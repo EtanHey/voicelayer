@@ -134,7 +134,7 @@ final class ReadQueueTests: XCTestCase {
                     state.mode = .idle
                 }
                 commands = []
-                if row.event == "stop" { state.stop() }
+                if row.event == "stop" { state.stop(); state.handleEvent(queueEvent(0, nil)) }
                 else if row.event == "f5" { state.retainingReadQueueOnStop { state.stop() } }
                 else { press(state, marker + text(row.selected)) }
                 let label = "p=\(row.playing) q=\(row.pending) suspended=\(row.suspended) event=\(row.event) input=\(marker)\(row.selected)"

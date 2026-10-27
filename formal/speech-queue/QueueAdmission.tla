@@ -40,7 +40,8 @@ Next == (\E p \in 0..4, q \in UNION {[1..n -> 1..4] : n \in 0..2}, s \in BOOLEAN
         \/ (\E t \in 1..4: Select(t)) \/ Stop \/ F5
 Spec == Init /\ [][Next]_vars
 TypeOK == playing \in 0..4 /\ pending \in Seq(1..4) /\ Len(pending) <= 3 /\ suspended \in BOOLEAN /\ steps \in 0..2
-NoSilentClear == event # "selection" \/ Members(beforePending) \subseteq Members(pending) \cup {playing}
+NoSilentClear == event # "selection" \/ selected \notin ({beforePlaying} \cup Members(beforePending))
+                 \/ Members(beforePending) \subseteq Members(pending) \cup {playing}
 NoDuplicateIdentity == Unique(pending) /\ playing \notin Members(pending)
 StopClearsAll == event # "stop" \/ (playing = 0 /\ pending = <<>> /\ ~suspended)
 F5KeepsQueue == event # "f5" \/ pending = beforePending

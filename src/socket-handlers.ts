@@ -199,9 +199,8 @@ export function handleSocketCommand(
         ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms } : {}) };
     }
     case "speak_text": {
-      if (command.source === "selection" && !command.id) return buildAck(command, "reject", "Selection requires a request id");
       const identity = command.source === "selection" ? selectionIdentity(command.text) : undefined;
-      if (identity && command.id && recordingState === "idle" && getEffectiveRecordingState() === "idle" && !hasActiveVoiceOperation()) {
+      if (identity && recordingState === "idle" && getEffectiveRecordingState() === "idle" && !hasActiveVoiceOperation()) {
         const admission = selectionReads.admission(identity);
         if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
         if (admission.kind === "playing") {
@@ -230,7 +229,7 @@ export function handleSocketCommand(
         const structuredDisplay = command.source === "selection" ? projection : undefined;
         const text = projection?.speechText ?? command.text;
         const textHash = normalizedSpeechHash(command.text);
-        if ((command.queue === true || (command.source === "selection" && selectionReads.hasRead)) && command.id) {
+        if (command.queue === true && command.id) {
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.
           queueStartOwnsFailure = true;
           const outcome = selectionReads.submit({ requestId: command.id, text, textHash, profile: command.profile ?? "auto",

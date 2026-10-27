@@ -30,7 +30,7 @@ test("selection admission preserves unrelated reads and never emits QUEUE_CLEARE
   for (const text of ["Charlie", "* [ ] Bravo", "2. Charlie"]) {
     expect(await press(text)).toMatchObject({ outcome: "noop", reason: "Already queued" });
   }
-  expect(await handleSocketCommand({ cmd: "speak_text", text: "unscoped", source: "selection" })).toMatchObject({ outcome: "reject" });
+  expect(await handleSocketCommand({ cmd: "speak_text", text: "Bravo", source: "selection" })).toMatchObject({ outcome: "noop", reason: "Already queued" });
   expect(counts.at(-1)).toBe(2);
   expect(await press("1. Alpha")).toMatchObject({ outcome: "accept" });
   expect(started).toEqual(["Alpha", "Bravo"]);

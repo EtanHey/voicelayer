@@ -1618,7 +1618,6 @@ public final class VoiceState {
             // Retire the stopped read only; queued reads keep their identities so Next can start them.
             clearCurrentSelectionReadIdentity(advanceEpoch: true)
         }
-        if !retainsReadQueue && !keepsWaitingReadsThroughCapture { clearReadQueue() }
         sendIntent(command: .stop, payload: payload,
                    retiresSelections: !retainsReadQueue && !keepsWaitingReadsThroughCapture)
         if shouldShowTranscribing {

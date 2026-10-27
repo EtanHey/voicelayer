@@ -66,8 +66,6 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
     private readonly preparer?: SelectionReadPreparation<L>,
   ) {}
 
-  get hasRead(): boolean { return this.current !== undefined; }
-
   get pendingCount(): number { return this.items.length; }
 
   admission(identity: string): { kind: "playing"; requestId: string } | { kind: "queued" } | { kind: "new" } {
