@@ -43,6 +43,39 @@ for (const [display, speech] of corpus) test(display, () => {
   expect(result.speechText).toBe(speech);
 });
 
+for (const engine of ["edge", "clone"] as const) {
+  const checkboxes: [string, string][] = [
+    ["1. [ ] Buy milk", "one. Buy milk."],
+    ["- [x] Done", "Done."],
+    ["2. [X] Call Dana", "two. Call Dana."],
+    ["1. [ ]Buy milk", "one. Buy milk."],
+    ['Etan said "[ ] x" here', engine === "clone" ? "Etan said x here" : 'Etan said " x" here'],
+    ["Before [ ] unchecked [x] checked [X] checked after", "Before unchecked checked checked after"],
+    ["[ ]\n[x]\t[X]", ""],
+    ['Task lists: "1. [ ] x" is no longer spoken "one. an empty list x".', engine === "clone"
+      ? "Task lists: 1. x is no longer spoken one. an empty list x."
+      : 'Task lists: "1. x" is no longer spoken "one. an empty list x".'],
+  ];
+  for (const [display, speech] of checkboxes) test(`${engine} silences checkbox tokens: ${display}`, () => {
+    const result = projectSpeakableText(display, [], engine);
+    expect(result.displayText).toBe(display);
+    expect(result.speechText).toBe(speech);
+    for (const marker of display.matchAll(/\[[ xX]\]/g)) {
+      const ranges = result.ranges.filter(range => range.source.start < marker.index + marker[0].length && range.source.end > marker.index);
+      expect(ranges.length).toBeGreaterThan(0);
+      expect(ranges.every(range => range.kind === "omission")).toBe(true);
+    }
+  });
+  for (const [display, clone, edge] of [
+    ["const a = []", "const a equals an empty list", "const a equals []"],
+    ["foo[] arr[ ]", "foo an empty list arr an empty list", "foo[] arr[ ]"],
+    ["arr[x] arr[X]", "arr open bracket x close bracket arr open bracket X close bracket", "arr[x] arr[X]"],
+    ["[x](https://example.com)", "x", "x"],
+  ]) test(`${engine} preserves code brackets and link labels: ${display}`, () => {
+    expect(projectSpeakableText(display, [], engine).speechText).toBe(engine === "clone" ? clone : edge);
+  });
+}
+
 test("ranges partition original and spoken UTF-16, including repeated words and emoji", () => {
   for (const display of [...corpus.map(([text]) => text), "🙂 MP3 MP3 שלום", "", " \r\n ", "שלוםMP3 עולם_חדש"]) {
     for (const engine of ["edge", "clone"] as const) {
