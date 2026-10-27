@@ -69,7 +69,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install daemon test dependencies
-        run: python3 -m pip install -r tests/requirements-tts-daemon.txt
+        run: python3 -m pip install -r ../workflow-tools/tests/requirements-tts-daemon.txt
 
       - name: Run tests
         run: bun test

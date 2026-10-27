@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -96,6 +97,26 @@ class WorkflowSourceTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.workflow_sha }}\n          path: workflow-tools", workflow)
         self.assertIn("working-directory: workflow-tools\n        run: python3 -m unittest", workflow)
         self.assertNotIn("${{ inputs.ref }}", workflow.split("        run:", 1)[1])
+
+    def test_daemon_dependencies_resolve_without_requirements_in_older_source(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/publish.yml").read_text()
+        command = re.search(
+            r"- name: Install daemon test dependencies\n        run: (.+)", workflow).group(1)
+        argv = shlex.split(command)
+        self.assertEqual(argv[:-1], ["python3", "-m", "pip", "install", "-r"])
+        requirements = root / "tests/requirements-tts-daemon.txt"
+        fixtures = root / ".build.noindex"
+        fixtures.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=fixtures) as directory:
+            workspace = Path(directory)
+            source = workspace / "source"
+            source.mkdir()
+            tools = workspace / "workflow-tools/tests"
+            tools.mkdir(parents=True)
+            shutil.copyfile(requirements, tools / requirements.name)
+            self.assertFalse((source / "tests" / requirements.name).exists())
+            self.assertEqual((source / argv[-1]).read_bytes(), requirements.read_bytes())
 
     def test_legacy_source_guard_location_fails_and_workflow_command_passes(self):
         root = Path(__file__).resolve().parents[1]
