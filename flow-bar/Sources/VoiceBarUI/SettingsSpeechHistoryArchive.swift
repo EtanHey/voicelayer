@@ -147,6 +147,24 @@ struct SettingsSpeechHistoryReloadRequest: Equatable {
     }
 }
 
+struct SettingsSpeechHistoryLoading {
+    private var fence = SettingsHistoryLoadFence()
+    private(set) var isLoading = true
+    var showSpinner = false
+
+    mutating func begin() -> Int {
+        isLoading = true
+        showSpinner = false
+        return fence.begin()
+    }
+
+    mutating func finish(_ invocation: Int) {
+        guard fence.accepts(invocation) else { return }
+        isLoading = false
+        showSpinner = false
+    }
+}
+
 /// One Speech history load, run from the scope's `.task(id:)`. Returns nil when that task was
 /// cancelled (a newer load replaced it), so stale entries are never applied.
 enum SettingsSpeechHistoryReload {

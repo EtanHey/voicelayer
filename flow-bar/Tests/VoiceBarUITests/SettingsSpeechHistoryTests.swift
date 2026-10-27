@@ -90,6 +90,61 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).map(\.id), [id])
     }
 
+    func testMalformedMetadataRepairIsDiscoveredWithoutDayChange() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let index = URL(fileURLWithPath: root.path + ".speech-history-v1")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: index)
+        }
+        let id = "2026-10-26T12-00-00-000Z-00000001"
+        let entry = root.appendingPathComponent("2026-10-26/" + id)
+        let metadata = entry.appendingPathComponent("metadata.json")
+        let day = entry.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+        try #"{"source":"spe"#.write(to: metadata, atomically: true, encoding: .utf8)
+        let modified = Date(timeIntervalSince1970: 1_760_486_400)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: day.path)
+        XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root), [])
+        let checkpoint = try JSONSerialization.jsonObject(with: Data(contentsOf: index.appendingPathComponent(".days.json"))) as? [String: Any]
+        XCTAssertNil(try XCTUnwrap(checkpoint)[day.lastPathComponent])
+        try #"{"schema_version":1,"source":"speak","id":"\#(id)","created_at":"2026-10-26T12:00:00Z","status":"completed"}"#
+            .write(to: metadata, atomically: true, encoding: .utf8)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: day.path)[.modificationDate] as? Date, modified)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: index.appendingPathComponent(id).path))
+        XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).map(\.id), [id])
+        XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).map(\.id), [id])
+    }
+
+    func testCachedNonSpeechMetadataChangeIsDiscoveredWithoutDayChange() throws {
+        for change in ["mtime", "size"] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let index = URL(fileURLWithPath: root.path + ".speech-history-v1")
+            defer {
+                try? FileManager.default.removeItem(at: root)
+                try? FileManager.default.removeItem(at: index)
+            }
+            let id = "2026-10-26T12-00-00-000Z-00000001"
+            let entry = root.appendingPathComponent("2026-10-26/" + id)
+            let metadata = entry.appendingPathComponent("metadata.json")
+            let day = entry.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+            let speech = #"{"schema_version":1,"source":"speak","id":"\#(id)","created_at":"2026-10-26T12:00:00Z","status":"completed"}"#
+            let nonSpeech = speech.replacingOccurrences(of: "speak", with: "other")
+            try nonSpeech.write(to: metadata, atomically: true, encoding: .utf8)
+            let modified = Date(timeIntervalSince1970: 1_760_486_400)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: metadata.path)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: day.path)
+            XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root), [])
+            try (speech + (change == "size" ? " " : "")).write(to: metadata, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.modificationDate: change == "size" ? modified : modified.addingTimeInterval(1)], ofItemAtPath: metadata.path)
+            XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: day.path)[.modificationDate] as? Date, modified)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: index.appendingPathComponent(id).path))
+            XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).map(\.id), [id], change)
+            XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).map(\.id), [id], change)
+        }
+    }
+
     func testCancelledMigrationDoesNotPublishCheckpoint() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let index = URL(fileURLWithPath: root.path + ".speech-history-v1")
@@ -246,6 +301,46 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         XCTAssertNil(stale, "A restarted load must not deliver the stale scan")
         XCTAssertEqual(second, [])
         XCTAssertEqual(probe.events, [.started, .cancelled], "The previous scan must observe cancellation")
+    }
+
+    @MainActor
+    func testReenteredHistoryKeepsLoadingUntilReplacementFinishes() async {
+        let firstProbe = ReloadProbe()
+        let replacementProbe = ReloadProbe()
+        var loading = SettingsSpeechHistoryLoading()
+        var applied = 0
+        func start(_ probe: ReloadProbe) -> Task<Void, Never> {
+            Task { @MainActor in
+                let invocation = loading.begin()
+                defer { loading.finish(invocation) }
+                await SettingsSpeechHistoryReload.reload(debounce: false, load: {
+                    probe.record(.started)
+                    let deadline = Date().addingTimeInterval(5)
+                    while !probe.isReleased, Date() < deadline { Thread.sleep(forTimeInterval: 0.001) }
+                    return []
+                }, apply: { _ in applied += 1 })
+            }
+        }
+        let first = start(firstProbe)
+        let firstDeadline = Date().addingTimeInterval(2)
+        while !firstProbe.events.contains(.started), Date() < firstDeadline { await Task.yield() }
+        XCTAssertEqual(firstProbe.events, [.started])
+        first.cancel()
+        let replacement = start(replacementProbe)
+        let replacementDeadline = Date().addingTimeInterval(2)
+        while !replacementProbe.events.contains(.started), Date() < replacementDeadline { await Task.yield() }
+        XCTAssertEqual(replacementProbe.events, [.started])
+        loading.showSpinner = true
+        firstProbe.release()
+        await first.value
+        XCTAssertTrue(loading.isLoading)
+        XCTAssertTrue(loading.showSpinner)
+        XCTAssertEqual(applied, 0)
+        replacementProbe.release()
+        await replacement.value
+        XCTAssertFalse(loading.isLoading)
+        XCTAssertFalse(loading.showSpinner)
+        XCTAssertEqual(applied, 1)
     }
 
     // `run` checks cancellation off the main actor; a cancel can land after it returns entries but

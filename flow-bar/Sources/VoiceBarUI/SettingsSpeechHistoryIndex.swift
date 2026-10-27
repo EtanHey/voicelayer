@@ -4,6 +4,19 @@ enum SettingsSpeechHistoryIndex {
     private struct Day: Codable {
         let modifiedAt: Date
         let ids: [String]
+        let metadata: [String: MetadataStamp]
+    }
+    private struct MetadataStamp: Codable, Equatable {
+        let modifiedAt: Date
+        let size: Int
+
+        init?(entry: URL) {
+            guard safeDirectory(entry), let file = safeFile(entry.appendingPathComponent("metadata.json")),
+                  let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let modifiedAt = values.contentModificationDate, let size = values.fileSize else { return nil }
+            self.modifiedAt = modifiedAt
+            self.size = size
+        }
     }
     private struct Source: Decodable { let source: String? }
 
@@ -30,7 +43,11 @@ enum SettingsSpeechHistoryIndex {
                   safeDirectory(day),
                   let modified = try? day.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { continue }
             if let cached = saved[key], cached.modifiedAt == modified,
-               cached.ids.allSatisfy({ validID($0) && $0.hasPrefix(key + "T") }) {
+               cached.ids.allSatisfy({ validID($0) && $0.hasPrefix(key + "T") }),
+               cached.metadata.allSatisfy({ id, stamp in
+                   !Task.isCancelled && validID(id) && id.hasPrefix(key + "T") &&
+                       MetadataStamp(entry: day.appendingPathComponent(id)) == stamp
+               }) {
                 updated[key] = cached
                 ids.formUnion(cached.ids)
                 continue
@@ -38,19 +55,22 @@ enum SettingsSpeechHistoryIndex {
             guard let entries = try? manager.contentsOfDirectory(at: day,
                 includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) else { continue }
             var speech: [String] = []
+            var metadataStamps: [String: MetadataStamp] = [:]
             var readable = true
             for entry in entries {
                 guard !Task.isCancelled else { return [] }
                 let id = entry.lastPathComponent
                 guard validID(id), id.hasPrefix(key + "T"), safeDirectory(entry) else { continue }
                 let metadata = entry.appendingPathComponent("metadata.json")
-                guard let file = safeFile(metadata) else { readable = false; continue }
+                guard let stamp = MetadataStamp(entry: entry), let file = safeFile(metadata) else { readable = false; continue }
                 metadataRead(file)
-                guard let data = try? Data(contentsOf: file) else { readable = false; continue }
-                if (try? JSONDecoder().decode(Source.self, from: data))?.source == "speak" { speech.append(id) }
+                guard let data = try? Data(contentsOf: file),
+                      let source = try? JSONDecoder().decode(Source.self, from: data) else { readable = false; continue }
+                metadataStamps[id] = stamp
+                if source.source == "speak" { speech.append(id) }
             }
             ids.formUnion(speech)
-            if readable { updated[key] = Day(modifiedAt: modified, ids: speech) }
+            if readable { updated[key] = Day(modifiedAt: modified, ids: speech, metadata: metadataStamps) }
         }
         guard !Task.isCancelled else { return [] }
         if usableIndex, !Task.isCancelled, let data = try? JSONEncoder().encode(updated) {
