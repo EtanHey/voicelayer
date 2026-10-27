@@ -2653,6 +2653,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
       },
       play: (chunk, text, info, position) => {
         throwIfAbortedSafe(signal);
+        prosodyRead?.chunkAdmitted(info.chunk_index);
         // CLICK2: a Pause that landed during preparation admits this first chunk parked, before any player.
         const startPaused = handle.firstAdmission?.paused === true;
         handle.firstAdmission = undefined;
@@ -2687,7 +2688,6 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
               console.error(`[tts] first_audio_ms=${ms} profile=${kind} engine=${engine} voice=${voice} chars=${chars}`);
             }
             started = true; resolveStarted(true); audioStarted = true; handleStarted();
-            prosodyRead?.playbackStarted(info.chunk_index);
             firstAudio?.firstAudioStarted(chunk.audioFile);
           },
           onCompleted: (outcome) => {

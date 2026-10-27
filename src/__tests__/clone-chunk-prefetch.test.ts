@@ -108,7 +108,7 @@ describe("S2 F3 clone startup and sequential prefetch", () => {
         },
         play: (chunk, _text, info) => {
           starts.push(clock.now); playing = info.chunk_index;
-          read.playbackStarted(info.chunk_index);
+          read.chunkAdmitted(info.chunk_index);
           if (info.chunk_index === 0) read.firstAudioStarted(chunk.audioFile);
           const pcm = files.get(chunk.audioFile)!;
           expect(chunk.durationMs).toBe(pcm.length * 1000 / PROSODY_SAMPLE_RATE);

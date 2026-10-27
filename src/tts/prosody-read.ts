@@ -69,7 +69,7 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
     prepared?: ProsodyReadChunk; lookahead?: number; overlapDecode?: boolean; playbackLookahead?: number;
   } = {}) {
   const firstEnd = plan.chunks[0]?.end ?? 0;
-  let playingChunk = 0;
+  let admittedChunk = 0;
   const decodeFailure = new AbortController();
   const decoding = new Set<Promise<Synthesized>>();
   const schedulerPlan = prepared ? { segments: plan.segments.slice(firstEnd), chunks: plan.chunks.slice(1).map(chunk =>
@@ -88,7 +88,7 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
     return { ready };
   }, { signal: AbortSignal.any([signal, decodeFailure.signal]), concurrency, lookahead,
     canStart: playbackLookahead === undefined ? undefined : index => index < (schedulerPlan.chunks[
-      Math.min(playingChunk + playbackLookahead - (prepared ? 1 : 0), schedulerPlan.chunks.length - 1)]?.end ?? 0),
+      Math.min(admittedChunk + playbackLookahead - (prepared ? 1 : 0), schedulerPlan.chunks.length - 1)]?.end ?? 0),
     dispose: (result) => { if (result.rawFile) engine.unlink(result.rawFile); } });
   let preparedDelivered = false;
   let previousTailMs: Promise<number> = Promise.resolve(0);
@@ -107,7 +107,7 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
   const spoken = (index: number) => plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map((s) => s.text).join(" ");
 
   return {
-    playbackStarted(index: number) { playingChunk = Math.max(playingChunk, index); scheduler.resume(); },
+    chunkAdmitted(index: number) { admittedChunk = Math.max(admittedChunk, index); scheduler.resume(); },
     async chunk(index: number): Promise<ProsodyReadChunk> {
       if (prepared && index === 0) {
         throwIfAbortedSafe(signal);

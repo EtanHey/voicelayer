@@ -112,6 +112,18 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+  it("S2 a later structured player launch failure cannot strand bounded prefetch", async () => {
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+    const h = start("clone", "## Status\n" + "- Keep every complete word in this read.\n".repeat(8));
+    await playerBarrier.at(0);
+    for (let i = 0; i < 4; i++) await fixtureCheckpoint();
+    failPlayerSpawn = true; players[0].exit.resolve(0);
+    const deadline = deferred<{ error: string }>();
+    const timer = setTimeout(() => deadline.resolve({ error: "completion deadline" }), 500);
+    try { expect(await Promise.race([h.completion, deadline.promise])).toEqual({ error: "Speech playback failed: player-error" }); }
+    finally { clearTimeout(timer); }
+  });
+
 
   it("R1C playback wait includes audio enqueued by captured short-speech preparation", async () => {
     await speak("First fixture.", { voice: "en-US-JennyNeural" });
