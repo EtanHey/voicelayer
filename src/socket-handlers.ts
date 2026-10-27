@@ -200,16 +200,14 @@ export function handleSocketCommand(
     }
     case "speak_text": {
       const identity = command.source === "selection" ? selectionIdentity(command.text) : undefined;
-      if (identity && recordingState === "idle" && getEffectiveRecordingState() === "idle" && !hasActiveVoiceOperation()) {
+      if (identity !== undefined && recordingState === "idle" && getEffectiveRecordingState() === "idle" && !hasActiveVoiceOperation()) {
         const admission = selectionReads.admission(identity);
         if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
-        if (admission.kind === "playing") {
+        if (admission.kind === "playing" && !isPlaybackPaused()) {
           if (selectionReads.next(admission.requestId) === "stopped") stopPlayback();
           return buildAck(command, "accept", "selection advanced");
         }
       }
-      // Socket parsing/authentication precede this boundary. IDs retain their existing ownership
-      // meaning: each validated invocation gets one receipt, including repeated client IDs.
       const receipt = createSpeakReceipt({
         input: command.text, request_id: command.id ?? randomUUID(),
         request_source: command.source === "selection" || command.source === "clipboard" || command.source === "cli"
@@ -228,6 +226,10 @@ export function handleSocketCommand(
         const projection = command.format === "markdown" ? projectStructuredSpeech(command.text) : undefined;
         const structuredDisplay = command.source === "selection" ? projection : undefined;
         const text = projection?.speechText ?? command.text;
+        if (!text.trim()) {
+          finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
+          return buildAck(command, "reject", "No text selected");
+        }
         const textHash = normalizedSpeechHash(command.text);
         if (command.queue === true && command.id) {
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.

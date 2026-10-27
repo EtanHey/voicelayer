@@ -22,7 +22,8 @@ def check(runner):
                 "History": None, "MutableTerminal": "FirstAcceptedTerminalImmutable",
                 "AdmissionCurrent": None, "AdmissionFinding": "NonemptySelectionDoesNotStop", "AdmissionProposed": None,
                 "AdmissionOlderMatch": "EveryQueuedMatchStops", "QueueAdmissionFixed": None,
-                "QueueAdmissionClear": "NoSilentClear", "QueueAdmissionDuplicate": "NoDuplicateIdentity"}
+                "QueueAdmissionClear": "NoSilentClear", "QueueAdmissionDuplicate": "NoDuplicateIdentity", "QueueAdmissionStopLeaves": "StopClearsAll",
+                "QueueAdmissionF5Clears": "F5KeepsQueue", "QueueAdmissionFreshClears": "NoSilentClear"}
     configs = sorted(SPEC.glob("*.cfg"))
     assert {p.stem for p in configs} == set(EXPECTED), "Every config needs an explicit expected result"
     print(f"Evidence: {RUN}", flush=True)
@@ -97,7 +98,7 @@ def check(runner):
     if status:
         raise SystemExit(status)
     check_admission(RUN, runner)
-    print("PASS: queue/History runtime and real Swift/daemon admission conformance; eight expected counterexamples")
+    print("PASS: queue/History runtime and real Swift/daemon admission conformance; eleven expected counterexamples")
 
 
 if __name__ == "__main__":

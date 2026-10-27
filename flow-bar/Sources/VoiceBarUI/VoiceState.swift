@@ -1028,6 +1028,8 @@ public final class VoiceState {
     private var selectionSpeechRequestID: String?
     private var selectionSubmittedText: String?
     private var selectionSubmissions: [String: (text: String, order: Int)] = [:]
+    private var selectionUnacknowledgedRequestIDs: Set<String> = []
+    private var selectionQueueSnapshotIsEmpty = false
     private var selectionSubmissionOrder = 0
     private var selectionReceiptOrder = 0
     private var selectionRetiredRequestIDs: [String] = []
@@ -1088,6 +1090,7 @@ public final class VoiceState {
     }
 
     private func retireSelectionRequest(_ id: String) {
+        selectionUnacknowledgedRequestIDs.remove(id)
         selectionSubmissions.removeValue(forKey: id)
         guard !selectionRetiredRequestIDs.contains(id) else { return }
         selectionRetiredRequestIDs.append(id)
@@ -1124,6 +1127,8 @@ public final class VoiceState {
         clearCurrentSelectionReadIdentity(advanceEpoch: true)
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
+        selectionUnacknowledgedRequestIDs.removeAll()
+        selectionQueueSnapshotIsEmpty = false
         selectionSubmissionOrder = 0
         selectionReceiptOrder = 0
     }
@@ -1277,12 +1282,12 @@ public final class VoiceState {
             let samePlaying = selectionSubmittedText != nil && (selectionReadHash.map {
                 Self.selectionHash(result.text ?? "") == $0
             } ?? selectionReadText.map { normalized == Self.normalizedSelection($0) } ?? false)
-            if !fromClipboard, !normalized.isEmpty {
-                let first = readQueueCurrentRequestID == nil && selectionReadRequestID == nil
+            if !fromClipboard, !normalized.isEmpty, !selectionQueueSnapshotIsEmpty {
+                let first = selectionSpeechRequestID != nil && readQueueCurrentRequestID == nil && selectionReadRequestID == nil
                     ? selectionSubmissions.min(by: { $0.value.order < $1.value.order }) : nil
                 let owner = selectionReadRequestID ?? readQueueCurrentRequestID ?? first?.key
                 let pending = selectionSubmissions.filter { $0.key != owner }.map { $0.value.text }
-                let playing = mode == .idle && readQueueCurrentRequestID != nil ? nil
+                let playing = isPlaybackPaused || (mode == .idle && readQueueCurrentRequestID != nil) ? nil
                     : selectionReadText ?? first?.value.text
                         ?? (samePlaying || (selectionSubmittedText == nil && sameSelection) ? result.text : comparisonText)
                 switch SelectionAdmission.decide(result.text ?? "", playing: playing, pending: pending,
@@ -1327,9 +1332,11 @@ public final class VoiceState {
             selectionSubmittedText = text
             selectionSubmissionOrder += 1
             selectionSubmissions[requestID] = (text, selectionSubmissionOrder)
+            selectionUnacknowledgedRequestIDs.insert(requestID)
             if selectionSubmissions.count > Self.selectionIdentityLimit,
                let oldest = selectionSubmissions.min(by: { $0.value.order < $1.value.order })?.key {
                 // Forget only the text: an unresolved request may still receive a valid receipt.
+                selectionUnacknowledgedRequestIDs.remove(oldest)
                 selectionSubmissions.removeValue(forKey: oldest)
             }
             // speak_text preempts only the owned read and awaits its player teardown (PLAYER0/FX).
@@ -2391,12 +2398,14 @@ public final class VoiceState {
             case "speaking":
                 let requestID = event["request_id"] as? String
                 if let requestID, selectionRetiredRequestIDs.contains(requestID) { return }
+                if let requestID { selectionUnacknowledgedRequestIDs.remove(requestID) }
                 let submission = requestID.flatMap { selectionSubmissions[$0] }
                 // An external read changes the current read, but cannot supersede pending own
                 // submissions. Only an acknowledged newer own request establishes their order.
                 // Receipts may arrive out of order; never roll a newer read back to an older one.
                 if let submission, submission.order < selectionReceiptOrder { return }
                 if let submission {
+                    selectionQueueSnapshotIsEmpty = false
                     selectionReceiptOrder = submission.order
                     let superseded = selectionSubmissions.filter { $0.value.order < submission.order }.map(\.key)
                     for id in superseded { retireSelectionRequest(id) }
@@ -2581,6 +2590,16 @@ public final class VoiceState {
         case "read_queue":
             readQueueCount = max(0, (event["count"] as? NSNumber)?.intValue ?? 0)
             readQueueCurrentRequestID = event["current_request_id"] as? String
+            selectionQueueSnapshotIsEmpty = readQueueCount == 0 && readQueueCurrentRequestID == nil
+            if selectionQueueSnapshotIsEmpty {
+                clearCurrentSelectionReadIdentity()
+                let retired = selectionSubmissions.keys.filter { !selectionUnacknowledgedRequestIDs.contains($0) }
+                for id in retired { retireSelectionRequest(id) }
+                if let id = selectionSpeechRequestID, !selectionUnacknowledgedRequestIDs.contains(id) {
+                    selectionSpeechRequestID = nil
+                    selectionSubmittedText = nil
+                }
+            }
 
         case "playback_state":
             handlePlaybackStateEvent(event)
@@ -4493,6 +4512,7 @@ public final class VoiceState {
         // speak_text is not a recorder intent. Match its raw ack without changing that contract.
         if event["command"] as? String == "speak_text" {
             guard let id = event["id"] as? String, selectionSubmissions[id] != nil else { return }
+            selectionUnacknowledgedRequestIDs.remove(id)
             if ["selection advanced", "Already queued"].contains(event["reason"] as? String ?? "") {
                 retireSelectionRequest(id)
                 if selectionSpeechRequestID == id {

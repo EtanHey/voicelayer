@@ -106,9 +106,88 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(cmds, ["speak_text", "speak_text", "speak_text"])
     }
 
+    func testSharedSelectionIdentityFixtures() throws {
+        struct Fixture: Decodable { let name: String, input: String, identity: String }
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let rows = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: root.appendingPathComponent("formal/speech-queue/selection-identity.json")))
+        for row in rows {
+            XCTAssertEqual(Array(SelectionAdmission.identity(row.input).utf8), Array(row.identity.utf8), row.name)
+        }
+    }
+
+    func testCanonicalEquivalentSelectionsStopThePlayingReadAndHintForQueuedRead() {
+        for (composed, decomposed) in [("café", "cafe\u{0301}"), ("ש\u{05b8}\u{05c1}", "ש\u{05c1}\u{05b8}")] {
+            let (playing, _) = readingA(composed)
+            press(playing, decomposed)
+            XCTAssertEqual(cmds, ["stop"])
+            let (queued, a) = readingA()
+            press(queued, composed)
+            queued.handleEvent(queueEvent(1, a))
+            commands = []
+            press(queued, decomposed)
+            XCTAssertTrue(cmds.isEmpty)
+            XCTAssertEqual(queued.selectionFeedbackNote, "Already queued")
+        }
+    }
+
+    func testExternalPreemptionDropsDaemonMembershipButPreservesANewInflightRequest() throws {
+        for selected in ["Bravo selection", "Charlie selection"] {
+            let (state, a) = readingA()
+            for text in ["Bravo selection", "Charlie selection"] {
+                press(state, text)
+                let id = try XCTUnwrap(commands.last?["id"] as? String)
+                state.handleEvent(["type": "ack", "command": "speak_text", "id": id, "outcome": "accept", "reason": "queued"])
+            }
+            state.handleEvent(queueEvent(2, a))
+            state.handleEvent(queueEvent(0, nil))
+            state.handleEvent(speaking(id: "external", text: "Agent speech", read: "external-read"))
+            commands = []
+            press(state, selected)
+            XCTAssertEqual(cmds, ["speak_text"], selected)
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            commands = []
+            press(state, selected == "Bravo selection" ? "Charlie selection" : "Bravo selection")
+            XCTAssertEqual(cmds, ["speak_text"])
+        }
+        let (state, _) = readingA()
+        press(state, "Inflight selection")
+        let inflight = try XCTUnwrap(commands.last?["id"] as? String)
+        state.handleEvent(queueEvent(0, nil))
+        state.handleEvent(speaking(id: inflight, text: "Projected display", read: "inflight-read"))
+        commands = []
+        press(state, "Inflight selection")
+        XCTAssertEqual(cmds, ["stop"], "a genuine unacknowledged submission still binds its receipt")
+    }
+
+    func testClearedSnapshotAlreadyOverridesTheOldPlayingDisplayBeforeExternalSpeechArrives() {
+        let (state, a) = readingA()
+        press(state, "Bravo selection")
+        state.handleEvent(["type": "ack", "command": "speak_text", "id": commands.last?["id"] as? String ?? "", "outcome": "accept", "reason": "queued"])
+        state.handleEvent(queueEvent(1, a))
+        state.handleEvent(queueEvent(0, nil))
+        commands = []
+        press(state, "Alpha selection")
+        XCTAssertEqual(cmds, ["speak_text"])
+    }
+
+    func testSameTextAfterPausedReadWasParkedForDictationStartsFresh() {
+        let (state, a) = readingA()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Alpha selection", "request_id": a,
+                           "long_read": ["id": "read-A"], "playback_id": "p-A", "generation": 1])
+        state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-A", "generation": 2,
+                           "offset_ms": 500, "chunk_offset_ms": 500])
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        state.mode = .idle
+        commands = []
+        press(state, "Alpha selection")
+        XCTAssertEqual(cmds, ["speak_text"])
+    }
+
     func testModelAdmissionCasesDriveRealVoiceState() throws {
         struct Row: Decodable {
-            let playing: Int, pending: [Int], suspended: Bool, selected: Int, event: String, decision: String
+            let playing: Int, pending: [Int], suspended: Bool, selected: Int, event: String, decision: String, preempted: Bool
         }
         guard let path = ProcessInfo.processInfo.environment["VOICELAYER_ADMISSION_CASES"] else {
             throw XCTSkip("Run formal/speech-queue/check.sh for TLC admission cases")
@@ -126,10 +205,20 @@ final class ReadQueueTests: XCTestCase {
                     owner = try XCTUnwrap(commands.last?["id"] as? String)
                     state.handleEvent(speaking(id: owner, text: "Projected display", read: "model-read"))
                 }
-                for item in row.pending { press(state, text(item)) }
+                for item in row.pending {
+                    press(state, text(item))
+                    let id = try XCTUnwrap(commands.last?["id"] as? String)
+                    state.handleEvent(["type": "ack", "command": "speak_text", "id": id, "outcome": "accept", "reason": "queued"])
+                }
                 if !row.pending.isEmpty { state.handleEvent(queueEvent(row.pending.count, owner)) }
                 if row.suspended {
                     state.retainingReadQueueOnStop { state.stop() }
+                    state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+                    state.mode = .idle
+                }
+                if row.preempted {
+                    state.handleEvent(queueEvent(0, nil))
+                    state.handleEvent(speaking(id: "external", text: "Agent speech", read: "external-read"))
                     state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
                     state.mode = .idle
                 }
@@ -141,12 +230,12 @@ final class ReadQueueTests: XCTestCase {
                 XCTAssertEqual(cmds, row.decision == "hint" ? [] : [row.decision], label)
                 if row.decision == "speak_text" {
                     XCTAssertEqual(commands.last?["source"] as? String, "selection", label)
-                    XCTAssertEqual(commands.last?["queue"] as? Bool == true, row.playing != 0, label)
+                    XCTAssertEqual(commands.last?["queue"] as? Bool == true, row.playing != 0 && !row.preempted, label)
                 }
                 if row.decision == "hint" { XCTAssertEqual(state.selectionFeedbackNote, "Already queued", label) }
                 if row.decision == "read_next" { XCTAssertEqual(commands.last?["request_id"] as? String, owner, label) }
                 if row.event == "stop" { XCTAssertEqual(state.readQueueCount, 0, label) }
-                else { XCTAssertEqual(state.readQueueCount, row.pending.count, label) }
+                else { XCTAssertEqual(state.readQueueCount, row.preempted ? 0 : row.pending.count, label) }
                 if row.event == "f5", !row.pending.isEmpty { XCTAssertEqual(commands.last?["retain_read_queue"] as? Bool, true, label) }
             }
         }

@@ -179,6 +179,21 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     expect(contexts).toHaveLength(2); expect(start).toHaveBeenCalledTimes(2);
     for (let i = 0; i < 2; i++) { retained(contexts[i], "received"); expect(start.mock.calls[i][2]?.archiveContext).toBe(contexts[i]); }
   });
+  it("Next advances to an identical CLI request with the same client ID and keeps both archives", async () => {
+    incoming({ id: "same", source: "cli", queue: true });
+    incoming({ id: "same", source: "cli", queue: true });
+    expect(contexts).toHaveLength(2);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 1, current_request_id: "same" });
+    expect(await handleSocketCommand({ cmd: "read_next", request_id: "same" })).toMatchObject({ outcome: "accept" });
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 0, current_request_id: "same" });
+    for (const [index, context] of contexts.entries()) {
+      retained(context, "received");
+      expect(start.mock.calls[index]?.[2]?.archiveContext).toBe(context);
+    }
+    expect(contexts[0].id).not.toBe(contexts[1].id);
+  });
   it("invalid, unauthenticated and nonspoken commands never create speech receipts", async () => {
     for (const fields of [{ text: " " }, { text: 3 }, { profile: "invalid" }, { format: "html" }, { text: "x".repeat(200001) }])
       expect(incoming(fields)).toBeNull();

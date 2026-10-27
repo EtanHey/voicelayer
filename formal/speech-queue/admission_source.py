@@ -11,14 +11,19 @@ def check_admission(run, runner):
         if not node:
             continue
         label = json.loads('"' + node[2] + '"')
-        if not re.search(r"\bsteps = 2(?:\n|$)", label):
+        event = re.search(r'\bevent = "(\w+)"', label)[1]
+        step = int(re.search(r"\bsteps = (\d+)", label)[1])
+        if not ((event == "selection" and step >= 2) or (event in {"stop", "f5"} and step == 3)):
             continue
-        cases.append(dict(playing=int(re.search(r"\bbeforePlaying = (\d+)", label)[1]),
+        cases.append(dict(afterPlaying=int(re.search(r"\bplaying = (\d+)", label)[1]),
+                          afterPending=[int(n) for n in re.findall(r"\d+", re.search(r"\bpending = <<(.*?)>>", label)[1])],
+                          preempted="preempted = TRUE" in label, playing=int(re.search(r"\bbeforePlaying = (\d+)", label)[1]),
                           pending=[int(n) for n in re.findall(r"\d+", re.search(r"\bbeforePending = <<(.*?)>>", label)[1])],
                           suspended="wasSuspended = TRUE" in label,
                           selected=int(re.search(r"\bselected = (\d+)", label)[1]),
                           event=re.search(r'\bevent = "(\w+)"', label)[1],
                           decision=re.search(r'\bdecision = "(\w+)"', label)[1]))
+    assert any(row["preempted"] and len(row["pending"]) == 2 for row in cases)
     assert cases and {row["event"] for row in cases} == {"selection", "stop", "f5"}
     assert {row["decision"] for row in cases} == {"stop", "read_next", "hint", "speak_text"}
     assert any(len(row["pending"]) == 2 and row["selected"] not in [row["playing"], *row["pending"]] for row in cases)
@@ -33,6 +38,6 @@ def check_admission(run, runner):
     assert status == 0 and f"Replayed {len(cases) * 4} TLC cases" in output, "Real Swift admission diverged"
     status = runner.run(["timeout", "-s", "KILL", "900", "bun", "test", "src/__tests__/selection-admission.test.ts"],
                         run / "wire-conformance.log", 900, cwd=Path(__file__).resolve().parents[2],
-                        env={**os.environ, "VOICELAYER_ADMISSION_WIRE": str(run / "wire.ndjson")})
+                        env={**os.environ, "VOICELAYER_ADMISSION_WIRE": str(run / "wire.ndjson"), "VOICELAYER_ADMISSION_CASES": str(path)})
     print((run / "wire-conformance.log").read_text(), flush=True)
     assert status == 0, "Swift socket commands diverged at daemon boundary"

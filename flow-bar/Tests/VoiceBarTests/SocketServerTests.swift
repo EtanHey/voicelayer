@@ -77,12 +77,20 @@ final class SocketServerTests: XCTestCase {
         let a = try XCTUnwrap(press("Alpha", command: "speak_text"))
         fixture.state.handleEvent(["type": "state", "state": "speaking", "text": "Alpha", "request_id": a,
                                   "long_read": ["id": "read-A", "preparing": false]])
-        _ = try press("Bravo", command: "speak_text")
-        _ = try press("Charlie", command: "speak_text")
+        let b = try XCTUnwrap(press("Bravo", command: "speak_text"))
+        let c = try XCTUnwrap(press("Charlie", command: "speak_text"))
         fixture.state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": a])
         for text in ["Charlie", "* [ ] Bravo", "2. Charlie"] { _ = try press(text, command: nil) }
         _ = try press("1. Alpha", command: "read_next")
-        XCTAssertEqual(fixture.state.readQueueCount, 2)
+        fixture.state.handleEvent(["type": "state", "state": "speaking", "text": "Bravo", "request_id": b,
+                                  "long_read": ["id": "read-B", "preparing": false]])
+        fixture.state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": b])
+        _ = try press("2. Charlie", command: nil)
+        _ = try press("- [x] Bravo", command: "read_next")
+        fixture.state.handleEvent(["type": "state", "state": "speaking", "text": "Charlie", "request_id": c,
+                                  "long_read": ["id": "read-C", "preparing": false]])
+        fixture.state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": c])
+        XCTAssertEqual(fixture.state.readQueueCount, 0)
         if let path = ProcessInfo.processInfo.environment["VOICELAYER_ADMISSION_WIRE"] {
             try wire.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
         }
