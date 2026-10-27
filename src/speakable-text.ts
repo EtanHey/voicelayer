@@ -226,8 +226,8 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     return atStart || /^\.?$/.test(after) ? "" : ", ";
   });
   edit(/^[ \t]*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?[ \t]*(?:\r?\n|$)/gm, "");
+  edit(/(?<![^\s"'“‘])\[[ xX]\](?=$|[\s"'”’])/g, "");
   edit(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
-  // Task checkboxes go silent after a number, as after a bullet below; a link labelled "x" is not a checkbox.
   edit(/(?<=^[ \t]*\d+[.)][ \t]+)\[[ xX]\](?!\()[ \t]*/gm, "");
   // Keep the marker's own source span: alignment maps the spoken number back to it.
   edit(/^[ \t]*(\d+)[.)](?=[ \t]+)/gm, m => {
