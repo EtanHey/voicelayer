@@ -125,7 +125,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     expect(start.mock.calls[0][2]?.archiveContext).toBe(contexts[0]);
   });
   for (const source of ["selection", "clipboard"] as const) it(`carries queued ${source} through preparation and Next once`, async () => {
-    incoming({ id: "A", source: "selection" });
+    incoming({ id: "A", source: "selection", text: raw + " owner" });
     const prepared = deferredFixture<PreparedReadStart>(), seen = fixtureBarrier<archive.SpeakArchiveContext | undefined>();
     const lease = new PreparedReadStart("synthetic", { chunk: { audioFile: "unused", durationMs: 1, wordBoundaries: [] },
       voice: "synthetic", engine: "synthetic" }, () => {});
@@ -159,7 +159,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     expect(incoming({ id: "reserved" })).toMatchObject({ outcome: "reject", reason: "busy" }); active.mockReturnValue(false);
     expect(start).not.toHaveBeenCalled(); retained(contexts[0], "rejected"); retained(contexts[1], "rejected");
     incoming({ id: "A", source: "selection" });
-    for (let i = 0; i < 10; i++) expect(incoming({ id: `Q${i}`, source: "selection", queue: true })).toMatchObject({ reason: "queued" });
+    for (let i = 0; i < 10; i++) expect(incoming({ id: `Q${i}`, source: "selection", queue: true, text: raw + ` queued ${i}` })).toMatchObject({ reason: "queued" });
     expect(incoming({ id: "full", source: "clipboard", queue: true })).toMatchObject({ outcome: "reject", reason: "queue full" });
     retained(contexts.at(-1)!, "rejected"); expect(start).toHaveBeenCalledTimes(1);
     expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 10, current_request_id: "A" });
@@ -171,10 +171,10 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     expect(contexts).toHaveLength(3); await flushSpeechArchives(); retained(contexts[1], "stopped"); expect(start).toHaveBeenCalledTimes(2);
     expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 0, current_request_id: null });
   });
-  for (const queue of [false, true]) it(`keeps repeated-ID invocations distinct with queue=${queue}`, () => {
-    incoming({ id: "same", source: "selection" }); incoming({ id: "same", source: "selection", queue });
+  for (const queue of [false, true]) it(`keeps repeated-ID invocations distinct with queue=${queue}`, async () => {
+    incoming({ id: "same", source: "cli" }); incoming({ id: "same", source: "cli", queue });
     expect(contexts).toHaveLength(2); expect(contexts[0].id).not.toBe(contexts[1].id);
-    if (queue) expect(handleSocketCommand({ cmd: "read_next", request_id: "same" })).toMatchObject({ outcome: "accept" });
+    if (queue) expect(await handleSocketCommand({ cmd: "read_next", request_id: "same" })).toMatchObject({ outcome: "accept" });
     expect(archive.createSpeakReceipt).toHaveBeenCalledTimes(2);
     expect(contexts).toHaveLength(2); expect(start).toHaveBeenCalledTimes(2);
     for (let i = 0; i < 2; i++) { retained(contexts[i], "received"); expect(start.mock.calls[i][2]?.archiveContext).toBe(contexts[i]); }
@@ -204,7 +204,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     expect(log.mock.calls.flat().join(" ")).not.toContain("FINALIZED");
   });
   it("queued start refusal retains its context and clears the existing chain", async () => {
-    incoming({ id: "A", source: "selection" }); incoming({ id: "B", source: "selection", queue: true });
+    incoming({ id: "A", source: "selection", text: raw + " owner" }); incoming({ id: "B", source: "selection", queue: true });
     active.mockReturnValue(true);
     expect(await handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
     retained(contexts[1], "rejected"); expect(start).toHaveBeenCalledTimes(1);
@@ -224,7 +224,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     }
   });
   it("explicit idle Stop clears waiting reads without another receipt or completion", async () => {
-    incoming({ id: "A", source: "selection" }); incoming({ id: "B", source: "selection", queue: true });
+    incoming({ id: "A", source: "selection", text: raw + " owner" }); incoming({ id: "B", source: "selection", queue: true });
     expect(handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "noop", reason: "already idle" });
     expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "noop", reason: "stale" });
     expect(contexts).toHaveLength(2); await flushSpeechArchives(); retained(contexts[1], "stopped"); expect(start).toHaveBeenCalledTimes(1);

@@ -6,7 +6,7 @@ import { finishLiveSpeechReceipt } from "./speech-archive-live";
  * broadcast() to communicate state back to Voice Bar clients.
  */
 
-import { normalizedSpeechHash } from "./speech-identity";
+import { normalizedSpeechHash, selectionIdentity } from "./speech-identity";
 import { randomUUID } from "crypto";
 import { createSpeakReceipt, type SpeakArchiveContext } from "./speak-archive";
 import { updateSpeakLifecycle, type SpeakLifecycle } from "./speak-archive-store";
@@ -199,6 +199,16 @@ export function handleSocketCommand(
         ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms } : {}) };
     }
     case "speak_text": {
+      if (command.source === "selection" && !command.id) return buildAck(command, "reject", "Selection requires a request id");
+      const identity = command.source === "selection" ? selectionIdentity(command.text) : undefined;
+      if (identity && command.id && recordingState === "idle" && getEffectiveRecordingState() === "idle" && !hasActiveVoiceOperation()) {
+        const admission = selectionReads.admission(identity);
+        if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
+        if (admission.kind === "playing") {
+          if (selectionReads.next(admission.requestId) === "stopped") stopPlayback();
+          return buildAck(command, "accept", "selection advanced");
+        }
+      }
       // Socket parsing/authentication precede this boundary. IDs retain their existing ownership
       // meaning: each validated invocation gets one receipt, including repeated client IDs.
       const receipt = createSpeakReceipt({
@@ -220,11 +230,11 @@ export function handleSocketCommand(
         const structuredDisplay = command.source === "selection" ? projection : undefined;
         const text = projection?.speechText ?? command.text;
         const textHash = normalizedSpeechHash(command.text);
-        if (command.queue === true && command.id) {
+        if ((command.queue === true || (command.source === "selection" && selectionReads.hasRead)) && command.id) {
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.
           queueStartOwnsFailure = true;
           const outcome = selectionReads.submit({ requestId: command.id, text, textHash, profile: command.profile ?? "auto",
-            archiveContext: receipt.context, ...(structuredDisplay ? { structuredDisplay } : {}) }, true);
+            archiveContext: receipt.context, selectionIdentity: identity ?? selectionIdentity(command.text), ...(structuredDisplay ? { structuredDisplay } : {}) }, true);
           if (outcome === "full") {
             finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
             return buildAck(command, "reject", "queue full");
@@ -232,7 +242,7 @@ export function handleSocketCommand(
           return buildAck(command, "accept", outcome === "queued" ? "queued" : undefined);
         }
         // The first Option+F5 selection owns the queue, so a different one queues behind it.
-        if (command.source === "selection" && command.id) selectionReads.own(command.id);
+        if (command.source === "selection" && command.id) selectionReads.own(command.id, identity);
         else selectionReads.clear();
         const read = speakText(text, command.profile ?? "auto", { request_id: command.id, text_hash: textHash,
           archiveContext: receipt.context, ...(structuredDisplay ? { structuredDisplay } : {}) });

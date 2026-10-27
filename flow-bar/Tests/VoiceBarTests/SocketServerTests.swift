@@ -55,6 +55,39 @@ final class SocketServerTests: XCTestCase {
         XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.1))
     }
 
+    func testQueueAdmissionSocketBoundary() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+        var wire: [String] = []
+        func press(_ text: String, command: String?) throws -> String? {
+            fixture.state.selectionTextCaptureHandler = { $0(.completed(text)) }
+            fixture.state.speakSelection()
+            let line = try readLine(from: fixture.commandClient, timeout: command == nil ? 0.01 : 1)
+            if let line {
+                wire.append(line)
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+                XCTAssertEqual(payload["cmd"] as? String, command)
+                return payload["id"] as? String
+            }
+            XCTAssertNil(command)
+            XCTAssertEqual(fixture.state.selectionFeedbackNote, "Already queued")
+            return nil
+        }
+        let a = try XCTUnwrap(press("Alpha", command: "speak_text"))
+        fixture.state.handleEvent(["type": "state", "state": "speaking", "text": "Alpha", "request_id": a,
+                                  "long_read": ["id": "read-A", "preparing": false]])
+        _ = try press("Bravo", command: "speak_text")
+        _ = try press("Charlie", command: "speak_text")
+        fixture.state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": a])
+        for text in ["Charlie", "* [ ] Bravo", "2. Charlie"] { _ = try press(text, command: nil) }
+        _ = try press("1. Alpha", command: "read_next")
+        XCTAssertEqual(fixture.state.readQueueCount, 2)
+        if let path = ProcessInfo.processInfo.environment["VOICELAYER_ADMISSION_WIRE"] {
+            try wire.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        }
+    }
+
     func testUnstartedServerDeinitDoesNotUnlinkSocketPathItDoesNotOwn() throws {
         let directory = URL(fileURLWithPath: "/tmp")
             .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)

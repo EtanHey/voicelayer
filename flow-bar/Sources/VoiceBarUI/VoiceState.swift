@@ -1277,7 +1277,29 @@ public final class VoiceState {
             let samePlaying = selectionSubmittedText != nil && (selectionReadHash.map {
                 Self.selectionHash(result.text ?? "") == $0
             } ?? selectionReadText.map { normalized == Self.normalizedSelection($0) } ?? false)
-            if replacing, (!fromClipboard && normalized.isEmpty) || sameSelection || samePlaying {
+            if !fromClipboard, !normalized.isEmpty {
+                let first = readQueueCurrentRequestID == nil && selectionReadRequestID == nil
+                    ? selectionSubmissions.min(by: { $0.value.order < $1.value.order }) : nil
+                let owner = selectionReadRequestID ?? readQueueCurrentRequestID ?? first?.key
+                let pending = selectionSubmissions.filter { $0.key != owner }.map { $0.value.text }
+                let playing = mode == .idle && readQueueCurrentRequestID != nil ? nil
+                    : selectionReadText ?? first?.value.text
+                        ?? (samePlaying || (selectionSubmittedText == nil && sameSelection) ? result.text : comparisonText)
+                switch SelectionAdmission.decide(result.text ?? "", playing: playing, pending: pending,
+                                                count: selectionReadText == nil && first == nil ? readQueueCount : max(readQueueCount, pending.count)) {
+                case .advance:
+                    if let owner {
+                        clearCurrentSelectionReadIdentity()
+                        retireSelectionRequest(owner)
+                        sendCommand?(["cmd": "read_next", "request_id": owner])
+                    }
+                    return
+                case .stop: stopSelectionRead(); return
+                case .alreadyQueued: showSelectionBusyNote(message: "Already queued"); return
+                case .submit: break
+                }
+            }
+            if replacing, (!fromClipboard && normalized.isEmpty) || (fromClipboard && (sameSelection || samePlaying)) {
                 stopSelectionRead()
                 return
             }
@@ -1596,6 +1618,7 @@ public final class VoiceState {
             // Retire the stopped read only; queued reads keep their identities so Next can start them.
             clearCurrentSelectionReadIdentity(advanceEpoch: true)
         }
+        if !retainsReadQueue && !keepsWaitingReadsThroughCapture { clearReadQueue() }
         sendIntent(command: .stop, payload: payload,
                    retiresSelections: !retainsReadQueue && !keepsWaitingReadsThroughCapture)
         if shouldShowTranscribing {
@@ -4471,6 +4494,14 @@ public final class VoiceState {
         // speak_text is not a recorder intent. Match its raw ack without changing that contract.
         if event["command"] as? String == "speak_text" {
             guard let id = event["id"] as? String, selectionSubmissions[id] != nil else { return }
+            if ["selection advanced", "Already queued"].contains(event["reason"] as? String ?? "") {
+                retireSelectionRequest(id)
+                if selectionSpeechRequestID == id {
+                    selectionSpeechRequestID = nil
+                    selectionSubmittedText = nil
+                }
+                if event["reason"] as? String == "Already queued" { showSelectionBusyNote(message: "Already queued") }
+            }
             if event["outcome"] as? String == "reject" {
                 retireSelectionRequest(id)
                 if selectionReadRequestID == id { clearCurrentSelectionReadIdentity() }

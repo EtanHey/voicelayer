@@ -23,7 +23,7 @@ final class VoiceBarHotkeyContractTests: XCTestCase {
 
     func testSpeakSelectionUsesOptionF5AndDocumentsToggle() {
         XCTAssertEqual(VoiceBarHotkeyContract.speakSelectionShortcutLabel, "Option+F5")
-        XCTAssertEqual(VoiceBarHotkeyContract.speakSelectionDescription, "Speak selection; press again to stop")
+        XCTAssertEqual(VoiceBarHotkeyContract.speakSelectionDescription, "Speak selection; repeat playing text skips or stops")
     }
 
     func testActivationLogDoesNotAdvertiseCmdF5OrDoubleTap() {

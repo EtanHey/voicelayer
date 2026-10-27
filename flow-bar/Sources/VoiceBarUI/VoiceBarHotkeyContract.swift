@@ -11,7 +11,7 @@ public enum VoiceBarHotkeyContract {
     public static let repasteShortcutLabel = "Shift+F5"
     public static let repasteDescription = "Re-paste last transcript"
     public static let speakSelectionShortcutLabel = "Option+F5"
-    public static let speakSelectionDescription = "Speak selection; press again to stop"
+    public static let speakSelectionDescription = "Speak selection; repeat playing text skips or stops"
     public static let readClipboardActionLabel = "Read Clipboard"
     public static let readClipboardDescription = "Copy text yourself, then choose Read Clipboard. Different text queues; the same text stops."
     public static let activationLogMessage = "[VoiceBar] Hotkey system active — primary shortcut is F5"

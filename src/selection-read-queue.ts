@@ -14,6 +14,7 @@ export interface QueuedSelectionRead {
   text: string;
   textHash: string;
   profile: "auto" | "short" | "long";
+  selectionIdentity?: string;
   archiveContext?: SpeakArchiveContext;
   structuredDisplay?: StructuredSpeech;
 }
@@ -49,6 +50,7 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
   private items: QueuedSelectionRead[] = [];
   /** The user's read that owns playback (speaking, preparing or paused) and therefore the queue. */
   private current?: string;
+  private currentIdentity?: string;
   private session = false;
   /** F5 interrupted the owner: its queued reads wait for Next, never auto-start. */
   private suspended = false;
@@ -64,7 +66,14 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
     private readonly preparer?: SelectionReadPreparation<L>,
   ) {}
 
+  get hasRead(): boolean { return this.current !== undefined; }
+
   get pendingCount(): number { return this.items.length; }
+
+  admission(identity: string): { kind: "playing"; requestId: string } | { kind: "queued" } | { kind: "new" } {
+    if (!this.suspended && this.current && this.currentIdentity === identity) return { kind: "playing", requestId: this.current };
+    return { kind: this.items.some(read => read.selectionIdentity === identity) ? "queued" : "new" };
+  }
 
   /** `append` reads queue behind the user's live read; anything else replaces it and forgets the queue.
    * After an F5 interruption a new selection plays now and the retained reads stay queued behind it. */
@@ -99,10 +108,11 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
 
   /** A direct (non-queue) Option+F5 start owns the queue. It replaces the chain, except after F5, when the
    * retained reads stay queued behind it. The caller starts the read itself. */
-  own(requestId: string): void {
+  own(requestId: string, identity?: string): void {
     if (this.suspended) this.suspended = false;
     else this.clear();
     this.current = requestId;
+    this.currentIdentity = identity;
     if (this.session) this.emit();
     // Deferred: the caller starts this read right after own() returns.
     this.prepareHead();
@@ -135,6 +145,7 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
     }
     this.items = [];
     this.current = undefined;
+    this.currentIdentity = undefined;
     this.session = false;
     this.suspended = false;
     if (changed) this.emit();
@@ -143,6 +154,7 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
   private launch(read: QueuedSelectionRead): void {
     // Own the queue before starting: the start preempts the old read, whose settle is then stale.
     this.current = read.requestId;
+    this.currentIdentity = read.selectionIdentity;
     const prepared = this.takePrepared(read);
     try { prepared ? this.start(read, prepared) : this.start(read); } catch (error) {
       prepared?.dispose();

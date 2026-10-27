@@ -49,8 +49,8 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(VoiceBarPresentation.readQueueControl(for: state)?.countLabel, "+1")
     }
 
-    func testSameOrEmptySelectionStopsAndClearsTheWholeQueue() {
-        for second in ["Alpha selection", "  Alpha \n selection ", "", nil] as [String?] {
+    func testEmptySelectionStopsAndClearsTheWholeQueue() {
+        for second in ["", nil] as [String?] {
             let (state, a) = readingA()
             press(state, "Bravo selection")
             state.handleEvent(queueEvent(1, a))
@@ -60,13 +60,97 @@ final class ReadQueueTests: XCTestCase {
             XCTAssertEqual(state.readQueueCount, 0)
             XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
         }
-        // Pressing again on the selection just queued is the same selection too.
+    }
+
+    func testQueuedRepeatIsANoopWithAlreadyQueuedHint() {
         let (state, a) = readingA()
         press(state, "Bravo selection")
         state.handleEvent(queueEvent(1, a))
         commands = []
         press(state, "Bravo selection")
-        XCTAssertEqual(cmds, ["stop"])
+        XCTAssertTrue(cmds.isEmpty)
+        XCTAssertEqual(state.readQueueCount, 1)
+        XCTAssertEqual(state.selectionFeedbackNote, "Already queued")
+    }
+
+    func testPlayingRepeatAdvancesWithoutClearingPendingReads() {
+        for text in ["Alpha selection", "  Alpha \n selection ", "1. Alpha selection", "- [x] Alpha selection"] {
+            let (state, a) = readingA()
+            press(state, "Bravo selection")
+            press(state, "Charlie selection")
+            state.handleEvent(queueEvent(2, a))
+            commands = []
+            press(state, text)
+            XCTAssertEqual(cmds, ["read_next"], text)
+            XCTAssertEqual(commands.last?["request_id"] as? String, a)
+            XCTAssertEqual(state.readQueueCount, 2)
+        }
+    }
+
+    func testEveryQueuedIdentityIsCheckedBeforeCapacityAndKeepsCaseAndTimerChanges() {
+        let (state, a) = readingA()
+        press(state, "Bravo selection")
+        press(state, "Charlie selection")
+        state.handleEvent(queueEvent(10, a))
+        for text in ["* [ ] Bravo selection", "2. Charlie selection"] {
+            commands = []
+            press(state, text)
+            XCTAssertTrue(cmds.isEmpty)
+            XCTAssertEqual(state.selectionFeedbackNote, "Already queued")
+        }
+        state.handleEvent(queueEvent(2, a))
+        commands = []
+        press(state, "bravo selection")
+        press(state, "Timer 4m 01s")
+        press(state, "Timer 4m 03s")
+        XCTAssertEqual(cmds, ["speak_text", "speak_text", "speak_text"])
+    }
+
+    func testModelAdmissionCasesDriveRealVoiceState() throws {
+        struct Row: Decodable {
+            let playing: Int, pending: [Int], suspended: Bool, selected: Int, event: String, decision: String
+        }
+        guard let path = ProcessInfo.processInfo.environment["VOICELAYER_ADMISSION_CASES"] else {
+            throw XCTSkip("Run formal/speech-queue/check.sh for TLC admission cases")
+        }
+        let rows = try JSONDecoder().decode([Row].self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        for row in rows {
+            for marker in ["", "1. ", "- [x] ", "* [ ] "] {
+                let state = VoiceState()
+                state.isConnected = true
+                state.sendCommand = { [unowned self] in commands.append($0) }
+                let text = { (n: Int) in "Item \(n)" }
+                var owner = ""
+                if row.playing != 0 {
+                    press(state, text(row.playing))
+                    owner = try XCTUnwrap(commands.last?["id"] as? String)
+                    state.handleEvent(speaking(id: owner, text: "Projected display", read: "model-read"))
+                }
+                for item in row.pending { press(state, text(item)) }
+                if !row.pending.isEmpty { state.handleEvent(queueEvent(row.pending.count, owner)) }
+                if row.suspended {
+                    state.retainingReadQueueOnStop { state.stop() }
+                    state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+                    state.mode = .idle
+                }
+                commands = []
+                if row.event == "stop" { state.stop() }
+                else if row.event == "f5" { state.retainingReadQueueOnStop { state.stop() } }
+                else { press(state, marker + text(row.selected)) }
+                let label = "p=\(row.playing) q=\(row.pending) suspended=\(row.suspended) event=\(row.event) input=\(marker)\(row.selected)"
+                XCTAssertEqual(cmds, row.decision == "hint" ? [] : [row.decision], label)
+                if row.decision == "speak_text" {
+                    XCTAssertEqual(commands.last?["source"] as? String, "selection", label)
+                    XCTAssertEqual(commands.last?["queue"] as? Bool == true, row.playing != 0, label)
+                }
+                if row.decision == "hint" { XCTAssertEqual(state.selectionFeedbackNote, "Already queued", label) }
+                if row.decision == "read_next" { XCTAssertEqual(commands.last?["request_id"] as? String, owner, label) }
+                if row.event == "stop" { XCTAssertEqual(state.readQueueCount, 0, label) }
+                else { XCTAssertEqual(state.readQueueCount, row.pending.count, label) }
+                if row.event == "f5", !row.pending.isEmpty { XCTAssertEqual(commands.last?["retain_read_queue"] as? Bool, true, label) }
+            }
+        }
+        print("Replayed \(rows.count * 4) TLC cases through real VoiceState capture completion and commands")
     }
 
     func testNextSkipsToTheFollowingReadAndIgnoresTheSkippedReadsLateReceipts() throws {

@@ -32,13 +32,13 @@
   },
   "excluded": ["Swift capture lifecycle and identity computation beyond the admission projection", "duplicate request IDs", "priority player and generations", "Pause/Play", "speaker teardown", "preparation leases", "start exceptions", "archive writes and PID recovery", "replay formatting", "liveness"],
   "admission": {
-    "source": "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
-    "bounds": {"text_classes": 3, "latest_playing_earlier_queued": "each absent or one of three classes", "nonempty_inputs": 3, "snapshots_checked": 192},
-    "actions": {"Init": "model instrumentation only", "Snapshot": "arbitrary known-text snapshot, not a claim of lifecycle reachability", "Admit": [1262, 1282], "Next": "union of Snapshot and Admit"},
-    "source_context": {"replacing": [1218, 1221], "comparison": [1262, 1279], "stop_effect": [1118, 1135], "fresh_request": [1303, 1327], "receipt": [2398, 2408]},
-    "conformance": "admission_source.py parses the actual Stop Boolean guard and checks all model decision snapshots; identity flags are projected, not executed Swift",
-    "assumptions": "successful nonempty selection capture; connected, idle hotkey, no concurrent receipt/capture; canonical known text/hash classes agree",
-    "excluded": ["capture lifecycle", "normalization/hash implementation", "unknown external text/status fallback", "natural completion during capture", "clipboard", "queue capacity", "macOS execution"],
-    "variants": {"AdmissionFinding": "current-code finding: nonempty duplicate emits Stop", "AdmissionOlderMatch": "current-code finding: an older queued duplicate does not Stop", "AdmissionProposed": "unapproved distinct-request alternative pending Etan ruling; not a product fix"}
+    "baseline_sha": "a4bd730e6613edbe51e62c06e53a73a1d6ef2ee9",
+    "source": ["flow-bar/Sources/VoiceBarUI/VoiceState.swift", "flow-bar/Sources/VoiceBarUI/SelectionAdmission.swift", "src/socket-handlers.ts", "src/selection-read-queue.ts", "src/speech-identity.ts"],
+    "bounds": {"identities": 4, "snapshot_pending_limit": 2, "operations_per_snapshot": 1, "normalization_variants": 4},
+    "actions": {"Snapshot": "valid unique active/suspended queue snapshots", "Select": "real VoiceState.speakSelection completion, commands and hint", "Stop": "VoiceState.stop explicit control", "F5": "retainingReadQueueOnStop over active speech"},
+    "invariants": ["NoSilentClear", "NoDuplicateIdentity", "StopClearsAll", "F5KeepsQueue"],
+    "conformance": "Mandatory real Swift XCTest over TLC decisions, then native SocketServer NDJSON replay through daemon handlers; no Python reimplementation of Swift flags",
+    "variants": {"QueueAdmissionFixed": "next/hint; HOLD until Etan rules", "QueueAdmissionClear": "pre-Q1 clear/clear, expected F-01 silent-clear violation", "QueueAdmissionDuplicate": "pre-Q1 clear/clear, expected F-02 older-queued duplicate violation", "Admission*": "historical T1 projection only"},
+    "excluded": ["real AX/pasteboard capture", "capture in flight", "external/hash-only ownership snapshots", "socket delivery races", "start/preparation failure", "private archive integrity F-08", "installed app, audio and visual acceptance", "liveness"]
   }
 }
