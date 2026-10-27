@@ -5,6 +5,7 @@
   "type": "module",
   "bin": {
     "voicelayer-mcp": "src/mcp-server.ts",
+    "voicelayer-mcp-bridge": "src/mcp-bridge.ts",
     "voicelayer": "src/cli/voicelayer.sh"
   },
   "files": [

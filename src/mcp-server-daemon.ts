@@ -4,7 +4,7 @@ import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from 
 /**
  * VoiceLayer MCP Daemon — persistent singleton replacing per-session MCP processes.
  *
- * Listens on /tmp/voicelayer-mcp.sock for MCP clients (via socat).
+ * Listens on /tmp/voicelayer-mcp.sock for MCP clients (via the reconnecting stdio bridge).
  * Connects to Voice Bar on /tmp/voicelayer.sock for UI state.
  *
  * Resilience features:
@@ -19,7 +19,7 @@ import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from 
  *   bun src/mcp-server-daemon.ts
  *
  * MCP client config (.mcp.json):
- *   "voicelayer": { "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }
+ *   "voicelayer": { "command": "/absolute/path/to/bun", "args": ["/absolute/package/src/mcp-bridge.ts"] }
  */
 
 import { createSpeechControl, loadSpeechSecret } from "./speech-control";
@@ -243,7 +243,7 @@ async function main() {
     `[voicelayer-daemon] MCP daemon listening on ${MCP_SOCKET_PATH}`,
   );
   console.error(
-    `[voicelayer-daemon] socat config: socat STDIO UNIX-CONNECT:${MCP_SOCKET_PATH}`,
+    `[voicelayer-daemon] Client config: run scripts/migrate-to-daemon.sh --dry-run for absolute bridge argv`,
   );
   appendControlLayerEvent("daemon.started", {
     mcp_socket_path: MCP_SOCKET_PATH,

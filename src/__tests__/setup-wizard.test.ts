@@ -5,22 +5,29 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
+import { testTmp } from "./setup/test-tmp";
 import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+
 import {
   detectAgentClis,
   getSetupCommandPlan,
   getTccGrantSteps,
   loadRememberedAgent,
   rememberAgent,
-  resolveSocatCommand,
   resolveAgentConfigPath,
   runSetup,
   wireAgentMcpConfig,
   type AgentId,
 } from "../cli/setup";
+
+const bridgeScript = Bun.which("voicelayer-mcp-bridge") ?? fileURLToPath(new URL("../mcp-bridge.ts", import.meta.url));
+const stableBun = ["/opt/homebrew/bin/bun", Bun.which("bun")]
+  .find(path => path && !path.includes("/Cellar/") && existsSync(path));
 
 function withTempHome<T>(fn: (home: string) => T): T {
   const home = mkdtempSync(join(tmpdir(), "voicelayer-setup-"));
@@ -68,17 +75,16 @@ describe("voicelayer setup wizard helpers", () => {
           { flush: true },
         );
 
-        const options = { socatExists: () => false };
-        const first = wireAgentMcpConfig(agent, home, options);
-        const second = wireAgentMcpConfig(agent, home, options);
+        const first = wireAgentMcpConfig(agent, home);
+        const second = wireAgentMcpConfig(agent, home);
         const data = JSON.parse(readFileSync(configPath, "utf8"));
 
         expect(first.changed).toBe(true);
         expect(second.changed).toBe(false);
         expect(data.mcpServers.existing).toEqual({ command: "noop" });
         expect(data.mcpServers.voicelayer).toEqual({
-          command: "socat",
-          args: ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"],
+          command: stableBun,
+          args: [bridgeScript],
         });
         expect(
           Object.keys(data.mcpServers).filter((key) => key === "voicelayer"),
@@ -110,65 +116,22 @@ describe("voicelayer setup wizard helpers", () => {
         { flush: true },
       );
 
-      const options = { socatExists: () => false };
-      const first = wireAgentMcpConfig("codex", home, options);
-      const second = wireAgentMcpConfig("codex", home, options);
+      const first = wireAgentMcpConfig("codex", home);
+      const second = wireAgentMcpConfig("codex", home);
       const body = readFileSync(configPath, "utf8");
 
       expect(first.changed).toBe(true);
       expect(second.changed).toBe(false);
       expect(body).toContain("[mcp_servers.brainlayer]");
       expect(body).toContain("[mcp_servers.voicelayer]");
-      expect(body).toContain('command = "socat"');
+      expect(body).toContain(`command = ${JSON.stringify(stableBun)}`);
       expect(body).toContain(
-        'args = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]',
+        `args = [${JSON.stringify(bridgeScript)}]`,
       );
       expect(body.match(/\[mcp_servers\.voicelayer\]/g)?.length).toBe(1);
       expect(body).not.toContain("[mcp_servers.voicelayer.env]");
       expect(body).not.toContain("OLD_ENV");
       expect(body).not.toContain('command = "voicelayer-mcp"');
-    }));
-
-  test("pins Homebrew socat when it exists", () => {
-    expect(
-      resolveSocatCommand((path) => path === "/opt/homebrew/bin/socat"),
-    ).toBe("/opt/homebrew/bin/socat");
-    expect(resolveSocatCommand(() => false)).toBe("socat");
-  });
-
-  test("pins Intel Homebrew socat when only /usr/local exists", () => {
-    expect(resolveSocatCommand((path) => path === "/usr/local/bin/socat")).toBe(
-      "/usr/local/bin/socat",
-    );
-  });
-
-  test("writes absolute socat path into MCP config when Homebrew socat exists", () =>
-    withTempHome((home) => {
-      const configPath = resolveAgentConfigPath("cursor", home);
-      const result = wireAgentMcpConfig("cursor", home, {
-        socatExists: (path) => path === "/opt/homebrew/bin/socat",
-      });
-      const data = JSON.parse(readFileSync(configPath, "utf8"));
-
-      expect(result.changed).toBe(true);
-      expect(data.mcpServers.voicelayer).toEqual({
-        command: "/opt/homebrew/bin/socat",
-        args: ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"],
-      });
-    }));
-
-  test("writes absolute socat path into Codex TOML when Homebrew socat exists", () =>
-    withTempHome((home) => {
-      const configPath = resolveAgentConfigPath("codex", home);
-      wireAgentMcpConfig("codex", home, {
-        socatExists: (path) => path === "/opt/homebrew/bin/socat",
-      });
-      const body = readFileSync(configPath, "utf8");
-
-      expect(body).toContain('command = "/opt/homebrew/bin/socat"');
-      expect(body).toContain(
-        'args = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]',
-      );
     }));
 
   test("skips build-app for cask-installed VoiceBar while preserving install steps", () => {
@@ -238,4 +201,41 @@ describe("voicelayer setup wizard helpers", () => {
       "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
     ]);
   });
+});
+
+test("setup argv survives Homebrew VoiceLayer and Bun keg replacement", async () => {
+  const root = testTmp("setup-keg-" + Math.random().toString(16).slice(2));
+  mkdirSync(root, { recursive: true });
+  try {
+    const prefix = `${root}/homebrew`; const bin = `${prefix}/bin`; const opt = `${prefix}/opt`;
+    mkdirSync(bin, { recursive: true }); mkdirSync(opt);
+    for (const version of ["1", "2"]) {
+      const src = `${prefix}/Cellar/voicelayer/${version}/src`;
+      mkdirSync(`${src}/cli`, { recursive: true });
+      writeFileSync(`${src}/cli/setup.ts`, readFileSync(new URL("../cli/setup.ts", import.meta.url), "utf8").replaceAll("/opt/homebrew/bin", bin));
+      writeFileSync(`${src}/mcp-bridge.ts`, `console.log("bridge-${version}");`, { mode: 0o755 });
+      mkdirSync(`${prefix}/Cellar/bun/${version}`, { recursive: true });
+      symlinkSync(process.execPath, `${prefix}/Cellar/bun/${version}/bun`);
+    }
+    for (const pkg of ["voicelayer", "bun"]) symlinkSync(`${prefix}/Cellar/${pkg}/1`, `${opt}/${pkg}`);
+    symlinkSync(`${opt}/voicelayer/src/mcp-bridge.ts`, `${bin}/voicelayer-mcp-bridge`);
+    symlinkSync(`${opt}/bun/bun`, `${bin}/bun`);
+    const runner = `${root}/wire.ts`;
+    writeFileSync(runner, `import { wireAgentMcpConfig } from ${JSON.stringify(`${opt}/voicelayer/src/cli/setup.ts`)}; for (const agent of ["claude", "cursor", "gemini", "codex"]) wireAgentMcpConfig(agent, ${JSON.stringify(root)});`);
+    const child = Bun.spawn([`${bin}/bun`, runner], { env: { ...process.env, HOME: root, PATH: bin }, stdout: "pipe", stderr: "pipe" });
+    const stderr = await new Response(child.stderr).text(); expect(stderr).toBe(""); expect(await child.exited).toBe(0);
+    const servers = (["claude", "cursor", "gemini", "codex"] as const).map(agent => {
+      const body = readFileSync(resolveAgentConfigPath(agent, root), "utf8");
+      expect(body).not.toContain("/Cellar/");
+      return agent === "codex" ? Bun.TOML.parse(body).mcp_servers.voicelayer : JSON.parse(body).mcpServers.voicelayer;
+    });
+    for (const pkg of ["voicelayer", "bun"]) {
+      rmSync(`${opt}/${pkg}`); symlinkSync(`${prefix}/Cellar/${pkg}/2`, `${opt}/${pkg}`);
+      rmSync(`${prefix}/Cellar/${pkg}/1`, { recursive: true });
+    }
+    for (const server of servers) {
+      const launched = Bun.spawn([server.command, ...server.args], { env: process.env, stdout: "pipe", stderr: "pipe" });
+      expect(await launched.exited).toBe(0); expect(await new Response(launched.stdout).text()).toBe("bridge-2\n");
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
