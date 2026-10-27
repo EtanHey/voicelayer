@@ -134,7 +134,7 @@ public final class SettingsAudioPlayback {
             return
         }
         guard !isVoiceBusy else {
-            failureMessage = "Voice is busy — wait for the current voice operation to finish"
+            failureMessage = SettingsHistoryCopy.playBusy
             return
         }
         failureMessage = nil

@@ -568,7 +568,7 @@ final class UIE2EModel {
         case "paste-unverified": voice.mode = .idle; voice.confirmationText = "Unverified\nIn History"
         case "paste-partial": voice.mode = .idle; voice.confirmationText = "Part pasted\nHistory: full"
         case "paste-typed": voice.mode = .idle; voice.confirmationText = "Typed"
-        case "paste-failed": voice.mode = .idle; voice.confirmationText = "Paste failed — click input and press Shift+F5"
+        case "paste-failed": voice.mode = .idle; voice.confirmationText = "Paste failed. Click the input and press Shift+F5."
         case "error": voice.handleEvent(["type": "error", "message": "QA fixture failure", "recoverable": true])
         case "transcribing": voice.handleEvent(["type": "state", "state": "transcribing"])
         case "disconnected": voice.setConnectionStatus(false)

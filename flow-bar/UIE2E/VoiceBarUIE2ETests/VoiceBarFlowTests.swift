@@ -1170,7 +1170,7 @@ extension VoiceBarFlowTests {
 
     func pillFlow() {
         for (name, text) in [("transcribing", "Cancel transcription"), ("confirmation", "Pasted"),
-                             ("paste-failed", "Paste failed — click input and press Shift+F5"),
+                             ("paste-failed", "Paste failed. Click the input and press Shift+F5."),
                              ("error", "QA fixture failure"), ("disconnected", "Disconnected")] {
             click(app.buttons["qa-fixture-\(name)"])
             receipt("fixture:" + name)

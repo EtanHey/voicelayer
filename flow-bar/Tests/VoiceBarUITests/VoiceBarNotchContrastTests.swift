@@ -328,7 +328,7 @@ final class VoiceBarNotchContrastTests: XCTestCase {
         )
 
         XCTAssertEqual(tapAgain, "Tap again to lock")
-        XCTAssertEqual(transcribing, "Transcribing...")
+        XCTAssertEqual(transcribing, "Transcribing…")
         XCTAssertEqual(modelLoad, "Loading speech model")
 
         let source = try barViewSource()
