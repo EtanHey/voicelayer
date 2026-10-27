@@ -1,11 +1,10 @@
 import json
 import os
 import re
-import subprocess
 from pathlib import Path
 
 
-def check_admission(run):
+def check_admission(run, runner):
     cases = []
     for line in (run / "QueueAdmissionFixed.dot").read_text().splitlines():
         node = re.match(r'(-?\d+) \[label="((?:\\.|[^"\\])*)"', line)
@@ -25,16 +24,15 @@ def check_admission(run):
     assert any(len(row["pending"]) == 2 and row["selected"] not in [row["playing"], *row["pending"]] for row in cases)
     path = run / "admission.json"
     path.write_text(json.dumps(cases))
-    result = subprocess.run(["timeout", "-s", "KILL", "900", "swift", "test", "--package-path", "flow-bar",
-                             "--scratch-path", ".build.noindex/swift", "--filter", "ReadQueueTests.testModelAdmissionCasesDriveRealVoiceState|SocketServerTests.testQueueAdmissionSocketBoundary"],
-                            cwd=Path(__file__).resolve().parents[2],
-                            env={**os.environ, "VOICELAYER_ADMISSION_CASES": str(path), "VOICELAYER_ADMISSION_WIRE": str(run / "wire.ndjson")}, capture_output=True, text=True)
-    (run / "swift-admission.log").write_text(result.stdout + result.stderr)
-    print(result.stdout + result.stderr, flush=True)
-    assert result.returncode == 0 and f"Replayed {len(cases) * 4} TLC cases" in result.stdout, "Real Swift admission diverged"
-    result = subprocess.run(["timeout", "-s", "KILL", "900", "bun", "test", "src/__tests__/selection-admission.test.ts"],
-                            cwd=Path(__file__).resolve().parents[2],
-                            env={**os.environ, "VOICELAYER_ADMISSION_WIRE": str(run / "wire.ndjson")}, capture_output=True, text=True)
-    (run / "wire-conformance.log").write_text(result.stdout + result.stderr)
-    print(result.stdout + result.stderr, flush=True)
-    assert result.returncode == 0, "Swift socket commands diverged at daemon boundary"
+    status = runner.run(["timeout", "-s", "KILL", "900", "swift", "test", "--package-path", "flow-bar",
+                         "--scratch-path", ".build.noindex/swift", "--filter", "ReadQueueTests.testModelAdmissionCasesDriveRealVoiceState|SocketServerTests.testQueueAdmissionSocketBoundary"],
+                        run / "swift-admission.log", 900, cwd=Path(__file__).resolve().parents[2],
+                        env={**os.environ, "VOICELAYER_ADMISSION_CASES": str(path), "VOICELAYER_ADMISSION_WIRE": str(run / "wire.ndjson")})
+    output = (run / "swift-admission.log").read_text()
+    print(output, flush=True)
+    assert status == 0 and f"Replayed {len(cases) * 4} TLC cases" in output, "Real Swift admission diverged"
+    status = runner.run(["timeout", "-s", "KILL", "900", "bun", "test", "src/__tests__/selection-admission.test.ts"],
+                        run / "wire-conformance.log", 900, cwd=Path(__file__).resolve().parents[2],
+                        env={**os.environ, "VOICELAYER_ADMISSION_WIRE": str(run / "wire.ndjson")})
+    print((run / "wire-conformance.log").read_text(), flush=True)
+    assert status == 0, "Swift socket commands diverged at daemon boundary"

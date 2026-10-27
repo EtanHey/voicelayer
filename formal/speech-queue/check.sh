@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-exec python3 formal/speech-queue/check.py
+export PYTHONDONTWRITEBYTECODE=1
+exec python3 -B formal/speech-queue/check.py

@@ -1,44 +1,180 @@
 {
-  "sync_sha": "9c20288a56a4ae2ac3cc8d9dfefa20c80fc6a3c9",
+  "sync_sha": "faff43942a39e207bff02161a1eb60ee7e574c3e",
   "predecessor": "TLA3-SpeechQueue/SpeechQueue_verify.tla at f88622f17dacd7cdcaebf2a00aa8395d6c774bd7 (previously docs.local only)",
   "scope": "Refines the predecessor's QUEUE1 OptF5Different, NextButton, Stop, RecordStart and stale-delivery actions against the implemented selection queue. Does not port its priority-player abstraction.",
-  "bounds": { "unique_requests": 4, "pending_limit": 2, "steps": 8, "production_pending_limit": 10 },
+  "bounds": {
+    "unique_requests": 4,
+    "pending_limit": 2,
+    "steps": 8,
+    "production_pending_limit": 10
+  },
   "source": "src/selection-read-queue.ts",
   "actions": {
-    "Init": { "lines": [48, 56], "symbol": "SelectionReadQueue field initializers" },
-    "OptF5Different": { "lines": [71, 87], "symbol": "submit(read, true)" },
-    "Replace": { "lines": [71, 87], "symbol": "submit(read, false)" },
-    "Own": { "lines": [102, 108], "symbol": "own" },
-    "NextButton": { "lines": [91, 97], "symbol": "next" },
-    "Settled": { "lines": [120, 125], "symbol": "settled, all three outcomes" },
-    "RecordStart": { "lines": [113, 116], "symbol": "suspend; capture itself is external" },
-    "Stop": { "lines": [129, 140], "symbol": "clear; physical player teardown is external" }
+    "Init": {
+      "lines": [
+        48,
+        56
+      ],
+      "symbol": "SelectionReadQueue field initializers"
+    },
+    "OptF5Different": {
+      "lines": [
+        71,
+        87
+      ],
+      "symbol": "submit(read, true)"
+    },
+    "Replace": {
+      "lines": [
+        71,
+        87
+      ],
+      "symbol": "submit(read, false)"
+    },
+    "Own": {
+      "lines": [
+        102,
+        108
+      ],
+      "symbol": "own"
+    },
+    "NextButton": {
+      "lines": [
+        91,
+        97
+      ],
+      "symbol": "next"
+    },
+    "Settled": {
+      "lines": [
+        120,
+        125
+      ],
+      "symbol": "settled, all three outcomes"
+    },
+    "RecordStart": {
+      "lines": [
+        113,
+        116
+      ],
+      "symbol": "suspend; capture itself is external"
+    },
+    "Stop": {
+      "lines": [
+        129,
+        140
+      ],
+      "symbol": "clear; physical player teardown is external"
+    }
   },
   "helpers": {
-    "Clear": [129, 140], "Launch": [143, 153], "Emit": [203, 204],
-    "Advance": [94, 96, 122, 125],
+    "Clear": [
+      129,
+      140
+    ],
+    "Launch": [
+      143,
+      153
+    ],
+    "Emit": [
+      203,
+      204
+    ],
+    "Advance": [
+      94,
+      96,
+      122,
+      125
+    ],
     "Step": "model instrumentation: event/result/step bound, no runtime transition",
     "Next": "union of mapped actions, not an additional runtime step"
   },
   "atomicity": "One synchronous public queue call. start synchronously delivers the prior owner's stopped settlement in the conformance harness. No await or async preparation is collapsed into these actions.",
-  "observations": ["pendingCount", "started request IDs", "last published read_queue state", "method return value"],
+  "observations": [
+    "pendingCount",
+    "started request IDs",
+    "last published read_queue state",
+    "method return value"
+  ],
   "history": {
     "source": "src/speech-state.ts",
-    "bounds": { "states": 9, "operations": 4 },
-    "actions": { "Init": [21, 22], "Move": [25, 34], "Next": "union of Move(to) for all nine states" },
+    "bounds": {
+      "states": 9,
+      "operations": 4
+    },
+    "actions": {
+      "Init": [
+        21,
+        22
+      ],
+      "Move": [
+        25,
+        34
+      ],
+      "Next": "union of Move(to) for all nine states"
+    },
     "invariant": "FirstAcceptedTerminalImmutable: once an accepted transition is terminal, later moves cannot replace it",
-    "legal_relation": [4, 10],
+    "legal_relation": [
+      4,
+      10
+    ],
     "excluded": "producer route selection, persistence, failed write retries, reason/timing projection, recovery identity"
   },
-  "excluded": ["Swift capture lifecycle and identity computation beyond the admission projection", "duplicate request IDs", "priority player and generations", "Pause/Play", "speaker teardown", "preparation leases", "start exceptions", "archive writes and PID recovery", "replay formatting", "liveness"],
+  "excluded": [
+    "Swift capture lifecycle and identity computation beyond the admission projection",
+    "duplicate request IDs",
+    "priority player and generations",
+    "Pause/Play",
+    "speaker teardown",
+    "preparation leases",
+    "start exceptions",
+    "archive writes and PID recovery",
+    "replay formatting",
+    "liveness"
+  ],
   "admission": {
     "baseline_sha": "a4bd730e6613edbe51e62c06e53a73a1d6ef2ee9",
-    "source": ["flow-bar/Sources/VoiceBarUI/VoiceState.swift", "flow-bar/Sources/VoiceBarUI/SelectionAdmission.swift", "src/socket-handlers.ts", "src/selection-read-queue.ts", "src/speech-identity.ts"],
-    "bounds": {"identities": 4, "snapshot_pending_limit": 2, "operations_per_snapshot": 1, "normalization_variants": 4},
-    "actions": {"Snapshot": "valid unique active/suspended queue snapshots", "Select": "real VoiceState.speakSelection completion, commands and hint", "Stop": "VoiceState.stop explicit control", "F5": "retainingReadQueueOnStop over active speech"},
-    "invariants": ["NoSilentClear", "NoDuplicateIdentity", "StopClearsAll", "F5KeepsQueue"],
+    "source": [
+      "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+      "flow-bar/Sources/VoiceBarUI/SelectionAdmission.swift",
+      "src/socket-handlers.ts",
+      "src/selection-read-queue.ts",
+      "src/speech-identity.ts"
+    ],
+    "bounds": {
+      "identities": 4,
+      "snapshot_pending_limit": 2,
+      "operations_per_snapshot": 1,
+      "normalization_variants": 4
+    },
+    "actions": {
+      "Snapshot": "valid unique active/suspended queue snapshots",
+      "Select": "real VoiceState.speakSelection completion, commands and hint",
+      "Stop": "VoiceState.stop explicit control",
+      "F5": "retainingReadQueueOnStop over active speech"
+    },
+    "invariants": [
+      "NoSilentClear",
+      "NoDuplicateIdentity",
+      "StopClearsAll",
+      "F5KeepsQueue"
+    ],
     "conformance": "Mandatory real Swift XCTest over TLC decisions, then native SocketServer NDJSON replay through daemon handlers; no Python reimplementation of Swift flags",
-    "variants": {"QueueAdmissionFixed": "next/hint; HOLD until Etan rules", "QueueAdmissionClear": "pre-Q1 clear/clear, expected F-01 silent-clear violation", "QueueAdmissionDuplicate": "pre-Q1 clear/clear, expected F-02 older-queued duplicate violation", "Admission*": "historical T1 projection only"},
-    "excluded": ["real AX/pasteboard capture", "capture in flight", "external/hash-only ownership snapshots", "socket delivery races", "start/preparation failure", "private archive integrity F-08", "installed app, audio and visual acceptance", "liveness"]
+    "variants": {
+      "QueueAdmissionFixed": "next/hint; HOLD until Etan rules",
+      "QueueAdmissionClear": "pre-Q1 clear/clear, expected F-01 silent-clear violation",
+      "QueueAdmissionDuplicate": "pre-Q1 clear/clear, expected F-02 older-queued duplicate violation",
+      "Admission*": "historical T1 projection only"
+    },
+    "excluded": [
+      "real AX/pasteboard capture",
+      "capture in flight",
+      "external/hash-only ownership snapshots",
+      "socket delivery races",
+      "start/preparation failure",
+      "private archive integrity F-08",
+      "installed app, audio and visual acceptance",
+      "liveness"
+    ]
   }
 }
