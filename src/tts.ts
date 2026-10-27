@@ -1,7 +1,7 @@
 import { beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
-import { structuredReadDisplay } from "./tts/structured-display";
+import { structuredReadDisplay, type StructuredChunkDisplay } from "./tts/structured-display";
 import type { StructuredSpeech } from "./tts/structured-speech";
 import { randomUUID } from "node:crypto";
 import { normalizedSpeechHash } from "./speech-identity";
@@ -81,7 +81,7 @@ import { createProsodyRead, decodeAudioToPCM, encodePCMToMp3, isStructuredPlan, 
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { getEffectiveRecordingState } from "./recording-state";
 import { startCloneTiming } from "./tts/clone-timing";
-import { combineHistoryTimings } from "./tts/history-timings";
+import { combineHistoryTimings, clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
 import {
   startPlaybackAmplitudeEnvelopeExtraction,
   type PlaybackAmplitudeEnvelope,
@@ -629,6 +629,7 @@ export interface TTSHistoryEntry {
   id: number; // 0-19 circular
   file: string; // /tmp/voicelayer-history-N.mp3
   text: string; // original message
+  display?: StructuredChunkDisplay;
   voice: string; // which voice was used
   timestamp: number; // Date.now()
   /** Long-read chunks whose audio was never synthesized (stopped first); their text is still in `text`. */
@@ -663,7 +664,7 @@ function saveHistory(entries: TTSHistoryEntry[]): void {
 
 /** Add an entry to the ring buffer. Overwrites oldest when full. */
 export function addToHistory(text: string, audioFile: string, voice: string, audioMissingChunks: number[] = [],
-  timings: Pick<TTSHistoryEntry, "wordBoundaries" | "alignedWords"> = {}): TTSHistoryRef | undefined {
+  presentation: Pick<TTSHistoryEntry, "wordBoundaries" | "alignedWords" | "display"> = {}): TTSHistoryRef | undefined {
   const entries = loadHistory();
   const id = ringIndex % RING_BUFFER_SIZE;
   const historyFile = ttsHistoryFilePath(id);
@@ -682,8 +683,9 @@ export function addToHistory(text: string, audioFile: string, voice: string, aud
     voice,
     timestamp: Date.now(),
     ...(audioMissingChunks.length ? { audioMissingChunks } : {}),
-    ...(timings.wordBoundaries?.length ? { wordBoundaries: timings.wordBoundaries } : {}),
-    ...(timings.alignedWords?.length ? { alignedWords: timings.alignedWords } : {}),
+    ...(presentation.wordBoundaries?.length ? { wordBoundaries: presentation.wordBoundaries } : {}),
+    ...(presentation.alignedWords?.length ? { alignedWords: presentation.alignedWords } : {}),
+    ...(presentation.display?.text === text ? { display: presentation.display } : {}),
   };
 
   // Find existing entry with same id and replace, or push new
@@ -725,6 +727,19 @@ export function getHistoryEntry(index: number = 0): TTSHistoryEntry | null {
   const sorted = [...entries].sort((a, b) => b.timestamp - a.timestamp);
   if (index < 0 || index >= sorted.length) return null;
   return sorted[index];
+}
+
+export function historyReplayMetadata(entry: TTSHistoryEntry): PlaybackMetadata {
+  const display = entry.display?.text === entry.text ? entry.display : undefined;
+  const text = display ? entry.text : replayDisplayText(entry.text);
+  return {
+    text,
+    voice: entry.voice,
+    ...(display ? { display } : {}),
+    ...(entry.alignedWords?.length ? { alignedWords: clipAlignedWordsToText(entry.alignedWords, text) } : {}),
+    ...(entry.wordBoundaries?.length ? { wordBoundaries: text === entry.text ? entry.wordBoundaries
+      : clipWordBoundariesToText(displayTokenBoundaries(entry.text, entry.wordBoundaries), text) } : {}),
+  };
 }
 
 /** Check if TTS is disabled via flag file. */
@@ -854,6 +869,7 @@ async function playClonedAudio(
 export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   speechArchive?: LiveSpeechArchive;
   text: string;
+  display?: StateEvent["display"];
   voice: string;
   longRead?: StateEvent["long_read"];
   speechIdentity?: Pick<StateEvent, "request_id" | "text_hash">;
@@ -1689,6 +1705,7 @@ class PlaybackQueueManager {
         type: "state",
         state: "speaking",
         text: next.metadata.text,
+        ...(next.metadata.display ? { display: next.metadata.display } : {}),
         voice: next.metadata.voice,
         readback_id: readbackID,
         ...(readbackID ? { readback_duration_ms: retainedReadback.seekableMs(readbackID) } : {}),
@@ -2486,6 +2503,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   // Optional source layout decorates the exact startup/body chunks without changing speech.
   const displays = identity.structuredDisplay?.speechText === displayText
     ? structuredReadDisplay(identity.structuredDisplay, texts, TTS_CHUNK_MAX_CHARS) : [];
+  const display = identity.structuredDisplay?.speechText === displayText
+    ? structuredReadDisplay(identity.structuredDisplay, [displayText], TTS_CHUNK_MAX_CHARS)[0] : undefined;
   let resolveStarted!: (result: { error?: string }) => void;
   const started = new Promise<{ error?: string }>((resolve) => { resolveStarted = resolve; });
   let failure: string | undefined;
@@ -2519,8 +2538,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   broadcast({ type: "state", state: "speaking", text: "Preparing speech…", voice: profile.voice, ...speechIdentity,
     long_read: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0, preparing: true,
       ...longReadDocument(displayText, texts),
-      ...(identity.structuredDisplay?.speechText === displayText
-        ? { display: structuredReadDisplay(identity.structuredDisplay, [displayText], TTS_CHUNK_MAX_CHARS)[0] } : {}) } });
+      ...(display ? { display } : {}) } });
   const run = async () => {
     if (signal.aborted) return;
     // A recording may have begun while the predecessor was settling.
@@ -2627,8 +2645,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           await assembleLongReadHistory(audio, combined);
           const alignedWords = combineHistoryTimings(audio.map(({ chunk, text }) => ({ text, durationMs: chunk.durationMs,
             aligned: chunkAlignedWords.get(chunk.audioFile), words: displayTokenBoundaries(text, chunk.wordBoundaries) })));
-          addToHistory(text, combined,
-            chunkVoices.get(audio[0]?.chunk.audioFile) ?? profile.voice, missingChunks, { alignedWords });
+          addToHistory(display?.text ?? text, combined,
+            chunkVoices.get(audio[0]?.chunk.audioFile) ?? profile.voice, missingChunks, { alignedWords, display });
         } catch (error) {
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
         } finally { try { unlinkSync(combined); } catch {} }

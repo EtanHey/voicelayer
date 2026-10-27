@@ -17,7 +17,7 @@ import { createHash } from "node:crypto";
 import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
-import { handleVoiceAsk } from "../handlers";
+import { handleReplay, handleVoiceAsk } from "../handlers";
 import { pausePlayback, isPlaybackPaused } from "../tts";
 import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
@@ -674,6 +674,35 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(replayed[0]).not.toBe(played[0]);
     expect(replayed[0].long_read.display).toEqual(played[0].long_read.display);
     expect(replayed[0].text).toBe(played[0].text);
+  });
+
+  for (const route of ["socket", "mcp"] as const)
+  for (const engine of ["edge", "clone"] as const) it(`S3 F4 ${route} ${engine}: completed Replay preserves the original structured document`, async () => {
+    autoPlay = true;
+    if (engine === "clone") cloneFixture();
+    const structuredDisplay = projectStructuredSpeech("## Release notes\n\n**Fixed:** שלום client/server.\n\n" +
+      Array.from({ length: 45 }, (_, i) => `${i + 1}. Item ${i} keeps its formatting after completion.`).join("\n") +
+      "\n\n```ts\nconst answer = 42;\n```");
+    const h = speakLongRead(structuredDisplay.speechText, { engine, voice: "fixture", rate: "+0%" },
+      Date.now(), { structuredDisplay });
+    handles.push(h);
+    await h.done;
+    await awaitCurrentPlayback();
+    const original = events.find(event => event.long_read?.preparing).long_read.display;
+    const entry = getHistoryEntry();
+    expect(entry?.text.length).toBeGreaterThan(2000);
+    expect(entry).toMatchObject({ text: original.text, display: original });
+    expect(entry?.audioMissingChunks).toBeUndefined();
+    const before = events.length;
+    if (route === "socket") expect(handleSocketCommand({ cmd: "replay" })).toMatchObject({ outcome: "accept" });
+    else expect((await handleReplay({ index: 0 })).isError).not.toBe(true);
+    await awaitCurrentPlayback();
+    const replayed = events.slice(before).find(event => event.state === "speaking");
+    expect(replayed).toBeDefined();
+    const wire = JSON.parse(serializeEvent(replayed));
+    expect(wire.text).toBe(original.text);
+    expect(wire.display).toEqual(original);
+    expect(wire.long_read).toBeUndefined();
   });
 
   it("PLAYER0 new speakLongRead cannot stop another agent's active or queued job", async () => {

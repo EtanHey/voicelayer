@@ -33,6 +33,7 @@ export interface StateEvent {
   state: VoiceLayerState;
   /** Present when state is "speaking" — the text being spoken. */
   text?: string;
+  display?: StructuredChunkDisplay;
   /** Original request identity, stable across preparation, chunks and seeks. */
   request_id?: string;
   text_hash?: string;
@@ -702,16 +703,20 @@ export function serializeEvent(event: SocketEvent): string {
 
   // Preserve complete geometry on preparing, chunk and pause/resume events.
   if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
-      normalizedEvent.type === "playback_state") && normalizedEvent.long_read?.display &&
+      normalizedEvent.type === "playback_state") && (normalizedEvent.long_read?.display ||
+        (normalizedEvent.type === "state" && normalizedEvent.display)) &&
       serializedByteLength(payload) <= VOICEBAR_STRUCTURED_READ_MAX_BYTES) {
     return payload;
   }
 
   // Beyond the structured-read budget, fall back to the historical text frame.
   if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
-      normalizedEvent.type === "playback_state") && normalizedEvent.long_read?.display) {
-    const { display: _display, ...long_read } = normalizedEvent.long_read;
-    return serializeEvent({ ...normalizedEvent, long_read });
+      normalizedEvent.type === "playback_state") && (normalizedEvent.long_read?.display ||
+        (normalizedEvent.type === "state" && normalizedEvent.display))) {
+    const long_read = normalizedEvent.long_read ? { ...normalizedEvent.long_read, display: undefined } : undefined;
+    return normalizedEvent.type === "state"
+      ? serializeEvent({ ...normalizedEvent, display: undefined, long_read })
+      : serializeEvent({ ...normalizedEvent, long_read });
   }
 
   if (normalizedEvent.type === "state" && normalizedEvent.state === "speaking") {
