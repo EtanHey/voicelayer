@@ -24,7 +24,8 @@ import * as tts from "../tts";
 import * as input from "../input";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
-import { handleConverse, handleVoiceAsk, runVoiceAskTurn } from "../handlers";
+import { handleConverse, handleVoiceAsk, runVoiceAskTurn, runAdmittedVoiceAsk } from "../handlers";
+import { formatAdmittedVoiceAskResult, type AdmittedVoiceAskResult } from "../voice-ask-admission";
 import { reserveArchiveRetranscription } from "../voice-operation-reservation";
 import { whisperLifecycleGate } from "../whisper-lifecycle-gate";
 
@@ -234,7 +235,8 @@ describe("handleConverse resilience — P0-2", () => {
     expect(waitSpy).not.toHaveBeenCalled();
   });
 
-  for (const retained of [false, true]) it(`return abort preserves callback evidence before publication: retained=${retained}`, async () => {
+  for (const caller of ["legacy", "typed"] as const) for (const retained of [false, true])
+    it(`return abort preserves callback evidence before publication: ${caller}/retained=${retained}`, async () => {
     jest.useFakeTimers();
     let finishInput: (() => void) | undefined;
     try {
@@ -253,7 +255,12 @@ describe("handleConverse resilience — P0-2", () => {
         });
       });
       const results: unknown[] = [];
-      const pending = handleVoiceAsk({ message: "question" }).then(result => { results.push(result); return result; });
+      let admitted: AdmittedVoiceAskResult | undefined;
+      const pending = (caller === "legacy" ? handleVoiceAsk({ message: "question" }) :
+        runAdmittedVoiceAsk({ args: { message: "question" } }).then(value => {
+          admitted = value;
+          return formatAdmittedVoiceAskResult(value);
+        })).then(result => { results.push(result); return result; });
       for (let i = 0; i < 5; i++) await Promise.resolve();
       jest.advanceTimersByTime(120_000);
       for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -263,6 +270,9 @@ describe("handleConverse resilience — P0-2", () => {
         jest.advanceTimersByTime(15_000);
       }
       const result = await pending;
+      if (caller === "typed") expect(admitted).toMatchObject({ kind: "turn", outcome: retained
+        ? { kind: "retained", recovery: { archiveId: "return-paired" } }
+        : { kind: "hard-timeout", stage: "return", recovery: null } });
       expect(result.isError).toBe(retained ? undefined : true);
       expect(result.content[0].text).toContain(retained ? "↳ Archive: return-paired" : "zero recoverable audio");
       expect(result.content[0].text).toContain(retained ? "return stage aborted" : "return stage after 120s");
@@ -532,7 +542,8 @@ describe("handleConverse resilience — P0-2", () => {
     }
   });
 
-  it("holds the standard-operation reservation after a hard-timeout fallback until the underlying flow settles", async () => {
+  for (const caller of ["legacy", "typed"] as const)
+    it(`holds the standard-operation reservation after a hard-timeout fallback until the underlying flow settles: ${caller}`, async () => {
     jest.useFakeTimers();
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
     let finishInput: ((value: string) => void) | undefined;
@@ -552,10 +563,13 @@ describe("handleConverse resilience — P0-2", () => {
         },
       );
 
-      const pending = handleVoiceAsk({
-        message: "Keep the reservation until late capture cleanup settles",
-        timeout_seconds: 5,
-      });
+      const args = { message: "Keep the reservation until late capture cleanup settles", timeout_seconds: 5 };
+      let admitted: AdmittedVoiceAskResult | undefined;
+      let results = 0;
+      const pending = (caller === "legacy" ? handleVoiceAsk(args) : runAdmittedVoiceAsk({ args }).then(value => {
+        admitted = value;
+        return formatAdmittedVoiceAskResult(value);
+      })).then(result => { results++; return result; });
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -564,6 +578,9 @@ describe("handleConverse resilience — P0-2", () => {
       await Promise.resolve();
       jest.advanceTimersByTime(15_000);
       const fallback = await pending;
+      if (caller === "typed") expect(admitted).toEqual({ kind: "turn", outcome: {
+        kind: "hard-timeout", stage: "capture", timeoutMs: 20_000, recovery: null,
+      } });
       expect(fallback.isError).toBe(true);
       expect(fallback.content[0].text).toContain("Hard timeout");
 
@@ -574,6 +591,7 @@ describe("handleConverse resilience — P0-2", () => {
       for (let microtask = 0; microtask < 10; microtask++) {
         await Promise.resolve();
       }
+      expect(results).toBe(1); expect(waitSpy).toHaveBeenCalledTimes(1);
       const afterSettlement = reserveArchiveRetranscription();
       expect(afterSettlement).not.toBeNull();
       afterSettlement?.release();

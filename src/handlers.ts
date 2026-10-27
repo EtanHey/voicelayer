@@ -1,5 +1,8 @@
 import { formatVoiceAskTurnResult, type VoiceAskTurnOutcome, type VoiceAskTimeoutStage, type McpTextResult } from "./voice-turn-result";
-import { parseVoiceAskIngress } from "./voice-ask-admission";
+import {
+  parseVoiceAskIngress, invalidVoiceAskMode, formatAdmittedVoiceAskResult,
+  type VoiceAskIngress, type AdmittedVoiceAskResult,
+} from "./voice-ask-admission";
 import { finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
@@ -426,13 +429,33 @@ export async function handleVoiceAsk(
       );
     }
   }
+  return formatAdmittedVoiceAskResult(await executeAdmittedNormalAsk({ ingress, context }));
+}
+
+export type AdmittedVoiceAskRequest = {
+  args: unknown;
+  context?: VoiceToolContext;
+};
+
+export async function runAdmittedVoiceAsk({ args, context }: AdmittedVoiceAskRequest): Promise<AdmittedVoiceAskResult> {
+  const ingress = parseVoiceAskIngress(args);
+  if (ingress.kind === "refused") return ingress;
+  if (ingress.kind === "retranscribe") return invalidVoiceAskMode();
+  return executeAdmittedNormalAsk({ ingress, context });
+}
+
+async function executeAdmittedNormalAsk({ ingress, context }: {
+  ingress: Extract<VoiceAskIngress, { kind: "normal" }>;
+  context?: VoiceToolContext;
+}): Promise<AdmittedVoiceAskResult> {
   const { input: parsed, originalMessage } = ingress;
   if (ingress.legacyPressToTalk) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
   // Bound raw archive input separately from the trimmed prompt-duration policy.
   if (originalMessage.length > SPEAK_TEXT_MAX_CHARS) {
-    return textResult("voice_ask refused: raw input exceeds archive admission limit", true);
+    return { kind: "refused", reason: "raw-input-limit",
+      result: textResult("voice_ask refused: raw input exceeds archive admission limit", true) };
   }
   const receipt = createSpeakReceipt({
     input: originalMessage, request_id: randomUUID(), request_source: "ask_prompt",
@@ -441,7 +464,8 @@ export async function handleVoiceAsk(
     build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
   });
   if (receipt.kind === "failed") {
-    return textResult(`voice_ask refused: input archive unavailable (${receipt.code})`, true);
+    return { kind: "refused", reason: "input-archive-unavailable",
+      result: textResult(`voice_ask refused: input archive unavailable (${receipt.code})`, true) };
   }
   const archiveContext = receipt.context;
   const refusal = refuseOverlongMessage(
@@ -450,15 +474,15 @@ export async function handleVoiceAsk(
   );
   if (refusal) {
     finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-    return refusal;
+    return { kind: "refused", reason: "prompt-limit", result: refusal };
   }
   const reservation = reserveStandardVoiceOperation();
   if (!reservation) {
     finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-    return textResult(
+    return { kind: "refused", reason: "archive-operation", result: textResult(
       "voice_ask refused because an archive retranscription voice operation is in progress",
       true,
-    );
+    ) };
   }
   let releaseDeferred = false;
   const operationLifecycle: VoiceOperationLifecycle = {
@@ -471,8 +495,8 @@ export async function handleVoiceAsk(
     },
   };
   try {
-    return await handleConverse(
-      {
+    return { kind: "turn", outcome: await runVoiceAskTurn({
+      args: {
         message: parsed.message,
         voice: parsed.voice,
         timeout_seconds: parsed.timeout_seconds,
@@ -482,7 +506,7 @@ export async function handleVoiceAsk(
       context,
       operationLifecycle,
       archiveContext,
-    );
+    }) };
   } finally {
     if (!releaseDeferred) reservation.release();
   }
