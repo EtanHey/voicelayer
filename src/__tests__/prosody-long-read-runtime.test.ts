@@ -104,7 +104,7 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     const structure = selection ? projectStructuredSpeech(source) : undefined;
     const text = structure?.speechText ?? source;
     const projection = projectSpeakableText(text, [], "clone");
-    const plan = planProsody({ readText: text, projection, structure, listNumbers: "inline", concurrency: 1 });
+    const plan = planProsody({ readText: text, projection, structure, engine: "clone", listNumbers: "inline", concurrency: 1 });
     const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio"));
     const timingInputs: Parameters<typeof cloneTiming.startCloneTiming>[0][] = [];
     const timing = spyOn(cloneTiming, "startCloneTiming").mockImplementation(input => {
@@ -151,7 +151,7 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
   it("S1 structured clone fallback keeps actual engine provenance and Edge word timings", async () => {
     const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(null); spies.push(clone);
     const doc = "## Choose\n1. Red apple\n2. Green pear";
-    const plan = planProsody({ readText: doc, projection: projectSpeakableText(doc, [], "clone"), listNumbers: "inline" });
+    const plan = planProsody({ readText: doc, projection: projectSpeakableText(doc, [], "clone"), engine: "clone", listNumbers: "inline" });
     const archive = beginSpeechArchive(doc); await archive.settled();
     const handle = speakLongRead(doc, { engine: "clone", voice: "fixture", fallbackVoice: "en-US-JennyNeural", rate: "+0%" },
       Date.now(), { archiveContext: archive.context }); handles.push(handle); await handle.done; await flushSpeechArchives();
@@ -167,7 +167,7 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     spies.push(clone, spyOn(binaries, "resolveBinary").mockImplementation(name => name === "ffmpeg" ? undefined : resolve(name)));
     const doc = "## Choose\n1. Red apple\n2. Green pear";
     const handle = speakLongRead(doc, { engine: "clone", voice: "fixture", rate: "+0%" }); handles.push(handle); await handle.done;
-    expect(clone.mock.calls.map(call => call[0])).toEqual(chunkTextForLongRead(doc).map(chunk => projectSpeakableText(chunk, [], "clone").speechText));
+    expect(clone.mock.calls.map(call => call[0])).toEqual(chunkTextForLongRead(doc, "clone").map(chunk => projectSpeakableText(chunk, [], "clone").speechText));
     expect(encodes).toEqual([]);
   });
   it("S1 Stop cancels in-flight clone segments without starting more", async () => {

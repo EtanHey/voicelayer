@@ -25,6 +25,7 @@ import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
+import { PreparedReadStart } from "../tts/selection-read-preparation";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
@@ -111,6 +112,18 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+  it("S2 a later structured player launch failure cannot strand bounded prefetch", async () => {
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+    const h = start("clone", "## Status\n" + "- Keep every complete word in this read.\n".repeat(8));
+    await playerBarrier.at(0);
+    for (let i = 0; i < 4; i++) await fixtureCheckpoint();
+    failPlayerSpawn = true; players[0].exit.resolve(0);
+    const deadline = deferred<{ error: string }>();
+    const timer = setTimeout(() => deadline.resolve({ error: "completion deadline" }), 500);
+    try { expect(await Promise.race([h.completion, deadline.promise])).toEqual({ error: "Speech playback failed: player-error" }); }
+    finally { clearTimeout(timer); }
+  });
+
 
   it("R1C playback wait includes audio enqueued by captured short-speech preparation", async () => {
     await speak("First fixture.", { voice: "en-US-JennyNeural" });
@@ -298,8 +311,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     holdDecoder = true;
     const h = start("clone", "First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8));
     await decoderBarrier.at(0);
-    expect(parts[0]).toBe("First sentence. The rest of this read is synthesized in the background.");
-    expect(parts[0].length).toBeLessThanOrEqual(100);
+    expect(parts[0]).toBe(chunkTextForLongRead("First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8))[0]);
     clockMs += 300;
     holdDecoder = false;
     for (const child of decoders) child.exit.resolve(0);
@@ -481,7 +493,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it("CLN1b next chunk playback never waits for old alignment and publishes local offsets", async () => {
     const fixture = cloneFixture(); start("clone"); await playerBarrier.at(0);
     const first = await fixture.entered.at(0), oldResult = fixture.result(first);
-    expect(qwen.synthesizeCloned).toHaveBeenCalledTimes(2); // current + one lookahead
+    expect(qwen.synthesizeCloned).toHaveBeenCalledTimes(3);
     players[0].exit.resolve(0); await playerBarrier.at(1);
     expect(first.signal!.aborted).toBe(true);
     fixture.pending[0].resolve(oldResult);
@@ -1000,7 +1012,33 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
       const cloneProfile = { name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [],
         reference_clip: "", fallback: "jenny", created: "" };
-      it("S1 Next aborts a structured clone read before starting the queued read", async () => {
+      it("S2 leaves prepared audio held until a predecessor finishes settling", async () => {
+        select("A", "Alpha single chunk."); await playerBarrier.at(0);
+        spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
+          kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
+          engineSource: "settings", rateSource: "settings",
+        }), spyOn(qwen, "loadProfile").mockReturnValue(cloneProfile),
+        spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+        const prepare = tts.prepareSelectionReadStart, ready = deferred<void>();
+        spies.push(spyOn(tts, "prepareSelectionReadStart").mockImplementation(async (...args) => {
+          const prepared = await prepare(...args); ready.resolve(); return prepared;
+        }));
+        select("B", "## Bravo heading\n\n1. Read the next item."); await ready.promise; await settle();
+        const take = spyOn(PreparedReadStart.prototype, "take"); spies.push(take);
+        holdPlayerExit = true;
+        try {
+          expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
+          await settle();
+          expect(players[0].killed).toBe(true);
+          expect(take).not.toHaveBeenCalled();
+          expect(players).toHaveLength(1);
+        } finally {
+          stopPlayback(); holdPlayerExit = false; players[0].exit.resolve(143); await awaitCurrentPlayback();
+        }
+      });
+      for (const playing of [false, true]) for (const command of ["stop", "read_next"] as const)
+      it(`S2 ${command} aborts clone prefetch while ${playing ? "playing" : "preparing"}`, async () => {
+        const heading = playing ? "Choose the complete release verification record and read every saved result before deciding whether this implementation is ready for review" : "Choose";
         spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
           kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
           engineSource: "settings", rateSource: "settings",
@@ -1010,7 +1048,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const clone = spyOn(qwen, "synthesizeCloned").mockImplementation(async (text, _voice, signal) => {
           maximum = Math.max(maximum, ++running);
           try {
-            if (text === "Choose." || text.startsWith("Bravo")) return Buffer.from("clone audio");
+            if (text === `${heading}.` || text.startsWith("Bravo")) return Buffer.from("clone audio");
             pending.resolve();
             await new Promise<void>(resolve => {
               if (signal?.aborted) resolve(); else signal?.addEventListener("abort", () => resolve(), { once: true });
@@ -1018,18 +1056,23 @@ describe("long-read real runtime with owned synth/player fakes", () => {
             return null;
           } finally { running--; }
         }); spies.push(clone);
-        select("A", "## Choose\n- Red apple\n- Green pear\n- Blue sky");
-        await playerBarrier.at(0); await pending.promise;
+        select("A", `## ${heading}\n- Red apple\n- Green pear\n- Blue sky`);
+        await pending.promise;
+        if (playing) await playerBarrier.at(0);
+        else expect(players).toHaveLength(0);
         select("B", "Bravo queued read.");
-        expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
-        await playerBarrier.at(1);
+        const result = await handleSocketCommand({ cmd: command, request_id: "A" });
+        expect(result).toMatchObject({ outcome: "accept" });
+        if (command === "read_next") await playerBarrier.at(playing ? 1 : 0);
+        else await settle();
         expect(maximum).toBe(1);
-        expect(clone.mock.calls.map(call => call[0])).toEqual(["Choose.", "Red apple.", "Bravo queued read."]);
+        expect(clone.mock.calls.map(call => call[0])).toEqual([`${heading}.`, "Red apple.",
+          ...(command === "read_next" ? ["Bravo queued read."] : [])]);
         expect(clone.mock.calls[1][2]?.aborted).toBe(true);
         await handleSocketCommand({ cmd: "stop" });
       });
 
-      it("S1 queued structured clone reads reuse the planned first segment and start gapless", async () => {
+      it("S1 queued structured clone reads reuse one prepared request and start gapless", async () => {
         select("A", "Alpha single chunk.");
         await playerBarrier.at(0);
         spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({

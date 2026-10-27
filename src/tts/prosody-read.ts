@@ -64,19 +64,33 @@ type Synthesized =
   | { raw: true; audioFile: string; words: WordBoundary[]; durationMs: number }
   | { raw: false; pcm: Float32Array; words: WordBoundary[] };
 
-/** One read's audio: chunk 0 is the engine's own file, played without a decode before first audio.
- * Once its player has started (`firstAudioStarted`), its tail is measured and completed by chunk 1's
- * leading pad. Every later chunk splices its utterances with exact planned silence into one MP3.
- * Requests run at most 3 at once. The tail decode is owned: abort cancels it, and `close()` and
- * `settleTail()` wait for it to settle. */
-export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal, concurrency?: number) {
+export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal, concurrency?: number,
+  { prepared, lookahead, overlapDecode = false, playbackLookahead }: {
+    prepared?: ProsodyReadChunk; lookahead?: number; overlapDecode?: boolean; playbackLookahead?: number;
+  } = {}) {
   const firstEnd = plan.chunks[0]?.end ?? 0;
-  const scheduler = createSegmentScheduler<Synthesized>(plan, async (segment, index, signal) => {
+  let admittedChunk = 0;
+  const decodeFailure = new AbortController();
+  const decoding = new Set<Promise<Synthesized>>();
+  const schedulerPlan = prepared ? { segments: plan.segments.slice(firstEnd), chunks: plan.chunks.slice(1).map(chunk =>
+    ({ ...chunk, first: chunk.first - firstEnd, end: chunk.end - firstEnd })) } : plan;
+  const scheduler = createSegmentScheduler<{ ready: Promise<Synthesized>; rawFile?: string }>(schedulerPlan, async (segment, index, signal) => {
     const result = await engine.synthesize(segment, signal);
-    if (index < firstEnd) return { raw: true, ...result };
-    try { return { raw: false, pcm: await engine.decode(result.audioFile, signal), words: result.words }; }
-    finally { engine.unlink(result.audioFile); }
-  }, { signal, concurrency, dispose: (result) => { if (result.raw) engine.unlink(result.audioFile); } });
+    if (!prepared && index === 0 && firstEnd === 1)
+      return { ready: Promise.resolve({ raw: true, ...result }), rawFile: result.audioFile };
+    const ready = (async (): Promise<Synthesized> => {
+      try { return { raw: false, pcm: await engine.decode(result.audioFile, signal), words: result.words }; }
+      finally { engine.unlink(result.audioFile); }
+    })();
+    decoding.add(ready);
+    void ready.then(() => decoding.delete(ready), error => { decoding.delete(ready); decodeFailure.abort(error); });
+    if (!overlapDecode) await ready;
+    return { ready };
+  }, { signal: AbortSignal.any([signal, decodeFailure.signal]), concurrency, lookahead,
+    canStart: playbackLookahead === undefined ? undefined : index => index < (schedulerPlan.chunks[
+      Math.min(admittedChunk + playbackLookahead - (prepared ? 1 : 0), schedulerPlan.chunks.length - 1)]?.end ?? 0),
+    dispose: (result) => { if (result.rawFile) engine.unlink(result.rawFile); } });
+  let preparedDelivered = false;
   let previousTailMs: Promise<number> = Promise.resolve(0);
   // Chunk 0's tail: decoded only after its player started; resolves 0 if it never starts or on abort.
   const tailAbort = new AbortController();
@@ -93,8 +107,16 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
   const spoken = (index: number) => plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map((s) => s.text).join(" ");
 
   return {
+    chunkAdmitted(index: number) { admittedChunk = Math.max(admittedChunk, index); scheduler.resume(); },
     async chunk(index: number): Promise<ProsodyReadChunk> {
-      const parts = await scheduler.chunk(index);
+      if (prepared && index === 0) {
+        throwIfAbortedSafe(signal);
+        if (preparedDelivered) throw new Error("Prosody chunk already delivered");
+        preparedDelivered = true; firstRaw = prepared; previousTailMs = tail;
+        return prepared;
+      }
+      const pending = await scheduler.chunk(prepared ? index - 1 : index);
+      const parts = await Promise.all(pending.map(part => part.ready));
       const [first] = parts;
       if (index === 0 && parts.length === 1 && first.raw) {
         firstRaw = first;
@@ -132,6 +154,8 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
       signal.removeEventListener("abort", cancelTail);
       await settleTail();
       await scheduler.close();
+      await Promise.allSettled([...decoding]);
+      if (prepared && !preparedDelivered) { preparedDelivered = true; engine.unlink(prepared.audioFile); }
     },
   };
 }
