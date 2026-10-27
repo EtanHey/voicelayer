@@ -64,6 +64,13 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install daemon test dependencies
+        run: python3 -m pip install fastapi uvicorn
+
       - name: Run tests
         run: bun test
 
