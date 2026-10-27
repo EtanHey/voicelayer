@@ -17,6 +17,7 @@ describe("stt-polish-server", () => {
       isResidentStack: () => true,
       findBinary: () => "/tmp/mlx_lm.server",
       findStalePortOwnerPids: () => [70870],
+      isProcessAlive: () => true,
       isEndpointReady: async () => true,
       killProcess: (pid) => { killed.push(pid); },
       spawn: () => { spawns++; return { pid: 456 }; },
@@ -36,6 +37,7 @@ describe("stt-polish-server", () => {
       findBinary: () => "/tmp/mlx_lm.server",
       isEndpointReady: async () => false,
       findPortOwnerPids: () => [70870],
+      isProcessAlive: () => true,
       spawn: () => { spawns++; return { pid: 456 }; },
       startupTimeoutMs: 1, sleep: async () => {}, appendEvent: () => {},
     });
@@ -116,7 +118,7 @@ describe("stt-polish-server", () => {
     const off = onSTTPolishServerStatus((s) => statuses.push(s.status));
     try {
       await ensureSTTPolishServer({ env: { QA_VOICE_STT_POLISH: "on" }, isEndpointReady: async () => false,
-        findPortOwnerPids: () => [70870], startupTimeoutMs: 5 });
+        isProcessAlive: () => true, findPortOwnerPids: () => [70870], startupTimeoutMs: 5 });
       await Bun.sleep(25);
       expect(statuses).toEqual(["starting", "timeout"]);
     } finally { off(); resetSTTPolishServerManagerForTests(); }
@@ -126,7 +128,7 @@ describe("stt-polish-server", () => {
     resetSTTPolishServerManagerForTests();
     const statuses: string[] = [];
     const off = onSTTPolishServerStatus((s) => statuses.push(s.status));
-    const options = { env: { QA_VOICE_STT_POLISH: "on" }, findPortOwnerPids: () => [70870], startupTimeoutMs: 5 };
+    const options = { env: { QA_VOICE_STT_POLISH: "on" }, isProcessAlive: () => true, findPortOwnerPids: () => [70870], startupTimeoutMs: 5 };
     try {
       await ensureSTTPolishServer({ ...options, isEndpointReady: async () => false });
       await ensureSTTPolishServer({ ...options, isEndpointReady: async () => true });
@@ -393,6 +395,7 @@ describe("stt-polish-server", () => {
 
   it("reaps stale local polish port owners on an explicit force restart", async () => {
     resetSTTPolishServerManagerForTests();
+    let alive = true;
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
     const spawnCalls: string[][] = [];
@@ -403,9 +406,11 @@ describe("stt-polish-server", () => {
       findBinary: () => "/tmp/mlx_lm.server",
       isResidentStack: () => true,
       forceRestart: true,
+      isProcessAlive: (pid) => pid === 70870 && alive,
       findStalePortOwnerPids: () => [70870],
       killProcess: (pid, signal) => {
         killed.push({ pid, signal });
+        if (signal === "SIGTERM") alive = false;
       },
       isEndpointReady: async () => ++readinessChecks >= 2,
       spawn: (args) => {
@@ -446,6 +451,7 @@ describe("stt-polish-server", () => {
         isResidentStack: () => false,
         forceRestart: true,
         findStalePortOwnerPids: () => [70870],
+        isProcessAlive: () => true,
         killProcess: (pid, signal) => {
           killed.push({ pid, signal });
         },
@@ -493,6 +499,7 @@ describe("stt-polish-server", () => {
 
   it("does not spawn a replacement while a terminated owner still serves the polish port", async () => {
     resetSTTPolishServerManagerForTests();
+    let alive = true;
     let spawns = 0;
     const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
 
@@ -501,10 +508,12 @@ describe("stt-polish-server", () => {
       forceRestart: true,
       findBinary: () => "/tmp/mlx_lm.server",
       isResidentStack: () => true,
+      isProcessAlive: (pid) => pid === 70870 && alive,
       findStalePortOwnerPids: () => [70870],
       findPortOwnerPids: () => [70870],
       killProcess: (pid, signal) => {
         killed.push({ pid, signal });
+        if (signal === "SIGTERM") alive = false;
       },
       isEndpointReady: async () => false,
       spawn: () => { spawns++; return { pid: 456 }; },
