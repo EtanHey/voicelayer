@@ -44,6 +44,27 @@ for (const [display, speech] of corpus) test(display, () => {
 });
 
 for (const engine of ["edge", "clone"] as const) {
+  for (const marker of ["[ ]", "[x]", "[X]"]) for (const punctuation of [".", ",", ";", ":", "!", "?", ")"]) {
+    test(`${engine} silences ${marker} before ${punctuation} and keeps source ranges`, () => {
+      const display = `Check ${marker}${punctuation} then go`;
+      const result = projectSpeakableText(display, [], engine);
+      expect(result.displayText).toBe(display);
+      expect(result.speechText).toBe(`Check ${punctuation} then go`);
+      const omitted = result.ranges.filter(range => range.source.start < 6 + marker.length && range.source.end > 6);
+      expect(omitted.length).toBeGreaterThan(0);
+      expect(omitted.every(range => range.kind === "omission")).toBe(true);
+      const punctuationRange = result.ranges.find(range => range.source.start <= 6 + marker.length && range.source.end > 6 + marker.length)!;
+      expect(punctuationRange.kind).toBe("identity");
+      expect(result.speechText[punctuationRange.speech.start + 6 + marker.length - punctuationRange.source.start]).toBe(punctuation);
+      let source = 0, speech = 0;
+      for (const range of result.ranges) {
+        expect(range.source.start).toBe(source); expect(range.speech.start).toBe(speech);
+        expect(range.display).toEqual(range.source);
+        source = range.source.end; speech = range.speech.end;
+      }
+      expect(source).toBe(display.length); expect(speech).toBe(result.speechText.length);
+    });
+  }
   const checkboxes: [string, string][] = [
     ["1. [ ] Buy milk", "one. Buy milk."],
     ["- [x] Done", "Done."],
@@ -67,6 +88,7 @@ for (const engine of ["edge", "clone"] as const) {
     }
   });
   for (const [display, clone, edge] of [
+    ["`[ ]`", "an empty list", "[ ]"],
     ["const a = []", "const a equals an empty list", "const a equals []"],
     ["foo[] arr[ ]", "foo an empty list arr an empty list", "foo[] arr[ ]"],
     ["arr[x] arr[X]", "arr open bracket x close bracket arr open bracket X close bracket", "arr[x] arr[X]"],
