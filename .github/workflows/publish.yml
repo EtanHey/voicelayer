@@ -90,7 +90,10 @@ jobs:
         run: |
           release_commit=$(git rev-parse HEAD)
           if [ "$GITHUB_EVENT_NAME" = push ]; then
-            test "$release_commit" = "$GITHUB_SHA"
+            if [ "$release_commit" != "$GITHUB_SHA" ]; then
+              echo "release commit mismatch: expected GITHUB_SHA $GITHUB_SHA, actual checkout HEAD $release_commit" >&2
+              exit 1
+            fi
           fi
           export GITHUB_SHA="$release_commit"
           python3 ../workflow-tools/scripts/release-commit-stamp.py stamp --source "$PWD"

@@ -33,11 +33,13 @@ function stamp(dir: string, sha = commit) {
 
 afterEach(() => { for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-test("installed CLI reports the package stamp, even inside a different checkout", () => {
+test("checkout HEAD takes precedence over a stale package stamp", () => {
   const dir = fixture();
   expect(run(["git", "init", "-q"], dir).exitCode).toBe(0);
+  expect(run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "fixture"], dir).exitCode).toBe(0);
+  const head = run(["git", "rev-parse", "HEAD"], dir).stdout.toString().trim();
   writeFileSync(join(dir, "build-info.json"), JSON.stringify({ gitCommit: commit }));
-  expect(version(dir)).toEqual({ version: "1.2.3", gitCommit: commit, source: "package" });
+  expect(version(dir)).toEqual({ version: "1.2.3", gitCommit: head, source: "checkout" });
   const plain = run(["bash", join(dir, "src/cli/voicelayer.sh"), "--version"], dir);
   expect(plain.stdout.toString()).toBe("1.2.3\n");
 });
@@ -51,7 +53,7 @@ test("unstamped checkout reports its exact HEAD", () => {
 });
 
 test("unstamped package never borrows an enclosing checkout's HEAD", () => {
-  expect(version(fixture())).toEqual({ version: "1.2.3", gitCommit: null, source: "package" });
+  expect(version(fixture())).toEqual({ version: "1.2.3", gitCommit: null, source: null });
 });
 
 test("release tooling stamps GITHUB_SHA and verifies actual packed bytes", () => {
@@ -90,4 +92,33 @@ test("workflow stamps the selected commit, verifies and publishes the same archi
   expect(publishIndex).toBeGreaterThan(verifyIndex);
   expect(workflow).toContain('export GITHUB_SHA="$release_commit"');
   expect(workflow).toContain('echo "pack_archive=$pack_dir/$archive" >> "$GITHUB_ENV"');
+});
+
+test("generated build-info.json is ignored by git", () => {
+  const result = run(["git", "check-ignore", "build-info.json"], root);
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout.toString().trim()).toBe("build-info.json");
+});
+
+test.each(["{", "{}", "null", "[]", '{"gitCommit":42}', '{"gitCommit":"short"}'])("malformed package stamp %s reports unknown identity", (contents) => {
+  const dir = fixture();
+  writeFileSync(join(dir, "build-info.json"), contents);
+  expect(version(dir)).toEqual({ version: "1.2.3", gitCommit: null, source: null });
+});
+
+test("workflow commit mismatch prints expected and actual identity before failing", () => {
+  const workflow = readFileSync(join(root, ".github/workflows/publish.yml"), "utf8");
+  const start = workflow.indexOf("          release_commit=$(git rev-parse HEAD)");
+  const end = workflow.indexOf("          export GITHUB_SHA=", start);
+  expect(start).toBeGreaterThan(0);
+  expect(end).toBeGreaterThan(start);
+  const guard = workflow.slice(start, end).replace(/^          /gm, "");
+  const result = run(["bash", "-e", "-c", guard], root, { ...process.env, GITHUB_EVENT_NAME: "push", GITHUB_SHA: otherCommit });
+  const head = run(["git", "rev-parse", "HEAD"], root).stdout.toString().trim();
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain(otherCommit);
+  expect(result.stderr.toString()).toContain(head);
+  expect(result.stderr.toString()).toContain("GITHUB_SHA");
+  expect(run(["bash", "-e", "-c", guard], root, { ...process.env, GITHUB_EVENT_NAME: "push", GITHUB_SHA: head }).exitCode).toBe(0);
+  expect(run(["bash", "-e", "-c", guard], root, { ...process.env, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_SHA: otherCommit }).exitCode).toBe(0);
 });
