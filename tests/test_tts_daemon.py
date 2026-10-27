@@ -183,8 +183,9 @@ def test_model_load_failure_names_provisioned_base_repo(monkeypatch, tmp_path, c
     app = create_app(model_path="fixture-model",
                      auth_token_file=str(tmp_path / "daemon.secret"),
                      voices_root=str(tmp_path / "voices"))
-    with TestClient(app):
-        pass
+    with TestClient(app) as client:
+        response = client.post("/synthesize", headers=synthesize_headers((tmp_path / "daemon.secret").read_text().strip()), json=synthesize_payload(str(tmp_path / "voices/clip.wav")))
+        assert response.status_code == 503
     assert "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit" in caplog.text
     assert "hf download" in caplog.text
     assert "Qwen/Qwen3-TTS" not in caplog.text

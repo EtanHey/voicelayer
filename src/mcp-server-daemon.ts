@@ -55,13 +55,10 @@ import { startLogRotation, stopLogRotation } from "./log-rotation";
 import { initEnrichedPATH } from "./resolve-binary";
 import { primeRecordingProvenanceProbes } from "./recording-provenance";
 import {
-  ensureSTTPolishServer,
-  onSTTPolishServerStatus,
   stopSTTPolishServer,
 } from "./stt-polish-server";
 import {
-  createSTTPolishStatusReporter,
-  ensureAndReportSTTPolishServer,
+  startSTTPolishStatusReporting,
 } from "./stt-polish-daemon-status";
 import {
   appendControlLayerEvent,
@@ -215,33 +212,12 @@ async function main() {
     );
   }
   // Connect to Voice Bar for UI state
-  const polishStatusReporter = createSTTPolishStatusReporter(broadcast);
-  const unsubscribePolishStatus = onSTTPolishServerStatus((status) => {
-    polishStatusReporter.report(status);
-  });
+  const { reporter: polishStatusReporter, unsubscribe: unsubscribePolishStatus } = startSTTPolishStatusReporting(broadcast);
   onCommand(handleSocketCommand);
   connectToBar(undefined, {
     role: "mcp-daemon",
     acceptsCommands: shouldAcceptVoiceBarCommands(),
     onConnected: () => polishStatusReporter.replay(),
-  });
-  void ensureAndReportSTTPolishServer({
-    ensure: async () => {
-      try {
-        return await ensureSTTPolishServer();
-      } catch (err: unknown) {
-        console.error(
-          `[voicelayer-daemon] STT polish server startup failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        appendControlLayerEvent(
-          "transcription.polish_server_failed",
-          { error: err instanceof Error ? err.message : String(err) },
-          { topic: "voice.transcription" },
-        );
-        throw err;
-      }
-    },
-    reporter: polishStatusReporter,
   });
 
   // Start MCP daemon (includes orphan socket cleanup and chmod 600)

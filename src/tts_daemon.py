@@ -2,8 +2,8 @@
 """
 VoiceLayer TTS Daemon — Qwen3-TTS zero-shot voice cloning via MLX.
 
-FastAPI server on port 8880. Loads Qwen3-TTS 0.6B (4-bit MLX quantized) once,
-keeps model hot in Metal/MPS memory for fast inference.
+FastAPI server on port 8880. Qwen3-TTS 0.6B (4-bit MLX quantized)
+loads on first synthesis and releases idle Metal/MPS memory.
 
 Endpoints:
   POST /synthesize  — Generate speech from text + reference audio (cloned voice)
@@ -21,13 +21,19 @@ Usage:
 
 # AIDEV-NOTE: This daemon runs as a separate process from the MCP server.
 # TypeScript side calls it over HTTP (src/tts/qwen3.ts).
-# Model stays loaded in memory (~300MB) for fast inference (200-500ms).
+
+import gc
+import json
+import threading
+from contextlib import asynccontextmanager, contextmanager
+from concurrent.futures import ThreadPoolExecutor
 
 import argparse
 import base64
 import hmac
 import logging
 import os
+import re
 import secrets
 import sys
 import tempfile
@@ -231,6 +237,27 @@ def model_pin_matches(requested_model: str | None, loaded_model_path: str) -> bo
     return not loaded_candidates.isdisjoint(requested_candidates)
 
 
+def model_idle_seconds() -> float:
+    raw = os.environ.get("VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS")
+    if raw is None:
+        path = os.environ.get("VOICELAYER_MODEL_SETTINGS_PATH", "").strip() or str(
+            Path(os.environ.get("VOICELAYER_STATE_DIR", "").strip() or Path.home() / ".local/state/voicelayer") / "model-residency.json"
+        )
+        try:
+            raw = json.loads(Path(path).read_text()).get("idle_unload_seconds")
+            if not isinstance(raw, (int, float)):
+                raw = None
+        except (OSError, ValueError, AttributeError):
+            pass
+    if isinstance(raw, str) and not re.fullmatch(r"\s*[0-9]+(\.[0-9]+)?\s*", raw):
+        return 600
+    try:
+        value = float(raw) if not isinstance(raw, bool) else 0
+        return value if 0 < value <= 2_147_483 else 600
+    except (TypeError, ValueError):
+        return 600
+
+
 def create_app(
     model_path: str = str(DEFAULT_MODEL_PATH),
     host: str = "127.0.0.1",
@@ -238,7 +265,7 @@ def create_app(
     auth_token_file: str | None = None,
     voices_root: str = str(DEFAULT_VOICES_DIR),
 ):
-    """Create FastAPI app with model loaded."""
+    """Create the HTTP daemon without loading model weights."""
     try:
         from fastapi import FastAPI, HTTPException, Request
         from fastapi.middleware.cors import CORSMiddleware
@@ -246,14 +273,6 @@ def create_app(
         from pydantic import BaseModel
     except ImportError:
         logger.error("FastAPI not installed. Run: pip install fastapi uvicorn")
-        sys.exit(1)
-
-    try:
-        import mlx_audio  # noqa: F401
-        from mlx_audio.tts.generate import generate_audio
-        from mlx_audio.tts.utils import load as load_tts_model
-    except ImportError:
-        logger.error("mlx-audio not installed. Run: pip install mlx-audio")
         sys.exit(1)
 
     token_file = resolve_auth_token_file(auth_token_file)
@@ -281,7 +300,14 @@ def create_app(
     allowed_hosts = build_allowed_hosts(port)
     allowed_origins = build_allowed_origins(port)
 
-    app = FastAPI(title="VoiceLayer TTS Daemon", version="1.0.0")
+    @asynccontextmanager
+    async def lifespan(app):
+        try:
+            yield
+        finally:
+            stop_model()
+
+    app = FastAPI(title="VoiceLayer TTS Daemon", version="1.0.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[],
@@ -291,9 +317,63 @@ def create_app(
     )
     logger.info(f"Using bearer auth token file {token_file}")
 
-    # --- Model loading ---
     model = None
     model_load_time = None
+    model_lock = threading.RLock()
+    model_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qwen3-model")
+    closing = False
+    idle_timer = None
+    idle_generation = 0
+
+    def unload_model(generation):
+        nonlocal model, idle_timer
+        with model_lock:
+            if generation != idle_generation:
+                return
+            model = None
+            idle_timer = None
+            gc.collect()
+            if "mlx.core" in sys.modules:
+                sys.modules["mlx.core"].clear_cache()
+
+    def queue_unload(generation):
+        with model_lock:
+            if not closing:
+                model_executor.submit(unload_model, generation)
+
+    @contextmanager
+    def resident_model():
+        nonlocal model, model_load_time, idle_timer, idle_generation
+        with model_lock:
+            idle_generation += 1
+            if idle_timer:
+                idle_timer.cancel()
+            try:
+                if model is None:
+                    start = time.monotonic()
+                    try:
+                        from mlx_audio.tts.utils import load as load_tts_model
+                        model = load_tts_model(model_path)
+                        model_load_time = time.monotonic() - start
+                    except Exception as exc:
+                        logger.error("Failed to load model: %s. Download with hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit --local-dir <base-model-directory>", exc)
+                        raise HTTPException(503, "Model could not be loaded. Check daemon logs.") from exc
+                yield
+            finally:
+                if model is not None:
+                    idle_timer = threading.Timer(model_idle_seconds(), queue_unload, args=(idle_generation,))
+                    idle_timer.daemon = True
+                    idle_timer.start()
+
+    def stop_model():
+        nonlocal idle_generation, closing
+        with model_lock:
+            closing = True
+            idle_generation += 1
+            if idle_timer:
+                idle_timer.cancel()
+        model_executor.submit(unload_model, idle_generation).result()
+        model_executor.shutdown(wait=True)
 
     class SynthesizeRequest(BaseModel):
         text: str
@@ -304,27 +384,6 @@ def create_app(
     class SynthesizeResponse(BaseModel):
         audio_b64: str  # base64-encoded MP3
         duration_ms: float
-
-    @app.on_event("startup")
-    async def load_model():
-        nonlocal model, model_load_time
-        logger.info(f"Loading model from {model_path}...")
-        start = time.time()
-        try:
-            model = load_tts_model(model_path)
-            model_load_time = time.time() - start
-            logger.info(f"Model loaded in {model_load_time:.1f}s")
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            logger.error(
-                "Download a Qwen3-TTS Base model (tts_model_type=base) first:\n"
-                "  hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit "
-                "--local-dir <base-model-directory>\n"
-                "Then start voicelayer daemon --model <base-model-directory> "
-                "and use the same directory in the profile's model_path."
-            )
-            # Don't exit — let health check report the error
-            model = None
 
     def guard_request(request: Request) -> None:
         try:
@@ -346,7 +405,17 @@ def create_app(
             )
 
     @app.post("/synthesize", response_model=SynthesizeResponse)
-    async def synthesize(req: SynthesizeRequest, request: Request):
+    def synthesize(req: SynthesizeRequest, request: Request):
+        guard_request(request)
+        if not req.text.strip():
+            raise HTTPException(400, "text must not be empty")
+        return model_executor.submit(synthesize_resident, req, request).result()
+
+    def synthesize_resident(req, request):
+        with resident_model():
+            return synthesize_loaded(req, request)
+
+    def synthesize_loaded(req: SynthesizeRequest, request: Request):
         """Synthesize speech using a bearer-authenticated WAV under ~/.voicelayer/voices/."""
         guard_request(request)
 
@@ -400,7 +469,7 @@ def create_app(
 
         start = time.time()
         try:
-            # Generate speech using zero-shot cloning
+            from mlx_audio.tts.generate import generate_audio
             mp3_bytes = synthesize_mp3_bytes(
                 generate_audio,
                 text=req.text,
@@ -429,7 +498,7 @@ def create_app(
         guard_request(request)
 
         return {
-            "status": "ok" if model is not None else "no_model",
+            "status": "ok",
             "model_path": str(model_path),
             "model_loaded": model is not None,
             "model_load_time_s": model_load_time,
@@ -440,9 +509,6 @@ def create_app(
     async def warmup(request: Request):
         """Pre-warm model with a short synthesis (Metal shader compilation)."""
         guard_request(request)
-
-        if model is None:
-            raise HTTPException(503, "Model not loaded")
 
         # Find any WAV file to use as reference for warmup
         # This is just to trigger Metal compilation, output is discarded

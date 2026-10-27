@@ -1,3 +1,4 @@
+import { residencyBusy } from "./model-residency-busy";
 import { finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
  * Socket command handlers — logic for Voice Bar socket commands.
@@ -655,13 +656,6 @@ export function handleSocketCommand(
       }
       return;
   }
-}
-
-function residencyBusy(): boolean {
-  const booking = isVoiceBooked();
-  return getRecordingState() !== "idle" ||
-    getPlaybackQueueDepth() > 0 || hasActiveVoiceOperation() ||
-    (booking.booked && !booking.ownedByUs);
 }
 
 function residencyBusyReason(): string {

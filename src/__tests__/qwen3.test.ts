@@ -196,7 +196,7 @@ describe("isDaemonHealthy", () => {
     }
   });
 
-  it("sends bearer auth from the shared token file", async () => {
+  it.each([false, true])("sends bearer auth and accepts an available daemon with model_loaded=%s", async (loaded) => {
     const tokenFile = join("/tmp", `voicelayer-tts-token-${process.pid}`);
     process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = tokenFile;
     writeFileSync(tokenFile, "test-token\n", { mode: 0o600 });
@@ -205,7 +205,7 @@ describe("isDaemonHealthy", () => {
       new Response(
         JSON.stringify({
           status: "ok",
-          model_loaded: true,
+          model_loaded: loaded,
         }),
         {
           status: 200,
