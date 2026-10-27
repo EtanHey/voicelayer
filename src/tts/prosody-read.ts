@@ -3,7 +3,7 @@ import type { SpeakableText } from "../speakable-text";
 import type { ProjectionRange, TextRange } from "./structured-speech";
 import { resolveBinaryAsync } from "../resolve-binary";
 import type { WordBoundary } from "../socket-protocol";
-import { mapper, PAUSE, type ProsodyPlan, type ProsodySegment } from "./prosody";
+import { mapper, PROSODY_POLICY, type ProsodyPlan, type ProsodySegment } from "./prosody";
 import { measurePCMExtent, splicePCM } from "./prosody-pcm";
 import { createSegmentScheduler } from "./prosody-schedule";
 
@@ -22,7 +22,7 @@ export interface ProsodyReadChunk { audioFile: string; durationMs: number; words
 
 /** Prosody engages only for structure; plain prose (any length) keeps the existing chunker byte-for-byte. */
 export function isStructuredPlan(plan: ProsodyPlan): boolean {
-  return plan.segments.some((s) => s.kind !== "prose" || s.pauseMs > PAUSE.sentence);
+  return plan.segments.some((s) => s.kind !== "prose" || s.pauseMs > PROSODY_POLICY.pauses.sentence);
 }
 
 /** The whole read's projection restricted to one chunk (trimmed read span), in chunk-local offsets.

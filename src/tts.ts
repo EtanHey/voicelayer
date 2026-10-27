@@ -626,6 +626,7 @@ export function displayTokenBoundaries(displayText: string, wordBoundaries: Word
 // --- Ring Buffer ---
 
 export interface TTSHistoryEntry {
+  prosodyIdentity?: string;
   id: number; // 0-19 circular
   file: string; // /tmp/voicelayer-history-N.mp3
   text: string; // original message
@@ -663,7 +664,7 @@ function saveHistory(entries: TTSHistoryEntry[]): void {
 
 /** Add an entry to the ring buffer. Overwrites oldest when full. */
 export function addToHistory(text: string, audioFile: string, voice: string, audioMissingChunks: number[] = [],
-  timings: Pick<TTSHistoryEntry, "wordBoundaries" | "alignedWords"> = {}): TTSHistoryRef | undefined {
+  timings: Pick<TTSHistoryEntry, "wordBoundaries" | "alignedWords" | "prosodyIdentity"> = {}): TTSHistoryRef | undefined {
   const entries = loadHistory();
   const id = ringIndex % RING_BUFFER_SIZE;
   const historyFile = ttsHistoryFilePath(id);
@@ -684,6 +685,7 @@ export function addToHistory(text: string, audioFile: string, voice: string, aud
     ...(audioMissingChunks.length ? { audioMissingChunks } : {}),
     ...(timings.wordBoundaries?.length ? { wordBoundaries: timings.wordBoundaries } : {}),
     ...(timings.alignedWords?.length ? { alignedWords: timings.alignedWords } : {}),
+    ...(timings.prosodyIdentity ? { prosodyIdentity: timings.prosodyIdentity } : {}),
   };
 
   // Find existing entry with same id and replace, or push new
@@ -870,6 +872,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   preparedAmplitude?: PlaybackAmplitudeExtraction;
   alignedWords?: AlignedWordBoundary[];
   cloneProjection?: ReturnType<typeof projectSpeakableText>;
+  prosodyIdentity?: string;
   /** Clone alignment for this playback was published. */
   onAlignedWords?(words: AlignedWordBoundary[]): void;
   priority?: PlaybackPriority;
@@ -1717,7 +1720,7 @@ class PlaybackQueueManager {
       const generation = next.lifecycle.generation;
       active.timing = startCloneTiming({ ...next.metadata.cloneProjection,
         audioPath: next.audioFile, durationMs, requestId: next.id,
-        chunkId: String(next.metadata.longRead?.chunk_index ?? 0),
+        chunkId: [next.metadata.prosodyIdentity, next.metadata.longRead?.chunk_index ?? 0].filter(value => value !== undefined).join(":"),
       }, () => this.current === active && !next.completed && next.lifecycle.generation === generation,
       aligned_words => {
         // A seek restarts this job, and an idle word click replays the retained snapshot;
@@ -2315,13 +2318,14 @@ interface ChunkSynthesisPolicy { requireClone: boolean; edgeFallbackRate: string
 const chunkSynthesisPolicy = (): ChunkSynthesisPolicy => ({ requireClone: requireClonedVoiceEnabled(), edgeFallbackRate: defaultRate() });
 
 async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadProfile, signal: AbortSignal,
-  { requireClone, edgeFallbackRate }: ChunkSynthesisPolicy, edgeRetries = 1, rules = pronunciationRules()): Promise<PreparedChunk> {
-  const audioFile = ttsFilePath(process.pid, ttsCounter++);
-  const projection = projectSpeakableText(displayChunk, rules, profile.engine);
+  { requireClone, edgeFallbackRate }: ChunkSynthesisPolicy, edgeRetries = 1, rules = pronunciationRules(),
+  projected?: ReturnType<typeof projectSpeakableText>, renderIdentity?: string): Promise<PreparedChunk> {
+  const audioFile = ttsFilePath(process.pid, ttsCounter++).replace(".mp3", renderIdentity ? `.${renderIdentity}.mp3` : ".mp3");
+  const projection = projected ?? projectSpeakableText(displayChunk, rules, profile.engine);
   const spoken = projection.speechText;
   try {
     const synthesizeEdge = async (voice: string, rate: string): Promise<PreparedChunk> => {
-      const edge = profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge");
+      const edge = projected ?? (profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge"));
       const chunk = await synthesizeEdgeChunk(edge.speechText, voice, rate, audioFile,
         new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal, edgeRetries);
       chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, edge.speechText, chunk.wordBoundaries, edge.ranges);
@@ -2421,20 +2425,26 @@ function emphasisRate(rate: string): string {
   return `${value >= 0 ? "+" : ""}${value}%`;
 }
 
-/** PROSODY: an edge read with structure is planned once, from the whole projection. Plain prose,
- * clone reads and hosts without ffmpeg keep the existing chunker and synthesis. */
 function structuredReadPlan(displayText: string, profile: LongReadProfile, structure?: StructuredSpeech) {
-  if (profile.engine !== "edge" || !resolveBinary("ffmpeg")) return undefined;
-  const projection = projectSpeakableText(displayText, pronunciationRules(), "edge");
-  const plan = planProsody({ readText: displayText, projection, structure });
+  if (!resolveBinary("ffmpeg")) return undefined;
+  const projection = projectSpeakableText(displayText, pronunciationRules(), profile.engine);
+  const plan = planProsody({ readText: displayText, projection, structure, listNumbers: profile.engine === "clone" ? "inline" : "separate" });
   return isStructuredPlan(plan) ? { plan, projection } : undefined;
 }
 
-function createEdgeProsodyRead(plan: ProsodyPlan, profile: LongReadProfile, signal: AbortSignal) {
+function createStructuredProsodyRead(plan: ProsodyPlan, profile: LongReadProfile, signal: AbortSignal, policy: ChunkSynthesisPolicy) {
   const scriptPath = new URL("../scripts/edge-tts-words.py", import.meta.url).pathname;
-  return createProsodyRead(plan, {
+  const provenance = new Map<ProsodyPlan["segments"][number], Pick<PreparedChunk, "voice" | "engine">>();
+  const read = createProsodyRead(plan, {
     synthesize: async (segment, signal) => {
-      const audioFile = ttsFilePath(process.pid, ttsCounter++);
+      if (profile.engine === "clone") {
+        const span = { start: 0, end: segment.text.length };
+        const result = await synthesizeLongReadChunk(segment.text, profile, signal, policy, 1, [],
+          { displayText: segment.text, speechText: segment.text, ranges: [{ kind: "identity", source: span, display: span, speech: span }] }, plan.renderIdentity);
+        provenance.set(segment, { voice: result.voice, engine: result.engine });
+        return { audioFile: result.chunk.audioFile, words: result.chunk.wordBoundaries, durationMs: result.chunk.durationMs };
+      }
+      const audioFile = ttsFilePath(process.pid, ttsCounter++).replace(".mp3", `.${plan.renderIdentity}.mp3`);
       try {
         const chunk = await synthesizeEdgeChunk(segment.text, profile.voice, segment.emphasis ? emphasisRate(profile.rate) : profile.rate,
           audioFile, scriptPath, signal, 1, segment.emphasis ? EDGE_EMPHASIS : undefined);
@@ -2443,12 +2453,18 @@ function createEdgeProsodyRead(plan: ProsodyPlan, profile: LongReadProfile, sign
     },
     decode: decodeAudioToPCM,
     encode: async (pcm, signal) => {
-      const audioFile = ttsFilePath(process.pid, ttsCounter++);
+      const audioFile = ttsFilePath(process.pid, ttsCounter++).replace(".mp3", `.${plan.renderIdentity}.mp3`);
       try { await encodePCMToMp3(pcm, audioFile, signal); return audioFile; }
       catch (error) { disposeLongReadChunkFiles(audioFile); throw error; }
     },
     unlink: disposeLongReadChunkFiles,
   }, signal);
+  return { ...read, provenance(index: number) {
+    const sources = plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map(segment =>
+      provenance.get(segment) ?? { voice: profile.voice, engine: "edge-tts" });
+    return { voice: [...new Set(sources.map(source => source.voice))].join(","),
+      engine: [...new Set(sources.map(source => source.engine))].join("+") };
+  } };
 }
 
 export function speakText(text: string, kind: "auto" | "short" | "long" = "auto", identity: SpeechIdentity = {}, prepared?: PreparedReadStart): LongReadHandle {
@@ -2502,13 +2518,16 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   longReads.set(id, handle);
   const signal = controller.signal;
   const policy = chunkSynthesisPolicy();
-  const prosodyRead = prosodyPlan ? createEdgeProsodyRead(prosodyPlan, profile, signal) : undefined;
+  const prosodyRead = prosodyPlan ? createStructuredProsodyRead(prosodyPlan, profile, signal, policy) : undefined;
   const prosodyChunk = async (displayChunk: string, index: number): Promise<PreparedChunk> => {
     const result = await prosodyRead!.chunk(index);
     const local = sliceProjection(prosody!.projection, prosody!.plan.chunks[index].read);
+    const source = prosodyRead!.provenance(index);
+    const needsAlignment = profile.engine === "clone" && source.engine !== "edge-tts";
     return { chunk: { audioFile: result.audioFile, durationMs: result.durationMs,
-      wordBoundaries: alignWordBoundariesToDisplayText(displayChunk, local.speechText, result.words, local.ranges) },
-      voice: profile.voice, engine: "edge-tts", spokenText: result.spokenText };
+      wordBoundaries: needsAlignment ? [] : alignWordBoundariesToDisplayText(displayChunk, local.speechText, result.words, local.ranges) },
+      ...source, spokenText: result.spokenText,
+      ...(needsAlignment ? { projection: local } : {}) };
   };
   const chunkVoices = new Map<string, string>();
   const chunkEngines = new Map<string, string>();
@@ -2587,6 +2606,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
           preparedAmplitude: chunkAmplitudes.get(chunk.audioFile),
           cloneProjection: cloneProjections.get(chunk.audioFile),
+          prosodyIdentity: prosodyPlan?.renderIdentity,
           alignedWords: chunkAlignedWords.get(chunk.audioFile),
           onAlignedWords: words => chunkAlignedWords.set(chunk.audioFile, words),
           playbackOffsetMs: info.chunk_start_ms + position.offsetMs,
@@ -2628,7 +2648,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           const alignedWords = combineHistoryTimings(audio.map(({ chunk, text }) => ({ text, durationMs: chunk.durationMs,
             aligned: chunkAlignedWords.get(chunk.audioFile), words: displayTokenBoundaries(text, chunk.wordBoundaries) })));
           addToHistory(text, combined,
-            chunkVoices.get(audio[0]?.chunk.audioFile) ?? profile.voice, missingChunks, { alignedWords });
+            chunkVoices.get(audio[0]?.chunk.audioFile) ?? profile.voice, missingChunks, { alignedWords, prosodyIdentity: prosodyPlan?.renderIdentity });
         } catch (error) {
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
         } finally { try { unlinkSync(combined); } catch {} }
