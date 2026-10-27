@@ -1,3 +1,4 @@
+import { onSTTPolishServerStatus } from "./stt-polish-server";
 import type { SocketEvent } from "./socket-protocol";
 import type { STTPolishServerStatus } from "./stt-polish-server";
 
@@ -57,6 +58,9 @@ export function createSTTPolishStatusReporter(
         case "external":
           emit({ type: "polish_ready" });
           break;
+        case "stopped":
+          currentEvent = null;
+          break;
         case "starting":
           break;
       }
@@ -84,4 +88,9 @@ export async function ensureAndReportSTTPolishServer(options: {
   } catch (error) {
     options.reporter.reportLaunchFailure(error);
   }
+}
+
+export function startSTTPolishStatusReporting(broadcast: BroadcastPolishStatus) {
+  const reporter = createSTTPolishStatusReporter(broadcast);
+  return { reporter, unsubscribe: onSTTPolishServerStatus(status => reporter.report(status)) };
 }

@@ -163,6 +163,50 @@ describe("stt-polish-server", () => {
     } finally { off(); resetSTTPolishServerManagerForTests(); }
   });
 
+  it("releases an unconfirmed stopping hold only after the polish child eventually exits", async () => {
+    resetSTTPolishServerManagerForTests();
+    let exit!: (code: number) => void;
+    const exited = new Promise<number>((resolve) => { exit = resolve; });
+    const signals: string[] = [];
+    const statuses: string[] = [];
+    let spawns = 0;
+    const off = onSTTPolishServerStatus((status) => statuses.push(status.status));
+    const options = {
+      env: { QA_VOICE_STT_POLISH: "on" },
+      findBinary: () => "/tmp/mlx_lm.server",
+      isEndpointReady: async () => spawns > 0,
+      findPortOwnerPids: () => spawns > 0 ? [456] : [],
+      spawn: () => {
+        spawns++;
+        return { pid: 456, exited, kill: (signal?: NodeJS.Signals) => { signals.push(signal ?? "SIGTERM"); } };
+      },
+      appendEvent: () => {}, log: () => {},
+    };
+    try {
+      expect(await ensureSTTPolishServer(options)).toMatchObject({ status: "ready" });
+      await expect(stopSTTPolishServerAndWait()).rejects.toThrow("unload unconfirmed");
+      expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(await ensureSTTPolishServer(options)).toMatchObject({ status: "launch-failed" });
+      expect(spawns).toBe(1);
+      exit(0);
+      await exited;
+      expect(statuses.at(-1)).toBe("stopped");
+      let replacementSpawns = 0;
+      const replacement = {
+        ...options,
+        isEndpointReady: async () => replacementSpawns > 0,
+        findPortOwnerPids: () => replacementSpawns > 0 ? [457] : [],
+        spawn: () => { replacementSpawns++; return { pid: 457, exited: new Promise<number>(() => {}) }; },
+      };
+      expect(await ensureSTTPolishServer(replacement)).toEqual({ status: "ready", pid: 457 });
+      expect(await ensureSTTPolishServer(replacement)).toEqual({ status: "already-ready", pid: 457 });
+      expect(replacementSpawns).toBe(1);
+    } finally {
+      off();
+      resetSTTPolishServerManagerForTests();
+    }
+  });
+
   it("R1 F6 escalates a startup-timeout child that ignores SIGTERM and releases custody on exit", async () => {
     resetSTTPolishServerManagerForTests();
     const signals: string[] = [];

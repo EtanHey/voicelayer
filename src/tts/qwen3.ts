@@ -1,8 +1,7 @@
 /**
  * Qwen3-TTS HTTP bridge — connects TypeScript MCP to the Python TTS daemon.
  *
- * The daemon (src/tts_daemon.py) runs on localhost:8880, keeps the Qwen3-TTS model
- * loaded in Metal/MPS memory for fast inference (200-500ms per call).
+ * The daemon (src/tts_daemon.py) runs on localhost:8880.
  *
  * This module handles:
  *   - Loading voice profiles (profile.yaml)
@@ -550,7 +549,7 @@ export async function isDaemonHealthy(): Promise<boolean> {
       status: string;
       model_loaded: boolean;
     };
-    return data.status === "ok" && data.model_loaded === true;
+    return data.status === "ok";
   } catch {
     return false;
   }

@@ -30,7 +30,7 @@ export async function probeCloneDaemon(fetcher: typeof fetch = fetch, now = Date
       }).then(async response => {
         if (!response.ok) return false;
         const data = await response.json() as { status?: string; model_loaded?: boolean };
-        return data.status === "ok" && data.model_loaded === true;
+        return data.status === "ok";
       }) : false;
       cloneState = healthy ? "up" : "down";
     } catch { cloneState = "down"; }

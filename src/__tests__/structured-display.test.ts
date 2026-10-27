@@ -5,6 +5,20 @@ import { structuredReadDisplay } from "../tts/structured-display";
 import { serializeEvent, VOICEBAR_SOCKET_EVENT_MAX_BYTES, type StateEvent } from "../socket-protocol";
 
 describe("P14b layout over unchanged speech chunks", () => {
+  it("S3 keeps completed replay structure within the layout budget and drops oversized decoration", () => {
+    const projection = projectStructuredSpeech("## Heading\n\n2. Alpha.\n3. Beta.");
+    const [display] = structuredReadDisplay(projection, [projection.speechText], 400);
+    if (!display) throw new Error("display required");
+    const event: StateEvent = { type: "state", state: "speaking", text: display.text,
+      playback_id: "completed-replay", generation: 1, display };
+    expect(JSON.parse(serializeEvent(event))).toEqual(event);
+    const wire = serializeEvent({ ...event,
+      display: { ...display, blocks: Array.from({ length: 5000 }, () => display.blocks[0]) } });
+    expect(Buffer.byteLength(wire)).toBeLessThanOrEqual(VOICEBAR_SOCKET_EVENT_MAX_BYTES);
+    expect(JSON.parse(wire)).toEqual({ type: "state", state: "speaking", text: display.text,
+      playback_id: "completed-replay", generation: 1 });
+  });
+
   for (const [count, padding] of [[20, 0], [100, 140]]) {
     it(`retains complete preparing structure for ${count} bullets`, () => {
       const source = Array.from({ length: count }, (_, i) =>

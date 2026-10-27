@@ -9,6 +9,8 @@
  * We POST WAV audio chunks to /inference and get back JSON transcriptions.
  */
 
+import { residencyBusy } from "./model-residency-busy";
+import { ModelResidency } from "./model-residency";
 import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
@@ -77,6 +79,7 @@ interface WhisperServerState {
   pid: number;
   /** True when another process launched this server and we are reusing it. */
   adopted: boolean;
+  stoppingRecord?: WhisperServerLaunchRecord;
 }
 
 type WhisperServerProcess = ReturnType<typeof Bun.spawn>;
@@ -159,6 +162,15 @@ interface CoreMLRuntimeFlag {
 }
 
 let serverState: WhisperServerState | null = null;
+const whisperResidency = new ModelResidency(async () => {
+  if (!serverState || serverState.adopted) return;
+  const result = await unloadOwnedServerWithEscalation(residencyBusy, true);
+  if (result.outcome === "reject") {
+    console.error(`[voicelayer] Whisper unload unconfirmed: ${result.reason}`);
+    return false;
+  }
+  return true;
+}, undefined, residencyBusy);
 const launchPromises = new Map<number, Promise<number>>();
 
 interface WhisperServerTestHooks {
@@ -594,7 +606,7 @@ async function waitForWhisperProcessExit(
   const result = await Promise.race([
     proc.exited.then(
       () => "exited" as const,
-      () => "exited" as const,
+      () => "unconfirmed" as const,
     ),
     Bun.sleep(FAILED_LAUNCH_EXIT_TIMEOUT).then(() => "timeout" as const),
   ]);
@@ -862,7 +874,7 @@ async function reclaimExternalWhisperServers(port: number): Promise<boolean> {
  * Returns the port number.
  */
 export function ensureServer(portOverride?: number): Promise<number> {
-  return whisperLifecycleGate.use(() => ensureServerReserved(portOverride));
+  return whisperResidency.use(() => whisperLifecycleGate.use(() => ensureServerReserved(portOverride)));
 }
 
 function ensureServerReserved(portOverride?: number): Promise<number> {
@@ -932,6 +944,14 @@ function refuseBenchLaunchOnLiveHost(port: number): void {
 }
 
 async function ensureServerUnlocked(port: number): Promise<number> {
+  if (serverState?.stoppingRecord && serverState.proc) {
+    const state = serverState;
+    const { proc, stoppingRecord } = serverState;
+    if (!(await waitForWhisperProcessExit(proc))) {
+      throw new Error("Whisper unload unconfirmed: child exit unconfirmed");
+    }
+    detachExitedWhisperServer(state, stoppingRecord);
+  }
   // Already running?
   if (serverState && serverState.port === port) {
     if (await checkServerHealthy(port)) return port;
@@ -1146,6 +1166,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
  * way out. An adopted server is detached from, never signalled.
  */
 export function stopServer(): void {
+  whisperResidency.reset();
   launchPromises.clear();
   if (!serverState) return;
 
@@ -1192,6 +1213,22 @@ export async function stopServerAndWait(): Promise<void> {
 
 /** Explicit user unload. Only the live child this process launched may be stopped. */
 export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> {
+  return unloadOwnedServerWithEscalation(isBusy, false);
+}
+
+function detachExitedWhisperServer(state: WhisperServerState, record: WhisperServerLaunchRecord): void {
+  if (serverState === state) {
+    serverState = null;
+    lastLaunchRecord = null;
+    notifyWhisperModelStateChange();
+  }
+  const owner = readWhisperServerOwnership(state.port);
+  if (owner?.pid === state.pid && owner.owner_pid === process.pid && owner.started_at === record.startedAt) {
+    clearWhisperServerOwnership(state.port);
+  }
+}
+
+function unloadOwnedServerWithEscalation(isBusy: () => boolean, escalate: boolean): Promise<UnloadResult> {
   return whisperLifecycleGate.unload(isBusy, async () => {
     const release = (testHooks.reserveVoiceMaintenance ?? reserveVoiceMaintenance)(isBusy);
     if (!release) {
@@ -1204,7 +1241,7 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
       if (!state || state.adopted || !state.proc) {
         throw new Error("not owned");
       }
-      const record = verifiedWhisperServerLaunchRecord(state.port);
+      const record = state.stoppingRecord ?? verifiedWhisperServerLaunchRecord(state.port);
       if (!record || record.adopted || record.pid !== state.pid) {
         throw new Error("owner identity unavailable");
       }
@@ -1212,21 +1249,16 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
 
       if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
 
+      state.stoppingRecord = record;
       state.proc.kill("SIGTERM");
       if (!(await waitForWhisperProcessExit(state.proc))) {
-        throw new Error("child exit unconfirmed");
+        if (!escalate || residencyBusy() || whisperLifecycleGate.shouldYieldToCapture) {
+          throw new Error("child exit unconfirmed");
+        }
+        state.proc.kill("SIGKILL");
+        if (!(await waitForWhisperProcessExit(state.proc))) throw new Error("child exit unconfirmed");
       }
-      // The child exited; detach our stale state even if another listener arrived.
-      if (serverState === state) {
-        serverState = null;
-        lastLaunchRecord = null;
-        notifyWhisperModelStateChange();
-      }
-      const owner = readWhisperServerOwnership(state.port);
-      if (owner?.pid === state.pid && owner.owner_pid === process.pid &&
-          owner.started_at === record.startedAt) {
-        clearWhisperServerOwnership(state.port);
-      }
+      detachExitedWhisperServer(state, record);
       const listeners = probeWhisperServerListeners(state.port);
       const healthy = await checkServerHealthy(state.port);
       if (listeners === null || listeners.length !== 0 || healthy) {
@@ -1390,9 +1422,9 @@ export async function transcribeViaServer(
   port?: number,
   options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
-  return whisperLifecycleGate.use(() =>
+  return whisperResidency.use(() => whisperLifecycleGate.use(() =>
     transcribeViaServerAttempt(wavData, port, true, options)
-  );
+  ));
 }
 
 function normalizeTranscriptionText(text: string): string {
@@ -1527,6 +1559,7 @@ async function markServerUnhealthy(): Promise<void> {
 export function __resetWhisperServerStateForTests(
   state: WhisperServerState | null,
 ): void {
+  whisperResidency.reset();
   serverState = state;
   launchPromises.clear();
   recentInferenceRtfs.length = 0;
