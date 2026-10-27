@@ -1853,7 +1853,9 @@ describe("stt-polish", () => {
       expect(requests[0]).toMatchObject({
         model: "mlx-community/Qwen3-4B-Instruct-2507-4bit",
         temperature: 0,
+        seed: 0,
         top_p: 1,
+        top_k: 0,
         max_tokens: 512,
         repetition_penalty: 0,
         stream: false,
@@ -2579,6 +2581,10 @@ describe("stt-polish", () => {
         ["POST", "/v1/chat/completions"],
       ]);
       expect(requests[1].body).toMatchObject({
+        temperature: 0,
+        seed: 0,
+        top_p: 1,
+        top_k: 0,
         max_tokens: 1,
         stream: false,
       });

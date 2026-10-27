@@ -36,7 +36,7 @@ const PRODUCT_LINKS: Record<
     },
     {
       label: "Docs",
-      href: "https://etanhey.github.io/voicelayer/docs/",
+      href: "https://voicelayer.etanheyman.com/",
       external: true,
     },
     {
