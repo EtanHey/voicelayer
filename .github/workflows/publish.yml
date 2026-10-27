@@ -88,10 +88,21 @@ jobs:
 
       - name: Verify packed package contract
         run: |
+          release_commit=$(git rev-parse HEAD)
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            if [ "$release_commit" != "$GITHUB_SHA" ]; then
+              echo "release commit mismatch: expected GITHUB_SHA $GITHUB_SHA, actual checkout HEAD $release_commit" >&2
+              exit 1
+            fi
+          fi
+          export GITHUB_SHA="$release_commit"
+          python3 ../workflow-tools/scripts/release-commit-stamp.py stamp --source "$PWD"
           pack_dir=$(mktemp -d "$RUNNER_TEMP/voicelayer-pack.XXXXXX")
           npm pack --pack-destination "$pack_dir"
           archive="voicelayer-mcp-$(node -p 'require("./package.json").version').tgz"
           python3 ../workflow-tools/scripts/verify-npm-package.py "$pack_dir/$archive" --source "$PWD"
+          python3 ../workflow-tools/scripts/release-commit-stamp.py verify --archive "$pack_dir/$archive"
+          echo "pack_archive=$pack_dir/$archive" >> "$GITHUB_ENV"
 
       - name: Publish (OIDC trusted publishing)
         # Verbose so the OIDC token exchange is visible. A default-loglevel run
@@ -99,4 +110,4 @@ jobs:
         # exchange, was refused by the registry, or matched no trusted publisher.
         env:
           NPM_CONFIG_LOGLEVEL: verbose
-        run: npm publish --provenance --access public
+        run: npm publish "$pack_archive" --provenance --access public
