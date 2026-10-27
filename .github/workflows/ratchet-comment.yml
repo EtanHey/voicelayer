@@ -15,34 +15,61 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: ratchet
-          path: .verified/ratchet
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
       - uses: actions/github-script@v7
         id: context
         with:
           script: |
             const run = context.payload.workflow_run;
-            if (run.event !== 'pull_request') throw new Error('Not a PR run');
-            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+            const source = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${run.id}`;
+            const unavailable = async reason => {
+              await core.summary.addRaw(`Ratchet table unavailable: ${reason}\n\nSource run: ${source}\nPR SHA: ${run.head_sha}\n`).write();
+            };
+            if (run.event !== 'pull_request') {
+              await unavailable('not a PR run');
+              return;
+            }
+            const prs = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
               ...context.repo, commit_sha: run.head_sha, per_page: 100
             });
-            const pr = prs.find(p => p.state === 'open' && p.base.ref === 'main' && p.head.sha === run.head_sha);
-            if (!pr) throw new Error('No current matching PR; refusing stale comment');
+            const matches = prs.filter(p => p.state === 'open' && p.base.ref === 'main' && p.head.sha === run.head_sha);
+            if (matches.length > 1) throw new Error('Ambiguous matching PRs; lead reconciliation required');
+            if (!matches.length) {
+              await unavailable('superseded or closed PR; preserving pinned table');
+              return;
+            }
+            const pr = matches[0];
             core.setOutput('pr', pr.number);
             core.setOutput('base', pr.base.sha);
-            core.setOutput('head', pr.head.sha);
+            core.setOutput('head', run.head_sha);
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: run.id, per_page: 100
+            });
+            const results = artifacts.filter(a => a.name === 'ratchet');
+            if (results.length > 1) throw new Error('Ambiguous ratchet artifacts');
+            if (!results.length || results[0].expired) {
+              core.setOutput('unavailable', 'missing or expired result artifact');
+            } else {
+              core.setOutput('download', 'true');
+            }
+      - uses: actions/download-artifact@v4
+        if: steps.context.outputs.download == 'true'
+        with:
+          name: ratchet
+          path: .verified/ratchet
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
       - name: Upsert pinned table
+        if: steps.context.outputs.pr != ''
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.context.outputs.pr }}
           BASE_SHA: ${{ steps.context.outputs.base }}
           HEAD_SHA: ${{ steps.context.outputs.head }}
+          UNAVAILABLE: ${{ steps.context.outputs.unavailable }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
           REPO: ${{ github.repository }}
         run: |
           python3 ratchet/comment.py --baseline .verified/ratchet/baseline/result.json \
             --head .verified/ratchet/head/result.json --baseline-sha "$BASE_SHA" \
-            --head-sha "$HEAD_SHA" --pr "$PR" --repo "$REPO"
+            --head-sha "$HEAD_SHA" --pr "$PR" --repo "$REPO" \
+            --source-run "$SOURCE_RUN" --unavailable-reason "$UNAVAILABLE"
