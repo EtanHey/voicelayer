@@ -194,13 +194,11 @@ final class SpeakSelectionCapture {
                 Self.onMain { complete(reason) }
                 return
             }
-            // T3's AX selection can flatten lists. Its normal Copy preserves the original bytes.
-            // This target pin grants no unreadable-focus exemption; only preflight can earn that.
-            let intendedCopyApp = self.bundleIdentifier.flatMap { bundleIdentifier in
-                self.frontmostApp().flatMap { bundleIdentifier($0) == "com.t3tools.t3code" ? $0 : nil }
-            }
+            let sourceApp = self.frontmostApp()
+            let prefersCopy = sourceApp.flatMap { self.bundleIdentifier?($0) }.map(Self.prefersCopy) ?? false
             let selectedText = preflight.unreadableFocusAllowsCopy ? nil : self.readAXSelection()
-            if let text = selectedText, !text.isEmpty, intendedCopyApp == nil {
+            let comparesWordBoundaries = !prefersCopy && selectedText.map { Self.longestWordRun($0) >= 24 } == true
+            if let text = selectedText, !text.isEmpty, !prefersCopy, !comparesWordBoundaries {
                 Self.onMain { complete(.completed(text).observed(axRead: .text, path: .ax)) }
             } else {
                 let axRead: SelectionCaptureResult.AXRead = preflight.unreadableFocusAllowsCopy ? .notAttempted
@@ -208,12 +206,34 @@ final class SpeakSelectionCapture {
                 // Keep AppKit pasteboard/item access serialized with the app's other clipboard users.
                 Self.onMain {
                     self.captureUsingPasteboard(copyExemptApp: preflight.copyExemptApp,
-                                                intendedCopyApp: intendedCopyApp) {
-                        complete($0.observed(axRead: axRead, path: .copy))
+                                                intendedCopyApp: prefersCopy || comparesWordBoundaries ? sourceApp : nil) { result in
+                        var observed = result.observed(axRead: axRead, path: .copy)
+                        if comparesWordBoundaries, result.outcome == .completed,
+                           let selectedText, let copiedText = result.text,
+                           !Self.copyRestoresWordBoundaries(ax: selectedText, copy: copiedText) {
+                            observed = observed.usingAXText(selectedText)
+                        }
+                        complete(observed)
                     }
                 }
             }
         }
+    }
+
+    private static func prefersCopy(bundle: String) -> Bool {
+        bundle == "com.t3tools.t3code" || [
+            "net.imput.helium", "com.google.Chrome", "company.thebrowser.Browser",
+            "com.brave.Browser", "com.microsoft.edgemac", "org.chromium.Chromium",
+        ].contains { bundle == $0 || bundle.hasPrefix($0 + ".") }
+    }
+
+    private static func longestWordRun(_ text: String) -> Int {
+        text.split { !$0.isLetter && !$0.isNumber }.map(\.count).max() ?? 0
+    }
+
+    private static func copyRestoresWordBoundaries(ax: String, copy: String) -> Bool {
+        ax.split { !$0.isLetter && !$0.isNumber }.contains { $0.count >= 24 && !copy.contains($0) }
+            && ax.filter { !$0.isWhitespace } == copy.filter { !$0.isWhitespace }
     }
 
     private func captureUsingPasteboard(copyExemptApp: SelectionFocusAX.AppIdentity?,

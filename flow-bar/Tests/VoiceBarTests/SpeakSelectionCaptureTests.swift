@@ -5,6 +5,118 @@ import VoiceBarUI
 import XCTest
 
 final class SpeakSelectionCaptureTests: XCTestCase {
+    func testBrowserCopyRoutingRestoresEveryClipboardRepresentation() {
+        for bundle in ["com.t3tools.t3code", "net.imput.helium", "com.google.Chrome", "com.google.Chrome.beta",
+                       "company.thebrowser.Browser", "com.brave.Browser", "com.microsoft.edgemac", "org.chromium.Chromium"] {
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            seed(board)
+            let original = contents(board)
+            var ax = clipboardFocus()
+            let app = SelectionFocusAX.AppIdentity(pid: 42, startTime: 1)
+            ax.frontmostApp = { app }
+            ax.bundleIdentifier = { _ in bundle }
+            var copies = 0
+            let capture = makeCapture(focusAX: ax, readAXSelection: { "AX keeps spaces but loses structure" },
+                                      pasteboard: board, postCopy: {
+                copies += 1
+                board.clearContents()
+                board.setString("and the row should say Stopped", forType: .string)
+                return true
+            })
+            let done = expectation(description: bundle)
+            capture.capture { result in
+                XCTAssertEqual(result.text, "and the row should say Stopped", bundle)
+                XCTAssertEqual(result.path, .copy, bundle)
+                XCTAssertEqual(self.contents(board), original, bundle)
+                XCTAssertEqual(copies, 1, bundle)
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+        }
+    }
+
+    func testSpacelessAXUsesCopyOnlyWhenItRestoresMatchingWordBoundaries() {
+        for (axText, copied, repaired) in [
+            ("andtherowshouldsayStopped", "and the row should say Stopped", true),
+            ("andtherowshouldsayStopped", "andtherowshouldsayStopped", false),
+            ("andtherowshouldsayStopped", "unrelated copied selection", false),
+            ("averylongunchangedidentifierinthetext andtherowshouldsayStopped",
+             "averylongunchangedidentifierinthetext and the row should say Stopped", true),
+        ] {
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            seed(board)
+            let original = contents(board)
+            var copies = 0
+            let capture = makeCapture(readAXSelection: { axText }, pasteboard: board, postCopy: {
+                copies += 1
+                board.clearContents()
+                board.setString(copied, forType: .string)
+                return true
+            })
+            let done = expectation(description: copied)
+            capture.capture { result in
+                XCTAssertEqual(result.text, repaired ? copied : axText)
+                XCTAssertEqual(result.path, repaired ? .copy : .ax)
+                XCTAssertEqual(copies, 1)
+                XCTAssertEqual(self.contents(board), original)
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+        }
+    }
+
+    func testSelectionCapturePathTravelsWithSpeechCommand() {
+        for path in [SelectionCaptureResult.Path.ax, .copy, .unknown, .clipboard] {
+            let state = VoiceState()
+            state.isConnected = true
+            var command: [String: Any] = [:]
+            state.sendCommand = { command = $0 }
+            state.selectionTextCaptureHandler = { $0(.completed("selected words").observed(axRead: .text, path: path)) }
+            state.speakSelection()
+            XCTAssertEqual(command["capture_path"] as? String, path == .ax || path == .copy ? path.rawValue : nil)
+        }
+    }
+
+    func testBrowserAndSpacelessFallbackFailClosedOnFocusSecurityClipboardAndRestoreChanges() {
+        for bundle in ["net.imput.helium", "com.example.editor"] {
+            for scenario in ["focus", "secure", "race", "restore"] {
+                let board = NSPasteboard.withUniqueName()
+                defer { board.releaseGlobally() }
+                seed(board)
+                let original = contents(board)
+                let snapshot = SelectionPasteboardSnapshot.readOnMain(name: board.name.rawValue)
+                var app = SelectionFocusAX.AppIdentity(pid: 42, startTime: 1)
+                var secure = false, copies = 0
+                var ax = clipboardFocus()
+                ax.frontmostApp = { app }
+                ax.bundleIdentifier = { _ in bundle }
+                ax.secureInputEnabled = { secure }
+                let capture = SpeakSelectionCapture(focusAX: ax, snapshotReader: {
+                    DispatchQueue.main.sync {
+                        if scenario == "focus" { app.startTime += 1 }
+                        if scenario == "secure" { secure = true }
+                    }
+                    return snapshot
+                }, writeRestoredItems: { scenario == "restore" ? false : board.writeObjects($0) },
+                readAXSelection: { "andtherowshouldsayStopped" }, pasteboard: board, postCopy: {
+                    copies += 1
+                    board.clearContents()
+                    board.setString("and the row should say Stopped", forType: .string)
+                    if scenario == "race" { board.clearContents(); board.setString("newer user copy", forType: .string) }
+                    return true
+                })
+                let expected: SelectionCaptureResult = scenario == "focus" ? .captureFailed
+                    : scenario == "secure" ? .secureField : scenario == "race" ? .clipboardChanged : .clipboardRestoreFailed
+                captureAndWait(capture, expectedResult: expected) { XCTAssertNil($0) }
+                XCTAssertEqual(copies, scenario == "focus" || scenario == "secure" ? 0 : 1)
+                if scenario == "race" { XCTAssertEqual(board.string(forType: .string), "newer user copy") }
+                if scenario == "focus" || scenario == "secure" { XCTAssertEqual(contents(board), original) }
+            }
+        }
+    }
+
     func testExplicitClipboardReadsExactTextWithoutCopySnapshotOrWrites() {
         for text: String? in ["  שלום 👩🏽‍💻 e\u{301}\r\n\tend…\n", " \n\t", "", nil] {
             var reads = 0
@@ -460,7 +572,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         return (events.first { $0.0 == "selection_capture" }?.1 ?? [:], state.confirmationText, commands)
     }
 
-    private func makeCapture(canCapture: @escaping () -> Bool = { true },
+    private func makeCapture(focusAX: SelectionFocusAX? = nil, canCapture: @escaping () -> Bool = { true },
                              snapshotReader: (() -> SpeakSelectionCapture.Snapshot?)? = nil,
                              writeRestoredItems: (([NSPasteboardItem]) -> Bool)? = nil,
                              readAXSelection: @escaping () -> String?, pasteboard: NSPasteboard,
@@ -470,7 +582,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         let executable = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
             .appendingPathComponent("VoiceBar")
         let pasteboardName = pasteboard.name.rawValue
-        return SpeakSelectionCapture(canCapture: canCapture, focusAX: clipboardFocus(), snapshotReader: snapshotReader ?? {
+        return SpeakSelectionCapture(canCapture: canCapture, focusAX: focusAX ?? clipboardFocus(), snapshotReader: snapshotReader ?? {
             SelectionPasteboardSnapshot.readInHelper(name: pasteboardName, executable: executable)
         }, writeRestoredItems: writeRestoredItems, readAXSelection: readAXSelection, pasteboard: pasteboard,
            postCopy: postCopy, readCopiedString: readCopiedString, schedule: schedule ?? {

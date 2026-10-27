@@ -81,6 +81,21 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
       return syntheticHandle(identity?.request_id ?? "synthetic-no-client-id");
     }); spies.push(start);
   });
+  for (const capture_path of ["ax", "copy", undefined]) it(`stores capture provenance through socket ingress: ${capture_path}`, async () => {
+    expect(incoming({ id: "provenance", source: "selection", ...(capture_path ? { capture_path } : {}) })).toMatchObject({ outcome: "accept" });
+    await flushSpeechArchives();
+    expect(metadata(contexts[0]).capture_path).toBe(capture_path);
+    expect(fs.readFileSync(join(contexts[0].path, "input.txt"), "utf8")).toBe(raw);
+  });
+  it("rejects malformed capture provenance before archive creation", () => {
+    for (const capture_path of ["clipboard", "unknown", "COPY", null, 1, {}]) expect(incoming({ capture_path })).toBeNull();
+    expect(contexts).toHaveLength(0);
+  });
+  it("keeps capture provenance after lifecycle metadata is rewritten", () => {
+    state.mockReturnValue("recording");
+    expect(incoming({ id: "busy-copy", source: "selection", capture_path: "copy" })).toMatchObject({ outcome: "reject" });
+    expect(metadata(contexts[0])).toMatchObject({ status: "rejected", capture_path: "copy" });
+  });
   afterEach(async () => {
     if (!fixture) return;
     resetSelectionReadQueueForTests();
