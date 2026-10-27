@@ -1,3 +1,5 @@
+import { reserveVoiceMaintenance } from "./session-booking";
+import { ModelResidency, modelIdleSeconds } from "./model-residency";
 import { accessSync, constants } from "fs";
 
 import { processingEnv } from "./processing-settings";
@@ -74,6 +76,30 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
 let polishProcess: ManagedPolishProcess | null = null;
 let polishLaunch: Promise<STTPolishServerStatus> | null = null;
+let idleEnv: STTPolishEnv | undefined;
+const polishResidency = new ModelResidency(async () => {
+  if (!polishProcess) return;
+  const release = reserveVoiceMaintenance(() => false);
+  if (!release) return false;
+  try {
+    const proc = polishProcess;
+    await stopSTTPolishServerAndWait();
+    await proc.exited;
+    return true;
+  } finally { release(); }
+}, () => modelIdleSeconds(idleEnv));
+
+export function withSTTPolishServer<T>(work: () => Promise<T>, options: EnsureSTTPolishServerOptions & { loadOnDemand?: boolean } = {}): Promise<T> {
+  idleEnv = options.env;
+  return polishResidency.use(async () => {
+    if (options.loadOnDemand !== false && (!polishProcess || polishLaunch)) {
+      try { await ensureSTTPolishServer(options); }
+      catch (error: unknown) { console.error("[voicelayer] Lazy polish launch failed:", error); }
+    }
+    return work();
+  });
+}
+
 const reapedOwnerPids = new Set<number>();
 let ownerWatch: { pid: number; timer?: ReturnType<typeof setTimeout> } | null = null;
 /**
@@ -114,6 +140,7 @@ function resetSTTPolishServerManager(retainReapedOwners: boolean): void {
 }
 
 export function resetSTTPolishServerManagerForTests(): void {
+  polishResidency.reset();
   resetSTTPolishServerManager(false);
 }
 
@@ -132,9 +159,12 @@ export async function stopSTTPolishServerAndWait(): Promise<void> {
   if (proc) await escalatePolishProcessExit(proc, POLISH_STOP_EXIT_TIMEOUT_MS);
 }
 
-export async function ensureSTTPolishServer(
-  options: EnsureSTTPolishServerOptions = {},
-): Promise<STTPolishServerStatus> {
+export function ensureSTTPolishServer(options: EnsureSTTPolishServerOptions = {}): Promise<STTPolishServerStatus> {
+  idleEnv = options.env;
+  return polishResidency.use(() => ensureSTTPolishServerReserved(options));
+}
+
+async function ensureSTTPolishServerReserved(options: EnsureSTTPolishServerOptions): Promise<STTPolishServerStatus> {
   const env = options.env ?? processingEnv();
   const endpoint = getSTTPolishEndpoint(env);
   if (getSTTPolishMode(env) === "off") {

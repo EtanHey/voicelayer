@@ -9,6 +9,7 @@
  * We POST WAV audio chunks to /inference and get back JSON transcriptions.
  */
 
+import { ModelResidency } from "./model-residency";
 import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
@@ -159,6 +160,18 @@ interface CoreMLRuntimeFlag {
 }
 
 let serverState: WhisperServerState | null = null;
+const whisperResidency = new ModelResidency(async () => {
+  if (!serverState || serverState.adopted) return;
+  const state = serverState;
+  const result = await unloadOwnedServer(() => false);
+  if (result.outcome === "reject" && result.reason === "child exit unconfirmed" && state.proc) {
+    state.proc.kill("SIGKILL");
+    await state.proc.exited;
+    if (serverState === state) stopServer();
+    return true;
+  }
+  return result.outcome === "accept";
+});
 const launchPromises = new Map<number, Promise<number>>();
 
 interface WhisperServerTestHooks {
@@ -862,7 +875,7 @@ async function reclaimExternalWhisperServers(port: number): Promise<boolean> {
  * Returns the port number.
  */
 export function ensureServer(portOverride?: number): Promise<number> {
-  return whisperLifecycleGate.use(() => ensureServerReserved(portOverride));
+  return whisperResidency.use(() => whisperLifecycleGate.use(() => ensureServerReserved(portOverride)));
 }
 
 function ensureServerReserved(portOverride?: number): Promise<number> {
@@ -1146,6 +1159,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
  * way out. An adopted server is detached from, never signalled.
  */
 export function stopServer(): void {
+  whisperResidency.reset();
   launchPromises.clear();
   if (!serverState) return;
 
@@ -1390,9 +1404,9 @@ export async function transcribeViaServer(
   port?: number,
   options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
-  return whisperLifecycleGate.use(() =>
+  return whisperResidency.use(() => whisperLifecycleGate.use(() =>
     transcribeViaServerAttempt(wavData, port, true, options)
-  );
+  ));
 }
 
 function normalizeTranscriptionText(text: string): string {
@@ -1527,6 +1541,7 @@ async function markServerUnhealthy(): Promise<void> {
 export function __resetWhisperServerStateForTests(
   state: WhisperServerState | null,
 ): void {
+  whisperResidency.reset();
   serverState = state;
   launchPromises.clear();
   recentInferenceRtfs.length = 0;

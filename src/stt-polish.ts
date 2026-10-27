@@ -1663,9 +1663,12 @@ async function requestPolishWarmupOverHttp(
   }
 }
 
-export async function warmPolishEndpoint(
-  env: STTPolishEnv = process.env,
-): Promise<STTPolishWarmupResult> {
+export async function warmPolishEndpoint(env: STTPolishEnv = process.env): Promise<STTPolishWarmupResult> {
+  const { withSTTPolishServer } = await import("./stt-polish-server");
+  return withSTTPolishServer(() => warmPolishEndpointReady(env), { env, loadOnDemand: false });
+}
+
+async function warmPolishEndpointReady(env: STTPolishEnv): Promise<STTPolishWarmupResult> {
   const startedAt = performance.now();
   const buildResult = (
     status: STTPolishWarmupStatus,
@@ -1839,9 +1842,14 @@ function writePolishLog(
     });
 }
 
-export async function polishTranscriptionText(
-  input: STTPolishInput,
-): Promise<STTPolishResult> {
+export async function polishTranscriptionText(input: STTPolishInput): Promise<STTPolishResult> {
+  const env = input.env ?? processingEnv();
+  if (getSTTPolishMode(env) === "off" || !input.cleanedText.trim() || getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return polishTranscriptionTextReady(input);
+  const { withSTTPolishServer } = await import("./stt-polish-server");
+  return withSTTPolishServer(() => polishTranscriptionTextReady(input), { env });
+}
+
+async function polishTranscriptionTextReady(input: STTPolishInput): Promise<STTPolishResult> {
   const env = input.env ?? processingEnv();
   const mode = getSTTPolishMode(env);
   const surface = input.surface ?? "dictation";
