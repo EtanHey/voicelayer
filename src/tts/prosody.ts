@@ -13,6 +13,7 @@ export const PROSODY_POLICY = Object.freeze({
 });
 /** Same limit as the long-read chunker (TTS_CHUNK_MAX_CHARS); one owner of request size. */
 export const PROSODY_MAX_CHARS = 400;
+export const CLONE_CHUNK_POLICY = Object.freeze({ startupChars: 120, startupSegments: 3, bodyMaxChars: 200 });
 /** Engine requests in flight at once for one read. */
 export const PROSODY_SYNTH_CONCURRENCY = 3;
 /** Request-size ramp, in projected speech characters. Speech plays at ~15 chars/s (MS_PER_CHAR) while an
@@ -55,6 +56,7 @@ export interface ProsodyPlan {
   chunks: ProsodyChunk[];
 }
 export interface ProsodyInput {
+  engine?: "edge" | "clone";
   policy?: { version: string; cloneEmphasis: "none"; pauses: { [K in keyof typeof PROSODY_POLICY.pauses]: number } };
   /** The text the read is about: sanitized markdown (speak), or flattened structured speech (selection). */
   readText: string;
@@ -100,7 +102,8 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   const policy = input.policy ?? PROSODY_POLICY;
   const PAUSE = policy.pauses;
   if (projection.displayText !== readText) throw new Error("Prosody projection must be of the read text");
-  const maxChars = input.maxChars ?? PROSODY_MAX_CHARS;
+  const clone = input.engine === "clone";
+  const maxChars = input.maxChars ?? (clone ? CLONE_CHUNK_POLICY.bodyMaxChars : PROSODY_MAX_CHARS);
   const structured = input.structure?.speechText === readText ? input.structure : undefined;
   const source = structured?.displayText ?? readText;
   const blocks = (structured ?? projectStructuredSpeech(readText)).blocks;
@@ -344,22 +347,24 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     delete (segment as { item?: boolean }).item;
   }
   if (segments.length) segments.at(-1)!.pauseMs = 0;
-  const chunks = planChunks(readText, segments, maxChars, input.concurrency ?? PROSODY_SYNTH_CONCURRENCY);
+  const chunks = planChunks(readText, segments, maxChars, input.concurrency ?? (clone ? 1 : PROSODY_SYNTH_CONCURRENCY),
+    clone ? CLONE_CHUNK_POLICY.startupChars : 0, clone ? CLONE_CHUNK_POLICY.startupSegments : 1);
   let renderIdentity: string | undefined;
   return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks,
     get renderIdentity() { return renderIdentity ??= createHash("sha256").update(JSON.stringify([policy, projection, segments, chunks])).digest("hex"); } };
 }
 
-/** Chunk 0 is the first utterance alone, so first audio waits for one short request. Chunk 1 fits
- * one concurrent round; every chunk stays within the ramp budget of the text queued before it. */
-function planChunks(readText: string, segments: ProsodySegment[], maxChars: number, concurrency: number): ProsodyChunk[] {
+function planChunks(readText: string, segments: ProsodySegment[], maxChars: number, concurrency: number, startupChars: number, startupSegments: number): ProsodyChunk[] {
   const groups: [number, number][] = [];
   let size = 0, before = 0;
   for (const [i, segment] of segments.entries()) {
     const group = groups.at(-1);
     const count = group ? group[1] - group[0] : 0;
     const length = segment.text.length;
-    const fits = group && groups.length > 1 && size + 1 + length <= prosodyBudget(before, maxChars) && (groups.length > 2 || count < concurrency);
+    const startup = group && groups.length === 1 && size < startupChars && count < startupSegments
+      && size + 1 + length <= PROSODY_MAX_CHARS;
+    const fits = startup || group && groups.length > 1 && size + 1 + length <= prosodyBudget(before, maxChars)
+      && (startupChars ? count < concurrency : groups.length > 2 || count < concurrency);
     if (fits) { group[1] = i + 1; size += 1 + length; }
     else {
       if (group) before += size + 1 + segments.slice(group[0], group[1]).reduce((ms, s) => ms + s.pauseMs, 0) / MS_PER_CHAR;

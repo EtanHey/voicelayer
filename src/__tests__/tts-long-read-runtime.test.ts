@@ -298,8 +298,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     holdDecoder = true;
     const h = start("clone", "First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8));
     await decoderBarrier.at(0);
-    expect(parts[0]).toBe("First sentence. The rest of this read is synthesized in the background.");
-    expect(parts[0].length).toBeLessThanOrEqual(100);
+    expect(parts[0]).toBe(chunkTextForLongRead("First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8), "clone")[0]);
+    expect(parts[0].length).toBeGreaterThanOrEqual(120);
+    expect(parts[0].length).toBeLessThanOrEqual(200);
     clockMs += 300;
     holdDecoder = false;
     for (const child of decoders) child.exit.resolve(0);
@@ -1000,7 +1001,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
       const cloneProfile = { name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [],
         reference_clip: "", fallback: "jenny", created: "" };
-      it("S1 Next aborts a structured clone read before starting the queued read", async () => {
+      for (const playing of [false, true]) for (const command of ["stop", "read_next"] as const)
+      it(`S2 ${command} aborts clone prefetch while ${playing ? "playing" : "preparing"}`, async () => {
+        const heading = playing ? "Choose the complete release verification record and read every saved result before deciding whether this implementation is ready for review" : "Choose";
         spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
           kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
           engineSource: "settings", rateSource: "settings",
@@ -1010,7 +1013,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const clone = spyOn(qwen, "synthesizeCloned").mockImplementation(async (text, _voice, signal) => {
           maximum = Math.max(maximum, ++running);
           try {
-            if (text === "Choose." || text.startsWith("Bravo")) return Buffer.from("clone audio");
+            if (text === `${heading}.` || text.startsWith("Bravo")) return Buffer.from("clone audio");
             pending.resolve();
             await new Promise<void>(resolve => {
               if (signal?.aborted) resolve(); else signal?.addEventListener("abort", () => resolve(), { once: true });
@@ -1018,18 +1021,23 @@ describe("long-read real runtime with owned synth/player fakes", () => {
             return null;
           } finally { running--; }
         }); spies.push(clone);
-        select("A", "## Choose\n- Red apple\n- Green pear\n- Blue sky");
-        await playerBarrier.at(0); await pending.promise;
+        select("A", `## ${heading}\n- Red apple\n- Green pear\n- Blue sky`);
+        await pending.promise;
+        if (playing) await playerBarrier.at(0);
+        else expect(players).toHaveLength(0);
         select("B", "Bravo queued read.");
-        expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
-        await playerBarrier.at(1);
+        const result = await handleSocketCommand({ cmd: command, request_id: "A" });
+        expect(result).toMatchObject({ outcome: "accept" });
+        if (command === "read_next") await playerBarrier.at(playing ? 1 : 0);
+        else await settle();
         expect(maximum).toBe(1);
-        expect(clone.mock.calls.map(call => call[0])).toEqual(["Choose.", "Red apple.", "Bravo queued read."]);
+        expect(clone.mock.calls.map(call => call[0])).toEqual([`${heading}.`, "Red apple.",
+          ...(command === "read_next" ? ["Bravo queued read."] : [])]);
         expect(clone.mock.calls[1][2]?.aborted).toBe(true);
         await handleSocketCommand({ cmd: "stop" });
       });
 
-      it("S1 queued structured clone reads reuse the planned first segment and start gapless", async () => {
+      it("S1 queued structured clone reads reuse the complete planned opening and start gapless", async () => {
         select("A", "Alpha single chunk.");
         await playerBarrier.at(0);
         spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
@@ -1053,7 +1061,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         }));
         select("B", "## Bravo heading\n\n1. Read the next item.");
         await ready.promise; await settle();
-        expect(clone.mock.calls.map(call => call[0])).toEqual(["Bravo heading."]);
+        expect(clone.mock.calls.map(call => call[0])).toEqual(["Bravo heading.", "one. Read the next item."]);
         const before = performance.now();
         players[0].exit.resolve(0);
         await playerBarrier.at(1);

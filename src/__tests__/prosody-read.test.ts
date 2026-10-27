@@ -57,6 +57,40 @@ describe("isStructuredPlan: prosody engages only when the text has structure", (
 
 describe("createProsodyRead", () => {
   const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three";
+  it("S2 reuses a complete prepared clone opening without resynthesizing its segments", async () => {
+    const text = "## Status\n" + "- This item contains enough words to cover preparation of another request.\n".repeat(6);
+    const p = planProsody({ readText: text, projection: projectSpeakableText(text, [], "clone"), engine: "clone", listNumbers: "inline" });
+    const { engine, calls, files } = fakeEngine();
+    const signal = new AbortController().signal;
+    const preparing = createProsodyRead(p, engine, signal, 1, { lookahead: 0 });
+    const prepared = await preparing.chunk(0);
+    await preparing.close();
+    expect(p.chunks[0].end).toBeGreaterThan(1);
+    expect(calls.synthesized).toHaveLength(p.chunks[0].end);
+    const read = createProsodyRead(p, engine, signal, 1, { prepared });
+    const first = await read.chunk(0);
+    expect(first).toBe(prepared);
+    read.firstAudioStarted(first.audioFile);
+    for (let i = 1; i < p.chunks.length; i++) engine.unlink((await read.chunk(i)).audioFile);
+    await read.close();
+    expect(calls.synthesized).toEqual(p.segments);
+    expect(files.has(first.audioFile)).toBe(true);
+    engine.unlink(first.audioFile);
+    expect(files.size).toBe(0);
+  });
+  it("S2 closes an unadmitted prepared opening exactly once without starting synthesis", async () => {
+    const { engine, calls, files } = fakeEngine(), p = plan(doc);
+    const preparing = createProsodyRead(p, engine, new AbortController().signal, 1, { lookahead: 0 });
+    const prepared = await preparing.chunk(0);
+    await preparing.close();
+    const count = calls.synthesized.length, controller = new AbortController();
+    const read = createProsodyRead(p, engine, controller.signal, 1, { prepared });
+    controller.abort();
+    await read.close(); await read.close();
+    expect(calls.synthesized).toHaveLength(count);
+    expect(calls.unlinked.filter(file => file === prepared.audioFile)).toHaveLength(1);
+    expect(files.size).toBe(0);
+  });
   it("chunk 0 is the engine's own file, delivered before anything is decoded (B3)", async () => {
     const { engine, calls } = fakeEngine(), p = plan(doc);
     const read = createProsodyRead(p, engine, new AbortController().signal);
