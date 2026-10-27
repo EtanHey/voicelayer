@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -97,6 +98,39 @@ class WorkflowSourceTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.workflow_sha }}\n          path: workflow-tools", workflow)
         self.assertIn("working-directory: workflow-tools\n        run: python3 -m unittest", workflow)
         self.assertNotIn("${{ inputs.ref }}", workflow.split("        run:", 1)[1])
+
+    def test_workflows_require_daemon_dependencies(self):
+        root = Path(__file__).resolve().parents[1]
+        for name in ("publish.yml", "ci.yml"):
+            with self.subTest(workflow=name):
+                workflow = (root / ".github/workflows" / name).read_text()
+                self.assertRegex(workflow, r"- name: Run tests\n        env:\n          VOICELAYER_REQUIRE_TTS_DAEMON_DEPS: ['\"]1['\"]\n        run: bun test")
+
+    def test_missing_daemon_dependencies_skip_locally_but_fail_when_required(self):
+        root = Path(__file__).resolve().parents[1]
+        fixtures = root / ".build.noindex"
+        fixtures.mkdir(exist_ok=True)
+        bun = shutil.which("bun")
+        self.assertIsNotNone(bun)
+        with tempfile.TemporaryDirectory(dir=fixtures) as directory:
+            python = Path(directory) / "python3"
+            python.write_text("#!/bin/sh\necho forced-missing-daemon-deps >&2\nexit 1\n")
+            python.chmod(0o755)
+            for required in ("", "1"):
+                with self.subTest(required=required):
+                    env = {**os.environ, "PATH": directory + os.pathsep + os.environ["PATH"],
+                           "VOICELAYER_REQUIRE_TTS_DAEMON_DEPS": required}
+                    result = subprocess.run(
+                        ["timeout", "-s", "KILL", "900", bun, "test", "./src/__tests__/qwen3-cancel.test.ts"],
+                        cwd=root, env=env, capture_output=True, text=True, timeout=30)
+                    self.assertIn("forced-missing-daemon-deps", result.stderr)
+                    if required:
+                        self.assertNotEqual(result.returncode, 0, result.stderr)
+                        self.assertIn("qwen3-cancel requires fastapi and uvicorn", result.stderr)
+                        self.assertNotIn("SKIP qwen3-cancel", result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn("SKIP qwen3-cancel", result.stderr)
 
     def test_daemon_dependencies_resolve_without_requirements_in_older_source(self):
         root = Path(__file__).resolve().parents[1]

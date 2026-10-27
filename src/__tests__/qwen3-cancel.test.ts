@@ -10,6 +10,11 @@ const pythonDependencies = Bun.spawnSync({
   stderr: "pipe",
 });
 const hasPythonDependencies = pythonDependencies.exitCode === 0;
+if (!hasPythonDependencies && process.env.VOICELAYER_REQUIRE_TTS_DAEMON_DEPS === "1") {
+  throw new Error(
+    "qwen3-cancel requires fastapi and uvicorn: " + pythonDependencies.stderr.toString(),
+  );
+}
 if (!hasPythonDependencies) {
   console.warn(
     "SKIP qwen3-cancel: python3 cannot import fastapi, uvicorn. " +
