@@ -69,14 +69,14 @@ type Synthesized =
  * leading pad. Every later chunk splices its utterances with exact planned silence into one MP3.
  * Requests run at most 3 at once. The tail decode is owned: abort cancels it, and `close()` and
  * `settleTail()` wait for it to settle. */
-export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal) {
+export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal, concurrency?: number) {
   const firstEnd = plan.chunks[0]?.end ?? 0;
   const scheduler = createSegmentScheduler<Synthesized>(plan, async (segment, index, signal) => {
     const result = await engine.synthesize(segment, signal);
     if (index < firstEnd) return { raw: true, ...result };
     try { return { raw: false, pcm: await engine.decode(result.audioFile, signal), words: result.words }; }
     finally { engine.unlink(result.audioFile); }
-  }, { signal, dispose: (result) => { if (result.raw) engine.unlink(result.audioFile); } });
+  }, { signal, concurrency, dispose: (result) => { if (result.raw) engine.unlink(result.audioFile); } });
   let previousTailMs: Promise<number> = Promise.resolve(0);
   // Chunk 0's tail: decoded only after its player started; resolves 0 if it never starts or on abort.
   const tailAbort = new AbortController();

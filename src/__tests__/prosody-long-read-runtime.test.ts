@@ -104,7 +104,7 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     const structure = selection ? projectStructuredSpeech(source) : undefined;
     const text = structure?.speechText ?? source;
     const projection = projectSpeakableText(text, [], "clone");
-    const plan = planProsody({ readText: text, projection, structure, listNumbers: "inline" });
+    const plan = planProsody({ readText: text, projection, structure, listNumbers: "inline", concurrency: 1 });
     const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio"));
     const timingInputs: Parameters<typeof cloneTiming.startCloneTiming>[0][] = [];
     const timing = spyOn(cloneTiming, "startCloneTiming").mockImplementation(input => {
@@ -181,10 +181,10 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     }); spies.push(clone);
     const handle = speakLongRead("## Choose\n- Red apple\n- Green pear\n- Blue sky\n- White cloud\n- Orange fruit",
       { engine: "clone", voice: "fixture", rate: "+0%" }); handles.push(handle);
-    for (let i = 0; i < 50 && calls < 4; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    expect(calls).toBe(4);
+    for (let i = 0; i < 50 && calls < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(calls).toBe(2);
     stopPlayback(); await handle.done;
-    expect(calls).toBe(4);
+    expect(calls).toBe(2);
   });
   it("chunk 0 plays the engine's own file before anything is encoded; later chunks play encoded MP3s", async () => {
     const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three";

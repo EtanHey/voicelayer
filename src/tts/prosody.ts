@@ -345,8 +345,9 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   }
   if (segments.length) segments.at(-1)!.pauseMs = 0;
   const chunks = planChunks(readText, segments, maxChars, input.concurrency ?? PROSODY_SYNTH_CONCURRENCY);
-  const renderIdentity = createHash("sha256").update(JSON.stringify([policy, projection, segments, chunks])).digest("hex");
-  return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks, renderIdentity };
+  let renderIdentity: string | undefined;
+  return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks,
+    get renderIdentity() { return renderIdentity ??= createHash("sha256").update(JSON.stringify([policy, projection, segments, chunks])).digest("hex"); } };
 }
 
 /** Chunk 0 is the first utterance alone, so first audio waits for one short request. Chunk 1 fits

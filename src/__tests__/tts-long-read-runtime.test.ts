@@ -969,6 +969,71 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     afterEach(() => resetSelectionReadQueueForTests());
 
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
+      const cloneProfile = { name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [],
+        reference_clip: "", fallback: "jenny", created: "" };
+      it("S1 Next aborts a structured clone read before starting the queued read", async () => {
+        spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
+          kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
+          engineSource: "settings", rateSource: "settings",
+        }), spyOn(qwen, "loadProfile").mockReturnValue(cloneProfile));
+        let running = 0, maximum = 0;
+        const pending = deferred<void>();
+        const clone = spyOn(qwen, "synthesizeCloned").mockImplementation(async (text, _voice, signal) => {
+          maximum = Math.max(maximum, ++running);
+          try {
+            if (text === "Choose." || text.startsWith("Bravo")) return Buffer.from("clone audio");
+            pending.resolve();
+            await new Promise<void>(resolve => {
+              if (signal?.aborted) resolve(); else signal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+            return null;
+          } finally { running--; }
+        }); spies.push(clone);
+        select("A", "## Choose\n- Red apple\n- Green pear\n- Blue sky");
+        await playerBarrier.at(0); await pending.promise;
+        select("B", "Bravo queued read.");
+        expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(1);
+        expect(maximum).toBe(1);
+        expect(clone.mock.calls.map(call => call[0])).toEqual(["Choose.", "Red apple.", "Bravo queued read."]);
+        expect(clone.mock.calls[1][2]?.aborted).toBe(true);
+        await handleSocketCommand({ cmd: "stop" });
+      });
+
+      it("S1 queued structured clone reads reuse the planned first segment and start gapless", async () => {
+        select("A", "Alpha single chunk.");
+        await playerBarrier.at(0);
+        spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
+          kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
+          engineSource: "settings", rateSource: "settings",
+        }));
+        spies.push(spyOn(qwen, "loadProfile").mockReturnValue(cloneProfile));
+        const clone = spyOn(qwen, "synthesizeCloned").mockImplementation(async (_text, _voice, signal) => {
+          await new Promise<void>(resolve => {
+            const timer = setTimeout(resolve, 150);
+            signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+          });
+          return signal?.aborted ? null : Buffer.from("clone audio");
+        });
+        const prepare = tts.prepareSelectionReadStart;
+        const ready = deferred<void>();
+        spies.push(clone, spyOn(tts, "prepareSelectionReadStart").mockImplementation(async (...args) => {
+          const result = await prepare(...args);
+          ready.resolve();
+          return result;
+        }));
+        select("B", "## Bravo heading\n\n1. Read the next item.");
+        await ready.promise; await settle();
+        expect(clone.mock.calls.map(call => call[0])).toEqual(["Bravo heading."]);
+        const before = performance.now();
+        players[0].exit.resolve(0);
+        await playerBarrier.at(1);
+        expect(performance.now() - before).toBeLessThan(50);
+        expect(clone.mock.calls.filter(call => call[0] === "Bravo heading.")).toHaveLength(1);
+        expect(players[1].argv.at(-1)).toContain(".mp3");
+        await handleSocketCommand({ cmd: "stop" });
+      });
+
       it("SEAT-A pronunciation changes during preparation must reject stale audio", async () => {
         let rules = [{ pattern: /\bBravo\b/gi, replacement: "oldword" }];
         spies.push(spyOn(pronunciation, "pronunciationRules").mockImplementation(() => rules));
