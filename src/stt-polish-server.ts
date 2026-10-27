@@ -506,7 +506,7 @@ async function escalatePolishProcessExit(proc: ManagedPolishProcess, timeoutMs: 
       while (isPolishProcessAlive(proc.pid, options)) {
         const remaining = deadline - Date.now();
         if (remaining <= 0) return false;
-        await Bun.sleep(Math.min(50, remaining));
+        await (options.sleep ?? Bun.sleep)(Math.min(50, remaining));
       }
       return true;
     }
