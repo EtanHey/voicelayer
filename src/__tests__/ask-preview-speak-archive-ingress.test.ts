@@ -125,6 +125,29 @@ describe("Ask and Preview real receipt ingress (canonical preload; synthetic spe
     expect(result.content[0].text).toContain("synthetic answer");
     expect(JSON.stringify(notifications)).not.toContain("שלום");
   });
+  for (const fault of ["directory", "unwritable"] as const) it(`Ask proceeds when its history marker is ${fault}`, async () => {
+    const index = root + ".speech-history-v1";
+    fs.mkdirSync(index, { mode: 0o700 });
+    if (fault === "unwritable") fs.chmodSync(index, 0o500);
+    else {
+      const create = realCreate;
+      spies.push(spyOn(archive, "createSpeakReceipt").mockImplementation(request => {
+        const id = "2026-10-27T12-00-00-000Z-aabbccdd";
+        fs.mkdirSync(join(index, id), { mode: 0o700 });
+        const result = create(request, { now: () => new Date("2026-10-27T12:00:00Z"), id: () => id });
+        if (result.kind === "created") contexts.push(result.context);
+        return result;
+      }));
+    }
+    try {
+      const result = await handleVoiceAsk({ message: raw });
+      expect(result.isError).not.toBe(true);
+      expect(result.content[0].text).toContain("synthetic answer");
+      expect(speak).toHaveBeenCalledTimes(1); expect(capture).toHaveBeenCalledTimes(1);
+      retained(raw, "received");
+      expect(log.mock.calls).toContainEqual(["[speech] history membership write failed"]);
+    } finally { fs.chmodSync(index, 0o700); }
+  });
   it("Ask retains overlong, reservation, booking and capture-admission refusals without speech", async () => {
     const long = raw + "x".repeat(601);
     expect((await handleVoiceAsk({ message: long })).isError).toBe(true); retained(long, "rejected"); contexts = [];

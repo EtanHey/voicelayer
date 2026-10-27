@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "crypto";
 import * as fs from "fs";
 import { join, relative, resolve } from "path";
+import { speechHistoryIndex, speechOpenIndex, speechPendingIndex } from "../speech-open-index";
 import { createSpeakReceipt, type SpeakReceiptRequest, type SpeakReceiptResult } from "../speak-archive";
 
 const at = new Date("2026-10-23T12:34:56.789Z");
@@ -61,6 +62,31 @@ describe("private speak receipt creation", () => {
     }
     expect(context.metadata).not.toHaveProperty("backup");
     expect(context.metadata).not.toHaveProperty("effective");
+  });
+
+  for (const fault of ["directory", "unwritable"] as const) it(`history marker ${fault} preserves a completed receipt`, () => {
+    const index = speechHistoryIndex(), marker = join(index, id);
+    fs.mkdirSync(index, { mode: 0o700 });
+    if (fault === "directory") fs.mkdirSync(marker, { mode: 0o700 });
+    else fs.chmodSync(index, 0o500);
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = createSpeakReceipt(request, seams);
+      expect(result.kind).toBe("created");
+      const context = created(result);
+      expect(JSON.parse(fs.readFileSync(join(context.path, "metadata.json"), "utf8"))).toEqual(context.metadata);
+      expect(fs.readFileSync(join(context.path, "input.txt"), "utf8")).toBe(request.input);
+      expect(fs.existsSync(join(speechOpenIndex(), id))).toBe(true);
+      expect(fs.existsSync(join(speechPendingIndex(), id))).toBe(false);
+      expect(log.mock.calls).toEqual([["[speech] history membership write failed"]]);
+    } finally { log.mockRestore(); fs.chmodSync(index, 0o700); }
+  });
+
+  it("shares the index sibling name with the Swift Settings reader", () => {
+    const swift = fs.readFileSync(new URL("../../flow-bar/Sources/VoiceBarUI/SettingsSpeechHistoryIndex.swift", import.meta.url), "utf8");
+    const suffix = swift.match(/root\.path \+ "([^"\n]+)"/)?.[1];
+    expect(suffix).toBe(".speech-history-v1");
+    expect(speechHistoryIndex()).toBe(root + suffix);
   });
 
   it("allowlists context and never copies transport extras or reference audio", () => {

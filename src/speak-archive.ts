@@ -1,3 +1,4 @@
+import { indexSpeechHistory } from "./speech-history-index";
 import { beginSpeechReceipt, finishSpeechReceipt, indexOpenSpeech } from "./speech-open-index";
 import { createHash } from "crypto";
 import * as fs from "fs";
@@ -173,6 +174,7 @@ export function createSpeakReceipt(
     writeReceiptFile(path, "metadata.json", encoded);
     indexOpenSpeech(id);
     finishSpeechReceipt(id, process.pid);
+    indexSpeechHistory(id);
     return { kind: "created", context: { ...partial, metadata } };
   } catch (error) {
     // Never return/log the raw filesystem exception, request text or transport object.

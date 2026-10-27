@@ -515,6 +515,7 @@ public struct SettingsView: View {
     @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
     private let speechHistoryRoot: URL
+    @State private var speechLoading = SettingsSpeechHistoryLoading()
     @State private var speechEntries: [SettingsSpeechHistoryEntry] = []
     @State private var selectedSpeechID: String?
     @State private var speechReload = SettingsSpeechHistoryReloadRequest()
@@ -1368,12 +1369,25 @@ public struct SettingsView: View {
     private var speechHistoryScope: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("\(speechEntries.count) speech record\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                Text(speechEntries.isEmpty && speechLoading.isLoading ? "Loading…" : "\(speechEntries.count) speech record\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Refresh") { selectedSpeechID = nil; speechReload.refresh() }
             }.padding(.horizontal, 18).padding(.vertical, 10)
             Divider()
-            if speechEntries.isEmpty {
+            if speechEntries.isEmpty, speechLoading.isLoading {
+                VStack(spacing: 8) {
+                    if speechLoading.showSpinner {
+                        ProgressView().controlSize(.small).accessibilityLabel("Loading speech history")
+                        Text("Loading speech history…").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .task(id: speechReload.taskID) {
+                    speechLoading.showSpinner = false
+                    try? await Task.sleep(for: .milliseconds(200))
+                    guard !Task.isCancelled else { return }
+                    speechLoading.showSpinner = true
+                }
+            } else if speechEntries.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "speaker.wave.2").font(.system(size: 28)).foregroundStyle(.secondary)
                     Text("No speech yet").font(.headline)
@@ -1422,6 +1436,8 @@ public struct SettingsView: View {
             }
         }
         .task(id: speechReload.taskID) {
+            let invocation = speechLoading.begin()
+            defer { speechLoading.finish(invocation) }
             let limit = speechReload.limit
             let root = speechHistoryRoot
             let debounce = speechReload.takeDebounce()
