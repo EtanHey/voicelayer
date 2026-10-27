@@ -20,14 +20,15 @@ import tempfile
 
 root, dry = sys.argv[1:]
 def resolve_command(name):
-    candidates = [shutil.which(name), f'/opt/homebrew/bin/{name}', str(pathlib.Path.home() / '.bun/bin' / name)]
-    return next((os.path.abspath(p) for p in candidates if p and os.path.isfile(p) and os.access(p, os.X_OK)), None)
+    stable = [f'/opt/homebrew/bin/{name}', str(pathlib.Path.home() / '.bun/bin' / name)]
+    candidates = stable + [shutil.which(name)] if name == 'bun' else [shutil.which(name)] + stable
+    return next((os.path.abspath(p) for p in candidates if p and '/Cellar/' not in os.path.abspath(p) and os.path.isfile(p) and os.access(p, os.X_OK)), None)
 
 bridge = resolve_command('voicelayer-mcp-bridge')
 bun = resolve_command('bun')
 socat = resolve_command('socat')
 if bridge and bun:
-    command, args = bun, [str(pathlib.Path(bridge).resolve())]
+    command, args = bun, [bridge]
 elif socat:
     command, args = socat, ['STDIO', 'UNIX-CONNECT:/tmp/voicelayer-mcp.sock']
 else:

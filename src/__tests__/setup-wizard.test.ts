@@ -5,9 +5,11 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
+import { testTmp } from "./setup/test-tmp";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -23,7 +25,9 @@ import {
   type AgentId,
 } from "../cli/setup";
 
-const bridgeScript = fileURLToPath(new URL("../mcp-bridge.ts", import.meta.url));
+const bridgeScript = Bun.which("voicelayer-mcp-bridge") ?? fileURLToPath(new URL("../mcp-bridge.ts", import.meta.url));
+const stableBun = ["/opt/homebrew/bin/bun", Bun.which("bun")]
+  .find(path => path && !path.includes("/Cellar/") && existsSync(path));
 
 function withTempHome<T>(fn: (home: string) => T): T {
   const home = mkdtempSync(join(tmpdir(), "voicelayer-setup-"));
@@ -79,7 +83,7 @@ describe("voicelayer setup wizard helpers", () => {
         expect(second.changed).toBe(false);
         expect(data.mcpServers.existing).toEqual({ command: "noop" });
         expect(data.mcpServers.voicelayer).toEqual({
-          command: process.execPath,
+          command: stableBun,
           args: [bridgeScript],
         });
         expect(
@@ -120,7 +124,7 @@ describe("voicelayer setup wizard helpers", () => {
       expect(second.changed).toBe(false);
       expect(body).toContain("[mcp_servers.brainlayer]");
       expect(body).toContain("[mcp_servers.voicelayer]");
-      expect(body).toContain(`command = ${JSON.stringify(process.execPath)}`);
+      expect(body).toContain(`command = ${JSON.stringify(stableBun)}`);
       expect(body).toContain(
         `args = [${JSON.stringify(bridgeScript)}]`,
       );
@@ -197,4 +201,41 @@ describe("voicelayer setup wizard helpers", () => {
       "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
     ]);
   });
+});
+
+test("setup argv survives Homebrew VoiceLayer and Bun keg replacement", async () => {
+  const root = testTmp("setup-keg-" + Math.random().toString(16).slice(2));
+  mkdirSync(root, { recursive: true });
+  try {
+    const prefix = `${root}/homebrew`; const bin = `${prefix}/bin`; const opt = `${prefix}/opt`;
+    mkdirSync(bin, { recursive: true }); mkdirSync(opt);
+    for (const version of ["1", "2"]) {
+      const src = `${prefix}/Cellar/voicelayer/${version}/src`;
+      mkdirSync(`${src}/cli`, { recursive: true });
+      writeFileSync(`${src}/cli/setup.ts`, readFileSync(new URL("../cli/setup.ts", import.meta.url), "utf8").replaceAll("/opt/homebrew/bin", bin));
+      writeFileSync(`${src}/mcp-bridge.ts`, `console.log("bridge-${version}");`, { mode: 0o755 });
+      mkdirSync(`${prefix}/Cellar/bun/${version}`, { recursive: true });
+      symlinkSync(process.execPath, `${prefix}/Cellar/bun/${version}/bun`);
+    }
+    for (const pkg of ["voicelayer", "bun"]) symlinkSync(`${prefix}/Cellar/${pkg}/1`, `${opt}/${pkg}`);
+    symlinkSync(`${opt}/voicelayer/src/mcp-bridge.ts`, `${bin}/voicelayer-mcp-bridge`);
+    symlinkSync(`${opt}/bun/bun`, `${bin}/bun`);
+    const runner = `${root}/wire.ts`;
+    writeFileSync(runner, `import { wireAgentMcpConfig } from ${JSON.stringify(`${opt}/voicelayer/src/cli/setup.ts`)}; for (const agent of ["claude", "cursor", "gemini", "codex"]) wireAgentMcpConfig(agent, ${JSON.stringify(root)});`);
+    const child = Bun.spawn([`${bin}/bun`, runner], { env: { ...process.env, HOME: root, PATH: bin }, stdout: "pipe", stderr: "pipe" });
+    const stderr = await new Response(child.stderr).text(); expect(stderr).toBe(""); expect(await child.exited).toBe(0);
+    const servers = (["claude", "cursor", "gemini", "codex"] as const).map(agent => {
+      const body = readFileSync(resolveAgentConfigPath(agent, root), "utf8");
+      expect(body).not.toContain("/Cellar/");
+      return agent === "codex" ? Bun.TOML.parse(body).mcp_servers.voicelayer : JSON.parse(body).mcpServers.voicelayer;
+    });
+    for (const pkg of ["voicelayer", "bun"]) {
+      rmSync(`${opt}/${pkg}`); symlinkSync(`${prefix}/Cellar/${pkg}/2`, `${opt}/${pkg}`);
+      rmSync(`${prefix}/Cellar/${pkg}/1`, { recursive: true });
+    }
+    for (const server of servers) {
+      const launched = Bun.spawn([server.command, ...server.args], { env: process.env, stdout: "pipe", stderr: "pipe" });
+      expect(await launched.exited).toBe(0); expect(await new Response(launched.stdout).text()).toBe("bridge-2\n");
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

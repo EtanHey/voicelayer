@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { constants, accessSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 export type AgentId = "claude" | "codex" | "cursor" | "gemini";
@@ -68,8 +68,25 @@ export function detectAgentClis(
   return AGENT_ORDER.filter((agent) => exists(agent.command));
 }
 
-function voiceLayerMcpServer() {
-  return { command: process.execPath, args: [fileURLToPath(new URL("../mcp-bridge.ts", import.meta.url))] };
+function stableExecutable(candidates: (string | null)[]): string | undefined {
+  return candidates.find((candidate): candidate is string => {
+    if (!candidate || resolve(candidate).includes("/Cellar/")) return false;
+    try { accessSync(candidate, constants.X_OK); return true; } catch { return false; }
+  });
+}
+
+function voiceLayerMcpServer(home: string) {
+  const command = stableExecutable([
+    "/opt/homebrew/bin/bun", join(home, ".bun/bin/bun"), Bun.which("bun"),
+  ]);
+  const moduleBridge = fileURLToPath(new URL("../mcp-bridge.ts", import.meta.url))
+    .replace(/^(.*)\/Cellar\/([^/]+)\/[^/]+\//u, "$1/opt/$2/");
+  const bridge = stableExecutable([
+    Bun.which("voicelayer-mcp-bridge"), "/opt/homebrew/bin/voicelayer-mcp-bridge",
+    join(home, ".bun/bin/voicelayer-mcp-bridge"), moduleBridge,
+  ]);
+  if (!command || !bridge) throw new Error("Stable Bun and MCP bridge paths are required for setup");
+  return { command: resolve(command), args: [resolve(bridge)] };
 }
 
 export function resolveAgentConfigPath(
@@ -153,7 +170,7 @@ function wireJsonMcpConfig(
       : {};
   const nextServers = {
     ...servers,
-    voicelayer: voiceLayerMcpServer(),
+    voicelayer: voiceLayerMcpServer(home),
   };
   const nextData = {
     ...data,
@@ -169,8 +186,8 @@ function wireJsonMcpConfig(
   return { agent, path, changed };
 }
 
-function canonicalCodexBlock(): string {
-  const server = voiceLayerMcpServer();
+function canonicalCodexBlock(home: string): string {
+  const server = voiceLayerMcpServer(home);
   return [
     "[mcp_servers.voicelayer]",
     `command = ${JSON.stringify(server.command)}`,
@@ -212,7 +229,7 @@ function wireCodexMcpConfig(home: string): WireResult {
   const current = existsSync(path) ? readFileSync(path, "utf8") : "";
   const withoutVoiceLayer = stripTomlTable(current, "mcp_servers.voicelayer");
   const prefix = withoutVoiceLayer ? `${withoutVoiceLayer}\n\n` : "";
-  const next = `${prefix}${canonicalCodexBlock()}`;
+  const next = `${prefix}${canonicalCodexBlock(home)}`;
   const changed = current !== next;
 
   if (changed) {

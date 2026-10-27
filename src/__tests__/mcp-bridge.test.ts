@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { createServer, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
-import { mkdirSync, writeFileSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, statSync, symlinkSync, rmSync } from "node:fs";
 import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -297,7 +297,7 @@ async function migrationFixture() {
   };
   return { root, bin, repos, config, other, run };
 }
-test("migration pins bun and resolved script, includes root, preserves Unicode/backup, and is idempotent", async () => {
+test("migration pins bun and stable bridge symlink, includes root, preserves Unicode/backup, and is idempotent", async () => {
   const { root, bin, repos, config, other, run } = await migrationFixture();
   const script = `${root}/mcp-bridge.ts`; writeFileSync(script, "#!/usr/bin/env bun\n", { mode: 0o755 });
   symlinkSync(script, `${bin}/voicelayer-mcp-bridge`); symlinkSync(process.execPath, `${bin}/bun`);
@@ -308,7 +308,7 @@ test("migration pins bun and resolved script, includes root, preserves Unicode/b
   expect(statSync(config).ino).not.toBe(inode);
   for (const file of [config, `${repos}/.mcp.json`]) {
     const text = readFileSync(file, "utf8"); const data = JSON.parse(text);
-    expect(data.mcpServers.voice).toEqual({ command: `${bin}/bun`, args: [script], env: { CUSTOM: "kept" } });
+    expect(data.mcpServers.voice).toEqual({ command: `${bin}/bun`, args: [`${bin}/voicelayer-mcp-bridge`], env: { CUSTOM: "kept" } });
     expect(JSON.stringify(data.mcpServers.other)).toBe(JSON.stringify(other)); expect(text).toContain("שלום 👋");
     expect(readFileSync(`${file}.bak`, "utf8")).toBe(original);
   }
@@ -330,4 +330,29 @@ test("migration resolves bridge and bun from home bun bin without PATH", async (
   writeFileSync(`${bin}/voicelayer-mcp-bridge`, "#!/usr/bin/env bun\n", { mode: 0o755 }); symlinkSync(process.execPath, `${bin}/bun`);
   expect(await run(true)).toMatchObject({ code: 0 });
   expect(JSON.parse(readFileSync(config, "utf8")).mcpServers.voice).toMatchObject({ command: `${bin}/bun`, args: [`${bin}/voicelayer-mcp-bridge`] });
+});
+
+test("migration argv survives Homebrew keg replacement", async () => {
+  const { root, bin, config, run } = await migrationFixture();
+  const opt = `${root}/opt`; mkdirSync(opt);
+  for (const version of ["1", "2"]) {
+    const keg = `${root}/Cellar/voicelayer/${version}`; mkdirSync(`${keg}/src`, { recursive: true });
+    writeFileSync(`${keg}/src/mcp-bridge.ts`, `console.log("bridge-${version}");`, { mode: 0o755 });
+    mkdirSync(`${root}/Cellar/bun/${version}`, { recursive: true });
+    symlinkSync(process.execPath, `${root}/Cellar/bun/${version}/bun`);
+  }
+  symlinkSync(`${root}/Cellar/voicelayer/1`, `${opt}/voicelayer`);
+  symlinkSync(`${root}/Cellar/bun/1`, `${opt}/bun`);
+  symlinkSync(`${opt}/voicelayer/src/mcp-bridge.ts`, `${bin}/voicelayer-mcp-bridge`);
+  symlinkSync(`${opt}/bun/bun`, `${bin}/bun`);
+  expect(await run()).toMatchObject({ code: 0 });
+  const server = JSON.parse(readFileSync(config, "utf8")).mcpServers.voice;
+  expect(JSON.stringify(server)).not.toContain("/Cellar/");
+  for (const pkg of ["voicelayer", "bun"]) {
+    rmSync(`${opt}/${pkg}`); symlinkSync(`${root}/Cellar/${pkg}/2`, `${opt}/${pkg}`);
+    rmSync(`${root}/Cellar/${pkg}/1`, { recursive: true });
+  }
+  const child = Bun.spawn([server.command, ...server.args], { env: process.env, stdout: "pipe", stderr: "pipe" });
+  expect(await child.exited).toBe(0);
+  expect(await new Response(child.stdout).text()).toBe("bridge-2\n");
 });
