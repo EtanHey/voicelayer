@@ -216,7 +216,7 @@ struct SettingsHistoryActionEnablement: Equatable {
         switch action {
         case .play, .retranscribe:
             if action == .play,
-               isVoiceBusy { return .unavailable("Voice is busy — wait for the current voice operation to finish") }
+               isVoiceBusy { return .unavailable(SettingsHistoryCopy.playBusy) }
             if isRecording { return .unavailable("Unavailable while recording") }
             // AIDEV-NOTE: a re-transcription also puts the daemon in "transcribing", so this must be checked first
             // or every blocked button said "Unavailable while transcribing" (QA 2.2.25 C6, 04:52).
@@ -1296,18 +1296,16 @@ public struct SettingsView: View {
 
     // MARK: - History Tab
 
+    private var historyNoticeKind: SettingsHistoryNotice.Kind? {
+        SettingsHistoryNotice.Kind(isVoiceBusy: historyPlayback.isVoiceBusy, failureMessage: historyPlayback.failureMessage)
+    }
+
     private var historyTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             historyScopePicker
-            if historyPlayback.isVoiceBusy {
-                Text("Voice is busy — wait for the current voice operation to finish")
-                    .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
-            } else if let failure = historyPlayback.failureMessage {
-                HStack(alignment: .top) {
-                    Text(failure).font(.caption).foregroundStyle(.secondary)
-                    SettingsCopyButton(text: failure, label: "History playback error")
-                }.padding(.bottom, 8)
-            }
+            SettingsHistoryNoticeSlot(kind: historyNoticeKind)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 8)
 
             // AIDEV-NOTE: lane E (QA 2.2.25 C10). A `switch` here tore down and rebuilt the whole list on every
             // Dictations ↔ Ask click; on the 11k archive that rebuild was most of the switch's main-thread time.
@@ -1328,6 +1326,7 @@ public struct SettingsView: View {
                 }
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: historyNoticeKind)
         // AIDEV-NOTE: A scope not yet mounted in this History visit is out of the view hierarchy, so its
         // `.onReceive(voiceBarHistoryArchiveDidChange)` never fired — it reloads when first shown. Once mounted it
         // stays mounted (hidden) and keeps itself current, so switching back to it does not reload (lane E).
@@ -1481,7 +1480,7 @@ public struct SettingsView: View {
                     VStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text(SettingsHistorySearch(historySearch).isActive ? "Searching…" : "Loading history...")
+                        Text(SettingsHistorySearch(historySearch).isActive ? "Searching…" : "Loading history…")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1634,7 +1633,7 @@ public struct SettingsView: View {
                     VStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text(SettingsHistorySearch(askHistorySearch).isActive ? "Searching…" : "Loading ask history...")
+                        Text(SettingsHistorySearch(askHistorySearch).isActive ? "Searching…" : "Loading ask history…")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1955,24 +1954,24 @@ public struct SettingsView: View {
             HStack(spacing: 12) {
                 if let audioLabel {
                     Label(audioLabel, systemImage: "waveform")
-                        .help(part.role == .speech ? "Retained speech duration; playback time when generated duration is unavailable" : "Audio length — how long the mic was on")
+                        .help(part.role == .speech ? "Retained speech duration; playback time when generated duration is unavailable" : "Audio length: how long the mic was on")
                         .accessibilityLabel("Audio length \(audioLabel)")
                 }
                 if let heardLabel {
                     Label(heardLabel, systemImage: "text.viewfinder")
                         .help(
-                            "Transcribed — the audio actually sent to speech-to-text after trailing silence was trimmed"
+                            "Transcribed: the audio VoiceBar transcribed, after cutting the silence at the end"
                         )
                         .accessibilityLabel("Transcribed length \(heardLabel)")
                 }
                 if let spokenLabel {
                     Label(spokenLabel, systemImage: "waveform.path")
-                        .help("≈ Spoken — speech time with the pauses left out, estimated in quarter-second steps")
+                        .help("Spoken: speech time without pauses, estimated in quarter-second steps")
                         .accessibilityLabel("Spoken length about \(spokenLabel)")
                 }
                 if let processingLabel {
                     Label(processingLabel, systemImage: "timer")
-                        .help("Processing — from the end of recording to the finished transcript")
+                        .help("Processing: from the end of recording to the finished transcript")
                         .accessibilityLabel("Processing time \(processingLabel)")
                 }
                 if let micDisconnectLabel {

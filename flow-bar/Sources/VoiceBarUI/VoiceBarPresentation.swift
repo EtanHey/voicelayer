@@ -565,13 +565,13 @@ public enum VoiceBarPresentation {
         case .disconnected:
             "Disconnected"
         case .speaking:
-            "Speaking..."
+            "Speaking…"
         case .recording:
             recordingContent(hotkeyPhase: hotkeyPhase).statusText
         case .transcribing:
             {
                 let trimmed = transcribingStatusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return trimmed.isEmpty ? "Transcribing..." : trimmed
+                return trimmed.isEmpty ? "Transcribing…" : trimmed
             }()
         case .error:
             errorStatusText(errorMessage)

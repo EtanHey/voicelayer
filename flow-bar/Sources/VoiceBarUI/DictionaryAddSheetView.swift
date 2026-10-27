@@ -23,7 +23,7 @@ public struct DictionaryAddSheetView: View {
         case misheard
     }
 
-    static let existingTermHint = "Already in your dictionary — add a misheard spelling"
+    static let existingTermHint = "Already in your dictionary. Add a misheard spelling instead."
 
     @State private var edit: DictionaryTermEdit
     @FocusState private var focusedField: Field?

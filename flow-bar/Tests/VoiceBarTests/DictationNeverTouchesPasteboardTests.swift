@@ -90,7 +90,7 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
             harness.dictate("all words stay recoverable")
             XCTAssertEqual(attempts, 1, bundle)
             XCTAssertEqual(harness.state.latestDictationInsertionStatus, .failed, bundle)
-            XCTAssertEqual(harness.state.confirmationText, "Paste failed — click input and press Shift+F5", bundle)
+            XCTAssertEqual(harness.state.confirmationText, "Paste failed. Click the text field and press Shift+F5.", bundle)
             XCTAssertEqual(harness.state.latestReusableTranscript, "all words stay recoverable", bundle)
             XCTAssertEqual(harness.pasteboardWrites, [], bundle)
             XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", bundle)

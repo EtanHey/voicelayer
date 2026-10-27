@@ -151,7 +151,7 @@ final class SettingsHistoryTimingTests: XCTestCase {
 
         XCTAssertTrue(stats.contains("part.spokenDurationLabel"))
         XCTAssertTrue(stats.contains("part.processingLabel"))
-        XCTAssertTrue(stats.contains("≈"), "the spoken tooltip names the estimate")
+        XCTAssertTrue(stats.contains("Spoken: speech time without pauses, estimated"), "the spoken tooltip names the estimate")
         XCTAssertTrue(stats.contains(".accessibilityLabel(\"Spoken length about"))
         XCTAssertTrue(stats.contains(".accessibilityLabel(\"Processing time"))
     }

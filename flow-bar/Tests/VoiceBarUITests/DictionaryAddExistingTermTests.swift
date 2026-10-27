@@ -180,7 +180,7 @@ final class DictionaryAddExistingTermTests: XCTestCase {
     }
 
     func testTheHintShowsForAMatchOrAnOpenedTermOnly() {
-        let hint = "Already in your dictionary — add a misheard spelling"
+        let hint = "Already in your dictionary. Add a misheard spelling instead."
         XCTAssertEqual(DictionaryAddSheetView.existingTermHint, hint)
         XCTAssertTrue(DictionaryAddSheetView.showsExistingTermHint(
             for: DictionaryTermEdit(correct: "quillo"), existingEntries: existing
