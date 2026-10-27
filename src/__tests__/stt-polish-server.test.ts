@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import {
   ensureSTTPolishServer,
   onSTTPolishServerStatus,
@@ -64,6 +64,12 @@ describe("stt-polish-server", () => {
     resetSTTPolishServerManagerForTests();
     let spawns = 0;
     let alive = true;
+    let now = 0;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const sleeps: number[] = [];
+    const exitGate = Promise.withResolvers<void>();
+    let completed = false;
+    let pending: ReturnType<typeof ensureSTTPolishServer> | undefined;
     const options = {
       failureKind,
       findBinary: () => "/tmp/mlx_lm.server",
@@ -71,17 +77,37 @@ describe("stt-polish-server", () => {
       isProcessAlive: () => alive,
       findPortOwnerPids: () => [],
       spawn: () => { spawns++; return { pid: 456, kill: () => {} }; },
-      startupTimeoutMs: 1, stopExitTimeoutMs: 1, sleep: async () => {}, appendEvent: () => {}, log: () => {},
+      startupTimeoutMs: 1, stopExitTimeoutMs: 1,
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+        if (ms < 500) await exitGate.promise;
+        now += ms;
+      },
+      appendEvent: () => {}, log: () => {},
     };
-    for (let i = 0; i < 3; i++) recoverDefaultSTTPolishServerAfterFailure({ QA_VOICE_STT_POLISH: "on" }, options);
-    await Bun.sleep(10);
-    expect(spawns).toBe(1);
-    expect(await ensureSTTPolishServer({ ...options, env: { QA_VOICE_STT_POLISH: "on" } })).toEqual({ status: "starting", pid: 456 });
-    expect(spawns).toBe(1);
-    alive = false;
-    await ensureSTTPolishServer({ ...options, env: { QA_VOICE_STT_POLISH: "on" } });
-    expect(spawns).toBe(2);
-    resetSTTPolishServerManagerForTests();
+    try {
+      for (let i = 0; i < 3; i++) recoverDefaultSTTPolishServerAfterFailure({ QA_VOICE_STT_POLISH: "on" }, options);
+      pending = ensureSTTPolishServer({ ...options, env: { QA_VOICE_STT_POLISH: "on" } });
+      void pending.then(() => { completed = true; });
+      // Drain the async probes without advancing time or releasing exit escalation.
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(sleeps).toEqual([500, 1]);
+      expect(completed).toBe(false);
+      expect(spawns).toBe(1);
+      exitGate.resolve();
+      expect(await pending).toEqual({ status: "timeout" });
+      expect(await ensureSTTPolishServer({ ...options, env: { QA_VOICE_STT_POLISH: "on" } })).toEqual({ status: "starting", pid: 456 });
+      expect(spawns).toBe(1);
+      alive = false;
+      await ensureSTTPolishServer({ ...options, env: { QA_VOICE_STT_POLISH: "on" } });
+      expect(spawns).toBe(2);
+    } finally {
+      exitGate.resolve();
+      alive = false;
+      await pending;
+      clock.mockRestore();
+      resetSTTPolishServerManagerForTests();
+    }
   });
 
   it("retains a managed pid after SIGTERM until its exit is observed", async () => {
