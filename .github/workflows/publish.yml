@@ -64,7 +64,16 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install daemon test dependencies
+        run: python3 -m pip install -r ../workflow-tools/tests/requirements-tts-daemon.txt
+
       - name: Run tests
+        env:
+          VOICELAYER_REQUIRE_TTS_DAEMON_DEPS: '1'
         run: bun test
 
       - name: Type check

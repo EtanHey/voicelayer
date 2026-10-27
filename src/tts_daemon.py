@@ -23,8 +23,10 @@ Usage:
 # TypeScript side calls it over HTTP (src/tts/qwen3.ts).
 
 import gc
+import asyncio
 import json
 import threading
+from functools import wraps
 from contextlib import asynccontextmanager, contextmanager
 from concurrent.futures import ThreadPoolExecutor
 
@@ -49,6 +51,59 @@ DEFAULT_AUTH_TOKEN_FILE = Path.home() / ".voicelayer" / "daemon.secret"
 DEFAULT_VOICES_DIR = Path.home() / ".voicelayer" / "voices"
 DEFAULT_PORT = 8880
 MAX_REFERENCE_WAV_BYTES = 5 * 1024 * 1024  # 24kHz mono PCM WAV, comfortably >60s
+
+
+class SynthesisCancelled(BaseException):
+    pass
+
+
+def check_cancelled(cancelled):
+    if cancelled.is_set():
+        raise SynthesisCancelled("Synthesis client disconnected")
+
+
+@contextmanager
+def cancellable_generation(model, cancelled):
+    originals = {}
+
+    def checked_step(step):
+        @wraps(step)
+        def run(*args, **kwargs):
+            check_cancelled(cancelled)
+            result = step(*args, **kwargs)
+            check_cancelled(cancelled)
+            return result
+        return run
+
+    def checked_segments(generate):
+        @wraps(generate)
+        def run(*args, **kwargs):
+            check_cancelled(cancelled)
+            segments = generate(*args, **kwargs)
+            try:
+                for segment in segments:
+                    check_cancelled(cancelled)
+                    yield segment
+                    check_cancelled(cancelled)
+            finally:
+                segments.close()
+        return run
+
+    try:
+        for name, wrap in (("_sample_token", checked_step), ("generate", checked_segments)):
+            method = getattr(model, name, None)
+            if callable(method):
+                originals[name] = (name in vars(model), method)
+                setattr(model, name, wrap(method))
+        check_cancelled(cancelled)
+        yield
+        check_cancelled(cancelled)
+    finally:
+        for name, (was_instance_attribute, method) in originals.items():
+            if was_instance_attribute:
+                setattr(model, name, method)
+            else:
+                delattr(model, name)
 
 
 def resolve_auth_token_file(token_file: str | None = None) -> Path:
@@ -405,15 +460,36 @@ def create_app(
             )
 
     @app.post("/synthesize", response_model=SynthesizeResponse)
-    def synthesize(req: SynthesizeRequest, request: Request):
+    async def synthesize(req: SynthesizeRequest, request: Request):
         guard_request(request)
         if not req.text.strip():
             raise HTTPException(400, "text must not be empty")
-        return model_executor.submit(synthesize_resident, req, request).result()
+        cancelled = threading.Event()
+        future = asyncio.wrap_future(model_executor.submit(synthesize_resident, req, request, cancelled))
+        try:
+            while not future.done():
+                if await request.is_disconnected():
+                    raise SynthesisCancelled("Synthesis client disconnected")
+                await asyncio.wait({future}, timeout=0.025)
+            return await future
+        except SynthesisCancelled as exc:
+            raise HTTPException(499, str(exc)) from exc
+        finally:
+            cancelled.set()
+            future.cancel()
 
-    def synthesize_resident(req, request):
+    def synthesize_resident(req, request, cancelled):
+        check_cancelled(cancelled)
         with resident_model():
-            return synthesize_loaded(req, request)
+            try:
+                check_cancelled(cancelled)
+                with cancellable_generation(model, cancelled):
+                    return synthesize_loaded(req, request)
+            except SynthesisCancelled:
+                gc.collect()
+                if "mlx.core" in sys.modules:
+                    sys.modules["mlx.core"].clear_cache()
+                raise
 
     def synthesize_loaded(req: SynthesizeRequest, request: Request):
         """Synthesize speech using a bearer-authenticated WAV under ~/.voicelayer/voices/."""
