@@ -1,5 +1,5 @@
 {
-  "sync_sha": "faff43942a39e207bff02161a1eb60ee7e574c3e",
+  "sync_sha": "9c20288a56a4ae2ac3cc8d9dfefa20c80fc6a3c9",
   "predecessor": "TLA3-SpeechQueue/SpeechQueue_verify.tla at f88622f17dacd7cdcaebf2a00aa8395d6c774bd7 (previously docs.local only)",
   "scope": "Refines the predecessor's QUEUE1 OptF5Different, NextButton, Stop, RecordStart and stale-delivery actions against the implemented selection queue. Does not port its priority-player abstraction.",
   "bounds": { "unique_requests": 4, "pending_limit": 2, "steps": 8, "production_pending_limit": 10 },
@@ -30,5 +30,15 @@
     "legal_relation": [4, 10],
     "excluded": "producer route selection, persistence, failed write retries, reason/timing projection, recovery identity"
   },
-  "excluded": ["Swift selection capture and dedupe", "duplicate request IDs", "priority player and generations", "Pause/Play", "speaker teardown", "preparation leases", "start exceptions", "archive writes and PID recovery", "replay formatting", "liveness"]
+  "excluded": ["Swift capture lifecycle and identity computation beyond the admission projection", "duplicate request IDs", "priority player and generations", "Pause/Play", "speaker teardown", "preparation leases", "start exceptions", "archive writes and PID recovery", "replay formatting", "liveness"],
+  "admission": {
+    "source": "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+    "bounds": {"text_classes": 3, "latest_playing_earlier_queued": "each absent or one of three classes", "nonempty_inputs": 3, "snapshots_checked": 192},
+    "actions": {"Init": "model instrumentation only", "Snapshot": "arbitrary known-text snapshot, not a claim of lifecycle reachability", "Admit": [1262, 1282], "Next": "union of Snapshot and Admit"},
+    "source_context": {"replacing": [1218, 1221], "comparison": [1262, 1279], "stop_effect": [1118, 1135], "fresh_request": [1303, 1327], "receipt": [2398, 2408]},
+    "conformance": "admission_source.py parses the actual Stop Boolean guard and checks all model decision snapshots; identity flags are projected, not executed Swift",
+    "assumptions": "successful nonempty selection capture; connected, idle hotkey, no concurrent receipt/capture; canonical known text/hash classes agree",
+    "excluded": ["capture lifecycle", "normalization/hash implementation", "unknown external text/status fallback", "natural completion during capture", "clipboard", "queue capacity", "macOS execution"],
+    "variants": {"AdmissionFinding": "current-code finding: nonempty duplicate emits Stop", "AdmissionProposed": "future distinct-request policy only; not a product fix"}
+  }
 }

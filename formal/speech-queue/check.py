@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from admission_source import check_admission
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = ROOT / "formal/speech-queue"
@@ -12,7 +13,8 @@ OUT = ROOT / ".build.noindex/formal-speech-queue"
 OUT.mkdir(parents=True, exist_ok=True)
 RUN = Path(tempfile.mkdtemp(prefix="run-", dir=OUT))
 EXPECTED = {"Current": None, "StaleNext": "StaleCannotAdvance", "StopLeaves": "StopClearsQueues",
-            "History": None, "MutableTerminal": "FirstAcceptedTerminalImmutable"}
+            "History": None, "MutableTerminal": "FirstAcceptedTerminalImmutable",
+            "AdmissionCurrent": None, "AdmissionFinding": "NonemptySelectionDoesNotStop", "AdmissionProposed": None}
 configs = sorted(SPEC.glob("*.cfg"))
 assert {p.stem for p in configs} == set(EXPECTED), "Every config needs an explicit expected result"
 print(f"Evidence: {RUN}", flush=True)
@@ -22,9 +24,9 @@ for config in configs:
            "-metadir", str(RUN / name), "-config", str(config)]
     if EXPECTED[name] is None:
         cmd += ["-dump", "dot,actionlabels", str(RUN / f"{name}.dot")]
-    module = "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
-    run = subprocess.run(cmd + [str(SPEC / f"{module}.tla")], cwd=ROOT,
-                         env={**os.environ, "JAVA_TOOL_OPTIONS": "-Xmx512m"}, capture_output=True, text=True, timeout=90)
+    module = "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
+    run = subprocess.run(["timeout", "-s", "KILL", "90", *cmd, str(SPEC / f"{module}.tla")], cwd=ROOT,
+                         env={**os.environ, "JAVA_TOOL_OPTIONS": "-Xmx512m"}, capture_output=True, text=True)
     output = run.stdout + run.stderr
     (RUN / f"{name}.log").write_text(output)
     invariant = EXPECTED[name]
@@ -35,6 +37,13 @@ for config in configs:
         raise SystemExit(f"Unexpected result for {name}:\n{output}")
     counts = re.search(r"\d+ states generated, \d+ distinct states found", output)
     print(f"{name}: {'PASS' if not invariant else 'EXPECTED violation ' + invariant}; {counts[0] if counts else 'no counts'}", flush=True)
+
+admission_nodes = {}
+for line in (RUN / "AdmissionCurrent.dot").read_text().splitlines():
+    node = re.match(r'(-?\d+) \[label="((?:\\.|[^"\\])*)"', line)
+    if node:
+        admission_nodes[node[1]] = json.loads('"' + node[2] + '"')
+check_admission(admission_nodes)
 
 def graph(name, event_pattern, parse_event):
     nodes, edges = {}, []
@@ -88,4 +97,4 @@ run = subprocess.run(["timeout", "-s", "KILL", "900", "bun", "test", "src/__test
 print(run.stdout + run.stderr, end="", flush=True)
 if run.returncode:
     raise SystemExit(run.returncode)
-print("PASS: both source conformance checks; three expected counterexamples")
+print("PASS: queue/History runtime conformance, admission source projection; four expected counterexamples")
