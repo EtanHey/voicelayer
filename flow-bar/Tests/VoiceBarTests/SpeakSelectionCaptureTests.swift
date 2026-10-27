@@ -49,7 +49,9 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             seed(board)
             let original = contents(board)
             var copies = 0
-            let capture = makeCapture(readAXSelection: { axText }, pasteboard: board, postCopy: {
+            var ax = clipboardFocus()
+            ax.frontmostApp = { .init(pid: 42, startTime: 1) }
+            let capture = makeCapture(focusAX: ax, readAXSelection: { axText }, pasteboard: board, postCopy: {
                 copies += 1
                 board.clearContents()
                 board.setString(copied, forType: .string)
@@ -65,6 +67,63 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             }
             wait(for: [done], timeout: 2)
         }
+    }
+
+    func testSpacelessComparisonKeepsAXOnEmptyOrTimedOutCopyOnly() {
+        let text = String(repeating: "a1b2", count: 8)
+        for bundle in ["com.example.editor", "net.imput.helium", "com.t3tools.t3code"] {
+            for outcome in ["timeout", "empty", "nonstring", "copyFailure"] {
+                let board = NSPasteboard.withUniqueName()
+                defer { board.releaseGlobally() }
+                seed(board)
+                let original = contents(board)
+                var ax = clipboardFocus()
+                ax.frontmostApp = { .init(pid: 42, startTime: 1) }
+                ax.bundleIdentifier = { _ in bundle }
+                var copies = 0
+                let capture = makeCapture(focusAX: ax, readAXSelection: { text }, pasteboard: board, postCopy: {
+                    copies += 1
+                    if outcome == "empty" || outcome == "nonstring" {
+                        board.clearContents()
+                        if outcome == "empty" { board.setString("", forType: .string) }
+                        else { board.setData(Data([0, 255]), forType: .png) }
+                    }
+                    return outcome != "copyFailure"
+                })
+                let done = expectation(description: "\(bundle) \(outcome)")
+                capture.capture { result in
+                    let keepsAX = bundle == "com.example.editor" && outcome != "copyFailure"
+                    XCTAssertEqual(result.outcome, keepsAX ? .completed : outcome == "timeout" ? .copyTimedOut
+                        : outcome == "copyFailure" ? .copyFailed : .copyEmpty)
+                    XCTAssertEqual(result.text, keepsAX ? text : nil)
+                    XCTAssertEqual(result.path, keepsAX ? .ax : .copy)
+                    XCTAssertEqual(copies, 1)
+                    XCTAssertEqual(self.contents(board), original)
+                    done.fulfill()
+                }
+                wait(for: [done], timeout: 2)
+            }
+        }
+    }
+
+    func testSpacelessAXWithoutPinnedAppNeverCopiesOrTouchesClipboard() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        seed(board)
+        let original = contents(board), generation = board.changeCount
+        let text = String(repeating: "a1b2", count: 8)
+        let capture = makeCapture(snapshotReader: { XCTFail("AX must not snapshot"); return nil },
+            readAXSelection: { text }, pasteboard: board, postCopy: { XCTFail("Copy must be pinned"); return false })
+        let done = expectation(description: "AX without source identity")
+        capture.capture { result in
+            XCTAssertEqual(result.outcome, .completed)
+            XCTAssertEqual(result.text, text)
+            XCTAssertEqual(result.path, .ax)
+            XCTAssertEqual(board.changeCount, generation)
+            XCTAssertEqual(self.contents(board), original)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
     }
 
     func testSelectionCapturePathTravelsWithSpeechCommand() {

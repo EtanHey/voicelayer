@@ -44,7 +44,7 @@ public struct SelectionCaptureResult: Equatable {
     /// AXManualAccessibility recovery for a Chromium/Electron app whose AX tree was still off.
     public enum AXEnable: String { case attempted, set, failed }
 
-    public let outcome: Outcome
+    public private(set) var outcome: Outcome
     public private(set) var text: String?
     public private(set) var axRead: AXRead = .notAttempted
     public private(set) var path: Path = .unknown
@@ -77,6 +77,7 @@ public struct SelectionCaptureResult: Equatable {
 
     public func usingAXText(_ text: String) -> Self {
         var result = self
+        result.outcome = .completed
         result.text = text
         result.path = .ax
         return result

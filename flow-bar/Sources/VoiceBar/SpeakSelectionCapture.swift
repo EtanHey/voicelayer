@@ -197,7 +197,8 @@ final class SpeakSelectionCapture {
             let sourceApp = self.frontmostApp()
             let prefersCopy = sourceApp.flatMap { self.bundleIdentifier?($0) }.map(Self.prefersCopy) ?? false
             let selectedText = preflight.unreadableFocusAllowsCopy ? nil : self.readAXSelection()
-            let comparesWordBoundaries = !prefersCopy && selectedText.map { Self.longestWordRun($0) >= 24 } == true
+            let comparesWordBoundaries = sourceApp != nil && !prefersCopy
+                && selectedText.map { Self.longestWordRun($0) >= 24 } == true
             if let text = selectedText, !text.isEmpty, !prefersCopy, !comparesWordBoundaries {
                 Self.onMain { complete(.completed(text).observed(axRead: .text, path: .ax)) }
             } else {
@@ -208,10 +209,17 @@ final class SpeakSelectionCapture {
                     self.captureUsingPasteboard(copyExemptApp: preflight.copyExemptApp,
                                                 intendedCopyApp: prefersCopy || comparesWordBoundaries ? sourceApp : nil) { result in
                         var observed = result.observed(axRead: axRead, path: .copy)
-                        if comparesWordBoundaries, result.outcome == .completed,
-                           let selectedText, let copiedText = result.text,
-                           !Self.copyRestoresWordBoundaries(ax: selectedText, copy: copiedText) {
-                            observed = observed.usingAXText(selectedText)
+                        if comparesWordBoundaries, let selectedText {
+                            switch result.outcome {
+                            case .copyEmpty, .copyTimedOut:
+                                observed = observed.usingAXText(selectedText)
+                            case .completed:
+                                if let copiedText = result.text,
+                                   !Self.copyRestoresWordBoundaries(ax: selectedText, copy: copiedText) {
+                                    observed = observed.usingAXText(selectedText)
+                                }
+                            default: break
+                            }
                         }
                         complete(observed)
                     }
@@ -220,11 +228,10 @@ final class SpeakSelectionCapture {
         }
     }
 
+    private static let t3BundleIdentifier = "com.t3tools.t3code"
+
     private static func prefersCopy(bundle: String) -> Bool {
-        bundle == "com.t3tools.t3code" || [
-            "net.imput.helium", "com.google.Chrome", "company.thebrowser.Browser",
-            "com.brave.Browser", "com.microsoft.edgemac", "org.chromium.Chromium",
-        ].contains { bundle == $0 || bundle.hasPrefix($0 + ".") }
+        bundle == t3BundleIdentifier || ChromiumFamilyApps.prefersCopy(bundleIdentifier: bundle)
     }
 
     private static func longestWordRun(_ text: String) -> Int {

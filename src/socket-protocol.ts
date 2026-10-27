@@ -787,14 +787,15 @@ export function parseCommand(line: string): SocketCommand | null {
         if (parsed.source !== undefined && (typeof parsed.source !== "string" || parsed.source.length > 256)) return null;
         if (parsed.text_hash !== undefined && (typeof parsed.text_hash !== "string" || !/^[a-f0-9]{64}$/.test(parsed.text_hash))) return null;
         if (parsed.queue !== undefined && typeof parsed.queue !== "boolean") return null;
-        if (parsed.capture_path !== undefined && parsed.capture_path !== "ax" && parsed.capture_path !== "copy") return null;
+        const capturePath = parsed.capture_path === "ax" || parsed.capture_path === "copy" ? parsed.capture_path : undefined;
+        if (parsed.capture_path !== undefined && capturePath === undefined) console.error("[socket-protocol] Ignoring unknown speak_text capture_path");
         return withCommandId<SpeakTextCommand>({
           cmd: "speak_text", text: parsed.text,
           ...(parsed.text_hash !== undefined ? { text_hash: parsed.text_hash } : {}),
           ...(parsed.profile !== undefined ? { profile: parsed.profile } : {}),
           ...(parsed.format !== undefined ? { format: parsed.format } : {}),
           ...(parsed.source !== undefined ? { source: parsed.source } : {}),
-          ...(parsed.capture_path !== undefined ? { capture_path: parsed.capture_path } : {}),
+          ...(capturePath !== undefined ? { capture_path: capturePath } : {}),
           ...(parsed.queue !== undefined ? { queue: parsed.queue } : {}),
         }, id);
       }

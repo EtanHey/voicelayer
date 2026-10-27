@@ -87,9 +87,16 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     expect(metadata(contexts[0]).capture_path).toBe(capture_path);
     expect(fs.readFileSync(join(contexts[0].path, "input.txt"), "utf8")).toBe(raw);
   });
-  it("rejects malformed capture provenance before archive creation", () => {
-    for (const capture_path of ["clipboard", "unknown", "COPY", null, 1, {}]) expect(incoming({ capture_path })).toBeNull();
-    expect(contexts).toHaveLength(0);
+  for (const capture_path of ["ocr", "clipboard", "unknown", "COPY", null, 1, {}]) it(`drops unknown capture provenance while accepting speech: ${JSON.stringify(capture_path)}`, async () => {
+    const command = parseCommand(JSON.stringify({ cmd: "speak_text", text: raw, capture_path }));
+    expect(command).toMatchObject({ cmd: "speak_text", text: raw });
+    expect(command).not.toHaveProperty("capture_path");
+    expect(log).toHaveBeenCalledWith("[socket-protocol] Ignoring unknown speak_text capture_path");
+    expect(command && handleSocketCommand(command)).toMatchObject({ outcome: "accept" });
+    await flushSpeechArchives();
+    expect(contexts).toHaveLength(1);
+    expect(metadata(contexts[0])).not.toHaveProperty("capture_path");
+    expect(fs.readFileSync(join(contexts[0].path, "input.txt"), "utf8")).toBe(raw);
   });
   it("keeps capture provenance after lifecycle metadata is rewritten", () => {
     state.mockReturnValue("recording");
