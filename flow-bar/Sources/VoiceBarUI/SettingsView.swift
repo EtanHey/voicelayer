@@ -515,6 +515,7 @@ public struct SettingsView: View {
     @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
     private let speechHistoryRoot: URL
+    @State private var isSpeechHistoryLoading = true
     @State private var speechEntries: [SettingsSpeechHistoryEntry] = []
     @State private var selectedSpeechID: String?
     @State private var speechReload = SettingsSpeechHistoryReloadRequest()
@@ -1373,7 +1374,12 @@ public struct SettingsView: View {
                 Button("Refresh") { selectedSpeechID = nil; speechReload.refresh() }
             }.padding(.horizontal, 18).padding(.vertical, 10)
             Divider()
-            if speechEntries.isEmpty {
+            if speechEntries.isEmpty, isSpeechHistoryLoading {
+                VStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading speech history...").font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if speechEntries.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "speaker.wave.2").font(.system(size: 28)).foregroundStyle(.secondary)
                     Text("No speech yet").font(.headline)
@@ -1422,12 +1428,13 @@ public struct SettingsView: View {
             }
         }
         .task(id: speechReload.taskID) {
+            isSpeechHistoryLoading = true
             let limit = speechReload.limit
             let root = speechHistoryRoot
             let debounce = speechReload.takeDebounce()
             await SettingsSpeechHistoryReload.reload(debounce: debounce, load: {
                 SettingsSpeechHistoryArchive.load(from: root, limit: limit)
-            }, apply: { speechEntries = $0 })
+            }, apply: { speechEntries = $0; isSpeechHistoryLoading = false })
         }
         .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
             speechReload.archiveChanged()

@@ -19,6 +19,7 @@ function indexPath(suffix: string): string {
   }
   return path;
 }
+export const speechHistoryIndex = () => indexPath("speech-history-v1");
 export const speechOpenIndex = () => indexPath("speech-open");
 export const speechPendingIndex = () => indexPath("speech-pending");
 

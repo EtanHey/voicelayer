@@ -1,3 +1,4 @@
+import { indexSpeechHistory } from "./speech-history-index";
 import { beginSpeechReceipt, finishSpeechReceipt, indexOpenSpeech } from "./speech-open-index";
 import { createHash } from "crypto";
 import * as fs from "fs";
@@ -168,6 +169,7 @@ export function createSpeakReceipt(
     beginSpeechReceipt(id);
     writeReceiptFile(path, "metadata.json", encoded);
     indexOpenSpeech(id);
+    indexSpeechHistory(id);
     finishSpeechReceipt(id, process.pid);
     return { kind: "created", context: { ...partial, metadata } };
   } catch (error) {

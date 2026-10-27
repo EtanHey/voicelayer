@@ -1,3 +1,4 @@
+import { indexSpeechHistory } from "./speech-history-index";
 import { unindexSpeech } from "./speech-open-index";
 import { UnsafeSpeechDirectory } from "./speech-archive-directory";
 import { initialSpeech, speechSchema, speechReasonSchema, transitionSpeech, type SpeechState, type SpeechRecord } from "./speech-state";
@@ -137,6 +138,7 @@ function persist(entry: string, m: SpeakStoreMetadata) {
       ? audio.reduce((sum, a) => sum + a!.duration_ms!, 0) : null;
   }
   m.updated_at = new Date().toISOString(); publish(entry, "metadata.json", encode(m));
+  indexSpeechHistory(m.id);
   if (terminal.has(m.status)) unindexSpeech(m.id);
   return m;
 }
@@ -355,6 +357,7 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
       if (audioExists) sync(join(entry, "audio"));
       if (before.equals(encode(m))) {
         sync(entry);
+        indexSpeechHistory(m.id);
         if (terminal.has(m.status)) unindexSpeech(m.id);
         return m;
       }

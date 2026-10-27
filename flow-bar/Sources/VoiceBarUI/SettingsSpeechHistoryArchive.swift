@@ -39,13 +39,21 @@ struct SettingsSpeechHistoryEntry: Identifiable, Equatable, Sendable {
     }
 }
 
-/// Read-only projection of the persisted speak store. Never recovers or rewrites live records.
 enum SettingsSpeechHistoryArchive {
-    static func load(from root: URL = SettingsHistoryArchive.defaultRoot, limit: Int = 100, now: Date = Date()) -> [SettingsSpeechHistoryEntry] {
-        SettingsArchiveScanner.scan(root: root, limit: limit) { directory, day, date in
-            loadEntry(from: directory, dayKey: day, fallbackDate: date, now: now)
-        }.days
-            .flatMap(\.entries).sorted { $0.createdAt > $1.createdAt }
+    static func load(from root: URL = SettingsHistoryArchive.defaultRoot, limit: Int = 100, now: Date = Date(), metadataRead: (URL) -> Void = { _ in }) -> [SettingsSpeechHistoryEntry] {
+        guard limit > 0, !Task.isCancelled else { return [] }
+        var entries: [SettingsSpeechHistoryEntry] = []
+        for directory in SettingsSpeechHistoryIndex.candidates(root: root, metadataRead: metadataRead) {
+            guard !Task.isCancelled else { return [] }
+            let day = String(directory.lastPathComponent.prefix(10))
+            guard let date = SettingsArchiveScanner.parseDayKey(day) else { continue }
+            metadataRead(directory.appendingPathComponent("metadata.json"))
+            if let entry = loadEntry(from: directory, dayKey: day, fallbackDate: date, now: now) {
+                entries.append(entry)
+                if entries.count == limit { break }
+            }
+        }
+        return entries.sorted { $0.createdAt > $1.createdAt }
     }
 
     private struct Metadata: Decodable {
@@ -142,10 +150,6 @@ struct SettingsSpeechHistoryReloadRequest: Equatable {
 /// One Speech history load, run from the scope's `.task(id:)`. Returns nil when that task was
 /// cancelled (a newer load replaced it), so stale entries are never applied.
 ///
-/// AIDEV-NOTE: Same debounce as `loadHistory`/`loadAskHistory`: an archive-change reload waits 300 ms
-/// inside the cancellable task, so a burst of notifications restarts the wait and scans once. The scan
-/// runs detached off the main actor; the cancellation handler forwards cancellation to it, and
-/// `SettingsArchiveScanner.scan` checks `Task.isCancelled` per day and per entry.
 enum SettingsSpeechHistoryReload {
     static func run(
         debounce: Bool,
