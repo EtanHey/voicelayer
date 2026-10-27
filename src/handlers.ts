@@ -1,4 +1,5 @@
 import { formatVoiceAskTurnResult, type VoiceAskTurnOutcome, type VoiceAskTimeoutStage, type McpTextResult } from "./voice-turn-result";
+import { parseVoiceAskIngress } from "./voice-ask-admission";
 import { finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
@@ -68,7 +69,6 @@ import { sanitizeTtsText } from "./sanitize";
 import {
   AnnounceArgsSchema,
   ConverseArgsSchema,
-  VoiceAskSchema,
   ThinkArgsSchema,
   ReplayArgsSchema,
   ToggleArgsSchema,
@@ -388,20 +388,10 @@ export async function handleVoiceAsk(
   args: unknown,
   context?: VoiceToolContext,
 ): Promise<McpResult> {
-  if (!args || typeof args !== "object") {
-    return textResult("Missing arguments", true);
-  }
-  const a = args as Record<string, unknown>;
-  const originalMessage = typeof a.message === "string" ? a.message : "";
-  const parsed = VoiceAskSchema.safeParse(args);
-  if (!parsed.success) {
-    return textResult(
-      "Invalid voice_ask arguments: provide exactly one mode — {message: ...} or {retranscribe_archive_id: ...}.",
-      true,
-    );
-  }
-  const retranscribeArchiveId = parsed.data.retranscribe_archive_id;
-  if (typeof retranscribeArchiveId === "string") {
+  const ingress = parseVoiceAskIngress(args);
+  if (ingress.kind === "refused") return ingress.result;
+  if (ingress.kind === "retranscribe") {
+    const retranscribeArchiveId = ingress.input.retranscribe_archive_id;
     try {
       const currentState = getEffectiveRecordingState();
       if (currentState !== "idle") {
@@ -436,7 +426,8 @@ export async function handleVoiceAsk(
       );
     }
   }
-  if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
+  const { input: parsed, originalMessage } = ingress;
+  if (ingress.legacyPressToTalk) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
   // Bound raw archive input separately from the trimmed prompt-duration policy.
@@ -446,7 +437,7 @@ export async function handleVoiceAsk(
   const receipt = createSpeakReceipt({
     input: originalMessage, request_id: randomUUID(), request_source: "ask_prompt",
     connection: context?.connection ?? null, format: null, blocking: true,
-    requested: { mode: "converse", profile: null, engine: null, voice: parsed.data.voice ?? null, rate: null },
+    requested: { mode: "converse", profile: null, engine: null, voice: parsed.voice ?? null, rate: null },
     build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
   });
   if (receipt.kind === "failed") {
@@ -454,7 +445,7 @@ export async function handleVoiceAsk(
   }
   const archiveContext = receipt.context;
   const refusal = refuseOverlongMessage(
-    parsed.data.message,
+    parsed.message,
     "voice_ask",
   );
   if (refusal) {
@@ -482,11 +473,11 @@ export async function handleVoiceAsk(
   try {
     return await handleConverse(
       {
-        message: parsed.data.message,
-        voice: parsed.data.voice,
-        timeout_seconds: parsed.data.timeout_seconds,
-        silence_mode: parsed.data.silence_mode,
-        push_to_end: parsed.data.push_to_end,
+        message: parsed.message,
+        voice: parsed.voice,
+        timeout_seconds: parsed.timeout_seconds,
+        silence_mode: parsed.silence_mode,
+        push_to_end: parsed.push_to_end,
       },
       context,
       operationLifecycle,

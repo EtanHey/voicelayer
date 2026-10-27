@@ -18,6 +18,9 @@ import { parseCommand } from "../socket-protocol";
 import { createVoiceToolContext, type McpNotification } from "../mcp-notifications";
 import { hasActiveVoiceOperation, reserveArchiveRetranscription } from "../voice-operation-reservation";
 import { TTS_DISABLED_FILE } from "../paths";
+import { parseVoiceAskIngress } from "../voice-ask-admission";
+import { VoiceAskSchema, ConverseArgsSchema } from "../schemas/mcp-inputs";
+import * as operations from "../voice-operation-reservation";
 
 const raw = " \t<speak>**Bun**\n\nשלום🙂 fu… no, full</speak>\r\n  ";
 const sample = "Here is a sample of this voice. Clear speech, at your preferred pace.";
@@ -190,11 +193,40 @@ describe("Ask and Preview real receipt ingress (canonical preload; synthetic spe
     expect(capture).toHaveBeenCalledTimes(1); expect(speak).toHaveBeenCalledTimes(1);
     expect(result.content[0].text).toContain(failure === "timeout" ? "timeout after 30s" : "synthetic recording failed");
   });
+  it("pure parser does no receipt, warning, booking, reservation or voice work", () => {
+    const reserve = spyOn(operations, "reserveStandardVoiceOperation"); spies.push(reserve);
+    for (const args of [null, { message: raw, press_to_talk: false }, { message: raw, press_to_talk: undefined },
+      { message: " " }, { retranscribe_archive_id: "2026-10-25T00-00-00-000Z-aabbccdd" }]) parseVoiceAskIngress(args);
+    expect(archive.createSpeakReceipt).not.toHaveBeenCalled(); expect(log).not.toHaveBeenCalled();
+    expect(bookingSpy).not.toHaveBeenCalled(); expect(reserve).not.toHaveBeenCalled();
+    expect(speak).not.toHaveBeenCalled(); expect(capture).not.toHaveBeenCalled();
+    expect(contexts).toEqual([]);
+  });
+  for (const legacy of [false, undefined]) it(`valid normal Ask alone warns for own legacy flag ${legacy}`, async () => {
+    const publicParse = spyOn(VoiceAskSchema, "safeParse"), internalParse = spyOn(ConverseArgsSchema, "safeParse");
+    spies.push(publicParse, internalParse);
+    const result = await handleVoiceAsk({ message: raw, press_to_talk: legacy });
+    expect(result.isError).not.toBe(true);
+    expect(log.mock.calls.filter(call => String(call[0]).includes("Deprecated press_to_talk"))).toEqual([
+      ["[voicelayer] Deprecated press_to_talk ignored; use push_to_end (caller: mcp.voice_ask)."],
+    ]);
+    expect(publicParse).toHaveBeenCalledTimes(1); expect(internalParse).toHaveBeenCalledTimes(1);
+    expect(speak).toHaveBeenCalledTimes(1); expect(capture).toHaveBeenCalledTimes(1);
+  });
   it("invalid Ask and silent retranscription create no prompt receipt; direct Converse stays compatible", async () => {
-    for (const args of [null, {}, { message: 1 }, { message: " \n" }, { message: raw, timeout_seconds: 1 }])
-      expect((await handleVoiceAsk(args)).isError).toBe(true);
+    const id = "2026-10-25T00-00-00-000Z-aabbccdd";
+    for (const args of [null, {}, { message: 1 }, { message: " \n", press_to_talk: false },
+      { message: raw, timeout_seconds: 1 }, { message: raw, retranscribe_archive_id: id },
+      { retranscribe_archive_id: id, press_to_talk: undefined }]) {
+      expect(await handleVoiceAsk(args)).toEqual({ content: [{ type: "text", text: args === null ? "Missing arguments" :
+        "Invalid voice_ask arguments: provide exactly one mode — {message: ...} or {retranscribe_archive_id: ...}." }], isError: true });
+    }
     const retranscribe = spyOn(input, "retranscribeVoiceAskArchive").mockResolvedValue("synthetic recovered answer"); spies.push(retranscribe);
-    await handleVoiceAsk({ retranscribe_archive_id: "2026-10-25T00-00-00-000Z-aabbccdd" });
+    const recovered = await handleVoiceAsk({ retranscribe_archive_id: id });
+    expect(recovered.isError).toBeUndefined(); expect(recovered.content[0].text).toContain("synthetic recovered answer");
+    expect(retranscribe).toHaveBeenCalledTimes(1); expect(retranscribe).toHaveBeenCalledWith(id, { delivery: "return-only" });
+    expect(log.mock.calls.filter(call => String(call[0]).includes("Deprecated press_to_talk"))).toEqual([]);
+    expect(capture).not.toHaveBeenCalled();
     expect(contexts).toEqual([]); expect(speak).not.toHaveBeenCalled();
     speak.mockResolvedValue({ displayText: "direct", engine: "edge-tts", voice: "en-US-JennyNeural",
       audioArtifact: { bytes: new Uint8Array([1]), format: "mp3" } });
