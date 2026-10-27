@@ -42,8 +42,9 @@ describe("Macroscope #562: delivered results are not retained by the scheduler",
     // Deliver one chunk past the ones checked: the newest delivery may still sit on this test's own stack.
     for (const index of [0, 1, 2, 3]) { const result = await clock.until(scheduler.chunk(index)); expect(result.length).toBeGreaterThan(0); }
     const delivered = p.segments.map((_, i) => i).filter((i) => i < p.chunks[2].end);
+    // Use an explicit timer task: Bun.sleep(0) leaves GC liveness runner-dependent.
     // WeakRef targets are only cleared after a real event-loop turn, not a microtask.
-    await Bun.sleep(0);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     for (let i = 0; i < 3; i++) { Bun.gc(true); await Promise.resolve(); }
     expect(delivered.filter((i) => refs.get(i)?.deref() !== undefined)).toEqual([]);
     await clock.until(scheduler.close());

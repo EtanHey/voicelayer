@@ -9,6 +9,7 @@ import * as launcher from "../voice-bar-launcher";
 import { handleVoiceAsk } from "../handlers";
 import { speakText, awaitCurrentPlayback, stopPlayback, loadHistory } from "../tts";
 import { releaseVoiceSession } from "../session-booking";
+import { flushSpeechArchives } from "../speech-archive-live";
 
 // Run only under the parent process guard. All orchestration above OS/provider
 // boundaries is real, including Ask's speak -> waitForInput -> archive/error flow.
@@ -70,6 +71,8 @@ import { releaseVoiceSession } from "../session-booking";
   });
   afterEach(async () => {
     stopPlayback(); await awaitCurrentPlayback(); releaseVoiceSession();
+    // Playback completion does not settle the archive worker. Reap its writes before the child exits.
+    await flushSpeechArchives();
     for (const spy of spies) spy.mockRestore();
     Bun.spawn = spawn; Bun.spawnSync = spawnSync;
   });
