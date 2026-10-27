@@ -49,9 +49,11 @@ Own ==
 NextButton(id) ==
   LET stale == id # q.current
       ignored == stale /\ Variant # "stale-next"
-      state == IF ignored THEN q ELSE Advance([q EXCEPT !.suspended = FALSE])
-  IN /\ Step(id + 8, state, IF ignored THEN "stale" ELSE IF q.pending = <<>> THEN "stopped" ELSE "advanced")
-     /\ staleChanged' = (staleChanged \/ (stale /\ ~ignored))
+      state == IF ignored THEN (IF Variant = "stale-clear" THEN Clear(q) ELSE q)
+               ELSE Advance([q EXCEPT !.suspended = FALSE])
+      answer == IF ignored THEN "stale" ELSE IF q.pending = <<>> THEN "stopped" ELSE "advanced"
+  IN /\ Step(id + 8, state, answer)
+     /\ staleChanged' = (staleChanged \/ (stale /\ (q' # q \/ result' # "stale")))
      /\ UNCHANGED issued
 Settled(id, outcome) ==
   LET ignored == id # q.current \/ q.suspended
