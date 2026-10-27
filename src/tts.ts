@@ -2563,7 +2563,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   longReads.set(id, handle);
   const signal = controller.signal;
   const policy = chunkSynthesisPolicy();
-  const prosodyRead = prosodyPlan ? createStructuredProsodyRead(prosodyPlan, profile, signal, policy, preparedStart) : undefined;
+  let prosodyRead: ReturnType<typeof createStructuredProsodyRead> | undefined;
   const prosodyChunk = async (displayChunk: string, index: number): Promise<PreparedChunk> => {
     const result = await prosodyRead!.chunk(index);
     const local = sliceProjection(prosody!.projection, prosody!.plan.chunks[index].read);
@@ -2588,6 +2588,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     if (signal.aborted) return;
     // A recording may have begun while the predecessor was settling.
     assertSpeakerClear();
+    prosodyRead = prosodyPlan ? createStructuredProsodyRead(prosodyPlan, profile, signal, policy, preparedStart) : undefined;
     // PROSODY: in-flight utterance requests are reaped, and never-delivered files removed, however the read ends.
     try { await runLongRead(texts, id, signal, {
       archiveContext: identity.archiveContext,

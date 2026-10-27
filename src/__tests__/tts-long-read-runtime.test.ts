@@ -25,6 +25,7 @@ import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
+import { PreparedReadStart } from "../tts/selection-read-preparation";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
@@ -1001,6 +1002,30 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
       const cloneProfile = { name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [],
         reference_clip: "", fallback: "jenny", created: "" };
+      it("S2 leaves prepared audio held until a predecessor finishes settling", async () => {
+        select("A", "Alpha single chunk."); await playerBarrier.at(0);
+        spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
+          kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
+          engineSource: "settings", rateSource: "settings",
+        }), spyOn(qwen, "loadProfile").mockReturnValue(cloneProfile),
+        spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+        const prepare = tts.prepareSelectionReadStart, ready = deferred<void>();
+        spies.push(spyOn(tts, "prepareSelectionReadStart").mockImplementation(async (...args) => {
+          const prepared = await prepare(...args); ready.resolve(); return prepared;
+        }));
+        select("B", "## Bravo heading\n\n1. Read the next item."); await ready.promise; await settle();
+        const take = spyOn(PreparedReadStart.prototype, "take"); spies.push(take);
+        holdPlayerExit = true;
+        try {
+          expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
+          await settle();
+          expect(players[0].killed).toBe(true);
+          expect(take).not.toHaveBeenCalled();
+          expect(players).toHaveLength(1);
+        } finally {
+          stopPlayback(); holdPlayerExit = false; players[0].exit.resolve(143); await awaitCurrentPlayback();
+        }
+      });
       for (const playing of [false, true]) for (const command of ["stop", "read_next"] as const)
       it(`S2 ${command} aborts clone prefetch while ${playing ? "playing" : "preparing"}`, async () => {
         const heading = playing ? "Choose the complete release verification record and read every saved result before deciding whether this implementation is ready for review" : "Choose";
