@@ -21,4 +21,6 @@ TypeOK == latest \in 0..3 /\ playing \in 0..3 /\ queued \in 0..3
           /\ selection \in 0..3 /\ stopped \in BOOLEAN /\ steps \in 0..2
 OnlyComparedIdentitiesStop == ~stopped \/ selection \in {latest, playing}
 NonemptySelectionDoesNotStop == ~stopped
+EveryQueuedMatchStops == steps # 2 \/ latest = 0 \/ playing = 0 \/ latest = playing
+                        \/ queued = 0 \/ queued \in {latest, playing} \/ selection # queued \/ stopped
 =============================================================================

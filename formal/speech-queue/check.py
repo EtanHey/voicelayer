@@ -14,7 +14,8 @@ OUT.mkdir(parents=True, exist_ok=True)
 RUN = Path(tempfile.mkdtemp(prefix="run-", dir=OUT))
 EXPECTED = {"Current": None, "StaleNext": "StaleCannotAdvance", "StopLeaves": "StopClearsQueues",
             "History": None, "MutableTerminal": "FirstAcceptedTerminalImmutable",
-            "AdmissionCurrent": None, "AdmissionFinding": "NonemptySelectionDoesNotStop", "AdmissionProposed": None}
+            "AdmissionCurrent": None, "AdmissionFinding": "NonemptySelectionDoesNotStop", "AdmissionProposed": None,
+            "AdmissionOlderMatch": "EveryQueuedMatchStops"}
 configs = sorted(SPEC.glob("*.cfg"))
 assert {p.stem for p in configs} == set(EXPECTED), "Every config needs an explicit expected result"
 print(f"Evidence: {RUN}", flush=True)
@@ -97,4 +98,4 @@ run = subprocess.run(["timeout", "-s", "KILL", "900", "bun", "test", "src/__test
 print(run.stdout + run.stderr, end="", flush=True)
 if run.returncode:
     raise SystemExit(run.returncode)
-print("PASS: queue/History runtime conformance, admission source projection; four expected counterexamples")
+print("PASS: queue/History runtime conformance, admission source projection; five expected counterexamples")

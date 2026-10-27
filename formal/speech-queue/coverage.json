@@ -39,6 +39,6 @@
     "conformance": "admission_source.py parses the actual Stop Boolean guard and checks all model decision snapshots; identity flags are projected, not executed Swift",
     "assumptions": "successful nonempty selection capture; connected, idle hotkey, no concurrent receipt/capture; canonical known text/hash classes agree",
     "excluded": ["capture lifecycle", "normalization/hash implementation", "unknown external text/status fallback", "natural completion during capture", "clipboard", "queue capacity", "macOS execution"],
-    "variants": {"AdmissionFinding": "current-code finding: nonempty duplicate emits Stop", "AdmissionProposed": "future distinct-request policy only; not a product fix"}
+    "variants": {"AdmissionFinding": "current-code finding: nonempty duplicate emits Stop", "AdmissionOlderMatch": "current-code finding: an older queued duplicate does not Stop", "AdmissionProposed": "unapproved distinct-request alternative pending Etan ruling; not a product fix"}
   }
 }
