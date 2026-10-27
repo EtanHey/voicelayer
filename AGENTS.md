@@ -193,7 +193,7 @@ Use `brain_search` before reading files. VoiceLayer history is indexed.
 - Keep session booking and ring buffer behavior stable (see `src/session-booking.ts`, `src/paths.ts`).
 - Tests live in `src/__tests__/`; run `bun test`.
 
-<!-- MCP-SERVERS: add new MCP server entries to .mcp.json — current servers: playwright, voicelayer-daemon (socat to /tmp/voicelayer-mcp.sock) -->
+<!-- MCP-SERVERS: add new MCP server entries to .mcp.json — current servers: playwright, voicelayer-daemon (reconnecting stdio bridge) -->
 ## Playwright MCP (browser automation)
 
 - `.mcp.json` config: `{ "mcpServers": { "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] } } }`
@@ -208,9 +208,9 @@ Use `brain_search` before reading files. VoiceLayer history is indexed.
   boots it out and deletes its plist, printing *"Retired. VoiceBar.app now owns the MCP daemon child
   process."* A second owner is the double-owner bug that took five commits to fix.
 - Singleton daemon on `/tmp/voicelayer-mcp.sock` — replaces per-session `voicelayer-mcp` spawning.
-- `.mcp.json` config: `{ "command": "voicelayer-mcp-bridge", "args": [] }`
-- The bridge keeps stdio open across daemon restarts and replays the MCP handshake before draining its bounded queue. Interrupted requests return an error and are never retried; execution may already have occurred. It only connects; VoiceBar owns daemon startup.
-- Socket overrides: `VOICELAYER_MCP_SOCKET_PATH`, then `QA_VOICE_MCP_SOCKET_PATH`. If the bridge binary is missing, migration retains socat as a fallback (without reconnect support).
+- `.mcp.json` config: `{ "command": "/absolute/path/to/bun", "args": ["/absolute/package/src/mcp-bridge.ts"] }`. Migration resolves and prints both paths; copy those exact values, never rely on client PATH or the bridge shebang.
+- The bridge keeps stdio open across daemon restarts and replays initialize, initialized, and the last acknowledged logging level before draining its bounded queue. The replacement daemon's initialize result is swallowed by design; the existing client retains its original capabilities/serverInfo. Interrupted requests return an error and are never retried; execution may already have occurred. It only connects; VoiceBar owns daemon startup.
+- Socket overrides: `VOICELAYER_MCP_SOCKET_PATH`, then `QA_VOICE_MCP_SOCKET_PATH`. Migration searches PATH, /opt/homebrew/bin, and ~/.bun/bin for bridge and Bun. If unavailable, existing bridge entries stay untouched; other seats retain an available socat fallback (without reconnect support). No available transport means no writes.
 - Migration: `bash scripts/migrate-to-daemon.sh` (migrates all repos under ~/Gits).
 
 ## Build artifacts and Spotlight

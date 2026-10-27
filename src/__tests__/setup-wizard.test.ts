@@ -9,18 +9,21 @@ import {
 } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+
 import {
   detectAgentClis,
   getSetupCommandPlan,
   getTccGrantSteps,
   loadRememberedAgent,
   rememberAgent,
-  resolveSocatCommand,
   resolveAgentConfigPath,
   runSetup,
   wireAgentMcpConfig,
   type AgentId,
 } from "../cli/setup";
+
+const bridgeScript = fileURLToPath(new URL("../mcp-bridge.ts", import.meta.url));
 
 function withTempHome<T>(fn: (home: string) => T): T {
   const home = mkdtempSync(join(tmpdir(), "voicelayer-setup-"));
@@ -68,17 +71,16 @@ describe("voicelayer setup wizard helpers", () => {
           { flush: true },
         );
 
-        const options = { socatExists: () => false };
-        const first = wireAgentMcpConfig(agent, home, options);
-        const second = wireAgentMcpConfig(agent, home, options);
+        const first = wireAgentMcpConfig(agent, home);
+        const second = wireAgentMcpConfig(agent, home);
         const data = JSON.parse(readFileSync(configPath, "utf8"));
 
         expect(first.changed).toBe(true);
         expect(second.changed).toBe(false);
         expect(data.mcpServers.existing).toEqual({ command: "noop" });
         expect(data.mcpServers.voicelayer).toEqual({
-          command: "socat",
-          args: ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"],
+          command: process.execPath,
+          args: [bridgeScript],
         });
         expect(
           Object.keys(data.mcpServers).filter((key) => key === "voicelayer"),
@@ -110,65 +112,22 @@ describe("voicelayer setup wizard helpers", () => {
         { flush: true },
       );
 
-      const options = { socatExists: () => false };
-      const first = wireAgentMcpConfig("codex", home, options);
-      const second = wireAgentMcpConfig("codex", home, options);
+      const first = wireAgentMcpConfig("codex", home);
+      const second = wireAgentMcpConfig("codex", home);
       const body = readFileSync(configPath, "utf8");
 
       expect(first.changed).toBe(true);
       expect(second.changed).toBe(false);
       expect(body).toContain("[mcp_servers.brainlayer]");
       expect(body).toContain("[mcp_servers.voicelayer]");
-      expect(body).toContain('command = "socat"');
+      expect(body).toContain(`command = ${JSON.stringify(process.execPath)}`);
       expect(body).toContain(
-        'args = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]',
+        `args = [${JSON.stringify(bridgeScript)}]`,
       );
       expect(body.match(/\[mcp_servers\.voicelayer\]/g)?.length).toBe(1);
       expect(body).not.toContain("[mcp_servers.voicelayer.env]");
       expect(body).not.toContain("OLD_ENV");
       expect(body).not.toContain('command = "voicelayer-mcp"');
-    }));
-
-  test("pins Homebrew socat when it exists", () => {
-    expect(
-      resolveSocatCommand((path) => path === "/opt/homebrew/bin/socat"),
-    ).toBe("/opt/homebrew/bin/socat");
-    expect(resolveSocatCommand(() => false)).toBe("socat");
-  });
-
-  test("pins Intel Homebrew socat when only /usr/local exists", () => {
-    expect(resolveSocatCommand((path) => path === "/usr/local/bin/socat")).toBe(
-      "/usr/local/bin/socat",
-    );
-  });
-
-  test("writes absolute socat path into MCP config when Homebrew socat exists", () =>
-    withTempHome((home) => {
-      const configPath = resolveAgentConfigPath("cursor", home);
-      const result = wireAgentMcpConfig("cursor", home, {
-        socatExists: (path) => path === "/opt/homebrew/bin/socat",
-      });
-      const data = JSON.parse(readFileSync(configPath, "utf8"));
-
-      expect(result.changed).toBe(true);
-      expect(data.mcpServers.voicelayer).toEqual({
-        command: "/opt/homebrew/bin/socat",
-        args: ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"],
-      });
-    }));
-
-  test("writes absolute socat path into Codex TOML when Homebrew socat exists", () =>
-    withTempHome((home) => {
-      const configPath = resolveAgentConfigPath("codex", home);
-      wireAgentMcpConfig("codex", home, {
-        socatExists: (path) => path === "/opt/homebrew/bin/socat",
-      });
-      const body = readFileSync(configPath, "utf8");
-
-      expect(body).toContain('command = "/opt/homebrew/bin/socat"');
-      expect(body).toContain(
-        'args = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]',
-      );
     }));
 
   test("skips build-app for cask-installed VoiceBar while preserving install steps", () => {

@@ -10,30 +10,47 @@ while [[ $# -gt 0 ]]; do
     *) echo "Usage: $0 [--dry-run] [--root DIRECTORY]" >&2; exit 1 ;;
   esac
 done
-BRIDGE="$(command -v voicelayer-mcp-bridge || true)"
-python3 - "$ROOT" "$BRIDGE" "$DRY_RUN" <<'PY'
+python3 - "$ROOT" "$DRY_RUN" <<'PYTHON'
 import json
+import os
 import pathlib
 import shutil
 import sys
+import tempfile
 
-root, bridge, dry = sys.argv[1:]
-command = bridge or 'socat'
-print(f'Transport: {command}' + (' (fallback: bridge binary missing)' if not bridge else ''))
+root, dry = sys.argv[1:]
+def resolve_command(name):
+    candidates = [shutil.which(name), f'/opt/homebrew/bin/{name}', str(pathlib.Path.home() / '.bun/bin' / name)]
+    return next((os.path.abspath(p) for p in candidates if p and os.path.isfile(p) and os.access(p, os.X_OK)), None)
+
+bridge = resolve_command('voicelayer-mcp-bridge')
+bun = resolve_command('bun')
+socat = resolve_command('socat')
+if bridge and bun:
+    command, args = bun, [str(pathlib.Path(bridge).resolve())]
+elif socat:
+    command, args = socat, ['STDIO', 'UNIX-CONNECT:/tmp/voicelayer-mcp.sock']
+else:
+    print('ERROR: neither bridge with bun nor socat is available; no files changed.', file=sys.stderr)
+    sys.exit(1)
+print(f'Transport: {command} {json.dumps(args, ensure_ascii=False)}')
 errors = 0
-for file in sorted(pathlib.Path(root).glob('*/.mcp.json')):
+root = pathlib.Path(root)
+files = sorted(set(root.glob('*/.mcp.json')) | ({root / '.mcp.json'} if (root / '.mcp.json').is_file() else set()))
+for file in files:
     try:
-        data = json.loads(file.read_text())
+        data = json.loads(file.read_text(encoding='utf-8'))
         changed = False
         for name, server in data.get('mcpServers', {}).items():
             old_command = pathlib.Path(server.get('command', '')).name
-            voice_socat = old_command == 'socat' and 'UNIX-CONNECT:/tmp/voicelayer-mcp.sock' in server.get('args', [])
-            if old_command not in ('voicelayer-mcp', 'voicelayer-mcp-bridge') and not voice_socat:
+            old_args = server.get('args', [])
+            on_bridge = old_command == 'voicelayer-mcp-bridge' or (old_command == 'bun' and any(pathlib.Path(arg).name in ('mcp-bridge.ts', 'voicelayer-mcp-bridge') for arg in old_args))
+            voice_socat = old_command == 'socat' and 'UNIX-CONNECT:/tmp/voicelayer-mcp.sock' in old_args
+            if not on_bridge and old_command != 'voicelayer-mcp' and not voice_socat:
                 continue
-            updated = dict(server, command=command)
-            updated.pop('args', None)
-            if not bridge:
-                updated['args'] = ['STDIO', 'UNIX-CONNECT:/tmp/voicelayer-mcp.sock']
+            if on_bridge and not (bridge and bun):
+                continue
+            updated = dict(server, command=command, args=args)
             if updated != server:
                 data['mcpServers'][name] = updated
                 changed = True
@@ -43,9 +60,21 @@ for file in sorted(pathlib.Path(root).glob('*/.mcp.json')):
                 backup = file.with_name(file.name + '.bak')
                 if not backup.exists():
                     shutil.copy2(file, backup)
-                file.write_text(json.dumps(data, indent=2) + '\n')
+                temporary = None
+                try:
+                    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=file.parent, prefix='.mcp-', delete=False) as output:
+                        temporary = output.name
+                        output.write(json.dumps(data, indent=2, ensure_ascii=False) + '\n')
+                        output.flush()
+                        os.fsync(output.fileno())
+                    os.chmod(temporary, file.stat().st_mode)
+                    os.replace(temporary, file)
+                    temporary = None
+                finally:
+                    if temporary is not None:
+                        os.unlink(temporary)
     except (OSError, ValueError, TypeError, AttributeError) as exc:
         print(f'FAILED: {file}: {exc}', file=sys.stderr)
         errors += 1
 sys.exit(1 if errors else 0)
-PY
+PYTHON
