@@ -23,7 +23,7 @@ Secure fields are never read. If a safe clipboard backup is unavailable, the sho
 
 **Local-first. Free. Open-source.** No cloud APIs, no API keys, no data leaves your machine.
 
-**[Website](https://voicelayer.etanheyman.com)** · **[Docs](https://etanhey.github.io/voicelayer/docs/)** · **[npm](https://www.npmjs.com/package/voicelayer-mcp)**
+**[Website](https://voicelayer.etanheyman.com)** · **[Docs](https://voicelayer.etanheyman.com/)** · **[npm](https://www.npmjs.com/package/voicelayer-mcp)**
 
 ## Install
 

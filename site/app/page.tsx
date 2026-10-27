@@ -14,7 +14,7 @@ const NAV_LINKS = [
   { label: "Features", href: "#features" },
   { label: "Demo", href: "#demo" },
   { label: "Setup", href: "#setup" },
-  { label: "Docs", href: "https://etanhey.github.io/voicelayer/docs/" },
+  { label: "Docs", href: "https://voicelayer.etanheyman.com/" },
 ];
 
 function Divider() {
