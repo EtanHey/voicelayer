@@ -1,0 +1,24 @@
+{
+  "chunks": [
+    {
+      "text": "We checked the map. Move the violet lantern",
+      "startSeconds": 0,
+      "segments": [
+        { "text": "We checked the map.", "startS": 20, "endS": 24 },
+        { "text": "Move the violet lantern", "startS": 28, "endS": 30 }
+      ]
+    },
+    {
+      "text": "Move the violet lantern after lunch. Keep the fu… full draft, no, keep both drafts. Leave the last word intact.",
+      "startSeconds": 25,
+      "segments": [
+        { "text": "Move the violet lantern", "startS": 3, "endS": 5 },
+        { "text": "after lunch.", "startS": 5, "endS": 7 },
+        { "text": "Keep the fu… full draft, no, keep both drafts.", "startS": 8, "endS": 13 },
+        { "text": "Leave the last word intact.", "startS": 14, "endS": 17 }
+      ]
+    }
+  ],
+  "duplicatedPhrase": "Move the violet lantern",
+  "expected": "We checked the map. Move the violet lantern after lunch. Keep the fu… full draft, no, keep both drafts. Leave the last word intact."
+}

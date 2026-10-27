@@ -9,6 +9,7 @@ import {
 import { findCandidateSpan, findOutroCandidates } from "../stt-outro-gate";
 import type { TranscriptSegment } from "../stt-transcript-alignment";
 import realChunkSegments from "./fixtures/h3-real-chunk-segments.json";
+import anchorOverlap from "./fixtures/r9-30s-anchor-overlap.json";
 import { TEST_TMP } from "./setup/test-tmp";
 import { privateCorpusPaths } from "./setup/private-specimens";
 
@@ -75,6 +76,19 @@ function makePcm16Wav(durationSeconds: number): Uint8Array {
 }
 
 describe("chunk transcript segment stitching", () => {
+  test("merges a duplicated phrase across the 30 s anchor boundary without losing a retraction or tail", () => {
+    const seamKinds = ["anchor", "anchor"] as const;
+    const untimed = mergeChunkTranscripts(anchorOverlap.chunks.map(chunk => chunk.text), [...seamKinds]);
+    const timed = mergeChunkTranscriptsWithSegments(anchorOverlap.chunks, [...seamKinds]);
+
+    for (const text of [untimed, timed.text]) {
+      expect(text).toBe(anchorOverlap.expected);
+      expect(text.split(anchorOverlap.duplicatedPhrase)).toHaveLength(2);
+    }
+    expect(timed.segments.map(part => part.text.trim()).join(" ")).toBe(anchorOverlap.expected);
+    expect(timed.segments.at(-1)).toEqual(segment("Leave the last word intact.", 39, 42));
+  });
+
   test("offsets a three-chunk schedule exactly and keeps overlap timing from the earlier chunk", () => {
     const merged = mergeChunkTranscriptsWithSegments(
       [
