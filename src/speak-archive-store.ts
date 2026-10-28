@@ -1,3 +1,4 @@
+import { indexSpeechHistory } from "./speech-history-index";
 import { unindexSpeech } from "./speech-open-index";
 import { UnsafeSpeechDirectory } from "./speech-archive-directory";
 import { initialSpeech, speechSchema, speechReasonSchema, transitionSpeech, type SpeechState, type SpeechRecord } from "./speech-state";
@@ -49,6 +50,7 @@ const metadata = z.object({ speech: speechSchema.optional(), schema_version: z.l
   request_source: z.enum(["voice_speak", "selection", "clipboard", "cli", "preview", "ask_prompt", "direct"]).nullable(),
   connection: z.enum(["stdio", "daemon", "cli_local"]).nullable(), format: z.enum(["plain", "markdown"]).nullable(),
   blocking: z.boolean().nullable(), requested: config,
+  capture_path: z.enum(["ax", "copy"]).optional(),
   build: z.object({ app_version: nullableText, daemon_version: nullableText, git_sha: nullableText, executable_hash: nullableText }),
   input: z.object({ bytes: count, sha256: hash }), status, generation_id: nullableText,
   parent_ask_id: nullableText.default(null), caller_request_id: nullableText.default(null),
@@ -138,6 +140,7 @@ function persist(entry: string, m: SpeakStoreMetadata) {
   }
   m.updated_at = new Date().toISOString(); publish(entry, "metadata.json", encode(m));
   if (terminal.has(m.status)) unindexSpeech(m.id);
+  indexSpeechHistory(m.id);
   return m;
 }
 function current(entry: string, context: Context) {
@@ -356,6 +359,7 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
       if (before.equals(encode(m))) {
         sync(entry);
         if (terminal.has(m.status)) unindexSpeech(m.id);
+        indexSpeechHistory(m.id);
         return m;
       }
     } catch { throw new Failure("SYNC_UNCERTAIN"); }

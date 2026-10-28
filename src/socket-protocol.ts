@@ -33,6 +33,7 @@ export interface StateEvent {
   state: VoiceLayerState;
   /** Present when state is "speaking" — the text being spoken. */
   text?: string;
+  display?: StructuredChunkDisplay;
   /** Original request identity, stable across preparation, chunks and seeks. */
   request_id?: string;
   text_hash?: string;
@@ -395,6 +396,7 @@ interface SocketCommandBase {
 }
 
 export const SPEAK_TEXT_MAX_CHARS = 200_000;
+export type SelectionCapturePath = "ax" | "copy";
 export interface SpeakTextCommand extends SocketCommandBase {
   cmd: "speak_text";
   text: string;
@@ -403,6 +405,7 @@ export interface SpeakTextCommand extends SocketCommandBase {
   profile?: "auto" | "short" | "long";
   format?: "plain" | "markdown";
   source?: string;
+  capture_path?: SelectionCapturePath;
   /** QUEUE1: append behind the user's live Option+F5 read instead of replacing it. */
   queue?: boolean;
 }
@@ -702,16 +705,20 @@ export function serializeEvent(event: SocketEvent): string {
 
   // Preserve complete geometry on preparing, chunk and pause/resume events.
   if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
-      normalizedEvent.type === "playback_state") && normalizedEvent.long_read?.display &&
+      normalizedEvent.type === "playback_state") && (normalizedEvent.long_read?.display ||
+        (normalizedEvent.type === "state" && normalizedEvent.display)) &&
       serializedByteLength(payload) <= VOICEBAR_STRUCTURED_READ_MAX_BYTES) {
     return payload;
   }
 
   // Beyond the structured-read budget, fall back to the historical text frame.
   if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
-      normalizedEvent.type === "playback_state") && normalizedEvent.long_read?.display) {
-    const { display: _display, ...long_read } = normalizedEvent.long_read;
-    return serializeEvent({ ...normalizedEvent, long_read });
+      normalizedEvent.type === "playback_state") && (normalizedEvent.long_read?.display ||
+        (normalizedEvent.type === "state" && normalizedEvent.display))) {
+    const long_read = normalizedEvent.long_read ? { ...normalizedEvent.long_read, display: undefined } : undefined;
+    return normalizedEvent.type === "state"
+      ? serializeEvent({ ...normalizedEvent, display: undefined, long_read })
+      : serializeEvent({ ...normalizedEvent, long_read });
   }
 
   if (normalizedEvent.type === "state" && normalizedEvent.state === "speaking") {
@@ -785,12 +792,15 @@ export function parseCommand(line: string): SocketCommand | null {
         if (parsed.source !== undefined && (typeof parsed.source !== "string" || parsed.source.length > 256)) return null;
         if (parsed.text_hash !== undefined && (typeof parsed.text_hash !== "string" || !/^[a-f0-9]{64}$/.test(parsed.text_hash))) return null;
         if (parsed.queue !== undefined && typeof parsed.queue !== "boolean") return null;
+        const capturePath = parsed.capture_path === "ax" || parsed.capture_path === "copy" ? parsed.capture_path : undefined;
+        if (parsed.capture_path !== undefined && capturePath === undefined) console.error("[socket-protocol] Ignoring unknown speak_text capture_path");
         return withCommandId<SpeakTextCommand>({
           cmd: "speak_text", text: parsed.text,
           ...(parsed.text_hash !== undefined ? { text_hash: parsed.text_hash } : {}),
           ...(parsed.profile !== undefined ? { profile: parsed.profile } : {}),
           ...(parsed.format !== undefined ? { format: parsed.format } : {}),
           ...(parsed.source !== undefined ? { source: parsed.source } : {}),
+          ...(capturePath !== undefined ? { capture_path: capturePath } : {}),
           ...(parsed.queue !== undefined ? { queue: parsed.queue } : {}),
         }, id);
       }

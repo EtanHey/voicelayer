@@ -3,7 +3,7 @@ import * as fs from "fs";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { createSpeakReceipt } from "../speak-archive";
-import { speechOpenIndex } from "../speech-open-index";
+import { speechOpenIndex, speechHistoryIndex } from "../speech-open-index";
 import { transitionSpeakArchive, recoverSpeakArchive, updateSpeakLifecycle, saveSpeakArtifact, saveSpeakGenerated, readSpeakArchive, startSpeakPlayer, endSpeakPlayer, type SpeakLifecycle } from "../speak-archive-store";
 function receipt() {
   expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");
@@ -147,8 +147,41 @@ for (const reason of ["PLAYER_FAILED", "OUTPUT_UNAVAILABLE", "ARCHIVE_INCOMPLETE
 }
 test("receipt indexes open intent and terminal transition removes it", () => {
   const c = receipt();
+  const history = join(speechHistoryIndex(), c.id);
+  expect(fs.existsSync(history)).toBe(true);
   const marker = join(speechOpenIndex(), c.id);
   expect(fs.existsSync(marker)).toBe(true);
   transitionSpeakArchive(c, "preparing"); transitionSpeakArchive(c, "failed", "SYNTH_FAILED");
   expect(fs.existsSync(marker)).toBe(false);
+  expect(fs.existsSync(history)).toBe(true);
+});
+
+test("history membership repairs deletion and rejects marker symlinks", () => {
+  const c = receipt(), marker = join(speechHistoryIndex(), c.id);
+  fs.unlinkSync(marker);
+  expect(transitionSpeakArchive(c, "preparing").kind).toBe("stored");
+  expect(fs.existsSync(marker)).toBe(true);
+  const outside = join(process.env.VOICELAYER_TEST_RUN_ROOT!, "history-marker-target");
+  fs.writeFileSync(outside, "synthetic retained bytes");
+  fs.unlinkSync(marker);
+  fs.symlinkSync(outside, marker);
+  expect(transitionSpeakArchive(c, "failed").kind).toBe("stored");
+  expect(fs.existsSync(join(speechOpenIndex(), c.id))).toBe(false);
+  expect(fs.readFileSync(outside, "utf8")).toBe("synthetic retained bytes");
+  fs.unlinkSync(marker);
+  expect(recoverSpeakArchive(c.id).kind).toBe("stored");
+  expect(fs.lstatSync(marker).isFile()).toBe(true);
+});
+
+test("directory history marker preserves terminal writes and unchanged recovery", () => {
+  const c = receipt(), marker = join(speechHistoryIndex(), c.id);
+  fs.unlinkSync(marker); fs.mkdirSync(marker, { mode: 0o700 });
+  expect(transitionSpeakArchive(c, "preparing").kind).toBe("stored");
+  expect(transitionSpeakArchive(c, "failed").kind).toBe("stored");
+  expect(fs.existsSync(join(speechOpenIndex(), c.id))).toBe(false);
+  expect(disk(c).status).toBe("failed");
+  expect(recoverSpeakArchive(c.id).kind).toBe("stored");
+  const before = fs.readFileSync(join(c.path, "metadata.json"));
+  expect(recoverSpeakArchive(c.id).kind).toBe("stored");
+  expect(fs.readFileSync(join(c.path, "metadata.json"))).toEqual(before);
 });

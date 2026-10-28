@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.58] - 2026-10-28
+
+### Added
+- Load local voice models when needed and release them safely when idle (#573).
+- Keep agent voice connections open across VoiceLayer restarts (#587).
+- Include the source commit in package identity to make installed versions easier to verify (#584).
+
+### Fixed
+- Make transcript polishing repeatable across runs (#568).
+- Preserve word boundaries when reading selections from Chromium apps (#577).
+- Keep checkboxes silent when reading lists, including before punctuation (#579, #588).
+- Preserve list and paragraph formatting when replaying a finished read (#580).
+- Load Speech history faster and show when it is still loading (#578).
+- Give cloned voices the same list and paragraph pauses as preset voices (#582).
+- Keep the History notice inside its panel and remove duplicate notices (#583).
+- Handle speech preparation failures without leaving the request hanging (#586).
+- Buffer the start of cloned speech to prevent stalls between chunks (#585).
+- Cancel cloned speech preparation when its requesting client disconnects (#589).
+
+### Developer / QA
+- Stabilize isolated test fixtures and subprocess cleanup, and add speech queue verification (#569, #570, #575, #576, #590).
+- Correct unavailable CI results and preserve newer review results and published version references (#574, #581).
+- Disable the obsolete Pages deployment and use the VoiceLayer website links (#571).
+
 ## [2.2.57] - 2026-10-26
 
 ### Added

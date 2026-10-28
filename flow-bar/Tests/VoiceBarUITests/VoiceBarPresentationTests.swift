@@ -366,7 +366,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         let baseline = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
-                statusText: "Transcribing..."
+                statusText: "Transcribing…"
             )
         )
         let warmup = VoiceBarPresentation.notchPresentation(
@@ -768,7 +768,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 commandModeState: nil,
                 activeClipMarker: nil
             ),
-            "Transcribing..."
+            "Transcribing…"
         )
     }
 
@@ -785,7 +785,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 commandModeState: nil,
                 activeClipMarker: nil
             ),
-            "Transcribing..."
+            "Transcribing…"
         )
     }
 

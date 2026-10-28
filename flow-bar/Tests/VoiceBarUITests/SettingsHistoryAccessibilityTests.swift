@@ -91,7 +91,7 @@ final class SettingsHistoryAccessibilityTests: XCTestCase {
                                                    isTranscribing: false, isVoiceBusy: true)
         XCTAssertFalse(busy.isEnabled(.play, for: clip))
         XCTAssertEqual(busy.availability(.play, for: clip),
-                       .unavailable("Voice is busy — wait for the current voice operation to finish"))
+                       .unavailable(SettingsHistoryCopy.playBusy))
         XCTAssertEqual(busy.availability(.copy, for: clip), .available)
     }
 

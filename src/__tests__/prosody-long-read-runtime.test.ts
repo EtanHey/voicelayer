@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { join } from "path";
+import * as qwen from "../tts/qwen3";
+import * as cloneTiming from "../tts/clone-timing";
+import * as prosodyPolicy from "../tts/prosody";
+import * as binaries from "../resolve-binary";
 import * as socket from "../socket-client";
 import * as recording from "../recording-state";
-import { flushSpeechArchives } from "../speech-archive-live";
+import { beginSpeechArchive, flushSpeechArchives } from "../speech-archive-live";
 import { projectSpeakableText } from "../speakable-text";
-import { awaitCurrentPlayback, chunkTextForLongRead, speakLongRead, stopPlayback } from "../tts";
+import { awaitCurrentPlayback, chunkTextForLongRead, loadHistory, speakLongRead, stopPlayback } from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
 import { planProsody } from "../tts/prosody";
 import { projectStructuredSpeech } from "../tts/structured-speech";
@@ -46,7 +51,7 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
       if (argv.some((arg) => /ffmpeg$/.test(arg)) || argv[0] === "ffmpeg") {
         if (argv.includes("pipe:0")) {
           encodes.push(argv.at(-1)!); writeFileSync(argv.at(-1)!, "encoded mp3");
-          return { pid: 300, stdin: { write() {}, end: async () => {} }, stdout: new Blob([]).stream(), exited: Promise.resolve(0), kill() {} };
+          return { pid: 300, stdin: { write(data: Uint8Array) { writeFileSync(argv.at(-1)!, data); }, end: async () => {} }, stdout: new Blob([]).stream(), exited: Promise.resolve(0), kill() {} };
         }
         if (argv.includes("pipe:1") && argv.includes("f32le")) {
           decodes.push(argv[argv.indexOf("-i") + 1]);
@@ -93,6 +98,93 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     expect(synths[1].argv.some((a) => a.startsWith("--pitch="))).toBe(false);
     const preparing = events.find((e) => e.state === "speaking" && e.long_read?.preparing);
     expect(preparing.long_read.chunk_count).toBe(plan.chunks.length);
+  });
+  for (const selection of [false, true]) it(`S1 F1/F11 clone structural media, alignment and archive (selection=${selection})`, async () => {
+    const source = "**What I need from you**\n1. Don't reboot yet.\n2. Open the merge page.";
+    const structure = selection ? projectStructuredSpeech(source) : undefined;
+    const text = structure?.speechText ?? source;
+    const projection = projectSpeakableText(text, [], "clone");
+    const plan = planProsody({ readText: text, projection, structure, engine: "clone", listNumbers: "inline", concurrency: 1 });
+    const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio"));
+    const timingInputs: Parameters<typeof cloneTiming.startCloneTiming>[0][] = [];
+    const timing = spyOn(cloneTiming, "startCloneTiming").mockImplementation(input => {
+      timingInputs.push(input);
+      return { cancel() {}, childReaped: Promise.resolve(), cleanupDone: Promise.resolve() };
+    });
+    spies.push(clone, timing);
+    const archive = beginSpeechArchive(source); await archive.settled();
+    const handle = speakLongRead(text, { engine: "clone", voice: "fixture", rate: "+0%" }, Date.now(),
+      { archiveContext: archive.context, structuredDisplay: structure });
+    handles.push(handle); await handle.done; await flushSpeechArchives();
+    expect(clone.mock.calls.map(call => call[0])).toEqual(plan.segments.map(segment => segment.text));
+    expect(synths).toEqual([]);
+    expect(timingInputs).toHaveLength(plan.chunks.length);
+    const metadata = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+    expect(metadata.speech.state).toBe("completed");
+    expect(metadata.speech.generated).toHaveLength(plan.chunks.length);
+    for (const [index, generated] of metadata.speech.generated.entries()) {
+      expect(generated).toMatchObject({ index, engine: "qwen3-tts", voice: "fixture" });
+      expect(generated.text).toBe(plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map(s => s.text).join(" "));
+      expect(timingInputs[index].audioPath).toBe(players[index].argv.at(-1)!);
+      expect(timingInputs[index].displayText).toBe(plan.chunks[index].text);
+      expect(timingInputs[index].speechText.replace(/[^\p{L}\p{N}]/gu, "")).toBe(generated.text.replace(/[^\p{L}\p{N}]/gu, ""));
+      if (index === 0) continue;
+      const bytes = readFileSync(join(archive.context.path, generated.audio_path));
+      const pcm = new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      expect(timingInputs[index].durationMs).toBeCloseTo(pcm.length / 24, 6);
+      const silentRuns: number[] = [];
+      let run = 0;
+      for (const sample of pcm) {
+        if (Math.abs(sample) < 0.00001) run++;
+        else { if (run > 100) silentRuns.push(run / 24); run = 0; }
+      }
+      if (index === 1) expect(silentRuns[0] + 200 + 15).toBeGreaterThanOrEqual(plan.chunks[0].trailingPauseMs);
+      if (plan.chunks[index].end - plan.chunks[index].first > 1)
+        expect(Math.max(...silentRuns.slice(1)) + 45).toBeGreaterThanOrEqual(plan.segments[plan.chunks[index].first].pauseMs);
+      expect(timingInputs[index].chunkId).toContain(plan.renderIdentity);
+    }
+    expect(plan.segments.find(s => s.kind === "heading")!.pauseMs).toBeGreaterThanOrEqual(800);
+    expect(plan.segments.find(s => s.kind === "item")!.pauseMs).toBeGreaterThanOrEqual(450);
+    expect(prosodyPolicy.PROSODY_POLICY.cloneEmphasis).toBe("none");
+    expect(loadHistory()[0].prosodyIdentity).toBe(plan.renderIdentity);
+  });
+  it("S1 structured clone fallback keeps actual engine provenance and Edge word timings", async () => {
+    const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(null); spies.push(clone);
+    const doc = "## Choose\n1. Red apple\n2. Green pear";
+    const plan = planProsody({ readText: doc, projection: projectSpeakableText(doc, [], "clone"), engine: "clone", listNumbers: "inline" });
+    const archive = beginSpeechArchive(doc); await archive.settled();
+    const handle = speakLongRead(doc, { engine: "clone", voice: "fixture", fallbackVoice: "en-US-JennyNeural", rate: "+0%" },
+      Date.now(), { archiveContext: archive.context }); handles.push(handle); await handle.done; await flushSpeechArchives();
+    expect(texts()).toEqual(plan.segments.map(s => s.text));
+    const metadata = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+    expect(metadata.speech.generated.every((g: { engine: string; voice: string }) =>
+      g.engine === "edge-tts" && g.voice === "en-US-JennyNeural")).toBe(true);
+    expect(events.some(e => e.type === "subtitle" && e.words.length > 0)).toBe(true);
+  });
+  it("S1 a clone read without ffmpeg keeps the existing chunker", async () => {
+    const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio"));
+    const resolve = binaries.resolveBinary;
+    spies.push(clone, spyOn(binaries, "resolveBinary").mockImplementation(name => name === "ffmpeg" ? undefined : resolve(name)));
+    const doc = "## Choose\n1. Red apple\n2. Green pear";
+    const handle = speakLongRead(doc, { engine: "clone", voice: "fixture", rate: "+0%" }); handles.push(handle); await handle.done;
+    expect(clone.mock.calls.map(call => call[0])).toEqual(chunkTextForLongRead(doc, "clone").map(chunk => projectSpeakableText(chunk, [], "clone").speechText));
+    expect(encodes).toEqual([]);
+  });
+  it("S1 Stop cancels in-flight clone segments without starting more", async () => {
+    let calls = 0;
+    const clone = spyOn(qwen, "synthesizeCloned").mockImplementation((_text, _voice, signal) => {
+      if (++calls === 1) return Promise.resolve(Buffer.from("clone audio"));
+      return new Promise(resolve => {
+        if (signal?.aborted) resolve(null);
+        else signal?.addEventListener("abort", () => resolve(null), { once: true });
+      });
+    }); spies.push(clone);
+    const handle = speakLongRead("## Choose\n- Red apple\n- Green pear\n- Blue sky\n- White cloud\n- Orange fruit",
+      { engine: "clone", voice: "fixture", rate: "+0%" }); handles.push(handle);
+    for (let i = 0; i < 50 && calls < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(calls).toBe(2);
+    stopPlayback(); await handle.done;
+    expect(calls).toBe(2);
   });
   it("chunk 0 plays the engine's own file before anything is encoded; later chunks play encoded MP3s", async () => {
     const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three";

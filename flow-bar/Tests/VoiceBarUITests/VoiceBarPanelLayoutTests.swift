@@ -431,7 +431,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
     func testTranscribingWidthHasNoResidualTrailingSlack() {
         let metrics = Theme.pillMetrics(
             for: .transcribing,
-            statusText: "Transcribing..."
+            statusText: "Transcribing…"
         )
 
         XCTAssertEqual(metrics.horizontalPadding, 10)

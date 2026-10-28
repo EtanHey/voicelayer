@@ -118,3 +118,13 @@ describe("daemon STT polish status reporting", () => {
     expect(events).toEqual([{ type: "polish_ready" }]);
   });
 });
+
+it("idle stop clears the reporter's previous ready state before reconnect", () => {
+  const events: SocketEvent[] = [];
+  const reporter = createSTTPolishStatusReporter(event => events.push(event));
+  reporter.report({ status: "ready" });
+  reporter.report({ status: "stopped" });
+  events.length = 0;
+  reporter.replay();
+  expect(events).toEqual([]);
+});

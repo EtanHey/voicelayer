@@ -5,10 +5,12 @@ export interface SegmentSchedulerOptions<T> {
   concurrency?: number;
   /** Chunks after the requested one whose segments are queued at the same time. */
   lookahead?: number;
+  canStart?(segmentIndex: number): boolean;
   /** Releases a result that was synthesized but never handed out. */
   dispose?(result: T): void;
 }
 export interface SegmentScheduler<T> {
+  resume(): void;
   /** Chunk `index`'s segment results, in order. Also queues the next `lookahead` chunks. */
   chunk(index: number): Promise<T[]>;
   /** Every started engine request has settled: reap before history or disposal. */
@@ -24,10 +26,10 @@ interface Task<T> { promise: Promise<T>; resolve(value: T): void; reject(error: 
 export function createSegmentScheduler<T>(
   plan: Pick<ProsodyPlan, "segments" | "chunks">,
   synthesize: (segment: ProsodySegment, index: number, signal: AbortSignal) => Promise<T>,
-  { signal, concurrency = PROSODY_SYNTH_CONCURRENCY, lookahead = 2, dispose }: SegmentSchedulerOptions<T>,
+  { signal, concurrency = PROSODY_SYNTH_CONCURRENCY, lookahead = 2, dispose, canStart }: SegmentSchedulerOptions<T>,
 ): SegmentScheduler<T> {
   const tasks: Task<T>[] = [];
-  const inFlight = new Set<Promise<unknown>>();
+  const drainWaiters = new Set<() => void>();
   /** Ownership transfers to the caller only when a whole chunk is delivered; everything else is ours. */
   const handedOut = new Set<number>(), released = new Set<number>();
   let next = 0, running = 0, stopped: unknown, closed = false;
@@ -59,19 +61,34 @@ export function createSegmentScheduler<T>(
       if (stopped !== undefined) reject(stopped);
     }
   };
+  const start = (index: number, task: Task<T>): Promise<T> => {
+    try {
+      return Promise.resolve(synthesize(plan.segments[index], index, signal));
+    } catch (error) {
+      task.reject(error);
+      stop(new Error("Synthesis stopped after an earlier failure"));
+      return Promise.reject(error);
+    }
+  };
   const pump = () => {
-    while (stopped === undefined && running < concurrency && next < tasks.length) {
+    while (stopped === undefined && running < concurrency && next < tasks.length && (canStart?.(next) ?? true)) {
       const index = next++, task = tasks[index];
       task.started = true; running++;
-      const run = synthesize(plan.segments[index], index, signal).then(
+      void start(index, task).then(
         (value) => { task.result = { value }; task.resolve(value); },
         (error) => { task.reject(error); stop(new Error("Synthesis stopped after an earlier failure")); },
-      ).finally(() => { running--; inFlight.delete(run); pump(); });
-      inFlight.add(run);
+      ).finally(() => {
+        running--; pump();
+        if (running === 0) {
+          for (const resolve of drainWaiters) resolve();
+          drainWaiters.clear();
+        }
+      });
     }
   };
 
   return {
+    resume: pump,
     chunk(index) {
       const chunk = plan.chunks[index];
       if (!chunk) return Promise.reject(new Error(`No prosody chunk ${index}`));
@@ -88,8 +105,8 @@ export function createSegmentScheduler<T>(
         return values;
       });
     },
-    async settled() {
-      while (inFlight.size) await Promise.allSettled([...inFlight]);
+    settled() {
+      return running === 0 ? Promise.resolve() : new Promise<void>((resolve) => drainWaiters.add(resolve));
     },
     async close() {
       closed = true;

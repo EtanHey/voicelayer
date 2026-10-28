@@ -3,30 +3,75 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
+from typing import NamedTuple
 
 MARKER = "<!-- voicelayer-ratchet:v1 -->"
 ROWS = ("ndjson-partial-write", "socket-isolation", "retranscribe-history-refresh",
         "recents-newest-after-retranscribe", "voice-ask-lock-suspends-timeout")
 
 
-def read(path, expected_sha):
+class InvalidResults(ValueError):
+    """An explicitly rejected, untrusted result artifact."""
+
+
+class Unavailable(NamedTuple):
+    reason: str
+
+
+class Publication(NamedTuple):
+    reason: str | None
+    body: str
+
+
+class Available(NamedTuple):
+    baseline: dict
+    head: dict
+
+
+def require(condition, reason):
+    if not condition:
+        raise InvalidResults(reason)
+
+
+def read(path, expected_sha, mismatch_reason="result SHA mismatch"):
     data = json.loads(path.read_text())
-    assert isinstance(data, list) and len(data) == len(ROWS), "missing/extra rows"
-    assert sorted(item["row"] for item in data) == sorted(ROWS), "row set changed"
+    require(isinstance(data, list) and len(data) == len(ROWS), "missing/extra rows")
+    require(all(isinstance(item, dict) for item in data), "invalid row shape")
+    require(all(isinstance(item.get("row"), str) for item in data), "invalid row name")
+    require(sorted(item["row"] for item in data) == sorted(ROWS), "row set changed")
     for item in data:
-        assert item["measured_sha"] == expected_sha, "result SHA mismatch"
-        assert item["kind"] == "behavior" and item["ceiling"] == 0, "ceiling loosened"
+        require(item.get("measured_sha") == expected_sha, mismatch_reason)
+        require(item.get("kind") == "behavior" and type(item.get("ceiling")) is int
+                and item["ceiling"] == 0, "ceiling loosened")
         for key in ("measured_sha", "bug_sha", "fix_sha"):
-            assert re.fullmatch(r"[0-9a-f]{40}", item[key]), "invalid commit"
-        assert type(item["value"]) is int and item["value"] >= 0, "invalid value"
-        assert item["status"] == ("PASS" if item["value"] == 0 else "FAIL"), "status mismatch"
+            require(isinstance(item.get(key), str) and re.fullmatch(r"[0-9a-f]{40}", item[key]), "invalid commit")
+        require(type(item.get("value")) is int and item["value"] >= 0, "invalid value")
+        require(item.get("status") == ("PASS" if item["value"] == 0 else "FAIL"), "status mismatch")
         if item["row"] in ("socket-isolation", "recents-newest-after-retranscribe"):
-            assert re.fullmatch(r"[0-9a-f]{64}", item["overlay_sha256"]), "overlay receipt missing"
+            require(isinstance(item.get("overlay_sha256"), str)
+                    and re.fullmatch(r"[0-9a-f]{64}", item["overlay_sha256"]), "overlay receipt missing")
     return {item["row"]: item for item in data}
+
+
+def result(baseline, head, base_sha, head_sha) -> Available | Unavailable:
+    try:
+        after = read(head, head_sha, "result head mismatch")
+        before = read(baseline, base_sha, "baseline advanced")
+        for row in ROWS:
+            require((before[row]["bug_sha"], before[row]["fix_sha"]) ==
+                    (after[row]["bug_sha"], after[row]["fix_sha"]), "row identity mismatch")
+        return Available(before, after)
+    except FileNotFoundError:
+        return Unavailable("missing result artifact")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return Unavailable("malformed result artifact")
+    except InvalidResults as error:
+        return Unavailable(str(error))
 
 
 def render(baseline, head, base_sha, head_sha):
@@ -45,10 +90,101 @@ def render(baseline, head, base_sha, head_sha):
         item = head[row]
         lines.append(f'- `{row}`: bug `{item["bug_sha"]}`, fix `{item["fix_sha"]}`' +
                      (f', overlay SHA-256 `{item["overlay_sha256"]}`' if row in ("socket-isolation", "recents-newest-after-retranscribe") else ""))
-    lines += ["", "<!-- /voicelayer-ratchet:v1 -->", "",
-              "— ratchet (worker) · github-actions/automation",
-              '<!-- golem-id v1 {"seat":"ratchet","role":"worker","harness":"github-actions","model":"unknown","model_source":"unavailable","ts":"' + datetime.now(timezone.utc).isoformat() + '"} -->']
     return "\n".join(lines) + "\n"
+
+
+def signature():
+    return ("\n<!-- /voicelayer-ratchet:v1 -->\n\n"
+            "— ratchet (worker) · github-actions/automation\n"
+            '<!-- golem-id v1 {"seat":"ratchet","role":"worker","harness":"github-actions",'
+            '"model":"unknown","model_source":"unavailable","ts":"' +
+            datetime.now(timezone.utc).isoformat() + '"} -->\n')
+
+
+def source_url(repo, run_id):
+    require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo), "invalid repository")
+    require(type(run_id) is int and run_id > 0, "invalid source run")
+    return f"https://github.com/{repo}/actions/runs/{run_id}"
+
+
+def body_for(outcome, base_sha, head_sha, run_url, run_attempt=1):
+    if isinstance(outcome, Available):
+        body = render(outcome.baseline, outcome.head, base_sha, head_sha)
+    else:
+        body = (f"{MARKER}\nRatchet table unavailable: {outcome.reason}\n\n"
+                f"Baseline: `{base_sha}` · PR: `{head_sha}`\n")
+    if run_url:
+        require(type(run_attempt) is int and run_attempt > 0, "invalid run attempt")
+        run_id = int(run_url.rsplit("/", 1)[1])
+        metadata = json.dumps({"source_run_id": run_id, "run_attempt": run_attempt})
+        body += f"\nSource run: {run_url} (attempt {run_attempt})\n"
+        body += f"<!-- voicelayer-ratchet-source: {metadata} -->\n"
+    return body + signature()
+
+
+def api(endpoint, method="GET", *, payload=None, paginate=False):
+    command = ["gh", "api", endpoint, "--method", method]
+    if paginate:
+        command += ["--paginate", "--slurp"]
+    if payload is None:
+        return json.loads(subprocess.check_output(command))
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as file:
+        json.dump(payload, file)
+        file.flush()
+        subprocess.run(command + ["--input", file.name], check=True, stdout=subprocess.DEVNULL)
+
+
+def context_reason(pr, head_sha):
+    if pr["state"] != "open" or pr["head"]["sha"] != head_sha or pr["base"]["ref"] != "main":
+        return "superseded or closed PR; preserving pinned table"
+
+
+def preservation_reason(existing, candidate):
+    pin = r"Baseline: `([0-9a-f]{40})` · PR: `([0-9a-f]{40})`"
+    old_pin, new_pin = re.search(pin, existing), re.search(pin, candidate)
+    if not old_pin or not new_pin or old_pin[2] != new_pin[2]:
+        return None
+    metadata = r"<!-- voicelayer-ratchet-source: (.+) -->"
+    old_source, new_source = re.search(metadata, existing), re.search(metadata, candidate)
+    if old_source:
+        old = json.loads(old_source[1])
+        # Missing provenance cannot establish that a callback is newer.
+        if not new_source:
+            return "source run missing; preserving pinned table"
+        new = json.loads(new_source[1])
+        if (old["source_run_id"], old["run_attempt"]) > (new["source_run_id"], new["run_attempt"]):
+            return "older source run or attempt; preserving pinned table"
+    if (old_pin[1] == new_pin[1] and "| row | main baseline |" in existing
+            and "Ratchet table unavailable:" in candidate):
+        return "unavailable result; preserving valid pinned table"
+
+
+def publish(repo, pr, base_sha, head_sha, body, run_url=None, run_attempt=1):
+    pull = f"repos/{repo}/pulls/{pr}"
+    reason = context_reason(api(pull), head_sha)
+    if reason:
+        return Publication(reason, body_for(Unavailable(reason), base_sha, head_sha, run_url, run_attempt))
+    endpoint = f"repos/{repo}/issues/{pr}/comments"
+    pages = api(endpoint, paginate=True)
+    matches = [c for page in pages for c in page if c["user"]["login"] == "github-actions[bot]"
+               and c["body"].startswith(MARKER)]
+    if len(matches) > 1:
+        raise RuntimeError("multiple ratchet comments need lead reconciliation")
+    if matches:
+        endpoint = f'repos/{repo}/issues/comments/{matches[0]["id"]}'
+    current = api(pull)
+    reason = context_reason(current, head_sha)
+    if reason:
+        return Publication(reason, body_for(Unavailable(reason), current["base"]["sha"], head_sha, run_url, run_attempt))
+    if current["base"]["sha"] != base_sha:
+        reason = "base advanced during publication"
+        body = body_for(Unavailable(reason), current["base"]["sha"], head_sha, run_url, run_attempt)
+    if matches:
+        preserve = preservation_reason(matches[0]["body"], body)
+        if preserve:
+            return Publication(preserve, matches[0]["body"])
+    api(endpoint, "PATCH" if matches else "POST", payload={"body": body})
+    return Publication(reason, body)
 
 
 def main():
@@ -58,24 +194,21 @@ def main():
         parser.add_argument("--" + name + "-sha", required=True)
     parser.add_argument("--repo", default="EtanHey/voicelayer")
     parser.add_argument("--pr", type=int)
+    parser.add_argument("--source-run", type=int)
+    parser.add_argument("--run-attempt", type=int, default=1)
+    parser.add_argument("--unavailable-reason")
     args = parser.parse_args()
-    body = render(read(args.baseline, args.baseline_sha), read(args.head, args.head_sha),
-                  args.baseline_sha, args.head_sha)
-    if args.pr is None:
-        print(body, end="")
-        return
-    endpoint = f"repos/{args.repo}/issues/{args.pr}/comments"
-    pages = json.loads(subprocess.check_output(["gh", "api", endpoint, "--paginate", "--slurp"]))
-    matches = [c for page in pages for c in page if c["user"]["login"] == "github-actions[bot]"
-               and c["body"].startswith(MARKER)]
-    assert len(matches) <= 1, "multiple ratchet comments need lead reconciliation"
-    if matches:
-        endpoint = f'repos/{args.repo}/issues/comments/{matches[0]["id"]}'
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as payload:
-        json.dump({"body": body}, payload)
-        payload.flush()
-        subprocess.run(["gh", "api", endpoint, "--method", "PATCH" if matches else "POST",
-                        "--input", payload.name], check=True, stdout=subprocess.DEVNULL)
+    outcome = (Unavailable(args.unavailable_reason) if args.unavailable_reason else
+               result(args.baseline, args.head, args.baseline_sha, args.head_sha))
+    run_url = source_url(args.repo, args.source_run) if args.source_run else None
+    body = body_for(outcome, args.baseline_sha, args.head_sha, run_url, args.run_attempt)
+    publication = (publish(args.repo, args.pr, args.baseline_sha, args.head_sha,
+                           body, run_url, args.run_attempt) if args.pr else Publication(None, body))
+    summary = publication.body
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
+            file.write(summary)
+    print(summary, end="")
 
 
 if __name__ == "__main__":

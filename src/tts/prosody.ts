@@ -1,14 +1,38 @@
 import type { SpeakableText } from "../speakable-text";
+import { createHash } from "node:crypto";
 import { projectStructuredSpeech, type ProjectionRange, type StructuredSpeech, type TextRange } from "./structured-speech";
 
 /** Total silence (ms) from the last word of one utterance to the first of the next. */
-export const PAUSE = { heading: 800, h1: 900, h2: 750, beforeHeading: 600,
-  label: 320, listIntro: 600, shortItem: 450, longItem: 700,
-  sentence: 550, paragraph: 1000, beforeAside: 200, afterAside: 300, askQuestion: 600,
-  /** After a spoken list number: short (1–5 word) and long items. */
-  number: 250, longNumber: 280 };
+export const PROSODY_POLICY = Object.freeze({
+  version: "vl-structural-pauses-v1",
+  cloneEmphasis: "none",
+  pauses: Object.freeze({ heading: 800, h1: 900, h2: 750, beforeHeading: 600,
+    label: 320, listIntro: 600, shortItem: 450, longItem: 700,
+    sentence: 550, paragraph: 1000, beforeAside: 200, afterAside: 300, askQuestion: 600,
+    number: 250, longNumber: 280 }),
+});
 /** Same limit as the long-read chunker (TTS_CHUNK_MAX_CHARS); one owner of request size. */
 export const PROSODY_MAX_CHARS = 400;
+export const CLONE_CHUNK_POLICY = Object.freeze({ synthMsPerChar: 48, playbackMsPerChar: 65, bodyMaxChars: 200, lookahead: 2 as const });
+export function createCloneChunkBudget(maxChars = PROSODY_MAX_CHARS, playbackSpeed = 1) {
+  const playbackStarts: number[] = [];
+  let playbackEnd = 0, synthesisEnd = 0, previousPauseMs = 0;
+  const synthesisStart = () => Math.max(synthesisEnd, playbackStarts.at(-CLONE_CHUNK_POLICY.lookahead) ?? 0);
+  return {
+    chars() {
+      return playbackStarts.length === 0 ? maxChars : Math.max(1, Math.min(maxChars, CLONE_CHUNK_POLICY.bodyMaxChars,
+        Math.floor((playbackEnd - synthesisStart()) / CLONE_CHUNK_POLICY.synthMsPerChar)));
+    },
+    append(chars: number, pauseMs = 0) {
+      if (playbackStarts.length) synthesisEnd = synthesisStart() + chars * CLONE_CHUNK_POLICY.synthMsPerChar;
+      const start = Math.max(playbackEnd, synthesisEnd);
+      playbackEnd = start + chars * CLONE_CHUNK_POLICY.playbackMsPerChar / playbackSpeed + previousPauseMs;
+      previousPauseMs = pauseMs;
+      playbackStarts.push(start);
+      if (playbackStarts.length > CLONE_CHUNK_POLICY.lookahead) playbackStarts.shift();
+    },
+  };
+}
 /** Engine requests in flight at once for one read. */
 export const PROSODY_SYNTH_CONCURRENCY = 3;
 /** Request-size ramp, in projected speech characters. Speech plays at ~15 chars/s (MS_PER_CHAR) while an
@@ -43,6 +67,7 @@ export interface ProsodyChunk {
   trailingPauseMs: number;
 }
 export interface ProsodyPlan {
+  renderIdentity: string;
   readText: string;
   /** Engine texts joined by single spaces: what the synthesizer and the clone aligner receive. */
   speechText: string;
@@ -50,6 +75,9 @@ export interface ProsodyPlan {
   chunks: ProsodyChunk[];
 }
 export interface ProsodyInput {
+  playbackSpeed?: number;
+  engine?: "edge" | "clone";
+  policy?: { version: string; cloneEmphasis: "none"; pauses: { [K in keyof typeof PROSODY_POLICY.pauses]: number } };
   /** The text the read is about: sanitized markdown (speak), or flattened structured speech (selection). */
   readText: string;
   /** Main's projection of `readText`, computed once by the caller; never redone per fragment. */
@@ -91,7 +119,10 @@ interface Unit { at: number; kind: ProsodySegmentKind; emphasis: boolean; pauseM
 /** Plan structural utterances over an already-projected read. Pure. */
 export function planProsody(input: ProsodyInput): ProsodyPlan {
   const { readText, projection } = input;
+  const policy = input.policy ?? PROSODY_POLICY;
+  const PAUSE = policy.pauses;
   if (projection.displayText !== readText) throw new Error("Prosody projection must be of the read text");
+  const clone = input.engine === "clone";
   const maxChars = input.maxChars ?? PROSODY_MAX_CHARS;
   const structured = input.structure?.speechText === readText ? input.structure : undefined;
   const source = structured?.displayText ?? readText;
@@ -266,10 +297,12 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   // so a request after a short label or heading is ready before that audio ends. Cuts never fall
   // inside a token or an atomic replacement; an oversized replacement stays one whole request.
   let ahead = 0;
-  const budget = () => prosodyBudget(ahead, maxChars);
+  const cloneBudget = createCloneChunkBudget(maxChars, input.playbackSpeed);
+  const budget = () => clone ? cloneBudget.chars() : prosodyBudget(ahead, maxChars);
   segments = mergeWordless(segments.flatMap((segment) => {
     if (segment.text.length <= budget()) {
       ahead += segment.text.length + 1 + segment.pauseMs / MS_PER_CHAR;
+      cloneBudget.append(segment.text.length + (segment.emphasis && !TERMINAL.test(segment.text) ? 1 : 0), segment.pauseMs);
       return [segment];
     }
     const sentences: TextRange[] = [];
@@ -285,6 +318,9 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     const emit = () => {
       const length = speechLength(current!.start, current!.end);
       ahead += length + 1 + (TERMINAL.test(readText.slice(current!.start, current!.end)) ? PAUSE.sentence / MS_PER_CHAR : 0);
+      cloneBudget.append(length + (segment.emphasis && current!.end === trim(segment.read.start, segment.read.end).end ? 1 : 0),
+        current!.end === trim(segment.read.start, segment.read.end).end ? segment.pauseMs
+          : !segment.emphasis && TERMINAL.test(readText.slice(current!.start, current!.end)) ? PAUSE.sentence : 0);
       pieces.push(current!); current = undefined;
     };
     for (const sentence of sentences) {
@@ -336,19 +372,21 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     delete (segment as { item?: boolean }).item;
   }
   if (segments.length) segments.at(-1)!.pauseMs = 0;
-  return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks: planChunks(readText, segments, maxChars, input.concurrency ?? PROSODY_SYNTH_CONCURRENCY) };
+  const chunks = planChunks(readText, segments, maxChars, input.concurrency ?? PROSODY_SYNTH_CONCURRENCY, clone);
+  let renderIdentity: string | undefined;
+  return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks,
+    get renderIdentity() { return renderIdentity ??= createHash("sha256").update(JSON.stringify([policy, projection, segments, chunks])).digest("hex"); } };
 }
 
-/** Chunk 0 is the first utterance alone, so first audio waits for one short request. Chunk 1 fits
- * one concurrent round; every chunk stays within the ramp budget of the text queued before it. */
-function planChunks(readText: string, segments: ProsodySegment[], maxChars: number, concurrency: number): ProsodyChunk[] {
+function planChunks(readText: string, segments: ProsodySegment[], maxChars: number, concurrency: number, clone: boolean): ProsodyChunk[] {
   const groups: [number, number][] = [];
   let size = 0, before = 0;
   for (const [i, segment] of segments.entries()) {
     const group = groups.at(-1);
     const count = group ? group[1] - group[0] : 0;
     const length = segment.text.length;
-    const fits = group && groups.length > 1 && size + 1 + length <= prosodyBudget(before, maxChars) && (groups.length > 2 || count < concurrency);
+    const fits = !clone && group && groups.length > 1 && size + 1 + length <= prosodyBudget(before, maxChars)
+      && (groups.length > 2 || count < concurrency);
     if (fits) { group[1] = i + 1; size += 1 + length; }
     else {
       if (group) before += size + 1 + segments.slice(group[0], group[1]).reduce((ms, s) => ms + s.pauseMs, 0) / MS_PER_CHAR;

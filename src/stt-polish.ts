@@ -1588,7 +1588,9 @@ async function requestPolishOverHttp(
           { role: "user", content: buildPolishUserPrompt(rawText, cleanedText) },
         ],
         temperature: 0,
+        seed: 0,
         top_p: 1,
+        top_k: 0,
         max_tokens: getSTTPolishMaxTokens(cleanedText),
         repetition_penalty: 0,
         stream: false,
@@ -1636,7 +1638,9 @@ async function requestPolishWarmupOverHttp(
           { role: "user", content: "Warm up." },
         ],
         temperature: 0,
+        seed: 0,
         top_p: 1,
+        top_k: 0,
         max_tokens: 1,
         stream: false,
       }),
@@ -1663,9 +1667,13 @@ async function requestPolishWarmupOverHttp(
   }
 }
 
-export async function warmPolishEndpoint(
-  env: STTPolishEnv = process.env,
-): Promise<STTPolishWarmupResult> {
+export async function warmPolishEndpoint(env: STTPolishEnv = process.env): Promise<STTPolishWarmupResult> {
+  if (getSTTPolishMode(env) === "off" || !isSTTPolishWarmupEnabled(env) || getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return warmPolishEndpointReady(env);
+  const { withSTTPolishServer } = await import("./stt-polish-server");
+  return withSTTPolishServer(() => warmPolishEndpointReady(env), { env });
+}
+
+async function warmPolishEndpointReady(env: STTPolishEnv): Promise<STTPolishWarmupResult> {
   const startedAt = performance.now();
   const buildResult = (
     status: STTPolishWarmupStatus,
@@ -1839,13 +1847,38 @@ function writePolishLog(
     });
 }
 
-export async function polishTranscriptionText(
-  input: STTPolishInput,
-): Promise<STTPolishResult> {
+export async function polishTranscriptionText(input: STTPolishInput): Promise<STTPolishResult> {
+  const env = input.env ?? processingEnv();
+  if (getSTTPolishMode(env) === "off" || !input.cleanedText.trim() || getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return polishTranscriptionTextReady(input);
+  const { withSTTPolishServer } = await import("./stt-polish-server");
+  const startedAt = performance.now();
+  const budget = getSTTPolishTimeoutMs(env, input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText);
+  const deadline = startedAt + budget;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      withSTTPolishServer(() => polishTranscriptionTextReady(input, startedAt, deadline), { env }),
+      new Promise<STTPolishResult>(resolve => {
+        timer = setTimeout(() => {
+          const mode = getSTTPolishMode(env);
+          const result: STTPolishResult = {
+            inputText: input.cleanedText, text: input.cleanedText, polishedText: null, mode,
+            status: "failed", surface: input.surface ?? "dictation", changed: false, retried: false,
+            latencyMs: performance.now() - startedAt, polished: false,
+            reason: "Polish budget expired", error: "Polish budget expired", failureKind: "timeout",
+          };
+          writePolishLog(result, input.rawText, input.cleanedText, env);
+          resolve(result);
+        }, budget);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = performance.now(), deadlineOverride?: number): Promise<STTPolishResult> {
   const env = input.env ?? processingEnv();
   const mode = getSTTPolishMode(env);
   const surface = input.surface ?? "dictation";
-  const startedAt = performance.now();
 
   const buildResult = (
     text: string,
@@ -1888,7 +1921,8 @@ export async function polishTranscriptionText(
       env,
       input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText,
     );
-    const deadline = performance.now() + timeoutMs;
+    const deadline = deadlineOverride ?? performance.now() + timeoutMs;
+    if (performance.now() >= deadline) return buildResult(input.cleanedText, null, "failed", "Polish budget expired", false, "timeout");
     const remainingMs = () => Math.max(1, Math.floor(deadline - performance.now()));
     const health = await checkPolishEndpointHealth(
       endpoint,

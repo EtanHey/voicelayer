@@ -88,7 +88,7 @@ final class NotchNoteMorphShotsTests: XCTestCase {
         state.isCollapsed = false
         state.sendCommand = { _ in }
         state.mode = mode
-        if mode == .transcribing { state.statusText = "Transcribing..." }
+        if mode == .transcribing { state.statusText = "Transcribing…" }
         let model = VoiceBarNotchPresentationModel()
         func refreshModel() {
             let resolved = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(

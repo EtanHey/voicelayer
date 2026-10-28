@@ -1,9 +1,11 @@
+import { indexSpeechHistory } from "./speech-history-index";
 import { beginSpeechReceipt, finishSpeechReceipt, indexOpenSpeech } from "./speech-open-index";
 import { createHash } from "crypto";
 import * as fs from "fs";
 import { dirname, join } from "path";
 import { preparePrivateSpeechDirectory, UnsafeSpeechDirectory } from "./speech-archive-directory";
 import { archiveId, recordingsArchiveRoot } from "./recordings-archive-fs";
+import type { SelectionCapturePath } from "./socket-protocol";
 
 export interface SpeakReceiptRequest {
   input: string;
@@ -12,6 +14,7 @@ export interface SpeakReceiptRequest {
   connection: "stdio" | "daemon" | "cli_local" | null;
   format: "plain" | "markdown" | null;
   blocking: boolean | null;
+  capture_path?: SelectionCapturePath;
   requested: {
     mode: string | null;
     profile: string | null;
@@ -45,6 +48,7 @@ export interface SpeakReceivedMetadata {
   connection: SpeakReceiptRequest["connection"];
   format: SpeakReceiptRequest["format"];
   blocking: SpeakReceiptRequest["blocking"];
+  capture_path?: SpeakReceiptRequest["capture_path"];
   requested: SpeakReceiptRequest["requested"];
   build: SpeakReceiptRequest["build"];
   status: "received";
@@ -133,6 +137,7 @@ export function createSpeakReceipt(
       schema_version: 1, source: "speak", id, created_at: timestamp, updated_at: timestamp,
       request_id: request.request_id, request_source: request.request_source,
       connection: request.connection, format: request.format, blocking: request.blocking,
+      ...(request.capture_path !== undefined ? { capture_path: request.capture_path } : {}),
       requested: {
         mode: request.requested.mode, profile: request.requested.profile,
         engine: request.requested.engine, voice: request.requested.voice, rate: request.requested.rate,
@@ -169,6 +174,7 @@ export function createSpeakReceipt(
     writeReceiptFile(path, "metadata.json", encoded);
     indexOpenSpeech(id);
     finishSpeechReceipt(id, process.pid);
+    indexSpeechHistory(id);
     return { kind: "created", context: { ...partial, metadata } };
   } catch (error) {
     // Never return/log the raw filesystem exception, request text or transport object.

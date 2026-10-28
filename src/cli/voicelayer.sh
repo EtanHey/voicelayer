@@ -48,6 +48,10 @@ if [[ "${VOICELAYER_DEBUG_PACKAGE_ROOT:-0}" = "1" ]]; then
 fi
 
 case "${1:-}" in
+    --version)
+        shift
+        exec python3 "$SCRIPT_DIR/version.py" "$@"
+        ;;
     speak)
         shift
         exec bun "$SCRIPT_DIR/speak.ts" "$@"

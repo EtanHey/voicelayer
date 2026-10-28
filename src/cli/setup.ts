@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { constants, accessSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname, join, resolve } from "path";
+import { fileURLToPath } from "url";
 
 export type AgentId = "claude" | "codex" | "cursor" | "gemini";
 
@@ -18,10 +19,6 @@ export interface WireResult {
 export interface TccGrantStep {
   name: string;
   url: string;
-}
-
-export interface SocatOptions {
-  socatExists?: (path: string) => boolean;
 }
 
 export interface SetupCommandPlanOptions {
@@ -46,14 +43,7 @@ const AGENT_ORDER: readonly AgentCli[] = [
   { id: "gemini", command: "gemini" },
 ];
 
-// Prefer an absolute socat so the MCP client resolves under launchd/agent
-// environments with a thin PATH; fall back to bare `socat` (PATH lookup).
-const SOCAT_CANDIDATES = [
-  "/opt/homebrew/bin/socat", // Apple Silicon Homebrew
-  "/usr/local/bin/socat", // Intel Homebrew
-] as const;
 const VOICEBAR_APP_PATH = "/Applications/VoiceBar.app";
-const MCP_ARGS = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] as const;
 
 function defaultHome(): string {
   const home = process.env.HOME;
@@ -78,17 +68,25 @@ export function detectAgentClis(
   return AGENT_ORDER.filter((agent) => exists(agent.command));
 }
 
-export function resolveSocatCommand(
-  exists: (path: string) => boolean = existsSync,
-): string {
-  return SOCAT_CANDIDATES.find(exists) ?? "socat";
+function stableExecutable(candidates: (string | null)[]): string | undefined {
+  return candidates.find((candidate): candidate is string => {
+    if (!candidate || resolve(candidate).includes("/Cellar/")) return false;
+    try { accessSync(candidate, constants.X_OK); return true; } catch { return false; }
+  });
 }
 
-function voiceLayerMcpServer(options: SocatOptions = {}) {
-  return {
-    command: resolveSocatCommand(options.socatExists),
-    args: MCP_ARGS,
-  };
+function voiceLayerMcpServer(home: string) {
+  const command = stableExecutable([
+    "/opt/homebrew/bin/bun", join(home, ".bun/bin/bun"), Bun.which("bun"),
+  ]);
+  const moduleBridge = fileURLToPath(new URL("../mcp-bridge.ts", import.meta.url))
+    .replace(/^(.*)\/Cellar\/([^/]+)\/[^/]+\//u, "$1/opt/$2/");
+  const bridge = stableExecutable([
+    Bun.which("voicelayer-mcp-bridge"), "/opt/homebrew/bin/voicelayer-mcp-bridge",
+    join(home, ".bun/bin/voicelayer-mcp-bridge"), moduleBridge,
+  ]);
+  if (!command || !bridge) throw new Error("Stable Bun and MCP bridge paths are required for setup");
+  return { command: resolve(command), args: [resolve(bridge)] };
 }
 
 export function resolveAgentConfigPath(
@@ -163,7 +161,6 @@ function sameJson(left: unknown, right: unknown): boolean {
 function wireJsonMcpConfig(
   agent: AgentId,
   home: string,
-  options: SocatOptions,
 ): WireResult {
   const path = resolveAgentConfigPath(agent, home);
   const data = readJsonConfig(path);
@@ -173,7 +170,7 @@ function wireJsonMcpConfig(
       : {};
   const nextServers = {
     ...servers,
-    voicelayer: voiceLayerMcpServer(options),
+    voicelayer: voiceLayerMcpServer(home),
   };
   const nextData = {
     ...data,
@@ -189,11 +186,12 @@ function wireJsonMcpConfig(
   return { agent, path, changed };
 }
 
-function canonicalCodexBlock(options: SocatOptions = {}): string {
+function canonicalCodexBlock(home: string): string {
+  const server = voiceLayerMcpServer(home);
   return [
     "[mcp_servers.voicelayer]",
-    `command = "${resolveSocatCommand(options.socatExists)}"`,
-    'args = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]',
+    `command = ${JSON.stringify(server.command)}`,
+    `args = ${JSON.stringify(server.args)}`,
     "startup_timeout_sec = 20",
     "",
   ].join("\n");
@@ -226,12 +224,12 @@ function stripTomlTable(body: string, tableName: string): string {
   return kept.join("\n").replace(/\s+$/u, "");
 }
 
-function wireCodexMcpConfig(home: string, options: SocatOptions): WireResult {
+function wireCodexMcpConfig(home: string): WireResult {
   const path = resolveAgentConfigPath("codex", home);
   const current = existsSync(path) ? readFileSync(path, "utf8") : "";
   const withoutVoiceLayer = stripTomlTable(current, "mcp_servers.voicelayer");
   const prefix = withoutVoiceLayer ? `${withoutVoiceLayer}\n\n` : "";
-  const next = `${prefix}${canonicalCodexBlock(options)}`;
+  const next = `${prefix}${canonicalCodexBlock(home)}`;
   const changed = current !== next;
 
   if (changed) {
@@ -245,13 +243,12 @@ function wireCodexMcpConfig(home: string, options: SocatOptions): WireResult {
 export function wireAgentMcpConfig(
   agent: AgentId,
   home = defaultHome(),
-  options: SocatOptions = {},
 ): WireResult {
   ensureUserStateDirs(home);
   if (agent === "codex") {
-    return wireCodexMcpConfig(home, options);
+    return wireCodexMcpConfig(home);
   }
-  return wireJsonMcpConfig(agent, home, options);
+  return wireJsonMcpConfig(agent, home);
 }
 
 export function getSetupCommandPlan(

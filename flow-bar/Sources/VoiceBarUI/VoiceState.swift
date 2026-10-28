@@ -44,8 +44,8 @@ public struct SelectionCaptureResult: Equatable {
     /// AXManualAccessibility recovery for a Chromium/Electron app whose AX tree was still off.
     public enum AXEnable: String { case attempted, set, failed }
 
-    public let outcome: Outcome
-    public let text: String?
+    public private(set) var outcome: Outcome
+    public private(set) var text: String?
     public private(set) var axRead: AXRead = .notAttempted
     public private(set) var path: Path = .unknown
     public private(set) var preflightAXEnable: AXEnable?
@@ -72,6 +72,14 @@ public struct SelectionCaptureResult: Equatable {
         var result = self
         result.axRead = axRead
         result.path = path
+        return result
+    }
+
+    public func usingAXText(_ text: String) -> Self {
+        var result = self
+        result.outcome = .completed
+        result.text = text
+        result.path = .ax
         return result
     }
 
@@ -1346,6 +1354,9 @@ public final class VoiceState {
                                           "format": fromClipboard ? "plain" : "markdown",
                                           "source": fromClipboard ? "clipboard" : "selection",
                                           "text_hash": Self.selectionHash(text)]
+            if !fromClipboard, result.path == .ax || result.path == .copy {
+                command["capture_path"] = result.path.rawValue
+            }
             // The existing queue route also owns the first explicit clipboard read, without claiming AX selection.
             if replacing || fromClipboard { command["queue"] = true }
             sendCommand?(command)
@@ -1717,7 +1728,7 @@ public final class VoiceState {
         }
         if cancelledTranscription {
             showConfirmation(
-                "Transcription cancelled — audio saved. Re-transcribe it from History once processing finishes.",
+                "Transcription cancelled. Audio saved. Re-transcribe it from History when processing finishes.",
                 duration: 5.0
             )
             expandFromCollapse()
@@ -2494,7 +2505,8 @@ public final class VoiceState {
                     let stored = playbackTimelineChunks[playbackChunkStartMilliseconds]
                     wordBoundaries = stored?.text == event["text"] as? String ? stored?.words ?? [] : []
                 }
-                updateLongReadDocument(longRead, readbackID: playbackReadbackID, chunkText: event["text"] as? String ?? "")
+                updateLongReadDocument(longRead, readbackID: playbackReadbackID,
+                                       chunkText: event["text"] as? String ?? "", displayValue: event["display"])
                 mode = .speaking
                 isTeleprompterDismissed = false
                 // Every speaking edge is the daemon playing: the resumed read or its replacement.
@@ -3476,8 +3488,8 @@ public final class VoiceState {
 
     /// Preparing brings the read's document; each chunk that is exactly its slice keeps that one page.
     /// A readback replay of the same audio keeps it too. Anything else is today's per-chunk text.
-    private func updateLongReadDocument(_ longRead: [String: Any]?, readbackID: String?, chunkText: String) {
-        let display = TeleprompterStructuredDisplay.decode(longRead?["display"], text: chunkText)
+    private func updateLongReadDocument(_ longRead: [String: Any]?, readbackID: String?, chunkText: String, displayValue: Any?) {
+        let display = TeleprompterStructuredDisplay.decode(displayValue ?? longRead?["display"], text: chunkText)
         currentStructuredDisplay = display
         isShowingLongReadDocument = false
         longReadDocumentWordStart = nil
@@ -4225,8 +4237,8 @@ public final class VoiceState {
         )
     }
 
-    private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
-    private static let pasteFailureRetryMessage = "Paste failed — click input and press Shift+F5"
+    private static let genericPasteFailureMessage = "Paste failed. Click the text field and try again."
+    private static let pasteFailureRetryMessage = "Paste failed. Click the text field and press Shift+F5."
 
     private static let richHostTypingBundleIdentifiers: Set<String> = [
         "com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS",

@@ -10,13 +10,13 @@ final class VoiceBarPanelHitGateTests: XCTestCase {
 
     private var inputs: [(String, VoiceBarNotchOperationalInput)] {
         var teleprompter = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true)
-        teleprompter.statusText = "Speaking..."
+        teleprompter.statusText = "Speaking…"
         var history = VoiceBarNotchOperationalInput(mode: .idle)
         history.isHistoryPanelOpen = true
         return [
             ("recording", .init(mode: .recording)),
             ("recording + hold", .init(mode: .recording, showsRecordingHold: true)),
-            ("transcribing", .init(mode: .transcribing, statusText: "Transcribing...")),
+            ("transcribing", .init(mode: .transcribing, statusText: "Transcribing…")),
             ("teleprompter", teleprompter),
             ("launcher", .init(mode: .idle, isHovered: true)),
             ("history", history),
@@ -258,7 +258,7 @@ final class VoiceBarPanelHitGateTests: XCTestCase {
     func testAWindowResizeAppliesTheDestinationAsBefore() {
         let recording = layout(.init(mode: .recording), note: nil)
         var teleprompter = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true)
-        teleprompter.statusText = "Speaking..."
+        teleprompter.statusText = "Speaking…"
         let opened = layout(teleprompter, note: nil)
         XCTAssertNotEqual(recording.panelSize, opened.panelSize)
         var gate = VoiceBarPanelHitGate(layout: recording)

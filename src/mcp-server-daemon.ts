@@ -4,7 +4,7 @@ import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from 
 /**
  * VoiceLayer MCP Daemon — persistent singleton replacing per-session MCP processes.
  *
- * Listens on /tmp/voicelayer-mcp.sock for MCP clients (via socat).
+ * Listens on /tmp/voicelayer-mcp.sock for MCP clients (via the reconnecting stdio bridge).
  * Connects to Voice Bar on /tmp/voicelayer.sock for UI state.
  *
  * Resilience features:
@@ -19,7 +19,7 @@ import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from 
  *   bun src/mcp-server-daemon.ts
  *
  * MCP client config (.mcp.json):
- *   "voicelayer": { "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }
+ *   "voicelayer": { "command": "/absolute/path/to/bun", "args": ["/absolute/package/src/mcp-bridge.ts"] }
  */
 
 import { createSpeechControl, loadSpeechSecret } from "./speech-control";
@@ -55,13 +55,10 @@ import { startLogRotation, stopLogRotation } from "./log-rotation";
 import { initEnrichedPATH } from "./resolve-binary";
 import { primeRecordingProvenanceProbes } from "./recording-provenance";
 import {
-  ensureSTTPolishServer,
-  onSTTPolishServerStatus,
   stopSTTPolishServer,
 } from "./stt-polish-server";
 import {
-  createSTTPolishStatusReporter,
-  ensureAndReportSTTPolishServer,
+  startSTTPolishStatusReporting,
 } from "./stt-polish-daemon-status";
 import {
   appendControlLayerEvent,
@@ -215,33 +212,12 @@ async function main() {
     );
   }
   // Connect to Voice Bar for UI state
-  const polishStatusReporter = createSTTPolishStatusReporter(broadcast);
-  const unsubscribePolishStatus = onSTTPolishServerStatus((status) => {
-    polishStatusReporter.report(status);
-  });
+  const { reporter: polishStatusReporter, unsubscribe: unsubscribePolishStatus } = startSTTPolishStatusReporting(broadcast);
   onCommand(handleSocketCommand);
   connectToBar(undefined, {
     role: "mcp-daemon",
     acceptsCommands: shouldAcceptVoiceBarCommands(),
     onConnected: () => polishStatusReporter.replay(),
-  });
-  void ensureAndReportSTTPolishServer({
-    ensure: async () => {
-      try {
-        return await ensureSTTPolishServer();
-      } catch (err: unknown) {
-        console.error(
-          `[voicelayer-daemon] STT polish server startup failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        appendControlLayerEvent(
-          "transcription.polish_server_failed",
-          { error: err instanceof Error ? err.message : String(err) },
-          { topic: "voice.transcription" },
-        );
-        throw err;
-      }
-    },
-    reporter: polishStatusReporter,
   });
 
   // Start MCP daemon (includes orphan socket cleanup and chmod 600)
@@ -267,7 +243,7 @@ async function main() {
     `[voicelayer-daemon] MCP daemon listening on ${MCP_SOCKET_PATH}`,
   );
   console.error(
-    `[voicelayer-daemon] socat config: socat STDIO UNIX-CONNECT:${MCP_SOCKET_PATH}`,
+    `[voicelayer-daemon] Client config: run scripts/migrate-to-daemon.sh --dry-run for absolute bridge argv`,
   );
   appendControlLayerEvent("daemon.started", {
     mcp_socket_path: MCP_SOCKET_PATH,

@@ -58,3 +58,5 @@ site/what-is-voicelayer/
 # Spotlight-excluded build, QA artifacts and local snapshot galleries
 *.noindex/
 .build.noindex/
+
+build-info.json

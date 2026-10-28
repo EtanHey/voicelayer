@@ -1,13 +1,15 @@
 {
   "name": "voicelayer-mcp",
-  "version": "2.2.57",
+  "version": "2.2.58",
   "description": "Voice I/O layer for AI coding assistants — local TTS, STT, session booking. MCP server.",
   "type": "module",
   "bin": {
     "voicelayer-mcp": "src/mcp-server.ts",
+    "voicelayer-mcp-bridge": "src/mcp-bridge.ts",
     "voicelayer": "src/cli/voicelayer.sh"
   },
   "files": [
+    "build-info.json",
     "src/**/*.ts",
     "src/**/*.py",
     "!src/__tests__/**",
