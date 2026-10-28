@@ -136,44 +136,52 @@ test("a parked same-text read starts fresh while paused queued duplicates still 
 });
 
 const modelPath = process.env.VOICELAYER_ADMISSION_CASES;
-test.skipIf(!modelPath)("TLC admission decisions and post-states conform to daemon handlers", async () => {
-  if (!modelPath) throw new Error("Run formal/speech-queue/check.sh");
-  const rows = z.array(z.object({ playing: z.number().int(), pending: z.array(z.number().int()), suspended: z.boolean(),
+const rows = modelPath ? z.array(z.object({ playing: z.number().int(), pending: z.array(z.number().int()), suspended: z.boolean(),
     selected: z.number().int(), event: z.enum(["selection", "stop", "f5"]), decision: z.string(), preempted: z.boolean(),
-    afterPlaying: z.number().int(), afterPending: z.array(z.number().int()) })).parse(JSON.parse(readFileSync(modelPath, "utf8")));
-  let depth = 0, count = 0;
-  const started: string[] = [];
-  spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"),
-    spyOn(input, "getEffectiveRecordingState").mockReturnValue("idle"),
-    spyOn(tts, "getPlaybackQueueDepth").mockImplementation(() => depth),
-    spyOn(tts, "stopPlayback").mockImplementation(() => { depth = 0; return true; }),
-    spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined),
-    spyOn(tts, "prepareSelectionReadStart").mockImplementation(() => new Promise(() => {})),
-    spyOn(tts, "speakText").mockImplementation((_text, _profile, identity) => {
-      const id = identity?.request_id ?? "";
-      started.push(id); depth = 1;
-      return { id, generation: 1, done: Promise.resolve(), playerExited: Promise.resolve(),
-        started: Promise.resolve({}), completion: Promise.resolve({}) };
-    }), spyOn(client, "broadcast").mockImplementation(event => { if (event.type === "read_queue") count = event.count; }));
-  const cleared = spyOn(archive, "cancelQueuedSpeech"); spies.push(cleared);
-  for (const [index, row] of rows.entries()) {
-    resetSelectionReadQueueForTests(); depth = 0; count = 0;
-    const press = (n: number, marker = "") => handleSocketCommand({ cmd: "speak_text", id: `model-${index}-${n}`,
-      text: `${marker}Item ${n}`, source: "selection", format: "markdown", queue: true });
-    if (row.playing) await press(row.playing);
-    for (const n of row.pending) await press(n);
-    if (row.suspended) { await handleSocketCommand({ cmd: "stop", retain_read_queue: true }); depth = 0; }
-    if (row.preempted) { tts.preemptLongRead("external"); depth = 0; }
-    cleared.mockClear(); started.length = 0;
-    const response = await (row.event === "selection" ? press(row.selected, "- [x] ")
-      : handleSocketCommand({ cmd: "stop", ...(row.event === "f5" ? { retain_read_queue: true } : {}) }));
-    expect(response, `row ${index}`).toMatchObject(row.decision === "hint"
-      ? { outcome: "noop", reason: "Already queued" } : { outcome: row.event === "stop" && (!row.playing || row.suspended) ? "noop" : "accept" });
-    expect(count, `row ${index}`).toBe(row.afterPending.length);
-    const launch = row.decision === "read_next" ? row.afterPlaying
-      : row.decision === "speak_text" && (row.preempted || row.suspended || !row.playing) ? row.selected : 0;
-    expect(started, `row ${index}`).toEqual(launch ? [`model-${index}-${launch}`] : []);
-    if (row.event !== "stop") expect(cleared, `row ${index}`).not.toHaveBeenCalled();
-  }
-  console.log(`Replayed ${rows.length} TLC admission cases through daemon handlers`);
+    afterPlaying: z.number().int(), afterPending: z.array(z.number().int()) })).parse(JSON.parse(readFileSync(modelPath, "utf8"))) : [];
+let replayed = 0;
+const batchSize = 25;
+for (let offset = 0; offset < rows.length; offset += batchSize) {
+  test(`TLC admission decisions and post-states conform to daemon handlers: rows ${offset}-${Math.min(offset + batchSize, rows.length) - 1}`, async () => {
+    let depth = 0, count = 0;
+    const started: string[] = [];
+    spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"),
+      spyOn(input, "getEffectiveRecordingState").mockReturnValue("idle"),
+      spyOn(tts, "getPlaybackQueueDepth").mockImplementation(() => depth),
+      spyOn(tts, "stopPlayback").mockImplementation(() => { depth = 0; return true; }),
+      spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined),
+      spyOn(tts, "prepareSelectionReadStart").mockImplementation(() => new Promise(() => {})),
+      spyOn(tts, "speakText").mockImplementation((_text, _profile, identity) => {
+        const id = identity?.request_id ?? "";
+        started.push(id); depth = 1;
+        return { id, generation: 1, done: Promise.resolve(), playerExited: Promise.resolve(),
+          started: Promise.resolve({}), completion: Promise.resolve({}) };
+      }), spyOn(client, "broadcast").mockImplementation(event => { if (event.type === "read_queue") count = event.count; }));
+    const cleared = spyOn(archive, "cancelQueuedSpeech"); spies.push(cleared);
+    for (const [batchIndex, row] of rows.slice(offset, offset + batchSize).entries()) {
+      const index = offset + batchIndex;
+      resetSelectionReadQueueForTests(); depth = 0; count = 0;
+      const press = (n: number, marker = "") => handleSocketCommand({ cmd: "speak_text", id: `model-${index}-${n}`,
+        text: `${marker}Item ${n}`, source: "selection", format: "markdown", queue: true });
+      if (row.playing) await press(row.playing);
+      for (const n of row.pending) await press(n);
+      if (row.suspended) { await handleSocketCommand({ cmd: "stop", retain_read_queue: true }); depth = 0; }
+      if (row.preempted) { tts.preemptLongRead("external"); depth = 0; }
+      cleared.mockClear(); started.length = 0;
+      const response = await (row.event === "selection" ? press(row.selected, "- [x] ")
+        : handleSocketCommand({ cmd: "stop", ...(row.event === "f5" ? { retain_read_queue: true } : {}) }));
+      expect(response, `row ${index}`).toMatchObject(row.decision === "hint"
+        ? { outcome: "noop", reason: "Already queued" } : { outcome: row.event === "stop" && (!row.playing || row.suspended) ? "noop" : "accept" });
+      expect(count, `row ${index}`).toBe(row.afterPending.length);
+      const launch = row.decision === "read_next" ? row.afterPlaying
+        : row.decision === "speak_text" && (row.preempted || row.suspended || !row.playing) ? row.selected : 0;
+      expect(started, `row ${index}`).toEqual(launch ? [`model-${index}-${launch}`] : []);
+      if (row.event !== "stop") expect(cleared, `row ${index}`).not.toHaveBeenCalled();
+      replayed++;
+    }
+  });
+}
+test.skipIf(!modelPath)("all TLC admission cases were replayed", () => {
+  expect(replayed).toBe(rows.length);
+  console.log(`Replayed ${replayed} TLC admission cases through daemon handlers`);
 });
