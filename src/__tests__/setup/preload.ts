@@ -109,6 +109,7 @@ function setIfUnset(name: string, value: string): void {
 process.env.VOICELAYER_TEST_RUN_ROOT = RUN_ROOT;
 // Never inherit another run's PID lock or honor a resident-path override.
 process.env.QA_VOICE_MCP_PID_PATH = join(RUN_ROOT, "voicelayer-mcp.pid");
+process.env.VOICELAYER_LOG_ROTATION_DIR = join(RUN_ROOT, "logs");
 
 // Git's repository selectors (GIT_DIR, GIT_COMMON_DIR, GIT_CONFIG, GIT_WORK_TREE,
 // GIT_INDEX_FILE, ...) are exported by git hooks and `rebase --exec`. A test
@@ -141,6 +142,7 @@ process.env.VOICELAYER_TEST_ISOLATED = "1";
 // disable the preload contract. Read current values when each child is spawned.
 const isolationKeys = [
   "VOICELAYER_TEST_ISOLATED", "VOICELAYER_TEST_RUN_ROOT", "QA_VOICE_MCP_PID_PATH",
+  "VOICELAYER_LOG_ROTATION_DIR",
   "VOICELAYER_TMP_ROOT", "VOICELAYER_STATE_DIR", "VOICELAYER_CONTROL_LAYER_BASE",
   "VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "QA_VOICE_RECORDINGS_DIR",
   "QA_VOICE_THINK_FILE", "QA_VOICE_STT_VOCABULARY_PATH", "QA_VOICE_STT_COMMANDS_DIR",

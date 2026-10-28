@@ -86,6 +86,7 @@ const isolationKeys = [
   "VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH",
   "QA_VOICE_SOCKET_PATH", "QA_VOICE_MCP_SOCKET_PATH",
   "QA_VOICE_MCP_PID_PATH", "QA_VOICE_MCP_HEARTBEAT_PATH",
+  "VOICELAYER_LOG_ROTATION_DIR",
 ];
 
 function rotationProbe(env: Record<string, string>, paths?: string[]) {
@@ -121,13 +122,27 @@ function rotationProbe(env: Record<string, string>, paths?: string[]) {
 }
 
 describe("log rotation isolation", () => {
-  for (const key of isolationKeys) {
+  for (const key of isolationKeys.filter((key) => key !== "VOICELAYER_LOG_ROTATION_DIR")) {
     it(`does not access implicit resident logs with ${key}`, () => {
       expect(rotationProbe({ [key]: `${TEST_TMP}/isolated` })).toEqual({
         exists: [], stat: [], rename: [],
       });
     });
   }
+
+  it("uses the preload's isolated log directory", () => {
+    expect(process.env.VOICELAYER_LOG_ROTATION_DIR).toBe(`${process.env.VOICELAYER_TEST_RUN_ROOT}/logs`);
+    const dir = `${TEST_TMP}/isolated-logs`;
+    const paths = ["stdout", "stderr"].map((stream) => `${dir}/voicelayer-mcp-daemon.${stream}.log`);
+    const result = rotationProbe({ VOICELAYER_LOG_ROTATION_DIR: dir, VOICELAYER_TMP_ROOT: TEST_TMP });
+    expect(result.exists).toEqual(paths);
+    expect(result.stat).toEqual(paths);
+    expect(result.rename).toEqual(paths.map((path) => [path, `${path}.1`]));
+  });
+
+  it("configures the daemon smoke to rotate only within its run directory", () => {
+    expect(readFileSync("scripts/run_tests.sh", "utf8")).toContain('VOICELAYER_LOG_ROTATION_DIR="$RUN_DIR"');
+  });
 
   it("retains byte-identical resident defaults without isolation overrides", () => {
     const paths = [

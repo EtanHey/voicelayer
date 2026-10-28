@@ -6,6 +6,7 @@
  */
 
 import { existsSync, statSync, renameSync } from "fs";
+import { basename, join } from "path";
 import {
   isDefaultTmpRoot, isDefaultStateDir,
   isDefaultVoiceBarSocketPath, isDefaultMcpSocketPath,
@@ -50,14 +51,14 @@ export function startLogRotation(
   intervalMs: number = CHECK_INTERVAL_MS,
 ): void {
   if (rotationTimer) return; // Already running
-  // Child output may be inherited handles, pipes, or arbitrary redirects; an
-  // isolated root does not tell us the actual log filenames. Only the resident
-  // defaults are known. Isolated callers must supply their output paths.
   const isolated = !isDefaultTmpRoot() || !isDefaultStateDir() ||
     !isDefaultVoiceBarSocketPath() || !isDefaultMcpSocketPath() ||
     !!process.env.QA_VOICE_MCP_PID_PATH?.trim() ||
     !!process.env.QA_VOICE_MCP_HEARTBEAT_PATH?.trim();
-  const logPaths = paths ?? (isolated ? [] : LOG_PATHS);
+  const directory = process.env.VOICELAYER_LOG_ROTATION_DIR?.trim();
+  const logPaths = paths ?? (directory
+    ? LOG_PATHS.map((path) => join(directory, basename(path)))
+    : isolated ? [] : LOG_PATHS);
   if (logPaths.length === 0) return;
   rotationTimer = setInterval(() => {
     for (const path of logPaths) {
