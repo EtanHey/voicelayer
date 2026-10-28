@@ -1384,8 +1384,6 @@ class PlaybackQueueManager {
     this.parked = parked;
     job.onParkedChange?.(true);
     if (offset < (metadata.durationMs ?? Infinity)) metadata.speechArchive?.move("paused");
-    // Resume at EOF completes without a new player. Close timing now and keep
-    // the legal playing -> completed path, including for a long-read chunk.
     else metadata.speechArchive?.playerEnded();
     if (!parked.ready) this.prepareParked(parked);
     this.broadcastPlaybackState(job, "paused");
@@ -1623,8 +1621,11 @@ class PlaybackQueueManager {
       }
 
       if (next.metadata?.localOffsetMs !== undefined && next.metadata.localOffsetMs >= (next.metadata.durationMs ?? Infinity)) {
-        completeJob(next, buildPlaybackOutcome(next, "completed"));
-        if (this.depth() === 0) broadcastPlaybackIdleIfSpeakerClear(next.metadata.nextState);
+        const outcome = this.ownsPausablePrompt(next)
+          ? buildPlaybackOutcome(next, "failed", "player-error")
+          : buildPlaybackOutcome(next, "completed");
+        completeJob(next, outcome);
+        if (this.depth() === 0) broadcastPlaybackIdleIfSpeakerClear(outcome.status === "completed" ? next.metadata.nextState : undefined);
         continue;
       }
       if (next.skipAmplitudeDecode) {

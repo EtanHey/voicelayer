@@ -133,25 +133,40 @@ it("rejects Pause for an unadmitted critical job", async () => {
   expect(tts.pausePlayback()).toMatchObject({ outcome: "reject", reason: "unsupported" });
 });
 
-for (const failed of [false, true]) it(`Resume ${failed ? "slice failure" : "at EOF"} retains the capture fence`, async () => {
+it("Resume slice failure retains the capture fence", async () => {
   const { player, handle } = await startAsk();
-  expect(tts.pausePlayback({ id: handle.id }, failed ? 4200 : 600_000).outcome).toBe("accept");
+  expect(tts.pausePlayback({ id: handle.id }, 4200).outcome).toBe("accept");
   const trim = await trims.at(0);
   expect(tts.resumePlayback({ id: handle.id, generation: handle.generation }).outcome).toBe("accept");
-  trim.resolve(failed ? 1 : 0); await flush();
+  trim.resolve(1); await flush();
   expect(capture).not.toHaveBeenCalled();
-  if (failed) {
-    expect(tts.isPlaybackPaused()).toBe(true);
-    expect(tts.isCaptureAdmissionReserved()).toBe(true);
-    tts.stopPlayback(); player.exit.resolve(143);
-    expect((await pending)?.content[0].text).toContain("stopped");
-    expect(capture).not.toHaveBeenCalled();
-  } else {
-    player.exit.resolve(143);
-    expect((await pending)?.content[0].text).toContain("fixture answer");
-    expect(capture).toHaveBeenCalledTimes(1);
-    expect(players.values).toHaveLength(1);
-  }
+  expect(tts.isPlaybackPaused()).toBe(true);
+  expect(tts.isCaptureAdmissionReserved()).toBe(true);
+  tts.stopPlayback(); player.exit.resolve(143);
+  expect((await pending)?.content[0].text).toContain("stopped");
+  expect(capture).not.toHaveBeenCalled();
+});
+
+for (const offset of [600_000, 650_000]) for (const exitCode of [0, 143])
+it(`Ask Resume at client EOF ${offset} never captures after terminated player exit ${exitCode}`, async () => {
+  const { player, handle } = await startAsk();
+  expect(await handleSocketCommand({ cmd: "pause", id: "eof-p", playback_id: handle.id,
+    generation: handle.generation, playback_elapsed_ms: offset })).toMatchObject({ outcome: "accept", offset_ms: 600_000 });
+  expect(player.signals).toContain("SIGTERM");
+  (await trims.at(0)).resolve(0); await flush();
+  expect(await handleSocketCommand({ cmd: "resume", id: "eof-r", playback_id: handle.id,
+    generation: handle.generation })).toMatchObject({ outcome: "accept", offset_ms: 600_000 });
+  await flush();
+  expect(capture).not.toHaveBeenCalled();
+  expect(tts.isCaptureAdmissionReserved()).toBe(true);
+  player.exit.resolve(exitCode);
+  const result = await pending;
+  expect(capture).not.toHaveBeenCalled();
+  expect(result?.isError).toBe(true);
+  expect(result?.content[0].text).toContain("nothing was recorded");
+  expect(await handle.exited).toMatchObject({ status: "failed" });
+  expect(tts.isCaptureAdmissionReserved()).toBe(false);
+  expect(players.values).toHaveLength(1);
 });
 
 it("Stop wins a pending Resume slice and late conversion cannot resurrect Ask", async () => {
@@ -178,9 +193,9 @@ it("rejects stale Pause and refuses Resume while actual recording owns the mic",
   expect(capture).not.toHaveBeenCalled();
 });
 
-it("failed natural player exit never opens the microphone", async () => {
+for (const exitCode of [1, 143]) it(`failed natural player exit ${exitCode} never opens the microphone`, async () => {
   const { player } = await startAsk();
-  player.exit.resolve(1);
+  player.exit.resolve(exitCode);
   expect((await pending)?.isError).toBe(true);
   expect(capture).not.toHaveBeenCalled();
 });
