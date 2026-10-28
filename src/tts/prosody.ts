@@ -68,6 +68,7 @@ export interface ProsodyChunk {
 }
 export interface ProsodyPlan {
   renderIdentity: string;
+  pausePlacement?: "trailing";
   readText: string;
   /** Engine texts joined by single spaces: what the synthesizer and the clone aligner receive. */
   speechText: string;
@@ -389,7 +390,10 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   const chunks = planChunks(readText, segments, maxChars, input.concurrency ?? PROSODY_SYNTH_CONCURRENCY, clone);
   let renderIdentity: string | undefined;
   return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks,
-    get renderIdentity() { return renderIdentity ??= createHash("sha256").update(JSON.stringify([policy, projection, segments, chunks])).digest("hex"); } };
+    ...(clone ? { pausePlacement: "trailing" as const } : {}),
+    get renderIdentity() { return renderIdentity ??= createHash("sha256").update(JSON.stringify([
+      policy, projection, segments, chunks, ...(clone ? ["trailing-pauses-v1"] : []),
+    ])).digest("hex"); } };
 }
 
 function planChunks(readText: string, segments: ProsodySegment[], maxChars: number, concurrency: number, clone: boolean): ProsodyChunk[] {

@@ -4,6 +4,7 @@ import { chunkTextForLongRead } from "../tts";
 import { runLongRead } from "../tts/long-read";
 import { planProsody } from "../tts/prosody";
 import { createProsodyRead, PROSODY_SAMPLE_RATE, type ProsodyReadEngine } from "../tts/prosody-read";
+import { projectStructuredSpeech } from "../tts/structured-speech";
 
 class Clock {
   now = 0;
@@ -28,6 +29,78 @@ const prose = "A short opening has enough words to read. " + "The next sentence 
 const structured = "## Status\n\n1. Keep the service running while the backup is verified.\n2. Open the review page and copy the results into the report.\n3. Check the changes and save the complete verification record.";
 const gapFree = "The first sentence has enough words to cover the following request without a playback stop. " + "The next sentence is short enough to finish before the audio ends.";
 const letters = (text: string) => text.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+
+const releaseNotes = "## Release notes\n\n**Fixed:** the pill no longer jumps.\n\n1. First item.\n2. Second item.\n";
+
+describe("R-GAPS audible clone pauses with Qwen request overhead", () => {
+  for (const speed of [1, 1.25])
+  for (const msPerChar of [30, 48])
+  for (const playbackMsPerChar of [50, 65])
+  for (const selection of [false, true])
+  it(`Release notes preserves planned audible gaps (${msPerChar}ms/char, ${playbackMsPerChar}ms audio/char, ${speed}x, selection=${selection})`, async () => {
+    const clock = new Clock(), controller = new AbortController();
+    const structure = selection ? projectStructuredSpeech(releaseNotes) : undefined;
+    const readText = structure?.speechText ?? releaseNotes;
+    const plan = planProsody({ readText, projection: projectSpeakableText(readText, [], "clone"),
+      structure, engine: "clone", listNumbers: "inline", concurrency: 1, playbackSpeed: speed });
+    const files = new Map<string, Float32Array>(), heard: { start: number; end: number }[] = [], requested: string[] = [];
+    let serial = 0, active = 0, peak = 0;
+    const engine: ProsodyReadEngine = {
+      async synthesize(segment, signal) {
+        requested.push(segment.text);
+        active++; peak = Math.max(peak, active);
+        try { await clock.sleep(300 + segment.text.length * msPerChar); signal.throwIfAborted(); }
+        finally { active--; }
+        const pcm = new Float32Array(Math.round(segment.text.length * playbackMsPerChar / speed * 24));
+        for (let i = 0; i < pcm.length; i++) pcm[i] = 0.3 * Math.sin(2 * Math.PI * i / 48);
+        const audioFile = `segment-${serial++}`;
+        files.set(audioFile, pcm);
+        return { audioFile, durationMs: pcm.length / 24, words: [] };
+      },
+      async decode(file) {
+        await clock.sleep(50);
+        const pcm = files.get(file); if (!pcm) throw new Error("Missing audio"); return pcm;
+      },
+      async encode(pcm) {
+        await clock.sleep(40);
+        const file = `chunk-${serial++}`; files.set(file, pcm); return file;
+      },
+      unlink(file) { files.delete(file); },
+    };
+    const read = createProsodyRead(plan, engine, controller.signal, 1, { overlapDecode: true, playbackLookahead: 2 });
+    try {
+      await clock.until(runLongRead(plan.chunks.map(chunk => chunk.text), "release-notes", controller.signal, {
+        synthesize: async (_text, index) => { const chunk = await read.chunk(index); return { ...chunk, wordBoundaries: chunk.words }; },
+        play(chunk, _text, info) {
+          read.chunkAdmitted(info.chunk_index);
+          if (info.chunk_index === 0) read.firstAudioStarted(chunk.audioFile);
+          const pcm = files.get(chunk.audioFile);
+          if (!pcm) throw new Error("Missing playback audio");
+          const first = pcm.findIndex(sample => Math.abs(sample) > 0.008);
+          let last = pcm.length - 1;
+          while (last > first && Math.abs(pcm[last]) <= 0.008) last--;
+          heard.push({ start: clock.now + first / 24, end: clock.now + (last + 1) / 24 });
+          return { started: Promise.resolve(true), exited: clock.sleep(chunk.durationMs).then(() =>
+            ({ status: "completed" as const, stopped_at_ms: chunk.durationMs })) };
+        },
+        async saveHistory(audio, info) { expect(audio).toHaveLength(plan.chunks.length); expect(letters(info.text)).toBe(letters(readText)); },
+        dispose(chunk) { engine.unlink(chunk.audioFile); },
+      }, 2));
+      const gaps = heard.slice(1).map((current, i) => Math.round(current.start - heard[i].end));
+      const planned = plan.segments.slice(0, -1).map(segment => segment.pauseMs);
+      const baselineFirstAudio = 300 + plan.segments[0].text.length * msPerChar;
+      console.info(JSON.stringify({ kind: "release-notes-audible", speed, msPerChar, playbackMsPerChar, selection, planned, gaps,
+        firstAudioMs: heard[0].start, mainFirstAudioMs: baselineFirstAudio }));
+      expect(planned).toEqual([1000, 320, 1000, 450]);
+      expect(requested).toEqual(plan.segments.map(segment => segment.text));
+      expect(heard).toHaveLength(plan.segments.length);
+      expect(heard[0].start).toBeLessThanOrEqual(baselineFirstAudio * 1.1);
+      expect(peak).toBe(1);
+      for (const [index, gap] of gaps.entries()) expect(Math.abs(gap - planned[index])).toBeLessThanOrEqual(150);
+    } finally { controller.abort(); await clock.until(read.close()); }
+    expect(files.size).toBe(0);
+  });
+});
 
 describe("S2 F3 clone startup and sequential prefetch", () => {
   it("does not buffer an entire list of tiny clone utterances before first audio", () => {

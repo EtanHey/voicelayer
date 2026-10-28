@@ -58,6 +58,36 @@ describe("isStructuredPlan: prosody engages only when the text has structure", (
 
 describe("createProsodyRead", () => {
   const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three";
+  it("R-GAPS clone trailing pauses count measured tails and preserve word coordinates through MP3", async () => {
+    const text = "## Release notes\n\n**Fixed:** the pill no longer jumps.\n\n1. First item.\n2. Second item.\n";
+    const p = planProsody({ readText: text, projection: projectSpeakableText(text, [], "clone"), engine: "clone", listNumbers: "inline" });
+    const { engine } = fakeEngine(), signal = new AbortController().signal;
+    const files: string[] = [];
+    engine.encode = async (pcm, signal) => {
+      const file = ttsFilePath(process.pid, 910000 + files.length); files.push(file);
+      await encodePCMToMp3(pcm, file, signal); return file;
+    };
+    const read = createProsodyRead(p, engine, signal, 1);
+    try {
+      let elapsedMs = 0, lastWordEndMs: number | undefined;
+      for (let index = 0; index < p.chunks.length; index++) {
+        const chunk = await read.chunk(index);
+        if (index === 0) read.firstAudioStarted(chunk.audioFile);
+        if (lastWordEndMs !== undefined)
+          expect(elapsedMs + chunk.words[0].offset_ms - lastWordEndMs).toBeCloseTo(p.chunks[index - 1].trailingPauseMs, 0);
+        const last = chunk.words.at(-1)!;
+        lastWordEndMs = elapsedMs + last.offset_ms + last.duration_ms;
+        if (index > 0) {
+          const decoded = await decodeAudioToPCM(chunk.audioFile, signal);
+          expect(decoded.length / 24).toBeCloseTo(chunk.durationMs, 0);
+          const tail = decoded.slice(Math.ceil((last.offset_ms + last.duration_ms + 30) * 24));
+          expect(tail.every(sample => Math.abs(sample) < 0.005)).toBe(true);
+          expect(tail.length / 24).toBeGreaterThanOrEqual(Math.max(0, p.chunks[index].trailingPauseMs - 50));
+        }
+        elapsedMs += chunk.durationMs;
+      }
+    } finally { await read.close(); for (const file of files) unlinkSync(file); }
+  });
   for (const failure of ["stop", "decode"] as const) it(`S2 overlapping clone decoding is reaped after ${failure}`, async () => {
     const text = "## Status\n" + "- Keep every complete word in the archive.\n".repeat(8);
     const p = planProsody({ readText: text, projection: projectSpeakableText(text, [], "clone"), engine: "clone", listNumbers: "inline" });

@@ -129,7 +129,10 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
       const spliced = splicePCM(parts.map((part, i) => {
         if (part.raw) throw new Error("Only chunk 0 plays an engine file directly");
         return { pcm: part.pcm, words: part.words, pauseMs: segments[i].pauseMs };
-      }), PROSODY_SAMPLE_RATE, index > 0 ? { leadingPauseMs: plan.chunks[index - 1].trailingPauseMs, previousTailMs: tailMs } : {});
+      }), PROSODY_SAMPLE_RATE, {
+        ...(index > 0 ? { leadingPauseMs: plan.chunks[index - 1].trailingPauseMs, previousTailMs: tailMs } : {}),
+        ...(plan.pausePlacement === "trailing" ? { trailingPauseMs: plan.chunks[index].trailingPauseMs } : {}),
+      });
       const audioFile = await engine.encode(spliced.pcm, signal);
       previousTailMs = Promise.resolve(measurePCMExtent(spliced.pcm, PROSODY_SAMPLE_RATE).tailMs);
       return { audioFile, durationMs: spliced.durationMs, words: spliced.words, spokenText: spoken(index) };
