@@ -795,6 +795,19 @@ export async function handleConverse(
       );
     }, timeoutMs);
   };
+  let promptBudgetRemaining = voiceAskPromptTimeoutMs(validated.message);
+  let promptBudgetStartedAt = 0;
+  const onPromptParkedChange = (parked: boolean): void => {
+    if (timeoutSettled || inputAbortController.signal.aborted) return;
+    if (parked) {
+      promptBudgetRemaining = Math.max(0, promptBudgetRemaining - (Date.now() - promptBudgetStartedAt));
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    } else {
+      promptBudgetStartedAt = Date.now();
+      armTimeout(promptBudgetRemaining, "prompt");
+    }
+  };
   armTimeout(VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS, "playback-wait");
 
   const converseFlow = async (): Promise<McpResult> => {
@@ -817,7 +830,8 @@ export async function handleConverse(
     if (!captureAdmission) throw new Error("Playback changed before Ask could reserve capture admission; try again");
 
     // Speak the question aloud — BLOCKING for converse
-    armTimeout(voiceAskPromptTimeoutMs(validated.message), "prompt");
+    promptBudgetStartedAt = Date.now();
+    armTimeout(promptBudgetRemaining, "prompt");
     const voiceName = validated.voice;
     promptAttempted = true;
     let speech: Awaited<ReturnType<typeof speak>>;
@@ -830,7 +844,7 @@ export async function handleConverse(
         captureAudioArtifact: true,
         onPlaybackQueued: handle => {
           promptPlayers.push(handle);
-          if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle)) {
+          if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle, onPromptParkedChange)) {
             admissionFailed = true;
             cancelPlayback({ id: handle.id });
           }
@@ -855,6 +869,14 @@ export async function handleConverse(
     if (promptPlayers.length) await waitForPlayerExit(promptPlayers);
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return textResult("[converse] Request ended before recording could start.", true);
+    }
+    if (speech.playbackOutcome && speech.playbackOutcome.status !== "completed") {
+      captureAdmission.release();
+      if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && getEffectiveRecordingState() === "idle") {
+        broadcast({ type: "state", state: "idle", source: "playback" });
+      }
+      return textResult(`[converse] Question ${speech.playbackOutcome.reason === "stopped" ? "stopped" : speech.playbackOutcome.status}; nothing was recorded.`,
+        speech.playbackOutcome.reason !== "stopped");
     }
     // Bound recorder startup separately from prompt playback. The full capture
     // window is rearmed only by onCaptureStart after the microphone opens.
