@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { projectSpeakableText } from "../speakable-text";
+import { proseSlashMatches } from "../tts/display-tokens";
 
 // Adapted R01 corpus: full clone paths, bounded URLs, complete hex literals,
 // unchanged prose numbers, and ordered table cells (no invented/repeated headers).
@@ -331,30 +332,103 @@ test("filename near-misses beside Hebrew stay below 50 ms in-process", () => {
   }
 });
 
-test("projection operation counts stay subquadratic as input doubles", () => {
-  const baselines = [
-    corpus.map(([text]) => text).join(" ").slice(0, 1000),
-    "``alpha`\n- [x] beta\ngamma`` ".repeat(40).slice(0, 1000),
-  ];
-  for (const baseline of baselines) for (const engine of ["edge", "clone"] as const) {
-    let previous = 0;
-    for (const repetitions of [1, 2, 4]) {
-      const input = baseline.repeat(repetitions);
-      const exec = spyOn(RegExp.prototype, "exec");
-      const lookup = spyOn(Map.prototype, "get");
-      let operations: number;
-      try {
-        const result = projectSpeakableText(input, [], engine);
-        operations = exec.mock.calls.length + lookup.mock.calls.length;
-        expect(result.displayText).toBe(input);
-        expect(result.speechText.length).toBeGreaterThan(0);
-      } finally {
-        exec.mockRestore();
-        lookup.mockRestore();
-      }
-      expect(operations).toBeGreaterThan(0);
-      if (previous) expect(operations).toBeLessThan(previous * 3);
-      previous = operations;
+const projectionSource = await Bun.file(new URL("../speakable-text.ts", import.meta.url)).text();
+
+function measureProjection(source = projectionSource) {
+  const work = { pieceVisits: 0 };
+  const loop = "for (let i = 0; i < pieces.length; i++) {";
+  expect(source.split(loop)).toHaveLength(2);
+  const instrumented = source.replace(loop, loop + " work.pieceVisits++;")
+    .replace('import { proseSlashMatches } from "./tts/display-tokens";', "")
+    .replace("export function projectSpeakableText", "function projectSpeakableText");
+  const code = new Bun.Transpiler({ loader: "ts" }).transformSync(instrumented);
+  const project: typeof projectSpeakableText = new Function("proseSlashMatches", "work",
+    code + "\nreturn projectSpeakableText;")(proseSlashMatches, work);
+  return (input: string, engine: "edge" | "clone") => {
+    work.pieceVisits = 0;
+    const exec = spyOn(RegExp.prototype, "exec");
+    const lookup = spyOn(Map.prototype, "get");
+    try {
+      const result = project(input, [], engine);
+      const regexMapOperations = exec.mock.calls.length + lookup.mock.calls.length;
+      return { result, pieceVisits: work.pieceVisits, regexMapOperations,
+        operations: work.pieceVisits + regexMapOperations };
+    } finally {
+      exec.mockRestore();
+      lookup.mockRestore();
     }
+  };
+}
+
+function hasSubquadraticGrowth(counts: number[]): boolean {
+  return counts.every((count, i) => count > 0 && (i === 0 || count < counts[i - 1] * 3));
+}
+
+test("projection gate rejects pre-existing quadratic piece visits on checkbox lines", () => {
+  const measure = measureProjection();
+  for (const engine of ["edge", "clone"] as const) {
+    const measurements = [100, 200, 400].map(repetitions => {
+      const input = "[x] done\n".repeat(repetitions);
+      const measured = measure(input, engine);
+      expect(measured.result).toEqual(projectSpeakableText(input, [], engine));
+      expect(measured.pieceVisits).toBeGreaterThan(0);
+      return measured;
+    });
+    expect(hasSubquadraticGrowth(measurements.map(m => m.regexMapOperations))).toBe(true);
+    expect(hasSubquadraticGrowth(measurements.map(m => m.pieceVisits))).toBe(false);
+    expect(hasSubquadraticGrowth(measurements.map(m => m.operations))).toBe(false);
   }
+});
+
+function measureSpanScanner(quadratic = false) {
+  const work = { steps: 0 };
+  let instrumented = projectionSource;
+  for (const loop of [
+    "for (let i = runs.length - 1; i >= 0; i--) {",
+    "for (let i = 0; i < runs.length; i++) {",
+  ]) {
+    expect(instrumented.split(loop)).toHaveLength(2);
+    instrumented = instrumented.replace(loop, loop + " work.steps++;");
+  }
+  expect(instrumented.split("at--) backslashes++;")).toHaveLength(2);
+  instrumented = instrumented.replace("at--) backslashes++;", "at--) { work.steps++; backslashes++; }");
+  if (quadratic) {
+    instrumented = instrumented.replace("work.steps++;", "work.steps++; for (const run of runs) { work.steps++; }");
+  }
+  instrumented = instrumented.replace('import { proseSlashMatches } from "./tts/display-tokens";', "")
+    .replace("export function projectSpeakableText", "function projectSpeakableText");
+  const code = new Bun.Transpiler({ loader: "ts" }).transformSync(instrumented);
+  const scan: (input: string) => Map<number, number> = new Function("proseSlashMatches", "work",
+    code + "\nreturn inlineCodeSpanEnds;")(proseSlashMatches, work);
+  return (input: string) => {
+    work.steps = 0;
+    const ends = scan(input);
+    return { ends, steps: work.steps };
+  };
+}
+
+test("backtick span scanner visits grow linearly, including escaped and unmatched runs", () => {
+  const scan = measureSpanScanner();
+  const baselines = [
+    "``alpha`\n- [x] beta\ngamma`` ".repeat(40),
+    "\\\\\\`alpha ``beta``` gamma\n".repeat(40),
+    Array.from({ length: 40 }, (_, i) => "`".repeat(i + 1) + " alpha\n").join(""),
+  ];
+  for (const baseline of baselines) {
+    const counts = [1, 2, 4].map(repetitions => scan(baseline.repeat(repetitions)).steps);
+    expect(hasSubquadraticGrowth(counts)).toBe(true);
+  }
+  expect([...scan("`alpha\n- [x] beta\ngamma`").ends]).toEqual([[0, 24]]);
+});
+
+test("span work gate rejects an intentionally quadratic scanner with unchanged spans", () => {
+  const scan = measureSpanScanner();
+  const quadratic = measureSpanScanner(true);
+  const counts = [100, 200, 400].map(repetitions => {
+    const input = "`alpha\n- [x] beta\ngamma` ".repeat(repetitions);
+    const measured = quadratic(input);
+    expect(measured.ends).toEqual(scan(input).ends);
+    return measured.steps;
+  });
+  expect(hasSubquadraticGrowth(counts)).toBe(false);
 });
