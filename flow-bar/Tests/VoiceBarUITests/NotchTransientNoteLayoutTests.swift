@@ -182,11 +182,7 @@ final class NotchTransientNoteLayoutTests: XCTestCase {
         let noteRect = try XCTUnwrap(model.presentation.transientNoteRect)
         let band = noteRect.offsetBy(dx: 12 + canvas.contentOffsetX, dy: 0)
         let bandLuminance = try maxLuminance(image, in: band, scale: scale)
-        // Same policy as PasteFeedbackLayoutTests: GitHub's hosted runners draw text over the notch glass
-        // at a luminance range of ~11, so only there a dim band skips; the outset check above still ran.
-        if bandLuminance <= 160, ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" {
-            throw XCTSkip("hosted runner render: band luminance \(bandLuminance) is unreadable")
-        }
+        try GlassTextCapability.current.get().requireReadableText()
         XCTAssertGreaterThan(bandLuminance, 160, "The note's text must render inside its band")
 
         if VisualArtifactTestPolicy.isRegenerationEnabled() {

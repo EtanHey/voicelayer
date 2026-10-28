@@ -9,7 +9,7 @@ import OffscreenTestSupport
 final class VoiceBarPresentationTests: XCTestCase {
     @MainActor
     func testBusyNoteHasReadablePixelsOnBothWallpaperPolarities() throws {
-        var hostedSkip: XCTSkip?
+        let capability = try GlassTextCapability.current.get()
         for light in [false, true] {
             for white in [false, true] {
                 let state = VoiceState()
@@ -43,16 +43,12 @@ final class VoiceBarPresentationTests: XCTestCase {
                 XCTAssertEqual(before.size, busy.size)
                 XCTAssertEqual(busy.presentation.geometry.leadingWingWidth, before.presentation.geometry.leadingWingWidth)
                 XCTAssertEqual(busy.presentation.geometry.trailingWingWidth, before.presentation.geometry.trailingWingWidth)
-                // Same policy as PasteFeedbackLayoutTests: GitHub's hosted runners draw text over the notch
-                // glass at a luminance range of ~11, so only there an unreadable render skips.
-                if readableChangedPixels <= 50, ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" {
-                    hostedSkip = hostedSkip ?? XCTSkip("hosted runner render: \(name) has \(readableChangedPixels) readable pixels")
-                } else {
+                if capability.isReadable {
                     XCTAssertGreaterThan(readableChangedPixels, 50, "Busy copy must remain visible: \(name)")
                 }
             }
         }
-        if let hostedSkip { throw hostedSkip }
+        try capability.requireReadableText()
     }
 
     @MainActor
@@ -123,6 +119,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 XCTAssertEqual(state.hotkeyPhase, phase)
             }
         }
+        try GlassTextCapability.current.get().requireReadableText()
     }
 
     @MainActor
@@ -154,6 +151,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         XCTAssertEqual(before.pixels, cleared.pixels)
         XCTAssertEqual(before.presentation, cleared.presentation)
         XCTAssertEqual(state.mode, .recording)
+        try GlassTextCapability.current.get().requireReadableText()
     }
 
     private final class SelectionFixturePanel: NSPanel {
@@ -261,9 +259,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
                 .filter { !$0.isEmpty }.joined(separator: " ")
         }
-        // Hosted AppKit text may be unreadable. Keep pixel stability here and leave
-        // the existing hosted readability skip to the contrast assertion above.
-        let hostedRunner = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
+        let capability = try GlassTextCapability.current.get()
         let expectedNote = state.selectionFeedbackNote
         let deadline = ProcessInfo.processInfo.systemUptime + 10
         var bitmap: NSBitmapImageRep
@@ -276,14 +272,15 @@ final class VoiceBarPresentationTests: XCTestCase {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = false
-            if !hostedRunner {
+            if capability.isReadable || expectedNote == nil {
                 try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([request])
             }
             let renderedText = (request.results ?? [])
                 .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
             let capturedAt = ProcessInfo.processInfo.systemUptime
             let pixels = Data(bytes: try XCTUnwrap(bitmap.bitmapData), count: bitmap.bytesPerRow * bitmap.pixelsHigh)
-            if (hostedRunner || normalizedOCR(renderedText) == normalizedOCR(expectedNote ?? "")),
+            if ((!capability.isReadable && expectedNote != nil)
+                || normalizedOCR(renderedText) == normalizedOCR(expectedNote ?? "")),
                state.selectionFeedbackNote == expectedNote, pixels == previousPixels,
                let previousCaptureTime, capturedAt - previousCaptureTime >= 0.05 { break }
             previousPixels = pixels
