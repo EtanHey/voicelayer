@@ -194,6 +194,33 @@ function applyEdits(pieces: Piece[], input: string, edits: {start: number; end: 
   }
 }
 
+function inlineCodeSpanEnds(input: string): Map<number, number> {
+  const runs = Array.from(input.matchAll(/`+/g));
+  const nextRunByLength = new Map<number, number>();
+  const closingRuns = new Map<number, number>();
+  const openingOffsets = new Map<number, number>();
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const run = runs[i];
+    let backslashes = 0;
+    for (let at = run.index - 1; at >= 0 && input[at] === "\\"; at--) backslashes++;
+    const escaped = backslashes % 2;
+    const closing = nextRunByLength.get(run[0].length - escaped);
+    if (closing !== undefined) {
+      closingRuns.set(i, closing);
+      openingOffsets.set(i, run.index + escaped);
+    }
+    nextRunByLength.set(run[0].length, i);
+  }
+  const ends = new Map<number, number>();
+  for (let i = 0; i < runs.length; i++) {
+    const closing = closingRuns.get(i), start = openingOffsets.get(i);
+    if (closing === undefined || start === undefined) continue;
+    ends.set(start, runs[closing].index + runs[closing][0].length);
+    i = closing;
+  }
+  return ends;
+}
+
 /** Pure projection; clone is the default. Runtime callers choose the actual engine. */
 export function projectSpeakableText(displayText: string, rules: readonly PronunciationRule[] = [], engine: SpeakableEngine = "clone"): SpeakableText {
   const pieces: Piece[] = displayText ? [{start: 0, end: displayText.length, text: displayText}] : [];
@@ -226,14 +253,17 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     return atStart || /^\.?$/.test(after) ? "" : ", ";
   });
   edit(/^[ \t]*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?[ \t]*(?:\r?\n|$)/gm, "");
+  const codeSpanEnds = inlineCodeSpanEnds(pieces.map(p => p.text).join(""));
   let checkboxCursor = 0, bracketDepth = 0;
   edit(/\[[ xX]\](?!\()/g, m => {
     for (; checkboxCursor < m.index; checkboxCursor++) {
+      const codeEnd = codeSpanEnds.get(checkboxCursor);
+      if (codeEnd !== undefined) { checkboxCursor = codeEnd - 1; continue; }
       const char = m.input[checkboxCursor];
       if (char === "[" || char === "{") bracketDepth++;
       else if (char === "]" || char === "}") bracketDepth = Math.max(0, bracketDepth - 1);
     }
-    if (bracketDepth) return undefined;
+    if (checkboxCursor > m.index || bracketDepth) return undefined;
     const prefix = m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1, m.index);
     if (/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix)) return "";
     return /^[ \t]*$/.test(prefix) && /^(?:$|[\s"'”’.,;:!?)])/.test(m.input.slice(m.index + m[0].length)) ? "" : undefined;

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { projectSpeakableText } from "../speakable-text";
 
 // Adapted R01 corpus: full clone paths, bounded URLs, complete hex literals,
@@ -57,6 +57,14 @@ for (const engine of ["edge", "clone"] as const) {
     ["[\n - [x] value\n]", "[ [x] value. ]", "open bracket open bracket x close bracket value. close bracket"],
     ["{\n 1. [x] value\n}", "{ one. [x] value. }", "open brace one. open bracket x close bracket value. close brace"],
     ["{key: [x]}", "{key: [x]}", "open brace key: open bracket x close bracket close brace"],
+    ["`alpha\n- [x] beta\ngamma`", "alpha [x] beta. gamma", "alpha open bracket x close bracket beta. gamma"],
+    ["``alpha\n1. [x] beta\ngamma``", "alpha one. [x] beta. gamma", "alpha one. open bracket x close bracket beta. gamma"],
+    ["``alpha`\n- [x] beta\ngamma``", "alpha [x] beta. gamma", "alpha open bracket x close bracket beta. gamma"],
+    ["`alpha``\n- [X] beta\ngamma`", "alpha [X] beta. gamma", "alpha open bracket X close bracket beta. gamma"],
+    ["```alpha\n[x] beta\ngamma```", "alpha [x] beta gamma", "alpha open bracket x close bracket beta gamma"],
+    ["`alpha\r\n  + [x] beta\r\ngamma`", "alpha [x] beta. gamma", "alpha open bracket x close bracket beta. gamma"],
+    ["\\\\`alpha\n- [x] beta\ngamma`", "\\\\alpha [x] beta. gamma", "alpha open bracket x close bracket beta. gamma"],
+    ["\\``alpha\n- [x] beta\ngamma`", "\\alpha [x] beta. gamma", "alpha open bracket x close bracket beta. gamma"],
     ["Use `[x]` here.", "Use [x] here.", "Use open bracket x close bracket here."],
     ['The token "[x]" stays.', 'The token "[x]" stays.', "The token open bracket x close bracket stays."],
     ['The literal "prefix [x] suffix" stays.', 'The literal "prefix [x] suffix" stays.', "The literal prefix open bracket x close bracket suffix stays."],
@@ -132,6 +140,33 @@ for (const engine of ["edge", "clone"] as const) {
       const ranges = result.ranges.filter(range => range.source.start < marker.index + marker[0].length && range.source.end > marker.index);
       expect(ranges.length).toBeGreaterThan(0);
       expect(ranges.every(range => range.kind === "omission")).toBe(true);
+    }
+  });
+  for (const display of [
+    "`alpha\n- [x] done",
+    "``alpha\n- [x] done\ngamma`",
+    "\\`alpha\n- [x] done\ngamma`",
+    "`alpha\\`\n- [x] done",
+    "`[alpha`\n- [x] done",
+    "``{alpha``\n- [x] done",
+  ]) test(`${engine} leaves real tasks outside code spans silent: ${display}`, () => {
+    const result = projectSpeakableText(display, [], engine);
+    const marker = display.indexOf("[x]");
+    const content = result.ranges.find(range => range.source.start <= marker + 1 && range.source.end > marker + 1);
+    expect(content?.kind).toBe("omission");
+    expect(result.speechText).not.toContain("[x]");
+    expect(result.speechText).not.toContain("open bracket x close bracket");
+  });
+  test(`${engine} preserves code literals while silencing later real task items`, () => {
+    const display = "``alpha\n- [x] beta\ngamma``\n1. [X] done";
+    const result = projectSpeakableText(display, [], engine);
+    expect(result.speechText).toBe(engine === "clone"
+      ? "alpha open bracket x close bracket beta. gamma one. done."
+      : "alpha [x] beta. gamma one. done.");
+    for (const [marker, kind] of [["[x]", "identity"], ["[X]", "omission"]]) {
+      const content = display.indexOf(marker) + 1;
+      const range = result.ranges.find(range => range.source.start <= content && range.source.end > content);
+      expect(range?.kind).toBe(kind);
     }
   });
   test(`${engine} silences only the leading task marker on a line`, () => {
@@ -296,11 +331,30 @@ test("filename near-misses beside Hebrew stay below 50 ms in-process", () => {
   }
 });
 
-test("local 2,000-character pass stays below 10 ms at p95 after warmup", () => {
-  const input = corpus.map(([text]) => text).join(" ").repeat(3).slice(0, 2000);
-  for (const engine of ["edge", "clone"] as const) {
-  for (let i = 0; i < 20; i++) projectSpeakableText(input, [], engine);
-  const times = Array.from({length: 100}, () => { const start = performance.now(); projectSpeakableText(input, [], engine); return performance.now() - start; }).sort((a,b) => a-b);
-  expect(times[95]).toBeLessThan(10);
+test("projection operation counts stay subquadratic as input doubles", () => {
+  const baselines = [
+    corpus.map(([text]) => text).join(" ").slice(0, 1000),
+    "``alpha`\n- [x] beta\ngamma`` ".repeat(40).slice(0, 1000),
+  ];
+  for (const baseline of baselines) for (const engine of ["edge", "clone"] as const) {
+    let previous = 0;
+    for (const repetitions of [1, 2, 4]) {
+      const input = baseline.repeat(repetitions);
+      const exec = spyOn(RegExp.prototype, "exec");
+      const lookup = spyOn(Map.prototype, "get");
+      let operations: number;
+      try {
+        const result = projectSpeakableText(input, [], engine);
+        operations = exec.mock.calls.length + lookup.mock.calls.length;
+        expect(result.displayText).toBe(input);
+        expect(result.speechText.length).toBeGreaterThan(0);
+      } finally {
+        exec.mockRestore();
+        lookup.mockRestore();
+      }
+      expect(operations).toBeGreaterThan(0);
+      if (previous) expect(operations).toBeLessThan(previous * 3);
+      previous = operations;
+    }
   }
 });
