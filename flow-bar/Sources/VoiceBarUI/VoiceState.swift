@@ -1036,6 +1036,8 @@ public final class VoiceState {
     private var selectionSpeechRequestID: String?
     private var selectionSubmittedText: String?
     private var selectionSubmissions: [String: (text: String, order: Int)] = [:]
+    private var selectionUnacknowledgedRequestIDs: Set<String> = []
+    private var selectionQueueSnapshotIsEmpty = false
     private var selectionSubmissionOrder = 0
     private var selectionReceiptOrder = 0
     private var selectionRetiredRequestIDs: [String] = []
@@ -1096,6 +1098,7 @@ public final class VoiceState {
     }
 
     private func retireSelectionRequest(_ id: String) {
+        selectionUnacknowledgedRequestIDs.remove(id)
         selectionSubmissions.removeValue(forKey: id)
         guard !selectionRetiredRequestIDs.contains(id) else { return }
         selectionRetiredRequestIDs.append(id)
@@ -1132,6 +1135,8 @@ public final class VoiceState {
         clearCurrentSelectionReadIdentity(advanceEpoch: true)
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
+        selectionUnacknowledgedRequestIDs.removeAll()
+        selectionQueueSnapshotIsEmpty = false
         selectionSubmissionOrder = 0
         selectionReceiptOrder = 0
     }
@@ -1224,8 +1229,8 @@ public final class VoiceState {
         }
         // QUEUE1: reads F5 left waiting count as live, so an empty press clears them like Stop.
         let replacing = mode == .speaking || selectionSubmittedText != nil || readQueueCurrentRequestID != nil
-        let pressText = selectionSubmittedText ?? selectionReadText
-            ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+        let pressPlaybackText = selectionReadText ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+        let pressText = selectionSubmittedText ?? pressPlaybackText
         let pressHash = selectionSubmittedText == nil ? selectionReadHash : nil
         let speechEpoch = selectionSpeechEpoch
         let captureID = UUID()
@@ -1267,8 +1272,8 @@ public final class VoiceState {
             let normalized = Self.normalizedSelection(result.text ?? "")
             // Preparing's label is not input text. Prefer own input, otherwise use reliable
             // speaking text at completion; a same-read receipt may have arrived during capture.
-            let currentText = selectionSubmittedText ?? selectionReadText
-                ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+            let playbackText = selectionReadText ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+            let currentText = selectionSubmittedText ?? playbackText
             // Natural completion may clear the read while capture is awaiting its result.
             // Keep that press's Stop comparison, while newer live receipts still take priority.
             let readEnded = mode == .idle && selectionSubmittedText == nil
@@ -1285,7 +1290,30 @@ public final class VoiceState {
             let samePlaying = selectionSubmittedText != nil && (selectionReadHash.map {
                 Self.selectionHash(result.text ?? "") == $0
             } ?? selectionReadText.map { normalized == Self.normalizedSelection($0) } ?? false)
-            if replacing, (!fromClipboard && normalized.isEmpty) || sameSelection || samePlaying {
+            if !fromClipboard, !normalized.isEmpty, !selectionQueueSnapshotIsEmpty {
+                let first = selectionSpeechRequestID != nil && readQueueCurrentRequestID == nil && selectionReadRequestID == nil
+                    ? selectionSubmissions.min(by: { $0.value.order < $1.value.order }) : nil
+                let owner = selectionReadRequestID ?? readQueueCurrentRequestID ?? first?.key
+                let pending = selectionSubmissions.filter { $0.key != owner }.map { $0.value.text }
+                let playing = isPlaybackPaused || (mode == .idle && readQueueCurrentRequestID != nil) ? nil
+                    : selectionReadText ?? first?.value.text
+                        ?? (samePlaying || (selectionSubmittedText == nil && sameSelection) ? result.text
+                            : playbackText ?? (readEnded ? pressPlaybackText : nil))
+                switch SelectionAdmission.decide(result.text ?? "", playing: playing, pending: pending,
+                                                count: selectionReadText == nil && first == nil ? readQueueCount : max(readQueueCount, pending.count)) {
+                case .advance:
+                    if let owner {
+                        clearCurrentSelectionReadIdentity()
+                        retireSelectionRequest(owner)
+                        sendCommand?(["cmd": "read_next", "request_id": owner])
+                    }
+                    return
+                case .stop: stopSelectionRead(); return
+                case .alreadyQueued: showSelectionBusyNote(message: "Already queued"); return
+                case .submit: break
+                }
+            }
+            if replacing, (!fromClipboard && normalized.isEmpty) || (fromClipboard && (sameSelection || samePlaying)) {
                 stopSelectionRead()
                 return
             }
@@ -1313,9 +1341,11 @@ public final class VoiceState {
             selectionSubmittedText = text
             selectionSubmissionOrder += 1
             selectionSubmissions[requestID] = (text, selectionSubmissionOrder)
+            selectionUnacknowledgedRequestIDs.insert(requestID)
             if selectionSubmissions.count > Self.selectionIdentityLimit,
                let oldest = selectionSubmissions.min(by: { $0.value.order < $1.value.order })?.key {
                 // Forget only the text: an unresolved request may still receive a valid receipt.
+                selectionUnacknowledgedRequestIDs.remove(oldest)
                 selectionSubmissions.removeValue(forKey: oldest)
             }
             // speak_text preempts only the owned read and awaits its player teardown (PLAYER0/FX).
@@ -2380,12 +2410,14 @@ public final class VoiceState {
             case "speaking":
                 let requestID = event["request_id"] as? String
                 if let requestID, selectionRetiredRequestIDs.contains(requestID) { return }
+                if let requestID { selectionUnacknowledgedRequestIDs.remove(requestID) }
                 let submission = requestID.flatMap { selectionSubmissions[$0] }
                 // An external read changes the current read, but cannot supersede pending own
                 // submissions. Only an acknowledged newer own request establishes their order.
                 // Receipts may arrive out of order; never roll a newer read back to an older one.
                 if let submission, submission.order < selectionReceiptOrder { return }
                 if let submission {
+                    selectionQueueSnapshotIsEmpty = false
                     selectionReceiptOrder = submission.order
                     let superseded = selectionSubmissions.filter { $0.value.order < submission.order }.map(\.key)
                     for id in superseded { retireSelectionRequest(id) }
@@ -2571,6 +2603,16 @@ public final class VoiceState {
         case "read_queue":
             readQueueCount = max(0, (event["count"] as? NSNumber)?.intValue ?? 0)
             readQueueCurrentRequestID = event["current_request_id"] as? String
+            selectionQueueSnapshotIsEmpty = readQueueCount == 0 && readQueueCurrentRequestID == nil
+            if selectionQueueSnapshotIsEmpty {
+                clearCurrentSelectionReadIdentity()
+                let retired = selectionSubmissions.keys.filter { !selectionUnacknowledgedRequestIDs.contains($0) }
+                for id in retired { retireSelectionRequest(id) }
+                if let id = selectionSpeechRequestID, !selectionUnacknowledgedRequestIDs.contains(id) {
+                    selectionSpeechRequestID = nil
+                    selectionSubmittedText = nil
+                }
+            }
 
         case "playback_state":
             handlePlaybackStateEvent(event)
@@ -4483,6 +4525,15 @@ public final class VoiceState {
         // speak_text is not a recorder intent. Match its raw ack without changing that contract.
         if event["command"] as? String == "speak_text" {
             guard let id = event["id"] as? String, selectionSubmissions[id] != nil else { return }
+            selectionUnacknowledgedRequestIDs.remove(id)
+            if ["selection advanced", "Already queued"].contains(event["reason"] as? String ?? "") {
+                retireSelectionRequest(id)
+                if selectionSpeechRequestID == id {
+                    selectionSpeechRequestID = nil
+                    selectionSubmittedText = nil
+                }
+                if event["reason"] as? String == "Already queued" { showSelectionBusyNote(message: "Already queued") }
+            }
             if event["outcome"] as? String == "reject" {
                 retireSelectionRequest(id)
                 if selectionReadRequestID == id { clearCurrentSelectionReadIdentity() }

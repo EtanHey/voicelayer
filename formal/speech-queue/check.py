@@ -21,7 +21,10 @@ def check(runner):
     EXPECTED = {"StaleClear": "StaleCannotAdvance", "Current": None, "StaleNext": "StaleCannotAdvance", "StopLeaves": "StopClearsQueues",
                 "History": None, "MutableTerminal": "FirstAcceptedTerminalImmutable",
                 "AdmissionCurrent": None, "AdmissionFinding": "NonemptySelectionDoesNotStop", "AdmissionProposed": None,
-                "AdmissionOlderMatch": "EveryQueuedMatchStops"}
+                "AdmissionOlderMatch": "EveryQueuedMatchStops", "QueueAdmissionFixed": None,
+                "QueueAdmissionClear": "NoSilentClear", "QueueAdmissionDuplicate": "NoDuplicateIdentity", "QueueAdmissionStopLeaves": "StopClearsAll",
+                "QueueAdmissionF5Clears": "F5KeepsQueue", "QueueAdmissionFreshClears": "NoSilentClear",
+                "QueueAdmissionInferredPlaying": "NoBlindAdvance"}
     configs = sorted(SPEC.glob("*.cfg"))
     assert {p.stem for p in configs} == set(EXPECTED), "Every config needs an explicit expected result"
     print(f"Evidence: {RUN}", flush=True)
@@ -31,7 +34,7 @@ def check(runner):
                "-metadir", str(RUN / name), "-config", str(config)]
         if EXPECTED[name] is None:
             cmd += ["-dump", "dot,actionlabels", str(RUN / f"{name}.dot")]
-        module = "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
+        module = "QueueAdmission" if name.startswith("QueueAdmission") else "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
         status = runner.run([*cmd, str(SPEC / f"{module}.tla")], RUN / f"{name}.log", 90, cwd=ROOT,
                             env={**os.environ, "JAVA_TOOL_OPTIONS": "-Xmx512m"})
         output = (RUN / f"{name}.log").read_text()
@@ -43,13 +46,6 @@ def check(runner):
             raise SystemExit(f"Unexpected result for {name}:\n{output}")
         counts = re.search(r"\d+ states generated, \d+ distinct states found", output)
         print(f"{name}: {'PASS' if not invariant else 'EXPECTED violation ' + invariant}; {counts[0] if counts else 'no counts'}", flush=True)
-
-    admission_nodes = {}
-    for line in (RUN / "AdmissionCurrent.dot").read_text().splitlines():
-        node = re.match(r'(-?\d+) \[label="((?:\\.|[^"\\])*)"', line)
-        if node:
-            admission_nodes[node[1]] = json.loads('"' + node[2] + '"')
-    check_admission(admission_nodes)
 
     def graph(name, event_pattern, parse_event):
         nodes, edges = {}, []
@@ -102,7 +98,8 @@ def check(runner):
     print((RUN / "conformance.log").read_text(), end="", flush=True)
     if status:
         raise SystemExit(status)
-    print("PASS: queue/History runtime conformance, admission source projection; six expected counterexamples")
+    check_admission(RUN, runner)
+    print("PASS: queue/History runtime and real Swift/daemon admission conformance; twelve expected counterexamples")
 
 
 if __name__ == "__main__":

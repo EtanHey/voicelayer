@@ -28,6 +28,8 @@ let contexts: archive.SpeakArchiveContext[], notifications: McpNotification[], s
 let spies: Array<ReturnType<typeof spyOn>> = [];
 let errorLog: ReturnType<typeof spyOn>;
 let failSynthesis = false;
+let holdPlayback = false;
+let releasePlayers: (() => void)[] = [];
 
 function disk(context = contexts[0]) {
   return JSON.parse(fs.readFileSync(join(context.path, "metadata.json"), "utf8"));
@@ -67,7 +69,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     fs.writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH, JSON.stringify({ profiles: { short: { engine: "edge" } } }));
     process.env.QA_VOICE_TTS_VOICE = "en-US-JennyNeural";
     delete process.env.QA_VOICE_TTS_RATE; delete process.env.QA_VOICE_TTS_REQUIRE_CLONE;
-    contexts = []; notifications = []; synthesized = []; failSynthesis = false;
+    contexts = []; notifications = []; synthesized = []; failSynthesis = false; holdPlayback = false; releasePlayers = [];
     __resetBinarySpawnForTests();
     spies.push(spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(() => {}),
       spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"),
@@ -90,7 +92,9 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     }));
     // Same deterministic subprocess boundary fixtures as tts-settings-wiring; never delegate to a real child.
     spies.push(spyOn(Bun, "spawn").mockImplementation(((cmd: string[]) => ({
-      pid: 89999, exited: Promise.resolve(0), kill() {},
+      pid: 89999, exited: holdPlayback && !["which", "ffmpeg"].includes(cmd[0])
+        ? new Promise<number>(resolve => releasePlayers.push(() => resolve(0))) : Promise.resolve(0),
+      kill() { releasePlayers.forEach(release => release()); },
       stdout: new Blob([cmd[0] === "which" ? "ffmpeg\n" : new Uint8Array([0, 0])]).stream(),
     })) as never), spyOn(Bun, "spawnSync").mockImplementation(((cmd: string[]) => ({
       exitCode: 0, stdout: Buffer.from(cmd[0] === "which" ? `${cmd[1]}\n` : "1.0"), stderr: Buffer.alloc(0),
@@ -145,6 +149,25 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     expect(telemetry).not.toContain("שלום"); expect(telemetry).not.toContain(root);
     for (const name of ["input.txt", "metadata.json"]) expect(fs.statSync(join(contexts[0].path, name)).mode & 0o777).toBe(0o600);
     expect(fs.statSync(contexts[0].path).mode & 0o777).toBe(0o700);
+  });
+
+  it("queues two identical MCP speaks with separate durable receipts", async () => {
+    holdPlayback = true;
+    try {
+      await handleVoiceSpeak({ message: raw, mode: "brief" });
+      await handleVoiceSpeak({ message: raw, mode: "brief" });
+      expect(tts.getPlaybackQueueDepth()).toBe(2);
+      expect(contexts).toHaveLength(2);
+      expect(contexts[0].id).not.toBe(contexts[1].id);
+      for (const context of contexts) {
+        expect(fs.readFileSync(join(context.path, "input.txt"), "utf8")).toBe(raw);
+        expect(disk(context).request_source).toBe("voice_speak");
+      }
+    } finally {
+      holdPlayback = false; releasePlayers.forEach(release => release());
+      await tts.awaitCurrentPlayback(); await flushSpeechArchives();
+    }
+    for (const context of contexts) expect(disk(context).status).toBe("completed");
   });
 
   it("retains exact raw rate through creator, lifecycle parse and recovery; absent field stays absent", async () => {
