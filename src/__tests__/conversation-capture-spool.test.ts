@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, relative } from "node:path";
 import { createConversationSpool } from "../conversation-capture-spool";
+import { atomicWriteFile, fsyncPath } from "../recordings-archive-fs";
 
 const input = { generation: 7, format: { sampleRate: 24000, channels: 1, encoding: "s16le", provenance: "requested" } } satisfies Parameters<typeof createConversationSpool>[0];
 const A = Buffer.from([1, 2, 3, 4, 5]), B = Buffer.from([11, 12, 13]);
@@ -211,3 +212,45 @@ for (const target of ["writer", "reader"]) {
     expect(fs.readFileSync(owner.path)).toEqual(A);
   });
 }
+
+// P4b-2 negative controls: raw verification plus legacy helpers cannot certify a checkpoint.
+test("P4b-2 RED: required sync must report a real open failure despite verified native bytes", () => {
+  const owner = make();
+  owner.appendNative(A);
+  const raw = owner.close().raw;
+  expect(raw).toEqual({ kind: "verified", path: owner.path, verifiedBytes: 5, sha256: hash(A) });
+  let failure: unknown;
+  fs.chmodSync(owner.path, 0o000);
+  try {
+    expect(() => fs.readFileSync(owner.path)).toThrow();
+    try { fsyncPath(owner.path); } catch (cause) { failure = cause; }
+  } finally {
+    fs.chmodSync(owner.path, 0o600);
+  }
+  expect(fs.readFileSync(owner.path)).toEqual(A);
+  expect(hash(fs.readFileSync(owner.path))).toBe(hash(A));
+  expect(live.size).toBe(0);
+  console.log(JSON.stringify({ witness: "required-sync-open-failure", raw, errorObserved: failure !== undefined }));
+  expect(failure).toBeInstanceOf(Error);
+});
+
+test("P4b-2 RED: manifest publication must preserve a foreign destination collision", () => {
+  const owner = make();
+  owner.appendNative(A);
+  const raw = owner.close().raw;
+  const manifest = join(dirname(owner.path), "manifest.json");
+  fs.writeFileSync(manifest, B, { flag: "wx", mode: 0o600 });
+  const before = fs.statSync(manifest);
+  let failure: unknown;
+  try { atomicWriteFile(manifest, JSON.stringify({ generation: input.generation, raw })); }
+  catch (cause) { failure = cause; }
+  expect(fs.readFileSync(owner.path)).toEqual(A);
+  expect(hash(fs.readFileSync(owner.path))).toBe(hash(A));
+  expect(live.size).toBe(0);
+  const after = fs.statSync(manifest);
+  console.log(JSON.stringify({ witness: "foreign-manifest", beforeInode: before.ino, afterInode: after.ino,
+    beforeHash: hash(B), afterHash: hash(fs.readFileSync(manifest)), errorObserved: failure !== undefined }));
+  expect(fs.readFileSync(manifest)).toEqual(B);
+  expect(after.ino).toBe(before.ino);
+  expect(failure).toBeInstanceOf(Error);
+});
