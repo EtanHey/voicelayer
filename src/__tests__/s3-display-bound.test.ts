@@ -103,6 +103,62 @@ describe("S3.1 structured display bounds", () => {
     expect(event.text).toBe(text);
   });
 
+  it("preserves all current text after dropping oversized layout and preparing text", () => {
+    const text = "שלום 😀 \"heading\"\n".repeat(1500);
+    const long_read = { id: "read", chunk_index: 0, chunk_count: 1, chunk_start_ms: 0,
+      preparing: true, text: "שלום 😀 \"\n".repeat(200_000),
+      display: { ...display, text, blocks: [{ ...display.blocks[0],
+        section_id: "שלום 😀 \"\n".repeat(500_000) }] } };
+    const event: StateEvent = { type: "state", state: "speaking", text,
+      playback_id: "owner", generation: 1, long_read };
+    const wire = serializeEvent(event);
+    const decoded = JSON.parse(wire);
+    expect(decoded.text.length).toBe(27_000);
+    expect(decoded.text === text).toBe(true);
+    expect(Buffer.byteLength(wire)).toBe(40_677);
+    expect(decoded.long_read).toEqual({ id: "read", chunk_index: 0, chunk_count: 1,
+      chunk_start_ms: 0, preparing: true });
+    expect(decoded.playback_id).toBe("owner");
+    expect(decoded.generation).toBe(1);
+    expect(event.text === text).toBe(true);
+    expect(long_read.text === "שלום 😀 \"\n".repeat(200_000)).toBe(true);
+    expect(long_read.display.blocks[0].section_id.length).toBe(5_000_000);
+  });
+
+  it("keeps fitting preparing text after dropping only oversized layout", () => {
+    const text = "שלום 😀 \"heading\"\n".repeat(1500);
+    const long_read = { id: "read", chunk_index: 0, chunk_count: 1, chunk_start_ms: 0,
+      preparing: true, text, chunk_word_starts: [0], display: oversizedDisplay };
+    const wire = serializeEvent({ type: "state", state: "speaking", text,
+      playback_id: "owner", generation: 1, long_read });
+    const decoded = JSON.parse(wire);
+    expect(Buffer.byteLength(wire)).toBeLessThanOrEqual(VOICEBAR_STRUCTURED_READ_MAX_BYTES);
+    expect(decoded.text === text).toBe(true);
+    expect(decoded.long_read.text === text).toBe(true);
+    expect(decoded.long_read.chunk_word_starts).toEqual([0]);
+    expect(decoded.long_read.display).toBeUndefined();
+  });
+
+  it("marks only the display copy when plain current text exceeds 1 MiB", () => {
+    const text = "שלום 😀 \"heading\"\n".repeat(50_000);
+    const event: StateEvent = { type: "state", state: "speaking", text,
+      playback_id: "owner", generation: 1, display: { ...display, text } };
+    const wire = serializeEvent(event);
+    const decoded = JSON.parse(wire);
+    const marker = "… [display truncated]";
+    expect(Buffer.byteLength(wire)).toBeLessThanOrEqual(VOICEBAR_STRUCTURED_READ_MAX_BYTES);
+    expect(decoded.text.endsWith(marker)).toBe(true);
+    const prefix = decoded.text.slice(0, -marker.length);
+    expect(text.startsWith(prefix)).toBe(true);
+    expect(prefix.length).toBeGreaterThan(27_000);
+    expect(prefix.charCodeAt(prefix.length - 1)).not.toBeWithin(0xD800, 0xDBFF);
+    expect(decoded.display).toBeUndefined();
+    expect(decoded.playback_id).toBe("owner");
+    expect(decoded.generation).toBe(1);
+    expect(event.text === text).toBe(true);
+    expect(event.display?.text === text).toBe(true);
+  });
+
   for (const extraBytes of [0, 1]) {
     it(`includes the newline and escaped UTF-8 in the socket limit plus ${extraBytes}`, () => {
       const event: StateEvent = { type: "state", state: "speaking", text: display.text,
