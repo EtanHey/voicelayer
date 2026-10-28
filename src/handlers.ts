@@ -1,3 +1,4 @@
+import { traceStage, linkVoiceTrace } from "./voice-trace";
 import { finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
@@ -391,6 +392,7 @@ export async function handleVoiceAsk(
   args: unknown,
   context?: VoiceToolContext,
 ): Promise<McpResult> {
+  traceStage(typeof args === "object" && args !== null ? args : undefined, "tool_received");
   if (!args || typeof args !== "object") {
     return textResult("Missing arguments", true);
   }
@@ -456,6 +458,7 @@ export async function handleVoiceAsk(
     return textResult(`voice_ask refused: input archive unavailable (${receipt.code})`, true);
   }
   const archiveContext = receipt.context;
+  linkVoiceTrace(args, archiveContext);
   const refusal = refuseOverlongMessage(
     parsed.data.message,
     "voice_ask",
@@ -496,6 +499,7 @@ export async function handleVoiceAsk(
       archiveContext,
     );
   } finally {
+    traceStage(archiveContext, "tool_result_emitted");
     if (!releaseDeferred) reservation.release();
   }
 }
@@ -683,6 +687,7 @@ export async function handleConverse(
   const outerTimeoutMs =
     (timeoutSeconds + VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS) * 1000;
   const inputAbortController = new AbortController();
+  linkVoiceTrace(archiveContext, inputAbortController.signal);
   let captureAdmission: CaptureAdmission | undefined;
   const promptPlayers: QueuedPlaybackHandle[] = [];
   let promptTimeoutCleanup: Promise<void> | undefined;
@@ -804,8 +809,11 @@ export async function handleConverse(
     assertSpeakerClear();
 
     // Wait for all queued playback to finish (P0-2: awaits full queue)
+    traceStage(archiveContext, "admission_done");
+    traceStage(archiveContext, "drain_start");
     preemptLongRead();
     await awaitCurrentPlayback({ forCaptureAdmission: true });
+    traceStage(archiveContext, "drain_end");
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return textResult(
         "[converse] Request ended before recording could start.",
