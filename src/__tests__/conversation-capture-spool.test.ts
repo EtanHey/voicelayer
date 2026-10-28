@@ -211,3 +211,192 @@ for (const target of ["writer", "reader"]) {
     expect(fs.readFileSync(owner.path)).toEqual(A);
   });
 }
+
+test("live A/inspect/B/inspect/close independently rereads each prefix and keeps snapshots stable", () => {
+  const attempts: number[] = [];
+  let reads = 0;
+  const owner = make({ read: fd => { reads++; return fs.readFileSync(fd); }, close: fd => {
+    attempts.push(fd);
+    release(fd);
+  } });
+  owner.appendNative(A);
+  const first = owner.checkpointEvidence();
+  expect(first).toMatchObject({ generation: 7, format: input.format, observedBytes: 5, writtenBytes: 5, fault: false,
+    writerPhase: "owned-open", closureStatus: "owned-open", temporaryReaderClosureStatus: "closed" });
+  expect(first.raw).toEqual({ kind: "verified", path: owner.path, verifiedBytes: 5, sha256: hash(fs.readFileSync(owner.path)) });
+  expect(live.has(opened[0]!)).toBe(true);
+  owner.appendNative(B);
+  const second = owner.checkpointEvidence();
+  const repeated = owner.checkpointEvidence();
+  const bytes = Buffer.concat([A, B]);
+  expect(fs.readFileSync(owner.path)).toEqual(bytes);
+  expect(second).toMatchObject({ observedBytes: 8, writtenBytes: 8, format: input.format, generation: 7 });
+  expect(second.raw).toEqual({ kind: "verified", path: owner.path, verifiedBytes: 8, sha256: hash(bytes) });
+  expect(repeated).toEqual(second);
+  expect(reads).toBe(3);
+  expect(attempts).toEqual(opened.slice(1));
+  expect(opened.length).toBe(4);
+  const final = owner.close();
+  expect(final).toMatchObject({ observedBytes: 8, writtenBytes: 8, raw: second.raw, closureStatus: "closed", fault: false });
+  expect(owner.close()).toBe(final);
+  expect(() => owner.appendNative(B)).toThrow();
+  expect(() => owner.checkpointEvidence()).toThrow();
+  expect(first).toMatchObject({ observedBytes: 5, writtenBytes: 5, raw: { verifiedBytes: 5, sha256: hash(A) }, errors: [] });
+  expect(attempts).toEqual([...opened.slice(1), opened[0]!]);
+});
+
+test.each(["throw", "zero", "negative", "oversized", "nan", "infinity", "fraction"])("immediate %s append fault requires no read or close and never resets", fault => {
+  let writes = 0, reads = 0, closes = 0;
+  const owner = make({ write: (fd, bytes, offset, length, position) => {
+    writes++;
+    if (writes === 3) {
+      if (fault === "throw") throw new Error("append failed now");
+      return { zero: 0, negative: -1, oversized: length + 1, nan: NaN, infinity: Infinity, fraction: 0.5 }[fault]!;
+    }
+    return fs.writeSync(fd, bytes, offset, writes === 2 ? 1 : length, position);
+  }, read: fd => { reads++; return fs.readFileSync(fd); }, close: fd => { closes++; release(fd); } });
+  owner.appendNative(A);
+  const before = owner.observe();
+  owner.appendNative(B);
+  expect(owner.observe()).toEqual({ observedBytes: 8, writtenBytes: 6, appendFault: true, fault: true,
+    writerPhase: "owned-open", closureStatus: "owned-open" });
+  owner.appendNative(Buffer.from([77, 78]));
+  expect(owner.observe()).toMatchObject({ observedBytes: 10, writtenBytes: 6, appendFault: true });
+  expect({ writes, reads, closes }).toEqual({ writes: 3, reads: 0, closes: 0 });
+  expect(before).toMatchObject({ observedBytes: 5, writtenBytes: 5, appendFault: false, fault: false });
+  const prefix = Buffer.concat([A, B.subarray(0, 1)]);
+  expect(fs.readFileSync(owner.path)).toEqual(prefix);
+  expect(owner.checkpointEvidence()).toMatchObject({ fault: true, appendFault: true, raw: { verifiedBytes: 6, sha256: hash(prefix) } });
+  owner.close();
+  expect(owner.observe()).toMatchObject({ writerPhase: "terminal", closureStatus: "closed", appendFault: true });
+});
+
+test.each(["read", "open", "replace", "truncate", "overwrite", "directory", "writer-mode", "reader-identity", "during-read"])("live snapshot refuses %s verification failure and retains the take", fault => {
+  const foreign = join(root, "foreign-reader");
+  fs.writeFileSync(foreign, B, { mode: 0o600 });
+  const owner = make({ open: (path, flags, mode) => {
+    if (typeof flags === "number" && fault === "open") throw new Error("reader open failed");
+    return acquire(typeof flags === "number" && fault === "reader-identity" ? foreign : path, flags, mode);
+  }, read: fd => {
+    if (fault === "read") throw new Error("snapshot read failed");
+    const bytes = fs.readFileSync(fd);
+    if (fault === "during-read") fs.writeFileSync(owner.path, Buffer.alloc(5, 88));
+    return bytes;
+  } });
+  owner.appendNative(A);
+  if (fault === "replace") {
+    fs.renameSync(owner.path, owner.path + ".original");
+    fs.writeFileSync(owner.path, A, { mode: 0o600 });
+  }
+  if (fault === "truncate") fs.truncateSync(owner.path, 2);
+  if (fault === "overwrite") fs.writeFileSync(owner.path, Buffer.alloc(5, 88));
+  if (fault === "writer-mode") fs.chmodSync(owner.path, 0o644);
+  if (fault === "directory") {
+    fs.renameSync(dirname(owner.path), dirname(owner.path) + ".original");
+    fs.mkdirSync(dirname(owner.path), { mode: 0o700 });
+    fs.writeFileSync(owner.path, A, { mode: 0o600 });
+  }
+  const snapshot = owner.checkpointEvidence();
+  expect(snapshot).toMatchObject({ observedBytes: 5, writtenBytes: 5, fault: true, writerPhase: "owned-open",
+    closureStatus: "owned-open", raw: { kind: "unavailable", verifiedBytes: null } });
+  expect(snapshot.errors.some(error => error.stage === "verify")).toBe(true);
+  expect(live.has(opened[0]!)).toBe(true);
+  expect(fs.existsSync(owner.path)).toBe(true);
+  expect(owner.close()).toMatchObject({ fault: true, closureStatus: "closed" });
+});
+
+test("live zero is verified but observed lost bytes are unavailable", () => {
+  const empty = make();
+  expect(empty.checkpointEvidence()).toMatchObject({ observedBytes: 0, writtenBytes: 0,
+    raw: { kind: "verified", verifiedBytes: 0, sha256: hash(Buffer.alloc(0)) }, writerPhase: "owned-open" });
+  const lost = make({ write: () => { throw new Error("nothing written"); } });
+  lost.appendNative(A);
+  expect(fs.readFileSync(lost.path)).toEqual(Buffer.alloc(0));
+  expect(lost.checkpointEvidence()).toMatchObject({ observedBytes: 5, writtenBytes: 0, appendFault: true,
+    temporaryReaderClosureStatus: "not-opened", raw: { kind: "unavailable", verifiedBytes: null } });
+});
+
+test("later append errors and observations cannot change an earlier raw snapshot", () => {
+  let writes = 0;
+  const owner = make({ write: (fd, bytes, offset, length, position) => {
+    if (++writes > 1) throw new Error("later append failed");
+    return fs.writeSync(fd, bytes, offset, length, position);
+  } });
+  owner.appendNative(A);
+  const first = owner.checkpointEvidence();
+  owner.appendNative(B);
+  expect(owner.checkpointEvidence()).toMatchObject({ observedBytes: 8, writtenBytes: 5, appendFault: true, fault: true,
+    raw: { verifiedBytes: 5, sha256: hash(A) } });
+  expect(first).toMatchObject({ observedBytes: 5, writtenBytes: 5, appendFault: false, fault: false, errors: [] });
+  expect(first.raw).toMatchObject({ verifiedBytes: 5, sha256: hash(A) });
+});
+
+test("recovered byte facts do not erase verification faults or mutate earlier diagnostics", () => {
+  let fail = false;
+  const owner = make({ read: fd => {
+    if (fail) throw new Error("transient read failure");
+    return fs.readFileSync(fd);
+  } });
+  owner.appendNative(A);
+  const clean = owner.checkpointEvidence();
+  fail = true;
+  const failed = owner.checkpointEvidence();
+  fail = false;
+  owner.appendNative(B);
+  expect(owner.checkpointEvidence()).toMatchObject({ fault: true, raw: { verifiedBytes: 8, sha256: hash(Buffer.concat([A, B])) } });
+  expect(clean.errors).toEqual([]);
+  expect(clean.fault).toBe(false);
+  expect(failed.errors.length).toBe(1);
+  expect(failed).toMatchObject({ observedBytes: 5, writtenBytes: 5, raw: { kind: "unavailable" } });
+  expect(owner.close()).toMatchObject({ fault: true, closureStatus: "closed" });
+});
+
+test.each(["before", "after", "persistent", "different-file", "same-inode"])("snapshot reader close %s remains ambiguous through later snapshots and terminal close", fault => {
+  const attempts: number[] = [];
+  const replacements: { fd: number; original: number; identity: fs.Stats; bytes: Buffer }[] = [];
+  const owner = make({ close: fd => {
+    attempts.push(fd);
+    if (fd === opened[0] || (fault !== "persistent" && attempts.length > 1)) return release(fd);
+    if (fault === "before" || fault === "persistent") ambiguous.add(fd);
+    else release(fd);
+    if (fault === "same-inode" || fault === "different-file") {
+      const path = fault === "same-inode" ? owner.path : join(root, "replacement");
+      if (fault === "different-file") fs.writeFileSync(path, B, { mode: 0o600 });
+      const identity = fs.statSync(path);
+      const replacement = acquire(path, "r");
+      ambiguous.add(replacement);
+      replacements.push({ fd: replacement, original: fd, identity, bytes: fault === "same-inode" ? A : B });
+    }
+    throw new Error("ambiguous reader close");
+  } });
+  const unrelated = acquire(join(root, "unaffected"), "w+", 0o600);
+  fs.writeSync(unrelated, B, 0, B.length, 0);
+  try {
+    owner.appendNative(A);
+    const first = owner.checkpointEvidence();
+    expect(first).toMatchObject({ writerPhase: "owned-open", closureStatus: "unconfirmed", temporaryReaderClosureStatus: "unconfirmed",
+      fault: true, raw: { verifiedBytes: 5, sha256: hash(A) } });
+    expect(owner.observe()).toMatchObject({ writerPhase: "owned-open", closureStatus: "unconfirmed", appendFault: false });
+    const second = owner.checkpointEvidence();
+    expect(second).toMatchObject({ closureStatus: "unconfirmed", fault: true, raw: first.raw,
+      temporaryReaderClosureStatus: fault === "persistent" ? "unconfirmed" : "closed" });
+    const final = owner.close();
+    expect(final).toMatchObject({ closureStatus: "unconfirmed", fault: true, raw: first.raw });
+    expect(owner.close()).toBe(final);
+    expect(owner.observe()).toMatchObject({ writerPhase: "terminal", closureStatus: "unconfirmed" });
+    expect(attempts.length).toBe(4);
+    expect(attempts.filter(fd => fd === opened[0]).length).toBe(1);
+    expect(live.has(opened[0]!)).toBe(false);
+    expect(first.errors.length).toBe(1);
+    expect(String(first.errors[0]?.cause)).toBe("Error: ambiguous reader close");
+    for (const item of replacements) {
+      expect(item.fd).toBe(item.original);
+      expect(fs.fstatSync(item.fd)).toMatchObject({ dev: item.identity.dev, ino: item.identity.ino, mode: item.identity.mode,
+        size: item.identity.size, ctimeMs: item.identity.ctimeMs, mtimeMs: item.identity.mtimeMs });
+      expect(fs.readFileSync(item.fd)).toEqual(item.bytes);
+    }
+    for (const fd of ambiguous) expect(fs.fstatSync(fd).isFile()).toBe(true);
+    expect(fs.readFileSync(unrelated)).toEqual(B);
+  } finally { release(unrelated); }
+  expect(fs.readFileSync(owner.path)).toEqual(A);
+});

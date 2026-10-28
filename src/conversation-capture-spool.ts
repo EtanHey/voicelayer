@@ -23,7 +23,19 @@ type Terminal = CaptureInput & {
   observedBytes: number; writtenBytes: number; raw: RawBytes;
   fault: boolean; closureStatus: ClosureStatus; errors: readonly Diagnostic[];
 };
-type Spool = { readonly path: string; appendNative: (chunk: Uint8Array) => void; close: () => Terminal };
+type Observation = {
+  observedBytes: number; writtenBytes: number; appendFault: boolean; fault: boolean;
+} & (
+  | { writerPhase: "owned-open"; closureStatus: "owned-open" | "unconfirmed" }
+  | { writerPhase: "terminal"; closureStatus: ClosureStatus }
+);
+type Snapshot = CaptureInput & Extract<Observation, { writerPhase: "owned-open" }> & {
+  raw: RawBytes; temporaryReaderClosureStatus: ClosureStatus | "not-opened"; errors: readonly Diagnostic[];
+};
+type Spool = {
+  readonly path: string; appendNative: (chunk: Uint8Array) => void; close: () => Terminal;
+  observe: () => Observation; checkpointEvidence: () => Snapshot;
+};
 type OpenResult =
   | { kind: "opened"; spool: Spool }
   | { kind: "unavailable"; closureStatus: ClosureStatus; errors: readonly Diagnostic[] };
@@ -51,11 +63,12 @@ export function createConversationSpool(input: CaptureInput, testIO: Partial<Spo
   };
   const errors: Diagnostic[] = [];
   let closureStatus: ClosureStatus = "closed";
-  function closeFd(fd: number): void {
+  function closeFd(fd: number): ClosureStatus {
     // A failed close relinquishes authority, even when the same fd/inode appears unchanged.
-    try { io.close(fd); } catch (cause) {
+    try { io.close(fd); return "closed"; } catch (cause) {
       closureStatus = "unconfirmed";
       errors.push({ stage: "close", cause });
+      return "unconfirmed";
     }
   }
   let writer: number | undefined;
@@ -110,7 +123,9 @@ export function createConversationSpool(input: CaptureInput, testIO: Partial<Spo
       errors.push({ stage: "append", cause });
     }
   }
+  let temporaryReaderClosureStatus: Snapshot["temporaryReaderClosureStatus"] = "not-opened";
   function verify(): RawBytes {
+    temporaryReaderClosureStatus = "not-opened";
     let reader: number | undefined;
     try {
       check(writtenBytes > 0 || observedBytes === 0);
@@ -133,8 +148,24 @@ export function createConversationSpool(input: CaptureInput, testIO: Partial<Spo
       errors.push({ stage: "verify", cause });
       return { kind: "unavailable", verifiedBytes: null };
     } finally {
-      if (reader !== undefined) closeFd(reader);
+      if (reader !== undefined) temporaryReaderClosureStatus = closeFd(reader);
     }
+  }
+  /** Constant-cost observation only: no I/O, verified pointer, completion or release authority. */
+  function observe(): Observation {
+    const counts = { observedBytes, writtenBytes, appendFault, fault: errors.length > 0 };
+    return terminal ? { ...counts, writerPhase: "terminal", closureStatus } : {
+      ...counts, writerPhase: "owned-open", closureStatus: closureStatus === "unconfirmed" ? "unconfirmed" : "owned-open",
+    };
+  }
+  /** Independently reread the current prefix. Temporary reader closure never closes the writer. */
+  function checkpointEvidence(): Snapshot {
+    if (terminal) throw new Error("conversation spool is terminal");
+    const raw = verify();
+    const state = observe();
+    check(state.writerPhase === "owned-open");
+    return { ...metadata, format: { ...metadata.format }, ...state, raw,
+      temporaryReaderClosureStatus, errors: errors.map(error => ({ ...error })) };
   }
   function close(): Terminal {
     if (result) return result;
@@ -144,5 +175,5 @@ export function createConversationSpool(input: CaptureInput, testIO: Partial<Spo
     result = { ...metadata, observedBytes, writtenBytes, raw, fault: errors.length > 0, closureStatus, errors };
     return result;
   }
-  return { kind: "opened", spool: { path, appendNative, close } };
+  return { kind: "opened", spool: { path, appendNative, close, observe, checkpointEvidence } };
 }
