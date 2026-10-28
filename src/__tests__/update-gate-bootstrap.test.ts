@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bootstrapUpdateGate, readTrustedUpdateGate } from "../update-gate-bootstrap";
+import { bootstrapUpdateGate, readTrustedUpdateGate, startUpdateGateBootstrap, updateGateBootstrapStatus } from "../update-gate-bootstrap";
 import { readUpdateGate, transitionUpdateGate } from "../update-gate";
 import { TEST_TMP, testSocket } from "./setup/test-tmp";
 import { withChildFixtureEnv } from "./setup/child-env";
@@ -84,6 +84,10 @@ test.each(["DRAINING", "PREPARED", "COMMITTED"])("crashed %s stays closed with r
   expect(bootstrapUpdateGate(path)).toMatchObject({ kind: "REFUSED", reason: expect.stringContaining("recovery") });
   expect(state(path).kind).toBe(phase);
   expect(readFileSync(path)).toEqual(before);
+  writeFileSync(path, "");
+  expect(bootstrapUpdateGate(path)).toMatchObject({ kind: "REFUSED", reason: expect.stringContaining(`recovery required: inspect ${path}`) });
+  expect(statSync(path).size).toBe(0);
+  expect(state(path).kind).toBe("UNKNOWN");
 });
 
 test.each(["broken", "partial header", "unreadable", "malformed state", "missing owner"])("%s stays UNKNOWN", kind => {
@@ -123,27 +127,21 @@ test.each(["create", "close", "rename"])("crash after %s publishes no partial ga
   expect(statSync(path).mode & 0o777).toBe(0o600);
 });
 
-test("legacy empty create recovers but an empty file with a recovery journal refuses", () => {
+test.each([false, true])("an existing empty gate refuses whether or not a recovery journal exists (journal %p)", journal => {
   const path = fixture();
   writeFileSync(path, "");
-  writeFileSync(`${path}-journal`, "unfinished transaction");
-  expect(bootstrapUpdateGate(path).kind).toBe("REFUSED");
-  expect(readFileSync(`${path}-journal`, "utf8")).toBe("unfinished transaction");
-  rmSync(`${path}-journal`);
-  expect(bootstrapUpdateGate(path).kind).toBe("READY");
-  expect(state(path).kind).toBe("OPEN");
+  if (journal) writeFileSync(`${path}-journal`, "unfinished transaction");
+  expect(bootstrapUpdateGate(path)).toMatchObject({ kind: "REFUSED", reason: expect.stringContaining(path) });
+  expect(statSync(path).size).toBe(0);
+  if (journal) expect(readFileSync(`${path}-journal`, "utf8")).toBe("unfinished transaction");
 });
 
-test("concurrent recovery of an incomplete create has only one live owner", async () => {
+test("asynchronous bootstrap reports PENDING until its worker publishes the gate", async () => {
   const path = fixture();
-  writeFileSync(path, "");
-  const reports = await Promise.all([contender(path, true), contender(path, true)].map(async child => {
-    const reader = new Response(child.stdout).body!.getReader();
-    try { return JSON.parse(new TextDecoder().decode((await reader.read()).value)); }
-    finally { reader.releaseLock(); }
-  }));
-  expect(reports.filter(report => report.kind === "READY")).toHaveLength(1);
-  expect(reports.filter(report => report.kind === "REFUSED")).toHaveLength(1);
+  const settled = startUpdateGateBootstrap(path);
+  expect(updateGateBootstrapStatus()).toEqual({ kind: "PENDING" });
+  expect((await settled).kind).toBe("READY");
+  expect(updateGateBootstrapStatus().kind).toBe("READY");
   expect(state(path).kind).toBe("OPEN");
 });
 
@@ -179,7 +177,9 @@ test.each(["fresh", "corrupt", "non-file", "unwritable"])("real daemon serves pi
   });
   expect(JSON.parse(reply).type).toBe("pong");
   expect(child.exitCode).toBeNull();
-  if (kind === "fresh") expect(state(path).kind).toBe("OPEN");
+  if (kind !== "fresh") return;
+  while (!existsSync(path)) await Bun.sleep(20);
+  expect(state(path).kind).toBe("OPEN");
 }, 20_000);
 
 test("a dead generation is UNKNOWN until a new daemon fences it; old generation cannot be trusted", async () => {
@@ -237,3 +237,47 @@ test("restart cannot clear unresolved admissions or overwrite their evidence", a
   expect(readFileSync(path)).toEqual(before);
   expect(state(path).kind).toBe("UNKNOWN");
 });
+
+test("real daemon answers ping while bootstrap storage is stalled for two seconds", async () => {
+  const path = fixture();
+  const root = join(path, "..");
+  const marker = join(root, "stall-entered");
+  const stall = join(root, "stall-gate-create.ts");
+  writeFileSync(stall, `import * as fs from "node:fs"; import * as threads from "node:worker_threads"; import { mock } from "bun:test";
+    const originalOpen = fs.openSync;
+    mock.module("node:fs", () => ({ ...fs, openSync: (...args) => {
+      if (args[1] === "wx" && String(args[0]).includes("update-admission.sqlite")) {
+        fs.writeFileSync(${JSON.stringify(marker)}, "");
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
+      }
+      return originalOpen(...args);
+    } }));
+    class StalledWorker extends threads.Worker { constructor(url, options = {}) { super(url, { ...options, preload: [import.meta.path] }); } }
+    mock.module("node:worker_threads", () => ({ ...threads, Worker: StalledWorker }));`);
+  const socketPath = testSocket("bg-stall.sock");
+  const env = { ...process.env, VOICELAYER_STATE_DIR: root, VOICELAYER_TMP_ROOT: join(root, "tmp"),
+    VOICELAYER_CONTROL_LAYER_BASE: join(root, "orc"), QA_VOICE_RECORDINGS_DIR: join(root, "archive"),
+    VOICELAYER_MCP_SOCKET_PATH: socketPath, VOICELAYER_ALLOW_ORPHAN_DAEMON: "1", QA_VOICE_STT_BACKEND: "whisper" };
+  const child = withChildFixtureEnv(env, () => Bun.spawn([process.execPath, "--preload", join(import.meta.dir, "setup/preload.ts"),
+    "--preload", stall, join(import.meta.dir, "../mcp-server-daemon.ts")], { env, stdout: "ignore", stderr: "pipe" }));
+  children.push(child);
+  let logs = "";
+  for await (const chunk of child.stderr) {
+    logs += new TextDecoder().decode(chunk);
+    if (logs.includes("MCP daemon listening")) break;
+  }
+  while (!existsSync(marker)) await Bun.sleep(5);
+  const sent = performance.now();
+  const reply = await new Promise<string>((resolve, reject) => {
+    Bun.connect({ unix: socketPath, socket: {
+      open(socket) { socket.write('{"type":"ping"}\n'); },
+      data(socket, data) { resolve(data.toString()); socket.end(); }, error(_socket, error) { reject(error); },
+    } }).catch(reject);
+  });
+  expect(JSON.parse(reply).type).toBe("pong");
+  expect(performance.now() - sent).toBeLessThan(500);
+  while (!existsSync(path)) await Bun.sleep(20);
+  expect(state(path).kind).toBe("OPEN");
+  await Bun.sleep(100);
+  expect(child.exitCode).toBeNull();
+}, 20_000);
