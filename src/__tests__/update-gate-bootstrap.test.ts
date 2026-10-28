@@ -1,16 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bootstrapUpdateGate, readTrustedUpdateGate } from "../update-gate-bootstrap";
 import { readUpdateGate, transitionUpdateGate } from "../update-gate";
-import { TEST_TMP } from "./setup/test-tmp";
+import { TEST_TMP, testSocket } from "./setup/test-tmp";
 import { withChildFixtureEnv } from "./setup/child-env";
 
 const roots: string[] = [];
 const children: ReturnType<typeof Bun.spawn>[] = [];
 afterEach(async () => {
-  for (const child of children.splice(0)) { child.kill(); await child.exited; }
+  for (const child of children.splice(0)) { child.kill("SIGKILL"); await child.exited; }
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 function fixture() {
@@ -86,12 +86,12 @@ test.each(["DRAINING", "PREPARED", "COMMITTED"])("crashed %s stays closed with r
   expect(readFileSync(path)).toEqual(before);
 });
 
-test.each(["broken", "empty", "unreadable", "malformed state", "missing owner"])("%s stays UNKNOWN", kind => {
+test.each(["broken", "partial header", "unreadable", "malformed state", "missing owner"])("%s stays UNKNOWN", kind => {
   const path = fixture();
   if (kind === "unreadable") {
     rmSync(join(path, ".."), { recursive: true });
     writeFileSync(join(path, ".."), "not a directory");
-  } else if (kind === "broken" || kind === "empty") writeFileSync(path, kind === "empty" ? "" : "not sqlite");
+  } else if (kind === "broken" || kind === "partial header") writeFileSync(path, kind === "partial header" ? "SQLite format 3" : "not sqlite");
   else {
     bootstrapUpdateGate(path);
     const db = new Database(path);
@@ -100,6 +100,87 @@ test.each(["broken", "empty", "unreadable", "malformed state", "missing owner"])
   }
   expect(bootstrapUpdateGate(path)).toMatchObject({ kind: "REFUSED", reason: expect.stringContaining("UNKNOWN") });
 });
+
+test.each(["create", "close", "rename"])("crash after %s publishes no partial gate and restart opens", async boundary => {
+  const path = fixture();
+  const script = `import * as fs from "node:fs"; import {mock} from "bun:test";
+    const originalOpen = fs.openSync, originalClose = fs.closeSync, originalRename = fs.renameSync;
+    let created;
+    mock.module("node:fs", () => ({...fs,
+      openSync: (...args) => { const fd = originalOpen(...args); if (args[1] === "wx") { created = fd; if (${JSON.stringify(boundary)} === "create") process.kill(process.pid, "SIGKILL"); } return fd; },
+      closeSync: fd => { originalClose(fd); if (${JSON.stringify(boundary)} === "close" && fd === created) process.kill(process.pid, "SIGKILL"); },
+      renameSync: (...args) => { originalRename(...args); process.kill(process.pid, "SIGKILL"); },
+    }));
+    const {bootstrapUpdateGate} = await import(${JSON.stringify(modulePath)});
+    bootstrapUpdateGate(${JSON.stringify(path)});`;
+  const child = Bun.spawn([process.execPath, "-e", script], { env: process.env, stdout: "pipe", stderr: "pipe" });
+  children.push(child);
+  await child.exited;
+  expect(child.signalCode).toBe("SIGKILL");
+  if (existsSync(path)) expect(statSync(path).size).toBeGreaterThan(0);
+  expect(bootstrapUpdateGate(path).kind).toBe("READY");
+  expect(state(path).kind).toBe("OPEN");
+  expect(statSync(path).mode & 0o777).toBe(0o600);
+});
+
+test("legacy empty create recovers but an empty file with a recovery journal refuses", () => {
+  const path = fixture();
+  writeFileSync(path, "");
+  writeFileSync(`${path}-journal`, "unfinished transaction");
+  expect(bootstrapUpdateGate(path).kind).toBe("REFUSED");
+  expect(readFileSync(`${path}-journal`, "utf8")).toBe("unfinished transaction");
+  rmSync(`${path}-journal`);
+  expect(bootstrapUpdateGate(path).kind).toBe("READY");
+  expect(state(path).kind).toBe("OPEN");
+});
+
+test("concurrent recovery of an incomplete create has only one live owner", async () => {
+  const path = fixture();
+  writeFileSync(path, "");
+  const reports = await Promise.all([contender(path, true), contender(path, true)].map(async child => {
+    const reader = new Response(child.stdout).body!.getReader();
+    try { return JSON.parse(new TextDecoder().decode((await reader.read()).value)); }
+    finally { reader.releaseLock(); }
+  }));
+  expect(reports.filter(report => report.kind === "READY")).toHaveLength(1);
+  expect(reports.filter(report => report.kind === "REFUSED")).toHaveLength(1);
+  expect(state(path).kind).toBe("OPEN");
+});
+
+test.each(["fresh", "corrupt", "non-file", "unwritable"])("real daemon serves ping with %s gate and reports refusal after listening", async kind => {
+  const path = fixture();
+  if (kind === "corrupt") writeFileSync(path, "not sqlite");
+  if (kind === "non-file") mkdirSync(path);
+  if (kind === "unwritable") { writeFileSync(path, ""); chmodSync(path, 0); }
+  const root = join(path, "..");
+  const socketPath = testSocket(`bg-${kind}.sock`);
+  const env = { ...process.env, VOICELAYER_STATE_DIR: root, VOICELAYER_TMP_ROOT: join(root, "tmp"),
+    VOICELAYER_CONTROL_LAYER_BASE: join(root, "orc"), QA_VOICE_RECORDINGS_DIR: join(root, "archive"),
+    VOICELAYER_MCP_SOCKET_PATH: socketPath, VOICELAYER_ALLOW_ORPHAN_DAEMON: "1", QA_VOICE_STT_BACKEND: "whisper" };
+  const child = withChildFixtureEnv(env, () => Bun.spawn([process.execPath, "--preload", join(import.meta.dir, "setup/preload.ts"),
+    join(import.meta.dir, "../mcp-server-daemon.ts")], { env, stdout: "ignore", stderr: "pipe" }));
+  children.push(child);
+  let logs = "";
+  for await (const chunk of child.stderr) {
+    logs += new TextDecoder().decode(chunk);
+    if (logs.includes("MCP daemon listening") && (kind === "fresh" || logs.includes("recovery required"))) break;
+  }
+  expect(logs).toContain("MCP daemon listening");
+  if (kind !== "fresh") {
+    expect(logs).toContain("UNKNOWN");
+    expect(logs.indexOf("MCP daemon listening")).toBeLessThan(logs.indexOf("recovery required"));
+    if (kind === "corrupt") expect(readFileSync(path, "utf8")).toBe("not sqlite");
+  }
+  const reply = await new Promise<string>((resolve, reject) => {
+    Bun.connect({ unix: socketPath, socket: {
+      open(socket) { socket.write('{"type":"ping"}\n'); },
+      data(socket, data) { resolve(data.toString()); socket.end(); }, error(_socket, error) { reject(error); },
+    } }).catch(reject);
+  });
+  expect(JSON.parse(reply).type).toBe("pong");
+  expect(child.exitCode).toBeNull();
+  if (kind === "fresh") expect(state(path).kind).toBe("OPEN");
+}, 20_000);
 
 test("a dead generation is UNKNOWN until a new daemon fences it; old generation cannot be trusted", async () => {
   const path = fixture();

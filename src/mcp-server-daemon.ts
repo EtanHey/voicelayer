@@ -190,9 +190,6 @@ async function main() {
     );
   }
 
-  const updateGate = bootstrapUpdateGate();
-  if (updateGate.kind === "REFUSED") throw new Error(updateGate.reason);
-
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
   // it independently and force-restarts an owned child that wedges in JS.
   daemonHeartbeat = startDaemonHeartbeat();
@@ -326,6 +323,10 @@ async function main() {
 
   process.on("SIGTERM", () => shutdown("sigterm"));
   process.on("SIGINT", () => shutdown("sigint"));
+  setImmediate(() => {
+    const updateGate = bootstrapUpdateGate();
+    if (updateGate.kind === "REFUSED") console.error(`[voicelayer-daemon] ${updateGate.reason}`);
+  });
 }
 
 main().catch((err) => {

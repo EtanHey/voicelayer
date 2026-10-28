@@ -8,10 +8,18 @@ their inferred types, `readUpdateGate` and `transitionUpdateGate`.
 Wire keys and enum values are case-sensitive. Extra fields and incompatible versions
 are rejected. Missing, malformed or unreadable state must be passed as unknown input;
 it yields `UNKNOWN`, which refuses all transitions. There is no implicit idle
-fallback. `bootstrapUpdateGate` exclusively creates a missing SQLite
-gate with generation 0 and released null, then binds it to the current daemon's
-UUID, PID and kernel start time in the same FULL-synchronous immediate transaction.
-It runs after daemon singleton acquisition and before startup archive recovery.
+fallback. `bootstrapUpdateGate` creates a private SQLite gate with generation 0
+and released null, binding it to the current daemon's UUID, PID and kernel start
+time in the same FULL-synchronous immediate transaction. After closing SQLite,
+it fsyncs the file, atomically renames it into place and fsyncs the parent directory.
+A nonblocking kernel flock on that directory serializes bootstrap publication and
+restart claims; process death releases the lock. SQLite ownership transactions
+also refuse contention immediately rather than waiting.
+
+An existing readable, writable regular zero-byte file without recovery sidecars is the sole
+legacy incomplete-create case bootstrap replaces. Nonempty partial headers and
+all other corrupt content remain UNKNOWN. Private temporary files left by a crash
+are never read as authoritative state.
 
 Persisted OPEN alone is insufficient. Admission adapters must call
 `readTrustedUpdateGate(db)` inside their admission transaction; this checks the
@@ -22,9 +30,15 @@ owner is proven dead and there are no unresolved admissions. The update lease's
 numeric generation is preserved across daemon restarts.
 
 DRAINING, PREPARED and COMMITTED are never reopened at startup. Corruption, missing
-ownership and unavailable identity probes also refuse startup. Diagnostics identify
+ownership and unavailable identity probes also refuse gate ownership. Diagnostics identify
 the gate path and require reconciliation of the pending update and archives while
-preserving state. This slice supplies no automatic recovery or state-deletion tool.
+preserving state. This slice supplies no closed-state recovery or state-deletion tool.
+
+In this standalone slice bootstrap is deferred until the daemon has started
+listening and installed its lifecycle handlers. Gate refusal is logged and never
+aborts daemon startup or changes current voice admission. Slice 2 must explicitly
+coordinate bootstrap readiness with its trusted-state admission checks and startup
+archive recovery; until then, successful daemon startup does not imply a trusted gate.
 
 Every lease binds a positive safe-integer generation, UUID operation ID, UUID owner
 incarnation and lowercase full target merge SHA. The owner ID is retained across a
