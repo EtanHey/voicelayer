@@ -2,7 +2,7 @@
 """
 VoiceLayer TTS Daemon — Qwen3-TTS zero-shot voice cloning via MLX.
 
-FastAPI server on port 8880. Qwen3-TTS 0.6B (4-bit MLX quantized)
+FastAPI server on port 8880. Qwen3-TTS Base (4-bit MLX quantized)
 loads on first synthesis and releases idle Metal/MPS memory.
 
 Endpoints:
