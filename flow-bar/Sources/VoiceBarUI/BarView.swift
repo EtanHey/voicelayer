@@ -451,7 +451,6 @@ public struct BarView: View {
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
-            isPlaybackPaused: state.isPlaybackPaused,
             readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
@@ -571,7 +570,6 @@ public struct BarView: View {
         .animation(.easeOut(duration: 0.2), value: state.readQueueCount)
     }
 
-    /// P16: Pause collapses the teleprompter and Play expands it again; the shell's own morph animates both.
     private func playbackPauseButton(_ control: VoiceBarPlaybackPauseControl) -> some View {
         notchButton(
             icon: control.iconName,
@@ -645,7 +643,7 @@ public struct BarView: View {
         let isCompact = notchPresentation.visualState == .compactStatus
         return HStack(spacing: isCompact ? VoiceBarNotchContract.material.compactControlSpacing : 0) {
             notchWaveform
-            if isCompact, state.isTeleprompterDismissed, !state.isPlaybackPaused {
+            if isCompact, state.isTeleprompterDismissed {
                 notchTeleprompterButton(
                     icon: "eye",
                     accessibilityLabel: "Show teleprompter"
@@ -798,6 +796,7 @@ public struct BarView: View {
                     displayBlocks: state.teleprompterDisplayBlocks,
                     hasCompleteDisplay: state.teleprompterHasCompleteDisplay,
                     isReadback: state.isTeleprompterReadback,
+                    isPaused: state.isPlaybackPaused,
                     playbackEpoch: state.playbackEpoch,
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
                     onSeek: state.seek,

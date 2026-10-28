@@ -131,8 +131,6 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         }
     }
 
-    // Keep the native wing hosts (and their tooltip tracking) mounted when pause
-    // collapses the teleprompter. Geometry still animates on the shared shell.
     private var morphingNotchSurface: some View {
         notchSurface
             .matchedGeometryEffect(

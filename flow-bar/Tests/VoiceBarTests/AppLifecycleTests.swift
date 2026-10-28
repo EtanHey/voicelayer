@@ -5,7 +5,7 @@ import AppKit
 import XCTest
 
 final class AppLifecycleTests: XCTestCase {
-    private final class PointerProbe: @unchecked Sendable {
+    final class PointerProbe: @unchecked Sendable {
         var isInside = true
     }
 
@@ -13,7 +13,7 @@ final class AppLifecycleTests: XCTestCase {
     /// `sleep` parks until `tick()` releases it, so a test decides exactly how
     /// many delays have elapsed.
     @MainActor
-    private final class ManualTicker {
+    final class ManualTicker {
         private var parked: [CheckedContinuation<Void, Never>] = []
 
         var pendingSleepCount: Int {
@@ -306,7 +306,7 @@ final class AppLifecycleTests: XCTestCase {
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 1)
     }
 
-    func testPausedSpeechKeepsPlayAndStopReachable() {
+    func testHiddenPausedSpeechKeepsPlayEyeAndStopReachable() {
         let state = VoiceState()
         state.handleEvent(["type": "state", "state": "speaking", "text": "Paused read", "playback_id": "p", "generation": 1])
         state.dismissTeleprompter()
@@ -318,7 +318,7 @@ final class AppLifecycleTests: XCTestCase {
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 1,
-                trailingControlCountFromOuter: 1,
+                trailingControlCountFromOuter: 2,
                 trailingOuterInset: WaveformLayout.outerInset
             )
         )

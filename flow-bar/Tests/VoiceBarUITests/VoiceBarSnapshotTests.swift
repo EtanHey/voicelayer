@@ -42,8 +42,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
                          "speaking", "paused", "teleprompter-expanded", "teleprompter-collapsed",
                          "queue-1", "queue-10", "last-item", "paused-controls", "hidden", "snoozed",
                          "busy-note", "typed"]
-    private let aliases = ["last-item": "speaking", "teleprompter-collapsed": "speaking", "snoozed": "hidden",
-                           "paused-controls": "paused"]
+    private let aliases = ["last-item": "speaking", "teleprompter-collapsed": "speaking", "snoozed": "hidden"]
     private var referenceEnvironment: [String: String]?
     private var recordedEnvironment: [String: String]?
     private var root: URL {
@@ -182,9 +181,9 @@ final class VoiceBarSnapshotTests: XCTestCase {
         let old = app.appearance
         app.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
         defer { app.appearance = old }
-        // Paused playback intentionally collapses the teleprompter, including when
-        // its dismissal flag is false. Both pause fixtures share the compact canvas.
-        let height: CGFloat = canvasHeight ?? (name == "teleprompter-expanded" ? 270 : (name == "busy-note" ? 90 : 64))
+        // F13: a paused read keeps its teleprompter open; only the hidden pause fixture is compact.
+        let expanded = name == "teleprompter-expanded" || name == "paused"
+        let height: CGFloat = canvasHeight ?? (expanded ? 270 : (name == "busy-note" ? 90 : 64))
         let size = CGSize(width: 540, height: height)
         // The real app orders its panel out while snoozed. Model that visibility boundary;
         // BarView alone intentionally does not implement window lifecycle.

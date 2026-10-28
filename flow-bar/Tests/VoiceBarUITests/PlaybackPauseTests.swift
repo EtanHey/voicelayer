@@ -125,7 +125,7 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertEqual(state.confirmationText, "This prompt can't be paused")
     }
 
-    // MARK: - Paused state, collapse and expand
+    // MARK: - Paused state
 
     func testPausedEventFreezesTheClockAtTheDaemonOffset() {
         let (state, _) = speakingState()
@@ -139,22 +139,20 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertEqual(state.playbackAudioLevel(), 0)
     }
 
-    func testPauseCollapsesTheTeleprompterAndResumeExpandsIt() {
+    func testPauseKeepsTheTeleprompterOpenWithPlayInPlaceOfPause() {
         let (state, _) = speakingState()
-        XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
+        let playing = presentation(for: state)
+        XCTAssertEqual(playing.visualState, .teleprompter)
 
         state.handleEvent(pausedEvent())
-        let paused = presentation(for: state)
-        XCTAssertEqual(paused.visualState, .compactStatus)
-        // Paused shows play + stop only; the eye button belongs to a hidden-but-playing read.
-        XCTAssertEqual(
-            paused.geometry.trailingWingWidth,
-            VoiceBarNotchContract.compactStatusDefaultTrailingWingWidth
-        )
+        XCTAssertEqual(presentation(for: state), playing, "F13: Pause never collapses the open teleprompter")
+        XCTAssertEqual(VoiceBarPresentation.playbackPauseControl(
+            mode: state.mode, isPaused: state.isPlaybackPaused, isReadback: state.isTeleprompterReadback
+        )?.iconName, "play.fill")
 
         resume(state, offset: 2500)
         XCTAssertFalse(state.isPlaybackPaused)
-        XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
+        XCTAssertEqual(presentation(for: state), playing)
     }
 
     func testPauseToggleNotifiesPanelLayout() {
@@ -438,7 +436,6 @@ final class PlaybackPauseTests: XCTestCase {
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
-            isPlaybackPaused: state.isPlaybackPaused,
             isCollapsed: state.isCollapsed
         ))
     }

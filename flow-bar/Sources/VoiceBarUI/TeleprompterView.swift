@@ -663,6 +663,7 @@ public struct TeleprompterView: View {
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [TeleprompterBoundary] = []
     public var isReadback = false
+    public var isPaused = false
     public let playbackElapsedMilliseconds: () -> Int
     public var onSeek: ((Int) -> Void)?
     public var onSeekUnavailable: (() -> Void)?
@@ -677,6 +678,7 @@ public struct TeleprompterView: View {
         displayBlocks: [TeleprompterDisplayBlock] = [],
         hasCompleteDisplay: Bool = false,
         isReadback: Bool = false,
+        isPaused: Bool = false,
         playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
         onSeek: ((Int) -> Void)? = nil,
@@ -691,6 +693,7 @@ public struct TeleprompterView: View {
         self.hasCompleteDisplay = hasCompleteDisplay
         self.wordBoundaries = wordBoundaries
         self.isReadback = isReadback
+        self.isPaused = isPaused
         self.playbackEpoch = playbackEpoch
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.onSeek = onSeek
@@ -807,6 +810,13 @@ public struct TeleprompterView: View {
                     restart()
                 }
             }
+            .onChange(of: isPaused) { _, paused in
+                if paused {
+                    stopAnimating()
+                } else {
+                    restart()
+                }
+            }
         }
     }
 
@@ -874,7 +884,7 @@ public struct TeleprompterView: View {
 
     private func startAnimating() {
         let hasTimeline = usesIndexedTiming ? !timedWords.isEmpty : !wordBoundaries.isEmpty
-        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), hasTimeline else { return }
+        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), !isPaused, hasTimeline else { return }
         isPlaybackStep = false
         currentIndex = TeleprompterPlaybackPolicy.currentWordIndex(
             in: teleprompterWords,
@@ -902,13 +912,7 @@ public struct TeleprompterView: View {
             for word in words {
                 guard let targetOffsetMs = word.offsetMs else { continue }
                 guard word.id > startingWordID else { continue }
-                let remainingMilliseconds = targetOffsetMs - playbackElapsedMilliseconds()
-
-                // Wait until the word's offset time
-                if remainingMilliseconds > 0 {
-                    try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
-                }
-
+                await waitForClock(toReach: targetOffsetMs) { playbackElapsedMilliseconds() }
                 if Task.isCancelled { break }
                 isPlaybackStep = true
                 currentIndex = word.id
@@ -930,14 +934,19 @@ public struct TeleprompterView: View {
                     forWordAt: index,
                     in: words
                 ) else { continue }
-                let remainingMilliseconds = targetOffsetMilliseconds - highlightElapsedMilliseconds
-                if remainingMilliseconds > 0 {
-                    try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
-                }
+                await waitForClock(toReach: targetOffsetMilliseconds) { highlightElapsedMilliseconds }
                 if Task.isCancelled { break }
                 isPlaybackStep = true
                 currentIndex = word.id
             }
+        }
+    }
+
+    private func waitForClock(toReach targetMilliseconds: Int, elapsed: () -> Int) async {
+        while !Task.isCancelled {
+            let remainingMilliseconds = targetMilliseconds - elapsed()
+            guard remainingMilliseconds > 0 else { return }
+            try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
         }
     }
 

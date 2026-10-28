@@ -64,7 +64,6 @@ final class ReadQueueShotsTests: XCTestCase {
             mode: state.mode,
             hasTeleprompterText: state.mode == .speaking && state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
-            isPlaybackPaused: state.isPlaybackPaused,
             readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
             statusText: VoiceBarPresentation.liveStatusText(
                 mode: state.mode, transcript: state.transcript, confirmationText: state.confirmationText,
