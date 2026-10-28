@@ -38,8 +38,8 @@ function fixture() {
   return { input, file, snapshot, metadata };
 }
 
-function unavailable(result: ReturnType<typeof verifyConversationPairedCapture>) {
-  expect(result).toEqual({ kind: "verification-unavailable", code: "paired-capture-verification-failed" });
+function unavailable(result: ReturnType<typeof verifyConversationPairedCapture>, closureStatus = "closed") {
+  expect(result).toEqual({ kind: "verification-unavailable", code: "paired-capture-verification-failed", closureStatus });
   expect("archiveId" in result).toBe(false);
   expect("archivePath" in result).toBe(false);
 }
@@ -52,7 +52,7 @@ test("real producer's captured-only files produce truthful capture evidence; no 
   expect(result.kind).toBe("verified-paired");
   if (result.kind !== "verified-paired") throw new Error("capture was not verified");
   expect(result).toMatchObject({ archiveId: f.input.archiveId, archivePath: f.input.archivePath,
-    audioStatus: "captured", transcriptStatus: "unverified" });
+    audioStatus: "captured", transcriptStatus: "unverified", closureStatus: "closed" });
   for (const name of names) {
     const bytes = fs.readFileSync(f.file(name));
     expect(result.artifacts[name]).toEqual({ bytes: bytes.length, sha256: hash(bytes) });
@@ -111,12 +111,12 @@ test("foreign identity/path and symlinked hierarchy are refused", () => {
   expect(f.snapshot()).toEqual(before);
 });
 
-for (const operation of ["open", "sync", "close"]) for (let targetIndex = 0; targetIndex < 8; targetIndex++) {
-  test(`strict ${operation} failure at hierarchy target ${targetIndex} refuses and closes owned fds`, () => {
+for (const operation of ["open", "sync", "close", "close-before", "close-persistent"]) for (let targetIndex = 0; targetIndex < 8; targetIndex++) {
+  test(`strict ${operation} failure at hierarchy target ${targetIndex} refuses and reports closure evidence`, () => {
     const f = fixture(); const before = f.snapshot();
     const targets = [...names.map(f.file), f.input.archivePath, dirname(f.input.archivePath),
       f.input.archiveRoot, dirname(f.input.archiveRoot)];
-    const opened = new Map<number, string>(); const closed: number[] = []; const synced: string[] = [];
+    const opened = new Map<number, string>(); const closed: number[] = []; const attempts: number[] = []; const synced: string[] = [];
     const open = fs.openSync, sync = fs.fsyncSync, close = fs.closeSync;
     let faulted = false;
     const fail = () => { faulted = true; throw new Error("synthetic private detail must not escape"); };
@@ -126,17 +126,48 @@ for (const operation of ["open", "sync", "close"]) for (let targetIndex = 0; tar
     }), spyOn(fs, "fsyncSync").mockImplementation(fd => {
       synced.push(opened.get(fd)!); if (operation === "sync" && opened.get(fd) === targets[targetIndex]) fail(); sync(fd);
     }), spyOn(fs, "closeSync").mockImplementation(fd => {
+      attempts.push(fd);
+      if ((operation === "close-persistent" || operation === "close-before" && !faulted) &&
+        opened.get(fd) === targets[targetIndex]) fail();
       close(fd); closed.push(fd); if (operation === "close" && opened.get(fd) === targets[targetIndex]) fail();
     })];
-    try { unavailable(verifyConversationPairedCapture(f.input)); }
+    try { unavailable(verifyConversationPairedCapture(f.input), operation.startsWith("close") ? "unconfirmed" : "closed"); }
     finally { for (const spy of spies) spy.mockRestore(); }
-    expect(faulted).toBe(true);
-    expect(closed.sort()).toEqual([...opened.keys()].sort());
-    for (const fd of opened.keys()) expect(() => fs.fstatSync(fd)).toThrow();
-    if (operation === "close") expect(synced).toEqual(targets);
-    expect(f.snapshot()).toEqual(before);
+    try {
+      expect(faulted).toBe(true);
+      const leftOpen = [...opened.keys()].filter(fd => operation.startsWith("close-") && opened.get(fd) === targets[targetIndex]);
+      expect(attempts.sort()).toEqual([...opened.keys()].sort());
+      expect(closed.sort()).toEqual([...opened.keys()].filter(fd => !leftOpen.includes(fd)).sort());
+      for (const fd of opened.keys()) {
+        if (leftOpen.includes(fd)) expect(fs.fstatSync(fd).ino).toBe(fs.statSync(opened.get(fd)!).ino);
+        else expect(() => fs.fstatSync(fd)).toThrow();
+      }
+      if (operation.startsWith("close")) expect(synced).toEqual(targets);
+      expect(f.snapshot()).toEqual(before);
+    } finally { // Synthetic before-close RED must not leave its fixture fd open.
+      for (const fd of opened.keys()) { try { close(fd); } catch {} }
+    }
   });
 }
+
+for (const target of ["foreign.txt", "metadata.json"]) test(`close failure after fd reuse preserves replacement ${target}`, () => {
+  const f = fixture(); const before = f.snapshot(); const foreign = f.file(target);
+  if (target === "foreign.txt") fs.writeFileSync(foreign, "foreign descriptor");
+  const replacementBytes = fs.readFileSync(foreign, "utf8");
+  const close = fs.closeSync, open = fs.openSync; let replacement: number | undefined;
+  const spy = spyOn(fs, "closeSync").mockImplementation(fd => {
+    close(fd);
+    if (replacement === undefined) {
+      replacement = open(foreign, "r"); expect(replacement).toBe(fd);
+      throw new Error("synthetic after-close reuse");
+    }
+  });
+  try {
+    unavailable(verifyConversationPairedCapture(f.input), "unconfirmed"); expect(replacement).toBeDefined();
+    expect(fs.readFileSync(replacement!, "utf8")).toBe(replacementBytes);
+    expect(f.snapshot()).toEqual(before);
+  } finally { spy.mockRestore(); if (replacement !== undefined) close(replacement); }
+});
 
 test("all strict sync targets are actual required files and selected parent links", () => {
   const f = fixture(); const opened = new Map<number, string>(); const synced: string[] = [];

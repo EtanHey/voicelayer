@@ -18,9 +18,10 @@ export type PairedCaptureExpectation = Readonly<{
 type ArtifactEvidence = Readonly<{ bytes: number; sha256: string }>;
 export type PairedCaptureEvidence =
   | Readonly<{ kind: "verified-paired"; archiveId: string; archivePath: string;
-      audioStatus: "captured"; transcriptStatus: "unverified";
+      audioStatus: "captured"; transcriptStatus: "unverified"; closureStatus: "closed";
       artifacts: Readonly<Record<string, ArtifactEvidence>> }>
-  | Readonly<{ kind: "verification-unavailable"; code: "paired-capture-verification-failed" }>;
+  | Readonly<{ kind: "verification-unavailable"; code: "paired-capture-verification-failed";
+      closureStatus: "closed" | "unconfirmed" }>;
 
 function requireEvidence(condition: unknown): asserts condition {
   if (!condition) throw new Error("Paired capture verification unavailable");
@@ -35,6 +36,7 @@ const artifact = (data: Uint8Array): ArtifactEvidence => Object.freeze({ bytes: 
 /** Read-only capture report; strict fsync is required, but this grants no lifecycle release authority. */
 export function verifyConversationPairedCapture(expected: PairedCaptureExpectation): PairedCaptureEvidence {
   const owned: number[] = [];
+  let closureStatus: "closed" | "unconfirmed" = "closed";
   let evidence: PairedCaptureEvidence | undefined;
   try {
     const { archiveRoot, archivePath, archiveId, prompt, format } = expected;
@@ -106,17 +108,17 @@ export function verifyConversationPairedCapture(expected: PairedCaptureExpectati
     }
     requireEvidence(realpathSync(archivePath) === archivePath);
     evidence = Object.freeze({ kind: "verified-paired", archiveId, archivePath, audioStatus: "captured",
-      transcriptStatus: "unverified", artifacts: Object.freeze({
+      transcriptStatus: "unverified", closureStatus: "closed", artifacts: Object.freeze({
         "agent-audio.mp3": artifact(agentAudio), "agent-transcript.txt": artifact(agentText),
         "audio.wav": artifact(userAudio), "metadata.json": artifact(metadataBytes),
       }) });
   } catch {
     evidence = undefined;
   } finally {
-    // A failed close invalidates success; still attempt every other owned close.
+    // Close errors leave ownership ambiguous; never retry even if stat identity matches.
     for (const fd of owned.reverse()) {
-      try { closeSync(fd); } catch { evidence = undefined; }
+      try { closeSync(fd); } catch { evidence = undefined; closureStatus = "unconfirmed"; }
     }
   }
-  return evidence ?? { kind: "verification-unavailable", code: "paired-capture-verification-failed" };
+  return evidence ?? { kind: "verification-unavailable", code: "paired-capture-verification-failed", closureStatus };
 }
