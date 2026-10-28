@@ -57,7 +57,7 @@ test("one registration owns pending setup and cleanup; returned reports have no 
   let late = () => {}, cleanupStarted = false;
   const safety = wait(policy);
   const operation = run(policy, async (owner) => {
-    expect("startChild" in owner).toBe(false);
+    expect("startChild" in owner).toBe(true);
     late = () => owner.ownSetupCleanup(async () => {});
     owner.ownSetupCleanup(async () => { cleanupStarted = true; await cleanup.promise; });
     await setup.promise;
