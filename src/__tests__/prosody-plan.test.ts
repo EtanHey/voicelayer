@@ -34,6 +34,125 @@ const letters = (text: string) => text.replace(/[^\p{L}\p{M}\p{N}]/gu, "").toLow
 const texts = (plan: ProsodyPlan) => plan.segments.map((s) => s.text);
 const pauses = (plan: ProsodyPlan) => plan.segments.map((s) => s.pauseMs);
 
+describe("R-ONE clone list numbers", () => {
+  const releaseNotes = "## Release notes\n\n**Fixed:** the pill no longer jumps.\n\n1. First item.\n2. Second item.\n";
+  const punctuationCases = [
+    {
+      name: "B1 parenthesized selection abbreviation",
+      source: "1) Intro.\n2) Ask Dr. Smith.",
+      markdown: "one, Intro. two, Ask Dr. Smith.",
+      selection: "one, Intro. 2) Ask Dr. Smith.",
+    },
+    {
+      name: "abbreviations",
+      source: "1. Ask Dr. Smith about e.g. item counts.\n2. Keep U.S. names.",
+      markdown: "one, Ask Dr. Smith about e.g. item counts. two, Keep U.S. names.",
+      selection: "one, Ask Dr. Smith about e.g. item counts. 2, Keep U.S. names.",
+    },
+    {
+      name: "decimals",
+      source: "1. Value 3.14 stays.\n2) Keep 2.50.",
+      markdown: "one, Value 3.14 stays. two, Keep 2.50.",
+      selection: "one, Value 3.14 stays. 2) Keep 2.50.",
+    },
+    {
+      name: "questions and exclamations",
+      source: "1. Can we ship?\n2) Really!",
+      markdown: "one, Can we ship? two, Really!",
+      selection: "one, Can we ship? 2) Really!",
+    },
+    {
+      name: "nested lists",
+      source: "1. Parent item.\n   1. Nested item.\n   2) Nested alternative!\n2. Final item.",
+      markdown: "one, Parent item. one, Nested item. two, Nested alternative! two, Final item.",
+      selection: "one, Parent item. 1, Nested item. 2) Nested alternative! 2, Final item.",
+    },
+    {
+      name: "Hebrew",
+      source: "1. שלום עולם.\n2. האם זה עובד?\n3) גרסה 3.14 נשמרת!",
+      markdown: "1, שלום עולם. 2, האם זה עובד? 3, גרסה 3.14 נשמרת!",
+      selection: "1, שלום עולם. 2, האם זה עובד? 3) גרסה 3.14 נשמרת!",
+    },
+    {
+      name: "parenthesized sentence stops",
+      source: "1) First item. More words.\n2) Second item?",
+      markdown: "one, First item. More words. two, Second item?",
+      selection: "one, First item. More words. 2) Second item?",
+    },
+    {
+      name: "numbered labels",
+      source: "1. **Item:** Keep 1.2.\n2) **Note:** Ask Dr. Smith.",
+      markdown: "one, Item. Keep 1.2. two, Note. Ask Dr. Smith.",
+      selection: "one, Item: Keep 1.2. 2) Note: Ask Dr. Smith.",
+    },
+    {
+      name: "label body starting with a year",
+      source: "1. **Released:** 2025. It shipped.\n2. Second item.\n",
+      markdown: "one, Released. 2025. It shipped. two, Second item.",
+      selection: "one, Released: 2025. It shipped. 2, Second item.",
+    },
+    {
+      name: "label body starting with a version",
+      source: "1. **Version:** 2.5. Done.\n2. Second item.\n",
+      markdown: "one, Version. 2.5. Done. two, Second item.",
+      selection: "one, Version: 2.5. Done. 2, Second item.",
+    },
+    {
+      name: "oversized items",
+      source: "1. " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "\n2) End.",
+      markdown: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "two, End.",
+      selection: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "2) End.",
+    },
+  ];
+  for (const fixture of punctuationCases) for (const selection of [false, true]) {
+    it(`preserves full body punctuation: ${fixture.name} (selection=${selection})`, () => {
+      const structure = selection ? projectStructuredSpeech(fixture.source) : undefined;
+      const readText = structure?.speechText ?? fixture.source;
+      const projection = projectSpeakableText(readText, [], "clone");
+      const plan = planProsody({ readText, projection, structure, engine: "clone", listNumbers: "inline", concurrency: 1 });
+      expect(plan.speechText).toBe(selection ? fixture.selection : fixture.markdown);
+      expectSound(plan, projection.speechText);
+    });
+  }
+  for (const selection of [false, true]) it(`keeps every number in the item without a sentence stop (selection=${selection})`, () => {
+    const structure = selection ? projectStructuredSpeech(releaseNotes) : undefined;
+    const readText = structure?.speechText ?? releaseNotes;
+    const projection = projectSpeakableText(readText, [], "clone");
+    const plan = planProsody({ readText, projection, structure, engine: "clone", listNumbers: "inline", concurrency: 1 });
+    const numbers = selection ? ["1", "2"] : ["one", "two"];
+    expect(plan.segments.some(segment => /^(?:one|two|\d+)\./i.test(segment.text))).toBe(false);
+    expect(texts(plan).slice(-2)).toEqual([`${numbers[0]}, First item.`, `${numbers[1]}, Second item.`]);
+    for (const [index, word] of numbers.entries()) {
+      expect(plan.segments.at(index - 2)?.text).toMatch(new RegExp(`\\b${word}\\b`, "i"));
+    }
+    expectSound(plan, projection.speechText);
+    expect(pauses(plan)).toEqual([1000, 320, 1000, 450, 0]);
+    expect(plan.chunks.map(chunk => [chunk.first, chunk.end])).toEqual([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]);
+  });
+  it("keeps all ten number words, numbered labels and parenthesized markers", () => {
+    const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+    const readText = "\n\n" + words.map((_, i) => `  ${i + 1}${i % 2 ? ")" : "."} **Item:** Keep these words.`).join("\n");
+    const projection = projectSpeakableText(readText, [], "clone");
+    const plan = planProsody({ readText, projection, engine: "clone", listNumbers: "inline", concurrency: 1 });
+    expect(plan.segments.filter(segment => segment.kind === "label").map(segment => segment.text))
+      .toEqual(words.map(word => `${word}, Item.`));
+    for (const word of words) expect(plan.segments.some(segment => segment.text.startsWith(`${word}.`))).toBe(false);
+    expectSound(plan, projection.speechText);
+  });
+  it("preserves Edge separate number requests and their pauses", () => {
+    const plan = planProsody({ readText: releaseNotes, projection: projectSpeakableText(releaseNotes, [], "edge"),
+      engine: "edge", listNumbers: "separate" });
+    expect(texts(plan)).toEqual(["Release notes.", "Fixed.", "the pill no longer jumps.", "one.", "First item.", "two.", "Second item."]);
+    expect(pauses(plan)).toEqual([1000, 320, 1000, 250, 450, 250, 0]);
+  });
+  it("preserves sentence stops on prose and unnumbered bullets", () => {
+    const readText = "One. Keep this sentence.\n\n- Two. Keep this bullet.";
+    const projection = projectSpeakableText(readText, [], "clone");
+    const plan = planProsody({ readText, projection, engine: "clone", listNumbers: "inline", concurrency: 1 });
+    expect(texts(plan)).toEqual(["One. Keep this sentence.", "Two. Keep this bullet."]);
+  });
+});
+
 /** Invariants every plan must hold: nothing added or lost, ordered spans, exact read partition. */
 function expectSound(plan: ProsodyPlan, projectionSpeech: string) {
   expect(letters(plan.speechText)).toBe(letters(projectionSpeech));
