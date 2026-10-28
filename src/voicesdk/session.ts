@@ -149,7 +149,6 @@ export function createVoiceSdkSessionManager(
 
   async function speak(sessionId: string, input: SpeakInput): Promise<void> {
     const state = sessionFor(sessionId);
-    const { session } = state;
     const plan = input.conversation
       ? prepareConversationUtterance(input.text, input.conversation, state.speaker) : undefined;
     // No bare-listen shortcut: response-bearing returns stay blocked before events/audio.
@@ -162,6 +161,19 @@ export function createVoiceSdkSessionManager(
     }
     state.speaker.pending = token;
     state.activeSpeaks++;
+    try {
+      await speakReserved(sessionId, input, state, plan, token);
+    } finally {
+      state.activeSpeaks--;
+      if (state.speaker.pending === token) state.speaker.pending = undefined;
+    }
+  }
+
+  async function speakReserved(
+    sessionId: string, input: SpeakInput, state: ReturnType<typeof sessionFor>,
+    plan: ReturnType<typeof prepareConversationUtterance> | undefined, token: symbol | undefined,
+  ): Promise<void> {
+    const { session } = state;
     const text = plan?.text ?? input.text;
     const utteranceId = `utt-${session.sequence + 1}`;
     const voiceId = input.voice_id ?? "default";
@@ -267,8 +279,6 @@ export function createVoiceSdkSessionManager(
       }
       try { await waitForPlayerExit(playbacks); }
       catch { reason = "error"; cancelOwned(); }
-      state.activeSpeaks--;
-      if (state.speaker.pending === token) state.speaker.pending = undefined;
     }
     if (interrupted && reason !== "error") {
       reason = "interrupted";

@@ -64,6 +64,22 @@ it("actual manager introduces first contact, then exact unnamed ACKs and immedia
   expect(f.captures).toBe(0);
 });
 
+for (const legacy of [false, true]) {
+  it(`releases the reservation after pre-audio subscriber failure (${legacy ? "legacy" : "optional"})`, async () => {
+    const f = await fixture();
+    const unsubscribe = f.manager.subscribe(event => {
+      if (event.type === "speak.started") throw Error("subscriber failed before audio");
+    });
+    try {
+      const failed = legacy ? f.manager.speak(f.session.session_id, { text: "Legacy" }) : f.say();
+      await expect(failed).rejects.toThrow("subscriber failed before audio");
+      expect(f.calls).toHaveLength(0);
+    } finally { unsubscribe(); }
+    await f.say();
+    expect(f.calls.map(call => call.text)).toEqual(["Agent A here. Body."]);
+  });
+}
+
 it("uses stable identity for A→B→A, independently of display/model/voice", async () => {
   const f = await fixture();
   await f.say();
