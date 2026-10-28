@@ -94,6 +94,7 @@ export { resolveSpeakProfile } from "./tts-settings";
 const defaultVoice = () => process.env.QA_VOICE_TTS_VOICE || TTS_DEFAULTS.voice;
 const defaultRate = () => process.env.QA_VOICE_TTS_RATE || TTS_DEFAULTS.rate;
 const RING_BUFFER_SIZE = 20;
+export const TTS_HISTORY_DISPLAY_MAX_BYTES = 256 * 1024;
 export const SPEAKER_OUTPUT_REFUSED_MESSAGE =
   "user is recording — speaker output refused";
 
@@ -669,13 +670,20 @@ export type TTSHistoryRef = Pick<TTSHistoryEntry, "id" | "timestamp">;
 
 let ringIndex = 0;
 
+function boundedHistoryDisplay(text: string, display?: StructuredChunkDisplay): StructuredChunkDisplay | undefined {
+  return display?.text === text && Buffer.byteLength(JSON.stringify(display), "utf8") <= TTS_HISTORY_DISPLAY_MAX_BYTES
+    ? display : undefined;
+}
+
 /** Load ring buffer from disk. Returns empty array if file missing/corrupt. */
 export function loadHistory(): TTSHistoryEntry[] {
   if (!existsSync(TTS_HISTORY_FILE)) return [];
   try {
     const raw: unknown = JSON.parse(readFileSync(TTS_HISTORY_FILE, "utf-8"));
     if (!Array.isArray(raw)) return [];
-    return raw as TTSHistoryEntry[];
+    return (raw as TTSHistoryEntry[]).map(entry => ({
+      ...entry, display: boundedHistoryDisplay(entry.text, entry.display),
+    }));
   } catch {
     return [];
   }
@@ -683,7 +691,7 @@ export function loadHistory(): TTSHistoryEntry[] {
 
 /** Save ring buffer to disk. */
 function saveHistory(entries: TTSHistoryEntry[]): void {
-  writeFileSync(TTS_HISTORY_FILE, JSON.stringify(entries, null, 2));
+  writeFileSync(TTS_HISTORY_FILE, JSON.stringify(entries));
 }
 
 /** Add an entry to the ring buffer. Overwrites oldest when full. */
@@ -709,7 +717,7 @@ export function addToHistory(text: string, audioFile: string, voice: string, aud
     ...(audioMissingChunks.length ? { audioMissingChunks } : {}),
     ...(presentation.wordBoundaries?.length ? { wordBoundaries: presentation.wordBoundaries } : {}),
     ...(presentation.alignedWords?.length ? { alignedWords: presentation.alignedWords } : {}),
-    ...(presentation.display?.text === text ? { display: presentation.display } : {}),
+    display: boundedHistoryDisplay(text, presentation.display),
     ...(presentation.prosodyIdentity ? { prosodyIdentity: presentation.prosodyIdentity } : {}),
   };
 
@@ -755,7 +763,7 @@ export function getHistoryEntry(index: number = 0): TTSHistoryEntry | null {
 }
 
 export function historyReplayMetadata(entry: TTSHistoryEntry): PlaybackMetadata {
-  const display = entry.display?.text === entry.text ? entry.display : undefined;
+  const display = boundedHistoryDisplay(entry.text, entry.display);
   const text = display ? entry.text : replayDisplayText(entry.text);
   return {
     text,
