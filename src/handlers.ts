@@ -499,7 +499,7 @@ export async function handleVoiceAsk(
       archiveContext,
     );
   } finally {
-    traceStage(archiveContext, "tool_result_emitted");
+    traceStage(archiveContext, "handler_returned");
     if (!releaseDeferred) reservation.release();
   }
 }

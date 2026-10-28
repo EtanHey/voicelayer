@@ -23,8 +23,11 @@ or VAD. Recorder exit is observed only on fulfillment of the owned child's
 `exited` promise; rejection, EOF, stop, and termination timeout provide no proof.
 `end_decision` observes committed timeout/silence/stop callers; manual stop marks
 the decision before tail draining. Barrier, drain, and retention internals are
-unchanged. Failure/abort paths can omit stages. `tool_result_emitted` marks the
-handler handoff, not client receipt; early validation refusals can omit it.
+unchanged. Failure/abort paths can omit stages. `handler_returned` marks settlement
+of the Ask handler's conversation call in its `finally`, before reservation
+release; early validation refusals can omit it. No transport emission hook is
+installed: `tool_result_emitted` is absent and result-emission spans stay UNMEASURED,
+even if a real `last_speech` timestamp is supplied.
 
 There is no real `last_speech` timestamp yet, so last-speech latency is UNMEASURED.
 The analyzer accepts a future `last_speech` event on the same clock and otherwise

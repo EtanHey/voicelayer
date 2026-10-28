@@ -53,7 +53,8 @@ it("stubbed Ask preserves ordered, private monotonic stages under one request", 
   expect(result.isError).not.toBe(true);
   const raw = readFileSync(file, "utf8");
   const events = raw.trim().split("\n").map(line => JSON.parse(line));
-  expect(events.map(event => event.stage)).toEqual(["tool_received", "admission_done", "drain_start", "drain_end", "synth_start", "probe_start", "probe_end", "synth_end", "probe_start", "probe_end", "job_queued", "envelope_start", "envelope_end", "probe_start", "probe_end", "player_spawn", "player_exit_confirmed", "recorder_spawn", "first_pcm", "first_vad_speech", "end_decision", "recorder_exit_confirmed", "stt_start", "stt_end", "tool_result_emitted"]);
+  expect(events.map(event => event.stage)).not.toContain("tool_result_emitted");
+  expect(events.map(event => event.stage)).toEqual(["tool_received", "admission_done", "drain_start", "drain_end", "synth_start", "probe_start", "probe_end", "synth_end", "probe_start", "probe_end", "job_queued", "envelope_start", "envelope_end", "probe_start", "probe_end", "player_spawn", "player_exit_confirmed", "recorder_spawn", "first_pcm", "first_vad_speech", "end_decision", "recorder_exit_confirmed", "stt_start", "stt_end", "handler_returned"]);
   expect(new Set(events.map(event => event.request_id)).size).toBe(1);
   expect(raw).not.toContain("private");
   for (let i = 1; i < events.length; i++) expect(BigInt(events[i].monotonic_ns)).toBeGreaterThanOrEqual(BigInt(events[i - 1].monotonic_ns));
@@ -95,6 +96,9 @@ it("analyzer computes clock-local spans and refuses guessed onset/last speech", 
   const clocks = fixture.split("\n").map((line, i) => JSON.stringify({ ...JSON.parse(line), clock_id: i + 1 })).join("\n");
   expect(analyzeVoiceTrace(clocks)).not.toMatch(/proxy\): \d/);
   expect(analyzeVoiceTrace(fixture + '\n' + JSON.stringify({ request_id: "fixture", stage: "last_speech", monotonic_ns: "4500000" }))).toContain("last_speech→tool_result: 1.500 ms");
+  const handlerOnly = fixture.replace("tool_result_emitted", "handler_returned") + '\n' +
+    JSON.stringify({ request_id: "fixture", stage: "last_speech", monotonic_ns: "4500000" });
+  expect(analyzeVoiceTrace(handlerOnly)).toContain("last_speech→tool_result: UNMEASURED");
 });
 
 it("native PCM is traced before VAD; recorder exit waits for the real child", async () => {

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 export type VoiceTraceStage = "tool_received" | "admission_done" | "drain_start" | "drain_end" |
   "synth_start" | "synth_end" | "synth_fail" | "probe_start" | "probe_end" | "envelope_start" | "envelope_end" |
   "job_queued" | "player_spawn" | "player_exit_confirmed" | "recorder_spawn" | "first_pcm" |
-  "first_vad_speech" | "end_decision" | "recorder_exit_confirmed" | "stt_start" | "stt_end" | "tool_result_emitted";
+  "first_vad_speech" | "end_decision" | "recorder_exit_confirmed" | "stt_start" | "stt_end" | "handler_returned";
 type Fields = { conversation_id?: string; turn?: number; outcome?: string; engine?: string; warm_state?: string; route?: string };
 type Trace = { request_id: string; seen: Set<VoiceTraceStage>; engine?: string };
 const traces = new WeakMap<object, Trace>();
