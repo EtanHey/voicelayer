@@ -94,28 +94,52 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
     }
 
     func testLongSlashHeavyDecodeStaysCloseToPlainText() throws {
-        func decodeVisits(_ text: String) throws -> Int {
+        func fixture(_ text: String) -> [String: Any] {
             let span = ["start": 0, "end": (text as NSString).length]
-            let value: [String: Any] = ["version": 1, "text": text, "speech_start": 0, "blocks": [[
+            return ["version": 1, "text": text, "speech_start": 0, "blocks": [[
                 "kind": "paragraph", "source": span, "speech": span,
                 "ranges": [["source": span, "display": span, "speech": span, "kind": "identity"]],
                 "word_start": 0, "word_end": 24_000, "section_id": "section:0",
                 "starts_block": true, "starts_section": true]]]
-            var visits = 0
-            let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: text,
-                onTokenizationVisit: { visits += 1 }))
-            XCTAssertEqual(display.blocks.last?.word_end, 24_000)
-            return visits
         }
         let plainText = Array(repeating: "client server", count: 12_000).joined(separator: " ")
         let slashText = Array(repeating: "client/server", count: 12_000).joined(separator: " ")
         XCTAssertEqual(plainText.utf16.count, slashText.utf16.count)
         XCTAssertEqual(TeleprompterContentModel.displayTokens("client/server client server"),
                        ["client", "/server", "client", "server"])
-        let plain = try decodeVisits(plainText), slash = try decodeVisits(slashText)
+        #if DEBUG
+        func tokenizationVisits(_ text: String) -> Int {
+            var visits = 0
+            let tokens = TeleprompterContentModel.displayTokenRanges(text, onVisit: { visits += 1 })
+            XCTAssertEqual(tokens.count, 24_000)
+            return visits
+        }
+        let plain = tokenizationVisits(plainText), slash = tokenizationVisits(slashText)
         XCTAssertGreaterThanOrEqual(plain, 24_000)
         XCTAssertGreaterThan(slash, plain)
         XCTAssertLessThan(slash, plain * 4, "slash \(slash) visits vs plain \(plain) visits")
+        #endif
+        let inputs = [(plainText, fixture(plainText)), (slashText, fixture(slashText))]
+        for (text, value) in inputs {
+            let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: text))
+            XCTAssertEqual(display.blocks.last?.word_end, 24_000)
+        }
+        let clock = ContinuousClock()
+        var fastest = [Duration.seconds(900), Duration.seconds(900)]
+        for _ in 0..<5 {
+            for (index, input) in inputs.enumerated() {
+                let (text, value) = input
+                let start = clock.now
+                let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: text))
+                let elapsed = start.duration(to: clock.now)
+                fastest[index] = min(fastest[index], elapsed)
+                XCTAssertEqual(display.blocks.last?.word_end, 24_000)
+            }
+        }
+        print("Full decode min-of-5: plain \(fastest[0]), slash \(fastest[1])")
+        for elapsed in fastest {
+            XCTAssertLessThan(elapsed, .seconds(2), "full decode exceeded the coarse 2-second ceiling")
+        }
     }
 
     func testMissingPreparingDisplayReflowsEveryArrivingChunk() throws {
