@@ -215,6 +215,25 @@ final class TeleprompterLazyScrollTests: XCTestCase {
     }
 
     func testACoalescedPlaybackAdvanceAcrossTheBlockBoundaryReachesTheWordAndTheNext() async {
+        await coalescedAdvanceAcrossTheBlockBoundary { NSWindow(contentRect: $0, styleMask: .borderless, backing: .buffered, defer: false) }
+    }
+
+    /// Hosted CI runners draw at 1x, where SwiftUI snaps the landed word to whole points: half a point off
+    /// its Retina position. Run the same landing at 1x so a Retina host covers CI's geometry too.
+    private final class OneXWindow: NSWindow {
+        override var backingScaleFactor: CGFloat { 1 }
+    }
+
+    func testACoalescedPlaybackAdvanceAcrossTheBlockBoundaryAtOneXReachesTheWordAndTheNext() async {
+        await coalescedAdvanceAcrossTheBlockBoundary { OneXWindow(contentRect: $0, styleMask: .borderless, backing: .buffered, defer: false) }
+    }
+
+    /// Centred in the viewport to within one device pixel, the only freedom pixel snapping leaves.
+    private static func isOnMiddleRow(_ frame: CGRect, in window: NSWindow) -> Bool {
+        abs(frame.midY - Theme.teleprompterViewportHeight / 2) < 1 / window.backingScaleFactor
+    }
+
+    private func coalescedAdvanceAcrossTheBlockBoundary(window makeWindow: (NSRect) -> NSWindow) async {
         let token = String(repeating: "x", count: 960) // 40 display pieces, one timestamp
         let raw = (0 ... 280).map { "word\($0)" } + [token] + (282 ..< 600).map { "word\($0)" }
         let text = raw.joined(separator: " ")
@@ -227,20 +246,20 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         defer { presentation.close(); clock.playback.cancel() }
         let host = NSHostingView(rootView: ClockHost(text: text, clock: clock))
         host.frame = NSRect(x: 0, y: 0, width: 300, height: Theme.teleprompterViewportHeight)
-        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        let window = makeWindow(host.frame)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         defer { window.contentView = nil }
         await presentation.wait(host, clock: clock.playback, for: "word280 landed before playback advances") {
             guard let word = $0[280] else { return false }
-            return abs(word.midY - 39) < 0.1 && clock.playback.isSuspended(until: 107_600)
+            return Self.isOnMiddleRow(word, in: window) && clock.playback.isSuspended(until: 107_600)
         }
         XCTAssertTrue(isOnScreen("word280", host), "the read starts on word 280; OCR: \(onScreenText(host).prefix(120))")
         let preAdvanceFrame = onScreenText(host)
         clock.playback.advance(to: 107_760)
         await presentation.wait(host, clock: clock.playback, for: "last token piece landed across the block boundary") {
             guard let piece = $0[320], let earlier = $0[280] else { return false }
-            return abs(piece.midY - 39) < 0.1 && earlier.maxY < 0
+            return Self.isOnMiddleRow(piece, in: window) && earlier.maxY < 0
                 && clock.playback.isSuspended(until: 108_000)
         }
         let destination = onScreenText(host)
@@ -251,7 +270,7 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         clock.playback.advance(to: 108_010)
         await presentation.wait(host, clock: clock.playback, for: "word282 landed after the long token") {
             guard let word = $0[321] else { return false }
-            return abs(word.midY - 39) < 0.1
+            return Self.isOnMiddleRow(word, in: window)
         }
         XCTAssertTrue(isOnScreen("word282", host), "the next ordinary word follows; OCR: \(onScreenText(host).prefix(120))")
     }
