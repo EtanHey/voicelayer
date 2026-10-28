@@ -226,22 +226,26 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     return atStart || /^\.?$/.test(after) ? "" : ", ";
   });
   edit(/^[ \t]*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?[ \t]*(?:\r?\n|$)/gm, "");
-  edit(/(?<![^\s"'“‘])\[[ xX]\](?=$|[\s"'”’.,;:!?)])/g, m => {
+  let checkboxCursor = 0, bracketDepth = 0;
+  edit(/\[[ xX]\](?!\()/g, m => {
+    for (; checkboxCursor < m.index; checkboxCursor++) {
+      const char = m.input[checkboxCursor];
+      if (char === "[" || char === "{") bracketDepth++;
+      else if (char === "]" || char === "}") bracketDepth = Math.max(0, bracketDepth - 1);
+    }
+    if (bracketDepth) return undefined;
     const prefix = m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1, m.index);
     if (/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix)) return "";
-    const bracketDepth = [...prefix].reduce((depth, char) => char === "[" || char === "{" ? depth + 1 : char === "]" || char === "}" ? Math.max(0, depth - 1) : depth, 0);
-    const quoted = /["'“‘]$/.test(prefix) && /^["'”’]/.test(m.input.slice(m.index + m[0].length));
-    return bracketDepth || quoted || /(?:[=(,+\-*/%<>!&|^~?]|\b(?:return|yield|throw))[ \t]*$/.test(prefix) ? undefined : "";
+    return /^[ \t]*$/.test(prefix) && /^(?:$|[\s"'”’.,;:!?)])/.test(m.input.slice(m.index + m[0].length)) ? "" : undefined;
   });
   edit(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
-  edit(/(?<=^[ \t]*\d+[.)][ \t]+)\[[ xX]\](?!\()[ \t]*/gm, "");
   // Keep the marker's own source span: alignment maps the spoken number back to it.
   edit(/^[ \t]*(\d+)[.)](?=[ \t]+)/gm, m => {
     const line = m.input.slice(m.index).split(/\r?\n/, 1)[0];
     // Let the voice frontend pronounce digits in Hebrew rather than injecting English.
     return `${/[\u0590-\u05ff]/.test(line) || m[1].length > 2 ? m[1] : number(m[1])}.`;
   }, true);
-  edit(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+(?:\[[ xX]\][ \t]*)?)/gm, "");
+  edit(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+)/gm, "");
   edit(/!?\[([^\]\n]+)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, m => m[1]);
   if (engine === "clone") {
     const input = pieces.map(p => p.text).join("");

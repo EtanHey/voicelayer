@@ -45,32 +45,63 @@ for (const [display, speech] of corpus) test(display, () => {
 
 for (const engine of ["edge", "clone"] as const) {
   for (const [display, edge, clone] of [
-    ["Completed: [x] done", "Completed: done", "Completed: done"],
+    ["Completed: [x] done", "Completed: [x] done", "Completed: open bracket x close bracket done"],
+    ["Array: [x] index", "Array: [x] index", "Array: open bracket x close bracket index"],
+    ["ratio 1: [x]", "ratio 1: [x]", "ratio 1: open bracket x close bracket"],
+    ["ratio 1:[x]", "ratio 1:[x]", "ratio 1: open bracket x close bracket"],
+    ["Array: [X] index", "Array: [X] index", "Array: open bracket X close bracket index"],
+    ["מערך: [x] אינדקס", "מערך: [x] אינדקס", "מערך: open bracket x close bracket אינדקס"],
+    ["(value: [x])", "(value: [x])", "(value: open bracket x close bracket )"],
     ["[ [x], y ]", "[ [x], y ]", "open bracket open bracket x close bracket , y close bracket"],
+    ["[\n [x], y\n]", "[ [x], y ]", "open bracket open bracket x close bracket , y close bracket"],
+    ["[\n - [x] value\n]", "[ [x] value. ]", "open bracket open bracket x close bracket value. close bracket"],
+    ["{\n 1. [x] value\n}", "{ one. [x] value. }", "open brace one. open bracket x close bracket value. close brace"],
     ["{key: [x]}", "{key: [x]}", "open brace key: open bracket x close bracket close brace"],
     ["Use `[x]` here.", "Use [x] here.", "Use open bracket x close bracket here."],
-    ['The token "[x]" means checked.', 'The token "[x]" means checked.', "The token open bracket x close bracket means checked."],
-  ]) test(`${engine} handles checkbox edges: ${display}`, () => {
+    ['The token "[x]" stays.', 'The token "[x]" stays.', "The token open bracket x close bracket stays."],
+    ['The literal "prefix [x] suffix" stays.', 'The literal "prefix [x] suffix" stays.', "The literal prefix open bracket x close bracket suffix stays."],
+    ['The token " [x] " stays.', 'The token " [x] " stays.', "The token open bracket x close bracket stays."],
+    ["Use [x] to close", "Use [x] to close", "Use open bracket x close bracket to close"],
+    ["Use [ ] inside a sentence", "Use [ ] inside a sentence", "Use an empty list inside a sentence"],
+    ['Etan said "[ ] x" here', 'Etan said "[ ] x" here', "Etan said an empty list x here"],
+    ["Before [ ] unchecked [x] checked [X] checked after", "Before [ ] unchecked [x] checked [X] checked after", "Before an empty list unchecked open bracket x close bracket checked open bracket X close bracket checked after"],
+    ["Done [x]. Next", "Done [x]. Next", "Done open bracket x close bracket . Next"],
+    ["Ready [X]!", "Ready [X]!", "Ready open bracket X close bracket !"],
+    ["Pending [ ];", "Pending [ ];", "Pending an empty list;"],
+    ["Done [x])", "Done [x])", "Done open bracket x close bracket )"],
+    ['Task lists: "1. [ ] x" is no longer spoken "one. an empty list x".', 'Task lists: "1. [ ] x" is no longer spoken "one. an empty list x".', "Task lists: 1. an empty list x is no longer spoken one. an empty list x."],
+  ]) test(`${engine} preserves literal checkbox content: ${display}`, () => {
     const result = projectSpeakableText(display, [], engine);
     expect(result.displayText).toBe(display);
     expect(result.speechText).toBe(engine === "clone" ? clone : edge);
-    const start = display.indexOf("[x]");
-    const ranges = result.ranges.filter(range => range.source.start < start + 3 && range.source.end > start);
-    expect(ranges.length).toBeGreaterThan(0);
-    expect(ranges.every(range => range.kind === "omission")).toBe(display.startsWith("Completed:"));
+    for (const marker of display.matchAll(/\[[ xX]\]/g)) {
+      const content = marker.index + 1;
+      const range = result.ranges.find(range => range.source.start <= content && range.source.end > content);
+      expect(range).toBeDefined();
+      expect(range?.kind).not.toBe("omission");
+    }
+    let source = 0, speech = 0;
+    for (const range of result.ranges) {
+      expect(range.source.start).toBe(source); expect(range.speech.start).toBe(speech);
+      expect(range.display).toEqual(range.source);
+      if (range.kind === "identity") expect(display.slice(range.source.start, range.source.end))
+        .toBe(result.speechText.slice(range.speech.start, range.speech.end));
+      source = range.source.end; speech = range.speech.end;
+    }
+    expect(source).toBe(display.length); expect(speech).toBe(result.speechText.length);
   });
   for (const marker of ["[ ]", "[x]", "[X]"]) for (const punctuation of [".", ",", ";", ":", "!", "?", ")"]) {
-    test(`${engine} silences ${marker} before ${punctuation} and keeps source ranges`, () => {
-      const display = `Check ${marker}${punctuation} then go`;
+    test(`${engine} silences task ${marker} before ${punctuation} and keeps source ranges`, () => {
+      const display = `- ${marker}${punctuation} then go`;
       const result = projectSpeakableText(display, [], engine);
       expect(result.displayText).toBe(display);
-      expect(result.speechText).toBe(`Check ${punctuation} then go`);
-      const omitted = result.ranges.filter(range => range.source.start < 6 + marker.length && range.source.end > 6);
+      expect(result.speechText).toBe(`${punctuation} then go.`);
+      const omitted = result.ranges.filter(range => range.source.start < 2 + marker.length && range.source.end > 2);
       expect(omitted.length).toBeGreaterThan(0);
       expect(omitted.every(range => range.kind === "omission")).toBe(true);
-      const punctuationRange = result.ranges.find(range => range.source.start <= 6 + marker.length && range.source.end > 6 + marker.length)!;
+      const punctuationRange = result.ranges.find(range => range.source.start <= 2 + marker.length && range.source.end > 2 + marker.length)!;
       expect(punctuationRange.kind).toBe("identity");
-      expect(result.speechText[punctuationRange.speech.start + 6 + marker.length - punctuationRange.source.start]).toBe(punctuation);
+      expect(result.speechText[punctuationRange.speech.start + 2 + marker.length - punctuationRange.source.start]).toBe(punctuation);
       let source = 0, speech = 0;
       for (const range of result.ranges) {
         expect(range.source.start).toBe(source); expect(range.speech.start).toBe(speech);
@@ -85,19 +116,15 @@ for (const engine of ["edge", "clone"] as const) {
     ["- [x] Done", "Done."],
     ["2. [X] Call Dana", "two. Call Dana."],
     ["1. [ ]Buy milk", "one. Buy milk."],
-    ['Etan said "[ ] x" here', engine === "clone" ? "Etan said x here" : 'Etan said " x" here'],
-    ["Before [ ] unchecked [x] checked [X] checked after", "Before unchecked checked checked after"],
-    ["[ ]\n[x]\t[X]", ""],
-    ["Done [x]. Next", "Done . Next"],
-    ["Ready [X]!", "Ready !"],
-    ["Pending [ ];", "Pending ;"],
-    ["Done [x])", "Done )"],
+    ["[ ]\n[x]\n[X]", ""],
+    ["[x] Done", "Done"],
+    ["  [ ] Pending", "Pending"],
+    ["  + [X] Done", "Done."],
+    ["* [ ] Pending", "Pending."],
+    ["3) [x] Done", "three. Done."],
     ["- [x];", ";."],
-    ['Task lists: "1. [ ] x" is no longer spoken "one. an empty list x".', engine === "clone"
-      ? "Task lists: 1. x is no longer spoken one. an empty list x."
-      : 'Task lists: "1. x" is no longer spoken "one. an empty list x".'],
   ];
-  for (const [display, speech] of checkboxes) test(`${engine} silences checkbox tokens: ${display}`, () => {
+  for (const [display, speech] of checkboxes) test(`${engine} silences task-list checkbox tokens: ${display}`, () => {
     const result = projectSpeakableText(display, [], engine);
     expect(result.displayText).toBe(display);
     expect(result.speechText).toBe(speech);
@@ -106,6 +133,14 @@ for (const engine of ["edge", "clone"] as const) {
       expect(ranges.length).toBeGreaterThan(0);
       expect(ranges.every(range => range.kind === "omission")).toBe(true);
     }
+  });
+  test(`${engine} silences only the leading task marker on a line`, () => {
+    const display = "[ ]\n[x]\t[X]";
+    const result = projectSpeakableText(display, [], engine);
+    expect(result.speechText).toBe(engine === "clone" ? "open bracket X close bracket" : "[X]");
+    const content = display.lastIndexOf("[X]") + 1;
+    expect(result.ranges.find(range => range.source.start <= content && range.source.end > content)?.kind)
+      .not.toBe("omission");
   });
   for (const [display, clone, edge] of [
     ["`[ ]`", "an empty list", "[ ]"],
