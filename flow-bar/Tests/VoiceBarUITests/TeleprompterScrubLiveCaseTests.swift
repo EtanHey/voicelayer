@@ -111,9 +111,7 @@ final class TeleprompterScrubLiveCaseTests: XCTestCase {
                 rows.insert(row); minX = min(minX, column); maxX = max(maxX, column)
             }
         }
-        if rows.isEmpty, ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" {
-            throw XCTSkip("hosted runner render: label ink unreadable over the notch glass")
-        }
+        try GlassTextCapability.current.get().requireReadableText()
         let top = try XCTUnwrap(rows.min(), "\(name): no total label rendered"), bottom = rows.max()!
         XCTAssertLessThanOrEqual(CGFloat(bottom - top) / s, 14,
                                  "\(name): the total and \"so far\" must sit on ONE line, not wrap under the time")
