@@ -1,29 +1,44 @@
-import ast
+import json
+import os
 import re
 from pathlib import Path
 
 
-def check_admission(nodes):
-    source = (Path(__file__).resolve().parents[2] / "flow-bar/Sources/VoiceBarUI/VoiceState.swift").read_text()
-    guard, = re.findall(r"if replacing, ([^\n]+) \{\s*stopSelectionRead\(\)\s*return\s*\}", source)
-    expression = guard.replace("normalized.isEmpty", "empty").replace("&&", " and ").replace("||", " or ").replace("!", " not ").strip()
-    tree = ast.parse(expression, mode="eval")
-    for node in ast.walk(tree):
-        assert isinstance(node, (ast.Expression, ast.BoolOp, ast.UnaryOp, ast.Name, ast.Load, ast.And, ast.Or, ast.Not)), "Unrecognised Swift admission guard"
-        if isinstance(node, ast.Name):
-            assert node.id in {"fromClipboard", "empty", "sameSelection", "samePlaying"}
-    code = compile(tree, "Swift admission Boolean projection", "eval")
-    count = 0
-    for label in nodes.values():
-        number = lambda key: int(re.search(rf"\b{key} = (\d+)", label)[1])
-        if number("steps") != 2:
+def check_admission(run, runner):
+    cases = []
+    for line in (run / "QueueAdmissionFixed.dot").read_text().splitlines():
+        node = re.match(r'(-?\d+) \[label="((?:\\.|[^"\\])*)"', line)
+        if not node:
             continue
-        latest, playing, queued, text = map(number, ("latest", "playing", "queued", "selection"))
-        flags = dict(fromClipboard=False, empty=False, sameSelection=text == (latest or playing),
-                     samePlaying=bool(latest) and text == playing)
-        actual = bool(latest or playing or queued) and eval(code, {"__builtins__": {}}, flags)
-        expected = re.search(r"\bstopped = (TRUE|FALSE)", label)[1] == "TRUE"
-        assert actual == expected, f"Swift admission mismatch: latest={latest}, playing={playing}, queued={queued}, input={text}"
-        count += 1
-    assert count == 192, f"Expected all 4 x 4 x 4 x 3 admission snapshots, got {count}"
-    print(f"PASS: {count} admission snapshots match the extracted Swift Boolean guard (not Swift runtime)", flush=True)
+        label = json.loads('"' + node[2] + '"')
+        event = re.search(r'\bevent = "(\w+)"', label)[1]
+        step = int(re.search(r"\bsteps = (\d+)", label)[1])
+        if not ((event == "selection" and step >= 2) or (event in {"stop", "f5"} and step == 3)):
+            continue
+        cases.append(dict(afterPlaying=int(re.search(r"\bplaying = (\d+)", label)[1]),
+                          afterPending=[int(n) for n in re.findall(r"\d+", re.search(r"\bpending = <<(.*?)>>", label)[1])],
+                          preempted="preempted = TRUE" in label, playing=int(re.search(r"\bbeforePlaying = (\d+)", label)[1]),
+                          pending=[int(n) for n in re.findall(r"\d+", re.search(r"\bbeforePending = <<(.*?)>>", label)[1])],
+                          suspended="wasSuspended = TRUE" in label,
+                          selected=int(re.search(r"\bselected = (\d+)", label)[1]),
+                          event=re.search(r'\bevent = "(\w+)"', label)[1],
+                          decision=re.search(r'\bdecision = "(\w+)"', label)[1]))
+    assert any(row["preempted"] and len(row["pending"]) == 2 for row in cases)
+    assert cases and {row["event"] for row in cases} == {"selection", "stop", "f5"}
+    assert {row["decision"] for row in cases} == {"stop", "read_next", "hint", "speak_text"}
+    assert any(len(row["pending"]) == 2 and row["selected"] not in [row["playing"], *row["pending"]] for row in cases)
+    assert any(row["playing"] == 5 and row["event"] == "selection" and row["decision"] == "hint" and not row["preempted"] and not row["suspended"] for row in cases)
+    path = run / "admission.json"
+    path.write_text(json.dumps(cases))
+    status = runner.run(["timeout", "-s", "KILL", "900", "swift", "test", "--package-path", "flow-bar",
+                         "--scratch-path", ".build.noindex/swift", "--filter", "ReadQueueTests.testModelAdmissionCasesDriveRealVoiceState|SocketServerTests.testQueueAdmissionSocketBoundary"],
+                        run / "swift-admission.log", 900, cwd=Path(__file__).resolve().parents[2],
+                        env={**os.environ, "VOICELAYER_ADMISSION_CASES": str(path), "VOICELAYER_ADMISSION_WIRE": str(run / "wire.ndjson")})
+    output = (run / "swift-admission.log").read_text()
+    print(output, flush=True)
+    assert status == 0 and f"Replayed {len(cases) * 4} TLC cases" in output, "Real Swift admission diverged"
+    status = runner.run(["timeout", "-s", "KILL", "900", "bun", "test", "src/__tests__/selection-admission.test.ts"],
+                        run / "wire-conformance.log", 900, cwd=Path(__file__).resolve().parents[2],
+                        env={**os.environ, "VOICELAYER_ADMISSION_WIRE": str(run / "wire.ndjson"), "VOICELAYER_ADMISSION_CASES": str(path)})
+    print((run / "wire-conformance.log").read_text(), flush=True)
+    assert status == 0, "Swift socket commands diverged at daemon boundary"

@@ -91,10 +91,8 @@ final class TeleprompterPreparingLayoutTests: XCTestCase {
                 minY = min(minY, row); maxY = max(maxY, row)
             }
         }
+        try GlassTextCapability.current.get().requireReadableText()
         guard minX <= maxX else {
-            if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" {
-                throw XCTSkip("hosted runner render: no readable ink over the notch glass")
-            }
             XCTFail("no ink in \(rect)")
             return .zero
         }

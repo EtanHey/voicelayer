@@ -55,6 +55,7 @@ export interface McpDaemonOptions {
 }
 
 interface ClientState {
+  lifetime: AbortController;
   protocol: "mcp" | "ndjson" | "unknown";
   buffer: string;
   decoder: TextDecoder;
@@ -145,12 +146,14 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     socket: {
       open(socket) {
         socket.data = {
+          lifetime: new AbortController(),
           protocol: "unknown", buffer: "", decoder: new TextDecoder(),
           unknownRaw: Buffer.alloc(0), unknownBytes: 0, ndjsonFramer: new NDJSONByteFramer(),
           unknownHadLeadingWhitespace: false,
           oversized: false, pendingResponses: new Set(), disconnected: false,
           writer: new SocketOutboundQueue(socket, "mcp-daemon", undefined, () => {
             if (!socket.data.disconnected) {
+              socket.data.lifetime.abort();
               socket.data.disconnected = true;
               onDisconnect();
             }
@@ -219,6 +222,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
       },
 
       close(socket) {
+        socket.data.lifetime.abort();
         socket.data.writer.close();
         if (!socket.data.disconnected) {
           socket.data.disconnected = true;
@@ -226,6 +230,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         }
       },
       error(socket) {
+        socket.data.lifetime.abort();
         socket.data.writer.close();
         if (!socket.data.disconnected) {
           socket.data.disconnected = true;
@@ -286,6 +291,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         },
         toolExecutor,
         {
+          disconnectSignal: socket.data.lifetime.signal,
           sendNotification(notification: McpNotification) {
             if (
               !shouldSendMcpNotification(
@@ -377,6 +383,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
             },
             toolExecutor,
             {
+              disconnectSignal: socket.data.lifetime.signal,
               sendNotification(notification: McpNotification) {
                 if (
                   !shouldSendMcpNotification(

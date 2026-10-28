@@ -43,7 +43,7 @@ Verify: `rec --version` should print version info.
 Microsoft's neural TTS engine. Free, no API key needed.
 
 ```bash
-pip3 install edge-tts
+pip3 install 'edge-tts>=7.3.1'
 ```
 
 Verify: `python3 -m edge_tts --list-voices` should print a list of voices.

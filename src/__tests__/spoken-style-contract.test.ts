@@ -8,8 +8,11 @@ describe("spoken tool description style contract", () => {
       expect(tool).toBeDefined();
       const description = tool!.description;
       for (const rule of [
-        "Announce who is speaking",
-        "who is asking",
+        "Announce the speaker (asker for questions) first or when agents change",
+        "Skip introductions in acknowledgements and replies after an answer",
+        "OK, I'm on it.",
+        "OK, I'm looking it up.",
+        "Deliver results via voice_ask or voice_speak immediately followed by voice_ask so the user can reply",
         "front-load the ask",
         "sentences of about 15 words or fewer",
         "one question per ask",
@@ -22,7 +25,7 @@ describe("spoken tool description style contract", () => {
       }
       const guide = description.split("Spoken style: ")[1]?.split("\n")[0];
       expect(guide).toBeDefined();
-      expect(guide!.length).toBeLessThanOrEqual(400);
+      expect(guide!.length).toBeLessThanOrEqual(550);
       expect(description.length).toBeLessThanOrEqual(name === "voice_ask" ? 3100 : 1800);
     });
   }

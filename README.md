@@ -42,7 +42,7 @@ Install the cask too — the formula alone gives you the CLI/MCP but no notch UI
 
 ```bash
 bun add -g voicelayer-mcp        # or: npm i -g voicelayer-mcp
-brew install sox socat && pip3 install edge-tts
+brew install sox socat && pip3 install 'edge-tts>=7.3.1'
 brew install whisper-cpp         # optional, for local STT
 
 # whisper model (~1.5 GB) — needed for local STT

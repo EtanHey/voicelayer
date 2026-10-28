@@ -14,7 +14,7 @@ bun install
 
 - [Bun](https://bun.sh) v1.0+
 - [sox](https://sox.sourceforge.net/) — `brew install sox` (macOS) or `apt install sox` (Linux)
-- [edge-tts](https://github.com/rany2/edge-tts) — `pip3 install edge-tts`
+- [edge-tts](https://github.com/rany2/edge-tts) — `pip3 install 'edge-tts>=7.3.1'`
 - [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (optional) — `brew install whisper-cpp`
 
 ## Running Tests

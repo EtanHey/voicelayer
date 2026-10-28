@@ -33,7 +33,7 @@ fi
 
 # Synthesize via Python edge-tts CLI
 if ! python3 -m edge_tts --text "$TEXT" --voice "$VOICE" --rate "$RATE" --write-media "$TTS_FILE" 2>/dev/null; then
-    echo "[speak.sh] edge-tts failed. Is it installed? Run: pip3 install edge-tts" >&2
+    echo "[speak.sh] edge-tts failed. Is it installed? Run: pip3 install 'edge-tts>=7.3.1'" >&2
     exit 1
 fi
 

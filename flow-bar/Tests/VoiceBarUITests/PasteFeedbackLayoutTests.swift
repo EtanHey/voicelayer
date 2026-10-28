@@ -84,26 +84,25 @@ final class PasteFeedbackLayoutTests: XCTestCase {
         XCTAssertGreaterThan(ink.variance, 0)
     }
 
-    func testSubFloorCropSkipsOnlyOnGitHubActions() throws {
+    func testSubFloorCropFailsOnReadableGlassHost() throws {
+        let capability = GlassTextCapability(contrast: 218, macOSVersion: "fixture")
         for range in [0, 23, 63] {
             let crop = try contrastFixture(range: range)
-            XCTAssertThrowsError(try requireReadableCrop(crop, githubActions: "true")) { error in
-                XCTAssertTrue(error is XCTSkip)
-            }
-            for environment in [nil, "false", "1", "TRUE"] as [String?] {
-                XCTAssertThrowsError(try requireReadableCrop(crop, githubActions: environment)) { error in
-                    XCTAssertFalse(error is XCTSkip)
-                    XCTAssertEqual((error as? CropContrastFailure)?.range, range)
-                }
+            XCTAssertThrowsError(try requireReadableCrop(crop, capability: capability)) { error in
+                XCTAssertFalse(error is XCTSkip)
+                XCTAssertEqual((error as? CropContrastFailure)?.range, range)
             }
         }
     }
 
-    func testContrastAtOrAboveFloorStillRequiresOCRInEveryEnvironment() throws {
+    func testReadableCropRunsOnlyOnReadableGlassHost() throws {
         for range in [64, 218, 255] {
             let crop = try contrastFixture(range: range)
-            for environment in [nil, "false", "true"] as [String?] {
-                XCTAssertNoThrow(try requireReadableCrop(crop, githubActions: environment))
+            XCTAssertNoThrow(try requireReadableCrop(crop,
+                capability: GlassTextCapability(contrast: 218, macOSVersion: "fixture")))
+            XCTAssertThrowsError(try requireReadableCrop(crop,
+                capability: GlassTextCapability(contrast: 22, macOSVersion: "fixture"))) { error in
+                XCTAssertTrue(error is XCTSkip)
             }
         }
     }
@@ -349,21 +348,16 @@ final class PasteFeedbackLayoutTests: XCTestCase {
         if let firstOCRSkip { throw firstOCRSkip }
     }
 
-    // 210 local crops: range 218–226; the same hosted crops: 11–23 (8-bit luminance).
-    nonisolated private static let ocrReadableContrastFloor = 64
-
     private struct CropContrastFailure: Error, CustomStringConvertible {
         let range: Int
-        var description: String { "Local crop range \(range) is below OCR contrast floor \(ocrReadableContrastFloor)" }
+        var description: String { "Crop range \(range) is below OCR contrast floor \(GlassTextCapability.contrastFloor)" }
     }
 
-    private func requireReadableCrop(_ image: CGImage,
-        githubActions: String? = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"]) throws {
+    private func requireReadableCrop(_ image: CGImage, capability: GlassTextCapability? = nil) throws {
+        let capability = try capability ?? GlassTextCapability.current.get()
+        try capability.requireReadableText()
         let range = try cropInk(image).luminanceRange
-        guard range < Self.ocrReadableContrastFloor else { return }
-        if githubActions == "true" {
-            throw XCTSkip("hosted runner render contrast <\(Self.ocrReadableContrastFloor) (range \(range)): unreadable by OCR")
-        }
+        guard range < GlassTextCapability.contrastFloor else { return }
         throw CropContrastFailure(range: range)
     }
 

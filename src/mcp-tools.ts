@@ -8,10 +8,10 @@
 import { STOP_FILE } from "./paths";
 
 const SPOKEN_STYLE =
-  "Spoken style: Announce who is speaking (for questions, who is asking). " +
+  `Spoken style: Announce the speaker (asker for questions) first or when agents change. Skip introductions in acknowledgements and replies after an answer: "OK, I'm on it." or "OK, I'm looking it up." ` +
+  "Deliver results via voice_ask or voice_speak immediately followed by voice_ask so the user can reply. " +
   "Use sentences of about 15 words or fewer. No markdown, URLs, code or long identifiers aloud. " +
-  'For questions, front-load the ask; one question per ask. Offer short numbered options ("One. … Two. …") answerable with a single word. ' +
-  "End with the question itself.\n";
+  'For questions, front-load the ask; one question per ask. Offer short numbered options ("One. … Two. …") answerable with a single word. End with the question itself.\n';
 
 /** The two canonical VoiceLayer MCP tools. */
 export function getToolDefinitions() {

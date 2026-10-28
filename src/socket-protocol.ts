@@ -636,11 +636,16 @@ function serializeJsonEvent(event: SocketEvent): string {
   return JSON.stringify(event) + "\n";
 }
 
-function fitSpeakingTextToSocketFrame(event: StateEvent): string | null {
+function fitSpeakingTextToSocketFrame(
+  event: StateEvent,
+  maxBytes = VOICEBAR_SOCKET_EVENT_MAX_BYTES,
+  truncationMarker = "",
+): string | null {
   const withoutText: StateEvent = { ...event };
   delete withoutText.text;
+  if (truncationMarker) withoutText.text = truncationMarker;
   const basePayload = serializeJsonEvent(withoutText);
-  if (serializedByteLength(basePayload) > VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
+  if (serializedByteLength(basePayload) > maxBytes) {
     return null;
   }
 
@@ -659,9 +664,9 @@ function fitSpeakingTextToSocketFrame(event: StateEvent): string | null {
     const middle = Math.floor((low + high) / 2);
     const candidate = serializeJsonEvent({
       ...event,
-      text: scalars.slice(0, middle).join(""),
+      text: scalars.slice(0, middle).join("") + truncationMarker,
     });
-    if (serializedByteLength(candidate) <= VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
+    if (serializedByteLength(candidate) <= maxBytes) {
       best = candidate;
       low = middle + 1;
     } else {
@@ -692,13 +697,15 @@ function normalizeSpeakingEnvelope(event: StateEvent): StateEvent {
 
 /** Serialize an event to NDJSON (JSON + newline). */
 export function serializeEvent(event: SocketEvent): string {
-  const normalizedEvent =
+  let normalizedEvent =
     event.type === "subtitle" && "aligned_words" in event
       ? { ...event, words: [] as [] }
       : event.type === "state" && event.state === "speaking"
       ? normalizeSpeakingEnvelope(event)
       : event;
-  const payload = serializeJsonEvent(normalizedEvent);
+  let payload = serializeJsonEvent(normalizedEvent);
+  let speakingTextMaxBytes = VOICEBAR_SOCKET_EVENT_MAX_BYTES;
+  let truncationMarker = "";
   if (serializedByteLength(payload) <= VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
     return payload;
   }
@@ -711,18 +718,25 @@ export function serializeEvent(event: SocketEvent): string {
     return payload;
   }
 
-  // Beyond the structured-read budget, fall back to the historical text frame.
   if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
       normalizedEvent.type === "playback_state") && (normalizedEvent.long_read?.display ||
         (normalizedEvent.type === "state" && normalizedEvent.display))) {
     const long_read = normalizedEvent.long_read ? { ...normalizedEvent.long_read, display: undefined } : undefined;
-    return normalizedEvent.type === "state"
-      ? serializeEvent({ ...normalizedEvent, display: undefined, long_read })
-      : serializeEvent({ ...normalizedEvent, long_read });
+    const plainEvent = normalizedEvent.type === "state"
+      ? { ...normalizedEvent, display: undefined, long_read }
+      : { ...normalizedEvent, long_read };
+    const plainPayload = serializeJsonEvent(plainEvent);
+    if (serializedByteLength(plainPayload) <= VOICEBAR_STRUCTURED_READ_MAX_BYTES) return plainPayload;
+    normalizedEvent = { ...plainEvent, long_read: long_read
+      ? { ...long_read, text: undefined, chunk_word_starts: undefined } : undefined };
+    payload = serializeJsonEvent(normalizedEvent);
+    if (serializedByteLength(payload) <= VOICEBAR_STRUCTURED_READ_MAX_BYTES) return payload;
+    speakingTextMaxBytes = VOICEBAR_STRUCTURED_READ_MAX_BYTES;
+    truncationMarker = "… [display truncated]";
   }
 
   if (normalizedEvent.type === "state" && normalizedEvent.state === "speaking") {
-    const textBoundedPayload = fitSpeakingTextToSocketFrame(normalizedEvent);
+    const textBoundedPayload = fitSpeakingTextToSocketFrame(normalizedEvent, speakingTextMaxBytes, truncationMarker);
     if (textBoundedPayload) return textBoundedPayload;
 
     // An envelope not produced by our bounded RMS extractor may still exceed
@@ -738,7 +752,7 @@ export function serializeEvent(event: SocketEvent): string {
           samples: [],
         },
       };
-      const unavailablePayload = fitSpeakingTextToSocketFrame(unavailableEvent);
+      const unavailablePayload = fitSpeakingTextToSocketFrame(unavailableEvent, speakingTextMaxBytes, truncationMarker);
       if (unavailablePayload) return unavailablePayload;
     }
 

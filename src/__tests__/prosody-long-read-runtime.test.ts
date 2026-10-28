@@ -148,6 +148,20 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     expect(prosodyPolicy.PROSODY_POLICY.cloneEmphasis).toBe("none");
     expect(loadHistory()[0].prosodyIdentity).toBe(plan.renderIdentity);
   });
+  for (const selection of [false, true]) it(`R-ONE sends inline list numbers to clone synthesis without sentence stops (selection=${selection})`, async () => {
+    const source = "## Release notes\n\n**Fixed:** the pill no longer jumps.\n\n1. First item.\n2. Second item.\n";
+    const structure = selection ? projectStructuredSpeech(source) : undefined;
+    const text = structure?.speechText ?? source;
+    const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio"));
+    spies.push(clone, spyOn(cloneTiming, "startCloneTiming").mockReturnValue({
+      cancel() {}, childReaped: Promise.resolve(), cleanupDone: Promise.resolve(),
+    }));
+    const handle = speakLongRead(text, { engine: "clone", voice: "fixture", rate: "+0%" }, Date.now(), { structuredDisplay: structure });
+    handles.push(handle); await handle.done;
+    expect(clone.mock.calls.map(call => call[0])).toEqual(["Release notes.", "Fixed.", "the pill no longer jumps.",
+      ...(selection ? ["1, First item.", "2, Second item."] : ["one, First item.", "two, Second item."])]);
+  });
+
   it("S1 structured clone fallback keeps actual engine provenance and Edge word timings", async () => {
     const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(null); spies.push(clone);
     const doc = "## Choose\n1. Red apple\n2. Green pear";

@@ -68,6 +68,7 @@ export interface ProsodyChunk {
 }
 export interface ProsodyPlan {
   renderIdentity: string;
+  pausePlacement?: "trailing";
   readText: string;
   /** Engine texts joined by single spaces: what the synthesizer and the clone aligner receive. */
   speechText: string;
@@ -132,6 +133,8 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   const spoken = (read: number) => projection.ranges.some((r) => r.kind === "identity" && r.source.start <= read && read < r.source.end);
 
   const units: Unit[] = [];
+  /** Read offsets just after each inline list number's delimiter ("1." → after "."). */
+  const markers: number[] = [];
   const pause = (ms: number) => { const last = units.at(-1); if (last) last.pauseMs = Math.max(last.pauseMs, ms); };
   const push = (at: number, kind: ProsodySegmentKind, pauseMs = 0, emphasis = false, item = false) =>
     units.push({ at, kind, emphasis, pauseMs, item });
@@ -206,7 +209,10 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
       const long = words >= 6;
       // A spoken number ("one.", "1.", "100.") is its own utterance: the item starts after it.
       let content = readAt(start);
-      const number = input.listNumbers === "inline" ? undefined : numberEnd(start, lineEnd, raw);
+      const numbered = numberEnd(start, lineEnd, raw);
+      // An inline number stays in the item request; remember where its delimiter sits in the read.
+      if (input.listNumbers === "inline" && numbered !== undefined) markers.push(readText.slice(0, numbered).trimEnd().length);
+      const number = input.listNumbers === "inline" ? undefined : numbered;
       if (number !== undefined && WORD.test(projection.speechText.slice(speechAt(content), speechAt(number)))) {
         push(content, "number", long ? PAUSE.longNumber : PAUSE.number, false, true);
         content = number;
@@ -364,6 +370,15 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
 
   for (const [i, segment] of segments.entries()) {
     const item = (segment as { item?: boolean }).item;
+    if (clone && input.listNumbers === "inline" && item) {
+      // Only the segment holding the item's own marker; a later body segment ("2025. It shipped.") keeps its stop.
+      const marker = markers.find((at) => segment.read.start < at && at <= segment.read.end);
+      if (marker !== undefined) {
+        const delimiter = speechAt(marker) - segment.speech.start - 1;
+        if (segment.text[delimiter] === ".")
+          segment.text = segment.text.slice(0, delimiter) + "," + segment.text.slice(delimiter + 1);
+      }
+    }
     if (!item && (segment.kind === "prose" || segment.kind === "aside") && TERMINAL.test(segment.text) && i < segments.length - 1)
       segment.pauseMs = Math.max(segment.pauseMs, PAUSE.sentence);
     const continues = (segment as { continues?: boolean }).continues;
@@ -375,7 +390,10 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   const chunks = planChunks(readText, segments, maxChars, input.concurrency ?? PROSODY_SYNTH_CONCURRENCY, clone);
   let renderIdentity: string | undefined;
   return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks,
-    get renderIdentity() { return renderIdentity ??= createHash("sha256").update(JSON.stringify([policy, projection, segments, chunks])).digest("hex"); } };
+    ...(clone ? { pausePlacement: "trailing" as const } : {}),
+    get renderIdentity() { return renderIdentity ??= createHash("sha256").update(JSON.stringify([
+      policy, projection, segments, chunks, ...(clone ? ["trailing-pauses-v1"] : []),
+    ])).digest("hex"); } };
 }
 
 function planChunks(readText: string, segments: ProsodySegment[], maxChars: number, concurrency: number, clone: boolean): ProsodyChunk[] {

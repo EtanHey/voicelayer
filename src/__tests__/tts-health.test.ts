@@ -147,6 +147,6 @@ describe("edge-tts argparse exit-2 regression", () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.toLowerCase()).toContain("not importable");
-    expect(result.error).toContain("pip install edge-tts");
+    expect(result.error).toContain("edge-tts>=7.3.1");
   });
 });

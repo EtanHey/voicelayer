@@ -78,6 +78,7 @@ trap 'exit 143' TERM
   exec env HOME="$RUN_DIR" \
     VOICELAYER_STATE_DIR="$RUN_DIR/state" \
     VOICELAYER_TMP_ROOT="$RUN_DIR" \
+    VOICELAYER_LOG_ROTATION_DIR="$RUN_DIR" \
     VOICELAYER_CONTROL_LAYER_BASE="$RUN_DIR/journal" \
     VOICELAYER_MCP_SOCKET_PATH="$MCP_SOCKET" \
     VOICELAYER_SOCKET_PATH="$VOICEBAR_SOCKET" \
@@ -153,7 +154,6 @@ done
 record_status "bun MCP daemon boot" "$daemon_status"
 
 # Boot smoke is complete; do not leave its daemon alive during the test suites.
-# Its periodic log rotator still targets production /tmp logs.
 # USR1 stops/reaps the daemon group; the supervisor remains until EXIT so it
 # can remove RUN_DIR even if the shell is killed during the later Bun suite.
 kill -USR1 "$supervisor_pid" 2>/dev/null

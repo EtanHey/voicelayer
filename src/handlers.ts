@@ -45,6 +45,7 @@ import {
   isVoiceBooked,
   yieldVoiceMaintenanceToCapture,
   clearStopSignal,
+  clearCancelSignal,
 } from "./session-booking";
 import {
   TTS_DISABLED_FILE,
@@ -670,6 +671,7 @@ export async function handleConverse(
 
   clearInput();
   clearStopSignal();
+  clearCancelSignal();
 
   // AIDEV-NOTE: P0-2 — warn if VoiceBar is disconnected (non-blocking)
   if (!isConnected()) {
@@ -685,6 +687,12 @@ export async function handleConverse(
   const inputAbortController = new AbortController();
   let captureAdmission: CaptureAdmission | undefined;
   const promptPlayers: QueuedPlaybackHandle[] = [];
+  const onDisconnect = (): void => {
+    inputAbortController.abort(new Error("MCP client disconnected"));
+    for (const handle of promptPlayers) cancelPlayback({ id: handle.id });
+  };
+  context?.disconnectSignal?.addEventListener("abort", onDisconnect, { once: true });
+  if (context?.disconnectSignal?.aborted) onDisconnect();
   let promptTimeoutCleanup: Promise<void> | undefined;
   let beforeCaptureExpired = false;
   let promptReaped: Promise<void> = Promise.resolve();
@@ -795,6 +803,19 @@ export async function handleConverse(
       );
     }, timeoutMs);
   };
+  let promptBudgetRemaining = voiceAskPromptTimeoutMs(validated.message);
+  let promptBudgetStartedAt = 0;
+  const onPromptParkedChange = (parked: boolean): void => {
+    if (timeoutSettled || inputAbortController.signal.aborted) return;
+    if (parked) {
+      promptBudgetRemaining = Math.max(0, promptBudgetRemaining - (performance.now() - promptBudgetStartedAt));
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    } else {
+      promptBudgetStartedAt = performance.now();
+      armTimeout(promptBudgetRemaining, "prompt");
+    }
+  };
   armTimeout(VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS, "playback-wait");
 
   const converseFlow = async (): Promise<McpResult> => {
@@ -817,7 +838,8 @@ export async function handleConverse(
     if (!captureAdmission) throw new Error("Playback changed before Ask could reserve capture admission; try again");
 
     // Speak the question aloud — BLOCKING for converse
-    armTimeout(voiceAskPromptTimeoutMs(validated.message), "prompt");
+    promptBudgetStartedAt = performance.now();
+    armTimeout(promptBudgetRemaining, "prompt");
     const voiceName = validated.voice;
     promptAttempted = true;
     let speech: Awaited<ReturnType<typeof speak>>;
@@ -830,7 +852,7 @@ export async function handleConverse(
         captureAudioArtifact: true,
         onPlaybackQueued: handle => {
           promptPlayers.push(handle);
-          if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle)) {
+          if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle, onPromptParkedChange)) {
             admissionFailed = true;
             cancelPlayback({ id: handle.id });
           }
@@ -855,6 +877,14 @@ export async function handleConverse(
     if (promptPlayers.length) await waitForPlayerExit(promptPlayers);
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return textResult("[converse] Request ended before recording could start.", true);
+    }
+    const promptStopped = speech.playbackOutcome?.reason === "stopped";
+    if (speech.playbackOutcome && speech.playbackOutcome.status !== "completed" && !promptStopped) {
+      captureAdmission.release();
+      if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && getEffectiveRecordingState() === "idle") {
+        broadcast({ type: "state", state: "idle", source: "playback" });
+      }
+      return textResult(`[converse] Question ${speech.playbackOutcome.status}; nothing was recorded.`, true);
     }
     // Bound recorder startup separately from prompt playback. The full capture
     // window is rearmed only by onCaptureStart after the microphone opens.
@@ -1012,6 +1042,7 @@ export async function handleConverse(
     }
     return textResult(`[converse] Error: ${message}`, true);
   } finally {
+    context?.disconnectSignal?.removeEventListener("abort", onDisconnect);
     progressHeartbeat?.stop();
   }
 }

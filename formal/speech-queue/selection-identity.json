@@ -1,0 +1,92 @@
+[
+  {
+    "name": "NFC Latin",
+    "input": "café",
+    "identity": "café"
+  },
+  {
+    "name": "NFC Hebrew",
+    "input": "שָׁ",
+    "identity": "שָׁ"
+  },
+  {
+    "name": "numbered",
+    "input": "1. Alpha\n2) Bravo",
+    "identity": "Alpha Bravo"
+  },
+  {
+    "name": "checkbox",
+    "input": "* [ ] Alpha",
+    "identity": "Alpha"
+  },
+  {
+    "name": "marker only",
+    "input": "- ",
+    "identity": "-"
+  },
+  {
+    "name": "checkbox only",
+    "input": "* [ ] ",
+    "identity": "* [ ]"
+  },
+  {
+    "name": "backtick minus",
+    "input": "```sh\n- value\n```",
+    "identity": "```sh - value ```"
+  },
+  {
+    "name": "backtick plus",
+    "input": "```sh\n+ value\n```",
+    "identity": "```sh + value ```"
+  },
+  {
+    "name": "tilde minus",
+    "input": "~~~\n- value\n~~~",
+    "identity": "~~~ - value ~~~"
+  },
+  {
+    "name": "tilde plus",
+    "input": "~~~\n+ value\n~~~",
+    "identity": "~~~ + value ~~~"
+  },
+  {
+    "name": "indented minus",
+    "input": "    - value",
+    "identity": "- value"
+  },
+  {
+    "name": "indented plus",
+    "input": "\t+ value",
+    "identity": "+ value"
+  },
+  {
+    "name": "long fence",
+    "input": "````\n```\n- value\n````\n- prose",
+    "identity": "```` ``` - value ```` prose"
+  },
+  {
+    "name": "prose after fence",
+    "input": "~~~\n+ value\n~~~\n- prose",
+    "identity": "~~~ + value ~~~ prose"
+  },
+  {
+    "name": "case preserved",
+    "input": "alpha",
+    "identity": "alpha"
+  },
+  {
+    "name": "decimal",
+    "input": "1.5 kg",
+    "identity": "1.5 kg"
+  },
+  {
+    "name": "minus number",
+    "input": "-5",
+    "identity": "-5"
+  },
+  {
+    "name": "bom after closing fence",
+    "input": "```\n- value\n```﻿\n- prose",
+    "identity": "``` - value ```﻿ - prose"
+  }
+]

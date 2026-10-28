@@ -14,7 +14,7 @@ bun install
 
 # Install audio prerequisites (macOS)
 brew install sox whisper-cpp
-pip3 install edge-tts
+pip3 install 'edge-tts>=7.3.1'
 
 # Download a whisper model for STT tests
 mkdir -p ~/.cache/whisper
