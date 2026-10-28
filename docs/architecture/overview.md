@@ -101,7 +101,7 @@ VoiceLayer delegates audio I/O to battle-tested system tools rather than bundlin
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| **python3 + edge-tts** | Neural TTS (Microsoft, free) | `pip3 install edge-tts` |
+| **python3 + edge-tts** | Neural TTS (Microsoft, free) | `pip3 install 'edge-tts>=7.3.1'` |
 | **sox/rec** | Mic recording (native rate mono) | `brew install sox` |
 | **afplay** (macOS) | Audio playback | Built-in |
 | **mpv/ffplay/mpg123** (Linux) | Audio playback | Package manager |

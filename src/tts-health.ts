@@ -105,6 +105,21 @@ export function checkEdgeTTSHealth(forceFresh = false): boolean {
     ]);
     healthCacheResult = result.exitCode === 0;
     healthCacheTime = now;
+    if (healthCacheResult) {
+      let version = "unknown";
+      try {
+        const probe = Bun.spawnSync([resolvedPython3, "-c", "from importlib.metadata import version; print(version('edge-tts'))"]);
+        if (probe.exitCode === 0) version = probe.stdout.toString().trim() || "unknown";
+      } catch {}
+      const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+      const belowFloor = parts && (Number(parts[1]) < 7 ||
+        (Number(parts[1]) === 7 && (Number(parts[2]) < 3 ||
+          (Number(parts[2]) === 3 && Number(parts[3]) < 1))));
+      if (!parts || belowFloor) {
+        const found = parts ? version : "unknown";
+        console.error(`[voicelayer] Warning: edge-tts version ${found}; version 7.3.1 or newer is required. Upgrade: ${resolvedPython3} -m pip install --upgrade 'edge-tts>=7.3.1'`);
+      }
+    }
     return healthCacheResult;
   } catch {
     healthCacheResult = false;
@@ -310,7 +325,7 @@ export async function synthesizeWithRetry(
   const base = `edge-tts synthesis failed after ${maxRetries + 1} attempts (${lastError}) using ${resolvedPython3}.`;
   const hint = importable
     ? ` edge-tts IS importable by that interpreter, so this is a runtime/network error from the edge-tts service, not a missing install.`
-    : ` edge-tts is NOT importable by that interpreter — install it: ${resolvedPython3} -m pip install edge-tts`;
+    : ` edge-tts is NOT importable by that interpreter — install it: ${resolvedPython3} -m pip install 'edge-tts>=7.3.1'`;
 
   return {
     success: false,
