@@ -51,6 +51,7 @@ import {
 } from "./daemon-startup";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
+import { bootstrapUpdateGate } from "./update-gate-bootstrap";
 import { startLogRotation, stopLogRotation } from "./log-rotation";
 import { initEnrichedPATH } from "./resolve-binary";
 import { primeRecordingProvenanceProbes } from "./recording-provenance";
@@ -188,6 +189,9 @@ async function main() {
       `[voicelayer-daemon] Killed orphan MCP server (PID ${killedStalePid})`,
     );
   }
+
+  const updateGate = bootstrapUpdateGate();
+  if (updateGate.kind === "REFUSED") throw new Error(updateGate.reason);
 
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
   // it independently and force-restarts an owned child that wedges in JS.

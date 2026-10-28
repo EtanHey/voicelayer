@@ -1,15 +1,30 @@
 # Update gate contract, version 1
 
-Status: schema and transition semantics only. Runtime admissions, persistent storage,
-cross-process locking, installation and recovery are not connected.
+Status: schema, transition semantics and daemon bootstrap persistence. Runtime
+admissions, installation and recovery are not connected in this slice.
 
 `src/update-gate.ts` exports the Zod state, command, acknowledgement and lease schemas,
 their inferred types, `readUpdateGate` and `transitionUpdateGate`.
 Wire keys and enum values are case-sensitive. Extra fields and incompatible versions
 are rejected. Missing, malformed or unreadable state must be passed as unknown input;
-it yields `UNKNOWN`, which refuses all transitions. There is no idle fallback or
-automatic initialization. A future verified bootstrap supplies the initial OPEN
-record with generation 0 and released null.
+it yields `UNKNOWN`, which refuses all transitions. There is no implicit idle
+fallback. `bootstrapUpdateGate` exclusively creates a missing SQLite
+gate with generation 0 and released null, then binds it to the current daemon's
+UUID, PID and kernel start time in the same FULL-synchronous immediate transaction.
+It runs after daemon singleton acquisition and before startup archive recovery.
+
+Persisted OPEN alone is insufficient. Admission adapters must call
+`readTrustedUpdateGate(db)` inside their admission transaction; this checks the
+current owner's exact kernel start identity. Daemon-owned callers can also pass
+their expected daemon UUID to reject an obsolete incarnation. Dead or unverifiable
+owners yield UNKNOWN. Bootstrap can rebind an existing OPEN only when its previous
+owner is proven dead and there are no unresolved admissions. The update lease's
+numeric generation is preserved across daemon restarts.
+
+DRAINING, PREPARED and COMMITTED are never reopened at startup. Corruption, missing
+ownership and unavailable identity probes also refuse startup. Diagnostics identify
+the gate path and require reconciliation of the pending update and archives while
+preserving state. This slice supplies no automatic recovery or state-deletion tool.
 
 Every lease binds a positive safe-integer generation, UUID operation ID, UUID owner
 incarnation and lowercase full target merge SHA. The owner ID is retained across a
