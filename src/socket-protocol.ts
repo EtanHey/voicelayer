@@ -711,14 +711,17 @@ export function serializeEvent(event: SocketEvent): string {
     return payload;
   }
 
-  // Beyond the structured-read budget, fall back to the historical text frame.
   if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
       normalizedEvent.type === "playback_state") && (normalizedEvent.long_read?.display ||
         (normalizedEvent.type === "state" && normalizedEvent.display))) {
     const long_read = normalizedEvent.long_read ? { ...normalizedEvent.long_read, display: undefined } : undefined;
-    return normalizedEvent.type === "state"
-      ? serializeEvent({ ...normalizedEvent, display: undefined, long_read })
-      : serializeEvent({ ...normalizedEvent, long_read });
+    const plainEvent = normalizedEvent.type === "state"
+      ? { ...normalizedEvent, display: undefined, long_read }
+      : { ...normalizedEvent, long_read };
+    const plainPayload = serializeJsonEvent(plainEvent);
+    if (serializedByteLength(plainPayload) <= VOICEBAR_STRUCTURED_READ_MAX_BYTES) return plainPayload;
+    return serializeEvent({ ...plainEvent, long_read: long_read
+      ? { ...long_read, text: undefined, chunk_word_starts: undefined } : undefined });
   }
 
   if (normalizedEvent.type === "state" && normalizedEvent.state === "speaking") {
