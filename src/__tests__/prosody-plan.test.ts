@@ -34,6 +34,47 @@ const letters = (text: string) => text.replace(/[^\p{L}\p{M}\p{N}]/gu, "").toLow
 const texts = (plan: ProsodyPlan) => plan.segments.map((s) => s.text);
 const pauses = (plan: ProsodyPlan) => plan.segments.map((s) => s.pauseMs);
 
+describe("R-ONE clone list numbers", () => {
+  const releaseNotes = "## Release notes\n\n**Fixed:** the pill no longer jumps.\n\n1. First item.\n2. Second item.\n";
+  for (const selection of [false, true]) it(`keeps every number in the item without a sentence stop (selection=${selection})`, () => {
+    const structure = selection ? projectStructuredSpeech(releaseNotes) : undefined;
+    const readText = structure?.speechText ?? releaseNotes;
+    const projection = projectSpeakableText(readText, [], "clone");
+    const plan = planProsody({ readText, projection, structure, engine: "clone", listNumbers: "inline", concurrency: 1 });
+    const numbers = selection ? ["1", "2"] : ["one", "two"];
+    expect(plan.segments.some(segment => /^(?:one|two|\d+)\./i.test(segment.text))).toBe(false);
+    expect(texts(plan).slice(-2)).toEqual([`${numbers[0]}, First item.`, `${numbers[1]}, Second item.`]);
+    for (const [index, word] of numbers.entries()) {
+      expect(plan.segments.at(index - 2)?.text).toMatch(new RegExp(`\\b${word}\\b`, "i"));
+    }
+    expectSound(plan, projection.speechText);
+    expect(pauses(plan)).toEqual([1000, 320, 1000, 450, 0]);
+    expect(plan.chunks.map(chunk => [chunk.first, chunk.end])).toEqual([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]);
+  });
+  it("keeps all ten number words, numbered labels and parenthesized markers", () => {
+    const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+    const readText = "\n\n" + words.map((_, i) => `  ${i + 1}${i % 2 ? ")" : "."} **Item:** Keep these words.`).join("\n");
+    const projection = projectSpeakableText(readText, [], "clone");
+    const plan = planProsody({ readText, projection, engine: "clone", listNumbers: "inline", concurrency: 1 });
+    expect(plan.segments.filter(segment => segment.kind === "label").map(segment => segment.text))
+      .toEqual(words.map(word => `${word}, Item.`));
+    for (const word of words) expect(plan.segments.some(segment => segment.text.startsWith(`${word}.`))).toBe(false);
+    expectSound(plan, projection.speechText);
+  });
+  it("preserves Edge separate number requests and their pauses", () => {
+    const plan = planProsody({ readText: releaseNotes, projection: projectSpeakableText(releaseNotes, [], "edge"),
+      engine: "edge", listNumbers: "separate" });
+    expect(texts(plan)).toEqual(["Release notes.", "Fixed.", "the pill no longer jumps.", "one.", "First item.", "two.", "Second item."]);
+    expect(pauses(plan)).toEqual([1000, 320, 1000, 250, 450, 250, 0]);
+  });
+  it("preserves sentence stops on prose and unnumbered bullets", () => {
+    const readText = "One. Keep this sentence.\n\n- Two. Keep this bullet.";
+    const projection = projectSpeakableText(readText, [], "clone");
+    const plan = planProsody({ readText, projection, engine: "clone", listNumbers: "inline", concurrency: 1 });
+    expect(texts(plan)).toEqual(["One. Keep this sentence.", "Two. Keep this bullet."]);
+  });
+});
+
 /** Invariants every plan must hold: nothing added or lost, ordered spans, exact read partition. */
 function expectSound(plan: ProsodyPlan, projectionSpeech: string) {
   expect(letters(plan.speechText)).toBe(letters(projectionSpeech));
