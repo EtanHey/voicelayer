@@ -21,6 +21,7 @@ let pending: ReturnType<typeof handleVoiceAsk> | undefined;
 
 beforeEach(() => {
   jest.useFakeTimers();
+  booking.clearCancelSignal();
   players = fixtureBarrier(); trims = fixtureBarrier(); handles = []; spies = [];
   spies.push(spyOn(Bun, "spawn").mockImplementation((argv, _options) => {
     if (!Array.isArray(argv)) throw new Error("fixture requires argv");
@@ -61,6 +62,7 @@ afterEach(async () => {
   await pending;
   await tts.awaitCurrentPlayback();
   pending = undefined;
+  booking.clearCancelSignal();
   for (const spy of spies.reverse()) spy.mockRestore();
   jest.useRealTimers();
   expect(tts.isCaptureAdmissionReserved()).toBe(false);
@@ -99,12 +101,33 @@ it("holds Ask and its reservation at the offset until resumed natural completion
   tts.cancelPlayback({ id: foreign.id });
 });
 
-for (const paused of [false, true]) it(`Stop during ${paused ? "paused" : "playing"} Ask never captures or resurrects`, async () => {
+for (const paused of [false, true]) it(`Stop during ${paused ? "paused" : "playing"} Ask captures only after physical exit`, async () => {
   const { player, handle } = paused ? await pauseAsk() : await startAsk();
   if (paused) (await trims.at(0)).resolve(0);
-  tts.stopPlayback(); player.exit.resolve(143);
+  const command = handleSocketCommand({ cmd: "stop", id: "ask-stop", playback_elapsed_ms: 4200 });
+  await flush();
+  expect(capture).not.toHaveBeenCalled();
+  expect(tts.isCaptureAdmissionReserved()).toBe(true);
+  player.exit.resolve(143);
+  expect(await command).toMatchObject({ outcome: "accept" });
   const result = await pending;
-  expect(result?.content[0].text).toContain("stopped");
+  expect(result?.content[0].text).toContain("fixture answer");
+  expect(result?.content[0].text).toContain("Prompt interrupted");
+  expect(result?.content[0].text).toContain("1%");
+  expect(capture).toHaveBeenCalledTimes(1);
+  expect(tts.isCaptureAdmissionReserved()).toBe(false);
+  expect(tts.resumePlayback({ id: handle.id })).toMatchObject({ outcome: "noop" });
+});
+
+for (const paused of [false, true]) it(`Cancel during ${paused ? "paused" : "playing"} Ask never captures`, async () => {
+  const { player, handle } = paused ? await pauseAsk() : await startAsk();
+  if (paused) (await trims.at(0)).resolve(0);
+  const command = handleSocketCommand({ cmd: "cancel", id: "ask-cancel" });
+  await flush();
+  expect(capture).not.toHaveBeenCalled();
+  player.exit.resolve(143);
+  expect(await command).toMatchObject({ outcome: "accept" });
+  expect((await pending)?.content[0].text).toContain("nothing was recorded");
   expect(capture).not.toHaveBeenCalled();
   expect(tts.isCaptureAdmissionReserved()).toBe(false);
   expect(tts.resumePlayback({ id: handle.id })).toMatchObject({ outcome: "noop" });
@@ -117,6 +140,23 @@ it("suspends only parked prompt time and rearms the remaining active budget on R
   expect(tts.isPlaybackPaused()).toBe(true);
   expect(capture).not.toHaveBeenCalled();
   expect(tts.resumePlayback({ id: handle.id, generation: handle.generation })).toMatchObject({ outcome: "accept" });
+  const resumed = await players.at(1);
+  jest.advanceTimersByTime(119_999); await flush();
+  expect(resumed.signals).toEqual([]);
+  jest.advanceTimersByTime(1); await flush();
+  expect(resumed.signals).toContain("SIGTERM");
+  resumed.exit.resolve(143);
+  expect((await pending)?.isError).toBe(true);
+  expect(capture).not.toHaveBeenCalled();
+});
+
+it("prompt watchdog uses monotonic active time across a wall-clock jump", async () => {
+  const { player, handle } = await startAsk();
+  jest.advanceTimersByTime(60_000);
+  spies.push(spyOn(Date, "now").mockReturnValue(Date.now() + 300_000));
+  expect(tts.pausePlayback({ id: handle.id }, 4200).outcome).toBe("accept");
+  player.exit.resolve(143); (await trims.at(0)).resolve(0); await flush();
+  expect(tts.resumePlayback({ id: handle.id }).outcome).toBe("accept");
   const resumed = await players.at(1);
   jest.advanceTimersByTime(119_999); await flush();
   expect(resumed.signals).toEqual([]);
@@ -143,8 +183,8 @@ it("Resume slice failure retains the capture fence", async () => {
   expect(tts.isPlaybackPaused()).toBe(true);
   expect(tts.isCaptureAdmissionReserved()).toBe(true);
   tts.stopPlayback(); player.exit.resolve(143);
-  expect((await pending)?.content[0].text).toContain("stopped");
-  expect(capture).not.toHaveBeenCalled();
+  expect((await pending)?.content[0].text).toContain("fixture answer");
+  expect(capture).toHaveBeenCalledTimes(1);
 });
 
 for (const offset of [600_000, 650_000]) for (const exitCode of [0, 143])
@@ -174,10 +214,10 @@ it("Stop wins a pending Resume slice and late conversion cannot resurrect Ask", 
   const trim = await trims.at(0);
   expect(tts.resumePlayback({ id: handle.id, generation: handle.generation }).outcome).toBe("accept");
   tts.stopPlayback(); trim.resolve(0); player.exit.resolve(143);
-  expect((await pending)?.content[0].text).toContain("stopped");
+  expect((await pending)?.content[0].text).toContain("fixture answer");
   await flush();
   expect(players.values).toHaveLength(1);
-  expect(capture).not.toHaveBeenCalled();
+  expect(capture).toHaveBeenCalledTimes(1);
 });
 
 it("rejects stale Pause and refuses Resume while actual recording owns the mic", async () => {
@@ -190,7 +230,7 @@ it("rejects stale Pause and refuses Resume while actual recording owns the mic",
   expect(tts.resumePlayback({ id: handle.id, generation: handle.generation })).toMatchObject({ outcome: "reject", reason: "busy" });
   busy.mockReturnValue("idle");
   tts.stopPlayback(); player.exit.resolve(143); await pending;
-  expect(capture).not.toHaveBeenCalled();
+  expect(capture).toHaveBeenCalledTimes(1);
 });
 
 for (const exitCode of [1, 143]) it(`failed natural player exit ${exitCode} never opens the microphone`, async () => {
