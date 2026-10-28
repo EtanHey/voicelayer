@@ -48,14 +48,16 @@ test("tags and missing refs skip", () => {
   expect(run("")).toBe(0);
 });
 
-test("main builds site changes using HEAD parent", () => {
+test("main builds site changes from the deployed base", () => {
+  const base = git("rev-parse", "HEAD");
   commit("site/index.html");
-  expect(run("main")).toBe(1);
+  expect(run("main", base)).toBe(1);
 });
 
-test("main skips changes outside site", () => {
+test("main skips changes outside site from the deployed base", () => {
+  const base = git("rev-parse", "HEAD");
   commit("README.md");
-  expect(run("main")).toBe(0);
+  expect(run("main", base)).toBe(0);
 });
 
 test("explicit previous SHA includes site changes before the last commit", () => {
@@ -76,6 +78,17 @@ test("missing explicit base builds", () => {
   expect(run("main", "1111111111111111111111111111111111111111")).toBe(1);
 });
 
-test("missing HEAD parent builds on the initial commit", () => {
+test("missing deployed base builds on the initial commit", () => {
+  expect(run("main")).toBe(1);
+});
+
+test("main builds a multi-commit site change without a deployed base", () => {
+  commit("site/index.html");
+  commit("README.md");
+  expect(run("main")).toBe(1);
+});
+
+test("main builds a non-site commit without a deployed base", () => {
+  commit("README.md");
   expect(run("main")).toBe(1);
 });
