@@ -32,7 +32,7 @@ struct TeleprompterStructuredDisplay: Decodable {
     let blocks: [TeleprompterDisplayBlock]
 
     /// Decode at the wire boundary. A malformed decoration never weakens document/token validation.
-    static func decode(_ value: Any?, text: String) -> Self? {
+    static func decode(_ value: Any?, text: String, onTokenizationVisit: (() -> Void)? = nil) -> Self? {
         guard let value, JSONSerialization.isValidJSONObject(value),
               let data = try? JSONSerialization.data(withJSONObject: value), data.count <= 1024 * 1024,
               let result = try? JSONDecoder().decode(Self.self, from: data), result.version == 1,
@@ -40,7 +40,7 @@ struct TeleprompterStructuredDisplay: Decodable {
               result.speech_start <= 200_000 - text.utf16.count else { return nil }
         let ns = text as NSString
         // Word indices are display tokens, as in display-tokens.ts: "client/server" is two words.
-        let tokens = TeleprompterContentModel.displayTokenRanges(text)
+        let tokens = TeleprompterContentModel.displayTokenRanges(text, onVisit: onTokenizationVisit)
         let kinds: Set<String> = ["heading", "paragraph", "list-item", "table-row", "table-separator", "separator", "code"]
         var next = 0
         for block in result.blocks {

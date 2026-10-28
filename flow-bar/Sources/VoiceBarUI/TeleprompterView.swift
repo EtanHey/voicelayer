@@ -306,20 +306,42 @@ public enum TeleprompterContentModel {
     private static let proseSlashCuts = try! NSRegularExpression(pattern: #"https?://[^\s<>]+|www\.[^\s<>]+|(`+)(?!`)[^\u2029]*?(?<!`)\1(?!`)|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#)
     private static let nonWhitespace = try! NSRegularExpression(pattern: #"\S+"#)
 
+    private struct SlashCuts: RandomAccessCollection {
+        private let offsets: [Int]
+        private let onVisit: (() -> Void)?
+
+        init(_ offsets: [Int], onVisit: (() -> Void)?) {
+            self.offsets = offsets
+            self.onVisit = onVisit
+        }
+
+        var startIndex: Int { offsets.startIndex }
+        var endIndex: Int { offsets.endIndex }
+        func index(after index: Int) -> Int { index + 1 }
+        func index(before index: Int) -> Int { index - 1 }
+        subscript(index: Int) -> Int {
+            onVisit?()
+            return offsets[index]
+        }
+    }
+
     /// UTF-16 ranges of `displayTokens`; structured-display word indices count these.
     /// One ordered pass: the decoder calls this on the main thread for whole long reads.
-    static func displayTokenRanges(_ text: String) -> [NSRange] {
+    static func displayTokenRanges(_ text: String, onVisit: (() -> Void)? = nil) -> [NSRange] {
         let source = text as NSString
         let whole = NSRange(location: 0, length: source.length)
         // Every cut is a prose slash, so text without one has none.
-        let cuts = source.range(of: "/").location == NSNotFound ? [] : proseSlashCuts.matches(in: text, range: whole).compactMap { match -> Int? in
+        let cutOffsets = source.range(of: "/").location == NSNotFound ? [] : proseSlashCuts.matches(in: text, range: whole).compactMap { match -> Int? in
+            onVisit?()
             let token = source.substring(with: match.range)
             guard !["http://", "https://", "www.", "`", "]("].contains(where: { token.hasPrefix($0) }) else { return nil }
             return match.range.location + (token as NSString).range(of: "/").location
         }
+        let cuts = SlashCuts(cutOffsets, onVisit: onVisit)
         // Matches arrive in source order, so one cursor pairs each word with its cuts.
         var ranges: [NSRange] = [], next = 0
         for match in nonWhitespace.matches(in: text, range: whole) {
+            onVisit?()
             var start = match.range.location
             let end = NSMaxRange(match.range)
             while next < cuts.count, cuts[next] <= start { next += 1 }
