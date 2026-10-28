@@ -902,13 +902,7 @@ public struct TeleprompterView: View {
             for word in words {
                 guard let targetOffsetMs = word.offsetMs else { continue }
                 guard word.id > startingWordID else { continue }
-                let remainingMilliseconds = targetOffsetMs - playbackElapsedMilliseconds()
-
-                // Wait until the word's offset time
-                if remainingMilliseconds > 0 {
-                    try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
-                }
-
+                await waitForClock(toReach: targetOffsetMs) { playbackElapsedMilliseconds() }
                 if Task.isCancelled { break }
                 isPlaybackStep = true
                 currentIndex = word.id
@@ -930,14 +924,19 @@ public struct TeleprompterView: View {
                     forWordAt: index,
                     in: words
                 ) else { continue }
-                let remainingMilliseconds = targetOffsetMilliseconds - highlightElapsedMilliseconds
-                if remainingMilliseconds > 0 {
-                    try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
-                }
+                await waitForClock(toReach: targetOffsetMilliseconds) { highlightElapsedMilliseconds }
                 if Task.isCancelled { break }
                 isPlaybackStep = true
                 currentIndex = word.id
             }
+        }
+    }
+
+    private func waitForClock(toReach targetMilliseconds: Int, elapsed: () -> Int) async {
+        while !Task.isCancelled {
+            let remainingMilliseconds = targetMilliseconds - elapsed()
+            guard remainingMilliseconds > 0 else { return }
+            try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
         }
     }
 
