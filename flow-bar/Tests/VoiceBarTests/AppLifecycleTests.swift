@@ -5,7 +5,7 @@ import AppKit
 import XCTest
 
 final class AppLifecycleTests: XCTestCase {
-    private final class PointerProbe: @unchecked Sendable {
+    final class PointerProbe: @unchecked Sendable {
         var isInside = true
     }
 
@@ -13,7 +13,7 @@ final class AppLifecycleTests: XCTestCase {
     /// `sleep` parks until `tick()` releases it, so a test decides exactly how
     /// many delays have elapsed.
     @MainActor
-    private final class ManualTicker {
+    final class ManualTicker {
         private var parked: [CheckedContinuation<Void, Never>] = []
 
         var pendingSleepCount: Int {
