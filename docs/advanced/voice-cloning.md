@@ -110,7 +110,7 @@ The daemon:
 - Serves a `/synthesize` HTTP endpoint
 - Inference latency: 200-500ms per call on Apple Silicon
 - Default model location: `~/.voicelayer/models/qwen3-tts-4bit/`
-- `voicelayer update` provisions [`mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit`](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit) there
+- `voicelayer update` provisions [`mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit`](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit) there by default. The daemon loads the model already at that path, which can instead be a symlink to a different Base model, such as `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit`. Use `--model` to select another path.
 - The updater re-fetches regular directories whose config is missing, invalid, or not `tts_model_type=base`; it preserves existing Base directories and user-managed symlinks, including incomplete or dangling ones. Non-Base or unreadable symlink targets emit a warning without being modified. A dir is only replaced once the Base download is verified (hf success + Base config + non-empty model weights); this does not verify `speech_tokenizer/` completeness
 - Creates or reuses `~/.voicelayer/daemon.secret` with mode `0600`
 
