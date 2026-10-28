@@ -229,7 +229,9 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   edit(/(?<![^\s"'“‘])\[[ xX]\](?=$|[\s"'”’.,;:!?)])/g, m => {
     const prefix = m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1, m.index);
     if (/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix)) return "";
-    return /(?:[=(:,+\-*/%<>!&|^~?]|\b(?:return|yield|throw))[ \t]*$/.test(prefix) ? undefined : "";
+    const bracketDepth = [...prefix].reduce((depth, char) => char === "[" || char === "{" ? depth + 1 : char === "]" || char === "}" ? Math.max(0, depth - 1) : depth, 0);
+    const quoted = /["'“‘]$/.test(prefix) && /^["'”’]/.test(m.input.slice(m.index + m[0].length));
+    return bracketDepth || quoted || /(?:[=(,+\-*/%<>!&|^~?]|\b(?:return|yield|throw))[ \t]*$/.test(prefix) ? undefined : "";
   });
   edit(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
   edit(/(?<=^[ \t]*\d+[.)][ \t]+)\[[ xX]\](?!\()[ \t]*/gm, "");

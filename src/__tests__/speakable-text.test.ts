@@ -44,6 +44,21 @@ for (const [display, speech] of corpus) test(display, () => {
 });
 
 for (const engine of ["edge", "clone"] as const) {
+  for (const [display, edge, clone] of [
+    ["Completed: [x] done", "Completed: done", "Completed: done"],
+    ["[ [x], y ]", "[ [x], y ]", "open bracket open bracket x close bracket , y close bracket"],
+    ["{key: [x]}", "{key: [x]}", "open brace key: open bracket x close bracket close brace"],
+    ["Use `[x]` here.", "Use [x] here.", "Use open bracket x close bracket here."],
+    ['The token "[x]" means checked.', 'The token "[x]" means checked.', "The token open bracket x close bracket means checked."],
+  ]) test(`${engine} handles checkbox edges: ${display}`, () => {
+    const result = projectSpeakableText(display, [], engine);
+    expect(result.displayText).toBe(display);
+    expect(result.speechText).toBe(engine === "clone" ? clone : edge);
+    const start = display.indexOf("[x]");
+    const ranges = result.ranges.filter(range => range.source.start < start + 3 && range.source.end > start);
+    expect(ranges.length).toBeGreaterThan(0);
+    expect(ranges.every(range => range.kind === "omission")).toBe(display.startsWith("Completed:"));
+  });
   for (const marker of ["[ ]", "[x]", "[X]"]) for (const punctuation of [".", ",", ";", ":", "!", "?", ")"]) {
     test(`${engine} silences ${marker} before ${punctuation} and keeps source ranges`, () => {
       const display = `Check ${marker}${punctuation} then go`;
