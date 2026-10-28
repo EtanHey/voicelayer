@@ -663,6 +663,7 @@ public struct TeleprompterView: View {
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [TeleprompterBoundary] = []
     public var isReadback = false
+    public var isPaused = false
     public let playbackElapsedMilliseconds: () -> Int
     public var onSeek: ((Int) -> Void)?
     public var onSeekUnavailable: (() -> Void)?
@@ -677,6 +678,7 @@ public struct TeleprompterView: View {
         displayBlocks: [TeleprompterDisplayBlock] = [],
         hasCompleteDisplay: Bool = false,
         isReadback: Bool = false,
+        isPaused: Bool = false,
         playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
         onSeek: ((Int) -> Void)? = nil,
@@ -691,6 +693,7 @@ public struct TeleprompterView: View {
         self.hasCompleteDisplay = hasCompleteDisplay
         self.wordBoundaries = wordBoundaries
         self.isReadback = isReadback
+        self.isPaused = isPaused
         self.playbackEpoch = playbackEpoch
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.onSeek = onSeek
@@ -807,6 +810,13 @@ public struct TeleprompterView: View {
                     restart()
                 }
             }
+            .onChange(of: isPaused) { _, paused in
+                if paused {
+                    stopAnimating()
+                } else {
+                    restart()
+                }
+            }
         }
     }
 
@@ -874,7 +884,7 @@ public struct TeleprompterView: View {
 
     private func startAnimating() {
         let hasTimeline = usesIndexedTiming ? !timedWords.isEmpty : !wordBoundaries.isEmpty
-        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), hasTimeline else { return }
+        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), !isPaused, hasTimeline else { return }
         isPlaybackStep = false
         currentIndex = TeleprompterPlaybackPolicy.currentWordIndex(
             in: teleprompterWords,

@@ -570,7 +570,6 @@ public struct BarView: View {
         .animation(.easeOut(duration: 0.2), value: state.readQueueCount)
     }
 
-    /// P16: Pause collapses the teleprompter and Play expands it again; the shell's own morph animates both.
     private func playbackPauseButton(_ control: VoiceBarPlaybackPauseControl) -> some View {
         notchButton(
             icon: control.iconName,
@@ -797,6 +796,7 @@ public struct BarView: View {
                     displayBlocks: state.teleprompterDisplayBlocks,
                     hasCompleteDisplay: state.teleprompterHasCompleteDisplay,
                     isReadback: state.isTeleprompterReadback,
+                    isPaused: state.isPlaybackPaused,
                     playbackEpoch: state.playbackEpoch,
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
                     onSeek: state.seek,

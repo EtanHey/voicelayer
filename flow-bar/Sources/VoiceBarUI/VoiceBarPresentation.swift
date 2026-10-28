@@ -416,7 +416,7 @@ public enum VoiceBarPresentation {
             : VoiceBarPlaybackPauseControl(
                 iconName: "pause.fill",
                 accessibilityLabel: "Pause speech",
-                accessibilityHint: "Pause reading"
+                accessibilityHint: "Keeps the page open at this word"
             )
     }
 
