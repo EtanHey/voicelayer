@@ -191,25 +191,49 @@ final class TeleprompterLazyScrollTests: XCTestCase {
 
     // TELE1C (Sol split-B R2): equal-timestamp pieces make one coalesced playback advance across the
     // hard block boundary; the destination and the next ordinary word must both reach the viewport.
-    @Observable final class Clock {
+    @MainActor @Observable final class Clock {
         var boundaries: [TeleprompterBoundary]
-        var elapsed: Int
-        init(boundaries: [TeleprompterBoundary], base: Int) { self.boundaries = boundaries; elapsed = base }
+        let playback: TeleprompterTestPlaybackClock
+        init(boundaries: [TeleprompterBoundary], base: Int) {
+            self.boundaries = boundaries
+            playback = TeleprompterTestPlaybackClock(elapsed: base)
+        }
     }
 
     private struct ClockHost: View {
         let text: String
         let clock: Clock
         var body: some View {
-            TeleprompterView(text: text, wordBoundaries: clock.boundaries,
-                             playbackElapsedMilliseconds: { [clock] in clock.elapsed })
+            var view = TeleprompterView(text: text, wordBoundaries: clock.boundaries,
+                                       playbackElapsedMilliseconds: { [clock] in clock.playback.elapsed })
+            view.playbackSleep = clock.playback.sleep
+            return view
                 .frame(width: 300, height: Theme.teleprompterViewportHeight)
                 .background(Color.black)
                 .environment(\.colorScheme, .dark)
         }
     }
 
-    func testACoalescedPlaybackAdvanceAcrossTheBlockBoundaryReachesTheWordAndTheNext() {
+    func testACoalescedPlaybackAdvanceAcrossTheBlockBoundaryReachesTheWordAndTheNext() async {
+        await coalescedAdvanceAcrossTheBlockBoundary { NSWindow(contentRect: $0, styleMask: .borderless, backing: .buffered, defer: false) }
+    }
+
+    /// Hosted CI runners draw at 1x, where SwiftUI snaps the landed word to whole points: half a point off
+    /// its Retina position. Run the same landing at 1x so a Retina host covers CI's geometry too.
+    private final class OneXWindow: NSWindow {
+        override var backingScaleFactor: CGFloat { 1 }
+    }
+
+    func testACoalescedPlaybackAdvanceAcrossTheBlockBoundaryAtOneXReachesTheWordAndTheNext() async {
+        await coalescedAdvanceAcrossTheBlockBoundary { OneXWindow(contentRect: $0, styleMask: .borderless, backing: .buffered, defer: false) }
+    }
+
+    /// Centred in the viewport to within one device pixel, the only freedom pixel snapping leaves.
+    private static func isOnMiddleRow(_ frame: CGRect, in window: NSWindow) -> Bool {
+        abs(frame.midY - Theme.teleprompterViewportHeight / 2) < 1 / window.backingScaleFactor
+    }
+
+    private func coalescedAdvanceAcrossTheBlockBoundary(window makeWindow: (NSRect) -> NSWindow) async {
         let token = String(repeating: "x", count: 960) // 40 display pieces, one timestamp
         let raw = (0 ... 280).map { "word\($0)" } + [token] + (282 ..< 600).map { "word\($0)" }
         let text = raw.joined(separator: " ")
@@ -218,29 +242,36 @@ final class TeleprompterLazyScrollTests: XCTestCase {
             return TeleprompterBoundary(offsetMs: offset, durationMs: 340, text: raw[index], wordIndex: index)
         }
         let clock = Clock(boundaries: boundaries, base: 106_410)
+        let presentation = TeleprompterTestPresentation()
+        defer { presentation.close(); clock.playback.cancel() }
         let host = NSHostingView(rootView: ClockHost(text: text, clock: clock))
         host.frame = NSRect(x: 0, y: 0, width: 300, height: Theme.teleprompterViewportHeight)
-        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        let window = makeWindow(host.frame)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         defer { window.contentView = nil }
-        waitForPaint(host) { self.isOnScreen("word280", host) }
+        await presentation.wait(host, clock: clock.playback, for: "word280 landed before playback advances") {
+            guard let word = $0[280] else { return false }
+            return Self.isOnMiddleRow(word, in: window) && clock.playback.isSuspended(until: 107_600)
+        }
         XCTAssertTrue(isOnScreen("word280", host), "the read starts on word 280; OCR: \(onScreenText(host).prefix(120))")
         let preAdvanceFrame = onScreenText(host)
-        clock.elapsed = 107_760 // all 40 pieces advance together (280 -> 320)
-        waitForPaint(host) {
-            let frame = self.onScreenText(host)
-            return frame != preAdvanceFrame
-                && !self.isOnScreen("word280", host)
-                && self.containsLongToken(frame)
+        clock.playback.advance(to: 107_760)
+        await presentation.wait(host, clock: clock.playback, for: "last token piece landed across the block boundary") {
+            guard let piece = $0[320], let earlier = $0[280] else { return false }
+            return Self.isOnMiddleRow(piece, in: window) && earlier.maxY < 0
+                && clock.playback.isSuspended(until: 108_000)
         }
         let destination = onScreenText(host)
         XCTAssertNotEqual(destination, preAdvanceFrame, "clock advance must produce a new frame")
         XCTAssertFalse(isOnScreen("word280", host), "the earlier word must have scrolled away")
         XCTAssertTrue(containsLongToken(destination),
                         "the token's last piece, in block 1, is on screen; OCR: \(destination.prefix(120))")
-        clock.elapsed = 108_010 // word282 (display id 321)
-        waitForPaint(host) { self.isOnScreen("word282", host) }
+        clock.playback.advance(to: 108_010)
+        await presentation.wait(host, clock: clock.playback, for: "word282 landed after the long token") {
+            guard let word = $0[321] else { return false }
+            return Self.isOnMiddleRow(word, in: window)
+        }
         XCTAssertTrue(isOnScreen("word282", host), "the next ordinary word follows; OCR: \(onScreenText(host).prefix(120))")
     }
 
