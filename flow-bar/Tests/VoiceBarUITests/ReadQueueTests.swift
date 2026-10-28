@@ -87,6 +87,31 @@ final class ReadQueueTests: XCTestCase {
         }
     }
 
+    func testQueuedSelectionIsNeverMistakenForAnUnretainedPlayingRead() throws {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        commands = []
+        state.sendCommand = { [unowned self] in commands.append($0) }
+        state.handleEvent(speaking(id: "unretained-read", text: "Projected display", read: "read-U"))
+        press(state, "Bravo selection")
+        XCTAssertEqual(commands.last?["queue"] as? Bool, true)
+        let bravo = try XCTUnwrap(commands.last?["id"] as? String)
+        state.handleEvent(["type": "ack", "command": "speak_text", "id": bravo, "outcome": "accept", "reason": "queued"])
+        state.handleEvent(queueEvent(1, "unretained-read"))
+        for text in ["Bravo selection", "1. Bravo selection"] {
+            commands = []
+            press(state, text)
+            XCTAssertTrue(cmds.isEmpty, text)
+            XCTAssertEqual(state.selectionFeedbackNote, "Already queued", text)
+            XCTAssertEqual(state.readQueueCount, 1, text)
+        }
+        commands = []
+        press(state, "Projected display")
+        XCTAssertEqual(cmds, ["read_next"], "the playing read's own receipt still identifies it")
+        XCTAssertEqual(commands.last?["request_id"] as? String, "unretained-read")
+    }
+
     func testEveryQueuedIdentityIsCheckedBeforeCapacityAndKeepsCaseAndTimerChanges() {
         let (state, a) = readingA()
         press(state, "Bravo selection")
@@ -200,7 +225,10 @@ final class ReadQueueTests: XCTestCase {
                 state.sendCommand = { [unowned self] in commands.append($0) }
                 let text = { (n: Int) in "Item \(n)" }
                 var owner = ""
-                if row.playing != 0 {
+                if row.playing == 5 {
+                    owner = "unretained-read"
+                    state.handleEvent(speaking(id: owner, text: "Projected display", read: "model-read"))
+                } else if row.playing != 0 {
                     press(state, text(row.playing))
                     owner = try XCTUnwrap(commands.last?["id"] as? String)
                     state.handleEvent(speaking(id: owner, text: "Projected display", read: "model-read"))

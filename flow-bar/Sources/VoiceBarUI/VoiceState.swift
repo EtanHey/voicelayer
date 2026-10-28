@@ -1229,8 +1229,8 @@ public final class VoiceState {
         }
         // QUEUE1: reads F5 left waiting count as live, so an empty press clears them like Stop.
         let replacing = mode == .speaking || selectionSubmittedText != nil || readQueueCurrentRequestID != nil
-        let pressText = selectionSubmittedText ?? selectionReadText
-            ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+        let pressPlaybackText = selectionReadText ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+        let pressText = selectionSubmittedText ?? pressPlaybackText
         let pressHash = selectionSubmittedText == nil ? selectionReadHash : nil
         let speechEpoch = selectionSpeechEpoch
         let captureID = UUID()
@@ -1272,8 +1272,8 @@ public final class VoiceState {
             let normalized = Self.normalizedSelection(result.text ?? "")
             // Preparing's label is not input text. Prefer own input, otherwise use reliable
             // speaking text at completion; a same-read receipt may have arrived during capture.
-            let currentText = selectionSubmittedText ?? selectionReadText
-                ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+            let playbackText = selectionReadText ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+            let currentText = selectionSubmittedText ?? playbackText
             // Natural completion may clear the read while capture is awaiting its result.
             // Keep that press's Stop comparison, while newer live receipts still take priority.
             let readEnded = mode == .idle && selectionSubmittedText == nil
@@ -1297,7 +1297,8 @@ public final class VoiceState {
                 let pending = selectionSubmissions.filter { $0.key != owner }.map { $0.value.text }
                 let playing = isPlaybackPaused || (mode == .idle && readQueueCurrentRequestID != nil) ? nil
                     : selectionReadText ?? first?.value.text
-                        ?? (samePlaying || (selectionSubmittedText == nil && sameSelection) ? result.text : comparisonText)
+                        ?? (samePlaying || (selectionSubmittedText == nil && sameSelection) ? result.text
+                            : playbackText ?? (readEnded ? pressPlaybackText : nil))
                 switch SelectionAdmission.decide(result.text ?? "", playing: playing, pending: pending,
                                                 count: selectionReadText == nil && first == nil ? readQueueCount : max(readQueueCount, pending.count)) {
                 case .advance:

@@ -47,7 +47,7 @@
       "normalization_variants": 4
     },
     "actions": {
-      "Snapshot": "valid unique active/suspended queue snapshots",
+      "Snapshot": "valid unique active/suspended queue snapshots, including playing = Unknown (5): a read playing whose text VoiceBar never retained, which no selection can name",
       "Select": "real VoiceState.speakSelection completion, commands and hint",
       "Stop": "VoiceState.stop emits command; independent daemon ApplyStop performs configurable clear",
       "F5": "retainingReadQueueOnStop emits retaining stop; independent ApplyF5 performs configurable retention",
@@ -57,7 +57,8 @@
       "NoSilentClear",
       "NoDuplicateIdentity",
       "StopClearsAll",
-      "F5KeepsQueue"
+      "F5KeepsQueue",
+      "NoBlindAdvance"
     ],
     "conformance": "Manual check.sh gate: real Swift XCTest over all TLC decisions and four marker variants; all daemon admission decisions/post-states; native SocketServer NDJSON A/C/B replay. Not invoked by CI or pre-push.",
     "variants": {
@@ -67,7 +68,8 @@
       "Admission*": "historical T1 projection only",
       "QueueAdmissionStopLeaves": "expected StopClearsAll violation when daemon ignores Stop",
       "QueueAdmissionF5Clears": "expected F5KeepsQueue violation when daemon clears on F5",
-      "QueueAdmissionFreshClears": "expected NoSilentClear violation when a fresh selection clears pending"
+      "QueueAdmissionFreshClears": "expected NoSilentClear violation when a fresh selection clears pending",
+      "QueueAdmissionInferredPlaying": "expected NoBlindAdvance violation when an unknown playing read is inferred from the latest queued selection (Macroscope r4386952911)"
     },
     "excluded": [
       "real AX/pasteboard capture",

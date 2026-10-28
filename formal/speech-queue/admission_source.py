@@ -27,6 +27,7 @@ def check_admission(run, runner):
     assert cases and {row["event"] for row in cases} == {"selection", "stop", "f5"}
     assert {row["decision"] for row in cases} == {"stop", "read_next", "hint", "speak_text"}
     assert any(len(row["pending"]) == 2 and row["selected"] not in [row["playing"], *row["pending"]] for row in cases)
+    assert any(row["playing"] == 5 and row["event"] == "selection" and row["decision"] == "hint" and not row["preempted"] and not row["suspended"] for row in cases)
     path = run / "admission.json"
     path.write_text(json.dumps(cases))
     status = runner.run(["timeout", "-s", "KILL", "900", "swift", "test", "--package-path", "flow-bar",
