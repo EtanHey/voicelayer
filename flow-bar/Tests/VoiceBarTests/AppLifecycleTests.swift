@@ -5,6 +5,58 @@ import AppKit
 import XCTest
 
 final class AppLifecycleTests: XCTestCase {
+    private final class PointerProbe: @unchecked Sendable {
+        var isInside = true
+    }
+
+    /// A hand-driven polling clock for `RetainedReadbackDismissalCoordinator`.
+    /// `sleep` parks until `tick()` releases it, so a test decides exactly how
+    /// many delays have elapsed.
+    @MainActor
+    private final class ManualTicker {
+        private var parked: [CheckedContinuation<Void, Never>] = []
+
+        var pendingSleepCount: Int {
+            parked.count
+        }
+
+        nonisolated var sleep: RetainedReadbackDismissalCoordinator.Sleep {
+            { [self] _ in await park() }
+        }
+
+        private func park() async {
+            await withCheckedContinuation { parked.append($0) }
+        }
+
+        /// Waits for the watchdog to reach its next sleep.
+        func waitForPendingSleep(file: StaticString = #filePath, line: UInt = #line) async {
+            await settle(until: { false })
+            XCTAssertFalse(parked.isEmpty, "the watchdog never reached its sleep", file: file, line: line)
+        }
+
+        /// One elapsed delay: releases the parked sleep, then waits until the
+        /// watchdog has parked again or `done` holds (e.g. it dismissed).
+        func tick(
+            until done: () -> Bool = { false },
+            file: StaticString = #filePath,
+            line: UInt = #line
+        ) async {
+            await waitForPendingSleep(file: file, line: line)
+            let released = parked
+            parked.removeAll()
+            released.forEach { $0.resume() }
+            await settle(until: done)
+        }
+
+        /// The deadline is liveness only: every caller waits on an outcome.
+        private func settle(until done: () -> Bool) async {
+            let deadline = Date().addingTimeInterval(5)
+            while parked.isEmpty, !done(), Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+        }
+    }
+
     @MainActor
     func testPanelMousePassthroughCapturesRenderedSurfaceButNotCanvasMargins() {
         let presentation = VoiceBarPresentation.notchPresentation(
@@ -1101,7 +1153,7 @@ final class AppLifecycleTests: XCTestCase {
         let modeChangeStart = try XCTUnwrap(source.range(of: "private func handleVoiceModeChange"))
         let nextFunction = try XCTUnwrap(
             source.range(
-                of: "private func applyPanelLayout",
+                of: "private func synchronizeRetainedReadbackLifecycle",
                 range: modeChangeStart.upperBound ..< source.endIndex
             )
         )
@@ -1117,11 +1169,167 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(AppDelegate.historyFileRevealSelection(for: audioURL), [audioURL])
     }
 
-    /// F13: an ended read stays open until its own dismiss control or a recording; no timer closes it.
-    func testNothingInTheAppClosesAnEndedReadOnItsOwn() throws {
+    // AIDEV-NOTE: these drive the watchdog's polling clock by hand. They used
+    // wall-clock sleeps against 20-100 ms delays and failed under load: 7/10
+    // runs at background QoS, and on the first macOS CI run. Each `tick()` is
+    // exactly one elapsed `delay`.
+    @MainActor
+    func testReadbackWatchdogDismissesOutsideTheVisibleNotchSurface() async {
+        let ticker = ManualTicker()
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(20),
+            sleep: ticker.sleep
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { false }
+        ) {
+            dismissCount += 1
+        }
+        await ticker.tick(until: { dismissCount == 1 })
+
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    @MainActor
+    func testRepeatedUnattendedReadbackSynchronizationDoesNotRestartGraceWindow() async {
+        let ticker = ManualTicker()
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(100),
+            sleep: ticker.sleep
+        )
+        let synchronize = {
+            coordinator.synchronize(
+                isReadback: true,
+                isPointerInsideVisibleSurface: { false }
+            ) {
+                dismissCount += 1
+            }
+        }
+
+        synchronize()
+        await ticker.waitForPendingSleep()
+        synchronize()
+        XCTAssertEqual(ticker.pendingSleepCount, 1, "a repeated broadcast must not start a second window")
+        await ticker.tick(until: { dismissCount == 1 })
+
+        XCTAssertEqual(
+            dismissCount,
+            1,
+            "Repeated W2 idle/readback broadcasts must not postpone unattended auto-dismiss"
+        )
+    }
+
+    @MainActor
+    func testReadbackWatchdogPersistsInsideThenDismissesAfterPointerLeaves() async {
+        let ticker = ManualTicker()
+        let pointer = PointerProbe()
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(20),
+            sleep: ticker.sleep
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { pointer.isInside }
+        ) {
+            dismissCount += 1
+        }
+        await ticker.tick()
+        await ticker.tick()
+        XCTAssertEqual(dismissCount, 0)
+
+        pointer.isInside = false
+        await ticker.tick()
+        XCTAssertEqual(dismissCount, 0, "the first tick after exit is the fresh grace window")
+        await ticker.tick(until: { dismissCount == 1 })
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    @MainActor
+    func testReadbackWatchdogStartsAFreshGraceWindowAfterObservingPointerExit() async {
+        let ticker = ManualTicker()
+        let pointer = PointerProbe()
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(80),
+            sleep: ticker.sleep
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { pointer.isInside }
+        ) {
+            dismissCount += 1
+        }
+        await ticker.waitForPendingSleep()
+        pointer.isInside = false
+
+        await ticker.tick()
+        XCTAssertEqual(
+            dismissCount,
+            0,
+            "A read-back that was hovered must not inherit the current polling deadline after exit"
+        )
+
+        await ticker.tick(until: { dismissCount == 1 })
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    func testReadbackPointerCheckRejectsScreenPointOutsidePanelBeforeConversion() {
+        var didConvert = false
+
+        let isInside = RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: CGPoint(x: 900, y: 700),
+            panelFrame: CGRect(x: 100, y: 100, width: 500, height: 200),
+            convertFromScreen: { point in
+                didConvert = true
+                return point
+            },
+            containsLocalPoint: { _ in true }
+        )
+
+        XCTAssertFalse(isInside)
+        XCTAssertFalse(didConvert)
+    }
+
+    func testReadbackPointerCheckConvertsAndChecksPointInsidePanelFrame() {
+        let isInside = RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: CGPoint(x: 320, y: 180),
+            panelFrame: CGRect(x: 100, y: 100, width: 500, height: 200),
+            convertFromScreen: { _ in CGPoint(x: 220, y: 80) },
+            containsLocalPoint: { $0 == CGPoint(x: 220, y: 80) }
+        )
+
+        XCTAssertTrue(isInside)
+    }
+
+    func testVoiceModeChangesSynchronizeRetainedReadbackLifecycle() throws {
         let source = try voiceBarAppSource()
-        XCTAssertFalse(source.contains("dismissRetainedTeleprompter()"))
-        XCTAssertFalse(source.contains("RetainedReadbackDismissalCoordinator"))
+
+        XCTAssertTrue(source.contains("private func synchronizeRetainedReadbackLifecycle()"))
+        XCTAssertTrue(source.contains("retainedReadbackDismissalCoordinator.synchronize("))
+        XCTAssertTrue(source.contains("isPointerInsideVisibleNotchSurface"))
+        XCTAssertTrue(source.contains("voiceState.dismissRetainedTeleprompter()"))
+
+        let modeHandler = try XCTUnwrap(source.range(of: "private func handleVoiceModeChange"))
+        let synchronizeCall = try XCTUnwrap(
+            source.range(
+                of: "synchronizeRetainedReadbackLifecycle()",
+                range: modeHandler.lowerBound ..< source.endIndex
+            )
+        )
+        let switchRange = try XCTUnwrap(
+            source.range(
+                of: "switch mode",
+                range: modeHandler.lowerBound ..< source.endIndex
+            )
+        )
+        XCTAssertLessThan(synchronizeCall.lowerBound, switchRange.lowerBound)
     }
 
     func testInitialVisibleIdleStartsItsCollapseCountdownAfterPanelInstallation() throws {
@@ -1267,6 +1475,42 @@ final class AppLifecycleTests: XCTestCase {
 
         XCTAssertTrue(method.contains("panel.isPillDragEnabled = false"))
         XCTAssertTrue(method.contains("panel.isMovableByWindowBackground = false"))
+    }
+
+    func testPointerAwareCoordinatorIsTheOnlyRetainedReadbackDismissalOwner() throws {
+        let appSource = try voiceBarAppSource()
+        let barSource = try voiceBarUISource(named: "BarView.swift")
+        let modelSource = try voiceBarUISource(named: "VoiceBarNotchPresentationModel.swift")
+        let coordinatorSource = try voiceBarSource(named: "RetainedReadbackDismissalCoordinator.swift")
+
+        XCTAssertTrue(appSource.contains("retainedReadbackDismissalCoordinator.synchronize("))
+        XCTAssertTrue(appSource.contains("voiceState.dismissRetainedTeleprompter()"))
+        XCTAssertFalse(barSource.contains("presentationModel?.updateRetainedReadback"))
+        XCTAssertFalse(modelSource.contains("updateRetainedReadback("))
+        XCTAssertTrue(coordinatorSource.contains("deinit"))
+        XCTAssertTrue(coordinatorSource.contains("dismissalTask?.cancel()"))
+    }
+
+    func testReadbackWatchdogClearsStaleHoverBeforeDismissing() throws {
+        let source = try voiceBarAppSource()
+        let synchronizeStart = try XCTUnwrap(
+            source.range(of: "private func synchronizeRetainedReadbackLifecycle()")
+        )
+        let synchronizeEnd = try XCTUnwrap(
+            source.range(
+                of: "private var isPointerInsideVisibleNotchSurface",
+                range: synchronizeStart.upperBound ..< source.endIndex
+            )
+        )
+        let bodyRange = synchronizeStart.lowerBound ..< synchronizeEnd.lowerBound
+        let clearHover = try XCTUnwrap(
+            source.range(of: "voiceState.setHovering(false)", range: bodyRange)
+        )
+        let dismiss = try XCTUnwrap(
+            source.range(of: "voiceState.dismissRetainedTeleprompter()", range: bodyRange)
+        )
+
+        XCTAssertLessThan(clearHover.lowerBound, dismiss.lowerBound)
     }
 
     func testEveryPanelLayoutInvalidatesThenRecertifiesBackingScale() throws {

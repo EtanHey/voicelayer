@@ -198,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.commitNotchContentThenApplyPanelLayout()
         }
     )
+    private let retainedReadbackDismissalCoordinator = RetainedReadbackDismissalCoordinator()
     private var lastLoggedNotchHousingWidth: CGFloat?
     private var panelBackingScaleCertificationGeneration: UInt = 0
 
@@ -1573,6 +1574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+        synchronizeRetainedReadbackLifecycle()
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
@@ -1583,6 +1585,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         default:
             audioLevelMonitor.stop()
         }
+    }
+
+    private func synchronizeRetainedReadbackLifecycle() {
+        retainedReadbackDismissalCoordinator.synchronize(
+            isReadback: voiceState.isTeleprompterReadback,
+            isPointerInsideVisibleSurface: { [weak self] in
+                self?.isPointerInsideVisibleNotchSurface ?? false
+            }
+        ) { [weak self] in
+            guard let self,
+                  voiceState.isTeleprompterReadback
+            else { return }
+            voiceState.setHovering(false)
+            voiceState.dismissRetainedTeleprompter()
+        }
+    }
+
+    private var isPointerInsideVisibleNotchSurface: Bool {
+        guard let panel else { return false }
+        let layout = currentPanelLayout()
+        return RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: NSEvent.mouseLocation,
+            panelFrame: panel.frame,
+            convertFromScreen: { panel.convertPoint(fromScreen: $0) },
+            containsLocalPoint: { layout.containsVisibleSurface($0) }
+        )
     }
 
     private func applyPanelLayout(animated: Bool) {
