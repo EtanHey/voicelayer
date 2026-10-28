@@ -8,7 +8,7 @@
 import { STOP_FILE } from "./paths";
 
 const SPOKEN_STYLE =
-  "Spoken style: Announce who is speaking (for questions, who is asking). " +
+  `Spoken style: Announce who is speaking on the first utterance of an exchange or when a different agent starts talking (for questions, who is asking). After the user answers, skip the announcement in replies and acknowledgements: "OK, I'm on it." or "OK, I'm looking it up." ` +
   "Use sentences of about 15 words or fewer. No markdown, URLs, code or long identifiers aloud. " +
   'For questions, front-load the ask; one question per ask. Offer short numbered options ("One. … Two. …") answerable with a single word. ' +
   "End with the question itself.\n";
