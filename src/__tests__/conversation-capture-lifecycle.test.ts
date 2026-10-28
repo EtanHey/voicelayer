@@ -178,7 +178,7 @@ test("issued fence defers idle once; stale holds cannot clear a newer owner", as
 });
 
 test("observer handoff cannot persist an old idle over a newly acquired fence", async () => {
-  const state = await stateModule(), policy = create(), next = create();
+  const state = await stateModule(), policy = create(), next = create(), seen: string[] = [];
   let handedOff = false;
   state.onRecordingStateChange((value: string) => {
     if (value === "idle" && !handedOff) {
@@ -186,6 +186,7 @@ test("observer handoff cannot persist an old idle over a newly acquired fence", 
       state.holdConversationCaptureUntil(next);
     }
   });
+  state.onRecordingStateChange(value => seen.push(`${value}:${state.getRecordingState()}`));
   state.setRecordingState("recording");
   state.holdConversationCaptureUntil(policy);
   state.setRecordingState("idle");
@@ -193,10 +194,12 @@ test("observer handoff cannot persist an old idle over a newly acquired fence", 
   await turn();
   expect(state.getRecordingState()).toBe("transcribing");
   expect(fileState().state).toBe("transcribing");
+  expect(seen).toEqual(["recording:recording", "transcribing:transcribing"]);
   state.setRecordingState("idle");
   await run(next, async () => undefined);
   await turn();
   expect(state.getEffectiveRecordingState()).toBe("idle");
+  expect(seen).toEqual(["recording:recording", "transcribing:transcribing", "idle:idle"]);
 });
 
 test("absence-policy legacy transitions persist and notify unchanged", async () => {

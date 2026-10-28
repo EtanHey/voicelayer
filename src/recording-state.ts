@@ -36,7 +36,10 @@ export function onRecordingStateChange(observer: (state: RecordingState) => void
   return () => { observers.delete(observer); };
 }
 function notifyState(state: RecordingState): void {
-  for (const observer of observers) { try { observer(state); } catch {} }
+  for (const observer of observers) {
+    if (state === "idle" && captureFence) return;
+    try { observer(state); } catch {}
+  }
 }
 
 interface PersistedRecordingState {
