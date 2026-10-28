@@ -83,5 +83,10 @@
     "name": "minus number",
     "input": "-5",
     "identity": "-5"
+  },
+  {
+    "name": "bom after closing fence",
+    "input": "```\n- value\n```﻿\n- prose",
+    "identity": "``` - value ```﻿ - prose"
   }
 ]

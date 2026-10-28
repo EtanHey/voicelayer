@@ -216,6 +216,13 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     }
     expect(contexts[0].id).not.toBe(contexts[1].id);
   });
+  for (const source of ["cli", "clipboard"] as const) it(`queued ${source} text does not suppress a later selection`, () => {
+    incoming({ id: "owner", source: "selection", text: "Alpha" });
+    expect(incoming({ id: "queued", source, queue: true, text: "Bravo" })).toMatchObject({ outcome: "accept", reason: "queued" });
+    expect(incoming({ id: "selection", source: "selection", queue: true, text: "Bravo" })).toMatchObject({ outcome: "accept", reason: "queued" });
+    expect(contexts).toHaveLength(3);
+    expect(queueEvents().at(-1)).toMatchObject({ count: 2, current_request_id: "owner" });
+  });
   it("invalid, unauthenticated and nonspoken commands never create speech receipts", async () => {
     for (const fields of [{ text: " " }, { text: 3 }, { profile: "invalid" }, { format: "html" }, { text: "x".repeat(200001) }])
       expect(incoming(fields)).toBeNull();

@@ -11,7 +11,7 @@ export function selectionIdentity(text: string): string {
   const lines = text.split(/[\n\r\v\f\u0085\u2028\u2029]/u).map(line => {
     const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
     if (fence) {
-      if (delimiter && delimiter[1]?.[0] === fence.marker && delimiter[1].length >= fence.length && !delimiter[2]?.trim()) fence = undefined;
+      if (delimiter && delimiter[1]?.[0] === fence.marker && delimiter[1].length >= fence.length && /^[\t\p{Zs}]*$/u.test(delimiter[2] ?? "")) fence = undefined;
       return line;
     }
     if (delimiter?.[1]) {

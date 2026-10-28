@@ -237,7 +237,7 @@ export function handleSocketCommand(
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.
           queueStartOwnsFailure = true;
           const outcome = selectionReads.submit({ requestId: command.id, text, textHash, profile: command.profile ?? "auto",
-            archiveContext: receipt.context, selectionIdentity: identity ?? selectionIdentity(command.text), ...(structuredDisplay ? { structuredDisplay } : {}) }, true);
+            archiveContext: receipt.context, ...(identity !== undefined ? { selectionIdentity: identity } : {}), ...(structuredDisplay ? { structuredDisplay } : {}) }, true);
           if (outcome === "full") {
             finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
             return buildAck(command, "reject", "queue full");
