@@ -1,5 +1,6 @@
 import type { NativeInputFormat } from "./audio-utils";
 import type { RecorderStderrWatcher } from "./input";
+import { normalizedCaptureByteLength } from "./conversation-capture-extent";
 
 type RecorderChild = Pick<Bun.Subprocess<"ignore", "pipe", "pipe">, "exited" | "kill" | "stdout" | "stderr">;
 interface NormalizedCaptureExtent {
@@ -165,7 +166,7 @@ class CaptureSetupOwner {
         format.sampleRate !== sampleRate || format.channels !== channels ||
         !Number.isSafeInteger(extent.nativeBytes) || extent.nativeBytes < 0 ||
         extent.nativeBytes % (channels * 2) || extent.nativeTail.byteLength ||
-        extent.pcm.byteLength !== Math.floor(extent.nativeBytes / (channels * 2) / (sampleRate / 16000)) * 2 ||
+        extent.pcm.byteLength !== normalizedCaptureByteLength(extent.nativeBytes, sampleRate, channels) ||
         !(child.stdout instanceof ReadableStream) || child.stdout.locked ||
         !(child.stderr instanceof ReadableStream) || child.stderr.locked
       ) {
