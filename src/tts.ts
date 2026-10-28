@@ -935,11 +935,12 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
 }
 
 export interface CaptureAdmission {
-  admit(handle: QueuedPlaybackHandle): boolean;
+  admit(handle: QueuedPlaybackHandle, onParkedChange?: (parked: boolean) => void): boolean;
   release(): void;
 }
 
 interface PlaybackJob {
+  onParkedChange?: (parked: boolean) => void;
   id: string;
   lifecycle: PlaybackLifecycle;
   alignments: Set<Promise<void>>;
@@ -1129,11 +1130,12 @@ class PlaybackQueueManager {
     this.captureAdmission = owned;
     let released = false;
     return {
-      admit: handle => {
+      admit: (handle, onParkedChange) => {
         if (released || !this.jobs.has(handle.id) || this.jobs.get(handle.id)!.completed) return false;
         // The handler owns this handoff on every completion path, even after release.
         const job = this.jobs.get(handle.id)!;
         if (job.metadata) job.metadata.nextState = undefined;
+        job.onParkedChange = onParkedChange;
         owned.add(handle.id); this.processNext(); return true;
       },
       release: () => {
@@ -1336,12 +1338,16 @@ class PlaybackQueueManager {
   }
 
   replaceParked(): void {
-    if (this.parked) this.cancel({ id: this.parked.job.id }, undefined, "replaced");
+    if (this.parked && !this.captureAdmission?.has(this.parked.job.id)) this.cancel({ id: this.parked.job.id }, undefined, "replaced");
   }
 
   private isStale(job: PlaybackJob, scope: ControlScope): boolean {
     return (scope.id !== undefined && scope.id !== job.id) ||
       (scope.generation !== undefined && scope.generation !== job.lifecycle.generation);
+  }
+
+  private ownsPausablePrompt(job: PlaybackJob): boolean {
+    return this.captureAdmission?.has(job.id) === true && job.onParkedChange !== undefined;
   }
 
   /** Quiesce the owned player (never SIGSTOP) and keep the job, cursor and audio for Resume. */
@@ -1355,8 +1361,8 @@ class PlaybackQueueManager {
     const job = active?.job ?? this.restartAfterTermination ?? this.preparing?.job;
     if (!job || job.completed) return { outcome: "noop", reason: "nothing playing" };
     if (this.isStale(job, scope)) return { outcome: "reject", reason: "stale" };
-    // Ask owns its prompt→answer handoff; it is never parked.
-    if (!job.metadata || job.priority === "critical" || this.captureAdmission) return { outcome: "reject", reason: "unsupported" };
+    if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
+    if (!job.metadata || ((job.priority === "critical" || this.captureAdmission) && !this.ownsPausablePrompt(job))) return { outcome: "reject", reason: "unsupported" };
     const chunkStart = job.metadata.longRead?.chunk_start_ms ?? 0;
     const elapsed = !active ? job.metadata.localOffsetMs ?? 0
       : elapsedMs !== undefined ? elapsedMs - chunkStart : Date.now() - active.startedAt;
@@ -1384,9 +1390,8 @@ class PlaybackQueueManager {
     const parked: ParkedPlayback = { job, offsetMs: offset, controller: new AbortController(),
       ready: offset === 0, failed: false, resumeRequested: false };
     this.parked = parked;
+    job.onParkedChange?.(true);
     if (offset < (metadata.durationMs ?? Infinity)) metadata.speechArchive?.move("paused");
-    // Resume at EOF completes without a new player. Close timing now and keep
-    // the legal playing -> completed path, including for a long-read chunk.
     else metadata.speechArchive?.playerEnded();
     if (!parked.ready) this.prepareParked(parked);
     this.broadcastPlaybackState(job, "paused");
@@ -1397,6 +1402,7 @@ class PlaybackQueueManager {
     const parked = this.parked;
     if (!parked) return { outcome: "noop", reason: "not paused" };
     if (this.isStale(parked.job, scope)) return { outcome: "reject", reason: "stale" };
+    if (getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) return { outcome: "reject", reason: "busy" };
     const offset_ms = (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
     if (parked.resumeRequested) return { outcome: "noop", reason: "resuming", offset_ms };
     parked.resumeRequested = true;
@@ -1434,7 +1440,7 @@ class PlaybackQueueManager {
     try {
       // A capture that began while the slice was cut keeps the item parked.
       assertSpeakerClear();
-      if (getEffectiveRecordingState() !== "idle" || this.captureAdmission) throw new Error("Resume refused: voice is busy");
+      if (getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) throw new Error("Resume refused: voice is busy");
     } catch (error) {
       parked.resumeRequested = false;
       broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
@@ -1443,6 +1449,7 @@ class PlaybackQueueManager {
     }
     this.parked = undefined;
     const { job } = parked;
+    job.onParkedChange?.(false);
     job.lifecycle.generation++;
     job.resuming = true;
     job.enqueuedAt = Date.now();
@@ -1622,8 +1629,11 @@ class PlaybackQueueManager {
       }
 
       if (next.metadata?.localOffsetMs !== undefined && next.metadata.localOffsetMs >= (next.metadata.durationMs ?? Infinity)) {
-        completeJob(next, buildPlaybackOutcome(next, "completed"));
-        if (this.depth() === 0) broadcastPlaybackIdleIfSpeakerClear(next.metadata.nextState);
+        const outcome = this.ownsPausablePrompt(next)
+          ? buildPlaybackOutcome(next, "failed", "player-error")
+          : buildPlaybackOutcome(next, "completed");
+        completeJob(next, outcome);
+        if (this.depth() === 0) broadcastPlaybackIdleIfSpeakerClear(outcome.status === "completed" ? next.metadata.nextState : undefined);
         continue;
       }
       if (next.skipAmplitudeDecode) {
@@ -2175,8 +2185,8 @@ export function pausePlayback(scope: { id?: string; generation?: number } = {}, 
 export function resumePlayback(scope: { id?: string; generation?: number } = {}): SeekResult {
   const read = playbackQueueManager.isPaused() ? undefined : preparationParkedRead();
   if (!playbackQueueManager.isPaused() && !read) return { outcome: "noop", reason: "not paused" };
-  if (getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
   if (!read) return playbackQueueManager.resume(scope);
+  if (getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
   if (scope.id !== undefined || scope.generation !== undefined) return { outcome: "reject", reason: "stale" };
   // Play before the first chunk exists: it is admitted normally, from zero.
   read.firstAdmission!.paused = false;

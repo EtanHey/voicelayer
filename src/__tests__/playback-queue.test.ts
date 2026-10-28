@@ -690,14 +690,32 @@ describe("playback queue — P0-1 sequential playback", () => {
         await waitFor(() => duringDecode ? decoderMocks.length === 1 : playerMocks.length === 1, "owned child");
         if (completion.startsWith("seek")) expect(tts.seekPlayback(1_000).outcome).toBe("accept");
         if (completion === "stop") expect(tts.stopPlayback()).toBe(true);
-        if (completion.startsWith("cancel")) expect(tts.cancelPlayback({ id: ask.prompt.id })).toBe(true);
+        if (completion.startsWith("cancel")) {
+          booking.setCancelSignal();
+          expect(tts.cancelPlayback({ id: ask.prompt.id })).toBe(true);
+        }
         await Bun.sleep(10); expect(ask.captureSpy).not.toHaveBeenCalled();
         expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toHaveLength(0);
         if (duringDecode) decoderMocks[0].resolveExit(); else playerMocks[0].resolveExit();
-        await waitFor(() => ask.captureSpy.mock.calls.length === 1, "capture after reap");
-        expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([
-          { type: "state", state: "idle", source: "playback", next_state: "recording" },
-        ]);
+        if (completion.startsWith("seek")) {
+          const result = await ask.request;
+          expect(result.content[0].text).toContain("nothing was recorded");
+          expect(result.isError).toBe(true);
+          expect(ask.captureSpy).not.toHaveBeenCalled();
+          expect(tts.isCaptureAdmissionReserved()).toBe(false);
+          expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([
+            { type: "state", state: "idle", source: "playback" },
+          ]);
+        } else {
+          await waitFor(() => ask.captureSpy.mock.calls.length === 1, "capture after reap");
+          expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([
+            { type: "state", state: "idle", source: "playback", next_state: "recording" },
+          ]);
+          ask.capture.resolve("raw answer");
+          const result = await ask.request;
+          expect(result.content[0].text).toContain("raw answer");
+          if (completion === "stop") expect(result.content[0].text).toContain("Prompt interrupted");
+        }
       } finally { await ask.dispose(); }
     });
   }

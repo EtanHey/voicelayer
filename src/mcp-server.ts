@@ -29,6 +29,7 @@ import { createVoiceToolContext } from "./mcp-notifications";
 
 // --- Server setup ---
 
+const clientLifetime = new AbortController();
 const server = new Server(
   {
     name: "voicelayer",
@@ -67,6 +68,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     }
     return extra.sendNotification(notification);
   }, "stdio");
+  context.disconnectSignal = clientLifetime.signal;
 
   try {
     switch (name) {
@@ -124,6 +126,7 @@ let shuttingDown = false;
 async function shutdown(code: number): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  clientLifetime.abort();
   stopPlayback();
   try { await awaitCurrentPlayback(); }
   catch { console.error("[speech] shutdown playback settlement incomplete"); }

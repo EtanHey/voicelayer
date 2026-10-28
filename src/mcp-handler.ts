@@ -34,6 +34,7 @@ export interface ToolExecutor {
 }
 
 export interface McpRequestContext {
+  disconnectSignal?: AbortSignal;
   sendNotification(notification: McpNotification): void | Promise<void>;
   setLoggingLevel?(level: McpLoggingLevel): void;
 }
@@ -186,6 +187,7 @@ export async function handleMcpRequest(
           requestMeta._meta?.progressToken,
           requestContext?.sendNotification,
         );
+        context.disconnectSignal = requestContext?.disconnectSignal;
         const result = await executor.executeTool(
           params.name,
           params.arguments ?? {},
