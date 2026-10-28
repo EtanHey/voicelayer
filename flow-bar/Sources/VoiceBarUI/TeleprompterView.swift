@@ -714,6 +714,7 @@ public struct TeleprompterView: View {
     }
 
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
+    var playbackSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
 
     @State private var contentHeight: CGFloat = 0
     @State private var hoveredWordID: Int?
@@ -896,7 +897,7 @@ public struct TeleprompterView: View {
         let startingWordID = currentIndex
 
         animationTask = Task { @MainActor in
-            try? await Task.sleep(for: TeleprompterPlaybackPolicy.startupDelay)
+            try? await playbackSleep(TeleprompterPlaybackPolicy.startupDelay)
             if Task.isCancelled { return }
 
             for word in words {
@@ -906,7 +907,7 @@ public struct TeleprompterView: View {
 
                 // Wait until the word's offset time
                 if remainingMilliseconds > 0 {
-                    try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
+                    try? await playbackSleep(.milliseconds(remainingMilliseconds))
                 }
 
                 if Task.isCancelled { break }
@@ -921,7 +922,7 @@ public struct TeleprompterView: View {
         let words = teleprompterWords
         let startingWordID = currentIndex
         animationTask = Task { @MainActor in
-            try? await Task.sleep(for: TeleprompterPlaybackPolicy.startupDelay)
+            try? await playbackSleep(TeleprompterPlaybackPolicy.startupDelay)
             if Task.isCancelled { return }
             for index in words.indices {
                 let word = words[index]
@@ -932,7 +933,7 @@ public struct TeleprompterView: View {
                 ) else { continue }
                 let remainingMilliseconds = targetOffsetMilliseconds - highlightElapsedMilliseconds
                 if remainingMilliseconds > 0 {
-                    try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
+                    try? await playbackSleep(.milliseconds(remainingMilliseconds))
                 }
                 if Task.isCancelled { break }
                 isPlaybackStep = true
