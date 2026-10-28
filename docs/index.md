@@ -67,7 +67,7 @@ Mode-specific guidance: [Announce](modes/announce.md), [Brief](modes/brief.md), 
 
 ```bash
 brew install sox whisper-cpp
-pip3 install edge-tts
+pip3 install 'edge-tts>=7.3.1'
 ```
 
 Then add to your `.mcp.json`:

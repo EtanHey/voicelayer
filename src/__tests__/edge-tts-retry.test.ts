@@ -86,8 +86,7 @@ describe("edge-tts health and retry", () => {
     checkEdgeTTSHealth();
     checkEdgeTTSHealth();
 
-    // Should only call python3 once due to caching
-    expect(callCount).toBe(1);
+    expect(callCount).toBe(2);
   });
 
   it("resolvePython3Path finds python3 via which", async () => {

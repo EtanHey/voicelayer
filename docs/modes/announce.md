@@ -32,7 +32,7 @@ Fire-and-forget text-to-speech. The agent speaks a short message aloud — no re
 | Error | Cause | Fix |
 |-------|-------|-----|
 | Missing message | Empty or missing `message` param | Provide non-empty message |
-| edge-tts failed | edge-tts not installed | `pip3 install edge-tts` |
+| edge-tts failed | edge-tts not installed | `pip3 install 'edge-tts>=7.3.1'` |
 | Audio playback failed | No audio player found | macOS: built-in. Linux: install `mpv` |
 
 ## Behavior

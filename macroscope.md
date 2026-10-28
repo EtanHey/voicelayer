@@ -44,7 +44,7 @@
 ## Testing
 
 - Test both TTS and STT paths independently — they have different backends and failure modes.
-- **edge-tts availability** should be checked at startup (`pip3 install edge-tts`). Missing edge-tts must produce a clear error, not a silent failure.
+- **edge-tts availability** should be checked at startup (`pip3 install 'edge-tts>=7.3.1'`). Missing edge-tts must produce a clear error, not a silent failure.
 - Voice profiles are stored in `~/.voicelayer/voices.json`. Tests that modify profiles must use fixtures, not the real file.
 - Pronunciation overrides go in `~/.voicelayer/pronunciation.yaml` — test that overrides are applied before TTS synthesis.
 - Run the full suite with `bun test` (308 tests). PRs must not reduce test count without justification.

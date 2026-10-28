@@ -20,6 +20,7 @@ const SYNTH_TIMEOUT_MS = 30_000; // 30s hard timeout per synthesis attempt
 
 let healthCacheResult: boolean | null = null;
 let healthCacheTime = 0;
+const versionCheckedPaths = new Set<string>();
 
 // AIDEV-NOTE: LaunchAgent PATH doesn't include Python framework dirs.
 // Resolve full python3 path once at startup so edge-tts works in daemon mode.
@@ -105,6 +106,35 @@ export function checkEdgeTTSHealth(forceFresh = false): boolean {
     ]);
     healthCacheResult = result.exitCode === 0;
     healthCacheTime = now;
+    if (healthCacheResult && !versionCheckedPaths.has(resolvedPython3)) {
+      versionCheckedPaths.add(resolvedPython3);
+      let version = "unknown";
+      try {
+        const probe = Bun.spawnSync(
+          [resolvedPython3, "-c", "from importlib.metadata import version; print(version('edge-tts'))"],
+          { timeout: 1000 },
+        );
+        if (probe.exitCode === 0) version = probe.stdout.toString().trim() || "unknown";
+      } catch {}
+      const release = /^v?(\d+(?:\.\d+)*)/i.exec(version);
+      const segments = release?.[1].split(".").map(Number);
+      const floor = [7, 3, 1];
+      let comparison = 0;
+      if (segments) {
+        for (let i = 0; i < Math.max(segments.length, floor.length); i++) {
+          const difference = (segments[i] ?? 0) - (floor[i] ?? 0);
+          if (difference !== 0) {
+            comparison = difference;
+            break;
+          }
+        }
+      }
+      const prerelease = release && /^[._-]?(?:a|b|rc|alpha|beta|pre|preview)\d*/i.test(version.slice(release[0].length));
+      if (!segments || comparison < 0 || (comparison === 0 && prerelease)) {
+        const found = segments ? version : "unknown";
+        console.error(`[voicelayer] Warning: edge-tts version ${found}; version 7.3.1 or newer is required. Upgrade: ${resolvedPython3} -m pip install --upgrade 'edge-tts>=7.3.1'`);
+      }
+    }
     return healthCacheResult;
   } catch {
     healthCacheResult = false;
@@ -117,6 +147,7 @@ export function checkEdgeTTSHealth(forceFresh = false): boolean {
 export function resetHealthCache(): void {
   healthCacheResult = null;
   healthCacheTime = 0;
+  versionCheckedPaths.clear();
 }
 
 interface SynthesizeResult {
@@ -310,7 +341,7 @@ export async function synthesizeWithRetry(
   const base = `edge-tts synthesis failed after ${maxRetries + 1} attempts (${lastError}) using ${resolvedPython3}.`;
   const hint = importable
     ? ` edge-tts IS importable by that interpreter, so this is a runtime/network error from the edge-tts service, not a missing install.`
-    : ` edge-tts is NOT importable by that interpreter — install it: ${resolvedPython3} -m pip install edge-tts`;
+    : ` edge-tts is NOT importable by that interpreter — install it: ${resolvedPython3} -m pip install 'edge-tts>=7.3.1'`;
 
   return {
     success: false,

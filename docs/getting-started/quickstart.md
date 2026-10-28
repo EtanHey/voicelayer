@@ -8,7 +8,7 @@ Get VoiceLayer running with Claude Code in 5 minutes.
 
     ```bash
     brew install sox whisper-cpp
-    pip3 install edge-tts
+    pip3 install 'edge-tts>=7.3.1'
     curl -fsSL https://bun.sh/install | bash
     ```
 
@@ -16,7 +16,7 @@ Get VoiceLayer running with Claude Code in 5 minutes.
 
     ```bash
     sudo apt install sox mpv
-    pip3 install edge-tts
+    pip3 install 'edge-tts>=7.3.1'
     curl -fsSL https://bun.sh/install | bash
     ```
 
