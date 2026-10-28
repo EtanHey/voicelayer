@@ -8,11 +8,11 @@ describe("spoken tool description style contract", () => {
       expect(tool).toBeDefined();
       const description = tool!.description;
       for (const rule of [
-        "Announce who is speaking on the first utterance of an exchange or when a different agent starts talking",
-        "After the user answers, skip the announcement in replies and acknowledgements",
+        "Announce the speaker (asker for questions) first or when agents change",
+        "Skip introductions in acknowledgements and replies after an answer",
         "OK, I'm on it.",
         "OK, I'm looking it up.",
-        "who is asking",
+        "Deliver results via voice_ask or voice_speak immediately followed by voice_ask so the user can reply",
         "front-load the ask",
         "sentences of about 15 words or fewer",
         "one question per ask",
