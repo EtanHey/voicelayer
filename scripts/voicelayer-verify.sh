@@ -145,67 +145,112 @@ assert_corpus_tree_clean() {
   fi
 }
 
-# AIDEV-NOTE: The corpus daemon used to inherit QA_VOICE_WHISPER_SERVER_PORT's default
-# (8178), where whisper-server's stale-orphan reclaim SIGKILLs the daily-driver's live
-# server. This reports the live listener so a verify run that still kills it fails loudly
-# instead of costing Etan a cold model load on his next utterance.
-live_whisper_default_port_pids() {
-  local pids
-  if [ -n "${VOICELAYER_VERIFY_LIVE_WHISPER_PIDS_CMD:-}" ]; then
-    pids="$("$VOICELAYER_VERIFY_LIVE_WHISPER_PIDS_CMD" 2>/dev/null | sort -n | tr '\n' ',' | sed 's/,$//')"
-  else
-    pids="$(lsof -nP -iTCP:8178 -sTCP:LISTEN -t 2>/dev/null | sort -n | tr '\n' ',' | sed 's/,$//')"
-  fi
-  if [ -z "$pids" ]; then
-    printf 'none'
-  else
-    printf '%s' "$pids"
-  fi
-}
-
-resident_whisper_start_evidence() {
-  python3 - "$1" "$2" "$3" "$4" <<'PY'
+live_whisper_guard() {
+  LC_ALL=C python3 - "$@" <<'PY'
 import datetime
+import json
+import os
 import re
 import shlex
+import subprocess
 import sys
 
-before_path, after_path, started, listener = sys.argv[1:]
-if not re.fullmatch(r'[1-9][0-9]*', listener):
-    sys.exit(1)
 
-def processes(path):
+def inspect(command, empty_port=False):
+    result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+    if empty_port and result.returncode == 1 and not result.stdout and not result.stderr:
+        return ''
+    if result.returncode != 0 or result.stderr:
+        raise ValueError(f'{command[0]} status={result.returncode}: {result.stderr.strip()}')
+    return result.stdout
+
+
+def processes():
+    output = inspect(['ps', '-axo', 'pid=,ppid=,lstart=,command='])
+    if not output.strip():
+        raise ValueError('empty process inspection')
     result = {}
-    with open(path) as source:
-        for line in source:
-            parts = line.strip().split(None, 7)
-            if len(parts) != 8 or not parts[0].isdigit() or not parts[1].isdigit():
-                continue
-            try:
-                start = datetime.datetime.strptime(' '.join(parts[2:7]), '%a %b %d %H:%M:%S %Y')
-                args = shlex.split(parts[7])
-            except ValueError:
-                continue
-            result[parts[0]] = (parts[1], start, args)
+    for line in output.splitlines():
+        parts = line.strip().split(None, 7)
+        if (len(parts) != 8 or not re.fullmatch(r'[0-9]+', parts[0])
+                or not re.fullmatch(r'[0-9]+', parts[1]) or parts[0] in result):
+            raise ValueError('malformed process inspection')
+        start = datetime.datetime.strptime(' '.join(parts[2:7]), '%a %b %d %H:%M:%S %Y')
+        result[parts[0]] = dict(pid=parts[0], ppid=parts[1], start=start.isoformat(), command=parts[7])
     return result
 
+
+def listeners():
+    override = os.environ.get('VOICELAYER_VERIFY_LIVE_WHISPER_PIDS_CMD')
+    command = [override] if override else ['lsof', '-nP', '-iTCP:8178', '-sTCP:LISTEN', '-t']
+    output = inspect(command, empty_port=not override)
+    pids = output.split()
+    if any(not re.fullmatch(r'[1-9][0-9]*', pid) for pid in pids):
+        raise ValueError('malformed listener inspection')
+    return sorted(set(pids), key=int)
+
+
+def owners(table):
+    result = []
+    for pid, proc in table.items():
+        args = shlex.split(proc['command'])
+        parent = table.get(proc['ppid'])
+        if (any(arg.endswith('/src/mcp-server-daemon.ts') for arg in args) and parent
+                and shlex.split(parent['command'])[:1] == ['/Applications/VoiceBar.app/Contents/MacOS/VoiceBar']):
+            result.append(dict(daemon=proc, voicebar=parent))
+    return sorted(result, key=lambda owner: int(owner['daemon']['pid']))
+
+
+def snapshot(path):
+    first = processes()
+    pids = listeners()
+    second = processes()
+    if pids != listeners() or owners(first) != owners(second):
+        raise ValueError('listener/owner changed during inspection')
+    records = []
+    for pid in pids:
+        if pid not in first or first[pid] != second.get(pid):
+            raise ValueError(f'listener pid={pid} changed identity during inspection')
+        records.append(dict(port=8178, **first[pid]))
+    with open(path, 'w') as target:
+        json.dump(dict(listeners=records, owners=owners(first)), target)
+    print(','.join(pids) or 'none')
+
+
+def verify(before_path, after_path, final_path, started):
+    with open(before_path) as source:
+        before = json.load(source)
+    with open(after_path) as source:
+        after = json.load(source)
+    with open(final_path) as source:
+        final = json.load(source)
+    if after != final:
+        raise ValueError('listener/owner identity changed at certification boundary')
+    if before['owners'] != after['owners']:
+        raise ValueError('resident daemon/VoiceBar identity changed during corpus run')
+    if before['listeners'] == after['listeners']:
+        return
+    if before['listeners'] or len(after['listeners']) != 1 or len(before['owners']) != 1:
+        raise ValueError('listener transition is not an unambiguous resident start')
+    daemon = before['owners'][0]['daemon']
+    voicebar = before['owners'][0]['voicebar']
+    child = after['listeners'][0]
+    if (child['ppid'] != daemon['pid']
+            or datetime.datetime.fromisoformat(child['start']).timestamp() <= int(started)):
+        raise ValueError('listener is not a new child of the recorded resident daemon')
+    print(f"resident daemon pid={daemon['pid']} started={daemon['start']} "
+          f"VoiceBar pid={voicebar['pid']} started={voicebar['start']} "
+          f"listener pid={child['pid']} ppid={child['ppid']} started={child['start']} port={child['port']}; "
+          'identity reverified at certification boundary')
+
+
 try:
-    before, after = processes(before_path), processes(after_path)
-    owners = [(pid, proc) for pid, proc in before.items()
-              if any(arg.endswith('/src/mcp-server-daemon.ts') for arg in proc[2])
-              and proc[0] in before
-              and before[proc[0]][2][:1] == ['/Applications/VoiceBar.app/Contents/MacOS/VoiceBar']]
-    if len(owners) != 1:
-        sys.exit(1)
-    pid, daemon = owners[0]
-    voicebar = before[daemon[0]]
-    child = after[listener]
-    if (after.get(pid) != daemon or after.get(daemon[0]) != voicebar
-            or child[0] != pid or child[1].timestamp() <= int(started)):
-        sys.exit(1)
-    print(f'resident daemon pid={pid} started={daemon[1].isoformat()} '
-          f'VoiceBar pid={daemon[0]} listener pid={listener} started={child[1].isoformat()}')
-except (OSError, KeyError, ValueError, OverflowError):
+    if sys.argv[1] == 'snapshot':
+        snapshot(sys.argv[2])
+    else:
+        verify(*sys.argv[2:])
+except (OSError, ValueError, KeyError, OverflowError, subprocess.TimeoutExpired) as error:
+    print(f'[voicelayer-verify] corpus run touched the live whisper-server or inspection failed: {error}', file=sys.stderr)
     sys.exit(1)
 PY
 }
@@ -406,8 +451,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   export VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH="$corpus_work_dir/f5-finish-paste-terminal-very-long.proof"
   export VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH="$corpus_work_dir/whisper-server-port.proof"
   whisper_guard_start="$(date +%s)"
-  LC_ALL=C ps -axo pid=,ppid=,lstart=,command= > "$corpus_work_dir/processes-before" || : > "$corpus_work_dir/processes-before"
-  live_whisper_pid_before="$(live_whisper_default_port_pids)"
+  live_whisper_pid_before="$(live_whisper_guard snapshot "$corpus_work_dir/whisper-before.json")"
   printf '[voicelayer-verify] live whisper-server :8178 pid(s) before: %s\n' "$live_whisper_pid_before"
 
   assert_corpus_tree_clean
@@ -429,21 +473,8 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
       --work-dir "$corpus_work_dir" \
       --repo-root "$REPO_ROOT"
   fi
-  live_whisper_pid_after="$(live_whisper_default_port_pids)"
+  live_whisper_pid_after="$(live_whisper_guard snapshot "$corpus_work_dir/whisper-after.json")"
   printf '[voicelayer-verify] live whisper-server :8178 pid(s) after: %s\n' "$live_whisper_pid_after"
-  if [ "$live_whisper_pid_before" != "$live_whisper_pid_after" ]; then
-    LC_ALL=C ps -axo pid=,ppid=,lstart=,command= > "$corpus_work_dir/processes-after" || : > "$corpus_work_dir/processes-after"
-    whisper_start_evidence=''
-    if [ "$live_whisper_pid_before" = none ]; then
-      whisper_start_evidence="$(LC_ALL=C resident_whisper_start_evidence "$corpus_work_dir/processes-before" "$corpus_work_dir/processes-after" "$whisper_guard_start" "$live_whisper_pid_after")" || :
-    fi
-    if [ -z "$whisper_start_evidence" ]; then
-      printf '[voicelayer-verify] corpus run touched the live whisper-server (:8178 pid %s -> %s).\n' \
-        "$live_whisper_pid_before" "$live_whisper_pid_after" >&2
-      exit 1
-    fi
-    printf '[voicelayer-verify] accepted live whisper-server start: %s; guard start epoch=%s\n' "$whisper_start_evidence" "$whisper_guard_start"
-  fi
   whisper_server_port='unknown'
   if [ -s "$VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH" ]; then
     whisper_server_port="$(tr -d '[:space:]' <"$VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH")"
@@ -462,6 +493,13 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   printf '[voicelayer-verify] F5 very-long finish-paste terminal gate: PASS\n'
 
   assert_corpus_tree_clean
+
+  live_whisper_guard snapshot "$corpus_work_dir/whisper-final.json" >/dev/null
+  whisper_start_evidence="$(live_whisper_guard verify "$corpus_work_dir/whisper-before.json" \
+    "$corpus_work_dir/whisper-after.json" "$corpus_work_dir/whisper-final.json" "$whisper_guard_start")"
+  if [ -n "$whisper_start_evidence" ]; then
+    printf '[voicelayer-verify] accepted live whisper-server start: %s; guard start epoch=%s\n' "$whisper_start_evidence" "$whisper_guard_start"
+  fi
 
   mkdir -p "$VERIFY_DIR"
   tmp_artifact="${artifact}.tmp.$$"
