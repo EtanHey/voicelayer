@@ -51,7 +51,7 @@ import {
 } from "./daemon-startup";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
-import { bootstrapUpdateGate } from "./update-gate-bootstrap";
+import { startUpdateGateBootstrap } from "./update-gate-bootstrap";
 import { startLogRotation, stopLogRotation } from "./log-rotation";
 import { initEnrichedPATH } from "./resolve-binary";
 import { primeRecordingProvenanceProbes } from "./recording-provenance";
@@ -323,8 +323,7 @@ async function main() {
 
   process.on("SIGTERM", () => shutdown("sigterm"));
   process.on("SIGINT", () => shutdown("sigint"));
-  setImmediate(() => {
-    const updateGate = bootstrapUpdateGate();
+  void startUpdateGateBootstrap().then((updateGate) => {
     if (updateGate.kind === "REFUSED") console.error(`[voicelayer-daemon] ${updateGate.reason}`);
   });
 }

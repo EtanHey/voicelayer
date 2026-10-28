@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, lstatSync, openSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { Database } from "bun:sqlite";
 import { dlopen, FFIType } from "bun:ffi";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import { readUpdateGate } from "./update-gate";
 const ownerSchema = z.strictObject({ daemonId: z.uuid(), pid: z.number().int().positive(), startUs: z.number().int().positive() });
 type Owner = z.infer<typeof ownerSchema>;
 type BootstrapResult = { kind: "READY"; daemonId: string } | { kind: "REFUSED"; reason: string };
+type BootstrapStatus = { kind: "PENDING" } | BootstrapResult;
 const LOCK_EX_NONBLOCKING = 2 | 4;
 
 function ownerStatus(owner: Owner): "LIVE" | "DEAD" | "UNKNOWN" {
@@ -96,16 +98,40 @@ export function bootstrapUpdateGate(path?: string): BootstrapResult {
         if (library.symbols.flock(directoryFd, LOCK_EX_NONBLOCKING) !== 0) throw new Error("UNKNOWN bootstrap already in progress; retry after the other daemon settles");
         const existing = lstatSync(path, { throwIfNoEntry: false });
         if (existing && !existing.isFile()) throw new Error("UNKNOWN gate is not a regular file");
-        if (!existing || existing.size === 0) {
-          if (["-journal", "-wal", "-shm"].some(suffix => existsSync(`${path}${suffix}`))) throw new Error("UNKNOWN incomplete gate has recovery sidecars");
-          if (existing) closeSync(openSync(path, "r+"));
-          return publishGate(path, startUs, directoryFd);
-        }
-        return claimGate(path, startUs);
+        if (existing?.size === 0) throw new Error("UNKNOWN empty gate; bootstrap never publishes one, so its prior state is lost");
+        if (existing) return claimGate(path, startUs);
+        if (["-journal", "-wal", "-shm"].some(suffix => existsSync(`${path}${suffix}`))) throw new Error("UNKNOWN absent gate has recovery sidecars");
+        return publishGate(path, startUs, directoryFd);
       } finally { library.close(); }
     } finally { closeSync(directoryFd); }
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { kind: "REFUSED", reason: `Update gate UNKNOWN/refused (${detail}); recovery required: inspect ${path ?? "the configured VoiceLayer state directory"}, reconcile the pending update and unfinished archives before reopening. Preserve this state.` };
-  }
+  } catch (error) { return refused(path, error); }
+}
+
+function refused(path: string | undefined, error: unknown): BootstrapResult {
+  const detail = error instanceof Error ? error.message : String(error);
+  return { kind: "REFUSED", reason: `Update gate UNKNOWN/refused (${detail}); recovery required: inspect ${path ?? "the configured VoiceLayer state directory"}, reconcile the pending update and unfinished archives before reopening. Preserve this state.` };
+}
+
+let bootstrapStatus: BootstrapStatus = { kind: "PENDING" };
+export const updateGateBootstrapStatus = (): BootstrapStatus => bootstrapStatus;
+
+export function startUpdateGateBootstrap(path?: string): Promise<BootstrapResult> {
+  bootstrapStatus = { kind: "PENDING" };
+  return new Promise(resolve => {
+    let settled = false;
+    const settle = (result: BootstrapResult) => {
+      if (settled) return;
+      settled = true;
+      bootstrapStatus = result;
+      resolve(result);
+    };
+    try {
+      path ??= join(getStateDir(), "update-admission.sqlite");
+      const worker = new Worker(new URL("./update-gate-bootstrap-worker.ts", import.meta.url), { workerData: path });
+      worker.unref();
+      worker.on("message", settle);
+      worker.on("error", error => settle(refused(path, error)));
+      worker.on("exit", () => settle(refused(path, "UNKNOWN bootstrap worker exited without a result")));
+    } catch (error) { settle(refused(path, error)); }
+  });
 }

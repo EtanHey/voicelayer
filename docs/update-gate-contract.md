@@ -16,10 +16,10 @@ A nonblocking kernel flock on that directory serializes bootstrap publication an
 restart claims; process death releases the lock. SQLite ownership transactions
 also refuse contention immediately rather than waiting.
 
-An existing readable, writable regular zero-byte file without recovery sidecars is the sole
-legacy incomplete-create case bootstrap replaces. Nonempty partial headers and
-all other corrupt content remain UNKNOWN. Private temporary files left by a crash
-are never read as authoritative state.
+Bootstrap never writes the gate path in place, so an interrupted create leaves no
+gate. Only an absent gate is created. Every existing file that is not a valid
+gate, including an empty or truncated one, remains UNKNOWN with a recovery path.
+Private temporary files left by a crash are never read as authoritative state.
 
 Persisted OPEN alone is insufficient. Admission adapters must call
 `readTrustedUpdateGate(db)` inside their admission transaction; this checks the
@@ -34,11 +34,12 @@ ownership and unavailable identity probes also refuse gate ownership. Diagnostic
 the gate path and require reconciliation of the pending update and archives while
 preserving state. This slice supplies no closed-state recovery or state-deletion tool.
 
-In this standalone slice bootstrap is deferred until the daemon has started
-listening and installed its lifecycle handlers. Gate refusal is logged and never
-aborts daemon startup or changes current voice admission. Slice 2 must explicitly
-coordinate bootstrap readiness with its trusted-state admission checks and startup
-archive recovery; until then, successful daemon startup does not imply a trusted gate.
+The daemon starts bootstrap after it is listening, through
+`startUpdateGateBootstrap`, on a worker thread of the daemon process, so gate
+storage never blocks request handling. `updateGateBootstrapStatus()` is PENDING
+until the worker settles, then READY or REFUSED; slice 2 must treat PENDING as
+UNKNOWN. Gate refusal is logged and never aborts daemon startup or changes current
+voice admission; successful daemon startup does not imply a trusted gate.
 
 Every lease binds a positive safe-integer generation, UUID operation ID, UUID owner
 incarnation and lowercase full target merge SHA. The owner ID is retained across a
