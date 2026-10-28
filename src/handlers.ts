@@ -46,7 +46,6 @@ import {
   yieldVoiceMaintenanceToCapture,
   clearStopSignal,
   clearCancelSignal,
-  hasCancelSignal,
 } from "./session-booking";
 import {
   TTS_DISABLED_FILE,
@@ -688,6 +687,12 @@ export async function handleConverse(
   const inputAbortController = new AbortController();
   let captureAdmission: CaptureAdmission | undefined;
   const promptPlayers: QueuedPlaybackHandle[] = [];
+  const onDisconnect = (): void => {
+    inputAbortController.abort(new Error("MCP client disconnected"));
+    for (const handle of promptPlayers) cancelPlayback({ id: handle.id });
+  };
+  context?.disconnectSignal?.addEventListener("abort", onDisconnect, { once: true });
+  if (context?.disconnectSignal?.aborted) onDisconnect();
   let promptTimeoutCleanup: Promise<void> | undefined;
   let beforeCaptureExpired = false;
   let promptReaped: Promise<void> = Promise.resolve();
@@ -873,16 +878,13 @@ export async function handleConverse(
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return textResult("[converse] Request ended before recording could start.", true);
     }
-    const promptCancelled = hasCancelSignal();
-    const promptStopped = speech.playbackOutcome?.status === "interrupted" &&
-      speech.playbackOutcome.reason === "stopped";
-    if (promptCancelled || (speech.playbackOutcome && speech.playbackOutcome.status !== "completed" && !promptStopped)) {
+    const promptStopped = speech.playbackOutcome?.reason === "stopped";
+    if (speech.playbackOutcome && speech.playbackOutcome.status !== "completed" && !promptStopped) {
       captureAdmission.release();
       if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && getEffectiveRecordingState() === "idle") {
         broadcast({ type: "state", state: "idle", source: "playback" });
       }
-      return textResult(`[converse] Question ${promptCancelled ? "cancelled" : speech.playbackOutcome?.reason === "stopped" ? "stopped" : speech.playbackOutcome?.status}; nothing was recorded.`,
-        !promptCancelled && speech.playbackOutcome?.reason !== "stopped");
+      return textResult(`[converse] Question ${speech.playbackOutcome.status}; nothing was recorded.`, true);
     }
     // Bound recorder startup separately from prompt playback. The full capture
     // window is rearmed only by onCaptureStart after the microphone opens.
@@ -1040,6 +1042,7 @@ export async function handleConverse(
     }
     return textResult(`[converse] Error: ${message}`, true);
   } finally {
+    context?.disconnectSignal?.removeEventListener("abort", onDisconnect);
     progressHeartbeat?.stop();
   }
 }

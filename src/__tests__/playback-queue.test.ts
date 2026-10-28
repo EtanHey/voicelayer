@@ -697,11 +697,10 @@ describe("playback queue — P0-1 sequential playback", () => {
         await Bun.sleep(10); expect(ask.captureSpy).not.toHaveBeenCalled();
         expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toHaveLength(0);
         if (duringDecode) decoderMocks[0].resolveExit(); else playerMocks[0].resolveExit();
-        if (completion !== "exit" && completion !== "stop") {
+        if (completion.startsWith("seek")) {
           const result = await ask.request;
           expect(result.content[0].text).toContain("nothing was recorded");
-          if (completion.startsWith("seek")) expect(result.isError).toBe(true);
-          else expect(result.content[0].text).toContain("cancelled");
+          expect(result.isError).toBe(true);
           expect(ask.captureSpy).not.toHaveBeenCalled();
           expect(tts.isCaptureAdmissionReserved()).toBe(false);
           expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([

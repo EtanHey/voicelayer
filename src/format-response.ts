@@ -126,7 +126,7 @@ export function formatAsk(
 function formatPromptInterruption(
   outcome: PlaybackOutcomeEvent | undefined,
 ): string | null {
-  if (outcome?.status !== "interrupted") return null;
+  if (!outcome || (outcome.status !== "interrupted" && outcome.reason !== "stopped")) return null;
   const percent = Math.round(outcome.progress * 100);
   const wordPosition =
     outcome.word_index !== undefined && outcome.word_count

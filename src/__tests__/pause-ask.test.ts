@@ -8,7 +8,9 @@ import * as socket from "../socket-client";
 import { handleVoiceAsk } from "../handlers";
 import { handleSocketCommand } from "../socket-handlers";
 import { hasActiveVoiceOperation } from "../voice-operation-reservation";
-import { TEST_TMP } from "./setup/test-tmp";
+import { createMcpDaemon } from "../mcp-daemon";
+import { serializeMcpFrame } from "../mcp-framing";
+import { TEST_TMP, testSocket } from "./setup/test-tmp";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint as flush } from "./long-read-fixture-barriers";
 
 type Player = { exit: ReturnType<typeof deferred<number>>; signals: string[] };
@@ -119,7 +121,7 @@ for (const paused of [false, true]) it(`Stop during ${paused ? "paused" : "playi
   expect(tts.resumePlayback({ id: handle.id })).toMatchObject({ outcome: "noop" });
 });
 
-for (const paused of [false, true]) it(`Cancel during ${paused ? "paused" : "playing"} Ask never captures`, async () => {
+for (const paused of [false, true]) it(`Cancel during ${paused ? "paused" : "playing"} Ask preserves main capture after physical exit`, async () => {
   const { player, handle } = paused ? await pauseAsk() : await startAsk();
   if (paused) (await trims.at(0)).resolve(0);
   const command = handleSocketCommand({ cmd: "cancel", id: "ask-cancel" });
@@ -127,8 +129,8 @@ for (const paused of [false, true]) it(`Cancel during ${paused ? "paused" : "pla
   expect(capture).not.toHaveBeenCalled();
   player.exit.resolve(143);
   expect(await command).toMatchObject({ outcome: "accept" });
-  expect((await pending)?.content[0].text).toContain("nothing was recorded");
-  expect(capture).not.toHaveBeenCalled();
+  expect((await pending)?.content[0].text).toContain("fixture answer");
+  expect(capture).toHaveBeenCalledTimes(1);
   expect(tts.isCaptureAdmissionReserved()).toBe(false);
   expect(tts.resumePlayback({ id: handle.id })).toMatchObject({ outcome: "noop" });
 });
@@ -252,7 +254,7 @@ it("VoiceBar socket commands pause and resume the admitted Ask identity", async 
   expect(capture).toHaveBeenCalledTimes(1);
 });
 
-it("Stop during admitted prompt preparation never captures", async () => {
+it("Stop during admitted prompt preparation captures without spawning a player", async () => {
   const envelope = deferred<amplitude.PlaybackAmplitudeEnvelope>();
   spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockReturnValue({ result: envelope.promise, cancel() {} });
   pending = handleVoiceAsk({ message: "Question?" });
@@ -260,6 +262,104 @@ it("Stop during admitted prompt preparation never captures", async () => {
   expect(handles).toHaveLength(1);
   expect(players.values).toHaveLength(0);
   tts.stopPlayback(); envelope.resolve({ source: "unavailable", sample_interval_ms: 50, samples: [] });
-  expect((await pending)?.content[0].text).toContain("stopped");
+  expect((await pending)?.content[0].text).toContain("fixture answer");
+  expect(capture).toHaveBeenCalledTimes(1);
+  expect(players.values).toHaveLength(0);
+});
+
+for (const preparing of [false, true]) it(`Stop after Resume while ${preparing ? "preparing" : "waiting for the old exit"} captures after all exits`, async () => {
+  const envelope = deferred<amplitude.PlaybackAmplitudeEnvelope>();
+  let player: Player | undefined;
+  let handle: tts.QueuedPlaybackHandle;
+  if (preparing) {
+    spies.push(spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockReturnValue({ result: envelope.promise, cancel() {} }));
+    pending = handleVoiceAsk({ message: "Question?" });
+    await flush();
+    handle = handles[0];
+    expect(tts.pausePlayback({ id: handle.id }, 0).outcome).toBe("accept");
+  } else {
+    ({ player, handle } = await pauseAsk());
+    (await trims.at(0)).resolve(0);
+  }
+  await flush();
+  expect(tts.resumePlayback({ id: handle.id, generation: handle.generation }).outcome).toBe("accept");
+  await flush();
+  expect(players.values).toHaveLength(preparing ? 0 : 1);
+  const command = handleSocketCommand({ cmd: "stop", id: "resume-stop" });
+  await flush();
   expect(capture).not.toHaveBeenCalled();
+  player?.exit.resolve(143);
+  envelope.resolve({ source: "unavailable", sample_interval_ms: 50, samples: [] });
+  expect(await command).toMatchObject({ outcome: "accept" });
+  const result = await pending;
+  expect(result?.content[0].text).toContain("fixture answer");
+  expect(result?.content[0].text).toContain("Prompt interrupted");
+  expect(capture).toHaveBeenCalledTimes(1);
+  expect(await handle.exited).toMatchObject({ status: "skipped", reason: "stopped" });
+  expect(players.values).toHaveLength(preparing ? 0 : 1);
+});
+
+it("Stop then Esc before player exit preserves main capture behaviour", async () => {
+  const { player } = await startAsk();
+  const stop = handleSocketCommand({ cmd: "stop", id: "stop-esc" });
+  await flush();
+  const cancel = handleSocketCommand({ cmd: "cancel", id: "esc-after-stop" });
+  expect(booking.hasCancelSignal()).toBe(true);
+  expect(capture).not.toHaveBeenCalled();
+  player.exit.resolve(143);
+  expect(await cancel).toMatchObject({ outcome: "accept" });
+  await stop;
+  expect((await pending)?.content[0].text).toContain("fixture answer");
+  expect(capture).toHaveBeenCalledTimes(1);
+});
+
+for (const paused of [false, true]) it(`Disconnect during ${paused ? "paused" : "playing"} Ask never captures`, async () => {
+  const disconnect = new AbortController();
+  pending = handleVoiceAsk({ message: "Question?" }, { emit() {}, disconnectSignal: disconnect.signal });
+  const player = await players.at(0);
+  if (paused) expect(tts.pausePlayback({ id: handles[0].id }, 0).outcome).toBe("accept");
+  disconnect.abort();
+  tts.stopPlayback();
+  await flush();
+  expect(capture).not.toHaveBeenCalled();
+  player.exit.resolve(143);
+  expect((await pending)?.content[0].text).toContain("ended before recording");
+  expect(capture).not.toHaveBeenCalled();
+});
+
+for (const shutdown of [false, true]) for (const framing of ["mcp", "ndjson"]) it(`${framing} ${shutdown ? "daemon shutdown" : "client disconnect"} cancels its owned Ask without capture`, async () => {
+  let disconnectSignal: AbortSignal | undefined;
+  const daemon = await createMcpDaemon({
+    socketPath: testSocket("ask-client.sock"),
+    toolExecutor: { executeTool(_name, args, context) {
+      disconnectSignal = context.disconnectSignal;
+      pending = handleVoiceAsk(args, context);
+      return pending;
+    } },
+  });
+  const client = await Bun.connect({
+    unix: testSocket("ask-client.sock"),
+    socket: { data() {}, close() {}, error() {} },
+  });
+  try {
+    const request = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "voice_ask", arguments: { message: "Question?" } } };
+    client.write(framing === "mcp" ? serializeMcpFrame(request) : JSON.stringify(request) + "\n");
+    const player = await players.at(0);
+    expect(disconnectSignal).toBeDefined();
+    if (!disconnectSignal) return;
+    const disconnected = new Promise<void>(resolve => disconnectSignal?.addEventListener("abort", () => resolve(), { once: true }));
+    if (shutdown) {
+      daemon.stop();
+      expect(disconnectSignal.aborted).toBe(true);
+    } else client.end();
+    await disconnected;
+    await flush();
+    expect(capture).not.toHaveBeenCalled();
+    player.exit.resolve(143);
+    expect((await pending)?.content[0].text).toContain("ended before recording");
+    expect(capture).not.toHaveBeenCalled();
+  } finally {
+    client.end();
+    daemon.stop();
+  }
 });

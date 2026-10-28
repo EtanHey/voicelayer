@@ -19,6 +19,7 @@ export type VoiceToolEvent =
   | PlaybackOutcomeToolEvent;
 
 export interface VoiceToolContext {
+  disconnectSignal?: AbortSignal;
   connection?: "stdio" | "daemon";
   emit(event: VoiceToolEvent): void;
   /** Test-only timing seam; production uses the default heartbeat interval. */
