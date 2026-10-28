@@ -1,10 +1,6 @@
 import CoreGraphics
 import Observation
 
-public enum VoiceBarRetainedReadbackPolicy {
-    public static let dismissDelay: Duration = .milliseconds(800)
-}
-
 @Observable
 public final class VoiceBarNotchPresentationModel {
     public private(set) var presentation: VoiceBarNotchPresentation
