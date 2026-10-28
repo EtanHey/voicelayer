@@ -36,6 +36,72 @@ const pauses = (plan: ProsodyPlan) => plan.segments.map((s) => s.pauseMs);
 
 describe("R-ONE clone list numbers", () => {
   const releaseNotes = "## Release notes\n\n**Fixed:** the pill no longer jumps.\n\n1. First item.\n2. Second item.\n";
+  const punctuationCases = [
+    {
+      name: "B1 parenthesized selection abbreviation",
+      source: "1) Intro.\n2) Ask Dr. Smith.",
+      markdown: "one, Intro. two, Ask Dr. Smith.",
+      selection: "one, Intro. 2) Ask Dr. Smith.",
+    },
+    {
+      name: "abbreviations",
+      source: "1. Ask Dr. Smith about e.g. item counts.\n2. Keep U.S. names.",
+      markdown: "one, Ask Dr. Smith about e.g. item counts. two, Keep U.S. names.",
+      selection: "one, Ask Dr. Smith about e.g. item counts. 2, Keep U.S. names.",
+    },
+    {
+      name: "decimals",
+      source: "1. Value 3.14 stays.\n2) Keep 2.50.",
+      markdown: "one, Value 3.14 stays. two, Keep 2.50.",
+      selection: "one, Value 3.14 stays. 2) Keep 2.50.",
+    },
+    {
+      name: "questions and exclamations",
+      source: "1. Can we ship?\n2) Really!",
+      markdown: "one, Can we ship? two, Really!",
+      selection: "one, Can we ship? 2) Really!",
+    },
+    {
+      name: "nested lists",
+      source: "1. Parent item.\n   1. Nested item.\n   2) Nested alternative!\n2. Final item.",
+      markdown: "one, Parent item. one, Nested item. two, Nested alternative! two, Final item.",
+      selection: "one, Parent item. 1, Nested item. 2) Nested alternative! 2, Final item.",
+    },
+    {
+      name: "Hebrew",
+      source: "1. שלום עולם.\n2. האם זה עובד?\n3) גרסה 3.14 נשמרת!",
+      markdown: "1, שלום עולם. 2, האם זה עובד? 3, גרסה 3.14 נשמרת!",
+      selection: "1, שלום עולם. 2, האם זה עובד? 3) גרסה 3.14 נשמרת!",
+    },
+    {
+      name: "parenthesized sentence stops",
+      source: "1) First item. More words.\n2) Second item?",
+      markdown: "one, First item. More words. two, Second item?",
+      selection: "one, First item. More words. 2) Second item?",
+    },
+    {
+      name: "numbered labels",
+      source: "1. **Item:** Keep 1.2.\n2) **Note:** Ask Dr. Smith.",
+      markdown: "one, Item. Keep 1.2. two, Note. Ask Dr. Smith.",
+      selection: "one, Item: Keep 1.2. 2) Note: Ask Dr. Smith.",
+    },
+    {
+      name: "oversized items",
+      source: "1. " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "\n2) End.",
+      markdown: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "two, End.",
+      selection: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "2) End.",
+    },
+  ];
+  for (const fixture of punctuationCases) for (const selection of [false, true]) {
+    it(`preserves full body punctuation: ${fixture.name} (selection=${selection})`, () => {
+      const structure = selection ? projectStructuredSpeech(fixture.source) : undefined;
+      const readText = structure?.speechText ?? fixture.source;
+      const projection = projectSpeakableText(readText, [], "clone");
+      const plan = planProsody({ readText, projection, structure, engine: "clone", listNumbers: "inline", concurrency: 1 });
+      expect(plan.speechText).toBe(selection ? fixture.selection : fixture.markdown);
+      expectSound(plan, projection.speechText);
+    });
+  }
   for (const selection of [false, true]) it(`keeps every number in the item without a sentence stop (selection=${selection})`, () => {
     const structure = selection ? projectStructuredSpeech(releaseNotes) : undefined;
     const readText = structure?.speechText ?? releaseNotes;

@@ -364,8 +364,14 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
 
   for (const [i, segment] of segments.entries()) {
     const item = (segment as { item?: boolean }).item;
-    if (clone && input.listNumbers === "inline" && item && /^\s*\d+[.)][ \t]+/.test(readText.slice(segment.read.start, segment.read.end)))
-      segment.text = segment.text.replace(/^([^.!?]+)\.(?=\s|$)/u, "$1,");
+    if (clone && input.listNumbers === "inline" && item) {
+      const marker = readText.slice(segment.read.start, segment.read.end).match(/^\s*\d+[.)](?=[ \t]+)/)?.[0];
+      if (marker) {
+        const delimiter = speechAt(segment.read.start + marker.length) - segment.speech.start - 1;
+        if (segment.text[delimiter] === ".")
+          segment.text = segment.text.slice(0, delimiter) + "," + segment.text.slice(delimiter + 1);
+      }
+    }
     if (!item && (segment.kind === "prose" || segment.kind === "aside") && TERMINAL.test(segment.text) && i < segments.length - 1)
       segment.pauseMs = Math.max(segment.pauseMs, PAUSE.sentence);
     const continues = (segment as { continues?: boolean }).continues;
