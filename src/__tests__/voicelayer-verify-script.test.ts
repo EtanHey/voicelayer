@@ -335,6 +335,46 @@ describe("voicelayer-verify.sh", () => {
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
+  for (const scenario of ["resident child", "foreign child", "vanished", "replaced", "restarted daemon", "old child", "unknown daemon", "multiple listeners", "failed process snapshot"] as const) {
+    test(`live whisper transition: ${scenario}`, () => {
+      pidsDir = mkdtempSync(join(tmpdir(), "verify-whisper-transition-"));
+      const changed = join(tempRoot, "changed.txt");
+      const runner = join(tempRoot, "corpus-runner.sh");
+      const state = join(pidsDir, "after");
+      const pids = join(pidsDir, "pids");
+      const before = scenario === "vanished" || scenario === "replaced" ? "100" : "";
+      const after = scenario === "vanished" ? "" : scenario === "multiple listeners" ? "101\n102" : "101";
+      writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+      writeFileSync(pids, `#!/bin/sh\nif [ -f "$STATE" ]; then echo '${after}'; else echo '${before}'; fi\n`, { mode: 0o755 });
+      writeFileSync(runner, '#!/bin/sh\ntouch "$STATE"\necho pass > "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"\necho pass > "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH"\n', { mode: 0o755 });
+      const format = (offset: number) => text(run(["python3", "-c",
+        `import datetime; print((datetime.datetime.now() + datetime.timedelta(seconds=${offset})).strftime('%a %b %d %H:%M:%S %Y'))`,
+      ], { env: { LC_ALL: "C" } }).stdout).trim();
+      const old = format(-120);
+      const newer = format(120);
+      const daemonAfter = scenario === "restarted daemon" ? newer : old;
+      const parent = scenario === "foreign child" ? "999" : "200";
+      const childStart = scenario === "old child" ? old : newer;
+      const fakeBin = writeFakeExecutable("ps", `#!/bin/sh\nif [ -f "$STATE" ]; then\n  echo ' 200 300 ${daemonAfter} bun run /pkg/src/mcp-server-daemon.ts'\n  echo ' 101 ${parent} ${childStart} whisper-server --port 8178'\nelse\n  echo ' 200 ${scenario === "unknown daemon" ? "999" : "300"} ${old} bun run /pkg/src/mcp-server-daemon.ts'\nfi\necho ' 300 1 ${old} /Applications/VoiceBar.app/Contents/MacOS/VoiceBar'\n${scenario === "failed process snapshot" ? "exit 1" : ""}\n`);
+      const result = run(["bash", scriptPath, "--corpus", "1"], { env: {
+        STATE: state, PATH: `${fakeBin}:${process.env.PATH}`, VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed, VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+        VOICELAYER_VERIFY_LIVE_WHISPER_PIDS_CMD: pids,
+      } });
+      if (scenario === "resident child") {
+        if (result.exitCode !== 0) throw new Error(`${text(result.stdout)}\n${text(result.stderr)}`);
+        expect(text(result.stderr)).toBe("");
+        expect(result.exitCode).toBe(0);
+        expect(text(result.stdout)).toContain("resident daemon");
+        const artifact = readdirSync(join(tempRoot, ".verified"))[0];
+        expect(text(run(["cat", join(tempRoot, ".verified", artifact)]).stdout)).toContain("live_whisper_8178_start_evidence: resident daemon pid=200");
+      } else {
+        expect(result.exitCode).not.toBe(0);
+        expect(text(result.stderr)).toContain("corpus run touched the live whisper-server");
+      }
+    }, SAFETY_SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
   test("refuses to certify a corpus run that killed the live whisper-server", () => {
     run(["git", "checkout", "-b", "feature/corpus-whisper-pid-hop"]);
     const changed = join(tempRoot, "changed.txt");

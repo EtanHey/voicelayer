@@ -163,6 +163,53 @@ live_whisper_default_port_pids() {
   fi
 }
 
+resident_whisper_start_evidence() {
+  python3 - "$1" "$2" "$3" "$4" <<'PY'
+import datetime
+import re
+import shlex
+import sys
+
+before_path, after_path, started, listener = sys.argv[1:]
+if not re.fullmatch(r'[1-9][0-9]*', listener):
+    sys.exit(1)
+
+def processes(path):
+    result = {}
+    with open(path) as source:
+        for line in source:
+            parts = line.strip().split(None, 7)
+            if len(parts) != 8 or not parts[0].isdigit() or not parts[1].isdigit():
+                continue
+            try:
+                start = datetime.datetime.strptime(' '.join(parts[2:7]), '%a %b %d %H:%M:%S %Y')
+                args = shlex.split(parts[7])
+            except ValueError:
+                continue
+            result[parts[0]] = (parts[1], start, args)
+    return result
+
+try:
+    before, after = processes(before_path), processes(after_path)
+    owners = [(pid, proc) for pid, proc in before.items()
+              if any(arg.endswith('/src/mcp-server-daemon.ts') for arg in proc[2])
+              and proc[0] in before
+              and before[proc[0]][2][:1] == ['/Applications/VoiceBar.app/Contents/MacOS/VoiceBar']]
+    if len(owners) != 1:
+        sys.exit(1)
+    pid, daemon = owners[0]
+    voicebar = before[daemon[0]]
+    child = after[listener]
+    if (after.get(pid) != daemon or after.get(daemon[0]) != voicebar
+            or child[0] != pid or child[1].timestamp() <= int(started)):
+        sys.exit(1)
+    print(f'resident daemon pid={pid} started={daemon[1].isoformat()} '
+          f'VoiceBar pid={daemon[0]} listener pid={listener} started={child[1].isoformat()}')
+except (OSError, KeyError, ValueError, OverflowError):
+    sys.exit(1)
+PY
+}
+
 is_voicebar_launchd_managed() {
   command -v launchctl >/dev/null 2>&1 || return 1
   launchctl list "$VOICEBAR_LAUNCHD_LABEL" >/dev/null 2>&1
@@ -358,6 +405,8 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   export VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH="$corpus_work_dir/f5-finish-paste-terminal.proof"
   export VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH="$corpus_work_dir/f5-finish-paste-terminal-very-long.proof"
   export VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH="$corpus_work_dir/whisper-server-port.proof"
+  whisper_guard_start="$(date +%s)"
+  LC_ALL=C ps -axo pid=,ppid=,lstart=,command= > "$corpus_work_dir/processes-before" || : > "$corpus_work_dir/processes-before"
   live_whisper_pid_before="$(live_whisper_default_port_pids)"
   printf '[voicelayer-verify] live whisper-server :8178 pid(s) before: %s\n' "$live_whisper_pid_before"
 
@@ -383,9 +432,17 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   live_whisper_pid_after="$(live_whisper_default_port_pids)"
   printf '[voicelayer-verify] live whisper-server :8178 pid(s) after: %s\n' "$live_whisper_pid_after"
   if [ "$live_whisper_pid_before" != "$live_whisper_pid_after" ]; then
-    printf '[voicelayer-verify] corpus run touched the live whisper-server (:8178 pid %s -> %s).\n' \
-      "$live_whisper_pid_before" "$live_whisper_pid_after" >&2
-    exit 1
+    LC_ALL=C ps -axo pid=,ppid=,lstart=,command= > "$corpus_work_dir/processes-after" || : > "$corpus_work_dir/processes-after"
+    whisper_start_evidence=''
+    if [ "$live_whisper_pid_before" = none ]; then
+      whisper_start_evidence="$(LC_ALL=C resident_whisper_start_evidence "$corpus_work_dir/processes-before" "$corpus_work_dir/processes-after" "$whisper_guard_start" "$live_whisper_pid_after")" || :
+    fi
+    if [ -z "$whisper_start_evidence" ]; then
+      printf '[voicelayer-verify] corpus run touched the live whisper-server (:8178 pid %s -> %s).\n' \
+        "$live_whisper_pid_before" "$live_whisper_pid_after" >&2
+      exit 1
+    fi
+    printf '[voicelayer-verify] accepted live whisper-server start: %s; guard start epoch=%s\n' "$whisper_start_evidence" "$whisper_guard_start"
   fi
   whisper_server_port='unknown'
   if [ -s "$VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH" ]; then
@@ -423,6 +480,9 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
     printf 'whisper_server_port: %s\n' "$whisper_server_port"
     printf 'live_whisper_8178_pid_before: %s\n' "$live_whisper_pid_before"
     printf 'live_whisper_8178_pid_after: %s\n' "$live_whisper_pid_after"
+    if [ -n "${whisper_start_evidence:-}" ]; then
+      printf 'live_whisper_8178_start_evidence: %s; guard start epoch=%s\n' "$whisper_start_evidence" "$whisper_guard_start"
+    fi
     printf 'daemon_files:\n'
     printf '%s' "$daemon_files" | sed 's/^/- /'
   } >"$tmp_artifact"
