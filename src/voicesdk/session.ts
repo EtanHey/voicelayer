@@ -270,15 +270,21 @@ export function createVoiceSdkSessionManager(
       cancelOwned();
     } finally {
       finished = true;
-      bargeInMonitor.current?.stop();
+      let cleanupFailure: { error: unknown } | undefined;
+      try { bargeInMonitor.current?.stop(); }
+      catch (error) { cleanupFailure = { error }; }
       try { await bargeInMonitor.current?.exited; }
       catch (error) {
-        console.error("[voicelayer] barge-in monitor teardown:", error);
         reason = "error";
-        cancelOwned();
+        try { console.error("[voicelayer] barge-in monitor teardown:", error); cancelOwned(); }
+        catch (error) { cleanupFailure ??= { error }; }
       }
       try { await waitForPlayerExit(playbacks); }
-      catch { reason = "error"; cancelOwned(); }
+      catch {
+        reason = "error";
+        try { cancelOwned(); } catch (error) { cleanupFailure ??= { error }; }
+      }
+      if (cleanupFailure) throw cleanupFailure.error;
     }
     if (interrupted && reason !== "error") {
       reason = "interrupted";

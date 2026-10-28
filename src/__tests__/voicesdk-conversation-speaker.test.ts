@@ -50,7 +50,7 @@ async function fixture(reuseId = false) {
     const input = { text: "Ignored ack body", conversation: { agent: A, phase: "ACK_AFTER_USER" as const, work } };
     return manager.speak(session.session_id, input);
   }
-  return { manager, session, calls, say, ack, get captures() { return captures; },
+  return { manager, session, calls, say, ack, layer, get captures() { return captures; },
     mode(value: typeof mode) { mode = value; }, finish() { pending.resolve(); pending = Promise.withResolvers<void>(); },
     physical(value: Promise<void>) { physical = value; } };
 }
@@ -79,6 +79,32 @@ for (const legacy of [false, true]) {
     expect(f.calls.map(call => call.text)).toEqual(["Agent A here. Body."]);
   });
 }
+
+it("a throwing monitor Stop retains ownership through monitor and player exit", async () => {
+  const f = await fixture(), monitor = Promise.withResolvers<void>(), player = Promise.withResolvers<void>();
+  const cause = Error("monitor Stop failed");
+  f.physical(player.promise);
+  f.layer.cancellation.cancelPlayback = () => true;
+  f.layer.bargeIn = { monitorDuringPlayback: () => ({
+    exited: monitor.promise, stop() { throw cause; },
+    async pushAudioChunk() { return { speechStarted: false }; },
+    getMetrics: () => ({ processed_chunks: 0, false_interrupts: 0, confirmed_interrupts: 0, false_interrupt_rate: 0 }),
+  }) };
+  let error: unknown, settled = false;
+  const first = f.say().then(() => { settled = true; }, failure => { error = failure; settled = true; });
+  try {
+    await Bun.sleep(0);
+    expect(settled).toBe(false);
+    await expect(f.say(B)).rejects.toThrow("overlapping conversation");
+    expect(f.calls).toHaveLength(1);
+    monitor.resolve(); await Bun.sleep(0);
+    expect(settled).toBe(false);
+  } finally { monitor.resolve(); player.resolve(); await first; }
+  expect(error).toBe(cause);
+  f.layer.bargeIn = undefined;
+  await f.say(B);
+  expect(f.calls.map(call => call.text)).toEqual(["Agent A here. Body.", "Agent B here. Body."]);
+});
 
 it("uses stable identity for A→B→A, independently of display/model/voice", async () => {
   const f = await fixture();
