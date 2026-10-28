@@ -86,6 +86,18 @@ describe("R-ONE clone list numbers", () => {
       selection: "one, Item: Keep 1.2. 2) Note: Ask Dr. Smith.",
     },
     {
+      name: "label body starting with a year",
+      source: "1. **Released:** 2025. It shipped.\n2. Second item.\n",
+      markdown: "one, Released. 2025. It shipped. two, Second item.",
+      selection: "one, Released: 2025. It shipped. 2, Second item.",
+    },
+    {
+      name: "label body starting with a version",
+      source: "1. **Version:** 2.5. Done.\n2. Second item.\n",
+      markdown: "one, Version. 2.5. Done. two, Second item.",
+      selection: "one, Version: 2.5. Done. 2, Second item.",
+    },
+    {
       name: "oversized items",
       source: "1. " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "\n2) End.",
       markdown: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "two, End.",

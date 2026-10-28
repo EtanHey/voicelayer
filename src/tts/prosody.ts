@@ -132,6 +132,8 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   const spoken = (read: number) => projection.ranges.some((r) => r.kind === "identity" && r.source.start <= read && read < r.source.end);
 
   const units: Unit[] = [];
+  /** Read offsets just after each inline list number's delimiter ("1." → after "."). */
+  const markers: number[] = [];
   const pause = (ms: number) => { const last = units.at(-1); if (last) last.pauseMs = Math.max(last.pauseMs, ms); };
   const push = (at: number, kind: ProsodySegmentKind, pauseMs = 0, emphasis = false, item = false) =>
     units.push({ at, kind, emphasis, pauseMs, item });
@@ -206,7 +208,10 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
       const long = words >= 6;
       // A spoken number ("one.", "1.", "100.") is its own utterance: the item starts after it.
       let content = readAt(start);
-      const number = input.listNumbers === "inline" ? undefined : numberEnd(start, lineEnd, raw);
+      const numbered = numberEnd(start, lineEnd, raw);
+      // An inline number stays in the item request; remember where its delimiter sits in the read.
+      if (input.listNumbers === "inline" && numbered !== undefined) markers.push(readText.slice(0, numbered).trimEnd().length);
+      const number = input.listNumbers === "inline" ? undefined : numbered;
       if (number !== undefined && WORD.test(projection.speechText.slice(speechAt(content), speechAt(number)))) {
         push(content, "number", long ? PAUSE.longNumber : PAUSE.number, false, true);
         content = number;
@@ -365,9 +370,10 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   for (const [i, segment] of segments.entries()) {
     const item = (segment as { item?: boolean }).item;
     if (clone && input.listNumbers === "inline" && item) {
-      const marker = readText.slice(segment.read.start, segment.read.end).match(/^\s*\d+[.)](?=[ \t]+)/)?.[0];
-      if (marker) {
-        const delimiter = speechAt(segment.read.start + marker.length) - segment.speech.start - 1;
+      // Only the segment holding the item's own marker; a later body segment ("2025. It shipped.") keeps its stop.
+      const marker = markers.find((at) => segment.read.start < at && at <= segment.read.end);
+      if (marker !== undefined) {
+        const delimiter = speechAt(marker) - segment.speech.start - 1;
         if (segment.text[delimiter] === ".")
           segment.text = segment.text.slice(0, delimiter) + "," + segment.text.slice(delimiter + 1);
       }
