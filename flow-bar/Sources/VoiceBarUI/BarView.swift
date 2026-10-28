@@ -451,7 +451,6 @@ public struct BarView: View {
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
-            isPlaybackPaused: state.isPlaybackPaused,
             readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
@@ -645,7 +644,7 @@ public struct BarView: View {
         let isCompact = notchPresentation.visualState == .compactStatus
         return HStack(spacing: isCompact ? VoiceBarNotchContract.material.compactControlSpacing : 0) {
             notchWaveform
-            if isCompact, state.isTeleprompterDismissed, !state.isPlaybackPaused {
+            if isCompact, state.isTeleprompterDismissed {
                 notchTeleprompterButton(
                     icon: "eye",
                     accessibilityLabel: "Show teleprompter"

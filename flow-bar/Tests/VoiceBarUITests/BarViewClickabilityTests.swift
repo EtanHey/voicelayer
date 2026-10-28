@@ -1100,7 +1100,6 @@ final class BarViewClickabilityTests: XCTestCase {
                 hasTeleprompterText: state.teleprompterText != nil,
                 isTeleprompterDismissed: state.isTeleprompterDismissed,
                 isTeleprompterReadback: state.isTeleprompterReadback,
-                isPlaybackPaused: state.isPlaybackPaused,
                 readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
                 isCollapsed: state.isCollapsed
             )

@@ -114,8 +114,6 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var hasTeleprompterText: Bool
     public var isTeleprompterDismissed: Bool
     public var isTeleprompterReadback: Bool
-    /// P16: the read is parked by Pause; the teleprompter collapses until Resume.
-    public var isPlaybackPaused: Bool
     /// QUEUE1: pause/play alone is 1 slot; Next and the "+N" count widen the leading wing.
     public var readQueueLeadingSlotCount: Int
     public var confirmationText: String?
@@ -141,7 +139,6 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         hasTeleprompterText: Bool = false,
         isTeleprompterDismissed: Bool = false,
         isTeleprompterReadback: Bool = false,
-        isPlaybackPaused: Bool = false,
         readQueueLeadingSlotCount: Int = 1,
         confirmationText: String? = nil,
         commandModeState: CommandModeState? = nil,
@@ -162,7 +159,6 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.hasTeleprompterText = hasTeleprompterText
         self.isTeleprompterDismissed = isTeleprompterDismissed
         self.isTeleprompterReadback = isTeleprompterReadback
-        self.isPlaybackPaused = isPlaybackPaused
         self.readQueueLeadingSlotCount = readQueueLeadingSlotCount
         self.confirmationText = confirmationText
         self.commandModeState = commandModeState
@@ -228,7 +224,7 @@ public enum VoiceBarPresentation {
             hasText: input.hasTeleprompterText,
             isDismissed: input.isTeleprompterDismissed,
             isReadback: input.isTeleprompterReadback
-        ) && !(input.mode == .idle && hasCompactStatus) && !isPlaybackPaused(input)
+        ) && !(input.mode == .idle && hasCompactStatus)
         let keepsIdleExpanded = input.mode == .idle && !input.isCollapsed
 
         return VoiceBarNotchPresentation.resolve(
@@ -317,7 +313,7 @@ public enum VoiceBarPresentation {
             return insets + material.waveformSlotWidth +
                 material.compactControlSpacing + material.compactControlSize
         case .speaking:
-            let visibilityControl = input.isTeleprompterDismissed && !input.isPlaybackPaused
+            let visibilityControl = input.isTeleprompterDismissed
                 ? material.compactControlSpacing + material.compactControlSize
                 : 0
             return insets + material.waveformSlotWidth +
@@ -403,10 +399,6 @@ public enum VoiceBarPresentation {
         )
     }
 
-    private static func isPlaybackPaused(_ input: VoiceBarNotchOperationalInput) -> Bool {
-        input.mode == .speaking && input.isPlaybackPaused
-    }
-
     /// P16 (Etan, 2026-10-18): pause/play sits on the pill's left while VoiceBar speaks, never while
     /// recording, transcribing or idle (an ended readback has nothing playing).
     public static func playbackPauseControl(
@@ -424,7 +416,7 @@ public enum VoiceBarPresentation {
             : VoiceBarPlaybackPauseControl(
                 iconName: "pause.fill",
                 accessibilityLabel: "Pause speech",
-                accessibilityHint: "Pause reading and collapse the teleprompter"
+                accessibilityHint: "Pause reading"
             )
     }
 

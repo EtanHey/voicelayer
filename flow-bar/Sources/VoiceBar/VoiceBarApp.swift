@@ -1876,7 +1876,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // QUEUE1: Next and the "+N" count share the left wing.
                 return VoiceBarNotchInteractionConfiguration(
                     leadingControlCount: playbackLeadingSlotCount(for: state),
-                    trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
+                    trailingControlCountFromOuter: state.isTeleprompterDismissed ? 2 : 1,
                     trailingOuterInset: WaveformLayout.outerInset
                 )
             case .error:
@@ -1980,7 +1980,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 hasTeleprompterText: state?.teleprompterText != nil,
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
-                isPlaybackPaused: state?.isPlaybackPaused ?? false,
                 readQueueLeadingSlotCount: state.flatMap { VoiceBarPresentation.readQueueControl(for: $0)?.leadingSlotCount } ?? 1,
                 confirmationText: state?.confirmationText,
                 commandModeState: state?.commandModeState,

@@ -19,6 +19,10 @@ public enum WaveformLayout {
 public struct WaveformEnvelopeFollower {
     public private(set) var level = 0.0
     private var lastSampleTime: Double?
+
+    public var heldFrame: (level: Double, time: Double)? {
+        lastSampleTime.map { (level, $0) }
+    }
     private var releaseStartTime: Double?
     private var releaseStartLevel = 0.0
 
@@ -89,6 +93,10 @@ private final class WaveformEnvelopeStore: ObservableObject {
     func sample(rawLevel: Double?, at time: Double) -> Double {
         follower.sample(rawLevel: rawLevel, at: time)
     }
+
+    var heldFrame: (level: Double, time: Double)? {
+        follower.heldFrame
+    }
 }
 
 public enum WaveformBarGeometry {
@@ -131,6 +139,7 @@ public struct WaveformView: View {
     private let isListening: Bool
     private let mode: RenderMode
     private let isPaused: Bool
+    private let holdsLastLevels: Bool
     @StateObject private var envelopeStore = WaveformEnvelopeStore()
 
     private let barCount = WaveformLayout.barCount
@@ -145,11 +154,13 @@ public struct WaveformView: View {
         isProcessing: Bool = false,
         isBooting: Bool = false,
         isPaused: Bool = false,
+        holdsLastLevels: Bool = false,
         currentLevel: @escaping () -> Double?
     ) {
         self.color = color
         self.isListening = isListening
         self.isPaused = isPaused
+        self.holdsLastLevels = holdsLastLevels
         self.currentLevel = currentLevel
         // Booting outranks every other treatment: until the recorder delivers a
         // frame there is nothing truthful to animate.
@@ -166,6 +177,7 @@ public struct WaveformView: View {
         self.color = color
         isListening = false
         isPaused = false
+        holdsLastLevels = false
         currentLevel = { nil }
         mode = .processing
     }
@@ -173,12 +185,13 @@ public struct WaveformView: View {
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isPaused || renderTime != nil)) { timeline in
             let now = renderTime ?? timeline.date.timeIntervalSinceReferenceDate
+            let held = isPaused && holdsLastLevels && mode == .audioDriven ? envelopeStore.heldFrame : nil
             let envelopeLevel = mode == .audioDriven && !isPaused
                 ? envelopeStore.sample(rawLevel: currentLevel(), at: now)
-                : 0
+                : held?.level ?? 0
             TimelineSample(
                 envelopeLevel: envelopeLevel,
-                time: now,
+                time: held?.time ?? now,
                 color: color,
                 isListening: isListening,
                 mode: mode,
@@ -294,6 +307,7 @@ public struct VoiceBarNotchWaveform: View {
             isProcessing: mode == .transcribing,
             isBooting: isBooting,
             isPaused: isPlaybackEnded,
+            holdsLastLevels: mode == .speaking && isPlaybackEnded,
             currentLevel: currentLevel
         )
     }
@@ -301,6 +315,7 @@ public struct VoiceBarNotchWaveform: View {
     /// Red is reserved for a capture that actually exists.
     public static func waveformColor(mode: VoiceMode, isCaptureLive: Bool, isPlaybackEnded: Bool = false) -> Color {
         if isPlaybackEnded, mode == .idle { return Theme.speakingColor.opacity(0.45) }
+        if isPlaybackEnded, mode == .speaking { return Theme.speakingColor.opacity(0.4) }
         return switch mode {
         case .recording:
             isCaptureLive ? Theme.recordingColor : Theme.captureBootingColor

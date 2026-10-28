@@ -133,11 +133,11 @@ final class VoiceBarPanelHitGateTests: XCTestCase {
     }
 
     func testPlaybackControlsRemainInteractiveThroughoutSettling() {
-        // Expanded PLAYING and compact PAUSED, including a same-size note transition.
+        // Expanded PLAYING and compact HIDDEN, including a same-size note transition.
         var previouslyDroppedControlPoints = 0
         for expanded in [false, true] {
             var input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true,
-                                                     isPlaybackPaused: !expanded)
+                                                     isTeleprompterDismissed: !expanded)
             func playbackLayout(note: String?) -> VoiceBarPanelLayout {
                 input.transientNote = note
                 let presentation = VoiceBarPresentation.notchPresentation(from: input)
