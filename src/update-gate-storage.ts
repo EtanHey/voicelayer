@@ -14,7 +14,7 @@ const mediaSync = process.platform === "darwin" ? dlopen("/usr/lib/libSystem.B.d
 // Capture the preload boundary so a test cannot opt itself back into live paths.
 const testRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
 const testMode = !!testRoot || process.env.NODE_ENV === "test";
-function gatePath(env: NodeJS.ProcessEnv): string {
+export function resolveUpdateGatePath(env: NodeJS.ProcessEnv): string {
   const path = resolve(updateGateFilePath(env));
   if (testMode) {
     if (!testRoot) throw new Error("update gate requires isolated test root");
@@ -46,7 +46,7 @@ function readState(path: string): ReturnType<typeof readUpdateGate> {
 
 /** Observation only. Admissions must recheck under withUpdateGateLock. */
 export function readUpdateGateFile(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof readUpdateGate> {
-  const path = gatePath(env);
+  const path = resolveUpdateGatePath(env);
   try { lstatSync(`${path}.lock`); return { kind: "UNKNOWN" }; }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { kind: "UNKNOWN" };
@@ -60,7 +60,7 @@ export function readUpdateGateFile(env: NodeJS.ProcessEnv = process.env): Return
  * Callbacks MUST be synchronous; any exception retains the lock for recovery.
  */
 export function withUpdateGateLock<T>(body: (path: string) => T, env: NodeJS.ProcessEnv = process.env): T {
-  const path = gatePath(env);
+  const path = resolveUpdateGatePath(env);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const lock = `${path}.lock`;
   try { mkdirSync(lock, { mode: 0o700 }); }
@@ -91,7 +91,11 @@ export function persistUpdateGateState(path: string, state: UpdateGateState, exc
     if (mediaSync && mediaSync.symbols.fcntl(fd, 51 /* F_FULLFSYNC */, 0) !== 0) {
       throw new Error("UPDATE_GATE_MEDIA_SYNC_FAILED");
     }
-  } finally { closeSync(fd); }
+  } finally {
+    try { closeSync(fd); } finally {
+      try { unlinkSync(staged); } catch { /* published or retained for recovery */ }
+    }
+  }
 }
 
 /** Compatibility entrypoint: all commands now use the admission-aware commit path. */

@@ -99,7 +99,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 // --- Startup ---
 
 async function main() {
-  initializeVoiceGate();
+  try { initializeVoiceGate(); } catch {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
+  }
   try {
     await getBackend();
   } catch (err: unknown) {

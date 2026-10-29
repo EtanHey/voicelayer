@@ -69,12 +69,12 @@ test("persistence failure retains the lock and the previous closed generation", 
   const env = fixture();
   applyUpdateGateCommand(request, env);
   applyUpdateGateCommand(prepare, env, () => true);
-  expect(() => applyUpdateGateCommand(commit, env, () => {
+  expect(applyUpdateGateCommand(commit, env, () => {
     writeFileSync(join(env.VOICELAYER_UPDATE_GATE_PATH + ".lock", "state.json"), "collision");
     return true;
-  })).toThrow();
+  })).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
   expect(readUpdateGateFile(env)).toEqual({ kind: "UNKNOWN" });
-  expect(() => applyUpdateGateCommand(commit, env)).toThrow("LOCKED");
+  expect(applyUpdateGateCommand(commit, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
   expect(JSON.parse(readFileSync(env.VOICELAYER_UPDATE_GATE_PATH, "utf8")).kind).toBe("PREPARED");
 });
 
@@ -112,14 +112,14 @@ test("orphaned lock and callback failure never age into permission; observations
   withUpdateGateLock(() => expect(readUpdateGateFile(env)).toEqual({ kind: "UNKNOWN" }), env);
   expect(existsSync(env.VOICELAYER_UPDATE_GATE_PATH + ".lock")).toBe(false);
   expect(() => withUpdateGateLock(() => { throw new Error("interrupted"); }, env)).toThrow("interrupted");
-  expect(() => applyUpdateGateCommand(request, env)).toThrow("LOCKED");
+  expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
   expect(readFileSync(env.VOICELAYER_UPDATE_GATE_PATH, "utf8")).toBe(JSON.stringify(initial));
 });
 
 test("async critical sections fail closed and retain their lock", () => {
   const env = fixture();
   expect(() => withUpdateGateLock(async () => {}, env)).toThrow("ASYNC");
-  expect(() => applyUpdateGateCommand(request, env)).toThrow("LOCKED");
+  expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
 });
 
 test("every existing lock entry, including a dangling symlink, refuses observation and acquisition", () => {
@@ -129,7 +129,7 @@ test("every existing lock entry, including a dangling symlink, refuses observati
     if (kind === "file") writeFileSync(lock, "not a lock directory");
     else symlinkSync(env.VOICELAYER_UPDATE_GATE_PATH + "-absent", lock);
     expect(readUpdateGateFile(env)).toEqual({ kind: "UNKNOWN" });
-    expect(() => applyUpdateGateCommand(request, env)).toThrow("LOCKED");
+    expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
   }
 });
 

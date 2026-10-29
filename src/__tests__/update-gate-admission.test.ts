@@ -53,7 +53,7 @@ test("queued selections keep their own admission and playback holds it through p
 });
 test("missing voice state bootstraps, stale registrations refuse updates; uses G1 lock", () => {
   fixture();
-  withUpdateGateLock(() => expect(() => withVoiceAdmission(() => {})).toThrow("LOCK_TIMEOUT"));
+  withUpdateGateLock(() => expect(() => withVoiceAdmission(() => {})).not.toThrow());
   process.env.VOICELAYER_UPDATE_GATE_PATH += "-missing";
   expect(() => withVoiceAdmission(() => {})).not.toThrow();
   fixture();

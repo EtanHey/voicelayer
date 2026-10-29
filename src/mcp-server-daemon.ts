@@ -102,7 +102,6 @@ const ALLOW_ORPHAN_DAEMON_ENV = "VOICELAYER_ALLOW_ORPHAN_DAEMON";
 let daemonHeartbeat: DaemonHeartbeatPublisher | null = null;
 
 async function main() {
-  initializeVoiceGate();
   if (isVoicelayerDisabled()) {
     console.error(
       `[voicelayer-daemon] ${DISABLE_VOICELAYER}=1 or daemon disable flag present — exiting`,
@@ -189,6 +188,10 @@ async function main() {
     console.error(
       `[voicelayer-daemon] Killed orphan MCP server (PID ${killedStalePid})`,
     );
+  }
+
+  try { initializeVoiceGate(); } catch {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   }
 
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
