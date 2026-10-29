@@ -267,6 +267,7 @@ for (const reuse of [false, true]) test(`failed fence publish rolls back; reuse 
   await turn();
   if (!reuse) {
     expect(state.getRecordingState()).toBe("transcribing");
+    expect(() => state.holdConversationCaptureUntil(create())).toThrow("already held");
     await run(next, async () => undefined);
     await turn();
   }
