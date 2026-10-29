@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { recordingStateFilePath } from "../paths";
 import {
@@ -241,4 +241,35 @@ void wait(create()).then(report => { report.generation = 7; });`,
       for (const code of ["TS2353", "TS2345", "TS2540"]) expect(output).toContain(code);
     }
   }
+});
+
+for (const reuse of [false, true]) test(`failed fence publish rolls back; reuse same policy=${reuse}`, async () => {
+  const state = await stateModule(), policy = create(), seen: string[] = [];
+  state.setRecordingState("idle");
+  state.onRecordingStateChange(value => seen.push(value));
+  const writable = recordingStateFilePath(), link = `${writable}.link-${reuse}`;
+  symlinkSync(writable, link);
+  process.env.QA_VOICE_RECORDING_STATE_PATH = link;
+  try {
+    expect(() => state.holdConversationCaptureUntil(policy)).toThrow("Unable to publish recording state (transcribing)");
+  } finally {
+    process.env.QA_VOICE_RECORDING_STATE_PATH = writable;
+  }
+  expect(state.getRecordingState()).toBe("idle");
+  expect(state.getEffectiveRecordingState()).toBe("idle");
+  state.setRecordingState("idle");
+  expect(seen).toEqual(["idle"]);
+  // Failed admission does not consume the policy; both it and a fresh policy may acquire.
+  const next = reuse ? policy : create();
+  expect(() => state.holdConversationCaptureUntil(next)).not.toThrow();
+  state.setRecordingState("idle");
+  await run(policy, async () => undefined);
+  await turn();
+  if (!reuse) {
+    expect(state.getRecordingState()).toBe("transcribing");
+    expect(() => state.holdConversationCaptureUntil(create())).toThrow("already held");
+    await run(next, async () => undefined);
+    await turn();
+  }
+  expect(state.getRecordingState()).toBe("idle");
 });

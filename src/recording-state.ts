@@ -27,7 +27,13 @@ export function holdConversationCaptureUntil(policy: ConversationCapturePolicy):
     captureFence = undefined;
     if (fence.pendingIdle) setRecordingState("idle");
   });
-  if (recordingState === "idle") setRecordingState("transcribing");
+  try {
+    if (recordingState === "idle") setRecordingState("transcribing");
+  } catch (error) {
+    if (captureFence === fence) captureFence = undefined;
+    heldPolicies.delete(policy);
+    throw error;
+  }
 }
 const observers = new Set<(state: RecordingState) => void>();
 /** Passive priority notification; capture never waits for background work. */
