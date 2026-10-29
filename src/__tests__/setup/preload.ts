@@ -141,6 +141,7 @@ process.env.VOICELAYER_TEST_ISOLATED = "1";
 // Explicit subset envs must retain the test paths too; caller values cannot
 // disable the preload contract. Read current values when each child is spawned.
 const isolationKeys = [
+  "VOICELAYER_UPDATE_GATE_PATH",
   "VOICELAYER_TEST_ISOLATED", "VOICELAYER_TEST_RUN_ROOT", "QA_VOICE_MCP_PID_PATH",
   "VOICELAYER_LOG_ROTATION_DIR",
   "VOICELAYER_TMP_ROOT", "VOICELAYER_STATE_DIR", "VOICELAYER_CONTROL_LAYER_BASE",
@@ -167,6 +168,8 @@ for (const api of ["spawn", "spawnSync"] as const) {
 // The two roots every path in src/paths.ts is built from.
 setIfUnset("VOICELAYER_TMP_ROOT", join(RUN_ROOT, "tmp"));
 setIfUnset("VOICELAYER_STATE_DIR", join(RUN_ROOT, "state"));
+// Always replace inherited gates, including a hostile resident-path override.
+process.env.VOICELAYER_UPDATE_GATE_PATH = join(RUN_ROOT, "update-gate.json");
 
 // Fleet journal DB and markers must not fall back to ~/.local/share/orc.
 setIfUnset("VOICELAYER_CONTROL_LAYER_BASE", join(RUN_ROOT, "orc"));
