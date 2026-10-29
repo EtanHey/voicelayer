@@ -22,6 +22,10 @@ LOG_DIR="$HOME/Library/Logs/voicelayer"
 # exercise the cleanup below without touching the real machine's /tmp.
 LEGACY_LOG_DIR="${VOICEBAR_LEGACY_LOG_DIR:-/tmp}"
 DOMAIN="gui/$(id -u)"
+# A validated bootstrap keeps old jobs disabled until the replacement's repair.
+if [[ "${VOICELAYER_INSTALL_OPERATION:-}" == *'"source":"supervised-bootstrap"'* ]]; then
+  launchctl enable "$DOMAIN/$LABEL"
+fi
 VOICEBAR_APP="${VOICEBAR_APP_PATH:-/Applications/VoiceBar.app}"
 RELOAD=0
 NO_START=0

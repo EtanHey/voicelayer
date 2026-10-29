@@ -7,9 +7,11 @@ live controller. Busy waits with the participant phase and Ctrl-C; precommit exi
 CANCELs its own generation. No stop/cancel signals are used to drain. After commit,
 admission remains closed for qualified completion/recovery; failure never reopens it.
 
-**NOT_GREEN for installed use:** G2 supplies a synchronous proof callback contract,
+**NOT_GREEN for automatic installed use:** G2 supplies a synchronous proof callback contract,
 not live native/daemon identity, target verification, handoff, competing-owner or
-archive-durability probes. Production therefore refuses UNKNOWN, including bootstrap.
+archive-durability probes. Production therefore refuses UNKNOWN by default. G4b adds
+the explicit [supervised legacy bootstrap](update-gate-bootstrap.md); it cannot prove
+ordinary live participant acknowledgements or replace postcommit qualification.
 The synthetic proof provider is harness-only: isolated preload flag, a real run root
 inside this checkout's `.test-tmp`, and a nonsymlink proof inside that run. It is not
 installed-runtime evidence. The target SHA environment value alone proves nothing.

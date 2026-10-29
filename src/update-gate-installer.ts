@@ -3,11 +3,11 @@ import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSy
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { acknowledgeVoiceDrain, updateVoiceGate, type ParticipantProof } from "./update-gate-admission";
 import { readUpdateGateFile } from "./update-gate-storage";
-import { updateGateFilePath } from "./paths";
 import { updateGateLeaseSchema, type UpdateGateLease } from "./update-gate";
+import { updateGateFilePath } from "./paths";
 
 // G2 deliberately has no live participant/target probe. Until that adapter is
-// qualified, production installation refuses UNKNOWN (including first install).
+// qualified, automatic production installation refuses UNKNOWN. G4b is opt-in.
 function participantEvidence(): { phase: string; ready: boolean } {
   const root = process.env.VOICELAYER_TEST_RUN_ROOT;
   const file = process.env.VOICELAYER_TEST_INSTALL_PROOF;
@@ -26,8 +26,11 @@ function participantEvidence(): { phase: string; ready: boolean } {
   return proof;
 }
 export function validateInstallerOperation(): void {
-  participantEvidence();
   const owner = JSON.parse(process.env.VOICELAYER_INSTALL_OPERATION!);
+  if (owner.source === "supervised-bootstrap") {
+    const file = updateGateFilePath() + ".bootstrap";
+    if (lstatSync(file).isSymbolicLink() || readFileSync(file, "utf8") !== JSON.stringify(owner)) throw Error("UNKNOWN: bootstrap receipt mismatch");
+  } else participantEvidence();
   const lease = updateGateLeaseSchema.parse(owner.lease);
   const current = readUpdateGateFile();
   if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || current.kind !== "COMMITTED" ||
@@ -64,13 +67,17 @@ async function cancelLease(lease: UpdateGateLease): Promise<void> {
   recoveryReceipt(lease, `precommit Cancel failed: ${failure}`);
   throw Error("RECOVERY_REQUIRED: Cancel could not restore admission; inspect the preserved lease and receipt");
 }
-export async function runGatedInstall(command: string[]): Promise<number> {
+export async function runGatedInstall(command: string[], bootstrap?: { evidence: typeof participantEvidence; onCommitted: () => void }): Promise<number> {
   if (!command.length) throw Error("UNKNOWN: missing installer command");
   if (process.env.VOICELAYER_INSTALL_OPERATION) {
     validateInstallerOperation();
     return await Bun.spawn(command, { env: process.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exited;
   }
-  participantEvidence(); // No synthetic production acknowledgement or idle fallback.
+  if (!bootstrap && process.env.VOICELAYER_SUPERVISED_BOOTSTRAP === "1") {
+    return await (await import("./update-gate-bootstrap")).runSupervisedBootstrap(command);
+  }
+  const evidence = bootstrap?.evidence ?? participantEvidence;
+  evidence(); // No synthetic production acknowledgement or idle fallback.
   const current = readUpdateGateFile();
   if (current.kind !== "OPEN") throw Error("UNKNOWN: gate unavailable or another update owns it");
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
@@ -85,13 +92,13 @@ export async function runGatedInstall(command: string[]): Promise<number> {
   };
   const interrupt = () => signal("SIGINT"), terminate = () => signal("SIGTERM");
   process.on("SIGINT", interrupt); process.on("SIGTERM", terminate);
-  const verify: ParticipantProof = () => participantEvidence().ready === true;
+  const verify: ParticipantProof = () => evidence().ready === true;
   try {
     const request = updateVoiceGate({ kind: "REQUEST", lease });
     if (request.kind !== "APPLIED") throw Error("UNKNOWN: drain request refused");
     requested = true;
     while (!cancelled) {
-      const proof = participantEvidence();
+      const proof = evidence();
       if (displayedPhase !== proof.phase) {
         console.error(`[update-gate] Update when idle: ${proof.phase}; Cancel: Ctrl-C (before commit)`);
         displayedPhase = proof.phase;
@@ -104,7 +111,15 @@ export async function runGatedInstall(command: string[]): Promise<number> {
         const commit = updateVoiceGate({ kind: "COMMIT", lease }, verify);
         if (commit.kind !== "APPLIED") throw Error("UNKNOWN: commit refused; mutation not authorized");
         committed = true;
-        const env = { ...process.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid }) };
+        bootstrap?.onCommitted();
+        const owner = { lease, pid: process.pid, ...(bootstrap ? { source: "supervised-bootstrap" } : {}) };
+        if (bootstrap) {
+          const fd = openSync(updateGateFilePath() + ".bootstrap", "wx", 0o600);
+          try { writeFileSync(fd, JSON.stringify(owner)); fsyncSync(fd); } finally { closeSync(fd); }
+          const directory = openSync(dirname(updateGateFilePath()), "r");
+          try { fsyncSync(directory); } finally { closeSync(directory); }
+        }
+        const env = { ...process.env, VOICELAYER_SUPERVISED_BOOTSTRAP: "", VOICELAYER_INSTALL_OPERATION: JSON.stringify(owner) };
         const child = Bun.spawn(command, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
         installerPid = child.pid;
         const result = await child.exited;
