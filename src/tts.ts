@@ -2785,7 +2785,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
       }
     }
   });
-  holdVoiceAdmission(handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); }).finally(() => settleSpeechArchivesForUpdate()));
+  handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); }); holdVoiceAdmission(handle.playerExited.finally(settleSpeechArchivesForUpdate));
   handle.completion = handle.done.then(() => failure ? { error: failure } : {});
   void handle.playerExited.catch(() => {});
   return { id, get generation() { return handle.generation; }, done: handle.done, playerExited: handle.playerExited, started, completion: handle.completion };
