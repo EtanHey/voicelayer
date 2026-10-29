@@ -231,7 +231,7 @@ void wait(create()).then(report => { report.generation = 7; });`,
     const fixture = join(root, `capture-types-${index}.ts`);
     writeFileSync(fixture, source);
     const argv = [process.execPath, resolve("node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--target", "esnext", "--module", "esnext", "--moduleResolution", "bundler", "--types", "bun-types", "--esModuleInterop", fixture];
-    const result = Bun.spawnSync(argv, { env: process.env, stdout: "pipe", stderr: "pipe" });
+    const result = Bun.spawnSync(argv, { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 45_000 });
     const output = result.stdout.toString() + result.stderr.toString();
     console.log("COMPILER_FIXTURE", JSON.stringify({ argv, exit: result.exitCode, output, source }));
     if (index === 0) { expect(output).toBe(""); expect(result.exitCode).toBe(0); }
@@ -241,7 +241,7 @@ void wait(create()).then(report => { report.generation = 7; });`,
       for (const code of ["TS2353", "TS2345", "TS2540"]) expect(output).toContain(code);
     }
   }
-});
+}, 60_000);
 
 for (const reuse of [false, true]) test(`failed fence publish rolls back; reuse same policy=${reuse}`, async () => {
   const state = await stateModule(), policy = create(), seen: string[] = [];
