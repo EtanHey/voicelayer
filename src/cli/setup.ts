@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { runGatedInstall, validateInstallerOperation } from "../update-gate-installer";
 import { constants, accessSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -373,11 +372,16 @@ export async function runSetup(
 }
 
 if (import.meta.main) {
+  if (process.argv.slice(2).some(arg => arg === "--help" || arg === "-h")) {
+    console.log("Usage: voicelayer setup (or setup.ts PACKAGE_ROOT)"); process.exit(0);
+  }
+  if (process.argv.length > 3) { console.error("ERROR: setup accepts no options"); process.exit(2); }
   const packageRoot = process.argv[2];
-  if (!packageRoot) {
+  if (!packageRoot || packageRoot.startsWith("-")) {
     console.error("Usage: setup.ts PACKAGE_ROOT");
     process.exit(2);
   }
+  const { runGatedInstall, validateInstallerOperation } = await import("../update-gate-installer");
   if (!process.env.VOICELAYER_INSTALL_OPERATION) {
     process.exit(await runGatedInstall([process.execPath, import.meta.path, ...process.argv.slice(2)]));
   }

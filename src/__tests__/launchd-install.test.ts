@@ -1,3 +1,4 @@
+import { stubInstallerTransport } from "./setup/installer-transport";
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
@@ -149,7 +150,9 @@ describe("MCP daemon LaunchAgent install contract", () => {
         env: {
           ...process.env,
           HOME: tempHome,
-          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          ...stubInstallerTransport(tempHome, `${binDir}:${process.env.PATH ?? ""}`),
+          VOICEBAR_APP_PATH: join(tempHome, "absent-fixture.app"),
+          VOICEBAR_LEGACY_LOG_DIR: tempHome,
           VOICEBAR_TEST_LAUNCHCTL_LOG: launchctlLog,
           VOICEBAR_TEST_LAUNCHCTL_STATE: launchctlState,
         },
@@ -211,7 +214,9 @@ describe("MCP daemon LaunchAgent install contract", () => {
         env: {
           ...process.env,
           HOME: tempHome,
-          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          ...stubInstallerTransport(tempHome, `${binDir}:${process.env.PATH ?? ""}`),
+          VOICEBAR_APP_PATH: join(tempHome, "absent-fixture.app"),
+          VOICEBAR_LEGACY_LOG_DIR: tempHome,
           VOICEBAR_TEST_LAUNCHCTL_LOG: launchctlLog,
           VOICEBAR_TEST_LAUNCHCTL_STATE: launchctlState,
           VOICEBAR_TEST_LAUNCHCTL_COUNT: launchctlCount,
@@ -259,7 +264,9 @@ describe("MCP daemon LaunchAgent install contract", () => {
           env: {
             ...process.env,
             HOME: tempHome,
-            PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            ...stubInstallerTransport(tempHome, `${binDir}:${process.env.PATH ?? ""}`),
+            VOICEBAR_APP_PATH: join(tempHome, "absent-fixture.app"),
+            VOICEBAR_LEGACY_LOG_DIR: tempHome,
             VOICEBAR_TEST_LAUNCHCTL_LOG: launchctlLog,
           },
         },

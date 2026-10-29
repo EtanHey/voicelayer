@@ -748,6 +748,10 @@ cleanup() {
 }
 
 main() {
+  case "${1:-}" in
+    -h|--help) echo "Usage: auto-f5-verify.sh (configured through VOICELAYER_AUTO_F5_* environment)"; return 0 ;;
+  esac
+  if [[ "$#" -ne 0 ]]; then echo "ERROR: auto-f5-verify accepts no arguments" >&2; return 2; fi
   require_command osascript
   require_command open
   require_command ioreg
