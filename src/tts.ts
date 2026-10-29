@@ -1,4 +1,4 @@
-import { withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withAsyncVoiceAdmission, withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
@@ -2275,6 +2275,7 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
 
 /** Stop current playback if any. */
 export function stopPlayback(playbackElapsedMs?: number, cancelled = false): boolean {
+  const hadPendingAdmission = cancelPendingVoiceAdmissions();
   if (cancelled) {
     for (const controller of speechPreparations) preparationArchives.get(controller)?.finish("cancelled", "USER_CANCEL");
     activeLongRead?.archive?.finish("cancelled", "USER_CANCEL");
@@ -2284,7 +2285,7 @@ export function stopPlayback(playbackElapsedMs?: number, cancelled = false): boo
   const hadLongRead = cancelLongRead(playbackElapsedMs);
   const stopped = playbackQueueManager.stop(playbackElapsedMs, cancelled);
   if ((hadPreparation || hadLongRead) && !stopped) broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
-  return hadPreparation || hadLongRead || stopped;
+  return hadPendingAdmission || hadPreparation || hadLongRead || stopped;
 }
 
 /** Internal cancellation is utterance-scoped; foreign, terminal and stale intents are no-ops. */
@@ -2454,7 +2455,7 @@ function untilAborted(signal: AbortSignal): Promise<never> {
  * synthesis is complete (no contention with it, whatever the engine), and never touches playback,
  * broadcasts, history or the active read. Rejects when the owner is gone or the signal aborts. */
 export const prepareSelectionReadStart = async (...args: Parameters<typeof prepareSelectionReadStartAdmitted>): ReturnType<typeof prepareSelectionReadStartAdmitted> =>
-  withVoiceAdmission(() => prepareSelectionReadStartAdmitted(...args));
+  withAsyncVoiceAdmission(() => prepareSelectionReadStartAdmitted(...args));
 async function prepareSelectionReadStartAdmitted(
   text: string, kind: "auto" | "short" | "long", ownerRequestId: string, signal: AbortSignal,
   archiveContext?: SpeakArchiveContext, structuredDisplay?: StructuredSpeech,
@@ -2854,7 +2855,10 @@ export class QueuedPlaybackController implements PlaybackController {
  * @param options.waitForPlayback - If true, wait for audio playback to finish (used in converse mode before recording).
  */
 export const speak = async (...args: Parameters<typeof speakAdmitted>): ReturnType<typeof speakAdmitted> =>
-  withVoiceAdmission(() => speakAdmitted(...args));
+  withAsyncVoiceAdmission(() => speakAdmitted(...args)).catch(error => {
+    if (error instanceof VoiceAdmissionCancelledError) throw new SpeechPreparationStoppedError();
+    throw error;
+  });
 async function speakAdmitted(
   text: string,
   options?: TextToSpeechOptions,

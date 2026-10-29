@@ -58,7 +58,6 @@ export function createShutdownHandler(deps?: {
 }
 
 async function main() {
-  initializeVoiceGate();
   // 0. Enrich PATH before any binary resolution — captures login shell PATH
   // for VoiceBar-spawned context where /opt/homebrew/bin is missing
   const enrichedPath = initEnrichedPATH();
@@ -73,6 +72,11 @@ async function main() {
       `${LOG_PREFIX} Killed orphan daemon (PID ${lockResult.stalePid})`,
     );
   }
+
+  // Admission bootstraps under its own lock; startup never waits to connect.
+  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
+  });
 
   // 2. Resolve python3 path early — needed for edge-tts
   try {

@@ -49,7 +49,7 @@ for (const data of ["{broken", JSON.stringify({ ...initial, generation: 7 })]) t
   expect(console.error).toHaveBeenCalled();
   expect(gate.updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, () => true)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
 });
-test("acquisition retries actual cross-process contention without calling it a closed gate", async () => {
+test("cross-process lock contention preserves voice without calling it a closed gate", async () => {
   fixture();
   const source = `import { withUpdateGateLock } from ${JSON.stringify(join(import.meta.dir, "..", "update-gate-storage.ts"))}; import {writeFileSync} from 'fs'; withUpdateGateLock(p=>{writeFileSync(p+'.ready','1');Bun.sleepSync(80);});`;
   const child = withChildFixtureEnv(process.env, () => Bun.spawn([process.execPath, "-e", source], { env: process.env, stdout: "pipe", stderr: "pipe" }));
