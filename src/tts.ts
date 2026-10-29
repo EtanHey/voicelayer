@@ -1,4 +1,4 @@
-import { withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { withAsyncVoiceAdmission, withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
@@ -2454,7 +2454,7 @@ function untilAborted(signal: AbortSignal): Promise<never> {
  * synthesis is complete (no contention with it, whatever the engine), and never touches playback,
  * broadcasts, history or the active read. Rejects when the owner is gone or the signal aborts. */
 export const prepareSelectionReadStart = async (...args: Parameters<typeof prepareSelectionReadStartAdmitted>): ReturnType<typeof prepareSelectionReadStartAdmitted> =>
-  withVoiceAdmission(() => prepareSelectionReadStartAdmitted(...args));
+  withAsyncVoiceAdmission(() => prepareSelectionReadStartAdmitted(...args));
 async function prepareSelectionReadStartAdmitted(
   text: string, kind: "auto" | "short" | "long", ownerRequestId: string, signal: AbortSignal,
   archiveContext?: SpeakArchiveContext, structuredDisplay?: StructuredSpeech,
@@ -2854,7 +2854,7 @@ export class QueuedPlaybackController implements PlaybackController {
  * @param options.waitForPlayback - If true, wait for audio playback to finish (used in converse mode before recording).
  */
 export const speak = async (...args: Parameters<typeof speakAdmitted>): ReturnType<typeof speakAdmitted> =>
-  withVoiceAdmission(() => speakAdmitted(...args));
+  withAsyncVoiceAdmission(() => speakAdmitted(...args));
 async function speakAdmitted(
   text: string,
   options?: TextToSpeechOptions,

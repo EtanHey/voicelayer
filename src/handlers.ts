@@ -1,4 +1,4 @@
-import { withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { withFreshAsyncVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
@@ -305,7 +305,7 @@ async function handleVoiceSpeakAdmitted(
 
   // Replay mode — replay_index present
   if (typeof a.replay_index === "number") {
-    return withFreshVoiceAdmission(() => handleReplay({ index: a.replay_index }));
+    return withFreshAsyncVoiceAdmission(() => handleReplay({ index: a.replay_index }));
   }
 
   // Resolve think mode before TTS sanitization so silent notes retain code and
@@ -327,7 +327,7 @@ async function handleVoiceSpeakAdmitted(
     return handleThink({ thought: rawMessage, category });
   }
 
-  return withFreshVoiceAdmission(async () => {
+  return withFreshAsyncVoiceAdmission(async () => {
     ensureVoiceBarRunning();
   // Bound raw archive input separately from the later speech-duration policy.
   if (originalMessage.length > SPEAK_TEXT_MAX_CHARS) {
@@ -394,7 +394,7 @@ async function handleVoiceSpeakAdmitted(
 }
 
 export async function handleVoiceAsk(...args: Parameters<typeof handleVoiceAskAdmitted>): Promise<McpResult> {
-  try { return await withFreshVoiceAdmission(() => handleVoiceAskAdmitted(...args)); }
+  try { return await withFreshAsyncVoiceAdmission(() => handleVoiceAskAdmitted(...args)); }
   catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
 }
 async function handleVoiceAskAdmitted(
@@ -610,7 +610,7 @@ export async function handleConsult(
 }
 
 export async function handleConverse(...args: Parameters<typeof handleConverseAdmitted>): Promise<McpResult> {
-  try { return await withFreshVoiceAdmission(() => handleConverseAdmitted(...args)); }
+  try { return await withFreshAsyncVoiceAdmission(() => handleConverseAdmitted(...args)); }
   catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
 }
 async function handleConverseAdmitted(

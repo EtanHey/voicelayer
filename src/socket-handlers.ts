@@ -1,4 +1,4 @@
-import { withFreshVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
@@ -193,13 +193,19 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
   if (control) return control;
   if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
-  try { return withFreshVoiceAdmission(() => handleSocketCommandAdmitted(...args)); }
-  catch (error) { if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message); throw error; }
+  const refuse = (error: unknown) => {
+    if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message);
+    throw error;
+  };
+  try {
+    const result = withFreshDeferredVoiceAdmission(() => handleSocketCommandAdmitted(...args));
+    return result instanceof Promise ? result.catch(refuse) : result;
+  } catch (error) { return refuse(error); }
 }
 function handleSocketCommandAdmitted(
   command: SocketCommand,
   onSpeak?: (read: import("./tts").LongReadHandle) => void,
-): SocketResponse | void | Promise<SocketResponse> {
+): SocketResponse | void | Promise<SocketResponse | void> {
   const recordingState = getRecordingState();
   const playbackQueueDepth = getPlaybackQueueDepth();
   const isSpeaking = recordingState === "idle" && playbackQueueDepth > 0;

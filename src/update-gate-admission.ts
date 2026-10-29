@@ -63,14 +63,15 @@ function diagnose(path: string): void {
   }
 }
 /** Catch INSIDE the primitive: a body fault must never orphan G1's lock. */
-function safeGateLock<T>(body: (path: string) => T, fallback: T, env: NodeJS.ProcessEnv): T {
+function safeGateLock<T>(body: (path: string) => T, fallback: T, env: NodeJS.ProcessEnv, retryContention = false): T {
   let path: string | undefined;
   try {
     path = resolveUpdateGatePath(env);
     return withUpdateGateLock(p => {
       try { return body(p); } catch { diagnose(p); return fallback; }
     }, env);
-  } catch {
+  } catch (error) {
+    if (retryContention && error instanceof Error && error.message === "UPDATE_GATE_LOCKED") throw error;
     if (path) diagnose(path);
     else {
       // Remember the logical path without writing through a failed isolation
@@ -108,7 +109,7 @@ function initializeUnderLock(path: string) {
 export function initializeVoiceGate(env: NodeJS.ProcessEnv = process.env): void {
   safeGateLock(path => { initializeUnderLock(path); }, undefined, env);
 }
-function acquire(): Admission {
+function acquire(retryContention = false): Admission {
   const env = { ...process.env };
   const result = safeGateLock<Admission | null>(path => {
     const state = initializeUnderLock(path);
@@ -125,7 +126,7 @@ function acquire(): Admission {
         unlinkSync(file); return true;
       } catch { diagnose(path); return false; }
     }, env)) };
-  }, unregistered(), env);
+  }, unregistered(), env, retryContention);
   if (!result) throw new UpdateBusyError();
   return result;
 }
@@ -141,10 +142,7 @@ function retain(admission: Admission): () => void {
   admission.refs++;
   return () => { if (--admission.refs === 0) admission.release(); };
 }
-/** Each child owns a reference. Async Ask continuations reuse admission after drain. */
-export function withVoiceAdmission<T>(work: () => T): T {
-  const inherited = context.getStore();
-  const admission = inherited && inherited.refs > 0 ? inherited : acquire();
+function runAdmitted<T>(admission: Admission, work: () => T): T {
   const release = retain(admission);
   return context.run(admission, () => {
     let result: T;
@@ -154,6 +152,46 @@ export function withVoiceAdmission<T>(work: () => T): T {
     }
     release(); return result;
   });
+}
+/** Synchronous media boundaries cannot wait: faults admit unregistered immediately. */
+export function withVoiceAdmission<T>(work: () => T): T {
+  const inherited = context.getStore();
+  return runAdmitted(inherited && inherited.refs > 0 ? inherited : acquire(), work);
+}
+async function retryAdmission(): Promise<Admission> {
+  const deadline = performance.now() + 1500;
+  let delay = 1;
+  for (;;) {
+    await Bun.sleep(delay);
+    try { return acquire(true); } catch (error) {
+      if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
+      if (performance.now() >= deadline) return acquire(); // Loud, unregistered fail-open; never reap.
+      delay = Math.min(delay * 2, 32);
+    }
+  }
+}
+/** Preserve synchronous acknowledgements on the healthy path; only contention returns a promise. */
+export function withDeferredVoiceAdmission<T>(work: () => T): T | Promise<Awaited<T>> {
+  const inherited = context.getStore();
+  let admission: Admission;
+  try { admission = inherited && inherited.refs > 0 ? inherited : acquire(true); }
+  catch (error) {
+    if (error instanceof Error && error.message === "UPDATE_GATE_LOCKED") {
+      return retryAdmission().then(value => runAdmitted(value, work)) as Promise<Awaited<T>>;
+    }
+    throw error;
+  }
+  return runAdmitted(admission, work);
+}
+export function withAsyncVoiceAdmission<T>(work: () => T): Promise<Awaited<T>> {
+  try { return Promise.resolve(withDeferredVoiceAdmission(work)) as Promise<Awaited<T>>; }
+  catch (error) { return Promise.reject(error); }
+}
+export function withFreshAsyncVoiceAdmission<T>(work: () => T): Promise<Awaited<T>> {
+  return context.exit(() => withAsyncVoiceAdmission(work));
+}
+export function withFreshDeferredVoiceAdmission<T>(work: () => T): T | Promise<Awaited<T>> {
+  return context.exit(() => withDeferredVoiceAdmission(work));
 }
 /** A nonblocking return must keep ownership through player exit and durable archive writes. */
 export function holdVoiceAdmission(work: Promise<unknown>): void {

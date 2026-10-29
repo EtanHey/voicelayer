@@ -130,3 +130,39 @@ test("R3 path-validation IO fault stays UNKNOWN without bypassing path isolation
   expect(() => gate.initializeVoiceGate()).not.toThrow(); fail.mockRestore();
   expect(gate.withVoiceAdmission(() => "voice")).toBe("voice"); refusesUpdate();
 });
+test("N1 async admission retries transient contention while Stop/Cancel timers run", async () => {
+  fixture(); fs.mkdirSync(path + ".lock");
+  let control = false;
+  const unlock = setTimeout(() => { control = true; fs.rmdirSync(path + ".lock"); }, 15);
+  try {
+    expect(await gate.withAsyncVoiceAdmission(() => {
+      expect(control).toBe(true);
+      expect(fs.readdirSync(path + ".admissions")).toHaveLength(1);
+      return "voice";
+    })).toBe("voice");
+    expect(fs.existsSync(path + ".voice-diag.json")).toBe(false);
+    expect(gate.updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+  } finally { clearTimeout(unlock); if (fs.existsSync(path + ".lock")) fs.rmdirSync(path + ".lock"); }
+});
+test("R3 async timeout admits unregistered without reaping or retrying voice work", async () => {
+  fixture(); fs.mkdirSync(path + ".lock"); let calls = 0, control = false;
+  const tick = setTimeout(() => { control = true; }, 1);
+  try {
+    expect(await gate.withAsyncVoiceAdmission(() => { calls++; expect(control).toBe(true); return "voice"; })).toBe("voice");
+    expect(calls).toBe(1); expect(fs.existsSync(path + ".lock")).toBe(true);
+    expect(fs.existsSync(path + ".voice-diag.json")).toBe(true); refusesUpdate();
+  } finally { clearTimeout(tick); }
+});
+test("N1 async retry observes closure before running any voice work", async () => {
+  fixture(); fs.mkdirSync(path + ".lock"); let calls = 0;
+  const close = setTimeout(() => { fs.writeFileSync(path, JSON.stringify({ version: 1, kind: "DRAINING", lease })); fs.rmdirSync(path + ".lock"); }, 10);
+  try {
+    await expect(gate.withAsyncVoiceAdmission(() => { calls++; })).rejects.toThrow("UPDATE_BUSY");
+    expect(calls).toBe(0); expect(fs.existsSync(path + ".voice-diag.json")).toBe(false);
+  } finally { clearTimeout(close); }
+});
+test("N1 never retries a voice body that throws a lock-shaped error", async () => {
+  fixture(); let calls = 0;
+  await expect(gate.withAsyncVoiceAdmission(() => { calls++; throw Error("UPDATE_GATE_LOCKED"); })).rejects.toThrow("UPDATE_GATE_LOCKED");
+  expect(calls).toBe(1); expect(fs.readdirSync(path + ".admissions")).toEqual([]);
+});
