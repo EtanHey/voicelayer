@@ -35,7 +35,7 @@ export function readSpeechSecret(path = speechSecretPath()): string {
 export type SpeechControl = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
 export function createSpeechControl(token: string, handle: (
   command: SocketCommand, lifecycle?: (read: LongReadHandle) => void,
-) => SocketResponse | void | Promise<SocketResponse>): SpeechControl {
+) => SocketResponse | void | Promise<SocketResponse | void>): SpeechControl {
   return async (params) => {
     const supplied = typeof params.token === "string" ? Buffer.from(params.token) : Buffer.alloc(0);
     const expected = Buffer.from(token);

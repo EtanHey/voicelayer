@@ -10,7 +10,7 @@ const writeFailureCodes = new Set([...deterministicWriteFailures, "IO_ERROR", "W
 
 const retainedAudio = new Map<string, Set<ArchiveWrite>>();
 const cleanupRequested = new Set<string>();
-/** Playback cleanup never removes a source until its durable copy succeeds. */
+/** Playback cleanup waits until every source hold is durably copied or permanently dropped. */
 export function unlinkSpeechAudio(file: string): void {
   if (retainedAudio.get(file)?.size) { cleanupRequested.add(file); return; }
   unlinkSync(file);
@@ -72,6 +72,8 @@ export class LiveSpeechArchive {
       const code = error instanceof Error && writeFailureCodes.has(error.message) ? error.message : "ARCHIVE_WRITE_FAILED";
       if (retry && deterministicWriteFailures.has(code)) {
         this.droppedWrite = true;
+        // No retry will consume this temp source. Other retryable operations retain their own holds.
+        if (operation.kind === "audio") releaseAudio(operation);
         console.error(`[speech] archive write dropped: ${operation.kind} ${code}`);
         return;
       }

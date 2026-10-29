@@ -1,13 +1,14 @@
 import { speechArchiveWriter } from "../speech-archive-writer";
 import * as speechReceipts from "../speak-archive";
 import { beginSpeechArchive, LiveSpeechArchive, flushSpeechArchives } from "../speech-archive-live";
+import * as speechArchives from "../speech-archive-live";
 import { join } from "path";
 import { serializeEvent } from "../socket-protocol";
 import { projectStructuredSpeech } from "../tts/structured-speech";
 import * as pronunciation from "../pronunciation";
 import * as settings from "../tts-settings";
 import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from "bun:test";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import * as socket from "../socket-client";
 import * as recording from "../recording-state";
 import * as qwen from "../tts/qwen3";
@@ -1026,6 +1027,65 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
       const cloneProfile = { name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [],
         reference_clip: "", fallback: "jenny", created: "" };
+      for (const outcome of ["rejected", "pending", "confirmed"] as const)
+      it(`G2c ${outcome} archive settlement cannot strand prepared audio or release uncertain admission`, async () => {
+        const originalGate = process.env.VOICELAYER_UPDATE_GATE_PATH;
+        const gate = join(mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "prefetch-")), "gate.json");
+        process.env.VOICELAYER_UPDATE_GATE_PATH = gate;
+        const admissions = () => readdirSync(gate + ".admissions").length;
+        const archive = beginSpeechArchive("Bravo prepared selection.");
+        await archive.settled();
+        const settlement = deferred<void>();
+        void settlement.promise.catch(() => {});
+        const originalSettle = speechArchives.settleSpeechArchivesForUpdate;
+        const settleSpy = spyOn(speechArchives, "settleSpeechArchivesForUpdate").mockImplementation(owner =>
+          owner === archive && outcome !== "rejected" ? settlement.promise : originalSettle(owner));
+        spies.push(settleSpy);
+        if (outcome === "rejected") {
+          const write = speechArchiveWriter.write.bind(speechArchiveWriter);
+          spies.push(spyOn(speechArchiveWriter, "write").mockImplementation(async (...args) => {
+            if (args[1].kind === "audio" && args[2]?.id === archive.context.id) throw Error("INVALID_INPUT");
+            return write(...args);
+          }));
+        }
+        const controller = new AbortController();
+        let prepared: PreparedReadStart | undefined, failure: unknown, file: string | undefined;
+        try {
+          select("A", "Alpha single chunk."); await playerBarrier.at(0);
+          const preparation = tts.prepareSelectionReadStart("Bravo prepared selection.", "short", "A", controller.signal, archive.context);
+          void preparation.then(value => { prepared = value; }, error => { failure = error; });
+          const synth = await synthBarrier.at(1);
+          file = synth.argv.find(arg => arg.startsWith("--write-media="))!.slice("--write-media=".length);
+          await settle();
+          if (outcome === "confirmed") settlement.resolve();
+          await settle();
+          expect(failure).toBeUndefined();
+          expect(prepared).toBeDefined(); // A pending durable waiter must never gate ownership transfer.
+          expect(admissions()).toBe(outcome === "confirmed" ? 1 : 2);
+          if (outcome !== "rejected") expect(existsSync(file)).toBe(true);
+          else {
+            expect(existsSync(file)).toBe(false);
+            expect(existsSync(file.replace(".mp3", ".meta.ndjson"))).toBe(false);
+          }
+          // Queue clear/discard owns cleanup even while the archive waiter remains pending.
+          prepared!.dispose(); prepared!.dispose();
+          expect(existsSync(file)).toBe(false);
+          expect(existsSync(file.replace(".mp3", ".meta.ndjson"))).toBe(false);
+          if (outcome === "pending") {
+            expect(admissions()).toBe(2);
+            settlement.resolve(); await settle();
+            expect(admissions()).toBe(1);
+          }
+        } finally {
+          controller.abort(); settlement.resolve(); prepared?.dispose();
+          await settle();
+          stopPlayback(); await awaitCurrentPlayback(); await settle();
+          archive.finish("cancelled", "QUEUE_CLEARED"); await flushSpeechArchives();
+          if (file) for (const path of [file, file.replace(".mp3", ".meta.ndjson")]) { try { unlinkSync(path); } catch {} }
+          settleSpy.mockRestore();
+          process.env.VOICELAYER_UPDATE_GATE_PATH = originalGate;
+        }
+      });
       it("S2 leaves prepared audio held until a predecessor finishes settling", async () => {
         select("A", "Alpha single chunk."); await playerBarrier.at(0);
         spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
