@@ -1,3 +1,8 @@
+import { formatVoiceAskTurnResult, type VoiceAskTurnOutcome, type VoiceAskTimeoutStage, type McpTextResult } from "./voice-turn-result";
+import {
+  parseVoiceAskIngress, invalidVoiceAskMode, formatAdmittedVoiceAskResult,
+  type VoiceAskIngress, type AdmittedVoiceAskResult,
+} from "./voice-ask-admission";
 import { finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
@@ -63,13 +68,11 @@ import {
   formatReplay,
   formatToggle,
   formatError,
-  formatBusy,
 } from "./format-response";
 import { sanitizeTtsText } from "./sanitize";
 import {
   AnnounceArgsSchema,
   ConverseArgsSchema,
-  VoiceAskSchema,
   ThinkArgsSchema,
   ReplayArgsSchema,
   ToggleArgsSchema,
@@ -94,12 +97,9 @@ import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 
 // --- MCP result helper ---
 
-type McpResult = {
-  content: { type: "text"; text: string }[];
-  isError?: boolean;
-};
+type McpResult = McpTextResult;
 
-type VoiceOperationLifecycle = {
+export type VoiceOperationLifecycle = {
   deferReleaseUntil: (settlement: Promise<unknown>) => void;
 };
 
@@ -392,20 +392,10 @@ export async function handleVoiceAsk(
   args: unknown,
   context?: VoiceToolContext,
 ): Promise<McpResult> {
-  if (!args || typeof args !== "object") {
-    return textResult("Missing arguments", true);
-  }
-  const a = args as Record<string, unknown>;
-  const originalMessage = typeof a.message === "string" ? a.message : "";
-  const parsed = VoiceAskSchema.safeParse(args);
-  if (!parsed.success) {
-    return textResult(
-      "Invalid voice_ask arguments: provide exactly one mode — {message: ...} or {retranscribe_archive_id: ...}.",
-      true,
-    );
-  }
-  const retranscribeArchiveId = parsed.data.retranscribe_archive_id;
-  if (typeof retranscribeArchiveId === "string") {
+  const ingress = parseVoiceAskIngress(args);
+  if (ingress.kind === "refused") return ingress.result;
+  if (ingress.kind === "retranscribe") {
+    const retranscribeArchiveId = ingress.input.retranscribe_archive_id;
     try {
       const currentState = getEffectiveRecordingState();
       if (currentState !== "idle") {
@@ -440,38 +430,60 @@ export async function handleVoiceAsk(
       );
     }
   }
-  if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
+  return formatAdmittedVoiceAskResult(await executeAdmittedNormalAsk({ ingress, context }));
+}
+
+export type AdmittedVoiceAskRequest = {
+  args: unknown;
+  context?: VoiceToolContext;
+};
+
+export async function runAdmittedVoiceAsk({ args, context }: AdmittedVoiceAskRequest): Promise<AdmittedVoiceAskResult> {
+  const ingress = parseVoiceAskIngress(args);
+  if (ingress.kind === "refused") return ingress;
+  if (ingress.kind === "retranscribe") return invalidVoiceAskMode();
+  return executeAdmittedNormalAsk({ ingress, context });
+}
+
+async function executeAdmittedNormalAsk({ ingress, context }: {
+  ingress: Extract<VoiceAskIngress, { kind: "normal" }>;
+  context?: VoiceToolContext;
+}): Promise<AdmittedVoiceAskResult> {
+  const { input: parsed, originalMessage } = ingress;
+  if (ingress.legacyPressToTalk) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
   // Bound raw archive input separately from the trimmed prompt-duration policy.
   if (originalMessage.length > SPEAK_TEXT_MAX_CHARS) {
-    return textResult("voice_ask refused: raw input exceeds archive admission limit", true);
+    return { kind: "refused", reason: "raw-input-limit",
+      result: textResult("voice_ask refused: raw input exceeds archive admission limit", true) };
   }
   const receipt = createSpeakReceipt({
     input: originalMessage, request_id: randomUUID(), request_source: "ask_prompt",
     connection: context?.connection ?? null, format: null, blocking: true,
-    requested: { mode: "converse", profile: null, engine: null, voice: parsed.data.voice ?? null, rate: null },
+    requested: { mode: "converse", profile: null, engine: null, voice: parsed.voice ?? null, rate: null },
     build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
   });
   if (receipt.kind === "failed") {
-    return textResult(`voice_ask refused: input archive unavailable (${receipt.code})`, true);
+    return { kind: "refused", reason: "input-archive-unavailable",
+      result: textResult(`voice_ask refused: input archive unavailable (${receipt.code})`, true) };
   }
   const archiveContext = receipt.context;
   const refusal = refuseOverlongMessage(
-    parsed.data.message,
+    parsed.message,
     "voice_ask",
   );
   if (refusal) {
     finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-    return refusal;
+    return { kind: "refused", reason: "prompt-limit", result: refusal };
   }
   const reservation = reserveStandardVoiceOperation();
   if (!reservation) {
     finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-    return textResult(
+    return { kind: "refused", reason: "archive-operation", result: textResult(
       "voice_ask refused because an archive retranscription voice operation is in progress",
       true,
-    );
+    ) };
   }
   let releaseDeferred = false;
   const operationLifecycle: VoiceOperationLifecycle = {
@@ -484,18 +496,18 @@ export async function handleVoiceAsk(
     },
   };
   try {
-    return await handleConverse(
-      {
-        message: parsed.data.message,
-        voice: parsed.data.voice,
-        timeout_seconds: parsed.data.timeout_seconds,
-        silence_mode: parsed.data.silence_mode,
-        push_to_end: parsed.data.push_to_end,
+    return { kind: "turn", outcome: await runVoiceAskTurn({
+      args: {
+        message: parsed.message,
+        voice: parsed.voice,
+        timeout_seconds: parsed.timeout_seconds,
+        silence_mode: parsed.silence_mode,
+        push_to_end: parsed.push_to_end,
       },
       context,
       operationLifecycle,
       archiveContext,
-    );
+    }) };
   } finally {
     if (!releaseDeferred) reservation.release();
   }
@@ -606,10 +618,21 @@ export async function handleConverse(
   operationLifecycle?: VoiceOperationLifecycle,
   archiveContext?: SpeakArchiveContext,
 ): Promise<McpResult> {
+  return formatVoiceAskTurnResult(await runVoiceAskTurn({ args, context, operationLifecycle, archiveContext }));
+}
+
+export type VoiceAskTurnRequest = {
+  args: unknown;
+  context?: VoiceToolContext;
+  operationLifecycle?: VoiceOperationLifecycle;
+  archiveContext?: SpeakArchiveContext;
+};
+
+export async function runVoiceAskTurn({ args, context, operationLifecycle, archiveContext }: VoiceAskTurnRequest): Promise<VoiceAskTurnOutcome> {
   // Direct internal callers retain their existing no-receipt contract.
   const validated = validateConverseArgs(args);
   if (!validated) {
-    return textResult("Missing or empty required parameter: message", true);
+    return { kind: "invalid-input" };
   }
 
   const timeoutSeconds = Math.min(
@@ -621,12 +644,12 @@ export async function handleConverse(
 
   if (isCaptureAdmissionReserved()) {
     finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-    return textResult("[converse] Another Ask owns capture admission", true);
+    return { kind: "capture-owned" };
   }
   try { assertSpeakerClear(); }
   catch (error) {
     finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-    return textResult(`[converse] Error: ${error instanceof Error ? error.message : String(error)}`, true);
+    return { kind: "failed", message: error instanceof Error ? error.message : String(error) };
   }
 
   // Reject an external booking before yielding maintenance, so an ask that
@@ -634,14 +657,8 @@ export async function handleConverse(
   const pre = isVoiceBooked();
   if (pre.booked && !pre.ownedByUs) {
     finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-    return textResult(
-      formatBusy(
-        pre.owner?.sessionId ?? "unknown",
-        pre.owner?.pid ?? 0,
-        pre.owner?.startedAt ?? "unknown",
-      ),
-      true,
-    );
+    return { kind: "busy", sessionId: pre.owner?.sessionId ?? "unknown",
+      pid: pre.owner?.pid ?? 0, startedAt: pre.owner?.startedAt ?? "unknown" };
   }
 
   whisperLifecycleGate.yieldToCapture();
@@ -652,20 +669,14 @@ export async function handleConverse(
   const post = isVoiceBooked();
   if (post.booked && !post.ownedByUs) {
     finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-    return textResult(
-      formatBusy(
-        post.owner?.sessionId ?? "unknown",
-        post.owner?.pid ?? 0,
-        post.owner?.startedAt ?? "unknown",
-      ),
-      true,
-    );
+    return { kind: "busy", sessionId: post.owner?.sessionId ?? "unknown",
+      pid: post.owner?.pid ?? 0, startedAt: post.owner?.startedAt ?? "unknown" };
   }
   if (!post.booked) {
     const result = bookVoiceSession();
     if (!result.success) {
       finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
-      return textResult(`[converse] ${result.error}`, true);
+      return { kind: "booking-refused", detail: result.error };
     }
   }
 
@@ -696,7 +707,7 @@ export async function handleConverse(
   let promptTimeoutCleanup: Promise<void> | undefined;
   let beforeCaptureExpired = false;
   let promptReaped: Promise<void> = Promise.resolve();
-  const abandonedBeforeCapture = Promise.withResolvers<McpResult>();
+  const abandonedBeforeCapture = Promise.withResolvers<VoiceAskTurnOutcome>();
   let admissionFailed = false;
   let noSpeech = false;
   let captureArchivePath: string | null = null;
@@ -710,8 +721,8 @@ export async function handleConverse(
   let captureHeld = false;
   let captureHasSpeech = false;
   let captureAllowsHold = false;
-  let resolveTimeout!: (result: McpResult) => void;
-  const timeoutPromise = new Promise<McpResult>((resolve) => {
+  let resolveTimeout!: (result: VoiceAskTurnOutcome) => void;
+  const timeoutPromise = new Promise<VoiceAskTurnOutcome>((resolve) => {
     resolveTimeout = resolve;
   });
   const recoveryOptions = (reason?: string) =>
@@ -723,7 +734,7 @@ export async function handleConverse(
         }
       : undefined;
   const settleTimeout = (
-    stage: "playback-wait" | "prompt" | "capture-start" | "capture" | "return",
+    stage: VoiceAskTimeoutStage,
     timeoutMs: number,
   ): void => {
     if (timeoutSettled) return;
@@ -731,31 +742,13 @@ export async function handleConverse(
     const recovery = recoveryOptions(
       `Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s`,
     );
-    // AIDEV-NOTE: prompt/capture-start time out before the microphone opens, so
-    // "zero recoverable audio" would blame the capture pipeline for a prompt that
-    // never finished. Say what actually did not happen, per stage.
-    const cause =
-      stage === "playback-wait"
-        ? "waiting for queued or ongoing audio playback to finish before the prompt; the microphone never opened"
-        : stage === "prompt"
-          ? "prompt synthesis or playback did not finish within its own budget; the microphone never opened"
-          : stage === "capture-start"
-            ? "the recorder did not start after the prompt finished; the microphone never opened"
-            : "the voice pipeline may be stuck with zero recoverable audio";
-    const result =
-      recovery
-        ? textResult(formatAsk(null, { outcome: "captured", recovery }))
-        : textResult(
-            `[converse] Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s: ` +
-              `${cause}.`,
-            true,
-          );
+    const result: VoiceAskTurnOutcome = { kind: "hard-timeout", stage, timeoutMs, recovery: recovery ?? null };
     if (beforeCaptureExpired) abandonedBeforeCapture.resolve(result);
     resolveTimeout(result);
   };
   const armTimeout = (
     timeoutMs: number,
-    stage: "playback-wait" | "prompt" | "capture-start" | "capture" | "return",
+    stage: VoiceAskTimeoutStage,
   ): void => {
     if (timeoutSettled) return;
     if (timer) clearTimeout(timer);
@@ -818,7 +811,7 @@ export async function handleConverse(
   };
   armTimeout(VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS, "playback-wait");
 
-  const converseFlow = async (): Promise<McpResult> => {
+  const converseFlow = async (): Promise<VoiceAskTurnOutcome> => {
     // V1 policy: refuse instead of queueing while the user is recording.
     // Queueing a question would make the eventual prompt stale and can still
     // leak audio if the recording state changes while the caller waits.
@@ -828,10 +821,7 @@ export async function handleConverse(
     preemptLongRead();
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
-      return textResult(
-        "[converse] Request ended before recording could start.",
-        true,
-      );
+      return { kind: "ended-before-capture" };
     }
 
     captureAdmission = reserveCaptureAdmission();
@@ -868,15 +858,12 @@ export async function handleConverse(
     }
     if (!speech.playbackId && !speech.engine) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     if (timeoutSettled || inputAbortController.signal.aborted) {
-      return textResult(
-        "[converse] Request ended before recording could start.",
-        true,
-      );
+      return { kind: "ended-before-capture" };
     }
     if (admissionFailed) throw new Error("Prompt lost capture admission");
     if (promptPlayers.length) await waitForPlayerExit(promptPlayers);
     if (timeoutSettled || inputAbortController.signal.aborted) {
-      return textResult("[converse] Request ended before recording could start.", true);
+      return { kind: "ended-before-capture" };
     }
     const promptStopped = speech.playbackOutcome?.reason === "stopped";
     if (speech.playbackOutcome && speech.playbackOutcome.status !== "completed" && !promptStopped) {
@@ -964,29 +951,15 @@ export async function handleConverse(
 
     if (response === null) {
       const recovery = recoveryOptions();
-      return textResult(
-        formatAsk(null, {
-          timeoutSeconds,
-          pushToEnd,
-          ...(noSpeech
-            ? { outcome: "no-speech" as const }
-            : recovery
-              ? { outcome: "captured" as const }
-              : {}),
-          ...(recovery ? { recovery } : {}),
-          promptPlayback: speech.playbackOutcome,
-        }),
-      );
+      const promptPlayback = speech.playbackOutcome;
+      if (noSpeech) return { kind: "no-speech", recovery: recovery ?? null, promptPlayback };
+      if (recovery) return { kind: "retained", recovery, promptPlayback };
+      return { kind: "no-input", timeoutSeconds, pushToEnd, promptPlayback };
     }
 
-    return textResult(
-      formatAsk(response, {
-        ...(captureArchivePath
-          ? { archiveId: basename(captureArchivePath) }
-          : {}),
-        promptPlayback: speech.playbackOutcome,
-      }),
-    );
+    return { kind: "answered", transcript: response,
+      archiveId: captureArchivePath ? basename(captureArchivePath) : null,
+      promptPlayback: speech.playbackOutcome };
   };
 
   // P0-2: catch pipeline errors cleanly; keep active recording UI intact
@@ -1030,7 +1003,7 @@ export async function handleConverse(
       }, () => {}); // Rejected exit proof cannot authorize idle.
     }
     if (err instanceof SpeechPreparationStoppedError) {
-      return textResult(formatAsk(null, { outcome: "stopped-before-prompt" }));
+      return { kind: "stopped-before-prompt" };
     }
     const message = err instanceof Error ? err.message : String(err);
     // Wire/recovery errors stay actionable; provider/filesystem messages can
@@ -1038,9 +1011,9 @@ export async function handleConverse(
     console.error("[voicelayer] voice_ask error: request failed");
     const recovery = recoveryOptions(message);
     if (recovery) {
-      return textResult(formatAsk(null, { outcome: "captured", recovery }));
+      return { kind: "retained", recovery, promptPlayback: undefined };
     }
-    return textResult(`[converse] Error: ${message}`, true);
+    return { kind: "failed", message };
   } finally {
     context?.disconnectSignal?.removeEventListener("abort", onDisconnect);
     progressHeartbeat?.stop();
