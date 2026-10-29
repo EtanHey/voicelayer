@@ -1039,8 +1039,15 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         void settlement.promise.catch(() => {});
         const originalSettle = speechArchives.settleSpeechArchivesForUpdate;
         const settleSpy = spyOn(speechArchives, "settleSpeechArchivesForUpdate").mockImplementation(owner =>
-          owner === archive ? settlement.promise : originalSettle(owner));
+          owner === archive && outcome !== "rejected" ? settlement.promise : originalSettle(owner));
         spies.push(settleSpy);
+        if (outcome === "rejected") {
+          const write = speechArchiveWriter.write.bind(speechArchiveWriter);
+          spies.push(spyOn(speechArchiveWriter, "write").mockImplementation(async (...args) => {
+            if (args[1].kind === "audio" && args[2]?.id === archive.context.id) throw Error("INVALID_INPUT");
+            return write(...args);
+          }));
+        }
         const controller = new AbortController();
         let prepared: PreparedReadStart | undefined, failure: unknown, file: string | undefined;
         try {
@@ -1050,7 +1057,6 @@ describe("long-read real runtime with owned synth/player fakes", () => {
           const synth = await synthBarrier.at(1);
           file = synth.argv.find(arg => arg.startsWith("--write-media="))!.slice("--write-media=".length);
           await settle();
-          if (outcome === "rejected") settlement.reject(Error("UPDATE_GATE_ARCHIVE_UNKNOWN"));
           if (outcome === "confirmed") settlement.resolve();
           await settle();
           expect(failure).toBeUndefined();
