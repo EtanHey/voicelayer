@@ -29,7 +29,7 @@ test.skipIf(!path)("TLC reachable transitions conform to the real selection queu
     for (const op of row.trace) {
       const id = (op - 1) % 4 + 1;
       result = "none";
-      if (op <= 8) result = queue.submit({ requestId: String(id), text: "identical text",
+      if (op <= 8) result = queue.submit({ admission: { run: work => work(), release() {} }, requestId: String(id), text: "identical text",
         textHash: "a".repeat(64), profile: "auto" }, op <= 4);
       else if (op <= 12) result = queue.next(String(id));
       else if (op <= 24) queue.settled(String(id), op <= 16 ? "completed" : op <= 20 ? "stopped" : "failed");

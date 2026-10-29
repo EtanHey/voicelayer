@@ -35,10 +35,10 @@ test("queued selections keep their own admission and playback holds it through p
   const { SelectionReadQueue } = await import("../selection-read-queue");
   let finish!: () => void;
   const playback = new Promise<void>(resolve => { finish = resolve; }), started: string[] = [];
-  const queue = new SelectionReadQueue(read => read.admission!.run(() => {
+  const queue = new SelectionReadQueue(read => read.admission.run(() => {
     started.push(read.requestId);
     if (read.requestId === "first") holdVoiceAdmission(playback);
-    read.admission!.release();
+    read.admission.release();
   }), () => {});
   for (const requestId of ["first", "second"]) withVoiceAdmission(() => {
     queue.submit({ requestId, text: requestId, textHash: requestId, profile: "short", admission: captureVoiceAdmission() }, true);
@@ -51,11 +51,11 @@ test("queued selections keep their own admission and playback holds it through p
   finish(); await playback; await Promise.resolve();
   expect(prepare().kind).toBe("APPLIED");
 });
-test("missing state, missing ledger and stale registrations refuse; uses G1 lock", () => {
+test("missing voice state bootstraps, stale registrations refuse updates; uses G1 lock", () => {
   fixture();
-  withUpdateGateLock(() => expect(() => withVoiceAdmission(() => {})).toThrow("UPDATE_BUSY"));
+  withUpdateGateLock(() => expect(() => withVoiceAdmission(() => {})).toThrow("LOCK_TIMEOUT"));
   process.env.VOICELAYER_UPDATE_GATE_PATH += "-missing";
-  expect(() => withVoiceAdmission(() => {})).toThrow("UPDATE_BUSY");
+  expect(() => withVoiceAdmission(() => {})).not.toThrow();
   fixture();
   writeFileSync(join(updateGateFilePath() + ".admissions", "stale"), "{}");
   updateVoiceGate({ kind: "REQUEST", lease });
@@ -63,7 +63,7 @@ test("missing state, missing ledger and stale registrations refuse; uses G1 lock
   fixture();
   process.env.VOICELAYER_UPDATE_GATE_PATH += "-no-ledger";
   writeFileSync(updateGateFilePath(), JSON.stringify({ version: 1, kind: "OPEN", generation: 0, released: null }));
-  expect(() => withVoiceAdmission(() => {})).toThrow("UPDATE_BUSY");
+  expect(() => withVoiceAdmission(() => {})).not.toThrow();
 });
 test("drain/cancel never write Stop or Cancel; preparation and commit require fresh participant proof", () => {
   fixture();
@@ -157,7 +157,7 @@ test("failed archive writes retain admission instead of acknowledging durable co
   const writer = spyOn(speechArchiveWriter, "write").mockRejectedValue(Error("IO_ERROR"));
   const log = spyOn(console, "error").mockImplementation(() => {});
   try {
-    await withVoiceAdmission(async () => { await beginSpeechArchive("synthetic").settled(); holdVoiceAdmission(settleSpeechArchivesForUpdate()); });
+    await withVoiceAdmission(async () => { const archive = beginSpeechArchive("synthetic"); await archive.settled(); holdVoiceAdmission(settleSpeechArchivesForUpdate(archive)); });
     updateVoiceGate({ kind: "REQUEST", lease }); expect(prepare().kind).toBe("REFUSED");
   } finally { writer.mockRestore(); log.mockRestore(); }
 });

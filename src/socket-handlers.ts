@@ -136,15 +136,15 @@ function startSelectionRead(read: QueuedSelectionRead, prepared?: PreparedReadSt
     if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) throw new Error("busy");
     const identity = { request_id: read.requestId, text_hash: read.textHash, archiveContext: read.archiveContext,
       ...(read.structuredDisplay ? { structuredDisplay: read.structuredDisplay } : {}) };
-    read.admission!.run(() => prepared ? speakText(read.text, read.profile, identity, prepared) : speakText(read.text, read.profile, identity));
+    read.admission.run(() => prepared ? speakText(read.text, read.profile, identity, prepared) : speakText(read.text, read.profile, identity));
   } catch (error) { finishRawSpeakFailure(read.archiveContext, error); throw error; }
-  finally { void settleSpeechArchivesForUpdate().then(() => read.admission?.release()).catch(() => console.error("[update-gate] queued archive UNKNOWN; admission retained")); }
+  finally { void settleSpeechArchivesForUpdate(read.archiveContext).then(() => read.admission.release()).catch(() => console.error("[update-gate] queued archive UNKNOWN; admission retained")); }
 }
 
 /** QPRE1: the queue head's first chunk is prepared once the playing read's synthesis is complete. */
 const selectionReadPreparation = {
   prepare: (read: QueuedSelectionRead, signal: AbortSignal, owner: string) =>
-    read.admission!.run(() => prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext, read.structuredDisplay)),
+    read.admission.run(() => prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext, read.structuredDisplay)),
 };
 const newSelectionReadQueue = () => new SelectionReadQueue<PreparedReadStart>(startSelectionRead,
   (state) => broadcast({ type: "read_queue", ...state }), SELECTION_READ_QUEUE_LIMIT, selectionReadPreparation);
@@ -177,7 +177,7 @@ function stopQueuePolicy(recordingState: string, retain: boolean): "clear" | "su
 // A repeated selection is Next/Stop for an existing chain, not a new voice start.
 function selectionControl(command: SocketCommand): SocketResponse | undefined {
   if (command.cmd !== "speak_text" || command.source !== "selection" ||
-      getRecordingState() !== "idle" || getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) return;
+      getRecordingState() !== "idle" || getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) return undefined;
   const admission = selectionReads.admission(selectionIdentity(command.text));
   if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
   if (admission.kind === "playing" && !isPlaybackPaused()) {
@@ -185,14 +185,16 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
     if (selectionReads.next(admission.requestId) === "stopped") stopPlayback();
     return buildAck(command, "accept", "selection advanced");
   }
+  return undefined;
 }
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   const control = selectionControl(args[0]);
   if (control) return control;
+  if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
   try { return withFreshVoiceAdmission(() => handleSocketCommandAdmitted(...args)); }
-  catch (error) { if (error instanceof UpdateBusyError) return buildAck(args[0] as AckCommand, "reject", error.message); throw error; }
+  catch (error) { if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message); throw error; }
 }
 function handleSocketCommandAdmitted(
   command: SocketCommand,

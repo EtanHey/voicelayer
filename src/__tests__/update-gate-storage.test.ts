@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { updateGateFilePath } from "../paths";
 import { applyUpdateGateCommand, readUpdateGateFile, withUpdateGateLock } from "../update-gate-storage";
@@ -16,6 +16,7 @@ function fixture() {
   const dir = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "gate-"));
   const env = { ...process.env, VOICELAYER_UPDATE_GATE_PATH: join(dir, "gate.json") };
   writeFileSync(env.VOICELAYER_UPDATE_GATE_PATH, JSON.stringify(initial));
+  mkdirSync(env.VOICELAYER_UPDATE_GATE_PATH + ".admissions");
   return env;
 }
 
@@ -54,7 +55,7 @@ test("durable duplicate request/commit replay after restart never applies twice"
 test("persisted preparation is insufficient: COMMIT needs current verification inside the lock", () => {
   const env = fixture();
   applyUpdateGateCommand(request, env);
-  applyUpdateGateCommand(prepare, env);
+  applyUpdateGateCommand(prepare, env, () => true);
   for (const verify of [undefined, () => false]) {
     expect(applyUpdateGateCommand(commit, env, verify)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
   }
@@ -67,7 +68,7 @@ test("persisted preparation is insufficient: COMMIT needs current verification i
 test("persistence failure retains the lock and the previous closed generation", () => {
   const env = fixture();
   applyUpdateGateCommand(request, env);
-  applyUpdateGateCommand(prepare, env);
+  applyUpdateGateCommand(prepare, env, () => true);
   expect(() => applyUpdateGateCommand(commit, env, () => {
     writeFileSync(join(env.VOICELAYER_UPDATE_GATE_PATH + ".lock", "state.json"), "collision");
     return true;

@@ -1,4 +1,4 @@
-import { withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
+import { withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
@@ -2095,7 +2095,7 @@ function playAudioNonBlockingAdmitted(
   // A start-paused admission holds no player, exactly like a P16 park; Play re-checks the speaker.
   if (!metadata?.startPaused) assertSpeakerClear();
   const handle = playbackQueueManager.enqueue(audioFile, metadata);
-  holdVoiceAdmission(handle.playerExited.finally(() => settleSpeechArchivesForUpdate()));
+  holdVoiceAdmission(handle.playerExited.finally(() => settleSpeechArchivesForUpdate(metadata?.speechArchive)));
   return handle;
 }
 
@@ -2206,7 +2206,8 @@ export function seekPlayback(offsetMs: number, scope: "current" | "readback" = "
   if (playbackQueueManager.isPaused()) return { outcome: "reject", reason: "paused" };
   if (scope === "readback") {
     if (getPlaybackQueueDepth() > 0 || activeLongRead || hasPendingSpeechPreparation() || hasActiveVoiceOperation()) return { outcome: "reject", reason: "busy" };
-    return replayReadback(offsetMs, readbackID);
+    try { return withFreshVoiceAdmission(() => replayReadback(offsetMs, readbackID)); }
+    catch (error) { if (error instanceof UpdateBusyError) return { outcome: "reject", reason: error.message }; throw error; }
   }
   if (activeLongRead) {
     if (activeLongRead.controller.signal.aborted) return { outcome: "noop", reason: "nothing playing" };
@@ -2268,6 +2269,7 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
     if (activeLongRead === handle) { activeLongRead = undefined; broadcastPlaybackIdleIfSpeakerClear(); }
   });
   handle.playerExited = handle.done;
+  holdVoiceAdmission(handle.playerExited);
   return { outcome: "accept", offset_ms: offsetMs, clamped: false };
 }
 
@@ -2477,6 +2479,7 @@ async function prepareSelectionReadStartAdmitted(
   const rules = pronunciationRules();
   const identity = preparedStartIdentity(displayChunk, profile, policy, rules) + (prosody?.plan.renderIdentity ?? "");
   const archive = archiveContext ? beginSpeechArchive(text, archiveContext) : undefined;
+  try {
   let prepared: PreparedChunk;
   if (prosody) {
     const read = createStructuredProsodyRead(prosody.plan, profile, signal, policy, undefined, { lookahead: 0, edgeRetries: 0 });
@@ -2490,6 +2493,7 @@ async function prepareSelectionReadStartAdmitted(
   if (signal.aborted) { disposeLongReadChunkFiles(prepared.chunk.audioFile); throwIfAbortedSafe(signal); }
   return new PreparedReadStart(identity, prepared,
     (chunk) => disposeLongReadChunkFiles(chunk.audioFile));
+  } finally { await settleSpeechArchivesForUpdate(archive); }
 }
 
 /** Spec emphasis for headings and labels: slower, lower, a little louder, as top-level edge prosody. */
@@ -2785,7 +2789,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
       }
     }
   });
-  handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); }); holdVoiceAdmission(handle.playerExited.finally(settleSpeechArchivesForUpdate));
+  handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); }); holdVoiceAdmission(handle.playerExited.finally(() => settleSpeechArchivesForUpdate(archive)));
   handle.completion = handle.done.then(() => failure ? { error: failure } : {});
   void handle.playerExited.catch(() => {});
   return { id, get generation() { return handle.generation; }, done: handle.done, playerExited: handle.playerExited, started, completion: handle.completion };
@@ -2855,7 +2859,7 @@ async function speakAdmitted(
   let settle!: () => void;
   const settlement = new Promise<void>(resolve => { settle = resolve; });
   speechPreparationSettlements.add(settlement);
-  holdVoiceAdmission(settlement.then(() => settleSpeechArchivesForUpdate()));
+  holdVoiceAdmission(settlement.then(() => settleSpeechArchivesForUpdate(archive)));
   let playback: QueuedPlaybackHandle | undefined;
   const onQueued = options?.onPlaybackQueued;
   const onCompleted = options?.onPlaybackComplete;

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { SelectionReadQueue, type QueuedSelectionRead } from "../selection-read-queue";
 
 // Proposed fourth constructor dependency. Synthetic memory-only audio ownership.
-const read = (requestId: string): QueuedSelectionRead => ({ requestId, text: `Synthetic ${requestId}`, textHash: requestId, profile: "auto" });
+const read = (requestId: string): QueuedSelectionRead => ({ admission: { run: work => work(), release() {} }, requestId, text: `Synthetic ${requestId}`, textHash: requestId, profile: "auto" });
 function harness(fail = false) {
   const synthesized: string[] = [], disposed: string[] = [], played: string[] = [];
   const hooks = {

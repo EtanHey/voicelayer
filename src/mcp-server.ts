@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { initializeVoiceGate } from "./update-gate-admission";
 import { flushSpeechArchives, interruptLiveSpeech } from "./speech-archive-live";
 import { stopPlayback, awaitCurrentPlayback } from "./tts";
 /**
@@ -98,6 +99,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 // --- Startup ---
 
 async function main() {
+  initializeVoiceGate();
   try {
     await getBackend();
   } catch (err: unknown) {

@@ -380,3 +380,19 @@ describe("P10 socket pause/resume", () => {
     }
   });
 });
+
+it("admitted paused playback restarts during drain without new admission", async () => {
+  const { updateVoiceGate } = await import("../update-gate-admission");
+  const { readUpdateGateFile } = await import("../update-gate-storage");
+  await startTenSecondRead();
+  at(4200); tts.pausePlayback();
+  (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+  const state = readUpdateGateFile();
+  if (state.kind !== "OPEN") throw Error("fixture gate must be open");
+  const lease = { generation: state.generation + 1, operationId: crypto.randomUUID(), ownerId: crypto.randomUUID(), targetSha: "a".repeat(40) };
+  expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+  try {
+    expect(handleSocketCommand({ cmd: "replay" })).toMatchObject({ outcome: "accept" });
+    await players.at(1);
+  } finally { updateVoiceGate({ kind: "CANCEL", lease }); }
+});

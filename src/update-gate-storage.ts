@@ -1,9 +1,10 @@
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync,
-  readFileSync, renameSync, rmdirSync, writeFileSync } from "fs";
+  readFileSync, renameSync, rmdirSync, writeFileSync, linkSync, unlinkSync } from "fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { dlopen } from "bun:ffi";
 import { updateGateFilePath } from "./paths";
-import { readUpdateGate, transitionUpdateGate, type UpdateGateState, type UpdateGateTransition } from "./update-gate";
+import { updateVoiceGate } from "./update-gate-admission";
+import { readUpdateGate, type UpdateGateState, type UpdateGateTransition } from "./update-gate";
 
 // Darwin's fsync alone need not flush a drive's write cache. No fallback on error.
 const mediaSync = process.platform === "darwin" ? dlopen("/usr/lib/libSystem.B.dylib", {
@@ -60,6 +61,7 @@ export function readUpdateGateFile(env: NodeJS.ProcessEnv = process.env): Return
  */
 export function withUpdateGateLock<T>(body: (path: string) => T, env: NodeJS.ProcessEnv = process.env): T {
   const path = gatePath(env);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const lock = `${path}.lock`;
   try { mkdirSync(lock, { mode: 0o700 }); }
   catch (error) {
@@ -75,13 +77,14 @@ export function withUpdateGateLock<T>(body: (path: string) => T, env: NodeJS.Pro
   return result;
 }
 
-function persist(path: string, state: UpdateGateState): void {
+export function persistUpdateGateState(path: string, state: UpdateGateState, exclusive = false): void {
   const staged = join(`${path}.lock`, "state.json");
   const fd = openSync(staged, "wx", 0o600);
   try {
     writeFileSync(fd, JSON.stringify(state) + "\n");
     fsyncSync(fd);
-    renameSync(staged, path); // Same filesystem: readers see the old or new record.
+    if (exclusive) { linkSync(staged, path); unlinkSync(staged); }
+    else renameSync(staged, path); // Same filesystem: readers see the old or new record.
     const directory = openSync(dirname(path), "r");
     try { fsyncSync(directory); }
     finally { closeSync(directory); }
@@ -91,17 +94,8 @@ function persist(path: string, state: UpdateGateState): void {
   } finally { closeSync(fd); }
 }
 
-/** No bootstrap: missing/corrupt state refuses even a REQUEST. */
+/** Compatibility entrypoint: all commands now use the admission-aware commit path. */
 export function applyUpdateGateCommand(command: unknown, env: NodeJS.ProcessEnv = process.env,
   verifyCommit?: (state: UpdateGateState) => boolean): UpdateGateTransition {
-  return withUpdateGateLock(path => {
-    const state = readState(path);
-    const result = transitionUpdateGate(state, command);
-    if (result.kind === "APPLIED" && result.state.kind === "COMMITTED"
-      && (state.kind === "UNKNOWN" || verifyCommit?.(state) !== true)) {
-      return { kind: "REFUSED", reason: "UNKNOWN" };
-    }
-    if (result.kind === "APPLIED") persist(path, result.state);
-    return result;
-  }, env);
+  return updateVoiceGate(command, verifyCommit, env);
 }

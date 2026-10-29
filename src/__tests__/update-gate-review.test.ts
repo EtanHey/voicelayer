@@ -10,7 +10,7 @@ import * as recording from "../recording-state";
 import * as socket from "../socket-client";
 import { handleVoiceAsk } from "../handlers";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
-import { settleSpeechArchivesForUpdate } from "../speech-archive-live";
+import { flushSpeechArchives } from "../speech-archive-live";
 import { acknowledgeVoiceDrain, holdVoiceAdmission, updateVoiceGate } from "../update-gate-admission";
 import { TTS_DISABLED_FILE } from "../paths";
 
@@ -45,7 +45,7 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
   });
   afterEach(async () => {
     resetSelectionReadQueueForTests();
-    await settleSpeechArchivesForUpdate(); await tick();
+    await flushSpeechArchives(); await tick();
     for (const spy of spies.splice(0).reverse()) spy.mockRestore();
     if (disabled) writeFileSync(TTS_DISABLED_FILE, disabled);
     else if (existsSync(TTS_DISABLED_FILE)) unlinkSync(TTS_DISABLED_FILE);
@@ -65,7 +65,7 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       const result = await handleVoiceAsk({ message: "synthetic question" });
       expect(result.content[0].text.toLowerCase()).toContain(failure === "TTS disabled" ? "recording was not started" : failure === "backend rejects" ? "synthetic synthesis failure" : "stopped");
       expect(capture).not.toHaveBeenCalled();
-      await settleSpeechArchivesForUpdate(); await tick();
+      await flushSpeechArchives(); await tick();
       drain();
       expect(acknowledgeVoiceDrain(lease, proof)).toEqual(ack);
       expect(prepare().kind).toBe("APPLIED");
@@ -83,7 +83,7 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
     drain();
     expect(acknowledgeVoiceDrain(lease, proof)).toBeNull();
     if (confirmed) exit.resolve(); else exit.reject(Error("physical exit unconfirmed"));
-    await settleSpeechArchivesForUpdate(); await tick();
+    await flushSpeechArchives(); await tick();
     if (confirmed) {
       expect(acknowledgeVoiceDrain(lease, proof)).toEqual(ack);
       expect(prepare().kind).toBe("APPLIED");
@@ -140,7 +140,7 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       expect(await command("C", "unadmitted selection")).toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY") });
       expect(await command("B-stop", "selection B")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
       expect(stop).toHaveBeenCalledTimes(1);
-      await settleSpeechArchivesForUpdate(); await tick();
+      await flushSpeechArchives(); await tick();
       expect(prepare().kind).toBe("APPLIED");
     } finally { exits.forEach(exit => exit.resolve()); resetSelectionReadQueueForTests(); }
   });

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { initializeVoiceGate } from "./update-gate-admission";
 /**
  * VoiceLayer Standalone Daemon — runs voice pipeline without MCP/Claude Code.
  *
@@ -57,6 +58,7 @@ export function createShutdownHandler(deps?: {
 }
 
 async function main() {
+  initializeVoiceGate();
   // 0. Enrich PATH before any binary resolution — captures login shell PATH
   // for VoiceBar-spawned context where /opt/homebrew/bin is missing
   const enrichedPath = initEnrichedPATH();

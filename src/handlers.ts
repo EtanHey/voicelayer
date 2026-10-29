@@ -286,7 +286,7 @@ function detectMode(
 // --- Unified handlers ---
 
 export async function handleVoiceSpeak(...args: Parameters<typeof handleVoiceSpeakAdmitted>): Promise<McpResult> {
-  try { return await withFreshVoiceAdmission(() => handleVoiceSpeakAdmitted(...args)); }
+  try { return await handleVoiceSpeakAdmitted(...args); }
   catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
 }
 async function handleVoiceSpeakAdmitted(
@@ -298,9 +298,6 @@ async function handleVoiceSpeakAdmitted(
   }
   const a = args as Record<string, unknown>;
 
-  // Auto-launch Voice Bar on first voice_speak call (no-op after first attempt)
-  ensureVoiceBarRunning();
-
   // Toggle mode — enabled param present
   if (typeof a.enabled === "boolean") {
     return handleToggle({ enabled: a.enabled, scope: a.scope ?? "all" });
@@ -308,7 +305,7 @@ async function handleVoiceSpeakAdmitted(
 
   // Replay mode — replay_index present
   if (typeof a.replay_index === "number") {
-    return handleReplay({ index: a.replay_index });
+    return withFreshVoiceAdmission(() => handleReplay({ index: a.replay_index }));
   }
 
   // Resolve think mode before TTS sanitization so silent notes retain code and
@@ -330,6 +327,8 @@ async function handleVoiceSpeakAdmitted(
     return handleThink({ thought: rawMessage, category });
   }
 
+  return withFreshVoiceAdmission(async () => {
+    ensureVoiceBarRunning();
   // Bound raw archive input separately from the later speech-duration policy.
   if (originalMessage.length > SPEAK_TEXT_MAX_CHARS) {
     return textResult("voice_speak refused: raw input exceeds archive admission limit", true);
@@ -391,6 +390,7 @@ async function handleVoiceSpeakAdmitted(
   } finally {
     reservation.release();
   }
+  });
 }
 
 export async function handleVoiceAsk(...args: Parameters<typeof handleVoiceAskAdmitted>): Promise<McpResult> {
@@ -1023,7 +1023,7 @@ async function handleConverseAdmitted(
   }).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
   const confirmedTeardown = async () => {
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
-    await settleSpeechArchivesForUpdate();
+    await settleSpeechArchivesForUpdate(archiveContext);
   };
   holdVoiceAdmission(flowPromise.then(confirmedTeardown, confirmedTeardown));
   operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));

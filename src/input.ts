@@ -2233,19 +2233,20 @@ function startMicChunkStreamAdmitted(options: {
     try { await task; }
     catch (error) { stop(); throw error; }
   };
-  const exited = Promise.allSettled([
+  const settled = Promise.allSettled([
     ownedTask(drainStderr()),
     ownedTask(pipeReader()),
     ownedTask(chunkProcessor()),
     ownedTask(recorder.exited.then(code => {
       if (!stopped && code !== 0) throw new Error(`Barge-in recorder exited with code ${code}`);
     })),
-  ]).then(results => {
+  ]);
+  const exited = settled.then(results => {
     const failure = results.find(result => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
   });
 
-  holdVoiceAdmission(exited);
+  holdVoiceAdmission(settled.then(() => recorder.exited));
   return { exited, stop };
 }
 
@@ -2269,9 +2270,7 @@ export function isPushToEndStopDrainComplete(
  * @param silenceMode - VAD silence threshold (ignored in push-to-end mode)
  * @param pushToEnd - If true, skip VAD — only stop on user signal or timeout
  */
-export const recordToBuffer = async (...args: Parameters<typeof recordToBufferAdmitted>): ReturnType<typeof recordToBufferAdmitted> =>
-  withVoiceAdmission(() => recordToBufferAdmitted(...args));
-async function recordToBufferAdmitted(
+export async function recordToBuffer(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
   pushToEnd: boolean = false,
@@ -2280,6 +2279,7 @@ async function recordToBufferAdmitted(
   preserveNoSpeechCapture = false,
   captureState?: RecordingCaptureState,
 ): Promise<Uint8Array | null> {
+  return withVoiceAdmission(async () => {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
   if (isMicDisabled()) {
@@ -2853,6 +2853,7 @@ async function recordToBufferAdmitted(
       finish(err instanceof Error ? err : new Error(String(err)));
     }
   });
+  });
 }
 
 /**
@@ -2866,14 +2867,13 @@ async function recordToBufferAdmitted(
  * @param silenceMode - VAD silence mode: quick (0.5s), standard (1.5s), thoughtful (2.5s)
  * @param pushToEnd - If true, use push-to-end mode (no VAD, stop on signal only)
  */
-export const waitForInput = async (...args: Parameters<typeof waitForInputAdmitted>): ReturnType<typeof waitForInputAdmitted> =>
-  withVoiceAdmission(() => waitForInputAdmitted(...args));
-async function waitForInputAdmitted(
+export async function waitForInput(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
   pushToEnd: boolean = false,
   options: WaitForInputOptions = {},
 ): Promise<string | null> {
+  return withVoiceAdmission(async () => {
   throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
   if (currentRecordingState !== "idle") {
@@ -3568,6 +3568,7 @@ async function waitForInputAdmitted(
       if (existsSync(wavPath)) unlinkSync(wavPath);
     } catch {}
   }
+  });
 }
 
 /**

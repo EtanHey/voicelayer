@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { initializeVoiceGate } from "./update-gate-admission";
 import { stopPlayback } from "./tts";
 import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from "./speech-archive-live";
 /**
@@ -101,6 +102,7 @@ const ALLOW_ORPHAN_DAEMON_ENV = "VOICELAYER_ALLOW_ORPHAN_DAEMON";
 let daemonHeartbeat: DaemonHeartbeatPublisher | null = null;
 
 async function main() {
+  initializeVoiceGate();
   if (isVoicelayerDisabled()) {
     console.error(
       `[voicelayer-daemon] ${DISABLE_VOICELAYER}=1 or daemon disable flag present — exiting`,

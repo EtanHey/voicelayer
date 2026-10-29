@@ -905,6 +905,20 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     stopPlayback(200); await h.done;
   });
 
+  it("current seek retains admission through drain across an async player restart", async () => {
+    const { updateVoiceGate } = await import("../update-gate-admission");
+    const { readUpdateGateFile } = await import("../update-gate-storage");
+    const h = start(); await playerBarrier.at(0); await fixtureCheckpoint();
+    const state = readUpdateGateFile(); if (state.kind !== "OPEN") throw Error("fixture gate must be open");
+    const lease = { generation: state.generation + 1, operationId: crypto.randomUUID(), ownerId: crypto.randomUUID(), targetSha: "a".repeat(40) };
+    expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+    try {
+      expect(seekPlayback(250).outcome).toBe("accept");
+      await playerBarrier.at(1);
+      expect(events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1).playback_offset_ms).toBe(250);
+    } finally { stopPlayback(); await h.done; updateVoiceGate({ kind: "CANCEL", lease }); }
+  });
+
   it("seeks across retained chunks through the real queue and converts global stop time", async () => {
     const h = start(); await playerBarrier.at(0);
     players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);

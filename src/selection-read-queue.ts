@@ -10,7 +10,7 @@ import type { SpeakArchiveContext } from "./speak-archive";
 export const SELECTION_READ_QUEUE_LIMIT = 10;
 
 export interface QueuedSelectionRead {
-  admission?: { run<T>(work: () => T): T; release(): void };
+  admission: { run<T>(work: () => T): T; release(): void };
   requestId: string;
   text: string;
   textHash: string;
@@ -140,7 +140,7 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
     this.discardPreparation();
     for (const read of this.items) {
       if (read.archiveContext) cancelQueuedSpeech(read.archiveContext);
-      void settleSpeechArchivesForUpdate().then(() => read.admission?.release()).catch(() => console.error("[update-gate] queued archive UNKNOWN; admission retained"));
+      void settleSpeechArchivesForUpdate(read.archiveContext).then(() => read.admission.release()).catch(() => console.error("[update-gate] queued archive UNKNOWN; admission retained"));
     }
     this.items = [];
     this.current = undefined;
