@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { withAsyncVoiceAdmission } from "../update-gate-admission";
 import { flushSpeechArchives } from "../speech-archive-live";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
@@ -98,7 +99,9 @@ export function requestSpeech(request: SpeechRequest, options: { socketPath?: st
 }
 
 /** Local fallback stays in the foreground so terminal signals own every child. */
-export async function speakLocally(request: Extract<SpeechRequest, { cmd: "speak_text" }>): Promise<void> {
+export const speakLocally = async (...args: Parameters<typeof speakLocallyAdmitted>): ReturnType<typeof speakLocallyAdmitted> =>
+  withAsyncVoiceAdmission(() => speakLocallyAdmitted(...args));
+async function speakLocallyAdmitted(request: Extract<SpeechRequest, { cmd: "speak_text" }>): Promise<void> {
   const receipt = createSpeakReceipt({
     input: request.text, request_id: randomUUID(), request_source: "cli",
     connection: null, format: request.format, blocking: true,

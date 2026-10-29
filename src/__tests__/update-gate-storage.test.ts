@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, existsSync, lstatSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { updateGateFilePath } from "../paths";
 import { applyUpdateGateCommand, readUpdateGateFile, withUpdateGateLock } from "../update-gate-storage";
@@ -16,6 +16,7 @@ function fixture() {
   const dir = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "gate-"));
   const env = { ...process.env, VOICELAYER_UPDATE_GATE_PATH: join(dir, "gate.json") };
   writeFileSync(env.VOICELAYER_UPDATE_GATE_PATH, JSON.stringify(initial));
+  mkdirSync(env.VOICELAYER_UPDATE_GATE_PATH + ".admissions");
   return env;
 }
 
@@ -54,7 +55,7 @@ test("durable duplicate request/commit replay after restart never applies twice"
 test("persisted preparation is insufficient: COMMIT needs current verification inside the lock", () => {
   const env = fixture();
   applyUpdateGateCommand(request, env);
-  applyUpdateGateCommand(prepare, env);
+  applyUpdateGateCommand(prepare, env, () => true);
   for (const verify of [undefined, () => false]) {
     expect(applyUpdateGateCommand(commit, env, verify)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
   }
@@ -67,13 +68,13 @@ test("persisted preparation is insufficient: COMMIT needs current verification i
 test("persistence failure retains the lock and the previous closed generation", () => {
   const env = fixture();
   applyUpdateGateCommand(request, env);
-  applyUpdateGateCommand(prepare, env);
-  expect(() => applyUpdateGateCommand(commit, env, () => {
+  applyUpdateGateCommand(prepare, env, () => true);
+  expect(applyUpdateGateCommand(commit, env, () => {
     writeFileSync(join(env.VOICELAYER_UPDATE_GATE_PATH + ".lock", "state.json"), "collision");
     return true;
-  })).toThrow();
+  })).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
   expect(readUpdateGateFile(env)).toEqual({ kind: "UNKNOWN" });
-  expect(() => applyUpdateGateCommand(commit, env)).toThrow("LOCKED");
+  expect(applyUpdateGateCommand(commit, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
   expect(JSON.parse(readFileSync(env.VOICELAYER_UPDATE_GATE_PATH, "utf8")).kind).toBe("PREPARED");
 });
 
@@ -111,14 +112,16 @@ test("orphaned lock and callback failure never age into permission; observations
   withUpdateGateLock(() => expect(readUpdateGateFile(env)).toEqual({ kind: "UNKNOWN" }), env);
   expect(existsSync(env.VOICELAYER_UPDATE_GATE_PATH + ".lock")).toBe(false);
   expect(() => withUpdateGateLock(() => { throw new Error("interrupted"); }, env)).toThrow("interrupted");
-  expect(() => applyUpdateGateCommand(request, env)).toThrow("LOCKED");
+  expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
+    expect(existsSync(env.VOICELAYER_UPDATE_GATE_PATH + ".lock")).toBe(true);
   expect(readFileSync(env.VOICELAYER_UPDATE_GATE_PATH, "utf8")).toBe(JSON.stringify(initial));
 });
 
 test("async critical sections fail closed and retain their lock", () => {
   const env = fixture();
   expect(() => withUpdateGateLock(async () => {}, env)).toThrow("ASYNC");
-  expect(() => applyUpdateGateCommand(request, env)).toThrow("LOCKED");
+  expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
+    expect(existsSync(env.VOICELAYER_UPDATE_GATE_PATH + ".lock")).toBe(true);
 });
 
 test("every existing lock entry, including a dangling symlink, refuses observation and acquisition", () => {
@@ -128,7 +131,9 @@ test("every existing lock entry, including a dangling symlink, refuses observati
     if (kind === "file") writeFileSync(lock, "not a lock directory");
     else symlinkSync(env.VOICELAYER_UPDATE_GATE_PATH + "-absent", lock);
     expect(readUpdateGateFile(env)).toEqual({ kind: "UNKNOWN" });
-    expect(() => applyUpdateGateCommand(request, env)).toThrow("LOCKED");
+    expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
+    expect(existsSync(lock)).toBe(kind === "file"); // existsSync follows a dangling link.
+    expect(lstatSync(lock).isSymbolicLink()).toBe(kind === "dangling-link");
   }
 });
 

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { createHash } from "crypto";
 import * as fs from "fs";
+const realOpenForArchiveFault = fs.openSync;
 import { basename, dirname, join, resolve } from "path";
 import * as archive from "../speak-archive";
 import * as tts from "../tts";
@@ -234,7 +235,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     expect(contexts).toHaveLength(0); expect(start).not.toHaveBeenCalled(); expect(fs.readdirSync(root)).toEqual([]);
   });
   for (const queue of [false, true]) it(`initial archive failure is bounded before direct/queued speech: ${queue}`, () => {
-    spies.push(spyOn(fs, "writeFileSync").mockImplementation(() => { throw new Error(`private ${root} ${raw}`); }));
+    spies.push(spyOn(fs, "openSync").mockImplementation(((file: any, ...args: any[]) => { if (String(file).startsWith(root + "/")) throw new Error(`private ${root} ${raw}`); return (realOpenForArchiveFault as any)(file, ...args); }) as any));
     expect(incoming({ id: "failed", queue })).toEqual({ type: "ack", command: "speak_text", id: "failed",
       outcome: "reject", reason: "Speech refused: input archive unavailable (IO_ERROR)" });
     expect(start).not.toHaveBeenCalled(); expect(contexts).toHaveLength(0);

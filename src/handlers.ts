@@ -1,4 +1,5 @@
-import { finishLiveSpeechReceipt } from "./speech-archive-live";
+import { VoiceAdmissionCancelledError, withFreshAsyncVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { createSpeakReceipt, type SpeakArchiveContext } from "./speak-archive";
@@ -284,7 +285,11 @@ function detectMode(
 
 // --- Unified handlers ---
 
-export async function handleVoiceSpeak(
+export async function handleVoiceSpeak(...args: Parameters<typeof handleVoiceSpeakAdmitted>): Promise<McpResult> {
+  try { return await handleVoiceSpeakAdmitted(...args); }
+  catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+}
+async function handleVoiceSpeakAdmitted(
   args: unknown,
   context?: VoiceToolContext,
 ): Promise<McpResult> {
@@ -293,9 +298,6 @@ export async function handleVoiceSpeak(
   }
   const a = args as Record<string, unknown>;
 
-  // Auto-launch Voice Bar on first voice_speak call (no-op after first attempt)
-  ensureVoiceBarRunning();
-
   // Toggle mode — enabled param present
   if (typeof a.enabled === "boolean") {
     return handleToggle({ enabled: a.enabled, scope: a.scope ?? "all" });
@@ -303,7 +305,7 @@ export async function handleVoiceSpeak(
 
   // Replay mode — replay_index present
   if (typeof a.replay_index === "number") {
-    return handleReplay({ index: a.replay_index });
+    return withFreshAsyncVoiceAdmission(() => handleReplay({ index: a.replay_index }));
   }
 
   // Resolve think mode before TTS sanitization so silent notes retain code and
@@ -325,6 +327,8 @@ export async function handleVoiceSpeak(
     return handleThink({ thought: rawMessage, category });
   }
 
+  return withFreshAsyncVoiceAdmission(async () => {
+    ensureVoiceBarRunning();
   // Bound raw archive input separately from the later speech-duration policy.
   if (originalMessage.length > SPEAK_TEXT_MAX_CHARS) {
     return textResult("voice_speak refused: raw input exceeds archive admission limit", true);
@@ -386,9 +390,14 @@ export async function handleVoiceSpeak(
   } finally {
     reservation.release();
   }
+  });
 }
 
-export async function handleVoiceAsk(
+export async function handleVoiceAsk(...args: Parameters<typeof handleVoiceAskAdmitted>): Promise<McpResult> {
+  try { return await withFreshAsyncVoiceAdmission(() => handleVoiceAskAdmitted(...args), { maxWaitMs: 20 }); }
+  catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+}
+async function handleVoiceAskAdmitted(
   args: unknown,
   context?: VoiceToolContext,
 ): Promise<McpResult> {
@@ -484,7 +493,7 @@ export async function handleVoiceAsk(
     },
   };
   try {
-    return await handleConverse(
+    return await handleConverseAdmitted(
       {
         message: parsed.data.message,
         voice: parsed.data.voice,
@@ -600,7 +609,11 @@ export async function handleConsult(
   );
 }
 
-export async function handleConverse(
+export async function handleConverse(...args: Parameters<typeof handleConverseAdmitted>): Promise<McpResult> {
+  try { return await withFreshAsyncVoiceAdmission(() => handleConverseAdmitted(...args), { maxWaitMs: 20 }); }
+  catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+}
+async function handleConverseAdmitted(
   args: unknown,
   context?: VoiceToolContext,
   operationLifecycle?: VoiceOperationLifecycle,
@@ -1008,6 +1021,11 @@ export async function handleConverse(
       }
     }
   }).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
+  const confirmedTeardown = async () => {
+    await Promise.all(promptPlayers.map(handle => handle.playerExited));
+    await settleSpeechArchivesForUpdate(archiveContext);
+  };
+  holdVoiceAdmission(flowPromise.then(confirmedTeardown, confirmedTeardown));
   operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));
   try {
     const result = await Promise.race([flowPromise, timeoutPromise]);

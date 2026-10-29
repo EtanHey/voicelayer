@@ -13,7 +13,7 @@
  */
 
 import { spawnSync } from "child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { randomBytes } from "crypto";
 
@@ -170,6 +170,9 @@ setIfUnset("VOICELAYER_TMP_ROOT", join(RUN_ROOT, "tmp"));
 setIfUnset("VOICELAYER_STATE_DIR", join(RUN_ROOT, "state"));
 // Always replace inherited gates, including a hostile resident-path override.
 process.env.VOICELAYER_UPDATE_GATE_PATH = join(RUN_ROOT, "update-gate.json");
+// Synthetic quiescent bootstrap for isolated tests only. Production has no fallback.
+writeFileSync(process.env.VOICELAYER_UPDATE_GATE_PATH, JSON.stringify({ version: 1, kind: "OPEN", generation: 0, released: null }));
+mkdirSync(process.env.VOICELAYER_UPDATE_GATE_PATH + ".admissions", { mode: 0o700 });
 
 // Fleet journal DB and markers must not fall back to ~/.local/share/orc.
 setIfUnset("VOICELAYER_CONTROL_LAYER_BASE", join(RUN_ROOT, "orc"));

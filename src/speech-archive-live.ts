@@ -10,7 +10,7 @@ const writeFailureCodes = new Set([...deterministicWriteFailures, "IO_ERROR", "W
 
 const retainedAudio = new Map<string, Set<ArchiveWrite>>();
 const cleanupRequested = new Set<string>();
-/** Playback cleanup never removes a source until its durable copy succeeds. */
+/** Playback cleanup waits until every source hold is durably copied or permanently dropped. */
 export function unlinkSpeechAudio(file: string): void {
   if (retainedAudio.get(file)?.size) { cleanupRequested.add(file); return; }
   unlinkSync(file);
@@ -27,6 +27,8 @@ export class LiveSpeechArchive {
   private state: SpeechState = "preparing";
   private storedContext?: SpeakArchiveContext;
   private tail: Promise<void> = Promise.resolve();
+  private droppedWrite = false;
+  private durableWaiters = new Set<() => void>();
   readonly failures: { operation: ArchiveWrite; code: string }[] = [];
   readonly key: string;
   constructor(context?: SpeakArchiveContext, text = "") {
@@ -69,6 +71,9 @@ export class LiveSpeechArchive {
     } catch (error) {
       const code = error instanceof Error && writeFailureCodes.has(error.message) ? error.message : "ARCHIVE_WRITE_FAILED";
       if (retry && deterministicWriteFailures.has(code)) {
+        this.droppedWrite = true;
+        // No retry will consume this temp source. Other retryable operations retain their own holds.
+        if (operation.kind === "audio") releaseAudio(operation);
         console.error(`[speech] archive write dropped: ${operation.kind} ${code}`);
         return;
       }
@@ -86,7 +91,10 @@ export class LiveSpeechArchive {
     const work = this.tail.then(run);
     this.tail = work;
     void work.then(() => {
-      if (this.tail === work && this.terminal && !this.failures.length) {
+      if (this.tail === work && !this.failures.length && !this.droppedWrite) {
+        for (const ready of this.durableWaiters) ready(); this.durableWaiters.clear();
+      }
+      if (this.tail === work && this.terminal && !this.failures.length && !this.droppedWrite) {
         liveArchives.delete(this.key);
         if (this.storedContext) liveArchives.delete(this.storedContext.id);
       }
@@ -96,6 +104,12 @@ export class LiveSpeechArchive {
   settled(): Promise<void> { return this.tail; }
   async retryFailed(): Promise<void> {
     await this.schedule(() => this.retryWrites());
+  }
+  async waitForDurable(): Promise<void> {
+    await this.settled();
+    if (this.failures.length) await this.retryFailed();
+    if (this.droppedWrite) throw Error("UPDATE_GATE_ARCHIVE_UNKNOWN");
+    if (this.failures.length) await new Promise<void>(resolve => this.durableWaiters.add(resolve));
   }
   playerStarted(): void {
     if (this.state !== "playing") this.move("playing");
@@ -124,6 +138,11 @@ export class LiveSpeechArchive {
 export async function flushSpeechArchives(context?: SpeakArchiveContext): Promise<void> {
   const archives = context ? [liveArchives.get(context.id)].filter((archive): archive is LiveSpeechArchive => archive !== undefined) : [...new Set(liveArchives.values())];
   for (const archive of archives) { await archive.settled(); await archive.retryFailed(); }
+}
+/** Only the operation's own archives can hold its admission. Successful retries release waiters. */
+export async function settleSpeechArchivesForUpdate(owner: LiveSpeechArchive | SpeakArchiveContext | undefined): Promise<void> {
+  const archive = owner instanceof LiveSpeechArchive ? owner : owner ? liveArchives.get(owner.id) : undefined;
+  await archive?.waitForDurable();
 }
 export function beginSpeechArchive(text: string, context?: SpeakArchiveContext): LiveSpeechArchive {
   if (context) { const current = liveArchives.get(context.id); if (current) return current; }
