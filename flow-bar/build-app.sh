@@ -1072,7 +1072,6 @@ fi
 
 parse_build_app_args "$@"
 source "$REPO_ROOT/scripts/lib/update-gate.sh"
-vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
@@ -1090,6 +1089,7 @@ elif [[ "$VOICEBAR_REQUIRE_NOTARIZATION" == 1 || -n "$VOICEBAR_RELEASE_ZIP" ]]; 
     if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then
         VOICEBAR_RELEASE_ZIP="$(resolve_release_artifact_destination "$VOICEBAR_RELEASE_ZIP")"
     fi
+    vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
     exec "$(release_artifact_python)" "$REPO_ROOT/scripts/lib/build-release-artifacts.py" \
         "$APP_DIR" "$VOICEBAR_RELEASE_ZIP" "$SCRIPT_DIR/build-app.sh"
 else
@@ -1102,6 +1102,7 @@ if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
     exit 1
 fi
 refuse_brew_managed_install_path
+vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
 guard_build_lifecycle_for_running_instances
 
 protect_notarized_resident_before_rebuild
@@ -1205,14 +1206,11 @@ else
     echo "[build-app] WARNING: scripts/edge-tts-words.py not found — daemon TTS will fail until it is present." >&2
 fi
 
-require_bundle_file "scripts/lib/update-gate.sh"
 require_bundle_file "scripts/install-voicebar-f5-hidutil.sh"
 require_bundle_file "scripts/apply-voicebar-f5-hidutil.sh"
 require_bundle_file "launchd/com.voicelayer.f5-to-f18-hidutil.plist"
 mkdir -p "$APP_DIR/Contents/Resources/scripts"
 mkdir -p "$APP_DIR/Contents/Resources/launchd"
-mkdir -p "$APP_DIR/Contents/Resources/scripts/lib"
-cp "$REPO_ROOT/scripts/lib/update-gate.sh" "$APP_DIR/Contents/Resources/scripts/lib/"
 cp "$REPO_ROOT/scripts/install-voicebar-f5-hidutil.sh" "$APP_DIR/Contents/Resources/scripts/"
 cp "$REPO_ROOT/scripts/apply-voicebar-f5-hidutil.sh" "$APP_DIR/Contents/Resources/scripts/"
 cp "$REPO_ROOT/launchd/com.voicelayer.f5-to-f18-hidutil.plist" "$APP_DIR/Contents/Resources/launchd/"

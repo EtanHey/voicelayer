@@ -94,8 +94,6 @@ case "${1:-}" in
         exec bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "$@"
         ;;
     setup)
-        source "$PACKAGE_ROOT/scripts/lib/update-gate.sh"
-        vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_PATH" "$@"
         shift
         exec bun "$SCRIPT_DIR/setup.ts" "$PACKAGE_ROOT" "$@"
         ;;
@@ -112,7 +110,8 @@ case "${1:-}" in
         shift
         case "${1:-install}" in
             install)
-                exec "$PACKAGE_ROOT/scripts/install-voicebar-f5-hidutil.sh"
+                if [[ "$#" -gt 0 ]]; then shift; fi
+                exec "$PACKAGE_ROOT/scripts/install-voicebar-f5-hidutil.sh" "$@"
                 ;;
             status)
                 launchctl print "gui/$(id -u)/com.voicelayer.f5-to-f18-hidutil" 2>/dev/null || true
@@ -128,7 +127,8 @@ case "${1:-}" in
         shift
         case "${1:-install}" in
             install)
-                exec "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh"
+                if [[ "$#" -gt 0 ]]; then shift; fi
+                exec "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" "$@"
                 ;;
             status)
                 label="com.voicelayer.voicebar"

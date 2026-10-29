@@ -7,6 +7,9 @@
 #   ./launchd/install.sh --recordings-backup  # render backup plist, do not load
 set -euo pipefail
 
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    printf 'Usage: %s [--uninstall|--recordings-backup]\n' "$0"; exit 0
+fi
 # Explicit opt-in; the default retirement path never installs a backup job.
 if [[ "${1:-}" == "--recordings-backup" && "$#" -eq 1 ]]; then
     exec bash "$(dirname "$0")/../scripts/backup-recordings-icloud.sh" --install
@@ -16,7 +19,7 @@ LABEL="com.voicelayer.mcp-daemon"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DAEMON_DISABLE_FLAG="/tmp/.voicelayer-daemon-disabled"
 
-if [[ "${1:-}" != "" && "${1:-}" != "--uninstall" ]]; then
+if [[ "$#" -gt 1 || ( "${1:-}" != "" && "${1:-}" != "--uninstall" ) ]]; then
     printf 'Usage: %s [--uninstall|--recordings-backup]\n' "$0" >&2
     exit 2
 fi

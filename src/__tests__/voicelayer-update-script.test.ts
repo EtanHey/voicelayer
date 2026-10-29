@@ -1,3 +1,4 @@
+import { stubInstallerTransport } from "./setup/installer-transport";
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
@@ -42,6 +43,7 @@ function installUpdateScript(scriptsDir: string) {
   mkdirSync(join(scriptsDir, "lib"), { recursive: true });
   copyFileSync(updateScript, join(scriptsDir, "voicelayer-update.sh"));
   copyFileSync(syncLib, join(scriptsDir, "lib", "brew-cask-sync.sh"));
+  copyFileSync(join(repoRoot, "scripts/lib/update-gate.sh"), join(scriptsDir, "lib/update-gate.sh"));
 }
 
 function run(command: string[], env: Record<string, string> = {}) {
@@ -56,6 +58,7 @@ function run(command: string[], env: Record<string, string> = {}) {
       VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "0",
       VOICELAYER_UPDATE_TEST_PACKAGE_VERSION: "",
       ...env,
+      ...stubInstallerTransport(fixtureRoot("gate-transport-"), env.PATH ?? process.env.PATH),
     },
   });
 }

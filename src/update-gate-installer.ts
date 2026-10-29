@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { acknowledgeVoiceDrain, updateVoiceGate, type ParticipantProof } from "./update-gate-admission";
 import { readUpdateGateFile } from "./update-gate-storage";
+import { updateGateFilePath } from "./paths";
 import { updateGateLeaseSchema, type UpdateGateLease } from "./update-gate";
 
 // G2 deliberately has no live participant/target probe. Until that adapter is
@@ -33,6 +34,36 @@ export function validateInstallerOperation(): void {
     JSON.stringify(current.lease) !== JSON.stringify(lease)) throw Error("UNKNOWN: installer lease mismatch");
   process.kill(owner.pid, 0); // Controller must still own the child operation.
 }
+function recoveryReceipt(lease: UpdateGateLease, reason: string, installerPid?: number): void {
+  const gate = updateGateFilePath(), receipt = `${gate}.recovery-${lease.operationId}.json`;
+  console.error(`[update-gate] RECOVERY_REQUIRED: ${reason}; admission remains closed; gate=${gate}; receipt=${receipt}`);
+  try {
+    const fd = openSync(receipt, "wx", 0o600);
+    try { writeFileSync(fd, JSON.stringify({ lease, reason, installerPid, at: new Date().toISOString() }) + "\n"); fsyncSync(fd); }
+    finally { closeSync(fd); }
+    const directory = openSync(dirname(receipt), "r");
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+  } catch (error) { console.error(`[update-gate] RECOVERY_RECEIPT_WRITE_FAILED: ${error}; durable lease remains at ${gate}`); }
+}
+async function cancelLease(lease: UpdateGateLease): Promise<void> {
+  let failure: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const result = updateVoiceGate({ kind: "CANCEL", lease });
+      if (result.kind !== "REFUSED") return;
+      failure = Error(`Cancel refused: ${result.reason}`); break;
+    } catch (error) {
+      failure = error;
+      if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") break;
+      if (attempt < 7) {
+        console.error("[update-gate] Cancel waiting for update-gate lock (bounded retry)");
+        await Bun.sleep(Math.min(25 * 2 ** attempt, 250));
+      }
+    }
+  }
+  recoveryReceipt(lease, `precommit Cancel failed: ${failure}`);
+  throw Error("RECOVERY_REQUIRED: Cancel could not restore admission; inspect the preserved lease and receipt");
+}
 export async function runGatedInstall(command: string[]): Promise<number> {
   if (!command.length) throw Error("UNKNOWN: missing installer command");
   if (process.env.VOICELAYER_INSTALL_OPERATION) {
@@ -46,8 +77,14 @@ export async function runGatedInstall(command: string[]): Promise<number> {
     ownerId: randomUUID(), targetSha: process.env.VOICELAYER_UPDATE_TARGET_SHA ?? "" };
   if (!updateGateLeaseSchema.safeParse(lease).success) throw Error("UNKNOWN: verified target SHA required");
   let requested = false, committed = false, cancelled = false, displayedPhase = "";
-  const cancel = () => { if (!committed) cancelled = true; };
-  process.on("SIGINT", cancel); process.on("SIGTERM", cancel);
+  let installerPid: number | undefined;
+  const signal = (name: "SIGINT" | "SIGTERM") => {
+    if (!committed) { cancelled = true; return; }
+    recoveryReceipt(lease, `${name}: Cancel unavailable after COMMIT; installer not signalled, outcome requires recovery`, installerPid);
+    process.exit(name === "SIGINT" ? 130 : 143); // Never signal/cancel the committed installer.
+  };
+  const interrupt = () => signal("SIGINT"), terminate = () => signal("SIGTERM");
+  process.on("SIGINT", interrupt); process.on("SIGTERM", terminate);
   const verify: ParticipantProof = () => participantEvidence().ready === true;
   try {
     const request = updateVoiceGate({ kind: "REQUEST", lease });
@@ -69,6 +106,7 @@ export async function runGatedInstall(command: string[]): Promise<number> {
         committed = true;
         const env = { ...process.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid }) };
         const child = Bun.spawn(command, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+        installerPid = child.pid;
         const result = await child.exited;
         return result;
       }
@@ -77,14 +115,16 @@ export async function runGatedInstall(command: string[]): Promise<number> {
     return 130;
   } finally {
     if (committed) console.error("[update-gate] COMMITTED: admission retained closed pending verified completion/recovery");
-    if (requested && !committed) {
-      const result = updateVoiceGate({ kind: "CANCEL", lease });
-      if (result.kind === "REFUSED") throw Error("UNKNOWN: Cancel requires recovery; admission retained closed");
-    }
-    process.off("SIGINT", cancel); process.off("SIGTERM", cancel);
+    try { if (requested && !committed) await cancelLease(lease); }
+    finally { process.off("SIGINT", interrupt); process.off("SIGTERM", terminate); }
   }
 }
 if (import.meta.main) {
+  const option = process.argv[2];
+  if (option === "--help" || option === "-h") { console.log("Usage: update-gate-installer.ts COMMAND [ARGS...] | --validate"); process.exit(0); }
+  if (!option || (option.startsWith("-") && option !== "--validate") || (option === "--validate" && process.argv.length !== 3)) {
+    console.error("Usage: update-gate-installer.ts COMMAND [ARGS...] | --validate"); process.exit(2);
+  }
   try {
     if (process.argv[2] === "--validate") { validateInstallerOperation(); }
     else process.exitCode = await runGatedInstall(process.argv.slice(2));
