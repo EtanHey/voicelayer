@@ -59,6 +59,12 @@ EOF
   esac
 done
 
+if [[ "$APPLY" -eq 1 ]]; then
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  source "$ROOT_DIR/scripts/lib/update-gate.sh"
+  vl_update_gate "$ROOT_DIR" bash "$ROOT_DIR/scripts/voicelayer-dedupe-voicebar.sh" "$@"
+fi
+
 log()  { printf '%s\n' "$*"; }
 sect() { printf '\n==== %s ====\n' "$*"; }
 run()  { # run a mutating command, or just print it in dry-run

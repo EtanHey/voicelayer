@@ -859,6 +859,8 @@ main() {
             ;;
     esac
 
+    source "$SCRIPT_DIR/lib/update-gate.sh"
+    vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/voicelayer-update.sh" "$@"
     update_package
     update_voicebar_app
     if [[ "$(detect_install_type)" != "brew-formula" ]]; then

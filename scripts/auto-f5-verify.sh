@@ -167,6 +167,8 @@ restore_last_known_good_main_build() {
     return 1
   fi
 
+  source "$REPO_ROOT/scripts/lib/update-gate.sh"
+  vl_update_gate "$REPO_ROOT" || return 1
   log "restoring installed VoiceBar.app from main checkout: $main_root"
   if ! (cd "$main_root" && VOICEBAR_ALLOW_BREW_MANAGED_INSTALL=1 bash flow-bar/build-app.sh); then
     log "failed to rebuild VoiceBar.app from main checkout"

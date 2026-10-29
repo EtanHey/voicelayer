@@ -141,7 +141,7 @@ process.env.VOICELAYER_TEST_ISOLATED = "1";
 // Explicit subset envs must retain the test paths too; caller values cannot
 // disable the preload contract. Read current values when each child is spawned.
 const isolationKeys = [
-  "VOICELAYER_UPDATE_GATE_PATH",
+  "VOICELAYER_UPDATE_GATE_PATH", "VOICELAYER_TEST_INSTALL_PROOF",
   "VOICELAYER_TEST_ISOLATED", "VOICELAYER_TEST_RUN_ROOT", "QA_VOICE_MCP_PID_PATH",
   "VOICELAYER_LOG_ROTATION_DIR",
   "VOICELAYER_TMP_ROOT", "VOICELAYER_STATE_DIR", "VOICELAYER_CONTROL_LAYER_BASE",
@@ -170,6 +170,7 @@ setIfUnset("VOICELAYER_TMP_ROOT", join(RUN_ROOT, "tmp"));
 setIfUnset("VOICELAYER_STATE_DIR", join(RUN_ROOT, "state"));
 // Always replace inherited gates, including a hostile resident-path override.
 process.env.VOICELAYER_UPDATE_GATE_PATH = join(RUN_ROOT, "update-gate.json");
+process.env.VOICELAYER_TEST_INSTALL_PROOF = join(RUN_ROOT, "installer-proof.json");
 // Synthetic quiescent bootstrap for isolated tests only. Production has no fallback.
 writeFileSync(process.env.VOICELAYER_UPDATE_GATE_PATH, JSON.stringify({ version: 1, kind: "OPEN", generation: 0, released: null }));
 mkdirSync(process.env.VOICELAYER_UPDATE_GATE_PATH + ".admissions", { mode: 0o700 });
