@@ -99,9 +99,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 // --- Startup ---
 
 async function main() {
-  try { await initializeVoiceGate(); } catch {
+  // Admission bootstraps under its own lock; startup never waits to connect.
+  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
     console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
-  }
+  });
   try {
     await getBackend();
   } catch (err: unknown) {

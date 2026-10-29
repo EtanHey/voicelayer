@@ -108,10 +108,15 @@ test("N3 preserves first-seen diagnostic bytes and rate-limits repeated UNKNOWN 
 for (const name of ["daemon.ts", "mcp-server-daemon.ts", "mcp-server.ts"]) test(`R2 ${name} guards bootstrap and continues startup`, async () => {
   const source = fs.readFileSync(join(import.meta.dir, "..", name), "utf8");
   const main = source.slice(source.indexOf("async function main()"));
-  const guarded = main.match(/try\s*\{\s*await initializeVoiceGate\(\);\s*\}\s*catch\s*\{[^}]*\}/)?.[0];
+  const guarded = main.match(/void Promise\.resolve\(\)\.then\(\(\) => initializeVoiceGate\(\)\)\.catch\(\(\) => \{[^}]*\}\);/)?.[0];
   expect(guarded).toBeDefined();
   const run = new Function("initializeVoiceGate", "console", `return (async () => { ${guarded}; return 'continued'; })();`);
   expect(await run(async () => { throw Error("gate unavailable"); }, console)).toBe("continued");
+  await Bun.sleep(0); // Detached rejection handler must still log the fault.
+  expect(console.error).toHaveBeenCalled();
+  (console.error as ReturnType<typeof spyOn>).mockClear();
+  expect(await run(() => { throw Error("sync gate unavailable"); }, console)).toBe("continued");
+  await Bun.sleep(0);
   expect(console.error).toHaveBeenCalled();
   if (name !== "mcp-server.ts") expect(main.indexOf(guarded!)).toBeGreaterThan(main.lastIndexOf("acquireProcessLock("));
   if (name === "mcp-server-daemon.ts") expect(main.indexOf(guarded!)).toBeGreaterThan(main.indexOf("if (isVoicelayerDisabled())"));
