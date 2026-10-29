@@ -1,5 +1,5 @@
 import { withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
-import { finishLiveSpeechReceipt } from "./speech-archive-live";
+import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { createSpeakReceipt, type SpeakArchiveContext } from "./speak-archive";
@@ -1021,7 +1021,11 @@ async function handleConverseAdmitted(
       }
     }
   }).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
-  holdVoiceAdmission(flowPromise);
+  const confirmedTeardown = async () => {
+    await Promise.all(promptPlayers.map(handle => handle.playerExited));
+    await settleSpeechArchivesForUpdate();
+  };
+  holdVoiceAdmission(flowPromise.then(confirmedTeardown, confirmedTeardown));
   operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));
   try {
     const result = await Promise.race([flowPromise, timeoutPromise]);

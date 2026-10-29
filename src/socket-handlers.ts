@@ -174,8 +174,22 @@ function stopQueuePolicy(recordingState: string, retain: boolean): "clear" | "su
   return recordingState !== "idle" ? "keep" : retain ? "suspend" : "clear";
 }
 
+// A repeated selection is Next/Stop for an existing chain, not a new voice start.
+function selectionControl(command: SocketCommand): SocketResponse | undefined {
+  if (command.cmd !== "speak_text" || command.source !== "selection" ||
+      getRecordingState() !== "idle" || getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) return;
+  const admission = selectionReads.admission(selectionIdentity(command.text));
+  if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
+  if (admission.kind === "playing" && !isPlaybackPaused()) {
+    // A queued successor keeps its original admission; new text takes the gate below.
+    if (selectionReads.next(admission.requestId) === "stopped") stopPlayback();
+    return buildAck(command, "accept", "selection advanced");
+  }
+}
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
+  const control = selectionControl(args[0]);
+  if (control) return control;
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
   try { return withFreshVoiceAdmission(() => handleSocketCommandAdmitted(...args)); }
   catch (error) { if (error instanceof UpdateBusyError) return buildAck(args[0] as AckCommand, "reject", error.message); throw error; }
@@ -208,14 +222,6 @@ function handleSocketCommandAdmitted(
     }
     case "speak_text": {
       const identity = command.source === "selection" ? selectionIdentity(command.text) : undefined;
-      if (identity !== undefined && recordingState === "idle" && getEffectiveRecordingState() === "idle" && !hasActiveVoiceOperation()) {
-        const admission = selectionReads.admission(identity);
-        if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
-        if (admission.kind === "playing" && !isPlaybackPaused()) {
-          if (selectionReads.next(admission.requestId) === "stopped") stopPlayback();
-          return buildAck(command, "accept", "selection advanced");
-        }
-      }
       const receipt = createSpeakReceipt({
         input: command.text, request_id: command.id ?? randomUUID(),
         request_source: command.source === "selection" || command.source === "clipboard" || command.source === "cli"

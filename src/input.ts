@@ -2621,6 +2621,8 @@ async function recordToBufferAdmitted(
         { stdout: "pipe", stderr: "pipe" },
       );
       recorder = spawnedRecorder;
+      // Capture settlement and bounded kill attempts are not physical exit evidence.
+      holdVoiceAdmission(spawnedRecorder.exited);
 
       if (!spawnedRecorder.stdout) {
         finish(new Error("rec: stdout not available"));
