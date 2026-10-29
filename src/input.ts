@@ -1,3 +1,4 @@
+import { traceStage, traceStageOnce, traceExit } from "./voice-trace";
 /**
  * Input module — mic recording + STT transcription.
  *
@@ -2556,6 +2557,7 @@ export async function recordToBuffer(
       const previouslyHeld = recordingHeld;
       if (resolved || synchronizeRecordingHold() || previouslyHeld ||
           (voiceAskVad && hasSpeech)) return;
+      traceStageOnce(signal, "end_decision");
       finish();
     };
     // Preserve dictation/PTT timing; MCP VAD starts only after the recorder opens.
@@ -2573,12 +2575,14 @@ export async function recordToBuffer(
       if (pushToEnd && finishIfPushToEndStopDrainComplete()) return;
       if (!hasStopSignal()) return;
       if (pushToEnd) {
+        traceStageOnce(signal, "end_decision");
         beginPushToEndStopDrain();
         clearStopSignal();
         return;
       }
       clearStopSignal();
       console.error("[voicelayer] Stop signal received — ending recording");
+      traceStageOnce(signal, "end_decision");
       finish();
     }, STOP_POLL_MS);
     stopSignalPoll.unref?.();
@@ -2615,6 +2619,8 @@ export async function recordToBuffer(
         { stdout: "pipe", stderr: "pipe" },
       );
       recorder = spawnedRecorder;
+      traceStage(signal, "recorder_spawn");
+      traceExit(signal, "recorder_exit_confirmed", spawnedRecorder.exited);
 
       if (!spawnedRecorder.stdout) {
         finish(new Error("rec: stdout not available"));
@@ -2686,6 +2692,7 @@ export async function recordToBuffer(
           if (done && !resolved) noteMicLoss("recorder-ended");
           if (done || resolved) break;
           if (!value || value.length === 0) continue;
+          traceStageOnce(signal, "first_pcm");
 
           // Defensive copy: Bun may recycle the underlying ArrayBuffer (R65)
           const safeCopy = new Uint8Array(value);
@@ -2749,6 +2756,7 @@ export async function recordToBuffer(
           if (pushToEnd) {
             chunkedSession?.pushChunk(chunk, true);
             if (hasStopSignal()) {
+              traceStageOnce(signal, "end_decision");
               beginPushToEndStopDrain();
               clearStopSignal();
             }
@@ -2781,6 +2789,7 @@ export async function recordToBuffer(
 
             if (speechDetected) {
               if (!hadSpeech) {
+                traceStage(signal, "first_vad_speech");
                 firstSpeechChunkIndex = pcmChunks.length - 1;
                 if (voiceAskVad && !resolved) {
                   clearTimeout(timer);
@@ -2790,6 +2799,7 @@ export async function recordToBuffer(
                     console.error(
                       `[voicelayer] voice_ask speech safety ceiling reached after ${VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS / 60_000} min — retaining recording`,
                     );
+                    traceStageOnce(signal, "end_decision");
                     finish();
                   }, VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS);
                   invokeCaptureObserver("speech_start", captureState?.onSpeechStart);
@@ -2803,6 +2813,7 @@ export async function recordToBuffer(
               console.error(
                 "[voicelayer] Stop signal received — ending recording",
               );
+              traceStageOnce(signal, "end_decision");
               finish();
               return;
             }
@@ -2814,6 +2825,7 @@ export async function recordToBuffer(
               console.error(
                 `[voicelayer] Silence detected (${silenceMode} mode) — ending recording`,
               );
+              traceStageOnce(signal, "end_decision");
               finish();
               return;
             }
@@ -2825,6 +2837,7 @@ export async function recordToBuffer(
               console.error(
                 `[voicelayer] No speech detected within ${PRE_SPEECH_TIMEOUT_SECONDS}s — ending recording`,
               );
+              traceStageOnce(signal, "end_decision");
               finish();
               return;
             }
@@ -3329,6 +3342,7 @@ export async function waitForInput(
     if (useChunkedTranscription) {
       chunkedSession.finalize();
       const segments = chunkedSession.consumeSegments();
+      traceStage(options.signal, "stt_start", { engine: backend.name });
       const rawText = await transcribeChunkSequenceRaw(
         segments,
         async (chunk, prompt) => {
@@ -3352,6 +3366,7 @@ export async function waitForInput(
           }
         },
       );
+      traceStage(options.signal, "stt_end", { engine: backend.name });
       throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         rawText,
@@ -3363,7 +3378,9 @@ export async function waitForInput(
         sttBackendLabel = `mixed(${[...chunkBackendLabels].join("|")})`;
       }
     } else {
+      traceStage(options.signal, "stt_start", { engine: backend.name });
       const result = await backend.transcribe(wavPath);
+      traceStage(options.signal, "stt_end", { engine: result.backend });
       sttBackendLabel = result.backend;
       throwIfWaitForInputAborted(options.signal);
       // Built BEFORE the finalize call, and abortable: the pause map is a

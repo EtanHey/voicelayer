@@ -1,3 +1,4 @@
+import { traceStage, linkVoiceTrace } from "./voice-trace";
 import { beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
@@ -538,10 +539,12 @@ async function synthesizeEdgeChunk(
     throw new Error(result.error || "edge-tts synthesis failed after retries");
   }
 
+  traceStage(signal, "probe_start");
   const durationMs = Math.max(
     probeAudioDurationMs(audioFile) ?? 0,
     inferBoundaryEndMs(result.wordBoundaries || []),
   );
+  traceStage(signal, "probe_end");
 
   return {
     audioFile,
@@ -851,7 +854,9 @@ async function playClonedAudio(
       ttsFile,
       options?.captureAudioArtifact,
     );
+    traceStage(options?.speechArchive, "probe_start");
     const durationMs = probeAudioDurationMs(ttsFile) ?? undefined;
+    traceStage(options?.speechArchive, "probe_end");
     options?.speechArchive?.generated(ttsFile, options?.generatedEngine === "xtts-v2" ? truncateAtWordBoundary(projection.speechText, 240) : options?.generatedEngine === "f5-tts-mlx" ? truncateAtWordBoundary(projection.speechText, 300) : projection.speechText, resolvedVoice, options?.profile ?? "short", options?.generatedEngine ?? "qwen3-tts", 0, durationMs ?? null);
     const historyRef = addToHistory(text, ttsFile, voiceLabel);
     proc = playAudioNonBlocking(ttsFile, {
@@ -1172,6 +1177,7 @@ class PlaybackQueueManager {
       completed: false,
       exited,
     };
+    traceStage(metadata?.speechArchive, "job_queued");
     this.jobs.set(job.id, job);
     // Capture/Stop fences include alignment children, never preparation or cleanup.
     const playerExited = job.lifecycle.playerExited.finally(async () => { await Promise.all(job.alignments); });
@@ -1646,6 +1652,7 @@ class PlaybackQueueManager {
         this.startPreparedPlayback(next, undefined);
         return;
       }
+      traceStage(next.metadata?.speechArchive, "envelope_start");
       const extraction = next.metadata?.preparedAmplitude ?? startPlaybackAmplitudeEnvelopeExtraction(next.audioFile);
       // Transfer this decode once; a cancelled preparation cannot serve Resume.
       next.metadata.preparedAmplitude = undefined;
@@ -1655,6 +1662,7 @@ class PlaybackQueueManager {
       this.emitQueueSnapshot();
       void extraction.result.then(
         (playbackAmplitude) => {
+          traceStage(next.metadata?.speechArchive, "envelope_end");
           if (this.preparing === preparation) this.startPreparedPlayback(next, playbackAmplitude);
           else { this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext(); }
         },
@@ -1702,8 +1710,10 @@ class PlaybackQueueManager {
       });
     }
     const expectedDurationMs = next.metadata?.durationMs;
+    traceStage(expectedDurationMs && Number.isFinite(expectedDurationMs) && expectedDurationMs > 0 ? undefined : next.metadata?.speechArchive, "probe_start");
     const durationMs = expectedDurationMs && Number.isFinite(expectedDurationMs) && expectedDurationMs > 0
       ? expectedDurationMs : probeAudioDurationMs(next.audioFile, 1_000);
+    traceStage(expectedDurationMs && Number.isFinite(expectedDurationMs) && expectedDurationMs > 0 ? undefined : next.metadata?.speechArchive, "probe_end");
     try {
       assertSpeakerClear();
     } catch (err) {
@@ -1734,6 +1744,7 @@ class PlaybackQueueManager {
       return;
     }
 
+    traceStage(next.metadata?.speechArchive, "player_spawn");
     next.lifecycle.track(proc.exited);
     this.current = { job: next, proc, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) };
     this.armPlayerWatchdog(this.current, durationMs);
@@ -1801,6 +1812,7 @@ class PlaybackQueueManager {
 
     proc.exited
       .then((exitCode) => {
+        traceStage(next.metadata?.speechArchive, "player_exit_confirmed");
         this.finish(next, proc, exitCode === 0);
       })
       .catch(() => {
@@ -2839,6 +2851,8 @@ export async function speak(
   if (!text?.trim()) return {};
   const controller = new AbortController();
   const archive = beginSpeechArchive(text, options?.archiveContext);
+  linkVoiceTrace(options?.archiveContext, archive);
+  linkVoiceTrace(options?.archiveContext, controller.signal);
   speechPreparations.add(controller);
   preparationArchives.set(controller, archive);
   let settle!: () => void;
@@ -2860,6 +2874,7 @@ export async function speak(
     return result;
   } catch (error) {
     // Stop before audio is cancellation, consistently with long-read preparation.
+    traceStage(archive, "synth_fail");
     const stoppedPreparing = controller.signal.aborted || error instanceof SpeechPreparationStoppedError;
     archive.finish(stoppedPreparing ? "cancelled" : "failed",
       stoppedPreparing ? "USER_STOP_PREPARING" : isSpeakerOutputRefusedError(error) ? "REJECTED" : "SYNTH_FAILED");
@@ -2988,6 +3003,7 @@ async function prepareSpeech(
 
     // Tier 0: XTTS-v2 fine-tuned (best quality -- captures cadence + timbre)
     if (isXTTSAvailable(profileAssetVoice) && profile?.reference_clip) {
+      traceStage(options?.speechArchive, "synth_start", { engine: "xtts-v2" });
       const wavPath = await synthesizeXTTS(
         spokenText,
         profileAssetVoice,
@@ -2997,6 +3013,7 @@ async function prepareSpeech(
       if (signal.aborted && wavPath) { try { unlinkSync(wavPath); } catch {} }
       throwIfAbortedSafe(signal);
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
+      traceStage(options?.speechArchive, mp3Path ? "synth_end" : "synth_fail");
       if (mp3Path) {
         audioEngine = "xtts-v2";
         const playback = await playClonedAudio(
@@ -3029,6 +3046,7 @@ async function prepareSpeech(
       profile.reference_clip &&
       profile.reference_text
     ) {
+      traceStage(options?.speechArchive, "synth_start", { engine: "f5-tts-mlx" });
       const wavPath = await synthesizeF5TTS(
         spokenText,
         profile.reference_clip,
@@ -3038,6 +3056,7 @@ async function prepareSpeech(
       if (signal.aborted && wavPath) { try { unlinkSync(wavPath); } catch {} }
       throwIfAbortedSafe(signal);
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
+      traceStage(options?.speechArchive, mp3Path ? "synth_end" : "synth_fail");
       if (mp3Path) {
         audioEngine = "f5-tts-mlx";
         const playback = await playClonedAudio(
@@ -3064,7 +3083,9 @@ async function prepareSpeech(
     }
 
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
+    traceStage(options?.speechArchive, "synth_start", { engine: "qwen3-tts" });
     const audioBuffer = await synthesizeCloned(spokenText, resolved.voice, signal);
+    traceStage(options?.speechArchive, audioBuffer ? "synth_end" : "synth_fail", { engine: "qwen3-tts" });
     throwIfAbortedSafe(signal);
     if (audioBuffer) {
       audioEngine = "qwen3-tts";
@@ -3153,6 +3174,7 @@ async function speakWithEdgeTTS(
   let wordBoundaries: WordBoundary[] = [];
 
   const textChunks = chunkTextForTTS(spokenText);
+  traceStage(options?.speechArchive, "synth_start", { engine: "edge-tts" });
   try {
     if (textChunks.length === 1) {
       const synthesized = await synthesizeEdgeChunk(
@@ -3184,7 +3206,9 @@ async function speakWithEdgeTTS(
       );
       wordBoundaries = mergeWordBoundaryChunks(synthesizedChunks);
     }
+    traceStage(options?.speechArchive, "synth_end", { engine: "edge-tts" });
   } catch (error) {
+    traceStage(options?.speechArchive, "synth_fail", { engine: "edge-tts" });
     if (!signal?.aborted) broadcast({
       type: "error",
       message: "TTS synthesis failed (edge-tts)",
@@ -3228,7 +3252,9 @@ async function speakWithEdgeTTS(
       ttsFile,
       options?.captureAudioArtifact,
     );
+    traceStage(options?.speechArchive, "probe_start");
     const durationMs = Math.max(probeAudioDurationMs(ttsFile) ?? 0, inferBoundaryEndMs(wordBoundaries)) || undefined;
+    traceStage(options?.speechArchive, "probe_end");
     if (textChunks.length === 1) options?.speechArchive?.generated(ttsFile, textChunks[0], voice, options?.profile ?? "short", "edge-tts", 0, durationMs ?? null);
     else options?.speechArchive?.keepAudio(ttsFile, durationMs ?? null);
     addToHistory(displayText, ttsFile, voice, [], { wordBoundaries });
