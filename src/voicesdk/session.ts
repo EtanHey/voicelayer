@@ -5,6 +5,8 @@ import type { BargeInMonitor, SoundLayer } from "../soundlayer";
 import type { QueuedPlaybackHandle, PlaybackScope } from "../tts/playback-lifecycle";
 import { boundedPlaybackWait, waitForPlayerExit } from "../tts/playback-exit";
 import { defaultSoundLayer } from "../soundlayer";
+import { AdmittedConversationAskRequired, prepareConversationUtterance,
+  type ConversationSpeakerState, type ConversationUtterance } from "./conversation-speaker";
 import {
   serializeVoiceSdkEvent,
   type VoiceSdkEvent,
@@ -44,6 +46,8 @@ export interface StartSectionInput {
 export interface SpeakInput {
   text: string;
   voice_id?: string;
+  /** Internal opt-in only; command parsing and legacy callers remain unchanged. */
+  conversation?: ConversationUtterance;
 }
 
 export interface ListenInput {
@@ -69,6 +73,7 @@ export interface VoiceSdkSessionManager {
 }
 
 const DEFAULT_LOG_DIR = join(homedir(), ".voicelayer", "voicesdk-sessions");
+type PrivateSession = { session: VoiceSdkSession; speaker: ConversationSpeakerState; activeSpeaks: number };
 
 export function createVoiceSdkSessionManager(
   options: VoiceSdkSessionManagerOptions = {},
@@ -77,16 +82,16 @@ export function createVoiceSdkSessionManager(
   const logDir = options.logDir ?? DEFAULT_LOG_DIR;
   const idFactory = options.idFactory ?? randomSessionId;
   const now = options.now ?? (() => new Date());
-  const sessions = new Map<string, VoiceSdkSession>();
+  const sessions = new Map<string, PrivateSession>();
   const listeners = new Set<(event: VoiceSdkEvent) => void>();
 
   if (options.onEvent) listeners.add(options.onEvent);
 
-  function sessionFor(sessionId: string): VoiceSdkSession {
-    const session = sessions.get(sessionId);
-    if (!session) throw new Error(`Unknown VoiceSDK session: ${sessionId}`);
-    if (session.ended) throw new Error(`VoiceSDK session has ended: ${sessionId}`);
-    return session;
+  function sessionFor(sessionId: string): PrivateSession {
+    const state = sessions.get(sessionId);
+    if (!state) throw new Error(`Unknown VoiceSDK session: ${sessionId}`);
+    if (state.session.ended) throw new Error(`VoiceSDK session has ended: ${sessionId}`);
+    return state;
   }
 
   function nextSequence(session: VoiceSdkSession): number {
@@ -115,7 +120,7 @@ export function createVoiceSdkSessionManager(
       startedAtMs: created.getTime(),
       ended: false,
     };
-    sessions.set(session.session_id, session);
+    sessions.set(session.session_id, { session, speaker: {}, activeSpeaks: 0 });
     emit({
       type: "session.started",
       session_id: session.session_id,
@@ -131,7 +136,7 @@ export function createVoiceSdkSessionManager(
     sessionId: string,
     input: StartSectionInput,
   ): Promise<void> {
-    const session = sessionFor(sessionId);
+    const { session } = sessionFor(sessionId);
     emit({
       type: "section.started",
       session_id: sessionId,
@@ -143,12 +148,38 @@ export function createVoiceSdkSessionManager(
   }
 
   async function speak(sessionId: string, input: SpeakInput): Promise<void> {
-    const session = sessionFor(sessionId);
+    const state = sessionFor(sessionId);
+    const plan = input.conversation
+      ? prepareConversationUtterance(input.text, input.conversation, state.speaker) : undefined;
+    // No bare-listen shortcut: response-bearing returns stay blocked before events/audio.
+    if (plan?.kind === "admitted-ask-required") throw new AdmittedConversationAskRequired(plan);
+    if (plan && state.activeSpeaks) throw new Error("overlapping conversation utterance lacks serial-owner evidence");
+    const token = plan ? Symbol("conversation utterance") : undefined;
+    if (!plan) {
+      // Legacy concurrency is unchanged; its unknown speaker invalidates opt-in evidence.
+      state.speaker.heardAgentId = undefined;
+    }
+    state.speaker.pending = token;
+    state.activeSpeaks++;
+    try {
+      await speakReserved(sessionId, input, state, plan, token);
+    } finally {
+      state.activeSpeaks--;
+      if (state.speaker.pending === token) state.speaker.pending = undefined;
+    }
+  }
+
+  async function speakReserved(
+    sessionId: string, input: SpeakInput, state: ReturnType<typeof sessionFor>,
+    plan: ReturnType<typeof prepareConversationUtterance> | undefined, token: symbol | undefined,
+  ): Promise<void> {
+    const { session } = state;
+    const text = plan?.text ?? input.text;
     const utteranceId = `utt-${session.sequence + 1}`;
     const voiceId = input.voice_id ?? "default";
     let playbackStartedAtMs = soundLayer.clock?.nowMs() ?? Date.now();
     // Same conservative cold-synthesis / slow-speech allowance as Ask.
-    const promptBudgetMs = Math.max(180_000, 60_000 + Math.ceil(input.text.length / 13.9) * 3_000);
+    const promptBudgetMs = Math.max(180_000, 60_000 + Math.ceil(text.length / 13.9) * 3_000);
     let reason: VoiceSdkSpeakStopReason = "completed";
     let interrupted = false;
     let finished = false;
@@ -164,7 +195,7 @@ export function createVoiceSdkSessionManager(
       session_id: sessionId,
       utterance_id: utteranceId,
       voice_id: voiceId,
-      text_preview: input.text.slice(0, 160),
+      text_preview: text.slice(0, 160),
       sequence: nextSequence(session),
     });
     emit({
@@ -172,7 +203,7 @@ export function createVoiceSdkSessionManager(
       session_id: sessionId,
       utterance_id: utteranceId,
       index: 0,
-      text: input.text,
+      text,
       final: true,
       sequence: nextSequence(session),
     });
@@ -217,11 +248,17 @@ export function createVoiceSdkSessionManager(
     };
 
     try {
-      await boundedPlaybackWait(soundLayer.tts.speak(input.text, {
+      await boundedPlaybackWait(soundLayer.tts.speak(text, {
         voice: input.voice_id,
         mode: "converse",
         waitForPlayback: true,
-        onPlaybackStart: startBargeInMonitor,
+        onPlaybackStart: (startedAtMs) => {
+          if (plan && !finished && !session.ended && sessions.get(sessionId) === state &&
+              state.speaker.pending === token && state.activeSpeaks === 1) {
+            state.speaker.heardAgentId = plan.agentId;
+          }
+          startBargeInMonitor(startedAtMs);
+        },
         onPlaybackQueued: (handle) => {
           if (finished) { soundLayer.cancellation.cancelPlayback?.({ id: handle.id }); return; }
           playbacks.push(handle);
@@ -233,15 +270,21 @@ export function createVoiceSdkSessionManager(
       cancelOwned();
     } finally {
       finished = true;
-      bargeInMonitor.current?.stop();
+      let cleanupFailure: { error: unknown } | undefined;
+      try { bargeInMonitor.current?.stop(); }
+      catch (error) { cleanupFailure = { error }; }
       try { await bargeInMonitor.current?.exited; }
       catch (error) {
-        console.error("[voicelayer] barge-in monitor teardown:", error);
         reason = "error";
-        cancelOwned();
+        try { console.error("[voicelayer] barge-in monitor teardown:", error); cancelOwned(); }
+        catch (error) { cleanupFailure ??= { error }; }
       }
       try { await waitForPlayerExit(playbacks); }
-      catch { reason = "error"; cancelOwned(); }
+      catch {
+        reason = "error";
+        try { cancelOwned(); } catch (error) { cleanupFailure ??= { error }; }
+      }
+      if (cleanupFailure) throw cleanupFailure.error;
     }
     if (interrupted && reason !== "error") {
       reason = "interrupted";
@@ -256,7 +299,7 @@ export function createVoiceSdkSessionManager(
   }
 
   async function listen(sessionId: string, input: ListenInput): Promise<void> {
-    const session = sessionFor(sessionId);
+    const { session } = sessionFor(sessionId);
     const mode = input.mode ?? "vad";
     const turnId = `turn-${session.sequence + 1}`;
     emit({
@@ -305,7 +348,7 @@ export function createVoiceSdkSessionManager(
     sessionId: string,
     input: DecisionInput,
   ): Promise<void> {
-    const session = sessionFor(sessionId);
+    const { session } = sessionFor(sessionId);
     emit({
       type: "decision.recorded",
       session_id: sessionId,
@@ -318,7 +361,7 @@ export function createVoiceSdkSessionManager(
   }
 
   async function endSession(sessionId: string, reason: string): Promise<void> {
-    const session = sessionFor(sessionId);
+    const { session } = sessionFor(sessionId);
     const endedAtMs = now().getTime();
     emit({
       type: "session.ended",
