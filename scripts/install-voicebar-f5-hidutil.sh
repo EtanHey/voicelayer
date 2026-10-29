@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/update-gate.sh"
+vl_update_gate "$ROOT_DIR" bash "$ROOT_DIR/scripts/install-voicebar-f5-hidutil.sh" "$@"
 LABEL="com.voicelayer.f5-to-f18-hidutil"
 PLIST_SRC="$ROOT_DIR/launchd/$LABEL.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"

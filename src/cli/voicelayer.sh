@@ -94,6 +94,8 @@ case "${1:-}" in
         exec bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "$@"
         ;;
     setup)
+        source "$PACKAGE_ROOT/scripts/lib/update-gate.sh"
+        vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_PATH" "$@"
         shift
         exec bun "$SCRIPT_DIR/setup.ts" "$PACKAGE_ROOT" "$@"
         ;;

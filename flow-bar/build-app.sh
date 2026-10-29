@@ -1071,6 +1071,8 @@ if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
 fi
 
 parse_build_app_args "$@"
+source "$REPO_ROOT/scripts/lib/update-gate.sh"
+vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
@@ -1203,11 +1205,14 @@ else
     echo "[build-app] WARNING: scripts/edge-tts-words.py not found — daemon TTS will fail until it is present." >&2
 fi
 
+require_bundle_file "scripts/lib/update-gate.sh"
 require_bundle_file "scripts/install-voicebar-f5-hidutil.sh"
 require_bundle_file "scripts/apply-voicebar-f5-hidutil.sh"
 require_bundle_file "launchd/com.voicelayer.f5-to-f18-hidutil.plist"
 mkdir -p "$APP_DIR/Contents/Resources/scripts"
 mkdir -p "$APP_DIR/Contents/Resources/launchd"
+mkdir -p "$APP_DIR/Contents/Resources/scripts/lib"
+cp "$REPO_ROOT/scripts/lib/update-gate.sh" "$APP_DIR/Contents/Resources/scripts/lib/"
 cp "$REPO_ROOT/scripts/install-voicebar-f5-hidutil.sh" "$APP_DIR/Contents/Resources/scripts/"
 cp "$REPO_ROOT/scripts/apply-voicebar-f5-hidutil.sh" "$APP_DIR/Contents/Resources/scripts/"
 cp "$REPO_ROOT/launchd/com.voicelayer.f5-to-f18-hidutil.plist" "$APP_DIR/Contents/Resources/launchd/"

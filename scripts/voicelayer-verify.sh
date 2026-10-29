@@ -2,6 +2,7 @@
 # Runtime verification gate for VoiceLayer daemon/socket/MCP changes.
 
 set -euo pipefail
+UPDATE_GATE_ARGS=("$@")
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -432,6 +433,9 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   printf 'Verified-Runtime: %s\n' "$sha"
   exit 0
 fi
+
+source "$REPO_ROOT/scripts/lib/update-gate.sh"
+vl_update_gate "$REPO_ROOT" bash "$REPO_ROOT/scripts/voicelayer-verify.sh" ${UPDATE_GATE_ARGS[@]+"${UPDATE_GATE_ARGS[@]}"}
 
 running_pids="$(pgrep -x VoiceBar 2>/dev/null || true)"
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then

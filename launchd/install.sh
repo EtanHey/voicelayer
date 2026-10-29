@@ -25,6 +25,10 @@ printf 'Retiring %s...\n' "$LABEL"
 printf '  plist:        %s\n' "$PLIST_DST"
 printf '  disable flag: %s (left unchanged)\n' "$DAEMON_DISABLE_FLAG"
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/update-gate.sh"
+vl_update_gate "$ROOT_DIR" bash "$ROOT_DIR/launchd/install.sh" "$@"
+
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 rm -f "$PLIST_DST"
 

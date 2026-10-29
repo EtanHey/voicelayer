@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { runGatedInstall, validateInstallerOperation } from "../update-gate-installer";
 import { constants, accessSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -323,6 +324,7 @@ function chooseAgent(detected: readonly AgentCli[], home: string): AgentId {
 
 async function runCommand(command: string[]): Promise<void> {
   const proc = Bun.spawn(command, {
+    env: process.env,
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -376,6 +378,10 @@ if (import.meta.main) {
     console.error("Usage: setup.ts PACKAGE_ROOT");
     process.exit(2);
   }
+  if (!process.env.VOICELAYER_INSTALL_OPERATION) {
+    process.exit(await runGatedInstall([process.execPath, import.meta.path, ...process.argv.slice(2)]));
+  }
+  validateInstallerOperation();
   runSetup(packageRoot).catch((error: unknown) => {
     console.error(
       `[voicelayer] setup failed: ${
