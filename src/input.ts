@@ -1,3 +1,4 @@
+import { withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
  * Input module — mic recording + STT transcription.
  *
@@ -2102,7 +2103,9 @@ export interface MicChunkStreamHandle {
   stop(): void;
 }
 
-export function startMicChunkStream(options: {
+export const startMicChunkStream = (...args: Parameters<typeof startMicChunkStreamAdmitted>): ReturnType<typeof startMicChunkStreamAdmitted> =>
+  withVoiceAdmission(() => startMicChunkStreamAdmitted(...args));
+function startMicChunkStreamAdmitted(options: {
   onChunk: (chunk: Uint8Array, capturedAtMs: number) => Promise<boolean | void>;
 }): MicChunkStreamHandle {
   const recPath = resolveRecorderBinary();
@@ -2242,6 +2245,7 @@ export function startMicChunkStream(options: {
     if (failure?.status === "rejected") throw failure.reason;
   });
 
+  holdVoiceAdmission(exited);
   return { exited, stop };
 }
 
@@ -2265,7 +2269,9 @@ export function isPushToEndStopDrainComplete(
  * @param silenceMode - VAD silence threshold (ignored in push-to-end mode)
  * @param pushToEnd - If true, skip VAD — only stop on user signal or timeout
  */
-export async function recordToBuffer(
+export const recordToBuffer = async (...args: Parameters<typeof recordToBufferAdmitted>): ReturnType<typeof recordToBufferAdmitted> =>
+  withVoiceAdmission(() => recordToBufferAdmitted(...args));
+async function recordToBufferAdmitted(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
   pushToEnd: boolean = false,
@@ -2858,7 +2864,9 @@ export async function recordToBuffer(
  * @param silenceMode - VAD silence mode: quick (0.5s), standard (1.5s), thoughtful (2.5s)
  * @param pushToEnd - If true, use push-to-end mode (no VAD, stop on signal only)
  */
-export async function waitForInput(
+export const waitForInput = async (...args: Parameters<typeof waitForInputAdmitted>): ReturnType<typeof waitForInputAdmitted> =>
+  withVoiceAdmission(() => waitForInputAdmitted(...args));
+async function waitForInputAdmitted(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
   pushToEnd: boolean = false,
@@ -4150,7 +4158,9 @@ function commitVoiceAskTranscriptPair(
 
 let voiceAskRetranscriptionOwner: symbol | null = null;
 
-export async function retranscribeVoiceAskArchive(
+export const retranscribeVoiceAskArchive = async (...args: Parameters<typeof retranscribeVoiceAskArchiveAdmitted>): ReturnType<typeof retranscribeVoiceAskArchiveAdmitted> =>
+  withVoiceAdmission(() => retranscribeVoiceAskArchiveAdmitted(...args));
+async function retranscribeVoiceAskArchiveAdmitted(
   archiveId: string,
   options: {
     delivery?: "return-only" | "history";
@@ -4305,7 +4315,9 @@ function voiceAskReceiptForArchivedAudio(audioPath: string): string | null {
   return record.id;
 }
 
-export async function retranscribeRecordingCapture(
+export const retranscribeRecordingCapture = async (...args: Parameters<typeof retranscribeRecordingCaptureAdmitted>): ReturnType<typeof retranscribeRecordingCaptureAdmitted> =>
+  withVoiceAdmission(() => retranscribeRecordingCaptureAdmitted(...args));
+async function retranscribeRecordingCaptureAdmitted(
   audioPath: string,
 ): Promise<string | null> {
   const eventAudioPath = audioPath.trim();
@@ -4431,7 +4443,9 @@ export async function retranscribeRecordingCapture(
   }
 }
 
-export async function retranscribeLastCapture(): Promise<string | null> {
+export const retranscribeLastCapture = async (...args: Parameters<typeof retranscribeLastCaptureAdmitted>): ReturnType<typeof retranscribeLastCaptureAdmitted> =>
+  withVoiceAdmission(() => retranscribeLastCaptureAdmitted(...args));
+async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
   const wavPath = retainedRecordingFilePath();
   if (!existsSync(wavPath)) {
     return null;

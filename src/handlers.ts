@@ -1,3 +1,4 @@
+import { withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
@@ -284,7 +285,11 @@ function detectMode(
 
 // --- Unified handlers ---
 
-export async function handleVoiceSpeak(
+export async function handleVoiceSpeak(...args: Parameters<typeof handleVoiceSpeakAdmitted>): Promise<McpResult> {
+  try { return await withFreshVoiceAdmission(() => handleVoiceSpeakAdmitted(...args)); }
+  catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+}
+async function handleVoiceSpeakAdmitted(
   args: unknown,
   context?: VoiceToolContext,
 ): Promise<McpResult> {
@@ -388,7 +393,11 @@ export async function handleVoiceSpeak(
   }
 }
 
-export async function handleVoiceAsk(
+export async function handleVoiceAsk(...args: Parameters<typeof handleVoiceAskAdmitted>): Promise<McpResult> {
+  try { return await withFreshVoiceAdmission(() => handleVoiceAskAdmitted(...args)); }
+  catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+}
+async function handleVoiceAskAdmitted(
   args: unknown,
   context?: VoiceToolContext,
 ): Promise<McpResult> {
@@ -484,7 +493,7 @@ export async function handleVoiceAsk(
     },
   };
   try {
-    return await handleConverse(
+    return await handleConverseAdmitted(
       {
         message: parsed.data.message,
         voice: parsed.data.voice,
@@ -600,7 +609,11 @@ export async function handleConsult(
   );
 }
 
-export async function handleConverse(
+export async function handleConverse(...args: Parameters<typeof handleConverseAdmitted>): Promise<McpResult> {
+  try { return await withFreshVoiceAdmission(() => handleConverseAdmitted(...args)); }
+  catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+}
+async function handleConverseAdmitted(
   args: unknown,
   context?: VoiceToolContext,
   operationLifecycle?: VoiceOperationLifecycle,
@@ -1008,6 +1021,7 @@ export async function handleConverse(
       }
     }
   }).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
+  holdVoiceAdmission(flowPromise);
   operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));
   try {
     const result = await Promise.race([flowPromise, timeoutPromise]);

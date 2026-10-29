@@ -1,5 +1,6 @@
+import { withFreshVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
-import { finishLiveSpeechReceipt } from "./speech-archive-live";
+import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
  * Socket command handlers — logic for Voice Bar socket commands.
  *
@@ -135,15 +136,15 @@ function startSelectionRead(read: QueuedSelectionRead, prepared?: PreparedReadSt
     if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) throw new Error("busy");
     const identity = { request_id: read.requestId, text_hash: read.textHash, archiveContext: read.archiveContext,
       ...(read.structuredDisplay ? { structuredDisplay: read.structuredDisplay } : {}) };
-    if (prepared) speakText(read.text, read.profile, identity, prepared);
-    else speakText(read.text, read.profile, identity);
+    read.admission!.run(() => prepared ? speakText(read.text, read.profile, identity, prepared) : speakText(read.text, read.profile, identity));
   } catch (error) { finishRawSpeakFailure(read.archiveContext, error); throw error; }
+  finally { void settleSpeechArchivesForUpdate().then(() => read.admission?.release()).catch(() => console.error("[update-gate] queued archive UNKNOWN; admission retained")); }
 }
 
 /** QPRE1: the queue head's first chunk is prepared once the playing read's synthesis is complete. */
 const selectionReadPreparation = {
   prepare: (read: QueuedSelectionRead, signal: AbortSignal, owner: string) =>
-    prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext, read.structuredDisplay),
+    read.admission!.run(() => prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext, read.structuredDisplay)),
 };
 const newSelectionReadQueue = () => new SelectionReadQueue<PreparedReadStart>(startSelectionRead,
   (state) => broadcast({ type: "read_queue", ...state }), SELECTION_READ_QUEUE_LIMIT, selectionReadPreparation);
@@ -173,7 +174,13 @@ function stopQueuePolicy(recordingState: string, retain: boolean): "clear" | "su
   return recordingState !== "idle" ? "keep" : retain ? "suspend" : "clear";
 }
 
-export function handleSocketCommand(
+const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
+export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
+  if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
+  try { return withFreshVoiceAdmission(() => handleSocketCommandAdmitted(...args)); }
+  catch (error) { if (error instanceof UpdateBusyError) return buildAck(args[0] as AckCommand, "reject", error.message); throw error; }
+}
+function handleSocketCommandAdmitted(
   command: SocketCommand,
   onSpeak?: (read: import("./tts").LongReadHandle) => void,
 ): SocketResponse | void | Promise<SocketResponse> {
@@ -236,9 +243,11 @@ export function handleSocketCommand(
         if (command.queue === true && command.id) {
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.
           queueStartOwnsFailure = true;
-          const outcome = selectionReads.submit({ requestId: command.id, text, textHash, profile: command.profile ?? "auto",
+          const admission = captureVoiceAdmission();
+          const outcome = selectionReads.submit({ admission, requestId: command.id, text, textHash, profile: command.profile ?? "auto",
             archiveContext: receipt.context, ...(identity !== undefined ? { selectionIdentity: identity } : {}), ...(structuredDisplay ? { structuredDisplay } : {}) }, true);
           if (outcome === "full") {
+            admission.release();
             finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
             return buildAck(command, "reject", "queue full");
           }

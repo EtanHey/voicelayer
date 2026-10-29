@@ -1,4 +1,5 @@
-import { beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
+import { withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
+import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
 import { structuredReadDisplay, type StructuredChunkDisplay } from "./tts/structured-display";
@@ -2085,13 +2086,17 @@ export function isCaptureAdmissionReserved(): boolean {
 }
 
 /** Play an audio file, queued after any currently playing audio. */
-export function playAudioNonBlocking(
+export const playAudioNonBlocking = (...args: Parameters<typeof playAudioNonBlockingAdmitted>): ReturnType<typeof playAudioNonBlockingAdmitted> =>
+  withVoiceAdmission(() => playAudioNonBlockingAdmitted(...args));
+function playAudioNonBlockingAdmitted(
   audioFile: string,
   metadata?: PlaybackMetadata,
 ): QueuedPlaybackHandle {
   // A start-paused admission holds no player, exactly like a P16 park; Play re-checks the speaker.
   if (!metadata?.startPaused) assertSpeakerClear();
-  return playbackQueueManager.enqueue(audioFile, metadata);
+  const handle = playbackQueueManager.enqueue(audioFile, metadata);
+  holdVoiceAdmission(handle.playerExited.finally(() => settleSpeechArchivesForUpdate()));
+  return handle;
 }
 
 const PLAYBACK_WAIT_TIMEOUT_MS = 35_000;
@@ -2446,7 +2451,9 @@ function untilAborted(signal: AbortSignal): Promise<never> {
 /** QPRE1: prepare a queued read's FIRST chunk in the background. It starts only once the playing owner's
  * synthesis is complete (no contention with it, whatever the engine), and never touches playback,
  * broadcasts, history or the active read. Rejects when the owner is gone or the signal aborts. */
-export async function prepareSelectionReadStart(
+export const prepareSelectionReadStart = async (...args: Parameters<typeof prepareSelectionReadStartAdmitted>): ReturnType<typeof prepareSelectionReadStartAdmitted> =>
+  withVoiceAdmission(() => prepareSelectionReadStartAdmitted(...args));
+async function prepareSelectionReadStartAdmitted(
   text: string, kind: "auto" | "short" | "long", ownerRequestId: string, signal: AbortSignal,
   archiveContext?: SpeakArchiveContext, structuredDisplay?: StructuredSpeech,
 ): Promise<PreparedReadStart> {
@@ -2558,7 +2565,9 @@ export function speakText(text: string, kind: "auto" | "short" | "long" = "auto"
 }
 
 /** Long reads bypass XTTS/F5 truncation and call the Qwen3 clone tier directly. */
-export function speakLongRead(text: string, profile: LongReadProfile, receivedAt = Date.now(), identity: SpeechIdentity = {}, prepared?: PreparedReadStart): LongReadHandle {
+export const speakLongRead = (...args: Parameters<typeof speakLongReadAdmitted>): ReturnType<typeof speakLongReadAdmitted> =>
+  withVoiceAdmission(() => speakLongReadAdmitted(...args));
+function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedAt = Date.now(), identity: SpeechIdentity = {}, prepared?: PreparedReadStart): LongReadHandle {
   const speechIdentity = { request_id: identity.request_id ?? randomUUID(), text_hash: identity.text_hash ?? normalizedSpeechHash(text) };
   const chars = text.length;
   const requestedClone = profile.requestedClone ?? (profile.engine === "clone");
@@ -2776,8 +2785,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
       }
     }
   });
+  holdVoiceAdmission(handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); }).finally(() => settleSpeechArchivesForUpdate()));
   handle.completion = handle.done.then(() => failure ? { error: failure } : {});
-  handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); });
   void handle.playerExited.catch(() => {});
   return { id, get generation() { return handle.generation; }, done: handle.done, playerExited: handle.playerExited, started, completion: handle.completion };
 }
@@ -2832,7 +2841,9 @@ export class QueuedPlaybackController implements PlaybackController {
  * @param options.voice - Voice name (profile name or raw edge-tts voice). If omitted, uses default.
  * @param options.waitForPlayback - If true, wait for audio playback to finish (used in converse mode before recording).
  */
-export async function speak(
+export const speak = async (...args: Parameters<typeof speakAdmitted>): ReturnType<typeof speakAdmitted> =>
+  withVoiceAdmission(() => speakAdmitted(...args));
+async function speakAdmitted(
   text: string,
   options?: TextToSpeechOptions,
 ): Promise<TextToSpeechResult> {
@@ -2844,6 +2855,7 @@ export async function speak(
   let settle!: () => void;
   const settlement = new Promise<void>(resolve => { settle = resolve; });
   speechPreparationSettlements.add(settlement);
+  holdVoiceAdmission(settlement.then(() => settleSpeechArchivesForUpdate()));
   let playback: QueuedPlaybackHandle | undefined;
   const onQueued = options?.onPlaybackQueued;
   const onCompleted = options?.onPlaybackComplete;

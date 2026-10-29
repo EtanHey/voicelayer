@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import type { SpeakArchiveContext } from "./speak-archive";
 import type { SpeechState } from "./speech-state";
 
+let updateArchiveUncertain = false;
 const liveArchives = new Map<string, LiveSpeechArchive>();
 const deterministicWriteFailures = new Set(["CONFLICT", "FINALIZED", "INVALID_INPUT", "UNSAFE_PATH", "CORRUPT_METADATA"]);
 const writeFailureCodes = new Set([...deterministicWriteFailures, "IO_ERROR", "WRITE_UNCERTAIN", "SYNC_UNCERTAIN", "ARCHIVE_WORKER_FAILED", "ARCHIVE_IO_FAILED"]);
@@ -67,6 +68,7 @@ export class LiveSpeechArchive {
       liveArchives.set(this.storedContext.id, this);
       if (operation.kind === "audio") releaseAudio(operation);
     } catch (error) {
+      updateArchiveUncertain = true;
       const code = error instanceof Error && writeFailureCodes.has(error.message) ? error.message : "ARCHIVE_WRITE_FAILED";
       if (retry && deterministicWriteFailures.has(code)) {
         console.error(`[speech] archive write dropped: ${operation.kind} ${code}`);
@@ -124,6 +126,11 @@ export class LiveSpeechArchive {
 export async function flushSpeechArchives(context?: SpeakArchiveContext): Promise<void> {
   const archives = context ? [liveArchives.get(context.id)].filter((archive): archive is LiveSpeechArchive => archive !== undefined) : [...new Set(liveArchives.values())];
   for (const archive of archives) { await archive.settled(); await archive.retryFailed(); }
+}
+/** Update admission never treats dropped/retryable writes as durable completion. */
+export async function settleSpeechArchivesForUpdate(): Promise<void> {
+  for (const archive of new Set(liveArchives.values())) await archive.settled();
+  if (updateArchiveUncertain) throw Error("UPDATE_GATE_ARCHIVE_UNKNOWN");
 }
 export function beginSpeechArchive(text: string, context?: SpeakArchiveContext): LiveSpeechArchive {
   if (context) { const current = liveArchives.get(context.id); if (current) return current; }
