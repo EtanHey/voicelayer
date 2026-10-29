@@ -2479,6 +2479,7 @@ async function prepareSelectionReadStartAdmitted(
   const rules = pronunciationRules();
   const identity = preparedStartIdentity(displayChunk, profile, policy, rules) + (prosody?.plan.renderIdentity ?? "");
   const archive = archiveContext ? beginSpeechArchive(text, archiveContext) : undefined;
+  let start: PreparedReadStart | undefined;
   try {
   let prepared: PreparedChunk;
   if (prosody) {
@@ -2491,9 +2492,16 @@ async function prepareSelectionReadStartAdmitted(
   } else prepared = await synthesizeLongReadChunk(displayChunk, profile, signal, policy, 0, rules);
   archive?.generated(prepared.chunk.audioFile, prepared.spokenText ?? displayChunk, prepared.voice, profile.kind ?? "long", prepared.engine, 0, prepared.chunk.durationMs);
   if (signal.aborted) { disposeLongReadChunkFiles(prepared.chunk.audioFile); throwIfAbortedSafe(signal); }
-  return new PreparedReadStart(identity, prepared,
+  return start = new PreparedReadStart(identity, prepared,
     (chunk) => disposeLongReadChunkFiles(chunk.audioFile));
-  } finally { await settleSpeechArchivesForUpdate(archive); }
+  } finally {
+    // Transfer the lease without waiting for archive retries. Teardown still holds admission
+    // until durability is confirmed; uncertainty also disposes any untransferred audio.
+    holdVoiceAdmission(settleSpeechArchivesForUpdate(archive).catch(error => {
+      start?.dispose();
+      throw error;
+    }));
+  }
 }
 
 /** Spec emphasis for headings and labels: slower, lower, a little louder, as top-level edge prosody. */
