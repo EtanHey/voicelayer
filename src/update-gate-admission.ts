@@ -47,11 +47,11 @@ function logDiagnostic(path: string): void {
   const now = Date.now();
   if (!lastDiagnostic.has(path) || now - lastDiagnostic.get(path)! >= 60_000) {
     lastDiagnostic.set(path, now);
-    console.error("[update-gate] UNKNOWN gate fault: voice admitted UNREGISTERED; updates REFUSED; recovery required");
+    try { console.error("[update-gate] UNKNOWN gate fault; updates REFUSED; voice fail-open policy active; recovery required"); } catch { /* diagnostics never throw */ }
   }
 }
 /** First-seen evidence is exclusive and sticky until verified recovery. Never print raw errors. */
-function diagnose(path: string): void {
+function diagnose(path: string): boolean {
   degraded.add(path);
   logDiagnostic(path);
   try {
@@ -61,17 +61,25 @@ function diagnose(path: string): void {
     // also refusal evidence if file creation itself failed. Never replace bytes.
     try { mkdirSync(path + ".voice-diag.json", { mode: 0o700 }); } catch { /* original evidence wins */ }
   }
+  try { const marker = lstatSync(path + ".voice-diag.json"); return marker.isFile() || marker.isDirectory(); }
+  catch { return false; }
 }
 /** Catch INSIDE the primitive: a body fault must never orphan G1's lock. */
-function safeGateLock<T>(body: (path: string) => T, fallback: T, env: NodeJS.ProcessEnv, retryContention = false): T {
+function safeGateLock<T>(body: (path: string) => T, fallback: T, env: NodeJS.ProcessEnv, retryContention = false, diagnoseContention = true): T {
   let path: string | undefined;
   try {
     path = resolveUpdateGatePath(env);
     return withUpdateGateLock(p => {
-      try { return body(p); } catch { diagnose(p); return fallback; }
+      try { return body(p); } catch {
+        if (!diagnose(p)) throw Error("UPDATE_GATE_FAULT_UNSAVED"); // Retain our lock as fault evidence.
+        return fallback;
+      }
     }, env);
   } catch (error) {
-    if (retryContention && error instanceof Error && error.message === "UPDATE_GATE_LOCKED") throw error;
+    if (error instanceof Error && error.message === "UPDATE_GATE_LOCKED") {
+      if (retryContention) throw error;
+      if (!diagnoseContention) return fallback; // A live holder is not a fault.
+    }
     if (path) diagnose(path);
     else {
       // Remember the logical path without writing through a failed isolation
@@ -106,12 +114,21 @@ function initializeUnderLock(path: string) {
   return state;
 }
 /** Voice availability bootstrap only. Updater commands never initialize or repair evidence. */
-export function initializeVoiceGate(env: NodeJS.ProcessEnv = process.env): void {
-  safeGateLock(path => { initializeUnderLock(path); }, undefined, env);
+export function initializeVoiceGate(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const attempt = () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env, true);
+  try { attempt(); return Promise.resolve(); }
+  catch { return retryGate(attempt, () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env), 1500); }
 }
 function acquire(retryContention = false): Admission {
   const env = { ...process.env };
-  const result = safeGateLock<Admission | null>(path => {
+  // This MUST precede lock acquisition: known faults never delay another capture.
+  try {
+    const path = resolveUpdateGatePath(env);
+    if (degraded.has(path) || hasDiagnostic(path)) { diagnose(path); return unregistered(); }
+  } catch {
+    return safeGateLock(() => { throw Error("UPDATE_GATE_PATH_FAULT"); }, unregistered(), env);
+  }
+  const body = (path: string): Admission | null => {
     const state = initializeUnderLock(path);
     if (state.kind === "UNKNOWN") return unregistered();
     if (state.kind !== "OPEN") return null;
@@ -126,7 +143,17 @@ function acquire(retryContention = false): Admission {
         unlinkSync(file); return true;
       } catch { diagnose(path); return false; }
     }, env)) };
-  }, unregistered(), env, retryContention);
+  };
+  const deadline = performance.now() + 2;
+  let result: Admission | null;
+  for (;;) {
+    try { result = safeGateLock(body, unregistered(), env, true); break; }
+    catch (error) {
+      if (retryContention) throw error;
+      if (performance.now() < deadline) continue; // <=2ms spin, never sleep on the event loop.
+      result = safeGateLock(body, unregistered(), env); break;
+    }
+  }
   if (!result) throw new UpdateBusyError();
   return result;
 }
@@ -158,40 +185,64 @@ export function withVoiceAdmission<T>(work: () => T): T {
   const inherited = context.getStore();
   return runAdmitted(inherited && inherited.refs > 0 ? inherited : acquire(), work);
 }
-async function retryAdmission(): Promise<Admission> {
-  const deadline = performance.now() + 1500;
+export type VoiceAdmissionOptions = { maxWaitMs?: number };
+type PendingAdmission = { cancelled: boolean };
+const pendingAdmissions = new Set<PendingAdmission>();
+export class VoiceAdmissionCancelledError extends Error {
+  constructor() { super("Voice admission cancelled before start"); }
+}
+/** Global Stop/Cancel also invalidate work that has not reached its media body yet. */
+export function cancelPendingVoiceAdmissions(): boolean {
+  for (const pending of pendingAdmissions) pending.cancelled = true;
+  return pendingAdmissions.size > 0;
+}
+function checkPending(pending?: PendingAdmission): void {
+  if (pending?.cancelled) throw new VoiceAdmissionCancelledError();
+}
+async function retryGate<T>(attempt: () => T, fallback: () => T, maxWaitMs: number, pending?: PendingAdmission): Promise<T> {
+  const deadline = performance.now() + maxWaitMs;
   let delay = 1;
   for (;;) {
-    await Bun.sleep(delay);
-    try { return acquire(true); } catch (error) {
+    checkPending(pending);
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return fallback();
+    await Bun.sleep(Math.min(delay, remaining));
+    checkPending(pending);
+    try { return attempt(); } catch (error) {
       if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
-      if (performance.now() >= deadline) return acquire(); // Loud, unregistered fail-open; never reap.
       delay = Math.min(delay * 2, 32);
     }
   }
 }
-/** Preserve synchronous acknowledgements on the healthy path; only contention returns a promise. */
-export function withDeferredVoiceAdmission<T>(work: () => T): T | Promise<Awaited<T>> {
+/** Healthy ACKs remain synchronous; a cancelled deferred body never starts or retries. */
+export function withDeferredVoiceAdmission<T>(work: () => T, options: VoiceAdmissionOptions = {}): T | Promise<Awaited<T>> {
   const inherited = context.getStore();
   let admission: Admission;
   try { admission = inherited && inherited.refs > 0 ? inherited : acquire(true); }
   catch (error) {
-    if (error instanceof Error && error.message === "UPDATE_GATE_LOCKED") {
-      return retryAdmission().then(value => runAdmitted(value, work)) as Promise<Awaited<T>>;
-    }
-    throw error;
+    if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
+    const pending = { cancelled: false }; pendingAdmissions.add(pending);
+    return retryGate(() => acquire(true), () => acquire(), options.maxWaitMs ?? 1500, pending).then(value => {
+      pendingAdmissions.delete(pending);
+      if (pending.cancelled) { value.release(); throw new VoiceAdmissionCancelledError(); }
+      return runAdmitted(value, work);
+    }).finally(() => pendingAdmissions.delete(pending)) as Promise<Awaited<T>>;
   }
   return runAdmitted(admission, work);
 }
-export function withAsyncVoiceAdmission<T>(work: () => T): Promise<Awaited<T>> {
-  try { return Promise.resolve(withDeferredVoiceAdmission(work)) as Promise<Awaited<T>>; }
+export function withAsyncVoiceAdmission<T>(work: () => T, options?: VoiceAdmissionOptions): Promise<Awaited<T>> {
+  try { return Promise.resolve(withDeferredVoiceAdmission(work, options)) as Promise<Awaited<T>>; }
   catch (error) { return Promise.reject(error); }
 }
-export function withFreshAsyncVoiceAdmission<T>(work: () => T): Promise<Awaited<T>> {
-  return context.exit(() => withAsyncVoiceAdmission(work));
+/** All capture starts have a <=20ms contention budget, before any microphone opens. */
+export function withCaptureVoiceAdmission<T>(work: () => T): Promise<Awaited<T>> {
+  return withAsyncVoiceAdmission(work, { maxWaitMs: 20 });
 }
-export function withFreshDeferredVoiceAdmission<T>(work: () => T): T | Promise<Awaited<T>> {
-  return context.exit(() => withDeferredVoiceAdmission(work));
+export function withFreshAsyncVoiceAdmission<T>(work: () => T, options?: VoiceAdmissionOptions): Promise<Awaited<T>> {
+  return context.exit(() => withAsyncVoiceAdmission(work, options));
+}
+export function withFreshDeferredVoiceAdmission<T>(work: () => T, options?: VoiceAdmissionOptions): T | Promise<Awaited<T>> {
+  return context.exit(() => withDeferredVoiceAdmission(work, options));
 }
 /** A nonblocking return must keep ownership through player exit and durable archive writes. */
 export function holdVoiceAdmission(work: Promise<unknown>): void {
@@ -224,7 +275,7 @@ export function updateVoiceGate(command: unknown, verify?: ParticipantProof, env
       (current.active.length !== 0 || verify?.(current.state) !== true)) return { kind: "REFUSED", reason: "UNKNOWN" };
     if (result.kind === "APPLIED") persistUpdateGateState(path, result.state);
     return result;
-  }, { kind: "REFUSED", reason: "UNKNOWN" }, env);
+  }, { kind: "REFUSED", reason: "UNKNOWN" }, env, false, false);
 }
 /** G3/updater supplies live identity, handoff, archive-durability and competing-owner evidence. */
 export function acknowledgeVoiceDrain(lease: UpdateGateLease, verify: ParticipantProof) {
@@ -233,5 +284,5 @@ export function acknowledgeVoiceDrain(lease: UpdateGateLease, verify: Participan
     if (!current || current.state.kind === "OPEN" || current.active.length ||
       transitionUpdateGate(current.state, { kind: "REQUEST", lease }).kind !== "UNCHANGED" || verify(current.state) !== true) return null;
     return { lease, activeOperations: 0 as const, openArchives: 0 as const };
-  }, null, process.env);
+  }, null, process.env, false, false);
 }

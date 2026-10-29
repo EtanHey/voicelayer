@@ -73,7 +73,7 @@ async function main() {
     );
   }
 
-  try { initializeVoiceGate(); } catch {
+  try { await initializeVoiceGate(); } catch {
     console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   }
 

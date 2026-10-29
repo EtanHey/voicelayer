@@ -1,4 +1,4 @@
-import { withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
@@ -189,16 +189,18 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
 }
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
+  if (args[0].cmd === "stop" || args[0].cmd === "cancel") cancelPendingVoiceAdmissions();
   const control = selectionControl(args[0]);
   if (control) return control;
   if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
   const refuse = (error: unknown) => {
+    if (error instanceof VoiceAdmissionCancelledError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "noop", error.message);
     if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message);
     throw error;
   };
   try {
-    const result = withFreshDeferredVoiceAdmission(() => handleSocketCommandAdmitted(...args));
+    const result = withFreshDeferredVoiceAdmission(() => handleSocketCommandAdmitted(...args), args[0].cmd === "record" ? { maxWaitMs: 20 } : undefined);
     return result instanceof Promise ? result.catch(refuse) : result;
   } catch (error) { return refuse(error); }
 }

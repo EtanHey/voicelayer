@@ -47,6 +47,8 @@ function readState(path: string): ReturnType<typeof readUpdateGate> {
 /** Observation only. Admissions must recheck under withUpdateGateLock. */
 export function readUpdateGateFile(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof readUpdateGate> {
   const path = resolveUpdateGatePath(env);
+  try { lstatSync(`${path}.voice-diag.json`); return { kind: "UNKNOWN" }; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { kind: "UNKNOWN" }; }
   try { lstatSync(`${path}.lock`); return { kind: "UNKNOWN" }; }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { kind: "UNKNOWN" };

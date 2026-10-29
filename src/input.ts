@@ -1,4 +1,4 @@
-import { withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
+import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
  * Input module — mic recording + STT transcription.
  *
@@ -2279,7 +2279,7 @@ export async function recordToBuffer(
   preserveNoSpeechCapture = false,
   captureState?: RecordingCaptureState,
 ): Promise<Uint8Array | null> {
-  return withAsyncVoiceAdmission(async () => {
+  return withCaptureVoiceAdmission(async () => {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
   if (isMicDisabled()) {
@@ -2873,7 +2873,7 @@ export async function waitForInput(
   pushToEnd: boolean = false,
   options: WaitForInputOptions = {},
 ): Promise<string | null> {
-  return withAsyncVoiceAdmission(async () => {
+  return withCaptureVoiceAdmission(async () => {
   throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
   if (currentRecordingState !== "idle") {

@@ -84,10 +84,12 @@ test("R3/N1 existing stale lock admits immediately without blocking timers or re
   expect(fs.readFileSync(path + ".lock/owner", "utf8")).toBe("do not reap");
   expect(readUpdateGateFile()).toEqual({ kind: "UNKNOWN" }); refusesUpdate();
 });
-test("R3 a transient collision leaves durable UNKNOWN after the other owner unlocks", () => {
+test("SF2 updater polling collision is retryable without sticky UNKNOWN", () => {
   fixture();
-  withUpdateGateLock(() => expect(gate.withVoiceAdmission(() => "voice")).toBe("voice"));
-  expect(fs.existsSync(path + ".lock")).toBe(false); refusesUpdate();
+  withUpdateGateLock(() => expect(gate.updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("REFUSED"));
+  expect(fs.existsSync(path + ".lock")).toBe(false);
+  expect(fs.existsSync(path + ".voice-diag.json")).toBe(false);
+  expect(gate.updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
 });
 test("N2 thrown updater proof returns structured UNKNOWN and releases the lock", () => {
   fixture(); gate.updateVoiceGate({ kind: "REQUEST", lease });
@@ -103,13 +105,13 @@ test("N3 preserves first-seen diagnostic bytes and rate-limits repeated UNKNOWN 
   expect(fs.readFileSync(path + ".voice-diag.json", "utf8")).toBe(first);
   expect(console.error).toHaveBeenCalledTimes(1);
 });
-for (const name of ["daemon.ts", "mcp-server-daemon.ts", "mcp-server.ts"]) test(`R2 ${name} guards bootstrap and continues startup`, () => {
+for (const name of ["daemon.ts", "mcp-server-daemon.ts", "mcp-server.ts"]) test(`R2 ${name} guards bootstrap and continues startup`, async () => {
   const source = fs.readFileSync(join(import.meta.dir, "..", name), "utf8");
   const main = source.slice(source.indexOf("async function main()"));
-  const guarded = main.match(/try\s*\{\s*initializeVoiceGate\(\);\s*\}\s*catch\s*\{[^}]*\}/)?.[0];
+  const guarded = main.match(/try\s*\{\s*await initializeVoiceGate\(\);\s*\}\s*catch\s*\{[^}]*\}/)?.[0];
   expect(guarded).toBeDefined();
-  const run = new Function("initializeVoiceGate", "console", `${guarded}; return 'continued';`);
-  expect(run(() => { throw Error("gate unavailable"); }, console)).toBe("continued");
+  const run = new Function("initializeVoiceGate", "console", `return (async () => { ${guarded}; return 'continued'; })();`);
+  expect(await run(async () => { throw Error("gate unavailable"); }, console)).toBe("continued");
   expect(console.error).toHaveBeenCalled();
   if (name !== "mcp-server.ts") expect(main.indexOf(guarded!)).toBeGreaterThan(main.lastIndexOf("acquireProcessLock("));
   if (name === "mcp-server-daemon.ts") expect(main.indexOf(guarded!)).toBeGreaterThan(main.indexOf("if (isVoicelayerDisabled())"));

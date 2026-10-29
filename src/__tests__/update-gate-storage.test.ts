@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, existsSync, lstatSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { updateGateFilePath } from "../paths";
 import { applyUpdateGateCommand, readUpdateGateFile, withUpdateGateLock } from "../update-gate-storage";
@@ -113,6 +113,7 @@ test("orphaned lock and callback failure never age into permission; observations
   expect(existsSync(env.VOICELAYER_UPDATE_GATE_PATH + ".lock")).toBe(false);
   expect(() => withUpdateGateLock(() => { throw new Error("interrupted"); }, env)).toThrow("interrupted");
   expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
+    expect(existsSync(env.VOICELAYER_UPDATE_GATE_PATH + ".lock")).toBe(true);
   expect(readFileSync(env.VOICELAYER_UPDATE_GATE_PATH, "utf8")).toBe(JSON.stringify(initial));
 });
 
@@ -120,6 +121,7 @@ test("async critical sections fail closed and retain their lock", () => {
   const env = fixture();
   expect(() => withUpdateGateLock(async () => {}, env)).toThrow("ASYNC");
   expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
+    expect(existsSync(env.VOICELAYER_UPDATE_GATE_PATH + ".lock")).toBe(true);
 });
 
 test("every existing lock entry, including a dangling symlink, refuses observation and acquisition", () => {
@@ -130,6 +132,8 @@ test("every existing lock entry, including a dangling symlink, refuses observati
     else symlinkSync(env.VOICELAYER_UPDATE_GATE_PATH + "-absent", lock);
     expect(readUpdateGateFile(env)).toEqual({ kind: "UNKNOWN" });
     expect(applyUpdateGateCommand(request, env)).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
+    expect(existsSync(lock)).toBe(kind === "file"); // existsSync follows a dangling link.
+    expect(lstatSync(lock).isSymbolicLink()).toBe(kind === "dangling-link");
   }
 });
 

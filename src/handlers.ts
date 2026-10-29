@@ -1,4 +1,4 @@
-import { withFreshAsyncVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { VoiceAdmissionCancelledError, withFreshAsyncVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
@@ -287,7 +287,7 @@ function detectMode(
 
 export async function handleVoiceSpeak(...args: Parameters<typeof handleVoiceSpeakAdmitted>): Promise<McpResult> {
   try { return await handleVoiceSpeakAdmitted(...args); }
-  catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+  catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
 }
 async function handleVoiceSpeakAdmitted(
   args: unknown,
@@ -394,8 +394,8 @@ async function handleVoiceSpeakAdmitted(
 }
 
 export async function handleVoiceAsk(...args: Parameters<typeof handleVoiceAskAdmitted>): Promise<McpResult> {
-  try { return await withFreshAsyncVoiceAdmission(() => handleVoiceAskAdmitted(...args)); }
-  catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+  try { return await withFreshAsyncVoiceAdmission(() => handleVoiceAskAdmitted(...args), { maxWaitMs: 20 }); }
+  catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
 }
 async function handleVoiceAskAdmitted(
   args: unknown,
@@ -610,8 +610,8 @@ export async function handleConsult(
 }
 
 export async function handleConverse(...args: Parameters<typeof handleConverseAdmitted>): Promise<McpResult> {
-  try { return await withFreshAsyncVoiceAdmission(() => handleConverseAdmitted(...args)); }
-  catch (error) { if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+  try { return await withFreshAsyncVoiceAdmission(() => handleConverseAdmitted(...args), { maxWaitMs: 20 }); }
+  catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
 }
 async function handleConverseAdmitted(
   args: unknown,
