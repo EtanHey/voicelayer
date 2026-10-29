@@ -115,9 +115,15 @@ function initializeUnderLock(path: string) {
 }
 /** Voice availability bootstrap only. Updater commands never initialize or repair evidence. */
 export function initializeVoiceGate(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  try {
+    const path = resolveUpdateGatePath(env);
+    if (degraded.has(path) || hasDiagnostic(path)) { diagnose(path); return Promise.resolve(); }
+  } catch {
+    return Promise.resolve(safeGateLock(() => { throw Error("UPDATE_GATE_PATH_FAULT"); }, undefined, env));
+  }
   const attempt = () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env, true);
   try { attempt(); return Promise.resolve(); }
-  catch { return retryGate(attempt, () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env), 1500); }
+  catch { return retryGate(attempt, () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env), 20); }
 }
 function acquire(retryContention = false): Admission {
   const env = { ...process.env };
