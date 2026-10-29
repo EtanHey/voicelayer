@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { recordingStateFilePath, safeWriteFileSync } from "./paths";
+import { waitForConversationCaptureSafety, type ConversationCapturePolicy } from "./conversation-capture-lifecycle";
 
 export type RecordingState = "idle" | "recording" | "transcribing";
 
@@ -11,6 +12,23 @@ const VALID_STATES = new Set<RecordingState>([
 ]);
 
 let recordingState: RecordingState = "idle";
+let captureFence: { policy: ConversationCapturePolicy; pendingIdle: boolean } | undefined;
+const heldPolicies = new WeakSet<ConversationCapturePolicy>();
+
+/** Idle is deferred until this exact owner is safe. A successful non-idle publish cancels it. */
+export function holdConversationCaptureUntil(policy: ConversationCapturePolicy): void {
+  const safety = waitForConversationCaptureSafety(policy);
+  if (captureFence || heldPolicies.has(policy)) throw new Error("Capture fence already held");
+  const fence = { policy, pendingIdle: false };
+  captureFence = fence;
+  heldPolicies.add(policy);
+  void safety.then(() => {
+    if (captureFence !== fence) return;
+    captureFence = undefined;
+    if (fence.pendingIdle) setRecordingState("idle");
+  });
+  if (recordingState === "idle") setRecordingState("transcribing");
+}
 const observers = new Set<(state: RecordingState) => void>();
 /** Passive priority notification; capture never waits for background work. */
 export function onRecordingStateChange(observer: (state: RecordingState) => void): () => void {
@@ -18,7 +36,10 @@ export function onRecordingStateChange(observer: (state: RecordingState) => void
   return () => { observers.delete(observer); };
 }
 function notifyState(state: RecordingState): void {
-  for (const observer of observers) { try { observer(state); } catch {} }
+  for (const observer of observers) {
+    if (state === "idle" && captureFence) return;
+    try { observer(state); } catch {}
+  }
 }
 
 interface PersistedRecordingState {
@@ -87,9 +108,14 @@ function recordingStatePublishError(state: RecordingState): Error {
 }
 
 export function setRecordingState(state: RecordingState): void {
+  if (captureFence && state === "idle") {
+    captureFence.pendingIdle = true;
+    return;
+  }
   if (state === "idle") {
     recordingState = "idle";
     notifyState(state);
+    if (captureFence) return;
     if (!persistRecordingState(state)) {
       console.error(recordingStatePublishError(state).message);
     }
@@ -100,14 +126,17 @@ export function setRecordingState(state: RecordingState): void {
     throw recordingStatePublishError(state);
   }
   recordingState = state;
+  if (captureFence) captureFence.pendingIdle = false;
   notifyState(state);
 }
 
 export function getRecordingState(): RecordingState {
+  if (captureFence && recordingState === "idle") return "transcribing";
   return recordingState;
 }
 
 export function getEffectiveRecordingState(): RecordingState {
+  if (captureFence) return getRecordingState();
   if (recordingState !== "idle") return recordingState;
 
   const persisted = readPersistedRecordingState();

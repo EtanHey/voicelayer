@@ -15,6 +15,7 @@
  * OnnxWrapper source in the silero-vad PyPI package).
  */
 
+import { VAD_CHUNK_SAMPLES } from "./vad-constants";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
@@ -24,8 +25,7 @@ import type { VoiceActivityDetector } from "./soundlayer";
 // If Bun drops support, switch to onnxruntime-web (WASM, same API).
 const ort = require("onnxruntime-node");
 
-/** VAD chunk size — 512 samples = 32ms at 16kHz. Silero VAD v5 requirement. */
-export const VAD_CHUNK_SAMPLES = 512;
+export { VAD_CHUNK_SAMPLES } from "./vad-constants";
 export const VAD_CHUNK_BYTES = VAD_CHUNK_SAMPLES * 2; // 16-bit = 2 bytes per sample
 export const MAX_STT_CHUNK_SECONDS = 28;
 export const STT_CHUNK_OVERLAP_SECONDS = 3;
