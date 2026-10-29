@@ -59,3 +59,10 @@ it("preserves exact refusal text and true error bits", () => {
     expect(formatVoiceAskTurnResult(outcome)).toEqual({ content: [{ type: "text", text }], isError: true });
   }
 });
+
+it("renders an incomplete prompt with the exact error result", () => {
+  expect(formatVoiceAskTurnResult({ kind: "prompt-incomplete", status: promptPlayback.status })).toEqual({
+    content: [{ type: "text", text: "[converse] Question interrupted; nothing was recorded." }],
+    isError: true,
+  });
+});

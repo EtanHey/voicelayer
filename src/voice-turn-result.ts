@@ -10,6 +10,7 @@ export type VoiceAskTurnOutcome =
   | { kind: "retained"; recovery: Recovery; promptPlayback: PromptPlayback }
   | { kind: "no-input"; timeoutSeconds: number; pushToEnd: boolean; promptPlayback: PromptPlayback }
   | { kind: "hard-timeout"; stage: VoiceAskTimeoutStage; timeoutMs: number; recovery: Recovery | null }
+  | { kind: "prompt-incomplete"; status: PlaybackOutcomeEvent["status"] }
   | { kind: "stopped-before-prompt" }
   | { kind: "ended-before-capture" }
   | { kind: "invalid-input" }
@@ -54,6 +55,8 @@ export function formatVoiceAskTurnResult(outcome: VoiceAskTurnOutcome): McpTextR
             : "the voice pipeline may be stuck with zero recoverable audio";
       return textResult(`[converse] Hard timeout during ${outcome.stage} stage after ${Math.round(outcome.timeoutMs / 1000)}s: ${cause}.`, true);
     }
+    case "prompt-incomplete":
+      return textResult(`[converse] Question ${outcome.status}; nothing was recorded.`, true);
     case "stopped-before-prompt":
       return textResult(formatAsk(null, { outcome: "stopped-before-prompt" }));
     case "ended-before-capture":

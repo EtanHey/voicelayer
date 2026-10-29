@@ -871,7 +871,7 @@ export async function runVoiceAskTurn({ args, context, operationLifecycle, archi
       if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && getEffectiveRecordingState() === "idle") {
         broadcast({ type: "state", state: "idle", source: "playback" });
       }
-      return textResult(`[converse] Question ${speech.playbackOutcome.status}; nothing was recorded.`, true);
+      return { kind: "prompt-incomplete", status: speech.playbackOutcome.status };
     }
     // Bound recorder startup separately from prompt playback. The full capture
     // window is rearmed only by onCaptureStart after the microphone opens.
