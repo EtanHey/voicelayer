@@ -69,6 +69,12 @@ export function getStateDir(env: NodeJS.ProcessEnv = process.env): string {
   return value ? value : defaultStateDir();
 }
 
+/** Dedicated update admission gate; never reuse session-booking locks. */
+export function updateGateFilePath(env: NodeJS.ProcessEnv = process.env): string {
+  requireIsolatedOverride(env, "VOICELAYER_UPDATE_GATE_PATH");
+  return env.VOICELAYER_UPDATE_GATE_PATH?.trim() || join(getStateDir(env), "update-gate.json");
+}
+
 /** Persistent recording archive; test runs must supply their own archive root. */
 export function getRecordingsArchiveRoot(env: NodeJS.ProcessEnv = process.env): string {
   requireIsolatedOverride(env, "QA_VOICE_RECORDINGS_DIR");

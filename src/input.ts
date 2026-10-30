@@ -1,3 +1,4 @@
+import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
  * Input module — mic recording + STT transcription.
  *
@@ -2102,7 +2103,9 @@ export interface MicChunkStreamHandle {
   stop(): void;
 }
 
-export function startMicChunkStream(options: {
+export const startMicChunkStream = (...args: Parameters<typeof startMicChunkStreamAdmitted>): ReturnType<typeof startMicChunkStreamAdmitted> =>
+  withVoiceAdmission(() => startMicChunkStreamAdmitted(...args));
+function startMicChunkStreamAdmitted(options: {
   onChunk: (chunk: Uint8Array, capturedAtMs: number) => Promise<boolean | void>;
 }): MicChunkStreamHandle {
   const recPath = resolveRecorderBinary();
@@ -2230,18 +2233,20 @@ export function startMicChunkStream(options: {
     try { await task; }
     catch (error) { stop(); throw error; }
   };
-  const exited = Promise.allSettled([
+  const settled = Promise.allSettled([
     ownedTask(drainStderr()),
     ownedTask(pipeReader()),
     ownedTask(chunkProcessor()),
     ownedTask(recorder.exited.then(code => {
       if (!stopped && code !== 0) throw new Error(`Barge-in recorder exited with code ${code}`);
     })),
-  ]).then(results => {
+  ]);
+  const exited = settled.then(results => {
     const failure = results.find(result => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
   });
 
+  holdVoiceAdmission(settled.then(() => recorder.exited));
   return { exited, stop };
 }
 
@@ -2274,6 +2279,7 @@ export async function recordToBuffer(
   preserveNoSpeechCapture = false,
   captureState?: RecordingCaptureState,
 ): Promise<Uint8Array | null> {
+  return withCaptureVoiceAdmission(async () => {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
   if (isMicDisabled()) {
@@ -2615,6 +2621,8 @@ export async function recordToBuffer(
         { stdout: "pipe", stderr: "pipe" },
       );
       recorder = spawnedRecorder;
+      // Capture settlement and bounded kill attempts are not physical exit evidence.
+      holdVoiceAdmission(spawnedRecorder.exited);
 
       if (!spawnedRecorder.stdout) {
         finish(new Error("rec: stdout not available"));
@@ -2845,6 +2853,7 @@ export async function recordToBuffer(
       finish(err instanceof Error ? err : new Error(String(err)));
     }
   });
+  });
 }
 
 /**
@@ -2864,6 +2873,7 @@ export async function waitForInput(
   pushToEnd: boolean = false,
   options: WaitForInputOptions = {},
 ): Promise<string | null> {
+  return withCaptureVoiceAdmission(async () => {
   throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
   if (currentRecordingState !== "idle") {
@@ -3558,6 +3568,7 @@ export async function waitForInput(
       if (existsSync(wavPath)) unlinkSync(wavPath);
     } catch {}
   }
+  });
 }
 
 /**
@@ -4150,7 +4161,9 @@ function commitVoiceAskTranscriptPair(
 
 let voiceAskRetranscriptionOwner: symbol | null = null;
 
-export async function retranscribeVoiceAskArchive(
+export const retranscribeVoiceAskArchive = async (...args: Parameters<typeof retranscribeVoiceAskArchiveAdmitted>): ReturnType<typeof retranscribeVoiceAskArchiveAdmitted> =>
+  withAsyncVoiceAdmission(() => retranscribeVoiceAskArchiveAdmitted(...args));
+async function retranscribeVoiceAskArchiveAdmitted(
   archiveId: string,
   options: {
     delivery?: "return-only" | "history";
@@ -4305,7 +4318,9 @@ function voiceAskReceiptForArchivedAudio(audioPath: string): string | null {
   return record.id;
 }
 
-export async function retranscribeRecordingCapture(
+export const retranscribeRecordingCapture = async (...args: Parameters<typeof retranscribeRecordingCaptureAdmitted>): ReturnType<typeof retranscribeRecordingCaptureAdmitted> =>
+  withAsyncVoiceAdmission(() => retranscribeRecordingCaptureAdmitted(...args));
+async function retranscribeRecordingCaptureAdmitted(
   audioPath: string,
 ): Promise<string | null> {
   const eventAudioPath = audioPath.trim();
@@ -4431,7 +4446,9 @@ export async function retranscribeRecordingCapture(
   }
 }
 
-export async function retranscribeLastCapture(): Promise<string | null> {
+export const retranscribeLastCapture = async (...args: Parameters<typeof retranscribeLastCaptureAdmitted>): ReturnType<typeof retranscribeLastCaptureAdmitted> =>
+  withAsyncVoiceAdmission(() => retranscribeLastCaptureAdmitted(...args));
+async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
   const wavPath = retainedRecordingFilePath();
   if (!existsSync(wavPath)) {
     return null;

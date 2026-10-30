@@ -1,4 +1,4 @@
-import { cancelQueuedSpeech } from "./speech-archive-live";
+import { settleSpeechArchivesForUpdate, cancelQueuedSpeech } from "./speech-archive-live";
 /**
  * QUEUE1 (Etan, 2026-10-20): Option+F5 on a different selection while VoiceBar reads one appends it here.
  * Only the user's Option+F5 reads live in this queue; agent voice_speak keeps the tts.ts priority queue.
@@ -10,6 +10,7 @@ import type { SpeakArchiveContext } from "./speak-archive";
 export const SELECTION_READ_QUEUE_LIMIT = 10;
 
 export interface QueuedSelectionRead {
+  admission: { run<T>(work: () => T): T; release(): void };
   requestId: string;
   text: string;
   textHash: string;
@@ -138,8 +139,8 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
     const changed = this.session || this.items.length > 0;
     this.discardPreparation();
     for (const read of this.items) {
-      if (!read.archiveContext) continue;
-      cancelQueuedSpeech(read.archiveContext);
+      if (read.archiveContext) cancelQueuedSpeech(read.archiveContext);
+      void settleSpeechArchivesForUpdate(read.archiveContext).then(() => read.admission.release()).catch(() => console.error("[update-gate] queued archive UNKNOWN; admission retained"));
     }
     this.items = [];
     this.current = undefined;

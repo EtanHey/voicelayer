@@ -17,7 +17,7 @@ import {
   spyOn,
   jest,
 } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import * as tts from "../tts";
@@ -28,6 +28,8 @@ import { handleConverse, handleVoiceAsk, runVoiceAskTurn, runAdmittedVoiceAsk } 
 import { formatAdmittedVoiceAskResult, type AdmittedVoiceAskResult } from "../voice-ask-admission";
 import { reserveArchiveRetranscription } from "../voice-operation-reservation";
 import { whisperLifecycleGate } from "../whisper-lifecycle-gate";
+import { formatVoiceAskTurnResult } from "../voice-turn-result";
+import { withAsyncVoiceAdmission, updateVoiceGate } from "../update-gate-admission";
 
 const capturedPrompt = () => ({
   displayText: "test question",
@@ -178,6 +180,60 @@ describe("handleConverse resilience — P0-2", () => {
       process.env.QA_VOICE_RECORDING_STATE_PATH = savedRecordingStatePath;
     }
     rmSync(recordingStateRoot, { recursive: true, force: true });
+  });
+
+  for (const caller of ["turn", "admitted"] as const) for (const state of ["open", "closed", "cancelled", "inherited"] as const)
+    it(`typed admission boundary: ${caller}/${state}`, async () => {
+    const savedGatePath = process.env.VOICELAYER_UPDATE_GATE_PATH;
+    const gateRoot = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "typed-gate-"));
+    const gatePath = join(gateRoot, "gate.json");
+    process.env.VOICELAYER_UPDATE_GATE_PATH = gatePath;
+    writeFileSync(gatePath, JSON.stringify({ version: 1, kind: "OPEN", generation: 0, released: null }));
+    mkdirSync(gatePath + ".admissions");
+    const lease = { generation: 1, operationId: "10000000-0000-4000-8000-000000000001",
+      ownerId: "20000000-0000-4000-8000-000000000001", targetSha: "a".repeat(40) };
+    const closeGate = () => expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+    const call = async () => {
+      if (caller === "turn") return runVoiceAskTurn({ args: { message: "question" } });
+      const result = await runAdmittedVoiceAsk({ args: { message: "question" } });
+      expect(result.kind).toBe("turn");
+      if (result.kind !== "turn") throw new Error("Expected typed turn");
+      return result.outcome;
+    };
+    speakSpy = spyOn(tts, "speak").mockImplementation(async () => {
+      expect(readdirSync(gatePath + ".admissions")).toHaveLength(1);
+      return capturedPrompt();
+    });
+    waitSpy = spyOn(input, "waitForInput").mockResolvedValue("typed answer");
+    try {
+      if (state === "closed") closeGate();
+      if (state === "cancelled") mkdirSync(gatePath + ".lock");
+      const pending = state === "inherited" ? withAsyncVoiceAdmission(() => { closeGate(); return call(); }) : call();
+      if (state === "cancelled") {
+        tts.stopPlayback();
+        rmdirSync(gatePath + ".lock");
+      }
+      const outcome = await pending;
+      if (state === "open" || state === "inherited") {
+        expect(outcome).toEqual({ kind: "answered", transcript: "typed answer", archiveId: null, promptPlayback: undefined });
+        expect(speakSpy).toHaveBeenCalledTimes(1);
+        expect(waitSpy).toHaveBeenCalledTimes(1);
+      } else {
+        const message = state === "closed" ? "UPDATE_BUSY: update gate closed; retry when the update finishes" : "Voice admission cancelled before start";
+        expect(outcome).toEqual({ kind: state === "closed" ? "update-busy" : "admission-cancelled", message });
+        expect(formatVoiceAskTurnResult(outcome)).toEqual({ content: [{ type: "text", text: message }],
+          ...(state === "closed" && { isError: true }) });
+        expect(speakSpy).not.toHaveBeenCalled();
+        expect(waitSpy).not.toHaveBeenCalled();
+      }
+      await Bun.sleep(0);
+      expect(readdirSync(gatePath + ".admissions")).toEqual([]);
+    } finally {
+      await Bun.sleep(0);
+      if (savedGatePath === undefined) delete process.env.VOICELAYER_UPDATE_GATE_PATH;
+      else process.env.VOICELAYER_UPDATE_GATE_PATH = savedGatePath;
+      rmSync(gateRoot, { recursive: true, force: true });
+    }
   });
 
   it("types raw answers and callback evidence without classifying transcript content", async () => {

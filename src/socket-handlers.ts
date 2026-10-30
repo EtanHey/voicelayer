@@ -1,5 +1,6 @@
+import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
-import { finishLiveSpeechReceipt } from "./speech-archive-live";
+import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
  * Socket command handlers — logic for Voice Bar socket commands.
  *
@@ -135,15 +136,15 @@ function startSelectionRead(read: QueuedSelectionRead, prepared?: PreparedReadSt
     if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) throw new Error("busy");
     const identity = { request_id: read.requestId, text_hash: read.textHash, archiveContext: read.archiveContext,
       ...(read.structuredDisplay ? { structuredDisplay: read.structuredDisplay } : {}) };
-    if (prepared) speakText(read.text, read.profile, identity, prepared);
-    else speakText(read.text, read.profile, identity);
+    read.admission.run(() => prepared ? speakText(read.text, read.profile, identity, prepared) : speakText(read.text, read.profile, identity));
   } catch (error) { finishRawSpeakFailure(read.archiveContext, error); throw error; }
+  finally { void settleSpeechArchivesForUpdate(read.archiveContext).then(() => read.admission.release()).catch(() => console.error("[update-gate] queued archive UNKNOWN; admission retained")); }
 }
 
 /** QPRE1: the queue head's first chunk is prepared once the playing read's synthesis is complete. */
 const selectionReadPreparation = {
   prepare: (read: QueuedSelectionRead, signal: AbortSignal, owner: string) =>
-    prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext, read.structuredDisplay),
+    read.admission.run(() => prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext, read.structuredDisplay)),
 };
 const newSelectionReadQueue = () => new SelectionReadQueue<PreparedReadStart>(startSelectionRead,
   (state) => broadcast({ type: "read_queue", ...state }), SELECTION_READ_QUEUE_LIMIT, selectionReadPreparation);
@@ -173,10 +174,40 @@ function stopQueuePolicy(recordingState: string, retain: boolean): "clear" | "su
   return recordingState !== "idle" ? "keep" : retain ? "suspend" : "clear";
 }
 
-export function handleSocketCommand(
+// A repeated selection is Next/Stop for an existing chain, not a new voice start.
+function selectionControl(command: SocketCommand): SocketResponse | undefined {
+  if (command.cmd !== "speak_text" || command.source !== "selection" ||
+      getRecordingState() !== "idle" || getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) return undefined;
+  const admission = selectionReads.admission(selectionIdentity(command.text));
+  if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
+  if (admission.kind === "playing" && !isPlaybackPaused()) {
+    // A queued successor keeps its original admission; new text takes the gate below.
+    if (selectionReads.next(admission.requestId) === "stopped") stopPlayback();
+    return buildAck(command, "accept", "selection advanced");
+  }
+  return undefined;
+}
+const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
+export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
+  if (args[0].cmd === "stop" || args[0].cmd === "cancel") cancelPendingVoiceAdmissions();
+  const control = selectionControl(args[0]);
+  if (control) return control;
+  if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
+  if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
+  const refuse = (error: unknown) => {
+    if (error instanceof VoiceAdmissionCancelledError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "noop", error.message);
+    if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message);
+    throw error;
+  };
+  try {
+    const result = withFreshDeferredVoiceAdmission(() => handleSocketCommandAdmitted(...args), args[0].cmd === "record" ? { maxWaitMs: 20 } : undefined);
+    return result instanceof Promise ? result.catch(refuse) : result;
+  } catch (error) { return refuse(error); }
+}
+function handleSocketCommandAdmitted(
   command: SocketCommand,
   onSpeak?: (read: import("./tts").LongReadHandle) => void,
-): SocketResponse | void | Promise<SocketResponse> {
+): SocketResponse | void | Promise<SocketResponse | void> {
   const recordingState = getRecordingState();
   const playbackQueueDepth = getPlaybackQueueDepth();
   const isSpeaking = recordingState === "idle" && playbackQueueDepth > 0;
@@ -201,14 +232,6 @@ export function handleSocketCommand(
     }
     case "speak_text": {
       const identity = command.source === "selection" ? selectionIdentity(command.text) : undefined;
-      if (identity !== undefined && recordingState === "idle" && getEffectiveRecordingState() === "idle" && !hasActiveVoiceOperation()) {
-        const admission = selectionReads.admission(identity);
-        if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
-        if (admission.kind === "playing" && !isPlaybackPaused()) {
-          if (selectionReads.next(admission.requestId) === "stopped") stopPlayback();
-          return buildAck(command, "accept", "selection advanced");
-        }
-      }
       const receipt = createSpeakReceipt({
         input: command.text, request_id: command.id ?? randomUUID(),
         request_source: command.source === "selection" || command.source === "clipboard" || command.source === "cli"
@@ -236,9 +259,11 @@ export function handleSocketCommand(
         if (command.queue === true && command.id) {
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.
           queueStartOwnsFailure = true;
-          const outcome = selectionReads.submit({ requestId: command.id, text, textHash, profile: command.profile ?? "auto",
+          const admission = captureVoiceAdmission();
+          const outcome = selectionReads.submit({ admission, requestId: command.id, text, textHash, profile: command.profile ?? "auto",
             archiveContext: receipt.context, ...(identity !== undefined ? { selectionIdentity: identity } : {}), ...(structuredDisplay ? { structuredDisplay } : {}) }, true);
           if (outcome === "full") {
+            admission.release();
             finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
             return buildAck(command, "reject", "queue full");
           }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "fs";
+const realOpenForArchiveFault = fs.openSync;
 import * as net from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import * as archive from "../speak-archive";
@@ -175,7 +176,7 @@ describe("CLI local raw ingress (real creator/store; controlled speech and socke
     let accessed = false;
     const fault = Object.defineProperties({}, { message: { get() { accessed = true; throw new Error(raw); } },
       toString: { value() { accessed = true; throw new Error(root); } } });
-    spies.push(spyOn(fs, "writeFileSync").mockImplementation(() => { throw fault; }));
+    spies.push(spyOn(fs, "openSync").mockImplementation(((file: any, ...args: any[]) => { if (String(file).startsWith(root + "/")) throw fault; return (realOpenForArchiveFault as any)(file, ...args); }) as any));
     const convert = spyOn(markdown, "markdownToSpeech"); spies.push(convert);
     expect(await runSpeakCli([raw, "--markdown"], { ...io(), request: unavailable(), local: speakLocally })).toBe(1);
     expect(stderr.at(-1)).toBe("voicelayer speak: Speech refused: input archive unavailable (IO_ERROR)\n");

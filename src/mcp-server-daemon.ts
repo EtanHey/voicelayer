@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { initializeVoiceGate } from "./update-gate-admission";
 import { stopPlayback } from "./tts";
 import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from "./speech-archive-live";
 /**
@@ -188,6 +189,11 @@ async function main() {
       `[voicelayer-daemon] Killed orphan MCP server (PID ${killedStalePid})`,
     );
   }
+
+  // Admission bootstraps under its own lock; startup never waits to connect.
+  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
+  });
 
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
   // it independently and force-restarts an owned child that wedges in JS.

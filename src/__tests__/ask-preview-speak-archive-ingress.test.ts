@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { createHash } from "crypto";
 import * as fs from "fs";
+const realOpenForArchiveFault = fs.openSync;
 import { join, relative, resolve } from "path";
 import * as archive from "../speak-archive";
 import * as tts from "../tts";
@@ -376,7 +377,7 @@ describe(`Ask and Preview real receipt ingress: ${caller} (canonical preload; sy
     expect(JSON.stringify(result)).toContain(surface === "Ask" ? "recording was not started" : "No preview audio was played");
   });
   for (const surface of ["Ask", "Preview"] as const) it(`${surface} initial archive failure refuses speech with fixed diagnostic`, async () => {
-    const write = spyOn(fs, "writeFileSync").mockImplementation(() => { throw new Error(`private ${root} ${raw}`); }); spies.push(write);
+    const write = spyOn(fs, "openSync").mockImplementation(((file: any, ...args: any[]) => { if (String(file).startsWith(root + "/")) throw new Error(`private ${root} ${raw}`); return (realOpenForArchiveFault as any)(file, ...args); }) as any); spies.push(write);
     const result = surface === "Ask" ? await ask({ message: raw }) : await preview();
     if (surface === "Ask") {
       refused("input-archive-unavailable", result);

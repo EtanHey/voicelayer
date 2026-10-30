@@ -17,6 +17,8 @@ export type VoiceAskTurnOutcome =
   | { kind: "capture-owned" }
   | { kind: "busy"; sessionId: string; pid: number; startedAt: string }
   | { kind: "booking-refused"; detail: string | undefined }
+  | { kind: "admission-cancelled"; message: string }
+  | { kind: "update-busy"; message: string }
   | { kind: "failed"; message: string };
 
 export type McpTextResult = {
@@ -69,6 +71,10 @@ export function formatVoiceAskTurnResult(outcome: VoiceAskTurnOutcome): McpTextR
       return textResult(formatBusy(outcome.sessionId, outcome.pid, outcome.startedAt), true);
     case "booking-refused":
       return textResult(`[converse] ${outcome.detail}`, true);
+    case "admission-cancelled":
+      return textResult(outcome.message);
+    case "update-busy":
+      return textResult(outcome.message, true);
     case "failed":
       return textResult(`[converse] Error: ${outcome.message}`, true);
     default: {

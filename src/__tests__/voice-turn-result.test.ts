@@ -66,3 +66,12 @@ it("renders an incomplete prompt with the exact error result", () => {
     isError: true,
   });
 });
+
+it("renders typed admission outcomes with main's exact text and error bits", () => {
+  expect(formatVoiceAskTurnResult({ kind: "admission-cancelled", message: "Voice admission cancelled before start" })).toEqual({
+    content: [{ type: "text", text: "Voice admission cancelled before start" }],
+  });
+  expect(formatVoiceAskTurnResult({ kind: "update-busy", message: "UPDATE_BUSY: update gate closed; retry when the update finishes" })).toEqual({
+    content: [{ type: "text", text: "UPDATE_BUSY: update gate closed; retry when the update finishes" }], isError: true,
+  });
+});

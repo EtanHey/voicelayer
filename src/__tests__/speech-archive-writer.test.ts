@@ -2,7 +2,7 @@ import { expect, test, spyOn } from "bun:test";
 import * as fs from "fs";
 import { join } from "path";
 import { applyArchiveWrite } from "../speech-archive-worker";
-import { beginSpeechArchive, unlinkSpeechAudio } from "../speech-archive-live";
+import { beginSpeechArchive, settleSpeechArchivesForUpdate, unlinkSpeechAudio } from "../speech-archive-live";
 import { speechArchiveWriter } from "../speech-archive-writer";
 const at = "2026-10-26T00:00:00.000Z";
 for (const fault of ["rename", "directory-sync"] as const) test(`terminal ${fault} uncertainty retries exactly one durable edge`, async () => {
@@ -84,4 +84,64 @@ test("permanent metadata rename fault uses three bounded retries without publica
   finally { spy.mockRestore(); }
   expect(attempts).toBe(3);
   expect(fs.readFileSync(join(c.path, "metadata.json"))).toEqual(prior);
+});
+
+for (const cleanup of ["before drop", "after drop"] as const)
+test(`G2c dropped audio releases its temp retain (${cleanup}) and preserves the archived copy`, async () => {
+  const archive = beginSpeechArchive("dropped temp audio fixture"); await archive.settled();
+  const source = join(process.env.VOICELAYER_TEST_RUN_ROOT!, `${crypto.randomUUID()}.mp3`);
+  fs.writeFileSync(source, "synthetic archived audio");
+  archive.generated(source, "first", "fixture", "long", "fixture", 0, 2500);
+  await archive.settled();
+  const metadata = fs.readFileSync(join(archive.context.path, "metadata.json"));
+  const saved = JSON.parse(metadata.toString()).speech.generated[0].audio_path;
+  const archived = join(archive.context.path, saved);
+  expect(archived).not.toBe(source);
+  const write = speechArchiveWriter.write.bind(speechArchiveWriter);
+  const spy = spyOn(speechArchiveWriter, "write").mockImplementation(async (...args) => {
+    if (args[1].kind === "audio" && args[1].file === source) throw Error("INVALID_INPUT");
+    return write(...args);
+  });
+  try {
+    archive.generated(source, "dropped", "fixture", "long", "fixture", 1, 2500);
+    if (cleanup === "before drop") unlinkSpeechAudio(source);
+    await archive.settled();
+    expect(fs.existsSync(source)).toBe(true); // Still retained until the retry is classified as dropped.
+    await expect(settleSpeechArchivesForUpdate(archive)).rejects.toThrow("UPDATE_GATE_ARCHIVE_UNKNOWN");
+    expect(archive.failures).toEqual([]);
+    if (cleanup === "after drop") unlinkSpeechAudio(source);
+    expect(fs.existsSync(source)).toBe(false);
+    expect(fs.readFileSync(archived, "utf8")).toBe("synthetic archived audio");
+    expect(fs.readFileSync(join(archive.context.path, "metadata.json"))).toEqual(metadata);
+  } finally {
+    spy.mockRestore();
+    archive.finish("cancelled", "USER_CANCEL"); await archive.settled();
+    if (fs.existsSync(source)) fs.unlinkSync(source);
+  }
+});
+
+test("G2c dropping one audio write preserves a recoverable retain on the same temp file", async () => {
+  const dropped = beginSpeechArchive("dropped owner"), retryable = beginSpeechArchive("retryable owner");
+  await dropped.settled(); await retryable.settled();
+  const source = join(process.env.VOICELAYER_TEST_RUN_ROOT!, `${crypto.randomUUID()}.mp3`);
+  fs.writeFileSync(source, "shared synthetic audio");
+  const write = speechArchiveWriter.write.bind(speechArchiveWriter);
+  const spy = spyOn(speechArchiveWriter, "write").mockImplementation(async (...args) => {
+    if (args[1].kind === "audio" && args[1].file === source)
+      throw Error(args[2]?.id === dropped.context.id ? "INVALID_INPUT" : "IO_ERROR");
+    return write(...args);
+  });
+  try {
+    dropped.keepAudio(source, 1000); retryable.keepAudio(source, 1000); unlinkSpeechAudio(source);
+    await dropped.settled(); await retryable.settled();
+    await expect(settleSpeechArchivesForUpdate(dropped)).rejects.toThrow("UPDATE_GATE_ARCHIVE_UNKNOWN");
+    await retryable.retryFailed();
+    expect(retryable.failures).toHaveLength(1);
+    expect(fs.existsSync(source)).toBe(true);
+  } finally { spy.mockRestore(); }
+  await retryable.retryFailed();
+  expect(fs.existsSync(source)).toBe(false);
+  const m = JSON.parse(fs.readFileSync(join(retryable.context.path, "metadata.json"), "utf8"));
+  expect(fs.readFileSync(join(retryable.context.path, m.artifacts[0].relative_path), "utf8")).toBe("shared synthetic audio");
+  for (const archive of [dropped, retryable]) { archive.finish("cancelled", "USER_CANCEL"); await archive.settled(); }
 });

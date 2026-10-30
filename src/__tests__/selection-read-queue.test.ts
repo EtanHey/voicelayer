@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { SELECTION_READ_QUEUE_LIMIT, SelectionReadQueue, type QueuedSelectionRead } from "../selection-read-queue";
 
-const read = (id: string): QueuedSelectionRead => ({ requestId: id, text: `text ${id}`, textHash: "a".repeat(64), profile: "auto" });
+const read = (id: string): QueuedSelectionRead => ({ admission: { run: work => work(), release() {} }, requestId: id, text: `text ${id}`, textHash: "a".repeat(64), profile: "auto" });
 
 function harness(startFails = () => false) {
   const started: string[] = [];
