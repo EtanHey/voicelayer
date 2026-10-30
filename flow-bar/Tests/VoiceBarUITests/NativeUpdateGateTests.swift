@@ -27,8 +27,12 @@ import XCTest
         try FileManager.default.createDirectory(atPath: path + ".admissions", withIntermediateDirectories: false)
         let gate = NativeUpdateGate(path: path)
         let release = try gate.acquire()
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: path + ".admissions").count, 1)
-        XCTAssertFalse(gate.permitsTermination())
+        let files = try FileManager.default.contentsOfDirectory(atPath: path + ".admissions")
+        XCTAssertEqual(files.count, 1)
+        let record = try String(contentsOfFile: path + ".admissions/" + XCTUnwrap(files.first))
+        XCTAssertTrue(record.hasPrefix("{\"token\":"))
+        XCTAssertNotNil(record.range(of: #"^\{"token":"[^"]+","pid":\d+,"incarnation":"[^"]+","generation":0\}\n$"#, options: .regularExpression))
+        XCTAssertTrue(gate.permitsTermination(), "OPEN ignores orphan or active ledger; live activity is checked by the app")
         release()
         XCTAssertTrue(gate.permitsTermination())
         try write(["version": 1, "kind": "DRAINING", "lease": lease])
@@ -50,13 +54,46 @@ import XCTest
         for fault in ["missing", "malformed", "locked"] {
             let path = root.appendingPathComponent(fault).path
             if fault == "malformed" { try Data("{}".utf8).write(to: URL(fileURLWithPath: path)) }
-            if fault == "locked" { try FileManager.default.createDirectory(atPath: path + ".lock", withIntermediateDirectories: false) }
+            if fault == "locked" {
+                try Data("{}".utf8).write(to: URL(fileURLWithPath: path))
+                try FileManager.default.createDirectory(atPath: path + ".lock", withIntermediateDirectories: false)
+            }
             let gate = NativeUpdateGate(path: path)
             XCTAssertNoThrow(try gate.acquire()())
-            XCTAssertFalse(gate.permitsTermination())
-            XCTAssertTrue(FileManager.default.fileExists(atPath: path + ".voice-diag.json"))
+            XCTAssertTrue(gate.permitsTermination(), "faults do not strand quit")
+            XCTAssertEqual(FileManager.default.fileExists(atPath: path + ".voice-diag.json"), fault != "missing")
             XCTAssertEqual(FileManager.default.fileExists(atPath: path + ".lock"), fault == "locked")
         }
+    }
+
+    func testBriefContentionDoesNotDiagnose() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("gate").path
+        try Data(#"{"version":1,"kind":"OPEN","generation":0,"released":null}"#.utf8).write(to: URL(fileURLWithPath: path))
+        try FileManager.default.createDirectory(atPath: path + ".admissions", withIntermediateDirectories: false)
+        var collisions = 0
+        for _ in 0..<100 {
+            var attempts = 0, time: UInt64 = 0
+            let gate = NativeUpdateGate(path: path, tryLock: { name in
+                attempts += 1
+                if attempts == 1 { errno = EEXIST; return false }
+                return mkdir(name, 0o700) == 0
+            }, monotonicNow: { defer { time += 250_000 }; return time })
+            let release = try gate.acquire()
+            XCTAssertEqual(attempts, 2, "retry a brief 0.25ms collision rather than diagnosing it")
+            if FileManager.default.fileExists(atPath: path + ".voice-diag.json") { collisions += 1 }
+            release()
+        }
+        print("G3 contention: \(collisions)/100 diagnostic markers (injected 0.25ms lock collisions)")
+        XCTAssertEqual(collisions, 0)
+        var attempts = 0, time: UInt64 = 0
+        let stuck = NativeUpdateGate(path: path, tryLock: { _ in attempts += 1; errno = EEXIST; return false },
+            monotonicNow: { defer { time += 1_000_000 }; return time })
+        XCTAssertNoThrow(try stuck.acquire()())
+        XCTAssertEqual(attempts, 2, "exhausted contention stops at the 2ms deadline")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path + ".voice-diag.json"))
     }
 
     func testPlaybackHoldsAdmissionThroughQueueAndStopsBeforeRelease() {

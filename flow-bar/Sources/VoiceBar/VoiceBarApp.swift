@@ -165,6 +165,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
     private var controlledUpdateLease: [String: Any]?
+    #if VOICEBAR_QA
+    var terminationGateForTesting: NativeUpdateGate?
+    var terminationOwnsServerForTesting: Bool?
+    var terminationCleanupForTesting: (() -> Void)?
+    #endif
 
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
@@ -511,7 +516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 _ = application.terminate()
             }
 
-            waitForTermination(ofExactPIDs: exactPIDs, timeout: 1.0)
+            waitForTermination(ofExactPIDs: exactPIDs, timeout: VoiceBarDaemonController.acceptedQuitWait)
             // A refused quit can mean live capture or a closed update gate. Never escalate it to SIGKILL.
             let survivorPIDs = exactPIDs.filter { processIsAlive(exactPID: $0) }
             guard survivorPIDs.isEmpty else {
@@ -533,11 +538,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ofExactPIDs exactPIDs: [pid_t],
         timeout: TimeInterval
     ) {
-        guard !exactPIDs.isEmpty else { return }
-        let deadline = Date().addingTimeInterval(timeout)
-        while exactPIDs.contains(where: { processIsAlive(exactPID: $0) }), Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.02)
-        }
+        _ = Self.waitForIncumbents(exactPIDs, timeout: timeout, isAlive: processIsAlive)
+    }
+
+    static func waitForIncumbents(_ pids: [pid_t], timeout: TimeInterval = VoiceBarDaemonController.acceptedQuitWait,
+        isAlive: (pid_t) -> Bool, now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) -> Bool {
+        let deadline = now() + timeout
+        while pids.contains(where: isAlive), now() < deadline { wait(0.02) }
+        return !pids.contains(where: isAlive)
     }
 
     private func processIsAlive(exactPID: pid_t) -> Bool {
@@ -679,6 +688,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     .filter { !$0.isTerminated }.map(\.processIdentifier) == [ProcessInfo.processInfo.processIdentifier],
                                                 gate: .shared)
             if reply != nil, request["action"] as? String == "quit" {
+                // Commit before returning ACK; later ingress cannot rescind an acknowledged quit.
+                terminationPolicy.authorize(.controlledUpdate)
                 let lease = request["lease"] as? [String: Any]
                 DispatchQueue.main.async { [weak self] in self?.requestTermination(.controlledUpdate, lease: lease) }
             }
@@ -1241,10 +1252,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         defer { controlledUpdateLease = nil }
+        var ownsServer = socketServer != nil
+        var gate: NativeUpdateGate = .shared
+        #if VOICEBAR_QA
+        ownsServer = terminationOwnsServerForTesting ?? ownsServer
+        gate = terminationGateForTesting ?? gate
+        #endif
         let reply = terminationPolicy.reply(
             enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance,
-            voiceBusy: !voiceState.isUpdateDrainIdle && socketServer != nil,
-            gatePermitsQuit: socketServer == nil || NativeUpdateGate.shared.permitsTermination(controlledLease: controlledUpdateLease)
+            voiceBusy: voiceState.isQuitBusy && ownsServer,
+            gatePermitsQuit: !ownsServer || gate.permitsTermination(controlledLease: controlledUpdateLease)
         )
         guard reply == .terminateNow else {
             voiceState.reportQuitRefusal()
@@ -1254,6 +1271,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Clean shutdown — exit code 0 so launchd KeepAlive.SuccessfulExit:false
         // does NOT respawn. Only crashes (non-zero) trigger restart.
+        #if VOICEBAR_QA
+        if let terminationCleanupForTesting { terminationCleanupForTesting(); return reply }
+        #endif
         performTerminationCleanup()
         return reply
     }

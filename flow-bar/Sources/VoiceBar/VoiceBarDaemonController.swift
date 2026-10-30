@@ -343,6 +343,8 @@ final class VoiceBarDaemonController {
 
     private static let stabilityResetDelay: TimeInterval = 300
     private static let gracefulStopTimeout: TimeInterval = 1.0
+    // stop() can spend one interval before SIGKILL and another waiting for exit.
+    static let acceptedQuitWait: TimeInterval = 2 * gracefulStopTimeout + 1.0
     private static let heartbeatCheckInterval: TimeInterval = 5
     // Provisional until gaps above 15s are measured from real-use logs. A
     // permanent wedge tolerates this delay; a false positive loses live audio.

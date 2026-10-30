@@ -69,3 +69,41 @@ test("live evidence rechecks G2 after the native round trip and never quits befo
     expect(calls).toBe(2);
   } finally { process.env.VOICELAYER_UPDATE_GATE_PATH = saved; }
 });
+
+test("one second without a native reply returns UNKNOWN", async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { initializeVoiceGate, updateVoiceGate } = await import("../update-gate-admission");
+  const { createVoiceDrainControl } = await import("../update-gate-native-participant");
+  const saved = process.env.VOICELAYER_UPDATE_GATE_PATH;
+  process.env.VOICELAYER_UPDATE_GATE_PATH = join(mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "timeout-")), "gate");
+  try {
+    await initializeVoiceGate();
+    expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+    const participant = createNativeDrainParticipant({ secret: "synthetic", nativePid: 123, send() {} });
+    const start = performance.now();
+    expect(await createVoiceDrainControl(participant, () => true)(lease, "drain")).toEqual({ kind: "UNKNOWN" });
+    expect(performance.now() - start).toBeGreaterThanOrEqual(990);
+  } finally { process.env.VOICELAYER_UPDATE_GATE_PATH = saved; }
+});
+test("quit succeeds only under exact COMMITTED with fresh native evidence", async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { initializeVoiceGate, updateVoiceGate } = await import("../update-gate-admission");
+  const { createVoiceDrainControl } = await import("../update-gate-native-participant");
+  const saved = process.env.VOICELAYER_UPDATE_GATE_PATH;
+  process.env.VOICELAYER_UPDATE_GATE_PATH = join(mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "quit-")), "gate");
+  try {
+    await initializeVoiceGate();
+    const ack = { lease, activeOperations: 0, openArchives: 0 };
+    expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+    expect(updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, () => true).kind).toBe("APPLIED");
+    expect(updateVoiceGate({ kind: "COMMIT", lease }, () => true).kind).toBe("APPLIED");
+    const participant = createNativeDrainParticipant({ secret: "synthetic", nativePid: 123, send(value) {
+      const reply = { ...value, cmd: "update_gate_drain_ack", pid: 123, incarnation: crypto.randomUUID(), mac: "" };
+      reply.mac = createHmac("sha256", "synthetic").update(drainMessage("ack-quit", reply)).digest("hex");
+      participant.receive(reply);
+    } });
+    expect(await createVoiceDrainControl(participant, () => true)(lease, "quit")).toMatchObject({ kind: "ACKNOWLEDGED", native: ack, daemon: ack });
+  } finally { process.env.VOICELAYER_UPDATE_GATE_PATH = saved; }
+});

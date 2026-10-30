@@ -363,7 +363,10 @@ final class SocketServer {
                   clients.values.filter({ $0.acceptsCommands }).count == 1 else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self, let reply = onUpdateGateDrain?(dict) else { return }
-                queue.async { [weak self] in self?.sendCommandToOwnerOnQueue(command: reply, targetFD: fd) }
+                queue.async { [weak self] in
+                    guard let self, clients[fd]?.peerPID == peer else { return }
+                    sendCommandToOwnerOnQueue(command: reply, targetFD: fd)
+                }
             }
             return
         }

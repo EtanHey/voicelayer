@@ -220,7 +220,7 @@ public final class SettingsAudioPlayback {
 
 public extension SettingsAudioPlayback {
     /// The real AVAudioPlayer-backed playback used by the app.
-    static func system(canPlay: @escaping @MainActor () -> Bool = { true }) -> SettingsAudioPlayback {
+    static func system(gate: NativeUpdateGate? = nil, canPlay: @escaping @MainActor () -> Bool = { true }) -> SettingsAudioPlayback {
         let holder = SystemPlayerHolder()
         let playback = SettingsAudioPlayback(
             start: { url in holder.play(url) },
@@ -228,7 +228,7 @@ public extension SettingsAudioPlayback {
             position: { holder.position },
             seek: { time in holder.seek(to: time) },
             canPlay: canPlay,
-            admit: { try NativeUpdateGate.shared.acquire() }
+            admit: { try (gate ?? .shared).acquire() }
         )
         holder.onFinish = { [weak playback] url in
             playback?.playbackDidFinish(url)

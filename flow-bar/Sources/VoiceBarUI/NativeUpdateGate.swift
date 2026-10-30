@@ -8,20 +8,23 @@ import CoreFoundation
     public static let busyMessage = "Update in progress. Try Play again when it finishes."
     public enum Fault: Error { case busy, unknown }
     private let path: String
+    private let tryLock: (String) -> Bool
+    private let monotonicNow: () -> UInt64
     private let incarnation = UUID().uuidString
     private var degraded = false
     private var lastDiagnostic = Date.distantPast
 
-    public init(path: String? = nil) {
+    public init(path: String? = nil,
+                tryLock: @escaping (String) -> Bool = { mkdir($0, 0o700) == 0 },
+                monotonicNow: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
+        self.tryLock = tryLock
+        self.monotonicNow = monotonicNow
         let env = ProcessInfo.processInfo.environment
         func trimmed(_ key: String) -> String? {
             guard let value = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
             return value
         }
-        let isTest = ProcessInfo.processInfo.processName == "xctest" || Bundle.main.bundlePath.hasSuffix(".xctest")
-        // Swift's system-player tests have no Bun preload. Never resolve their default into live state.
-        let testPath = isTest ? NSTemporaryDirectory() + "voicebar-gate-" + UUID().uuidString + "/gate" : nil
-        let resolved = path ?? testPath ?? trimmed("VOICELAYER_UPDATE_GATE_PATH") ??
+        let resolved = path ?? trimmed("VOICELAYER_UPDATE_GATE_PATH") ??
             (trimmed("VOICELAYER_STATE_DIR") ?? NSHomeDirectory() + "/.local/state/voicelayer") + "/update-gate.json"
         self.path = URL(fileURLWithPath: resolved).standardizedFileURL.path
     }
@@ -71,11 +74,14 @@ import CoreFoundation
         var s = Darwin.stat()
         return lstat(name, &s) != 0 && errno == ENOENT
     }
-    private func snapshot() throws -> (state: [String: Any], active: [String]) {
+    private func state() throws -> [String: Any] {
         guard !degraded, absent(path + ".voice-diag.json"), try stat(path).st_mode & S_IFMT == S_IFREG,
               let json = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any],
               let state = Self.validState(json), try stat(path + ".admissions").st_mode & S_IFMT == S_IFDIR else { throw Fault.unknown }
-        return (state, try FileManager.default.contentsOfDirectory(atPath: path + ".admissions"))
+        return state
+    }
+    private func snapshot() throws -> (state: [String: Any], active: [String]) {
+        (try state(), try FileManager.default.contentsOfDirectory(atPath: path + ".admissions"))
     }
     @discardableResult private func diagnose() -> Bool {
         degraded = true
@@ -99,7 +105,12 @@ import CoreFoundation
                 withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
             catch { diagnose(); throw Fault.unknown }
         }
-        guard mkdir(path + ".lock", 0o700) == 0 else { if voice { diagnose() }; throw Fault.unknown }
+        let deadline = monotonicNow() + 2_000_000
+        while !tryLock(path + ".lock") {
+            guard errno == EEXIST, monotonicNow() < deadline else {
+                if voice { diagnose() }; throw Fault.unknown
+            }
+        }
         let result: T
         do { result = try work() }
         catch {
@@ -113,15 +124,19 @@ import CoreFoundation
     /// Returned release is held through confirmed stop, finish, or failed start (including queued clips).
     public func acquire() throws -> () -> Void {
         if degraded || !absent(path + ".voice-diag.json") { diagnose(); return {} }
+        // The daemon bootstraps. Its absence already makes updater evidence UNKNOWN.
+        if absent(path) { return {} }
+        let token = UUID().uuidString
+        let file = path + ".admissions/" + token
         let admission: (() -> Void)?
         do {
             admission = try locked(voice: true) {
-                let current = try snapshot()
-                guard current.state["kind"] as? String == "OPEN" else { return nil }
-                let token = UUID().uuidString
-                let file = path + ".admissions/" + token
-                let bytes = try JSONSerialization.data(withJSONObject: ["token": token, "pid": getpid(), "incarnation": incarnation,
-                    "generation": current.state["generation"]!], options: [.sortedKeys])
+                if absent(path) { return {} }
+                let current = try state()
+                guard current["kind"] as? String == "OPEN" else { return nil }
+                // UUIDs and validated integers need no escaping. Match TS insertion order and newline.
+                let generation = (current["generation"] as! NSNumber).int64Value
+                let bytes = Data("{\"token\":\"\(token)\",\"pid\":\(getpid()),\"incarnation\":\"\(incarnation)\",\"generation\":\(generation)}\n".utf8)
                 let staged = path + ".lock/admission.json"
                 let fd = open(staged, O_WRONLY | O_CREAT | O_EXCL, 0o600)
                 guard fd >= 0 else { throw Fault.unknown }
@@ -162,11 +177,11 @@ import CoreFoundation
     }
     public func permitsTermination(controlledLease: [String: Any]? = nil) -> Bool {
         (try? locked {
-            let current = try snapshot()
-            return current.active.isEmpty && (current.state["kind"] as? String == "OPEN" ||
-                (current.state["kind"] as? String == "COMMITTED" && controlledLease.map {
-                    NSDictionary(dictionary: current.state["lease"] as? [String: Any] ?? [:]).isEqual(to: $0)
-                } == true))
-        }) == true
+            let current = try state()
+            return current["kind"] as? String == "OPEN" ||
+                (current["kind"] as? String == "COMMITTED" && controlledLease.map {
+                    NSDictionary(dictionary: current["lease"] as? [String: Any] ?? [:]).isEqual(to: $0)
+                } == true)
+        }) ?? true // Faults block updates, never ordinary quit; live activity is checked separately.
     }
 }
