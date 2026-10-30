@@ -107,3 +107,18 @@ test("fixture polling tolerates readiness later than two seconds", async () => {
   await waitFor(() => Date.now() - started >= 2200);
   expect(Date.now() - started).toBeGreaterThanOrEqual(2200);
 }, timeout);
+test.each(["invalid", "absent"])("setup awaits %s operation validation before any mutation", async kind => {
+  const f = fixture(kind === "invalid" ? "idle" : null);
+  writeFileSync(join(f.root, "bin/bash"), '#!/bin/bash\necho setup-mutator >> "$CALL_LOG"\n', { mode: 0o755 });
+  const operation = kind === "absent" ? "" : JSON.stringify({ lease: { generation: 1, operationId: crypto.randomUUID(), ownerId: crypto.randomUUID(), targetSha: "a".repeat(40) }, pid: process.pid });
+  const child = Bun.spawn([process.execPath, "src/cli/setup.ts", repo], { env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: operation }, stdout: "pipe", stderr: "pipe" });
+  expect(await child.exited).not.toBe(0);
+  expect(existsSync(join(f.env.HOME, ".voicelayer"))).toBe(false);
+  expect(readFileSync(f.log, "utf8")).toBe("");
+}, timeout);
+test("shell validator failure stops nested mutations with nonzero status", async () => {
+  const f = fixture("idle");
+  const child = Bun.spawn(["/bin/bash", "-ec", 'source scripts/lib/update-gate.sh; vl_update_gate "$1"; brew forbidden-mutation', "_", repo], { env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: "invalid" }, stdout: "pipe", stderr: "pipe" });
+  expect(await child.exited).not.toBe(0);
+  expect(readFileSync(f.log, "utf8")).toBe("");
+}, timeout);
