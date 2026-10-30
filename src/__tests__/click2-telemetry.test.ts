@@ -60,12 +60,14 @@ it("CLICK2 d2: a handler throw and a free-text reason are logged as bounded outc
   } });
   try {
     client.onCommand(command => {
+      if (command.id === "click2-pending") return { type: "ack", command: command.cmd, id: command.id, outcome: "accept", reason: "pending admissions cancelled" };
       if (command.id === "click2-throw") throw new Error(secret);
       return { type: "ack", command: command.cmd, id: command.id, outcome: "reject", reason: secret };
     });
     client.connectToBar(testSocket("c3.sock"), { role: "mcp-daemon", acceptsCommands: true });
     const peer = await connected.promise;
     peer.write(JSON.stringify({ cmd: "pause", id: "click2-throw" }) + "\n");
+    peer.write(JSON.stringify({ cmd: "stop", id: "click2-pending" }) + "\n");
     peer.write(JSON.stringify({ cmd: "replay", id: "click2-free" }) + "\n");
     await ack.promise;
     expect(lines.join("\n")).not.toContain(secret);
@@ -74,6 +76,8 @@ it("CLICK2 d2: a handler throw and a free-text reason are logged as bounded outc
     });
     expect(records.find(record => record.event === "command_outcome" && record.command_id === "click2-throw"))
       .toMatchObject({ command: "pause", outcome: "failed", reason: "handler-failed" });
+    expect(records.find(record => record.event === "command_outcome" && record.command_id === "click2-pending"))
+      .toMatchObject({ command: "stop", outcome: "accept", reason: "pending admissions cancelled" });
     expect(records.find(record => record.event === "command_outcome" && record.command_id === "click2-free"))
       .toMatchObject({ command: "replay", outcome: "reject", reason: "unlisted" });
   } finally {

@@ -245,7 +245,6 @@ async function main() {
     console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   });
 
-
   console.error(
     `[voicelayer-daemon] MCP daemon listening on ${MCP_SOCKET_PATH}`,
   );

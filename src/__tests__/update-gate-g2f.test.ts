@@ -141,14 +141,58 @@ test("G2f concurrent durability waiters share one backoff driver and retain fail
   const real = speechArchiveWriter.write.bind(speechArchiveWriter);
   let recovering = false;
   const write = spyOn(speechArchiveWriter, "write").mockImplementation((...args) =>
-    recovering ? real(...args) : Promise.reject(Error("IO_ERROR"))); mocks.push(write);
+    recovering || args[0] !== archive.key ? real(...args) : Promise.reject(Error("IO_ERROR"))); mocks.push(write);
   archive.playerStarted(); await archive.settled();
   const log = console.error as ReturnType<typeof spyOn>; log.mockClear(); write.mockClear();
   const waiters = Array.from({ length: 16 }, () => settleSpeechArchivesForUpdate(archive));
   try {
     await Bun.sleep(80);
-    expect(write.mock.calls.length).toBeLessThanOrEqual(5);
+    // Other full-suite archives may still be retrying; measure only this owner.
+    expect(write.mock.calls.filter(args => args[0] === archive.key).length).toBeLessThanOrEqual(5);
     expect(archive.failures).toHaveLength(1);
     expect(log).not.toHaveBeenCalled(); // The original failure is already reported and retained.
   } finally { recovering = true; await archive.retryFailed(); await Promise.all(waiters); }
+});
+
+for (const kind of ["DRAINING", "PREPARED", "COMMITTED"]) test(`G2g ${kind} unreadable ledger admits unregistered voice`, () => {
+  fs.writeFileSync(path, JSON.stringify({ version: 1, kind, lease, ...(kind === "DRAINING" ? {} : { native: ack, daemon: ack }) }));
+  fs.chmodSync(path + ".admissions", 0o000);
+  try {
+    expect(() => fs.readdirSync(path + ".admissions")).toThrow();
+    expect(gate.updateVoiceGate({ kind: "CANCEL", lease })).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
+    expect(gate.withVoiceAdmission(() => "voice")).toBe("voice");
+    expect(fs.existsSync(path + ".voice-diag.json")).toBe(true);
+    expect(console.error).toHaveBeenCalled();
+  } finally { fs.chmodSync(path + ".admissions", 0o700); }
+  expect(fs.readdirSync(path + ".admissions")).toEqual([]);
+  expect(gate.updateVoiceGate({ kind: "CANCEL", lease })).toEqual({ kind: "REFUSED", reason: "UNKNOWN" });
+});
+test("G2g OPEN admission never reads the ledger", () => {
+  const read = spyOn(fs, "readdirSync"); mocks.push(read);
+  expect(gate.withVoiceAdmission(() => "voice")).toBe("voice");
+  expect(read).not.toHaveBeenCalled();
+  // Positive control: this same spy must see the named import on the closed path.
+  fs.writeFileSync(path, JSON.stringify({ version: 1, kind: "DRAINING", lease }));
+  expect(() => gate.withVoiceAdmission(() => "voice")).toThrow("UPDATE_BUSY");
+  expect(read).toHaveBeenCalledWith(path + ".admissions");
+});
+test("G2g duplicate playing selection preserves VoiceBar wire contract", async () => {
+  fakeReads(); fs.mkdirSync(path + ".lock");
+  const first = selection("one", "same playing selection");
+  const second = selection("two", "same playing selection");
+  fs.rmdirSync(path + ".lock");
+  expect(await first).toMatchObject({ outcome: "accept" });
+  // VoiceState.swift:4529 retires duplicate submissions only for "Already queued".
+  expect(await second).toMatchObject({ outcome: "noop", reason: "Already queued" });
+});
+for (const cmd of ["stop", "cancel"] as const) test(`G2g idle ${cmd} acknowledges cancelled admissions`, async () => {
+  tts.stopPlayback(); fs.mkdirSync(path + ".lock");
+  const speech = gate.withAsyncVoiceAdmission(() => "must not start"); void speech.catch(() => {});
+  try {
+    expect(await handleSocketCommand({ cmd })).toMatchObject({ outcome: "accept", reason: "pending admissions cancelled" });
+  } finally { fs.rmdirSync(path + ".lock"); await expect(speech).rejects.toThrow("cancelled before start"); }
+});
+test("G2g daemon startup has no double blank line", () => {
+  const source = fs.readFileSync(join(import.meta.dir, "..", "mcp-server-daemon.ts"), "utf8");
+  expect(source).not.toContain("\n\n\n");
 });
