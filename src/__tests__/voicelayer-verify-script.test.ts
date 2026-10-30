@@ -1,3 +1,4 @@
+import { stubInstallerTransport } from "./setup/installer-transport";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   copyFileSync,
@@ -36,7 +37,7 @@ function run(command: string[], options: { env?: Record<string, string>; cwd?: s
   // into the real repo's .git/config (2026-09-24).
   const inherited = { ...process.env };
   for (const key of Object.keys(inherited)) if (key.startsWith("GIT_")) delete inherited[key];
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...inherited,
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
@@ -45,6 +46,7 @@ function run(command: string[], options: { env?: Record<string, string>; cwd?: s
   const cwd = options.cwd ?? tempRoot;
   if (!cwd) throw new Error("run() needs a temp repo: tempRoot is not set");
 
+  if (command.includes(scriptPath)) Object.assign(env, stubInstallerTransport(join(tempRoot, "fake-bin"), env.PATH));
   return Bun.spawnSync(command, {
     cwd,
     stdin: options.input ? new TextEncoder().encode(options.input) : undefined,
@@ -59,6 +61,8 @@ function text(bytes: Uint8Array) {
 }
 
 function initFakeRepo() {
+  mkdirSync(join(tempRoot, "scripts/lib"), { recursive: true });
+  copyFileSync(join(repoRoot, "scripts/lib/update-gate.sh"), join(tempRoot, "scripts/lib/update-gate.sh"));
   mkdirSync(join(tempRoot, "flow-bar"), { recursive: true });
   writeFileSync(
     join(tempRoot, "flow-bar", "build-app.sh"),

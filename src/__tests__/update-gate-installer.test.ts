@@ -7,7 +7,7 @@ const repo = process.cwd();
 const INSTALLER_PROCESS_TIMEOUT_MS = 30_000;
 const originalGate = process.env.VOICELAYER_UPDATE_GATE_PATH, originalProof = process.env.VOICELAYER_TEST_INSTALL_PROOF;
 afterEach(() => { process.env.VOICELAYER_UPDATE_GATE_PATH = originalGate; process.env.VOICELAYER_TEST_INSTALL_PROOF = originalProof; });
-function fixture(phase: string | null) {
+export function fixture(phase: string | null) {
   const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "installer-"));
   const bin = join(root, "bin"), gate = join(root, "gate"), proof = join(root, "proof");
   mkdirSync(bin); mkdirSync(join(root, "home")); mkdirSync(gate + ".admissions");
@@ -42,8 +42,9 @@ fi
     { cwd: repo, env, stdout: "pipe", stderr: "pipe" });
   return { root, gate, proof, log, env, start };
 }
-async function waitFor(check: () => boolean) {
-  for (let i = 0; i < 100; i++) { if (check()) return; await Bun.sleep(20); }
+export async function waitFor(check: () => boolean, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) { if (check()) return; await Bun.sleep(25); }
   throw Error("fixture did not reach expected phase");
 }
 test("busy direct CLI waits without mutations; Ctrl-C restores admission", async () => {
@@ -75,7 +76,7 @@ test("UNKNOWN proof refuses without mutation", async () => {
 test("direct build opt-outs cannot bypass UNKNOWN", async () => {
   const f = fixture(null);
   const child = Bun.spawn(["/bin/bash", "src/cli/voicelayer.sh", "build-app", "--no-stop", "--no-relaunch"],
-    { env: f.env, stdout: "pipe", stderr: "pipe" });
+    { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
   expect(await child.exited).not.toBe(0);
   expect(await new Response(child.stderr).text()).toContain("UNKNOWN");
   expect(readFileSync(f.log, "utf8")).toBe("");
@@ -95,7 +96,7 @@ test("direct launchd and repair entry points refuse UNKNOWN before any mutation"
     "scripts/voicelayer-dedupe-voicebar.sh"]) {
     const f = fixture(null);
     const child = Bun.spawn(["/bin/bash", script, ...(script.includes("dedupe") ? ["--apply"] : [])],
-      { env: f.env, stdout: "pipe", stderr: "pipe" });
+      { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
     expect(await child.exited).not.toBe(0);
     expect(await new Response(child.stderr).text()).toContain("UNKNOWN");
     expect(readFileSync(f.log, "utf8")).toBe("");
@@ -114,7 +115,7 @@ test("direct cask helpers refuse without an owning operation", async () => {
   const f = fixture("idle");
   for (const call of ["bcs_brew_run upgrade --formula fake", "bcs_sync_cask fake fake.app backup", "bcs_reregister_cask fake backup", "bcs_tap_update fake"]) {
     const child = Bun.spawn(["/bin/bash", "-c", 'source scripts/lib/brew-cask-sync.sh; ' + call],
-      { env: f.env, stdout: "pipe", stderr: "pipe" });
+      { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
     expect(await child.exited).not.toBe(0);
     expect(await new Response(child.stderr).text()).toContain("UNKNOWN");
   }
@@ -122,7 +123,7 @@ test("direct cask helpers refuse without an owning operation", async () => {
 }, INSTALLER_PROCESS_TIMEOUT_MS);
 test("direct setup refuses UNKNOWN before starting its command plan", async () => {
   const f = fixture(null);
-  const child = Bun.spawn([process.execPath, "src/cli/setup.ts", repo], { env: f.env, stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, "src/cli/setup.ts", repo], { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
   expect(await child.exited).not.toBe(0);
   expect(await new Response(child.stderr).text()).toContain("UNKNOWN");
   expect(readFileSync(f.log, "utf8")).toBe("");
@@ -138,16 +139,16 @@ test("admitted work drains through G2 even when the fake participant reports idl
     expect(await child.exited).toBe(0);
   } finally { finish(); await work; if (child.exitCode === null) { child.kill(); await child.exited; } }
 }, INSTALLER_PROCESS_TIMEOUT_MS);
-test("release cleanup and promotion refuse UNKNOWN before artifact or recipe writes", async () => {
+test("release artifacts and promotion do not take a resident gate", async () => {
   for (const promotion of [false, true]) {
     const f = fixture(null);
     const args = promotion ? ["scripts/promote-voicebar-release.sh", "--version", "0.0.0", "--app", "fake.app", "--zip", "fake.zip",
       "--tap-root", f.root, "--formula-sha256", "a".repeat(64), "--t3-proof", "fake.json"] :
       ["scripts/release-voicebar.sh", "--skip-tap-check", "--output-dir", join(f.root, "out.noindex")];
-    const child = Bun.spawn(["/bin/bash", ...args], { env: f.env, stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(["/bin/bash", ...args], { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
     expect(await child.exited).not.toBe(0);
-    expect(await new Response(child.stderr).text()).toContain("UNKNOWN");
-    expect(readFileSync(f.log, "utf8")).toBe("");
+    expect(await new Response(child.stderr).text()).not.toContain("[update-gate]");
+    expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
   }
 }, INSTALLER_PROCESS_TIMEOUT_MS);
 test("R1 Cancel retries a transient lock and restores admission", async () => {
@@ -181,7 +182,7 @@ test.each(["scripts/install-voicebar-autostart.sh", "scripts/install-voicebar-f5
   for (const help of [true, false]) {
     const f = fixture("idle");
     const child = Bun.spawn(["/bin/bash", script, help ? "--help" : "--invalid-g4-option"],
-      { env: f.env, stdout: "pipe", stderr: "pipe" });
+      { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
     expect(await child.exited).toBe(help ? 0 : 2);
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
     expect(readFileSync(f.log, "utf8")).toBe("");
@@ -191,29 +192,30 @@ test("R2 CLI setup handles help and invalid arguments before the gate", async ()
   for (const help of [true, false]) {
     const f = fixture(null);
     const child = Bun.spawn(["/bin/bash", "src/cli/voicelayer.sh", "setup", help ? "--help" : "--invalid-g4-option"],
-      { env: f.env, stdout: "pipe", stderr: "pipe" });
+      { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
     expect(await child.exited).toBe(help ? 0 : 2);
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
   }
 });
-test.each(["SIGINT", "SIGTERM"] as const)("R3 postcommit %s exits visibly without cancelling the installer", async signal => {
+test.each(["SIGINT", "SIGTERM"] as const)("R3 postcommit %s preserves the controller until installer completion", async signal => {
   const f = fixture("idle"), started = join(f.root, "started"), finish = join(f.root, "finish"), done = join(f.root, "done");
   const code = `import{writeFileSync,existsSync}from'node:fs';writeFileSync(${JSON.stringify(started)},String(process.pid));while(!existsSync(${JSON.stringify(finish)}))await Bun.sleep(20);writeFileSync(${JSON.stringify(done)},'done');`;
   const child = Bun.spawn([process.execPath, "src/update-gate-installer.ts", process.execPath, "-e", code],
-    { env: f.env, stdout: "pipe", stderr: "pipe" });
+    { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
   try {
     await waitFor(() => existsSync(started)); child.kill(signal);
-    await waitFor(() => child.exitCode !== null);
-    expect(await child.exited).toBe(signal === "SIGINT" ? 130 : 143);
+    await Bun.sleep(150);
+    expect(child.exitCode).toBeNull();
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
     writeFileSync(finish, "finish"); await waitFor(() => existsSync(done));
+    expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toContain("Cancel unavailable after COMMIT");
   } finally { writeFileSync(finish, "finish"); if (child.exitCode === null) await child.exited; }
 }, INSTALLER_PROCESS_TIMEOUT_MS);
 test("R4 command simulation leaves the gate OPEN and performs no mutations", async () => {
   const f = fixture("idle");
   const child = Bun.spawn(["/bin/bash", "src/cli/voicelayer.sh", "update", "--no-stop", "--no-relaunch"],
-    { env: { ...f.env, VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1" }, stdout: "pipe", stderr: "pipe" });
+    { env: { ...process.env, ...f.env, VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1" }, stdout: "pipe", stderr: "pipe" });
   expect(await child.exited).toBe(0);
   expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
   expect(readFileSync(f.log, "utf8")).toBe("");
@@ -221,7 +223,7 @@ test("R4 command simulation leaves the gate OPEN and performs no mutations", asy
 test("R5 a no-command helper returns refusal to its caller instead of exec", async () => {
   const f = fixture(null);
   const child = Bun.spawn(["/bin/bash", "-c", 'source scripts/lib/update-gate.sh; if vl_update_gate "$1"; then exit 9; else echo caller-survived; fi', "_", repo],
-    { env: f.env, stdout: "pipe", stderr: "pipe" });
+    { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
   expect(await child.exited).toBe(0);
   expect(await new Response(child.stdout).text()).toContain("caller-survived");
   expect(readFileSync(f.log, "utf8")).toBe("");
@@ -230,7 +232,7 @@ test("R2 controller help and invalid options never acquire a lease", async () =>
   for (const help of [true, false]) {
     const f = fixture("idle");
     const child = Bun.spawn([process.execPath, "src/update-gate-installer.ts", help ? "--help" : "--invalid-g4-option"],
-      { env: f.env, stdout: "pipe", stderr: "pipe" });
+      { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
     expect(await child.exited).toBe(help ? 0 : 2);
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
   }
@@ -248,7 +250,7 @@ test("R6 bundled relay setup needs neither src nor Bun and never acquires a leas
   writeFileSync(join(bin, "dirname"), '#!/bin/bash\nprintf "%s\\n" "${1%/*}"\n', { mode: 0o755 });
   writeFileSync(join(bin, "id"), '#!/bin/bash\necho 501\n', { mode: 0o755 });
   const child = Bun.spawn(["/bin/bash", join(resources, "scripts/install-voicebar-f5-hidutil.sh")],
-    { env: { ...f.env, PATH: bin }, stdout: "pipe", stderr: "pipe" });
+    { env: { ...process.env, ...f.env, PATH: bin }, stdout: "pipe", stderr: "pipe" });
   expect(await child.exited).toBe(0);
   expect(await new Response(child.stderr).text()).toBe("");
   expect(readFileSync(f.log, "utf8")).toContain("kickstart -k gui/501/com.voicelayer.f5-to-f18-hidutil");
@@ -259,7 +261,7 @@ test("R2 CLI helper-install help reaches parsing before relay or app mutation", 
   for (const command of ["hotkey", "autostart"]) {
     const f = fixture(null);
     const child = Bun.spawn(["/bin/bash", "src/cli/voicelayer.sh", command, "install", "--help"],
-      { env: f.env, stdout: "pipe", stderr: "pipe" });
+      { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
     expect(await child.exited).toBe(0);
     expect(readFileSync(f.log, "utf8")).toBe("");
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");

@@ -9,5 +9,5 @@ export function stubInstallerTransport(root: string, path = process.env.PATH ?? 
 if [[ "\${1:-}" == */src/update-gate-installer.ts && "\${2:-}" == --validate ]]; then exit 0; fi
 exec '${next}' "$@"
 `, { mode: 0o755 });
-  return { PATH: `${bin}:${path}`, VOICELAYER_INSTALL_OPERATION: "fixture-admitted" };
+  return { PATH: `${bin}:${path}`, VOICELAYER_TEST_BUN_CANDIDATES: join(bin, "bun"), VOICELAYER_INSTALL_OPERATION: "fixture-admitted" };
 }

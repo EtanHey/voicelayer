@@ -2,7 +2,6 @@
 # Promote a VoiceBar release to users: the only sanctioned delivery path (T3GATE1).
 set -euo pipefail
 
-UPDATE_GATE_ARGS=("$@")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSION=""
@@ -73,9 +72,6 @@ if [ -z "$VERSION" ] || [ -z "$APP_PATH" ] || [ -z "$ZIP_PATH" ] || [ -z "$TAP_R
 fi
 [ -n "$T3_PROOF" ] || die "T3 Option+F5 proof is required before delivery (--t3-proof PROOF.json). There is no bypass."
 [[ "$FORMULA_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "--formula-sha256 must be the sha256 of the published voicelayer-mcp-$VERSION.tgz"
-
-source "$SCRIPT_DIR/lib/update-gate.sh"
-vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/promote-voicebar-release.sh" ${UPDATE_GATE_ARGS[@]+"${UPDATE_GATE_ARGS[@]}"}
 
 FORMULA="$TAP_ROOT/Formula/voicelayer.rb"
 CASK="$TAP_ROOT/Casks/voicebar.rb"

@@ -1,3 +1,4 @@
+import { stubInstallerTransport } from "./setup/installer-transport";
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { fixtureGitEnv } from "./setup/git-env";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
@@ -156,6 +157,7 @@ function runInLib(box: Sandbox, body: string, env: Record<string, string> = {}) 
     stderr: "pipe",
     env: {
       ...fixtureGitEnv(),
+      ...stubInstallerTransport(box.root), PACKAGE_ROOT: repoRoot,
       BREW_CASK_SYNC_BREW_BIN: box.brewStub,
       BREW_STUB_LOG: box.brewLog,
       BREW_STUB_PREFIX: box.prefix,
@@ -696,6 +698,7 @@ describe("brew-cask-sync environment contract", () => {
         stderr: "pipe",
         env: {
           ...fixtureGitEnv(),
+          ...stubInstallerTransport(box.root), PACKAGE_ROOT: repoRoot,
           BREW_CASK_SYNC_BREW_BIN: box.brewStub,
           BREW_STUB_LOG: box.brewLog,
           BREW_STUB_PREFIX: box.prefix,
@@ -707,6 +710,7 @@ describe("brew-cask-sync environment contract", () => {
       },
     );
 
+    expect({ code: result.exitCode, stderr: decode(result.stderr) }).toEqual({ code: 0, stderr: expect.any(String) });
     expect(decode(result.stderr)).not.toContain("command not found");
     expect(result.exitCode).toBe(0);
     expect(decode(result.stdout)).toContain("already canonical at 2.2.6");
@@ -716,6 +720,7 @@ describe("brew-cask-sync environment contract", () => {
   // installed. bcs_sync_cask already short-circuits at its entry; its callers
   // make follow-up brew calls of their own, and those have to survive too.
   function runWithoutBrew(body: string) {
+    const box = sandbox({});
     // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
     return Bun.spawnSync(
       [
@@ -727,7 +732,7 @@ describe("brew-cask-sync environment contract", () => {
           body,
         ].join("\n"),
       ],
-      { cwd: repoRoot, stdout: "pipe", stderr: "pipe", env: { ...fixtureGitEnv() } },
+      { cwd: repoRoot, stdout: "pipe", stderr: "pipe", env: { ...fixtureGitEnv(), ...stubInstallerTransport(box.root), PACKAGE_ROOT: repoRoot } },
     );
   }
 

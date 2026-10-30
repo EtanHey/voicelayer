@@ -1089,7 +1089,6 @@ elif [[ "$VOICEBAR_REQUIRE_NOTARIZATION" == 1 || -n "$VOICEBAR_RELEASE_ZIP" ]]; 
     if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then
         VOICEBAR_RELEASE_ZIP="$(resolve_release_artifact_destination "$VOICEBAR_RELEASE_ZIP")"
     fi
-    vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
     exec "$(release_artifact_python)" "$REPO_ROOT/scripts/lib/build-release-artifacts.py" \
         "$APP_DIR" "$VOICEBAR_RELEASE_ZIP" "$SCRIPT_DIR/build-app.sh"
 else
@@ -1102,8 +1101,12 @@ if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
     exit 1
 fi
 refuse_brew_managed_install_path
-vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
 guard_build_lifecycle_for_running_instances
+# Artifact/staged and nonresident no-stop/no-relaunch QA builds do not mutate the resident owner.
+if [[ "$STOP_RUNNING" -eq 1 || "$RELAUNCH_APP" -eq 1 || "$APP_DIR" == /Applications/* ]] ||
+   { is_resident_app_dir && [[ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" != 1 ]]; }; then
+    vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
+fi
 
 protect_notarized_resident_before_rebuild
 
