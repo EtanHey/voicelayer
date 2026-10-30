@@ -413,6 +413,25 @@ public final class VoiceState {
             guard let self else { return false }
             return mode != .speaking && mode != .recording && mode != .transcribing
         })
+    /// Includes pre-daemon handoffs; presentation idle alone is never a drain receipt.
+    @MainActor public var isUpdateDrainIdle: Bool {
+        mode == .idle && hotkeyPhase == .idle && pendingIntent == nil && !captureLive && !isRecordingHandoffPending &&
+            !isHistoryRetranscriptionPending && !barInitiatedRecording &&
+            !selectionCaptureInFlight && selectionSubmittedText == nil && readQueueCount == 0 &&
+            readQueueCurrentRequestID == nil && speechPending["preview"] == nil && speechControls?.previewActive != true &&
+            historyPlayback.playingURL == nil && !historyPlayback.isVoiceBusy
+    }
+    public private(set) var quitRefusalMessage: String? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalMessage) }
+    }
+    public func reportQuitRefusal() {
+        let message = "Quit deferred: finish voice work or cancel the update."
+        quitRefusalMessage = message
+        expandFromCollapse()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            if self?.quitRefusalMessage == message { self?.quitRefusalMessage = nil }
+        }
+    }
     public var errorMessage: String?
     public private(set) var polishDegradation: STTPolishDegradation?
     public private(set) var polishMenuSignalPending = false
@@ -1060,6 +1079,7 @@ public final class VoiceState {
 
     private var selectionRejectionMessage: String?
     public var selectionFeedbackNote: String? {
+        if let quitRefusalMessage { return quitRefusalMessage }
         guard showsSelectionBusyNote else { return nil }
         return selectionRejectionMessage ?? VoiceBarPresentation.selectionBusyNote(
             isRequested: true, mode: mode, hotkeyPhase: hotkeyPhase)

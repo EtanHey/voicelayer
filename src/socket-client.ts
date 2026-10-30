@@ -41,6 +41,8 @@ export interface VoiceBarConnectionOptions {
   role?: "mcp-server" | "mcp-daemon" | "standalone-daemon" | "test";
   acceptsCommands?: boolean;
   onConnected?: () => void;
+  onDrainReply?: (reply: unknown) => void;
+  onDisconnected?: () => void;
 }
 
 // A History AVAudioPlayer lives in VoiceBar, outside the daemon queue. Ask must
@@ -93,6 +95,7 @@ export async function withHistoryPlaybackSuspended<T>(work: () => Promise<T>): P
 }
 
 function releaseHistoryGateWaiters(): void {
+  connectionOptions.onDisconnected?.();
   for (const gate of historyGates.values()) {
     gate.unavailable?.("VoiceBar disconnected before History playback stopped");
   }
@@ -264,6 +267,10 @@ function startConnection(): void {
 
         for (const line of lines) {
           if (line.trim().length === 0) continue;
+          try {
+            const raw = JSON.parse(line);
+            if (raw.cmd === "update_gate_drain_ack") { connectionOptions.onDrainReply?.(raw); continue; }
+          } catch { /* normal parser reports malformed commands */ }
           const command = parseCommand(line);
           if (command?.cmd === "history_playback_ready") {
             const gate = historyGates.get(command.id);

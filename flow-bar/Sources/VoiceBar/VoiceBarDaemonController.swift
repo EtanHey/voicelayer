@@ -367,6 +367,7 @@ final class VoiceBarDaemonController {
     private let dateProvider: DateProvider
     private var process: Process?
 
+    var ownedProcessIdentifier: Int32? { ownsLaunchedProcess && process?.isRunning == true ? process?.processIdentifier : nil }
     private(set) var ownsLaunchedProcess = false
     private var restartCount = 0
     private var isRestartScheduled = false
@@ -534,6 +535,7 @@ final class VoiceBarDaemonController {
 
         // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
         var daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
+        daemonEnvironment["VOICEBAR_UPDATE_SECRET"] = NativeDrainParticipant.secret
         daemonEnvironment["VOICEBAR_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         guard socketBindingAllowed(daemonEnvironment) else {
             NSLog("[VoiceBar] SOCKET_ISOLATION_REFUSED: refusing MCP child with resident socket paths")
