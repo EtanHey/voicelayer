@@ -135,3 +135,20 @@ for (const cmd of ["stop", "cancel"] as const) test(`G2f idle socket ${cmd} stil
   await expect(speech).rejects.toThrow("cancelled before start");
   expect(started).toBe(false);
 });
+
+test("G2f concurrent durability waiters share one backoff driver and retain failure evidence", async () => {
+  const archive = beginSpeechArchive("shared retry driver"); await archive.settled();
+  const real = speechArchiveWriter.write.bind(speechArchiveWriter);
+  let recovering = false;
+  const write = spyOn(speechArchiveWriter, "write").mockImplementation((...args) =>
+    recovering ? real(...args) : Promise.reject(Error("IO_ERROR"))); mocks.push(write);
+  archive.playerStarted(); await archive.settled();
+  const log = console.error as ReturnType<typeof spyOn>; log.mockClear(); write.mockClear();
+  const waiters = Array.from({ length: 16 }, () => settleSpeechArchivesForUpdate(archive));
+  try {
+    await Bun.sleep(80);
+    expect(write.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(archive.failures).toHaveLength(1);
+    expect(log).not.toHaveBeenCalled(); // The original failure is already reported and retained.
+  } finally { recovering = true; await archive.retryFailed(); await Promise.all(waiters); }
+});
