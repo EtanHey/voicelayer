@@ -73,11 +73,6 @@ async function main() {
     );
   }
 
-  // Admission bootstraps under its own lock; startup never waits to connect.
-  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
-    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
-  });
-
   // 2. Resolve python3 path early — needed for edge-tts
   try {
     const python3 = resolvePython3Path();
@@ -104,6 +99,11 @@ async function main() {
   connectToBar(getServeSocketPath(), {
     role: "standalone-daemon",
     acceptsCommands: true,
+  });
+
+  // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
+  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   });
 
   console.error(`${LOG_PREFIX} Standalone daemon ready (PID ${process.pid})`);

@@ -2275,7 +2275,7 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
 
 /** Stop current playback if any. */
 export function stopPlayback(playbackElapsedMs?: number, cancelled = false): boolean {
-  const hadPendingAdmission = cancelPendingVoiceAdmissions();
+  cancelPendingVoiceAdmissions("speech");
   if (cancelled) {
     for (const controller of speechPreparations) preparationArchives.get(controller)?.finish("cancelled", "USER_CANCEL");
     activeLongRead?.archive?.finish("cancelled", "USER_CANCEL");
@@ -2285,7 +2285,7 @@ export function stopPlayback(playbackElapsedMs?: number, cancelled = false): boo
   const hadLongRead = cancelLongRead(playbackElapsedMs);
   const stopped = playbackQueueManager.stop(playbackElapsedMs, cancelled);
   if ((hadPreparation || hadLongRead) && !stopped) broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
-  return hadPendingAdmission || hadPreparation || hadLongRead || stopped;
+  return hadPreparation || hadLongRead || stopped;
 }
 
 /** Internal cancellation is utterance-scoped; foreign, terminal and stale intents are no-ops. */

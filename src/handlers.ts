@@ -305,7 +305,10 @@ async function handleVoiceSpeakAdmitted(
 
   // Replay mode — replay_index present
   if (typeof a.replay_index === "number") {
-    return withFreshAsyncVoiceAdmission(() => handleReplay({ index: a.replay_index }));
+    return withFreshAsyncVoiceAdmission(() => {
+      ensureVoiceBarRunning();
+      return handleReplay({ index: a.replay_index });
+    });
   }
 
   // Resolve think mode before TTS sanitization so silent notes retain code and
@@ -394,7 +397,7 @@ async function handleVoiceSpeakAdmitted(
 }
 
 export async function handleVoiceAsk(...args: Parameters<typeof handleVoiceAskAdmitted>): Promise<McpResult> {
-  try { return await withFreshAsyncVoiceAdmission(() => handleVoiceAskAdmitted(...args), { maxWaitMs: 20 }); }
+  try { return await withFreshAsyncVoiceAdmission(() => handleVoiceAskAdmitted(...args), { maxWaitMs: 20, kind: "capture" }); }
   catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
 }
 async function handleVoiceAskAdmitted(
@@ -610,7 +613,7 @@ export async function handleConsult(
 }
 
 export async function handleConverse(...args: Parameters<typeof handleConverseAdmitted>): Promise<McpResult> {
-  try { return await withFreshAsyncVoiceAdmission(() => handleConverseAdmitted(...args), { maxWaitMs: 20 }); }
+  try { return await withFreshAsyncVoiceAdmission(() => handleConverseAdmitted(...args), { maxWaitMs: 20, kind: "capture" }); }
   catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
 }
 async function handleConverseAdmitted(
