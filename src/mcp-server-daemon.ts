@@ -190,11 +190,6 @@ async function main() {
     );
   }
 
-  // Admission bootstraps under its own lock; startup never waits to connect.
-  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
-    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
-  });
-
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
   // it independently and force-restarts an owned child that wedges in JS.
   daemonHeartbeat = startDaemonHeartbeat();
@@ -244,6 +239,12 @@ async function main() {
     },
     onNdjsonMessage: logUnhandledNdjsonMessage,
   });
+
+  // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
+  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
+  });
+
 
   console.error(
     `[voicelayer-daemon] MCP daemon listening on ${MCP_SOCKET_PATH}`,

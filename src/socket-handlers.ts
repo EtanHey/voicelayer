@@ -189,7 +189,10 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
 }
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
-  if (args[0].cmd === "stop" || args[0].cmd === "cancel") cancelPendingVoiceAdmissions();
+  if (args[0].cmd === "stop" || args[0].cmd === "cancel") {
+    cancelPendingVoiceAdmissions("capture");
+    cancelPendingVoiceAdmissions("speech"); // Explicit controls also cover the idle/pending-only return.
+  }
   const control = selectionControl(args[0]);
   if (control) return control;
   if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
@@ -200,7 +203,18 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
     throw error;
   };
   try {
-    const result = withFreshDeferredVoiceAdmission(() => handleSocketCommandAdmitted(...args), args[0].cmd === "record" ? { maxWaitMs: 20 } : undefined);
+    const command = args[0];
+    const result = withFreshDeferredVoiceAdmission(() => {
+      // Concurrent requests can pass the pre-wait check together. A duplicate
+      // discovered here is a no-op, not another Next gesture or another read.
+      if (command.cmd === "speak_text" && command.source === "selection") {
+        const duplicate = selectionReads.admission(selectionIdentity(command.text));
+        if (duplicate.kind === "queued" || (duplicate.kind === "playing" && !isPlaybackPaused()))
+          return buildAck(command, "noop", "Already queued");
+      }
+      return handleSocketCommandAdmitted(...args);
+    }, command.cmd === "record" ? { maxWaitMs: 20, kind: "capture" } :
+      command.cmd.startsWith("retranscribe") ? { kind: "capture" } : undefined);
     return result instanceof Promise ? result.catch(refuse) : result;
   } catch (error) { return refuse(error); }
 }

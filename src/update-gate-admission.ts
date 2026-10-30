@@ -101,7 +101,11 @@ function initializeUnderLock(path: string) {
     persistUpdateGateState(path, { version: 1, kind: "OPEN", generation: 0, released: null }, true);
   }
   const state = diskState(path);
-  if (state.kind !== "UNKNOWN" && state.kind !== "OPEN") return state;
+  if (state.kind !== "UNKNOWN" && state.kind !== "OPEN") {
+    const ledger = lstatSync(path + ".admissions"); // Missing closed-path evidence is a fault, never repaired here.
+    if (!ledger.isDirectory() || ledger.isSymbolicLink()) throw Error("UPDATE_GATE_UNSAFE_LEDGER");
+    return state;
+  }
   try { lstatSync(path + ".admissions"); } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     mkdirSync(path + ".admissions", { mode: 0o700 });
@@ -123,7 +127,7 @@ export function initializeVoiceGate(env: NodeJS.ProcessEnv = process.env): Promi
   }
   const attempt = () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env, true);
   try { attempt(); return Promise.resolve(); }
-  catch { return retryGate(attempt, () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env), 20); }
+  catch { return retryGate(attempt, () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env), 1500); }
 }
 function acquire(retryContention = false): Admission {
   const env = { ...process.env };
@@ -191,16 +195,15 @@ export function withVoiceAdmission<T>(work: () => T): T {
   const inherited = context.getStore();
   return runAdmitted(inherited && inherited.refs > 0 ? inherited : acquire(), work);
 }
-export type VoiceAdmissionOptions = { maxWaitMs?: number };
-type PendingAdmission = { cancelled: boolean };
+export type VoiceAdmissionOptions = { maxWaitMs?: number; kind?: "capture" | "speech" };
+type PendingAdmission = { cancelled: boolean; kind: "capture" | "speech" };
 const pendingAdmissions = new Set<PendingAdmission>();
 export class VoiceAdmissionCancelledError extends Error {
   constructor() { super("Voice admission cancelled before start"); }
 }
-/** Global Stop/Cancel also invalidate work that has not reached its media body yet. */
-export function cancelPendingVoiceAdmissions(): boolean {
-  for (const pending of pendingAdmissions) pending.cancelled = true;
-  return pendingAdmissions.size > 0;
+/** Controls invalidate only their own kind of work before its media body starts. */
+export function cancelPendingVoiceAdmissions(kind: "capture" | "speech"): void {
+  for (const pending of pendingAdmissions) if (pending.kind === kind) pending.cancelled = true;
 }
 function checkPending(pending?: PendingAdmission): void {
   if (pending?.cancelled) throw new VoiceAdmissionCancelledError();
@@ -227,7 +230,7 @@ export function withDeferredVoiceAdmission<T>(work: () => T, options: VoiceAdmis
   try { admission = inherited && inherited.refs > 0 ? inherited : acquire(true); }
   catch (error) {
     if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
-    const pending = { cancelled: false }; pendingAdmissions.add(pending);
+    const pending: PendingAdmission = { cancelled: false, kind: options.kind ?? "speech" }; pendingAdmissions.add(pending);
     return retryGate(() => acquire(true), () => acquire(), options.maxWaitMs ?? 1500, pending).then(value => {
       pendingAdmissions.delete(pending);
       if (pending.cancelled) { value.release(); throw new VoiceAdmissionCancelledError(); }
@@ -242,7 +245,7 @@ export function withAsyncVoiceAdmission<T>(work: () => T, options?: VoiceAdmissi
 }
 /** All capture starts have a <=20ms contention budget, before any microphone opens. */
 export function withCaptureVoiceAdmission<T>(work: () => T): Promise<Awaited<T>> {
-  return withAsyncVoiceAdmission(work, { maxWaitMs: 20 });
+  return withAsyncVoiceAdmission(work, { maxWaitMs: 20, kind: "capture" });
 }
 export function withFreshAsyncVoiceAdmission<T>(work: () => T, options?: VoiceAdmissionOptions): Promise<Awaited<T>> {
   return context.exit(() => withAsyncVoiceAdmission(work, options));

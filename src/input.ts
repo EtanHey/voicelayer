@@ -4162,7 +4162,7 @@ function commitVoiceAskTranscriptPair(
 let voiceAskRetranscriptionOwner: symbol | null = null;
 
 export const retranscribeVoiceAskArchive = async (...args: Parameters<typeof retranscribeVoiceAskArchiveAdmitted>): ReturnType<typeof retranscribeVoiceAskArchiveAdmitted> =>
-  withAsyncVoiceAdmission(() => retranscribeVoiceAskArchiveAdmitted(...args));
+  withAsyncVoiceAdmission(() => retranscribeVoiceAskArchiveAdmitted(...args), { kind: "capture" });
 async function retranscribeVoiceAskArchiveAdmitted(
   archiveId: string,
   options: {
@@ -4319,7 +4319,7 @@ function voiceAskReceiptForArchivedAudio(audioPath: string): string | null {
 }
 
 export const retranscribeRecordingCapture = async (...args: Parameters<typeof retranscribeRecordingCaptureAdmitted>): ReturnType<typeof retranscribeRecordingCaptureAdmitted> =>
-  withAsyncVoiceAdmission(() => retranscribeRecordingCaptureAdmitted(...args));
+  withAsyncVoiceAdmission(() => retranscribeRecordingCaptureAdmitted(...args), { kind: "capture" });
 async function retranscribeRecordingCaptureAdmitted(
   audioPath: string,
 ): Promise<string | null> {
@@ -4447,7 +4447,7 @@ async function retranscribeRecordingCaptureAdmitted(
 }
 
 export const retranscribeLastCapture = async (...args: Parameters<typeof retranscribeLastCaptureAdmitted>): ReturnType<typeof retranscribeLastCaptureAdmitted> =>
-  withAsyncVoiceAdmission(() => retranscribeLastCaptureAdmitted(...args));
+  withAsyncVoiceAdmission(() => retranscribeLastCaptureAdmitted(...args), { kind: "capture" });
 async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
   const wavPath = retainedRecordingFilePath();
   if (!existsSync(wavPath)) {
