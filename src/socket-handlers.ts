@@ -190,8 +190,12 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if (args[0].cmd === "stop" || args[0].cmd === "cancel") {
-    cancelPendingVoiceAdmissions("capture");
-    cancelPendingVoiceAdmissions("speech"); // Explicit controls also cover the idle/pending-only return.
+    const capture = cancelPendingVoiceAdmissions("capture");
+    const speech = cancelPendingVoiceAdmissions("speech");
+    const result = handleSocketCommandAdmitted(...args);
+    if ((capture || speech) && result && !(result instanceof Promise) && result.type === "ack" && result.reason === "already idle")
+      return buildAck(args[0], "accept", "pending admissions cancelled");
+    return result;
   }
   const control = selectionControl(args[0]);
   if (control) return control;
@@ -210,7 +214,7 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
       if (command.cmd === "speak_text" && command.source === "selection") {
         const duplicate = selectionReads.admission(selectionIdentity(command.text));
         if (duplicate.kind === "queued" || (duplicate.kind === "playing" && !isPlaybackPaused()))
-          return buildAck(command, "noop", "Already queued");
+          return buildAck(command, "noop", duplicate.kind === "playing" ? "Already playing" : "Already queued");
       }
       return handleSocketCommandAdmitted(...args);
     }, command.cmd === "record" ? { maxWaitMs: 20, kind: "capture" } :

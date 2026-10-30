@@ -30,11 +30,17 @@ function diskState(path: string) {
     return stat.isFile() && !stat.isSymbolicLink() ? readUpdateGate(JSON.parse(readFileSync(path, "utf8"))) : { kind: "UNKNOWN" as const };
   } catch { return { kind: "UNKNOWN" as const }; }
 }
+/** Closed voice admission and updater snapshots require identical readable evidence. */
+function readLedger(path: string): string[] {
+  const ledger = lstatSync(path + ".admissions");
+  if (!ledger.isDirectory() || ledger.isSymbolicLink()) throw Error("UPDATE_GATE_UNSAFE_LEDGER");
+  return readdirSync(path + ".admissions");
+}
 function snapshot(path: string) {
   try {
-    const state = diskState(path), ledger = lstatSync(path + ".admissions");
-    if (state.kind === "UNKNOWN" || degraded.has(path) || hasDiagnostic(path) || !ledger.isDirectory() || ledger.isSymbolicLink()) return null;
-    return { state, active: readdirSync(path + ".admissions") };
+    const state = diskState(path);
+    if (state.kind === "UNKNOWN" || degraded.has(path) || hasDiagnostic(path)) return null;
+    return { state, active: readLedger(path) };
   } catch { return null; }
 }
 const degraded = new Set<string>();
@@ -102,8 +108,7 @@ function initializeUnderLock(path: string) {
   }
   const state = diskState(path);
   if (state.kind !== "UNKNOWN" && state.kind !== "OPEN") {
-    const ledger = lstatSync(path + ".admissions"); // Missing closed-path evidence is a fault, never repaired here.
-    if (!ledger.isDirectory() || ledger.isSymbolicLink()) throw Error("UPDATE_GATE_UNSAFE_LEDGER");
+    readLedger(path); // Missing or unreadable closed evidence is never repaired here.
     return state;
   }
   try { lstatSync(path + ".admissions"); } catch (error) {
@@ -202,8 +207,12 @@ export class VoiceAdmissionCancelledError extends Error {
   constructor() { super("Voice admission cancelled before start"); }
 }
 /** Controls invalidate only their own kind of work before its media body starts. */
-export function cancelPendingVoiceAdmissions(kind: "capture" | "speech"): void {
-  for (const pending of pendingAdmissions) if (pending.kind === kind) pending.cancelled = true;
+export function cancelPendingVoiceAdmissions(kind: "capture" | "speech"): boolean {
+  let cancelled = false;
+  for (const pending of pendingAdmissions) if (pending.kind === kind && !pending.cancelled) {
+    pending.cancelled = true; cancelled = true;
+  }
+  return cancelled;
 }
 function checkPending(pending?: PendingAdmission): void {
   if (pending?.cancelled) throw new VoiceAdmissionCancelledError();
