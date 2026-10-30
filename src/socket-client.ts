@@ -121,7 +121,7 @@ export function setCommandTelemetrySnapshot(source: () => CommandTelemetrySnapsh
 const COMMAND_TELEMETRY_REASONS = new Set([
   "already idle", "already paused", "already recording", "already transcribing", "busy", "duration unavailable",
   "invalid offset", "mic disabled", "not paused", "not ready", "not recording", "nothing playing",
-  "nothing to replay", "nothing to retranscribe", "parked", "paused", "queue full", "queued",
+  "nothing to replay", "nothing to retranscribe", "pending admissions cancelled", "parked", "paused", "queue full", "queued",
   "Replay position unavailable", "Replay prefix audio unavailable", "resuming", "stale", "unsupported",
 ]);
 const COMMAND_TELEMETRY_OUTCOMES = new Set(["accept", "noop", "reject", "loading"]);

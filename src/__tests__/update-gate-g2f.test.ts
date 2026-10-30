@@ -171,14 +171,19 @@ test("G2g OPEN admission never reads the ledger", () => {
   const read = spyOn(fs, "readdirSync"); mocks.push(read);
   expect(gate.withVoiceAdmission(() => "voice")).toBe("voice");
   expect(read).not.toHaveBeenCalled();
+  // Positive control: this same spy must see the named import on the closed path.
+  fs.writeFileSync(path, JSON.stringify({ version: 1, kind: "DRAINING", lease }));
+  expect(() => gate.withVoiceAdmission(() => "voice")).toThrow("UPDATE_BUSY");
+  expect(read).toHaveBeenCalledWith(path + ".admissions");
 });
-test("G2g duplicate playing selection has a truthful noop reason", async () => {
+test("G2g duplicate playing selection preserves VoiceBar wire contract", async () => {
   fakeReads(); fs.mkdirSync(path + ".lock");
   const first = selection("one", "same playing selection");
   const second = selection("two", "same playing selection");
   fs.rmdirSync(path + ".lock");
   expect(await first).toMatchObject({ outcome: "accept" });
-  expect(await second).toMatchObject({ outcome: "noop", reason: "Already playing" });
+  // VoiceState.swift:4529 retires duplicate submissions only for "Already queued".
+  expect(await second).toMatchObject({ outcome: "noop", reason: "Already queued" });
 });
 for (const cmd of ["stop", "cancel"] as const) test(`G2g idle ${cmd} acknowledges cancelled admissions`, async () => {
   tts.stopPlayback(); fs.mkdirSync(path + ".lock");

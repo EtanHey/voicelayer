@@ -214,7 +214,7 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
       if (command.cmd === "speak_text" && command.source === "selection") {
         const duplicate = selectionReads.admission(selectionIdentity(command.text));
         if (duplicate.kind === "queued" || (duplicate.kind === "playing" && !isPlaybackPaused()))
-          return buildAck(command, "noop", duplicate.kind === "playing" ? "Already playing" : "Already queued");
+          return buildAck(command, "noop", "Already queued");
       }
       return handleSocketCommandAdmitted(...args);
     }, command.cmd === "record" ? { maxWaitMs: 20, kind: "capture" } :
