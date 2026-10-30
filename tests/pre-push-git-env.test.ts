@@ -65,6 +65,9 @@ for (const fallback of [false, true]) {
 }
 
 for (const suite of ["brew-cask-sync", "deploy-check"]) {
+  // G4 adds validator subprocesses to the cask fixtures. The full nested suite
+  // exceeded 30 s in isolation on the loaded M1; allow 90 s, retaining every assertion.
+  const fixtureTimeoutMs = suite === "brew-cask-sync" ? 90_000 : 30_000;
   test(`${suite} fixtures resist inherited Git repository selection`, () => {
     const root = mkdtempSync(join(tmpdir(), "voice-hostile-git-"));
     try {
@@ -80,12 +83,12 @@ for (const suite of ["brew-cask-sync", "deploy-check"]) {
         index: readFileSync(join(root, ".git/index")).toString("hex") });
       const before = snapshot();
       const result = withChildFixtureEnv({ VOICELAYER_STATE_DIR: join(root, "state") }, () => spawnSync(process.execPath, ["test", `./src/__tests__/${suite}.test.ts`], {
-        cwd: join(import.meta.dir, ".."), encoding: "utf8", timeout: 30000,
+        cwd: join(import.meta.dir, ".."), encoding: "utf8", timeout: fixtureTimeoutMs,
         env: { ...cleanEnv, VOICELAYER_STATE_DIR: join(root, "state"), GIT_DIR: join(root, ".git"), GIT_INDEX_FILE: join(root, ".git/index") },
       }));
       expect(result.error).toBeUndefined();
       expect({ status: result.status, failures: result.stderr.match(/\(fail\).*/g) }).toEqual({ status: 0, failures: null });
       expect(snapshot()).toEqual(before);
     } finally { rmSync(root, { recursive: true, force: true }); }
-  }, 45_000);
+  }, fixtureTimeoutMs + 15_000);
 }
