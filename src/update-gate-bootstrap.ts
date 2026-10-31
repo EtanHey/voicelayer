@@ -1,11 +1,11 @@
 import { createConnection } from "node:net";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync, statSync } from "node:fs";
+import { dirname, isAbsolute } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { getMcpSocketPath, bootstrapDiagnosticPath, updateGateFilePath } from "./paths";
 import { initializeSupervisedVoiceGate } from "./update-gate-admission";
 import { readUpdateGate, sameLease, type UpdateGateLease } from "./update-gate";
-import { withUpdateGateLock } from "./update-gate-storage";
+import { readInstallerGateState, withUpdateGateLock } from "./update-gate-storage";
 import { retryInstallerAcquisition, type InstallerParticipant } from "./update-gate-installer-participant";
 import { runGatedInstall } from "./update-gate-installer";
 
@@ -106,9 +106,21 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
       !["idle", "recording", "transcribing"].includes(String(health.recording_state)))) return "UNKNOWN legacy health";
     if (health && health.recording_state !== "idle") return String(health.recording_state);
     if (health && health.queue_depth !== 0) return "queued speech";
-    let line: string;
-    try { line = readFileSync(bootstrapDiagnosticPath(), "utf8").split("\n").filter(s => s.includes("[diag]")).at(-1) ?? ""; }
-    catch { return "UNKNOWN diagnostics"; }
+    const fallback = bootstrapDiagnosticPath();
+    const job = binary(["launchctl", "print", `${domain}/${labels[0]}`]);
+    if (job.code !== 0 && !/Could not find (specified )?service/i.test(job.err)) return "UNKNOWN launchd diagnostics";
+    const declared = job.out.match(/^\s*(?:stderr path|StandardErrorPath)\s*=\s*(.+?)\s*$/m)?.[1]?.replace(/^"(.*)"$/, "$1");
+    const files = [...new Set([...(declared && isAbsolute(declared) ? [declared] : []), fallback])];
+    const diagnostics: { line: string; modified: number }[] = [];
+    for (const file of files) {
+      try {
+        const line = readFileSync(file, "utf8").split("\n").filter(s => s.includes("[diag]")).at(-1);
+        if (line) diagnostics.push({ line, modified: statSync(file).mtimeMs });
+      } catch { /* Try the other declared/default file; absent evidence is never idle. */ }
+    }
+    diagnostics.sort((a, b) => b.modified - a.modified);
+    const line = diagnostics[0]?.line;
+    if (!line) return `UNKNOWN diagnostics; read ${files.join(", ")}; set VOICELAYER_BOOTSTRAP_DIAG_PATH to the active log`;
     if (/state_transcribing|voiceMode=transcribing/.test(line)) return "transcribing";
     const mode = line.match(/voiceMode=(\w+)/)?.[1];
     if (mode && mode !== "idle") return `native ${mode}`;
@@ -182,6 +194,12 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
       async withAcquisitionProof(read) {
         sample();
         const result = await retryInstallerAcquisition(read, observedAt + 250);
+        const persisted = await retryInstallerAcquisition(() => readInstallerGateState(), observedAt + 250);
+        if (persisted.kind === "UNKNOWN") throw Error("UNKNOWN: bootstrap acquisition outcome unavailable");
+        if (persisted.kind === "COMMITTED") {
+          if (requestedLease && sameLease(persisted.lease, requestedLease)) return result;
+          throw Error("UNKNOWN: committed bootstrap lease mismatch");
+        }
         sample();
         return result;
       },
@@ -193,7 +211,14 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
   } finally {
     const failures: unknown[] = [];
     const attempt = (work: () => void) => { try { work(); } catch (error) { failures.push(error); } };
-    if (!committed && initialized) attempt(() => {
+    let gateOpen = !initialized;
+    if (initialized) {
+      try { gateOpen = (await retryInstallerAcquisition(() => readInstallerGateState())).kind === "OPEN"; }
+      catch (error) { failures.push(error); }
+    }
+    const restorePrecommit = !committed && gateOpen;
+    if (!committed && !gateOpen) failures.push(Error("RECOVERY_REQUIRED: persisted gate is not OPEN; legacy jobs retained disabled"));
+    if (restorePrecommit && initialized) attempt(() => {
       // Never reset an arbitrary OPEN state. Remove only our initial generation or
       // G2's exact CANCEL result, with an empty ledger and no fault/controller.
       const refusal = withUpdateGateLock(path => {
@@ -214,7 +239,7 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
       });
       if (refusal) throw Error(`RECOVERY_REQUIRED: bootstrap retry refused: ${refusal}`);
     });
-    if (!committed) {
+    if (restorePrecommit) {
       for (const label of changed) attempt(() => { checked(["launchctl", "enable", `${domain}/${label}`]); });
       for (const label of unloaded) attempt(() => { checked(["launchctl", "bootstrap", domain, `${process.env.HOME}/Library/LaunchAgents/${label}.plist`]); });
     }

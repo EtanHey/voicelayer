@@ -57,6 +57,16 @@ export function readUpdateGateFile(env: NodeJS.ProcessEnv = process.env): Return
   return readState(path);
 }
 
+/** Updater readback acquires G1 so a short holder is an acquisition retry,
+ * never an UNKNOWN observation that races a separate lock-presence probe. */
+export function readInstallerGateState(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof readUpdateGate> {
+  return withUpdateGateLock(path => {
+    try { lstatSync(path + ".voice-diag.json"); return { kind: "UNKNOWN" }; }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return { kind: "UNKNOWN" }; }
+    return readState(path); // Read/parser evidence failures already return UNKNOWN.
+  }, env);
+}
+
 /**
  * POSIX mkdir, without recursive=true, is the sole acquisition operation.
  * Swift uses Darwin.mkdir on exactly the same path. Never reap a stale lock.

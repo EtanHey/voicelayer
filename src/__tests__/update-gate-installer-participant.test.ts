@@ -391,3 +391,17 @@ test("installer docs disclose that native receipts rely on the daemon HMAC verif
     expect(text).toContain("HMAC-verified native ACK");
   }
 });
+
+test("R1 acquisition never samples identities after its durable COMMIT write", async () => {
+  const f = fixture(), proof = await f.participant.refresh(f.lease);
+  expect(updateVoiceGate({ kind: "PREPARE", lease: f.lease, native: proof.native, daemon: proof.daemon }, f.participant.verify).kind).toBe("APPLIED");
+  const identity = f.deps.processIdentity;
+  f.deps.processIdentity = pid => {
+    if (JSON.parse(readFileSync(f.gate, "utf8")).kind === "COMMITTED") throw Error("postcommit identity sample forbidden");
+    return identity(pid);
+  };
+  const result = await f.participant.withAcquisitionProof!(() => updateVoiceGate({ kind: "COMMIT", lease: f.lease }, f.participant.verify));
+  expect(result.kind).toBe("APPLIED");
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+  expect(existsSync(f.gate + ".lock")).toBe(false);
+});

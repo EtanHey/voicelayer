@@ -1,6 +1,7 @@
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { readInstallerGateState } from "./update-gate-storage";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { getMcpSocketPath, updateGateFilePath } from "./paths";
@@ -198,6 +199,12 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
     try {
       sampleProcessProof();
       const result = await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
+      const persisted = await retryAcquire(() => readInstallerGateState(), Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
+      if (persisted.kind === "UNKNOWN") throw Error("UNKNOWN: acquisition outcome unavailable");
+      if (persisted.kind === "COMMITTED") {
+        if (evidence && sameLease(persisted.lease, evidence.native.lease)) return result;
+        throw Error("UNKNOWN: committed acquisition lease mismatch");
+      }
       sampleProcessProof();
       return result;
     } catch (error) { evidence = undefined; throw error; }

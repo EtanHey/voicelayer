@@ -42,7 +42,25 @@ only after argument checks and gate validation, never the retired MCP owner.
 Bootstrap process/launchd evidence is sampled outside G1's lock, bracketing each
 acquisition. Its locked proof is memory-only. Expected proof exceptions in installer,
 native readiness and the compatibility helper return false; unexpected storage
-persistence failures retain their existing fail-closed behavior.
+persistence failures retain their existing fail-closed behavior. The installer
+reads back durable COMMIT before returning to acquisition wrappers. Matching
+COMMITTED state skips their post-sample; later validation failures retain closed
+admission with recovery evidence. Legacy restoration requires persisted OPEN.
+See [the callback audit](update-gate-callback-audit.md).
+
+Bootstrap obtains the loaded VoiceBar job's `stderr path` (`StandardErrorPath`)
+from `launchctl print`, and also checks the current default diagnostics file.
+For each file it reads the last `[diag]` line; when both have diagnostics, the
+more recently modified file wins. Missing files or missing `[diag]` lines never
+prove idle. This supports an in-place legacy job still logging to
+`/tmp/voicebar-err.log` while the current default is
+`~/Library/Logs/voicelayer/voicebar-err.log`.
+
+`VOICELAYER_BOOTSTRAP_DIAG_PATH` changes the fallback file for an unusual legacy
+setup. For example, set `VOICELAYER_BOOTSTRAP_DIAG_PATH=/tmp/voicebar-err.log` on
+the supervised command when that is the active log. If no candidate has a
+`[diag]` line, the UNKNOWN status names the files read and prints this override
+hint; it never promotes the observation timeout to idle.
 
 Qualification remains pending: real M4 launchd/quit/socket behavior, signed target
 identity and postcommit recovery/readiness; the SHA above is lease bookkeeping,

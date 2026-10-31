@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { initializeVoiceGate, initializeSupervisedVoiceGate, updateVoiceGate } from "../update-gate-admission";
-import { applyUpdateGateCommand, readUpdateGateFile } from "../update-gate-storage";
+import { applyUpdateGateCommand, readInstallerGateState, readUpdateGateFile, withUpdateGateLock } from "../update-gate-storage";
 import { createVoiceDrainControl } from "../update-gate-native-participant";
 const savedGate = process.env.VOICELAYER_UPDATE_GATE_PATH, savedProof = process.env.VOICELAYER_TEST_INSTALL_PROOF;
 afterEach(() => { process.env.VOICELAYER_UPDATE_GATE_PATH = savedGate; process.env.VOICELAYER_TEST_INSTALL_PROOF = savedProof; });
@@ -71,4 +71,44 @@ test("R1 supervised initialization refuses adoption of another initializer's OPE
   process.env.VOICELAYER_UPDATE_GATE_PATH = join(gate, "..", "missing");
   expect(initializeSupervisedVoiceGate()).toBe(true);
   expect(readUpdateGateFile().kind).toBe("OPEN");
+});
+
+test("R1 installer records durable COMMIT before a participant post-check can throw", async () => {
+  const gate = await fixture(false), root = join(gate, "..");
+  const proof = join(root, "proof.json"); writeFileSync(proof, JSON.stringify({ phase: "idle", ready: true }));
+  process.env.VOICELAYER_TEST_INSTALL_PROOF = proof;
+  const savedSha = process.env.VOICELAYER_UPDATE_TARGET_SHA;
+  process.env.VOICELAYER_UPDATE_TARGET_SHA = "a".repeat(40);
+  const { runGatedInstall } = await import("../update-gate-installer");
+  let quit = false;
+  try {
+    await expect(runGatedInstall(["must-not-spawn-after-fault"], {
+      async refresh(lease) {
+        const ack = { lease, activeOperations: 0 as const, openArchives: 0 as const };
+        return { phase: "idle", ready: true, native: ack, daemon: ack };
+      },
+      verify: () => true,
+      async withAcquisitionProof(read) {
+        const result = read();
+        if (readUpdateGateFile().kind === "COMMITTED") throw Error("postcommit sample failed");
+        return result;
+      },
+      async quit() { quit = true; },
+    })).rejects.toThrow("postcommit sample failed");
+    expect(quit).toBe(false);
+    expect(readUpdateGateFile().kind).toBe("COMMITTED");
+    expect(existsSync(gate + ".lock")).toBe(false);
+    const receipts = readdirSync(root).filter(name => name.startsWith("gate.recovery-"));
+    expect(receipts).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(root, receipts[0]!), "utf8")).reason).toBe("installer failed: Error: postcommit sample failed");
+  } finally { process.env.VOICELAYER_UPDATE_TARGET_SHA = savedSha; }
+});
+
+test("R1 persisted installer read distinguishes a held gate from a fault without orphaning G1", async () => {
+  const gate = await fixture(false);
+  withUpdateGateLock(() => expect(() => readInstallerGateState()).toThrow("UPDATE_GATE_LOCKED"));
+  expect(readInstallerGateState().kind).toBe("OPEN");
+  writeFileSync(gate + ".voice-diag.json", "expected fault");
+  expect(readInstallerGateState().kind).toBe("UNKNOWN");
+  expect(existsSync(gate + ".lock")).toBe(false);
 });
