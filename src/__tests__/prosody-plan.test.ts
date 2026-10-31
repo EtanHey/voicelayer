@@ -41,67 +41,67 @@ describe("R-ONE clone list numbers", () => {
       name: "B1 parenthesized selection abbreviation",
       source: "1) Intro.\n2) Ask Dr. Smith.",
       markdown: "one, Intro. two, Ask Dr. Smith.",
-      selection: "one, Intro. 2) Ask Dr. Smith.",
+      selection: "one, Intro. two, Ask Dr. Smith.",
     },
     {
       name: "abbreviations",
       source: "1. Ask Dr. Smith about e.g. item counts.\n2. Keep U.S. names.",
       markdown: "one, Ask Dr. Smith about e.g. item counts. two, Keep U.S. names.",
-      selection: "one, Ask Dr. Smith about e.g. item counts. 2, Keep U.S. names.",
+      selection: "one, Ask Dr. Smith about e.g. item counts. two, Keep U.S. names.",
     },
     {
       name: "decimals",
       source: "1. Value 3.14 stays.\n2) Keep 2.50.",
-      markdown: "one, Value 3.14 stays. two, Keep 2.50.",
-      selection: "one, Value 3.14 stays. 2) Keep 2.50.",
+      markdown: "one, Value three point one four stays. two, Keep two point five zero.",
+      selection: "one, Value three point one four stays. two, Keep two point five zero.",
     },
     {
       name: "questions and exclamations",
       source: "1. Can we ship?\n2) Really!",
       markdown: "one, Can we ship? two, Really!",
-      selection: "one, Can we ship? 2) Really!",
+      selection: "one, Can we ship? two, Really!",
     },
     {
       name: "nested lists",
       source: "1. Parent item.\n   1. Nested item.\n   2) Nested alternative!\n2. Final item.",
       markdown: "one, Parent item. one, Nested item. two, Nested alternative! two, Final item.",
-      selection: "one, Parent item. 1, Nested item. 2) Nested alternative! 2, Final item.",
+      selection: "one, Parent item. one, Nested item. two, Nested alternative! two, Final item.",
     },
     {
       name: "Hebrew",
       source: "1. שלום עולם.\n2. האם זה עובד?\n3) גרסה 3.14 נשמרת!",
       markdown: "1, שלום עולם. 2, האם זה עובד? 3, גרסה 3.14 נשמרת!",
-      selection: "1, שלום עולם. 2, האם זה עובד? 3) גרסה 3.14 נשמרת!",
+      selection: "1, שלום עולם. 2, האם זה עובד? 3, גרסה 3.14 נשמרת!",
     },
     {
       name: "parenthesized sentence stops",
       source: "1) First item. More words.\n2) Second item?",
       markdown: "one, First item. More words. two, Second item?",
-      selection: "one, First item. More words. 2) Second item?",
+      selection: "one, First item. More words. two, Second item?",
     },
     {
       name: "numbered labels",
       source: "1. **Item:** Keep 1.2.\n2) **Note:** Ask Dr. Smith.",
-      markdown: "one, Item. Keep 1.2. two, Note. Ask Dr. Smith.",
-      selection: "one, Item: Keep 1.2. 2) Note: Ask Dr. Smith.",
+      markdown: "one, Item. Keep one point two. two, Note. Ask Dr. Smith.",
+      selection: "one, Item: Keep one point two. two, Note: Ask Dr. Smith.",
     },
     {
       name: "label body starting with a year",
       source: "1. **Released:** 2025. It shipped.\n2. Second item.\n",
       markdown: "one, Released. 2025. It shipped. two, Second item.",
-      selection: "one, Released: 2025. It shipped. 2, Second item.",
+      selection: "one, Released: 2025. It shipped. two, Second item.",
     },
     {
       name: "label body starting with a version",
       source: "1. **Version:** 2.5. Done.\n2. Second item.\n",
-      markdown: "one, Version. 2.5. Done. two, Second item.",
-      selection: "one, Version: 2.5. Done. 2, Second item.",
+      markdown: "one, Version. two point five. Done. two, Second item.",
+      selection: "one, Version: two point five. Done. two, Second item.",
     },
     {
       name: "oversized items",
       source: "1. " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "\n2) End.",
-      markdown: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "two, End.",
-      selection: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "2) End.",
+      markdown: "one, " + "Ask Dr. Smith about value three point one four and keep every original word. ".repeat(12) + "two, End.",
+      selection: "one, " + "Ask Dr. Smith about value three point one four and keep every original word. ".repeat(12) + "two, End.",
     },
   ];
   for (const fixture of punctuationCases) for (const selection of [false, true]) {
@@ -119,7 +119,7 @@ describe("R-ONE clone list numbers", () => {
     const readText = structure?.speechText ?? releaseNotes;
     const projection = projectSpeakableText(readText, [], "clone");
     const plan = planProsody({ readText, projection, structure, engine: "clone", listNumbers: "inline", concurrency: 1 });
-    const numbers = selection ? ["1", "2"] : ["one", "two"];
+    const numbers = ["one", "two"];
     expect(plan.segments.some(segment => /^(?:one|two|\d+)\./i.test(segment.text))).toBe(false);
     expect(texts(plan).slice(-2)).toEqual([`${numbers[0]}, First item.`, `${numbers[1]}, Second item.`]);
     for (const [index, word] of numbers.entries()) {
@@ -213,7 +213,7 @@ describe("projection-first structure (v1 defect 3: main's projection is never re
     expect(plan.readText).toBe(projectStructuredSpeech(source).speechText);
     expectSound(plan, projectSpeakableText(plan.readText, [], "edge").speechText);
     // R3 reflow keeps list numbers in the flattened text; each spoken number is its own utterance (N1).
-    expect(texts(plan)).toEqual(["Choose.", "Question.", "Which one?", "1.", "Red apple.", "2.", "Green pear."]);
+    expect(texts(plan)).toEqual(["Choose.", "Question.", "Which one?", "one.", "Red apple.", "two.", "Green pear."]);
     expect(plan.segments.map((s) => s.emphasis)).toEqual([true, true, false, false, false, false, false]);
     expect(pauses(plan).slice(3)).toEqual([PAUSE.number, PAUSE.shortItem, PAUSE.number, 0]);
   });
@@ -281,7 +281,7 @@ describe("pause vocabulary (spec table) with max-collapse", () => {
     const plan = speakPlan("1. **Merge:** now\n2. **Wait:** later");
     expect(texts(plan)).toEqual(["one.", "Merge.", "now.", "two.", "Wait.", "later."]);
     expect(pauses(plan)).toEqual([PAUSE.number, PAUSE.label, PAUSE.shortItem, PAUSE.number, PAUSE.label, 0]);
-    expect(texts(selectionPlan("1. **Merge:** now\n2. **Wait:** later"))).toEqual(["one.", "Merge.", "now.", "2.", "Wait.", "later."]);
+    expect(texts(selectionPlan("1. **Merge:** now\n2. **Wait:** later"))).toEqual(["one.", "Merge.", "now.", "two.", "Wait.", "later."]);
   });
   it("N1: inline numbers (clone engines) stay inside the item request; bullets never add a number", () => {
     const raw = "1. Pick up the blue basket.\n2. Walk to the gate.";

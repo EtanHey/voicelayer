@@ -49,13 +49,15 @@ private struct ClientConnection {
         return .connection(presentationID)
     }
 
+    let peerPID: Int32?
     let source: DispatchSourceRead
     var framer: NDJSONLineFramer
     var role: String?
     var pid: Int?
     var acceptsCommands: Bool
 
-    init(source: DispatchSourceRead, maxLineBytes: Int) {
+    init(source: DispatchSourceRead, maxLineBytes: Int, peerPID: Int32?) {
+        self.peerPID = peerPID
         self.source = source
         framer = NDJSONLineFramer(maxLineBytes: maxLineBytes)
         acceptsCommands = false
@@ -130,6 +132,9 @@ final class SocketServer {
     private var totalBytesRead = 0
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
+    var onUpdateGateDrain: (([String: Any]) -> [String: Any]?)?
+    /// Main-thread continuation after the accepted reply's write attempt (even if the peer left).
+    var onUpdateGateDrainReplySent: (([String: Any]) -> Void)?
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
     var onCaptureResolved: (() -> Void)?
@@ -300,7 +305,10 @@ final class SocketServer {
         }
         readSource.resume()
 
-        clients[clientFD] = ClientConnection(source: readSource, maxLineBytes: maxLineBytes)
+        var peerPID: Int32 = 0
+        var peerSize = socklen_t(MemoryLayout<Int32>.size)
+        let peerKnown = getsockopt(clientFD, SOL_LOCAL, LOCAL_PEERPID, &peerPID, &peerSize) == 0
+        clients[clientFD] = ClientConnection(source: readSource, maxLineBytes: maxLineBytes, peerPID: peerKnown ? peerPID : nil)
         updateConnectionState()
     }
 
@@ -351,6 +359,22 @@ final class SocketServer {
             return
         }
 
+        if dict["type"] as? String == "update_gate_drain" {
+            guard let fd, let client = clients[fd], client.role == "mcp-daemon", client.acceptsCommands,
+                  let peer = client.peerPID, peer == dict["pid"] as? Int32,
+                  clients.values.filter({ $0.acceptsCommands }).count == 1 else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let reply = onUpdateGateDrain?(dict) else { return }
+                queue.async { [self] in
+                    if self.clients[fd]?.peerPID == peer {
+                        self.sendCommandToOwnerOnQueue(command: reply, targetFD: fd)
+                    }
+                    // Authorization is final even if the peer disconnected or the ACK write failed.
+                    DispatchQueue.main.async { [self] in self.onUpdateGateDrainReplySent?(dict) }
+                }
+            }
+            return
+        }
         if let controlCommand = VoiceBarLocalControlCommand(payload: dict) {
             DispatchQueue.main.async { [weak self] in
                 self?.onControlCommand?(controlCommand)

@@ -293,8 +293,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
     }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("VoiceBar build script self-completes live app replacement with precise stop and relaunch", () => {
-    const stopIndex = buildScript.indexOf("stop_voicebar_instances");
+  test("VoiceBar build script uses controlled quit and has no force-stop helper", () => {
     const buildIndex = buildScript.indexOf("swift build -c release");
     const signIndex = buildScript.lastIndexOf("codesign --force --options runtime");
     const relaunchIndex = buildScript.lastIndexOf("relaunch_voicebar_app");
@@ -303,19 +302,18 @@ describe("MCP daemon LaunchAgent install contract", () => {
     expect(buildScript).toContain("CFBundleIdentifier");
     expect(buildScript).toContain("voicebar_target_pids");
     expect(buildScript).toContain("voicebar_descendant_pids");
-    expect(buildScript).toContain("osascript -e");
-    expect(buildScript).toContain("signal_pids TERM");
-    expect(buildScript).toContain("signal_pids KILL");
+    expect(buildScript).not.toContain("stop_voicebar_instances");
+    expect(buildScript).not.toContain("signal_pids");
+    expect(buildScript).toContain("VoiceBar appeared after controlled quit; refusing rebuild");
     expect(buildScript).toContain('open "$APP_DIR"');
     expect(buildScript).toContain("wait_for_exactly_one_voicebar_instance");
-    expect(stopIndex).toBeGreaterThan(-1);
-    expect(buildIndex).toBeGreaterThan(stopIndex);
+    expect(buildIndex).toBeGreaterThan(-1);
     expect(signIndex).toBeGreaterThan(buildIndex);
     expect(relaunchIndex).toBeGreaterThan(signIndex);
     expect(buildScript).toContain("--no-stop");
     expect(buildScript).toContain("--no-relaunch");
     expect(buildScript).not.toContain("VOICEBAR_FORCE_APP_REPLACE");
     expect(buildScript).not.toContain("Refusing to replace /Applications/VoiceBar.app");
-    expect(buildScript).not.toMatch(/\b(pkill|killall)\b/);
+    expect(buildScript).not.toMatch(/\b(kill|pkill|killall)\b/);
   });
 });

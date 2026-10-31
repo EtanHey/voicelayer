@@ -1,22 +1,80 @@
 # Installer integration (G4, update-button §3 / §5 slice 8, script half)
 
-Consumes G1 storage/schema and G2 REQUEST → acknowledge → PREPARE → COMMIT,
+Consumes the merged G1/G2 voice-side API on main: REQUEST → acknowledge → PREPARE → COMMIT,
 without adding transitions. Only APPLIED COMMIT starts mutation. A second request
 cannot repeat installation. Nested helpers validate the same committed lease and
 live controller. Busy waits with the participant phase and Ctrl-C; precommit exit
 CANCELs its own generation. No stop/cancel signals are used to drain. After commit,
 admission remains closed for qualified completion/recovery; failure never reopens it.
 
-**NOT_GREEN for automatic installed use:** G2 supplies a synchronous proof callback contract,
-not live native/daemon identity, target verification, handoff, competing-owner or
-archive-durability probes. Production therefore refuses UNKNOWN by default. G4b adds
-the explicit [supervised legacy bootstrap](update-gate-bootstrap.md); it cannot prove
-ordinary live participant acknowledgements or replace postcommit qualification.
-The synthetic proof provider is harness-only: isolated preload flag, a real run root
-inside this checkout's `.test-tmp`, and a nonsymlink proof inside that run. It is not
-installed-runtime evidence. The target SHA environment value alone proves nothing.
-Never enable the updater button or ship these guards as a working installer until
-the live provider, bootstrap and postcommit recovery are qualified.
+The production participant provider now calls G3's authenticated
+`voicelayer/speech` control endpoint with `update_gate_drain` and the exact lease.
+It validates native and daemon zero-work/zero-archive ACKs plus their
+PID/incarnation identities. Each new refresh invalidates the previous receipt;
+PREPARE, COMMIT and the postcommit quit each require a fresh round trip. The
+synchronous G2 verifier fences the same lease and receipt age under G1's lock.
+Process births, executable names and the daemon's native parent are sampled just
+before and after each locked proof; no process-table reads run inside the lock.
+A receipt may be at most one second old, including time in flight and sampling.
+Missing/UNKNOWN participants wait with Cancel; malformed/mismatched replies,
+identity changes and transport faults refuse. A timeout never proves idle.
+
+After APPLIED COMMIT, the controller waits a 100 ms fault-publication grace period,
+refreshes G3 evidence (up to four drain attempts on UNKNOWN) and issues exactly
+one authenticated `update_gate_quit`. Quit authorization retries only mkdir-lock
+contention with up to 100 acquisition attempts and 2 ms sleeps (at most 198 ms
+sleeping), capped also at 250 ms elapsed or the original receipt's one-second age
+minus a 50 ms post-sample reserve.
+The quit RPC itself is never retried. Exit verification uses the same acquisition
+schedule, capped at 250 ms or the remaining polling deadline.
+An ACK still requires observed exit. If a written quit loses its reply through
+socket disconnect or timeout (or G3 reports UNKNOWN after its native connection
+drops), the controller verifies the outcome rather than reporting a plain
+install failure: both pinned processes must be absent, no
+VoiceBar executable may remain in the process table, and G2 must still observe
+the exact COMMITTED lease with no diagnostic or admission records. It observes
+exit with a five-second polling budget. A clean exit confirmed by the final poll
+continues installation even when that poll finishes just past the deadline;
+otherwise the deadline refuses and never proves exit. A same-start-time
+`<defunct>` participant is still exiting and is polled until reaped. An unreadable process table, reused PID, explicit
+refusal, malformed reply, changed lease, retained process, diagnostic or ledger
+entry stops UNKNOWN,
+writes the recovery receipt and keeps admission closed. Nothing force-stops a
+participant or reopens the gate. Nested helpers validate the retained COMMITTED
+lease and the controller's PID, start time and executable name recorded in the
+operation environment after participant exit, without requesting new ACKs.
+COMMIT's installer proof callback durably writes `<gate>.controller` under that
+same G1 lock before controlled quit: `{ version: 1, lease: { operationId,
+generation }, pid, identity }`. Exclusive staging, rename, fsync and macOS
+F_FULLFSYNC match gate persistence. Nested validation requires this receipt's
+lease, PID and identity to match the committed lease and environment; live
+identity samples must also match. Missing, unreadable, malformed, foreign or
+stale receipts refuse UNKNOWN, including legacy gates without a receipt.
+Release/Cancel and verified finalization/recovery must remove only their matching
+receipt. An existing controller receipt refuses before REQUEST, without changing
+OPEN. A foreign/unreadable receipt appearing later returns false from the COMMIT
+proof so Cancel can restore OPEN; it does not throw inside G1. Foreign receipts
+are retained, never overwritten or reaped. Voice admission never reads
+the sidecar; the strict gate format and Swift decoder remain unchanged.
+
+**NOT_GREEN for installed use:** This wires the G3 participant contract; staged
+target verification, bootstrap, durable owner/reconnect hardening and qualified
+completion/recovery are still separate work. The target SHA environment value
+alone proves nothing. Do not enable the updater button or claim installed-app
+qualification from isolated tests.
+The synthetic proof provider still requires the isolated preload flag, a
+nonsymlink run root in this checkout's `.test-tmp`, a private random-token marker
+naming the live preload PID, and a nonsymlink proof inside that run. Flags alone
+do not qualify it. Invalid harness evidence never falls through to live sockets.
+Programmatic participant injection for controller tests requires that same proof
+and live capability; it is unavailable in production. A malicious same-user
+process can forge test files, so this is not an authentication boundary or
+installed-runtime evidence. On the production reply channel, the daemon builds
+the native receipt from the HMAC-verified native ACK; the installer trusts the daemon
+for that verification. A same-user socket owner can forge replies. Outside
+isolation the controller refuses a noncanonical gate path, including state and HOME overrides; the canonical root
+is the OS account home, not caller HOME. The installer also refuses a
+noncanonical MCP socket path, including socket and temp-root overrides.
 
 Recon inventory (scoped scripts, launchd, flow-bar/build-app.sh and src/cli):
 
@@ -24,39 +82,87 @@ Recon inventory (scoped scripts, launchd, flow-bar/build-app.sh and src/cli):
 | --- | --- |
 | `voicelayer update` → `scripts/voicelayer-update.sh` | Before package git/bun/npm/formula mutation, cask sync, setup/hotkey repair and restart; both lifecycle opt-outs still gated |
 | `scripts/lib/brew-cask-sync.sh` | Direct sync/reregister/tap/brew mutation requires an inherited operation; read-only queries and command simulation unchanged |
-| `voicelayer build-app` → `flow-bar/build-app.sh` | Before stop, compiler or bundle replacement; validation precedes admission |
-| `scripts/release-voicebar.sh` | Before artifact cleanup/build; original argv retained for gated re-exec |
-| `scripts/promote-voicebar-release.sh` | No local install helper; gate before recipe changes/publication; existing T3 release proof remains mandatory |
+| `voicelayer build-app` → `flow-bar/build-app.sh` | Before stop, relaunch, any `/Applications` bundle write or resident launchd install; nonresident `.noindex` builds with both lifecycle opt-outs take no lease |
+| `scripts/release-voicebar.sh` | Ungated artifact cleanup/build: changes only release output, with staging disabling resident lifecycle |
+| `scripts/promote-voicebar-release.sh` | Ungated publication/tap writes, no local install; existing T3 release proof remains mandatory |
 | `voicelayer setup` / direct `src/cli/setup.ts` | Before setup command plan/restarts; child env explicit |
 | `launchd/install.sh` | Before retired agent unload/removal; backup-plist mode does not touch VoiceBar |
 | `scripts/install-voicebar-autostart.sh` | Before plist writes, bootout/bootstrap/kickstart, including reload/no-start/preserve-load-state |
 | `scripts/install-voicebar-f5-hidutil.sh` | Ungated standalone Settings relay configuration: only its hidutil helper/plist/LaunchAgent, never VoiceBar/daemon restart or replacement; legacy Karabiner installer delegates here |
-| `voicelayer doctor` → dedupe `--apply` | Before quit, pkill, unload, bundle moves and autostart repair; inventory stays read-only |
-| `scripts/voicelayer-verify.sh` | Before build/relaunch section, including skip-build; not executed in this lane |
-| `scripts/auto-f5-verify.sh` restoration | Requires an inherited operation before invoking an older main checkout's build; not executed in this lane |
+| `voicelayer doctor` → dedupe `--apply` | Before controlled quit, unload, bundle moves and autostart repair; no osascript/pkill stop; inventory stays read-only |
+| `scripts/voicelayer-verify.sh` | Confirmation precedes admission, including skip-build; inherited re-exec skips the already-approved prompt. Unusable for acceptance until verified completion reopens voice |
+| `scripts/auto-f5-verify.sh` restoration | Requires an inherited operation before invoking an older main checkout's build. Restore remains unusable until the owning completion/recovery flow exists |
 | UI e2e build/release staging helpers | Delegate to guarded build; isolated test process cleanup is not a resident installer |
 | `bar-stop`, recording Stop/Cancel; runtime hidutil mapping | User/runtime controls, not installation; remain usable |
 
+Shell callers capture one observed VoiceBar bundle and the canonical job's loaded
+state before the gate can quit it. Unknown/ambiguous process evidence refuses
+before REQUEST. The owning re-exec arms EXIT/HUP/INT/TERM/QUIT restoration at
+script entry, before argument checks and nested validation. Nested helpers do
+not restore early. On success or failure, an already-running VoiceBar is left
+alone; otherwise the loaded canonical job is kickstarted, then observed for up
+to 50 × 100 ms before falling back to `open` of the observed bundle, followed by
+the same bounded observation. A failed kickstart is also observed before fallback.
+Restoration never releases the gate, repeats quit or changes the original failure
+status; inability to restore reports RECOVERY_REQUIRED and a nonzero exit.
+This covers verify's normal build, skip-build, validation/build failure and
+signals, autostart default/preserve-load-state, update --no-stop, dedupe --apply
+--no-stop and retired-agent cleanup. Opt-outs suppress the caller's lifecycle
+actions, not recovery after the gate's controlled quit. A dormant app is not
+started by recovery. Build-to-/Applications restores the original QA/candidate
+bundle if it would otherwise have left that instance alone; it does not launch
+the newly built target in that case. Dedupe instead selects the verified
+canonical bundle as its recovery target before moving the original stray into backup. The parent updater
+also adopts that target only after its canonical identity/signature check, so a
+nested dedupe cannot invalidate the parent's restoration path. Build refuses an
+unexpected process after controlled quit instead of force-stopping it. These are
+isolated whole-script proofs, not installed-app qualification.
+
 Follow-up rows: tap cask preflight/uninstall hook and old saved recipe ordering
 (separate tap qualification); golems deploy-local-prod cross-repo integration;
-live native/daemon/target proof provider; controller incarnation/reconnect hardening
+staged-target proof; controller incarnation/reconnect hardening
 and durable host job (slice 7); bootstrap/verified postcommit completion/recovery;
-Swift/Bun and installed real-agent proof, full suite/build after M1 window closes.
+Swift/Bun and installed real-agent proof. SIGKILL/crash before commit leaves a closed
+lease: proven owner-death recovery is a provider-slice blocker, never an age-based
+reopen. The wired G3 live endpoint and postcommit exit check require installed
+real-agent qualification. No updater button may ship enabled on this evidence.
 
-Surface sweep: entry points/clients are listed above; providers use G2 callbacks
-with synthetic fixtures only; G1/G2 wire contracts unchanged; reverse states tested
-are busy→idle, precommit Cancel, duplicate update and UNKNOWN; connections are local
+Surface sweep: entry points/clients are listed above; providers use fresh
+authenticated G3 round trips plus G2 callbacks (with qualified synthetic fixtures
+in tests); G1/G2 wire contracts unchanged; reverse states tested
+are busy→idle, precommit Cancel, duplicate update, stale/mismatched evidence,
+controlled-quit reply loss, verified exit and UNKNOWN recovery; connections are local
 persisted gate/ledger with inherited controller lease (SSH/job recovery deferred).
 
-Fix round 1: Cancel retries only lock contention (8 attempts; 25–250 ms exponential
-backoff), then emits RECOVERY_REQUIRED and a private fsynced recovery receipt beside
-the unchanged durable lease. Signal handlers are removed even when cleanup fails.
-After COMMIT, SIGINT/SIGTERM write a receipt with installer PID and exit 130/143;
-they never CANCEL the lease or signal the installer. Its outcome requires recovery.
-Help/invalid arguments precede admission; simulation takes no lease. A no-command
-shell helper validates an inherited operation or returns refusal without exec.
-G4 uses G2 9196eff4's single admission-aware command path; voice-only missing-gate
-bootstrap and ledger visibility semantics remain G2-owned.
+Final review: all updater transitions use `updateVoiceGate`; acknowledgements use
+`acknowledgeVoiceDrain`, with no G4 commit implementation. REQUEST, drain acknowledgement, PREPARE and COMMIT retry only the acquisition's
+`UPDATE_GATE_LOCKED` result, before any identity resample. These use up to 100
+attempts with 2 ms sleeps (at most 198 ms sleeping), capped at 250 ms elapsed;
+receipt-backed operations additionally use the original receipt's one-second
+expiry minus a 50 ms post-sample reserve (the review measured about 4 ms).
+No retry refreshes trust or resamples processes between failed acquisitions.
+A real refusal or fault is final. Initial/nested read-only observations and CANCEL
+retain eight attempts with seven 25, 50, 100, 200, 250, 250, 250 ms sleeps
+(1125 ms total), retrying UNKNOWN only while the lock is observed, or an explicit
+acquisition error. These paths do not consume participant receipts. The idle-drain
+loop polls every 200 ms. Postcommit UNKNOWN drain refreshes make at most four live
+round trips separated by 25, 50 and 100 ms; they never authorize an idle guess.
+Cancel exhaustion emits RECOVERY_REQUIRED and a private fsynced recovery receipt
+beside the retained lease. No foreign lock or ledger entry is removed.
+Proof callbacks return false on exceptions before G2's safeGateLock handles them;
+a transient proof read cannot poison the gate or orphan its lock.
+SIGINT/SIGTERM/SIGHUP/SIGQUIT before COMMIT Cancel the owned lease. After COMMIT,
+the controller stays alive until its installer completes and reports the child's
+exit status. The installer has a separate session/process group; terminal Ctrl-C
+does not reach brew/ditto or invalidate nested owner-PID checks. The visible message
+is “Ctrl-C will not stop the installer”. No postcommit signal cancels the lease.
+Admission remains closed after success or failure pending verified completion.
+Help/invalid arguments and simulations take no lease. A no-command helper validates
+an inherited operation in a subprocess or returns refusal without exec.
+The shell guard resolves Bun via `/opt/homebrew/bin/bun`, `~/.bun/bin/bun`, then
+PATH; missing Bun refuses clearly before mutation. Preload fixtures may substitute
+candidate paths so tests never execute a host installer binary. Cask helpers use
+the refreshed PACKAGE_ROOT after formula upgrade, since the old keg can disappear.
 
 Settings calls the F5 installer via `/bin/bash` from bundle resources (Swift
 `runRelaySetup`). It must work without daemon sources or Bun on GUI PATH. The

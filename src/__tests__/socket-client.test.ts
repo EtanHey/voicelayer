@@ -348,6 +348,21 @@ describe("socket-client", () => {
     }
   }, 10000);
 
+  it("routes native drain replies separately and notifies remote disconnect", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const client = await import("../socket-client");
+    const replies: unknown[] = [];
+    let disconnected = false;
+    client.connectToBar(TEST_SOCKET, { onDrainReply: value => replies.push(value), onDisconnected: () => { disconnected = true; } });
+    expect(await waitFor(() => client.isConnected())).toBe(true);
+    const reply = { cmd: "update_gate_drain_ack", id: "synthetic" };
+    mockServer.sendToAll(JSON.stringify(reply) + "\n");
+    expect(await waitFor(() => replies.length === 1)).toBe(true);
+    expect(replies).toEqual([reply]);
+    mockServer.stop();
+    expect(await waitFor(() => disconnected)).toBe(true);
+  });
+
   it("connectToBar connects to a listening Unix socket", async () => {
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
 

@@ -1,0 +1,5 @@
+{
+  "states": ["requested", "preparing", "playing", "paused", "completed", "stopped", "cancelled", "failed", "interrupted"],
+  "archive_statuses": ["received", "preparing", "playing", "paused", "completed", "stopped", "replaced", "rejected", "failed", "interrupted_unknown"],
+  "reasons": ["PROCESS_RESTART", "PROCESS_EXIT", "REJECTED", "SYNTH_FAILED", "PLAYER_FAILED", "OUTPUT_UNAVAILABLE", "ARCHIVE_INCOMPLETE", "SPEECH_FAILED", "USER_STOP", "USER_STOP_PREPARING", "USER_CANCEL", "QUEUE_CLEARED", "PLAYBACK_COMPLETED", "REPLACED"]
+}

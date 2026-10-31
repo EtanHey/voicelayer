@@ -8,9 +8,11 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as recording from "../recording-state";
 import * as socket from "../socket-client";
-import { handleVoiceAsk, VOICE_ASK_MESSAGE_MAX_CHARS } from "../handlers";
+import { handleVoiceAsk, runAdmittedVoiceAsk, VOICE_ASK_MESSAGE_MAX_CHARS } from "../handlers";
 import { SPEAK_TEXT_MAX_CHARS } from "../socket-protocol";
 import { hasActiveVoiceOperation } from "../voice-operation-reservation";
+import { createHash } from "crypto";
+import { formatAdmittedVoiceAskResult, type AdmittedVoiceAskResult } from "../voice-ask-admission";
 import { TTS_DISABLED_FILE } from "../paths";
 
 const realCreate = archive.createSpeakReceipt;
@@ -23,7 +25,14 @@ let speak: ReturnType<typeof spyOn<typeof tts, "speak">>;
 let capture: ReturnType<typeof spyOn<typeof input, "waitForInput">>;
 let book: ReturnType<typeof spyOn<typeof booking, "bookVoiceSession">>;
 
-describe("Ask raw archive admission (isolated preload; synthetic speech/capture)", () => {
+for (const caller of ["legacy", "typed"] as const)
+describe(`Ask raw archive admission: ${caller} (isolated preload; synthetic speech/capture)`, () => {
+  let admitted: AdmittedVoiceAskResult;
+  async function ask(args: unknown) {
+    if (caller === "legacy") return handleVoiceAsk(args);
+    admitted = await runAdmittedVoiceAsk({ args });
+    return formatAdmittedVoiceAskResult(admitted);
+  }
   beforeEach(() => {
     const run = process.env.VOICELAYER_TEST_RUN_ROOT, root = process.env.QA_VOICE_RECORDINGS_DIR;
     if (process.env.VOICELAYER_TEST_ISOLATED !== "1" || !run || !root ||
@@ -67,9 +76,12 @@ describe("Ask raw archive admission (isolated preload; synthetic speech/capture)
   });
 
   for (const message of ["x".repeat(SPEAK_TEXT_MAX_CHARS + 1),
-    "Ask?".padEnd(SPEAK_TEXT_MAX_CHARS + 1, " ")]) {
+    "Ask?".padEnd(SPEAK_TEXT_MAX_CHARS + 1, " "),
+    "🙂".repeat(SPEAK_TEXT_MAX_CHARS / 2) + "x"]) {
     it(`refuses raw cap+1 before allocation or voice work; trimmed=${message.trim().length}`, async () => {
-      const result = await handleVoiceAsk({ message });
+      const result = await ask({ message });
+      if (caller === "typed") expect(admitted).toEqual({ kind: "refused", reason: "raw-input-limit", result });
+      expect(result).toEqual({ content: [{ type: "text", text: "voice_ask refused: raw input exceeds archive admission limit" }], isError: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("raw input exceeds archive admission limit");
       expect(creator).not.toHaveBeenCalled();
@@ -85,15 +97,21 @@ describe("Ask raw archive admission (isolated preload; synthetic speech/capture)
     ["exact raw cap with short trimmed prompt", raw.padEnd(SPEAK_TEXT_MAX_CHARS, " "), false],
     ["exact raw cap with overlong trimmed prompt", "x".repeat(SPEAK_TEXT_MAX_CHARS), true],
     ["ordinary valid prompt", raw, false],
+    ["exact UTF-16 cap with twice as many UTF-8 bytes", "🙂".repeat(SPEAK_TEXT_MAX_CHARS / 2), true],
+    ["exact trimmed speech cap", "🙂".repeat(VOICE_ASK_MESSAGE_MAX_CHARS / 2), false],
     ["ordinary bounded speech-policy refusal", " \t" + "x".repeat(VOICE_ASK_MESSAGE_MAX_CHARS + 1) + "\n ", true],
   ] as const) {
     it(`retains original bytes and existing policy: ${label}`, async () => {
-      const result = await handleVoiceAsk({ message });
+      const result = await ask({ message });
       expect(creator).toHaveBeenCalledTimes(1);
       expect(contexts).toHaveLength(1);
       expect(fs.readFileSync(join(contexts[0].path, "input.txt"))).toEqual(Buffer.from(message));
       const metadata = JSON.parse(fs.readFileSync(join(contexts[0].path, "metadata.json"), "utf8"));
       expect(metadata.status).toBe(rejected ? "rejected" : "received");
+      expect(metadata.input).toEqual({ bytes: Buffer.byteLength(message), sha256: createHash("sha256").update(message).digest("hex") });
+      if (caller === "typed") expect(admitted).toMatchObject(rejected
+        ? { kind: "refused", reason: "prompt-limit", result }
+        : { kind: "turn", outcome: { kind: "answered", transcript: "synthetic answer", archiveId: null } });
       if (rejected) {
         expect(result.isError).toBe(true);
         expect(result.content[0].text).toContain("voice_ask");

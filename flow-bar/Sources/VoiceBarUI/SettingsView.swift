@@ -1423,7 +1423,10 @@ public struct SettingsView: View {
                                         }
                                         speechTextDetail("Generated speech text", text: entry.spokenText)
                                     }
-                                    Text(entry.reason ?? "No status reason stored").font(.caption).foregroundStyle(.secondary)
+                                    if let sentence = entry.reasonSentence {
+                                        Text(sentence).font(.caption).foregroundStyle(.secondary)
+                                            .help(entry.reason ?? "")
+                                    }
                                 }
                             }
                         }

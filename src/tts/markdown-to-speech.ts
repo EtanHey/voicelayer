@@ -1,3 +1,5 @@
+import { inlineCodeSpanEnds } from "./inline-code-spans";
+
 /** Convert markdown to speech text without fetching links or evaluating code. */
 export function markdownToSpeech(markdown: string): string {
   return markdownSpeechLines(markdown).map(line => line.text).filter(Boolean).join(" ");
@@ -12,17 +14,70 @@ export interface MarkdownSpeechLine {
 }
 
 export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
-  return speechLinesFromFences(markdown).map(line => ({
-    ...line, text: speechLineText(line.text),
-  }));
+  const code = [...inlineCodeSpanEnds(markdown, true)];
+  const lines = speechLinesFromFences(markdown);
+  let span = 0;
+  const output = lines.map(line => {
+    const marker = line.text.match(/^[ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+\[[ xX]\](?!\()/)?.[0];
+    const at = line.sourceStart + (marker?.indexOf("[") ?? 0);
+    while (span < code.length && code[span][1] <= line.sourceStart) span++;
+    const literalTask = !!marker && code[span]?.[0] <= at && at < code[span]?.[1];
+    const completed = !!marker && !marker.endsWith("[ ]") && !literalTask;
+    const literals: {token: string; text: string}[] = [];
+    let protectedText = "", cursor = 0;
+    for (let i = span; i < code.length && code[i][0] < line.sourceEnd; i++) {
+      const [start, end] = code[i];
+      const raw = markdown.slice(start, end);
+      // Keep delimiters only for checkbox spans or code the prose normalisers
+      // would rewrite. The lead approved visible ticks on these literal spans;
+      // plain `foo` displays without ticks and the speakable pass removes all
+      // retained ticks before sending text to either TTS engine.
+      const ticks = raw.match(/^`+/)![0];
+      const paired = raw.length >= ticks.length * 2 && raw.match(/`+$/)?.[0] === ticks;
+      const keep = !paired || /\[[ xX]\]|[$€£¥₪][ \t]*-?\d|\b[vV^~]?\d+(?:\.\d+|\/[A-Za-z])|(?:[\w-]+|\.[A-Za-z]+)\.[A-Za-z]|-\d+\b/.test(raw);
+      const left = Math.max(start, line.sourceStart) - line.sourceStart;
+      const right = Math.min(end, line.sourceEnd) - line.sourceStart;
+      let token = `\uE000${literals.length}\uE001`;
+      while (markdown.includes(token)) token = "\uE000" + token;
+      const literal = line.text.slice(left, right);
+      // Preserve exactly the captured delimiter; unmatched ticks protect only
+      // their attached token in the speakable pass, with no invented closer.
+      literals.push({token, text: keep ? literal : literal.replace(/`+/g, "")});
+      protectedText += line.text.slice(cursor, left) + token;
+      cursor = right;
+    }
+    protectedText += line.text.slice(cursor);
+    let text = speechLineText(protectedText, { literalTask });
+    // Tokens are local to this line and cannot collide with captured text.
+    for (const literal of literals) text = text.split(literal.token).join(literal.text);
+    return { ...line, text, completed, taskBody: marker ? line.text.slice(marker.length) : "" };
+  });
+  // Delay completion until the final indented continuation of a checked item.
+  for (let i = 0; i < output.length; i++) {
+    if (!output[i].completed) continue;
+    let end = i;
+    const quoteDepth = (text: string) => text.match(/^[ \t]*(?:>[ \t]*)*/)?.[0].match(/>/g)?.length ?? 0;
+    const depth = quoteDepth(lines[i].text);
+    while (end + 1 < output.length && quoteDepth(lines[end + 1].text) === depth &&
+      (depth > 0 || /^[ \t]+\S/.test(lines[end + 1].text)) &&
+      !!output[end + 1].text &&
+      !/^[ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+/.test(lines[end + 1].text) &&
+      !markdown.slice(output[end].sourceEnd, output[end + 1].sourceStart).replace(/\r?\n/, "")) end++;
+    const body = [output[i].taskBody, ...lines.slice(i + 1, end + 1).map(line => line.text)].join(" ");
+    if (!/[\p{L}\p{N}\p{S}]/u.test(body)) continue;
+    if (end > i) output[i].text = output[i].text.replace(/\.$/, "");
+    output[end].text = output[end].text.replace(/[.!?,;:]+$/, "") + ", done.";
+  }
+  return output.map(({ completed, taskBody, ...line }) => line);
 }
 
-function speechLineText(raw: string): string {
+function speechLineText(raw: string, { literalTask = false } = {}): string {
   if (/^\s*\[[^\]]+\]:\s*\S+/.test(raw) || /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(raw) || /^\s*=+\s*$/.test(raw)) return "";
-  let line = raw.replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+#+\s*$/, "").replace(/^\s*>\s?/, "");
+  let line = raw.replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+#+\s*$/, "").replace(/^[ \t]*(?:>[ \t]*)+/, "");
   if (/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)) return "";
   const list = /^\s*(?:[-+*]|\d+[.)])\s+/.test(line);
-  line = line.replace(/^\s*(?:([-+*])|(\d+)([.)]))\s+(?:\[[ xX]\]\s*)?/, (_match, _bullet, digits, punctuation) => digits ? `${digits}${punctuation} ` : "");
+  const listMarker = literalTask ? /^\s*(?:([-+*])|(\d+)([.)]))\s+/ : /^\s*(?:([-+*])|(\d+)([.)]))\s+(?:\[[ xX]\]\s*)?/;
+  line = line.replace(listMarker, (_match, _bullet, digits, punctuation) => digits ? `${digits}${punctuation} ` : "");
   line = stripInlineLinkTargets(line)
     .replace(/!?\[([^\]]+)\]\[[^\]]*\]/g, "$1")
     .replace(/<https?:\/\/[^>]+>/gi, "link")

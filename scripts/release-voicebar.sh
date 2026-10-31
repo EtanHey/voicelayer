@@ -2,7 +2,6 @@
 # Build a notarized VoiceBar.zip release artifact for the Homebrew cask.
 set -euo pipefail
 
-UPDATE_GATE_ARGS=("$@")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSION=""
@@ -131,9 +130,6 @@ ZIP_PATH="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).res
 require_release_artifact_path "$ARTIFACT_DIR"
 require_release_artifact_path "$APP_PATH" "$ARTIFACT_DIR"
 require_release_artifact_path "$ZIP_PATH" "$ARTIFACT_DIR"
-
-source "$SCRIPT_DIR/lib/update-gate.sh"
-vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/release-voicebar.sh" ${UPDATE_GATE_ARGS[@]+"${UPDATE_GATE_ARGS[@]}"}
 
 mkdir -p "$ARTIFACT_DIR"
 "$(release_artifact_python)" "$SCRIPT_DIR/lib/cleanup-release-artifacts.py" "$ARTIFACT_DIR" "$APP_PATH" "$ZIP_PATH"

@@ -3,12 +3,36 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
 const hook = readFileSync(new URL("../.githooks/pre-push", import.meta.url), "utf8");
 const guard = readFileSync(new URL("../scripts/guard-no-docslocal.sh", import.meta.url), "utf8");
 const cleanEnv = { ...process.env };
 for (const key of Object.keys(cleanEnv)) if (key.startsWith("GIT_")) delete cleanEnv[key];
+
+function assertChildSucceeded(label: string, result: SpawnSyncReturns<string>, elapsedMs: number): void {
+  const stdout = result.stdout ?? "", stderr = result.stderr ?? "";
+  if (!result.error && result.status === 0 && !/\(fail\)/.test(stderr)) return;
+  throw new Error(`${label}: elapsed=${elapsedMs.toFixed(1)}ms status=${result.status} signal=${result.signal} error=${result.error ?? "none"}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+}
+
+test("nested startup failures include stdout, stderr and elapsed time", () => {
+  const root = mkdtempSync(join(tmpdir(), "voice-child-failure-"));
+  try {
+    const startup = join(root, "fail.ts");
+    writeFileSync(startup, 'console.log("startup stdout marker"); throw new Error("startup stderr marker");');
+    const started = performance.now();
+    const result = spawnSync(process.execPath, ["test", "--preload", startup,
+      "./src/__tests__/deploy-check.test.ts", "-t", "readRepoGitCommit"], {
+      cwd: join(import.meta.dir, ".."), encoding: "utf8", timeout: 5000, env: cleanEnv,
+    });
+    const elapsed = performance.now() - started;
+    const fail = () => assertChildSucceeded("startup probe", result, elapsed);
+    for (const detail of ["startup stdout marker", "startup stderr marker", "status=1", "elapsed="]) {
+      expect(fail).toThrow(detail);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 15_000);
 
 for (const fallback of [false, true]) {
   test(`pre-push isolates fixture Git operations (${fallback ? "fallback" : "discovered variables"})`, () => {
@@ -64,7 +88,12 @@ for (const fallback of [false, true]) {
   }, 15_000);
 }
 
-for (const suite of ["brew-cask-sync", "deploy-check"]) {
+// Full suites stay in ordinary discovery. Repeat only Git-creating fixtures
+// here, under hostile selectors; their own assertions verify fixture identity.
+for (const { suite, filter, passes } of [
+  { suite: "brew-cask-sync", filter: "the tap is refreshed with an explicit remote and branch", passes: 1 },
+  { suite: "deploy-check", filter: "readRepoGitCommit", passes: 3 },
+]) {
   test(`${suite} fixtures resist inherited Git repository selection`, () => {
     const root = mkdtempSync(join(tmpdir(), "voice-hostile-git-"));
     try {
@@ -79,12 +108,14 @@ for (const suite of ["brew-cask-sync", "deploy-check"]) {
         config: readFileSync(join(root, ".git/config"), "utf8"),
         index: readFileSync(join(root, ".git/index")).toString("hex") });
       const before = snapshot();
-      const result = withChildFixtureEnv({ VOICELAYER_STATE_DIR: join(root, "state") }, () => spawnSync(process.execPath, ["test", `./src/__tests__/${suite}.test.ts`], {
+      const started = performance.now();
+      const result = withChildFixtureEnv({ VOICELAYER_STATE_DIR: join(root, "state") }, () => spawnSync(process.execPath, ["test", `./src/__tests__/${suite}.test.ts`, "-t", filter], {
         cwd: join(import.meta.dir, ".."), encoding: "utf8", timeout: 30000,
         env: { ...cleanEnv, VOICELAYER_STATE_DIR: join(root, "state"), GIT_DIR: join(root, ".git"), GIT_INDEX_FILE: join(root, ".git/index") },
       }));
-      expect(result.error).toBeUndefined();
-      expect({ status: result.status, failures: result.stderr.match(/\(fail\).*/g) }).toEqual({ status: 0, failures: null });
+      assertChildSucceeded(suite, result, performance.now() - started);
+      // A stale filter must fail rather than silently running zero fixtures.
+      expect(result.stderr).toMatch(new RegExp(`^ ${passes} pass$`, "m"));
       expect(snapshot()).toEqual(before);
     } finally { rmSync(root, { recursive: true, force: true }); }
   }, 45_000);

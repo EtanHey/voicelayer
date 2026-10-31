@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 import { initializeVoiceGate } from "./update-gate-admission";
+import { createNativeDrainParticipant, createVoiceDrainControl } from "./update-gate-native-participant";
+import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { stopPlayback } from "./tts";
 import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from "./speech-archive-live";
 /**
@@ -102,7 +104,6 @@ const ALLOW_ORPHAN_DAEMON_ENV = "VOICELAYER_ALLOW_ORPHAN_DAEMON";
 let daemonHeartbeat: DaemonHeartbeatPublisher | null = null;
 
 async function main() {
-  initializeVoiceGate();
   if (isVoicelayerDisabled()) {
     console.error(
       `[voicelayer-daemon] ${DISABLE_VOICELAYER}=1 or daemon disable flag present — exiting`,
@@ -215,17 +216,23 @@ async function main() {
   }
   // Connect to Voice Bar for UI state
   const { reporter: polishStatusReporter, unsubscribe: unsubscribePolishStatus } = startSTTPolishStatusReporting(broadcast);
+  const nativeDrain = createNativeDrainParticipant({
+    secret: process.env.VOICEBAR_UPDATE_SECRET, nativePid: initialParentPid, send: broadcast,
+  });
+  const drain = createVoiceDrainControl(nativeDrain, () => isConnected() &&
+    readProcessParentPid() === initialParentPid && !hasActiveVoiceOperation());
   onCommand(handleSocketCommand);
   connectToBar(undefined, {
     role: "mcp-daemon",
     acceptsCommands: shouldAcceptVoiceBarCommands(),
     onConnected: () => polishStatusReporter.replay(),
+    onDrainReply: nativeDrain.receive, onDisconnected: nativeDrain.disconnect,
   });
 
   // Start MCP daemon (includes orphan socket cleanup and chmod 600)
   const daemon = await createMcpDaemon({
     socketPath: MCP_SOCKET_PATH,
-    speechControl: createSpeechControl(loadSpeechSecret(), handleSocketCommand),
+    speechControl: createSpeechControl(loadSpeechSecret(), handleSocketCommand, drain),
     toolExecutor: {
       executeTool: async (name, args, context) => {
         const handler = toolDispatch[name];
@@ -239,6 +246,11 @@ async function main() {
       },
     },
     onNdjsonMessage: logUnhandledNdjsonMessage,
+  });
+
+  // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
+  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   });
 
   console.error(

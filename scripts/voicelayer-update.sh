@@ -4,6 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/update-gate.sh"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/brew-cask-sync.sh
 . "$SCRIPT_DIR/lib/brew-cask-sync.sh"
@@ -68,8 +69,8 @@ Runs on the target Mac. SOURCE_HOME is optional personal runtime data, either:
   brain-drive: /Volumes/BrainDrive/VoiceLayerBackup/<user>
 
 Environment overrides:
-  VOICELAYER_SUPERVISED_BOOTSTRAP=1    opt-in legacy bootstrap; requires a human's TTY confirmation
-  VOICELAYER_UPDATE_TARGET_SHA         required candidate commit for the gate lease
+  VOICELAYER_SUPERVISED_BOOTSTRAP=1    supervised legacy bootstrap; local TTY required
+  VOICELAYER_UPDATE_TARGET_SHA         candidate commit for the gate lease
   VOICELAYER_UPDATE_DATA_SOURCE
   VOICELAYER_UPDATE_DATA_MODE
   VOICELAYER_UPDATE_QWEN3_MODEL_REPO
@@ -868,7 +869,6 @@ main() {
             ;;
     esac
 
-    source "$SCRIPT_DIR/lib/update-gate.sh"
     if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
         vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/voicelayer-update.sh" "$@" || return 1
     else
@@ -876,6 +876,11 @@ main() {
     fi
     update_package
     update_voicebar_app
+    # Dedupe may move the original QA bundle into backup. Only a canonical app
+    # that passed the existing identity/signature check may replace that target.
+    if [[ -n "${VOICELAYER_GATE_RESTORE_APP:-}" ]] && ! voicebar_cask_repair_needed; then
+        export VOICELAYER_GATE_RESTORE_APP="$VOICEBAR_CANONICAL_APP"
+    fi
     if [[ "$(detect_install_type)" != "brew-formula" ]]; then
         update_formula
     fi

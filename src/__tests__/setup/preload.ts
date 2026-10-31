@@ -46,9 +46,24 @@ function isDead(pid: number): boolean {
   }
 }
 
+// A busy dead run is cleanup evidence, not a reason to abort a new run.
+// Root creation and every unexpected error still fail closed.
+function handleStaleDirectoryError(path: string, error: unknown): void {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ENOENT") return;
+  if (code === "ENOTEMPTY" || code === "EBUSY") {
+    console.warn(`[voicelayer] retaining busy dead test directory (${code}): ${path}`);
+    return;
+  }
+  throw error;
+}
+
 assertDirectory(TEST_ROOT);
 mkdirSync(TEST_ROOT, { recursive: true, mode: 0o700 });
 mkdirSync(RUN_ROOT, { mode: 0o700 });
+const installerToken = randomBytes(16).toString("hex");
+writeFileSync(join(RUN_ROOT, ".installer-harness.json"), JSON.stringify({ pid: process.pid, token: installerToken }), { mode: 0o600, flag: "wx" });
+process.env.VOICELAYER_TEST_INSTALL_TOKEN = installerToken;
 const dead: { path: string; pid: number; modified: number }[] = [];
 for (const entry of readdirSync(TEST_ROOT, { withFileTypes: true })) {
   // Also reclaim legacy PID-only directories left by older preloads.
@@ -63,7 +78,7 @@ for (const entry of readdirSync(TEST_ROOT, { withFileTypes: true })) {
       dead.push({ path, pid, modified: stat.mtimeMs });
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    handleStaleDirectoryError(path, error);
   }
 }
 // A dead run's hook-fixture index can still point at live setsid fixtures.
@@ -82,7 +97,13 @@ function fixturesSettled(path: string): boolean {
 }
 
 dead.sort((a, b) => b.modified - a.modified || b.pid - a.pid);
-const settled = new Set(dead.filter((entry) => fixturesSettled(entry.path)).map((entry) => entry.path));
+const settled = new Set(dead.filter((entry) => {
+  try { return fixturesSettled(entry.path); }
+  catch (error) {
+    handleStaleDirectoryError(entry.path, error);
+    return false;
+  }
+}).map((entry) => entry.path));
 for (const entry of dead.slice(2)) {
   if (!settled.has(entry.path)) continue;
   try {
@@ -94,7 +115,7 @@ for (const entry of dead.slice(2)) {
       rmSync(entry.path, { recursive: true, force: true });
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    handleStaleDirectoryError(entry.path, error);
   }
 }
 
@@ -141,7 +162,7 @@ process.env.VOICELAYER_TEST_ISOLATED = "1";
 // Explicit subset envs must retain the test paths too; caller values cannot
 // disable the preload contract. Read current values when each child is spawned.
 const isolationKeys = [
-  "VOICELAYER_UPDATE_GATE_PATH", "VOICELAYER_TEST_INSTALL_PROOF", "VOICELAYER_BOOTSTRAP_DIAG_PATH",
+  "VOICELAYER_UPDATE_GATE_PATH", "VOICELAYER_TEST_INSTALL_PROOF", "VOICELAYER_TEST_INSTALL_TOKEN",
   "VOICELAYER_TEST_ISOLATED", "VOICELAYER_TEST_RUN_ROOT", "QA_VOICE_MCP_PID_PATH",
   "VOICELAYER_LOG_ROTATION_DIR",
   "VOICELAYER_TMP_ROOT", "VOICELAYER_STATE_DIR", "VOICELAYER_CONTROL_LAYER_BASE",
@@ -171,7 +192,6 @@ setIfUnset("VOICELAYER_STATE_DIR", join(RUN_ROOT, "state"));
 // Always replace inherited gates, including a hostile resident-path override.
 process.env.VOICELAYER_UPDATE_GATE_PATH = join(RUN_ROOT, "update-gate.json");
 process.env.VOICELAYER_TEST_INSTALL_PROOF = join(RUN_ROOT, "installer-proof.json");
-process.env.VOICELAYER_BOOTSTRAP_DIAG_PATH = join(RUN_ROOT, "bootstrap-diag.log");
 // Synthetic quiescent bootstrap for isolated tests only. Production has no fallback.
 writeFileSync(process.env.VOICELAYER_UPDATE_GATE_PATH, JSON.stringify({ version: 1, kind: "OPEN", generation: 0, released: null }));
 mkdirSync(process.env.VOICELAYER_UPDATE_GATE_PATH + ".admissions", { mode: 0o700 });

@@ -113,6 +113,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
     }
+    private var releaseLevelAdmission: (() -> Void)?
+
+    func startAudioLevelMonitoring(gate: NativeUpdateGate? = nil) {
+        if releaseLevelAdmission == nil {
+            do { releaseLevelAdmission = try MainActor.assumeIsolated { try (gate ?? .shared).acquire() } }
+            catch { return } // The daemon reports UPDATE_BUSY; never open the meter first.
+        }
+        audioLevelMonitor.start()
+    }
+
+    func stopAudioLevelMonitoring() {
+        audioLevelMonitor.stop()
+        releaseLevelAdmission?()
+        releaseLevelAdmission = nil
+    }
 
     #if VOICEBAR_QA
     /// Install before panel observation; the QA fixture supplies a device-free engine.
@@ -149,6 +164,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var daemonController = VoiceBarDaemonController()
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
+    private var controlledUpdateLease: [String: Any]?
+    #if VOICEBAR_QA
+    var terminationGateForTesting: NativeUpdateGate?
+    var terminationOwnsServerForTesting: Bool?
+    var terminationCleanupForTesting: (() -> Void)?
+    #endif
 
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
@@ -212,7 +233,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
         modeProvider: { [weak self] in self?.voiceState.mode ?? .idle },
         restartRecordingAudio: { [weak self] in
-            self?.audioLevelMonitor.restart()
+            guard let self else { return }
+            audioLevelMonitor.stop() // Keep the existing admission through a recording's wake restart.
+            startAudioLevelMonitoring()
         },
         resetHotkeyState: { [weak self] in
             self?.resetHotkeyTracking()
@@ -493,22 +516,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 _ = application.terminate()
             }
 
-            waitForTermination(ofExactPIDs: exactPIDs, timeout: 1.0)
-            let stubbornTargets = targets.filter {
-                processIsAlive(exactPID: $0.processIdentifier)
-            }
-            for application in stubbornTargets {
-                NSLog(
-                    "[VoiceBar] Duplicate exact PID %d ignored graceful termination; force-terminating",
-                    application.processIdentifier
-                )
-                _ = application.forceTerminate()
-            }
-            waitForTermination(
-                ofExactPIDs: stubbornTargets.map(\.processIdentifier),
-                timeout: 0.5
-            )
-
+            waitForTermination(ofExactPIDs: exactPIDs, timeout: VoiceBarDaemonController.acceptedQuitWait)
+            // A refused quit can mean live capture or a closed update gate. Never escalate it to SIGKILL.
             let survivorPIDs = exactPIDs.filter { processIsAlive(exactPID: $0) }
             guard survivorPIDs.isEmpty else {
                 let survivorList = survivorPIDs.map(String.init).joined(separator: ",")
@@ -529,11 +538,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ofExactPIDs exactPIDs: [pid_t],
         timeout: TimeInterval
     ) {
-        guard !exactPIDs.isEmpty else { return }
-        let deadline = Date().addingTimeInterval(timeout)
-        while exactPIDs.contains(where: { processIsAlive(exactPID: $0) }), Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.02)
-        }
+        _ = Self.waitForIncumbents(exactPIDs, timeout: timeout, isAlive: processIsAlive)
+    }
+
+    static func waitForIncumbents(_ pids: [pid_t], timeout: TimeInterval = VoiceBarDaemonController.acceptedQuitWait,
+        isAlive: (pid_t) -> Bool, now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) -> Bool {
+        let deadline = now() + timeout
+        while pids.contains(where: isAlive), now() < deadline { wait(0.02) }
+        return !pids.contains(where: isAlive)
     }
 
     private func processIsAlive(exactPID: pid_t) -> Bool {
@@ -667,6 +680,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         configurePillContextMenu()
 
+        server.onUpdateGateDrain = { [weak self] request in
+            guard let self else { return nil }
+            let reply = NativeDrainParticipant.reply(request, ownedDaemonPID: daemonController.ownedProcessIdentifier,
+                                                idle: voiceState.isUpdateDrainIdle &&
+                NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.voicelayer.voicebar")
+                    .filter { !$0.isTerminated }.map(\.processIdentifier) == [ProcessInfo.processInfo.processIdentifier],
+                                                gate: .shared)
+            if reply != nil, request["action"] as? String == "quit" {
+                // Commit before returning ACK; later ingress cannot rescind an acknowledged quit.
+                terminationPolicy.authorize(.controlledUpdate)
+            }
+            return reply
+        }
+        server.onUpdateGateDrainReplySent = { [weak self] request in
+            guard request["action"] as? String == "quit" else { return }
+            self?.requestTermination(.controlledUpdate, lease: request["lease"] as? [String: Any])
+        }
         server.start()
         _ = daemonController.activateIfNeeded()
 
@@ -817,6 +847,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsSceneObservers.removeAll()
         hotkeyListener.stop()
         audioLevelMonitor.shutdown()
+        releaseLevelAdmission?()
+        releaseLevelAdmission = nil
         daemonController.stop()
         socketServer?.stop()
         if let monitor = mouseMonitor {
@@ -1221,16 +1253,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        defer { controlledUpdateLease = nil }
+        var ownsServer = socketServer != nil
+        var gate: NativeUpdateGate = .shared
+        #if VOICEBAR_QA
+        ownsServer = terminationOwnsServerForTesting ?? ownsServer
+        gate = terminationGateForTesting ?? gate
+        #endif
         let reply = terminationPolicy.reply(
-            enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance
+            enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance,
+            voiceBusy: voiceState.isQuitBusy && ownsServer,
+            gatePermitsQuit: !ownsServer || gate.permitsTermination(controlledLease: controlledUpdateLease)
         )
         guard reply == .terminateNow else {
-            NSLog("[VoiceBar] Ignoring external quit request for isolated QA instance")
+            voiceState.reportQuitRefusal()
+            NSLog("[VoiceBar] Quit refused: voice/update safety evidence unavailable")
             return reply
         }
 
         // Clean shutdown — exit code 0 so launchd KeepAlive.SuccessfulExit:false
         // does NOT respawn. Only crashes (non-zero) trigger restart.
+        #if VOICEBAR_QA
+        if let terminationCleanupForTesting { terminationCleanupForTesting(); return reply }
+        #endif
         performTerminationCleanup()
         return reply
     }
@@ -1581,9 +1626,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshSettingsWindowAnchorState()
         switch mode {
         case .recording:
-            audioLevelMonitor.start()
+            startAudioLevelMonitoring()
         default:
-            audioLevelMonitor.stop()
+            stopAudioLevelMonitoring()
         }
     }
 
@@ -2777,7 +2822,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
-    private func requestTermination(_ intent: VoiceBarTerminationIntent) {
+    private func requestTermination(_ intent: VoiceBarTerminationIntent, lease: [String: Any]? = nil) {
+        controlledUpdateLease = lease
         terminationPolicy.authorize(intent)
         NSApplication.shared.terminate(nil)
     }

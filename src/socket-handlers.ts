@@ -1,4 +1,4 @@
-import { withFreshVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
@@ -189,17 +189,43 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
 }
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
+  if (args[0].cmd === "stop" || args[0].cmd === "cancel") {
+    const capture = cancelPendingVoiceAdmissions("capture");
+    const speech = cancelPendingVoiceAdmissions("speech");
+    const result = handleSocketCommandAdmitted(...args);
+    if ((capture || speech) && result && !(result instanceof Promise) && result.type === "ack" && result.reason === "already idle")
+      return buildAck(args[0], "accept", "pending admissions cancelled");
+    return result;
+  }
   const control = selectionControl(args[0]);
   if (control) return control;
   if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
-  try { return withFreshVoiceAdmission(() => handleSocketCommandAdmitted(...args)); }
-  catch (error) { if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message); throw error; }
+  const refuse = (error: unknown) => {
+    if (error instanceof VoiceAdmissionCancelledError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "noop", error.message);
+    if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message);
+    throw error;
+  };
+  try {
+    const command = args[0];
+    const result = withFreshDeferredVoiceAdmission(() => {
+      // Concurrent requests can pass the pre-wait check together. A duplicate
+      // discovered here is a no-op, not another Next gesture or another read.
+      if (command.cmd === "speak_text" && command.source === "selection") {
+        const duplicate = selectionReads.admission(selectionIdentity(command.text));
+        if (duplicate.kind === "queued" || (duplicate.kind === "playing" && !isPlaybackPaused()))
+          return buildAck(command, "noop", "Already queued");
+      }
+      return handleSocketCommandAdmitted(...args);
+    }, command.cmd === "record" ? { maxWaitMs: 20, kind: "capture" } :
+      command.cmd.startsWith("retranscribe") ? { kind: "capture" } : undefined);
+    return result instanceof Promise ? result.catch(refuse) : result;
+  } catch (error) { return refuse(error); }
 }
 function handleSocketCommandAdmitted(
   command: SocketCommand,
   onSpeak?: (read: import("./tts").LongReadHandle) => void,
-): SocketResponse | void | Promise<SocketResponse> {
+): SocketResponse | void | Promise<SocketResponse | void> {
   const recordingState = getRecordingState();
   const playbackQueueDepth = getPlaybackQueueDepth();
   const isSpeaking = recordingState === "idle" && playbackQueueDepth > 0;
@@ -242,7 +268,10 @@ function handleSocketCommandAdmitted(
       try {
         const projection = command.format === "markdown" ? projectStructuredSpeech(command.text) : undefined;
         const structuredDisplay = command.source === "selection" ? projection : undefined;
-        const text = projection?.speechText ?? command.text;
+        // Keep the socket's legacy handoff text; exact source-line context travels
+        // with selections and is restored at synthesis, including queued preparation.
+        const text = structuredDisplay ? structuredDisplay.speechText.replace(/\n/g, " ")
+          : projection?.speechText ?? command.text;
         if (!text.trim()) {
           finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
           return buildAck(command, "reject", "No text selected");

@@ -1,0 +1,94 @@
+import { expect, test } from "bun:test";
+import { createConversationRecorderFixture } from "./setup/conversation-capture-fixture";
+
+test("independent controls preserve late bytes, locks and event order", async () => {
+  const f = createConversationRecorderFixture();
+  const out = f.child.stdout.getReader();
+  const err = f.child.stderr.getReader();
+  expect(f.locks()).toEqual({ stdout: true, stderr: true });
+  const read = out.read();
+  let exit = false, processor = false, effect = false, stderr = false;
+  void f.child.exited.then(() => { exit = true; });
+  void f.processor.promise.then(() => { processor = true; });
+  void f.effect.promise.then(() => { effect = true; });
+  const errRead = err.read().then(value => { stderr = true; return value; });
+  f.stop(); f.abort(); f.child.kill("SIGTERM"); f.child.kill("SIGKILL");
+  await Promise.resolve();
+  expect([exit, processor, effect, stderr]).toEqual([false, false, false, false]);
+  f.stdout.enqueue(new Uint8Array([1, 2, 255]));
+  expect((await read).value).toEqual(new Uint8Array([1, 2, 255]));
+  f.stdout.eof();
+  expect((await out.read()).done).toBe(true);
+  expect(f.locks().stdout).toBe(true);
+  f.stderr.enqueue(new TextEncoder().encode("for"));
+  expect(new TextDecoder().decode((await errRead).value)).toBe("for");
+  f.stderr.enqueue(new TextEncoder().encode("mat"));
+  expect(new TextDecoder().decode((await err.read()).value)).toBe("mat");
+  f.stderr.eof(); expect((await err.read()).done).toBe(true);
+  f.exit.resolve(7); f.processor.resolve(undefined); f.effect.resolve(undefined);
+  expect(await f.child.exited).toBe(7);
+  await f.processor.promise; await f.effect.promise;
+  out.releaseLock(); err.releaseLock();
+  expect(f.locks()).toEqual({ stdout: false, stderr: false });
+  expect(f.signals).toEqual(["SIGTERM", "SIGKILL"]);
+  expect(f.events).toEqual(["stop", "abort", "signal:SIGTERM", "signal:SIGKILL", "stdout:enqueue", "stdout:eof", "stderr:enqueue", "stderr:enqueue", "stderr:eof", "exit:resolve", "processor:resolve", "effect:resolve"]);
+  f.dispose(); f.dispose();
+  expect(f.events.filter(x => x === "dispose")).toHaveLength(1);
+});
+
+test("explicit errors remain observable and disposal settles owned pending work", async () => {
+  const f = createConversationRecorderFixture();
+  const out = f.child.stdout.getReader();
+  const pending = out.read();
+  const error = new Error("synthetic fault");
+  f.stdout.error(error); f.exit.reject(error); f.processor.reject(error); f.effect.reject(error);
+  await expect(pending).rejects.toBe(error);
+  await expect(f.child.exited).rejects.toBe(error);
+  await expect(f.processor.promise).rejects.toBe(error);
+  await expect(f.effect.promise).rejects.toBe(error);
+  out.releaseLock();
+  const err = f.child.stderr.getReader();
+  const waiting = err.read();
+  f.dispose(); f.dispose();
+  expect((await waiting).done).toBe(true);
+  err.releaseLock();
+  expect(f.locks()).toEqual({ stdout: false, stderr: false });
+});
+
+test("each completion is independent and disposal settles remaining controls", async () => {
+  const f = createConversationRecorderFixture();
+  let exit = false, processor = false, effect = false;
+  void f.child.exited.then(() => { exit = true; });
+  void f.processor.promise.then(() => { processor = true; });
+  void f.effect.promise.then(() => { effect = true; });
+  f.exit.resolve(3);
+  await f.child.exited;
+  expect([exit, processor, effect]).toEqual([true, false, false]);
+  f.processor.resolve(undefined);
+  await f.processor.promise;
+  expect(effect).toBe(false);
+  const reader = f.child.stderr.getReader();
+  const waiting = reader.read();
+  const failure = new Error("stderr fault");
+  f.stderr.error(failure);
+  await expect(waiting).rejects.toBe(failure);
+  reader.releaseLock();
+  f.dispose();
+  await f.effect.promise;
+  expect(effect).toBe(true);
+  const stdout = f.child.stdout.getReader();
+  expect((await stdout.read()).done).toBe(true);
+  stdout.releaseLock();
+});
+
+test("disposal discards unowned queued synthetic data", async () => {
+  const f = createConversationRecorderFixture();
+  f.stdout.enqueue(new Uint8Array([9]));
+  f.dispose();
+  const reader = f.child.stdout.getReader();
+  expect((await reader.read()).done).toBe(true);
+  reader.releaseLock();
+  expect(await f.child.exited).toBe(0);
+  await f.processor.promise;
+  await f.effect.promise;
+});

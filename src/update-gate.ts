@@ -15,7 +15,7 @@ export const updateGateAckSchema = z.strictObject({
   openArchives: z.literal(0),
 });
 
-function sameLease(a: UpdateGateLease, b: UpdateGateLease): boolean {
+export function sameLease(a: UpdateGateLease, b: UpdateGateLease): boolean {
   return a.generation === b.generation && a.operationId === b.operationId
     && a.ownerId === b.ownerId && a.targetSha === b.targetSha;
 }

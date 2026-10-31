@@ -10,7 +10,7 @@ const writeFailureCodes = new Set([...deterministicWriteFailures, "IO_ERROR", "W
 
 const retainedAudio = new Map<string, Set<ArchiveWrite>>();
 const cleanupRequested = new Set<string>();
-/** Playback cleanup never removes a source until its durable copy succeeds. */
+/** Playback cleanup waits until every source hold is durably copied or permanently dropped. */
 export function unlinkSpeechAudio(file: string): void {
   if (retainedAudio.get(file)?.size) { cleanupRequested.add(file); return; }
   unlinkSync(file);
@@ -29,6 +29,7 @@ export class LiveSpeechArchive {
   private tail: Promise<void> = Promise.resolve();
   private droppedWrite = false;
   private durableWaiters = new Set<() => void>();
+  private durability?: Promise<void>;
   readonly failures: { operation: ArchiveWrite; code: string }[] = [];
   readonly key: string;
   constructor(context?: SpeakArchiveContext, text = "") {
@@ -72,11 +73,14 @@ export class LiveSpeechArchive {
       const code = error instanceof Error && writeFailureCodes.has(error.message) ? error.message : "ARCHIVE_WRITE_FAILED";
       if (retry && deterministicWriteFailures.has(code)) {
         this.droppedWrite = true;
+        // No retry will consume this temp source. Other retryable operations retain their own holds.
+        if (operation.kind === "audio") releaseAudio(operation);
         console.error(`[speech] archive write dropped: ${operation.kind} ${code}`);
         return;
       }
       this.failures.push({ operation, code });
-      console.error(`[speech] archive write failed: ${operation.kind}`);
+      // Keep the failure above; background retries must not flood unrelated voice diagnostics.
+      if (!retry) console.error(`[speech] archive write failed: ${operation.kind}`);
     }
   }
   private async retryWrites(): Promise<void> {
@@ -89,7 +93,7 @@ export class LiveSpeechArchive {
     const work = this.tail.then(run);
     this.tail = work;
     void work.then(() => {
-      if (this.tail === work && !this.failures.length && !this.droppedWrite) {
+      if (this.tail === work && (!this.failures.length || this.droppedWrite)) {
         for (const ready of this.durableWaiters) ready(); this.durableWaiters.clear();
       }
       if (this.tail === work && this.terminal && !this.failures.length && !this.droppedWrite) {
@@ -103,11 +107,31 @@ export class LiveSpeechArchive {
   async retryFailed(): Promise<void> {
     await this.schedule(() => this.retryWrites());
   }
-  async waitForDurable(): Promise<void> {
-    await this.settled();
-    if (this.failures.length) await this.retryFailed();
-    if (this.droppedWrite) throw Error("UPDATE_GATE_ARCHIVE_UNKNOWN");
-    if (this.failures.length) await new Promise<void>(resolve => this.durableWaiters.add(resolve));
+  waitForDurable(): Promise<void> {
+    if (this.durability) return this.durability;
+    const work = this.retryUntilDurable();
+    this.durability = work;
+    const clear = () => { if (this.durability === work) this.durability = undefined; };
+    void work.then(clear, clear);
+    return work;
+  }
+  private async retryUntilDurable(): Promise<void> {
+    let delay = 10;
+    for (;;) {
+      await this.settled();
+      if (this.droppedWrite) throw Error("UPDATE_GATE_ARCHIVE_UNKNOWN");
+      if (!this.failures.length) return;
+      await this.retryFailed();
+      if (this.droppedWrite) throw Error("UPDATE_GATE_ARCHIVE_UNKNOWN");
+      if (!this.failures.length) continue;
+      // Keep driving transient failures without a busy loop or another ingress.
+      await new Promise<void>(resolve => {
+        const ready = () => { clearTimeout(timer); this.durableWaiters.delete(ready); resolve(); };
+        const timer = setTimeout(ready, delay);
+        this.durableWaiters.add(ready);
+      });
+      delay = Math.min(delay * 2, 1000);
+    }
   }
   playerStarted(): void {
     if (this.state !== "playing") this.move("playing");

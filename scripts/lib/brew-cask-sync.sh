@@ -85,7 +85,7 @@ bcs_brew() {
 # True when the caller's run_cmd only prints. Post-conditions cannot be asserted
 # in that mode, because nothing was actually done.
 bcs_commands_are_simulated() {
-    if bcs_function_exists bcs_caller_simulates_commands; then
+    if bcs_function_exists run_cmd && bcs_function_exists bcs_caller_simulates_commands; then
         bcs_caller_simulates_commands
         return
     fi
@@ -498,7 +498,13 @@ bcs_update_gate() {
         return 1
     fi
     local root
-    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-    source "$root/scripts/lib/update-gate.sh"
+    # Formula upgrade can remove the keg that originally sourced this function.
+    root="${PACKAGE_ROOT:-}"
+    if [[ -z "$root" ]]; then root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || return 1; fi
+    if [[ ! -f "$root/scripts/lib/update-gate.sh" ]]; then
+        bcs_err "REFUSED UNKNOWN: refreshed package validator unavailable; no further mutation authorized"
+        return 1
+    fi
+    source "$root/scripts/lib/update-gate.sh" || return 1
     vl_update_gate "$root"
 }

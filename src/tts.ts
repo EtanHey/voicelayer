@@ -1,4 +1,4 @@
-import { withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
+import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withAsyncVoiceAdmission, withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
@@ -2275,6 +2275,7 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
 
 /** Stop current playback if any. */
 export function stopPlayback(playbackElapsedMs?: number, cancelled = false): boolean {
+  cancelPendingVoiceAdmissions("speech");
   if (cancelled) {
     for (const controller of speechPreparations) preparationArchives.get(controller)?.finish("cancelled", "USER_CANCEL");
     activeLongRead?.archive?.finish("cancelled", "USER_CANCEL");
@@ -2454,7 +2455,7 @@ function untilAborted(signal: AbortSignal): Promise<never> {
  * synthesis is complete (no contention with it, whatever the engine), and never touches playback,
  * broadcasts, history or the active read. Rejects when the owner is gone or the signal aborts. */
 export const prepareSelectionReadStart = async (...args: Parameters<typeof prepareSelectionReadStartAdmitted>): ReturnType<typeof prepareSelectionReadStartAdmitted> =>
-  withVoiceAdmission(() => prepareSelectionReadStartAdmitted(...args));
+  withAsyncVoiceAdmission(() => prepareSelectionReadStartAdmitted(...args));
 async function prepareSelectionReadStartAdmitted(
   text: string, kind: "auto" | "short" | "long", ownerRequestId: string, signal: AbortSignal,
   archiveContext?: SpeakArchiveContext, structuredDisplay?: StructuredSpeech,
@@ -2469,7 +2470,7 @@ async function prepareSelectionReadStartAdmitted(
   throwIfAbortedSafe(signal);
   if (isTTSDisabled()) throw new Error("TTS is disabled");
   if (!text.trim() || text.length > SPEAK_TEXT_MAX_CHARS) throw new Error("Speech text must contain 1–200,000 characters");
-  const displayText = sanitizeTtsText(text);
+  const displayText = sanitizeTtsText(structuredReadText(text, structuredDisplay));
   const profile = resolveLongReadProfile(kind, text);
   const prosody = structuredReadPlan(displayText, profile, structuredDisplay);
   const displayChunk = prosody?.plan.chunks[0]?.text ?? chunkTextForLongRead(displayText, profile.engine, clonePlaybackSpeed(profile.rate))[0];
@@ -2479,6 +2480,7 @@ async function prepareSelectionReadStartAdmitted(
   const rules = pronunciationRules();
   const identity = preparedStartIdentity(displayChunk, profile, policy, rules) + (prosody?.plan.renderIdentity ?? "");
   const archive = archiveContext ? beginSpeechArchive(text, archiveContext) : undefined;
+  let start: PreparedReadStart | undefined;
   try {
   let prepared: PreparedChunk;
   if (prosody) {
@@ -2491,9 +2493,16 @@ async function prepareSelectionReadStartAdmitted(
   } else prepared = await synthesizeLongReadChunk(displayChunk, profile, signal, policy, 0, rules);
   archive?.generated(prepared.chunk.audioFile, prepared.spokenText ?? displayChunk, prepared.voice, profile.kind ?? "long", prepared.engine, 0, prepared.chunk.durationMs);
   if (signal.aborted) { disposeLongReadChunkFiles(prepared.chunk.audioFile); throwIfAbortedSafe(signal); }
-  return new PreparedReadStart(identity, prepared,
+  return start = new PreparedReadStart(identity, prepared,
     (chunk) => disposeLongReadChunkFiles(chunk.audioFile));
-  } finally { await settleSpeechArchivesForUpdate(archive); }
+  } finally {
+    // Transfer the lease without waiting for archive retries. Teardown still holds admission
+    // until durability is confirmed; uncertainty also disposes any untransferred audio.
+    holdVoiceAdmission(settleSpeechArchivesForUpdate(archive).catch(error => {
+      start?.dispose();
+      throw error;
+    }));
+  }
 }
 
 /** Spec emphasis for headings and labels: slower, lower, a little louder, as top-level edge prosody. */
@@ -2502,6 +2511,12 @@ function emphasisRate(rate: string): string {
   const percent = Number.parseInt(rate, 10);
   const value = (Number.isFinite(percent) ? percent : 0) - 10;
   return `${value >= 0 ? "+" : ""}${value}%`;
+}
+
+/** Restore source context only for the exact flattened selection handoff.
+ * Different caller text must never be replaced by unrelated optional layout. */
+function structuredReadText(text: string, structure?: StructuredSpeech): string {
+  return structure && text === structure.speechText.replace(/\n/g, " ") ? structure.speechText : text;
 }
 
 function structuredReadPlan(displayText: string, profile: LongReadProfile, structure?: StructuredSpeech) {
@@ -2580,7 +2595,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
     assertSpeakerClear();
     if (!text.trim() || text.length > SPEAK_TEXT_MAX_CHARS) throw new Error("Speech text must contain 1–200,000 characters");
     if (isTTSDisabled()) throw new Error("TTS is disabled");
-    displayText = sanitizeTtsText(text);
+    displayText = sanitizeTtsText(structuredReadText(text, identity.structuredDisplay));
     if (!displayText.trim()) throw new Error("Speech text is empty after sanitizing");
   } catch (error) { prepared?.dispose(); throw error; }
   const archive = beginSpeechArchive(text, identity.archiveContext);
@@ -2846,7 +2861,10 @@ export class QueuedPlaybackController implements PlaybackController {
  * @param options.waitForPlayback - If true, wait for audio playback to finish (used in converse mode before recording).
  */
 export const speak = async (...args: Parameters<typeof speakAdmitted>): ReturnType<typeof speakAdmitted> =>
-  withVoiceAdmission(() => speakAdmitted(...args));
+  withAsyncVoiceAdmission(() => speakAdmitted(...args)).catch(error => {
+    if (error instanceof VoiceAdmissionCancelledError) throw new SpeechPreparationStoppedError();
+    throw error;
+  });
 async function speakAdmitted(
   text: string,
   options?: TextToSpeechOptions,

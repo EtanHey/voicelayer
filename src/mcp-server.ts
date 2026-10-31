@@ -99,7 +99,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 // --- Startup ---
 
 async function main() {
-  initializeVoiceGate();
   try {
     await getBackend();
   } catch (err: unknown) {
@@ -116,6 +115,12 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
+  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
+  });
+
   console.error(
     `[voicelayer] MCP server v${PACKAGE_VERSION} running — modes: announce, brief, consult, converse, replay, toggle`,
   );

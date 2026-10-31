@@ -58,7 +58,6 @@ export function createShutdownHandler(deps?: {
 }
 
 async function main() {
-  initializeVoiceGate();
   // 0. Enrich PATH before any binary resolution — captures login shell PATH
   // for VoiceBar-spawned context where /opt/homebrew/bin is missing
   const enrichedPath = initEnrichedPATH();
@@ -100,6 +99,11 @@ async function main() {
   connectToBar(getServeSocketPath(), {
     role: "standalone-daemon",
     acceptsCommands: true,
+  });
+
+  // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
+  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
+    console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   });
 
   console.error(`${LOG_PREFIX} Standalone daemon ready (PID ${process.pid})`);

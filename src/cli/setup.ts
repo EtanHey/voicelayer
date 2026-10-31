@@ -385,13 +385,15 @@ if (import.meta.main) {
   if (!process.env.VOICELAYER_INSTALL_OPERATION) {
     process.exit(await runGatedInstall([process.execPath, import.meta.path, ...process.argv.slice(2)]));
   }
-  validateInstallerOperation();
-  runSetup(packageRoot).catch((error: unknown) => {
+  try {
+    await validateInstallerOperation();
+    await runSetup(packageRoot);
+  } catch (error: unknown) {
     console.error(
       `[voicelayer] setup failed: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    process.exit(1);
-  });
+    process.exitCode = 1;
+  }
 }
