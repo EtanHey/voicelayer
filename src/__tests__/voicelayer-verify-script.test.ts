@@ -1,3 +1,4 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { stubInstallerTransport } from "./setup/installer-transport";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -12,7 +13,6 @@ import {
   writeFileSync,
 } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 
 // Real subprocesses: standalone p95 <= 1095 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
@@ -103,7 +103,7 @@ function writeFakeExecutable(name: string, body: string) {
 }
 
 beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
+  tempRoot = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-verify-test-"));
   initialTempRoot = tempRoot;
   initFakeRepo();
 });
@@ -124,7 +124,7 @@ describe("the fake-repo helper stays inside its temp repo", () => {
   // GIT_CONFIG, so a caller that exports either (a git hook, a rebase --exec)
   // redirects initFakeRepo()'s identity write into another repository.
   test("initFakeRepo writes nothing to a repo named by GIT_COMMON_DIR or GIT_CONFIG", () => {
-    const victim = mkdtempSync(join(tmpdir(), "voicelayer-verify-victim-"));
+    const victim = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-verify-victim-"));
     const saved = { common: process.env.GIT_COMMON_DIR, config: process.env.GIT_CONFIG };
     const realUser = () => text(run(["git", "config", "--local", "--get", "user.name"], { cwd: repoRoot }).stdout);
     const realBefore = realUser();
@@ -135,7 +135,7 @@ describe("the fake-repo helper stays inside its temp repo", () => {
         ["GIT_CONFIG", join(victim, ".git", "config")],
       ] as const) {
         process.env[key] = value;
-        tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
+        tempRoot = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-verify-test-"));
         initFakeRepo();
         delete process.env[key];
         const leaked = text(run(["git", "config", "--local", "--get", "user.name"], { cwd: victim }).stdout);
@@ -343,7 +343,7 @@ describe("voicelayer-verify.sh", () => {
     run(["git", "checkout", "-b", "feature/corpus-whisper-pid-hop"]);
     const changed = join(tempRoot, "changed.txt");
     // Kept outside the fake repo so the pid stub cannot dirty the worktree.
-    pidsDir = mkdtempSync(join(tmpdir(), "voicelayer-verify-whisper-pids-"));
+    pidsDir = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-verify-whisper-pids-"));
     const pidsCmd = join(pidsDir, "live-whisper-pids.sh");
     const runner = join(tempRoot, "corpus-runner.sh");
     writeFileSync(changed, "src/mcp-server-daemon.ts\n");
@@ -561,14 +561,14 @@ describe("voicelayer-verify.sh", () => {
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("treats a launchd VoiceBar respawn as a successful relaunch", async () => {
+  test("explicitly starts a launchd VoiceBar after controlled quit", async () => {
     const changed = join(tempRoot, "changed.txt");
     const stateFile = join(tempRoot, "pgrep-state");
     const openCalls = join(tempRoot, "open-calls");
     const oldPid = "424242";
     const bashEnv = join(tempRoot, "fake-bash-env");
     writeFileSync(changed, "src/socket-handlers.ts\n");
-    writeFileSync(stateFile, "before\n");
+    writeFileSync(stateFile, "down\n");
     writeFileSync(
       bashEnv,
       `kill() {
@@ -588,8 +588,10 @@ set -euo pipefail
 if [ "$1" = "-x" ] && [ "$2" = "VoiceBar" ]; then
   if [ "$(cat "${stateFile}")" = "before" ]; then
     printf '${oldPid}\\n'
-  else
+  elif [ "$(cat "${stateFile}")" = "after" ]; then
     printf '222\\n'
+  else
+    exit 1
   fi
   exit 0
 fi
@@ -613,6 +615,10 @@ set -euo pipefail
 if [ "$1" = "list" ] && [ "$2" = "com.voicelayer.voicebar" ]; then
   exit 0
 fi
+if [ "$1" = "kickstart" ]; then
+  printf 'after\\n' > "${stateFile}"
+  exit 0
+fi
 exit 1
 `,
     );
@@ -629,6 +635,11 @@ exit 0
     const result = run(["bash", scriptPath], {
       env: {
         BASH_ENV: bashEnv,
+        VOICELAYER_GATE_RESTORE_APP: join(tempRoot, "VoiceBar.app"),
+        VOICELAYER_GATE_RESTORE_LAUNCHD: "1",
+        VOICELAYER_GATE_RESTORE_CALLER: scriptPath,
+        VOICELAYER_VERIFY_PRE_GATE_PIDS: oldPid,
+        VOICELAYER_VERIFY_PRE_GATE_LAUNCHD: "1",
         PATH: `${fakeBin}:${process.env.PATH}`,
         VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
         VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
@@ -639,7 +650,7 @@ exit 0
     });
 
     expect(result.exitCode).toBe(0);
-    expect(text(result.stdout)).toContain("launchd relaunched VoiceBar");
+    expect(await Bun.file(stateFile).text()).toBe("after\n");
     expect(existsSync(openCalls)).toBe(false);
     const artifacts = readdirSync(join(tempRoot, ".verified"));
     expect(artifacts).toHaveLength(1);

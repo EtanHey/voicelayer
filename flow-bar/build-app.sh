@@ -10,6 +10,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PACKAGE_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" != 1 ]]; then
+    source "$REPO_ROOT/scripts/lib/update-gate.sh"
+fi
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 APP_DIR="/Applications/VoiceBar.app"
 VOICEBAR_REQUIRED_TEAM_ID="${VOICEBAR_REQUIRED_TEAM_ID:-PPN23G925Y}"
@@ -389,6 +392,11 @@ guard_build_lifecycle_for_running_instances() {
     local matching_target=0
     local unrelated_path=0
     LEAVE_RUNNING_INSTANCE_ALONE=0
+    if [[ -n "${VOICELAYER_INSTALL_OPERATION:-}" && "${VOICEBAR_PRE_GATE_APP_DIR:-}" == "$APP_DIR" ]]; then
+        STOP_RUNNING="${VOICEBAR_PRE_GATE_STOP:-$STOP_RUNNING}"
+        RELAUNCH_APP="${VOICEBAR_PRE_GATE_RELAUNCH:-$RELAUNCH_APP}"
+        LEAVE_RUNNING_INSTANCE_ALONE="${VOICEBAR_PRE_GATE_LEAVE:-0}"
+    fi
     # When callers disable both lifecycle actions, there is no broad stop or
     # second launch for this guard to prevent.
     if [[ "$STOP_RUNNING" -eq 0 && "$RELAUNCH_APP" -eq 0 ]]; then
@@ -492,84 +500,6 @@ voicebar_relaunch_instance_status() {
         echo "[build-app] VoiceBar command socket is not ready: $VOICEBAR_SOCKET_PATH" >&2
     fi
     return 1
-}
-
-live_pids_from_list() {
-    local pid
-    while IFS= read -r pid || [[ -n "$pid" ]]; do
-        [[ "$pid" =~ ^[0-9]+$ ]] || continue
-        if kill -0 "$pid" 2>/dev/null; then
-            printf '%s\n' "$pid"
-        fi
-    done
-}
-
-wait_for_pids_exit() {
-    local pids="$1"
-    local attempts="$2"
-    local remaining
-    local _
-
-    for _ in $(seq 1 "$attempts"); do
-        remaining="$(printf '%s\n' "$pids" | live_pids_from_list)"
-        if [[ -z "$remaining" ]]; then
-            return 0
-        fi
-        sleep 0.2
-    done
-    return 1
-}
-
-voicebar_send_quit_event() {
-    osascript -e "tell application id \"$VOICEBAR_BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
-}
-
-signal_pids() {
-    local signal="$1"
-    local pids="$2"
-    local pid
-    while IFS= read -r pid || [[ -n "$pid" ]]; do
-        [[ "$pid" =~ ^[0-9]+$ ]] || continue
-        kill "-$signal" "$pid" 2>/dev/null || true
-    done <<< "$pids"
-}
-
-stop_voicebar_instances() {
-    local pids
-    local remaining
-    pids="$(voicebar_target_pids)"
-    if [[ -z "$pids" ]]; then
-        echo "[build-app] No running $VOICEBAR_BUNDLE_ID instances found."
-        return 0
-    fi
-
-    echo "[build-app] Stopping $VOICEBAR_BUNDLE_ID process tree:"
-    printf '%s\n' "$pids" | sed 's/^/[build-app]   PID /'
-
-    voicebar_send_quit_event
-    if wait_for_pids_exit "$pids" "${VOICEBAR_QUIT_WAIT_ATTEMPTS:-25}"; then
-        return 0
-    fi
-
-    remaining="$(printf '%s\n' "$pids" | live_pids_from_list)"
-    if [[ -n "$remaining" ]]; then
-        echo "[build-app] Sending TERM to remaining VoiceBar-owned PIDs..."
-        signal_pids TERM "$remaining"
-    fi
-    if wait_for_pids_exit "$pids" "${VOICEBAR_TERM_WAIT_ATTEMPTS:-25}"; then
-        return 0
-    fi
-
-    remaining="$(printf '%s\n' "$pids" | live_pids_from_list)"
-    if [[ -n "$remaining" ]]; then
-        echo "[build-app] Sending KILL to stuck VoiceBar-owned PIDs..."
-        signal_pids KILL "$remaining"
-    fi
-    if ! wait_for_pids_exit "$pids" "${VOICEBAR_KILL_WAIT_ATTEMPTS:-10}"; then
-        echo "[build-app] ERROR: VoiceBar-owned PIDs did not exit:" >&2
-        printf '%s\n' "$pids" | live_pids_from_list >&2
-        return 1
-    fi
 }
 
 count_lines() {
@@ -1071,7 +1001,6 @@ if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
 fi
 
 parse_build_app_args "$@"
-source "$REPO_ROOT/scripts/lib/update-gate.sh"
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
@@ -1102,6 +1031,9 @@ if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
 fi
 refuse_brew_managed_install_path
 guard_build_lifecycle_for_running_instances
+# Carry the guard's restrictive lifecycle decision through controlled quit/re-exec.
+export VOICEBAR_PRE_GATE_APP_DIR="$APP_DIR" VOICEBAR_PRE_GATE_STOP="$STOP_RUNNING"
+export VOICEBAR_PRE_GATE_RELAUNCH="$RELAUNCH_APP" VOICEBAR_PRE_GATE_LEAVE="$LEAVE_RUNNING_INSTANCE_ALONE"
 # Artifact/staged and nonresident no-stop/no-relaunch QA builds do not mutate the resident owner.
 if [[ "$STOP_RUNNING" -eq 1 || "$RELAUNCH_APP" -eq 1 || "$APP_DIR" == /Applications/* ]] ||
    { is_resident_app_dir && [[ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" != 1 ]]; }; then
@@ -1113,7 +1045,12 @@ protect_notarized_resident_before_rebuild
 if [[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 ]]; then
     : # The path-aware guard already explained why lifecycle actions are disabled.
 elif [[ "$STOP_RUNNING" -eq 1 ]]; then
-    stop_voicebar_instances
+    # The gate already verified controlled exit. A newly appeared process has no
+    # quit authorization; refuse rather than using the legacy force-stop path.
+    if [[ -n "$(voicebar_target_pids)" ]]; then
+        echo "[build-app] ERROR: VoiceBar appeared after controlled quit; refusing rebuild." >&2
+        exit 1
+    fi
 else
     echo "[build-app] Skipping VoiceBar stop because --no-stop was provided."
 fi
@@ -1278,7 +1215,7 @@ else
 fi
 
 if [[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 ]]; then
-    echo "[build-app] Built $APP_DIR without launching it; the existing VoiceBar instance is still running."
+    echo "[build-app] Built $APP_DIR without launching it; the original bundle is restored on exit if the gate quit it."
 elif [[ "$RELAUNCH_APP" -eq 1 ]]; then
     relaunch_voicebar_app
 else

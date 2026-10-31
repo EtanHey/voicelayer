@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { assertInstallerSocketPath, installerProcessIdentity, installerGateContended as contended,
-  retryInstallerContention as retryContention, createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
+  retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
 import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { acknowledgeVoiceDrain, updateVoiceGate, type ParticipantProof } from "./update-gate-admission";
-import { readUpdateGateFile } from "./update-gate-storage";
+import { persistInstallerController, readInstallerController, readUpdateGateFile } from "./update-gate-storage";
 import { updateGateFilePath } from "./paths";
-import { sameLease, updateGateLeaseSchema, type UpdateGateLease } from "./update-gate";
+import { sameLease, updateGateLeaseSchema, type UpdateGateLease, type UpdateGateCommand } from "./update-gate";
 
 // Only the live preload owns this harness capability; environment flags alone do not qualify it.
 function harnessRoot(): string {
@@ -78,7 +78,11 @@ export async function validateInstallerOperation(): Promise<void> {
     installerProcessIdentity(owner.pid) !== owner.identity) throw Error("UNKNOWN: installer controller identity mismatch");
   const current = await retryContention(() => readUpdateGateFile(), state => state.kind === "UNKNOWN");
   if (current.kind !== "COMMITTED" || !sameLease(current.lease, lease)) throw Error("UNKNOWN: installer lease mismatch");
-  if (installerProcessIdentity(owner.pid) !== owner.identity) throw Error("UNKNOWN: installer controller identity changed");
+  const controller = readInstallerController(updateGateFilePath());
+  if (!controller || controller.lease.operationId !== lease.operationId || controller.lease.generation !== lease.generation ||
+    controller.pid !== owner.pid || controller.identity !== owner.identity)
+    throw Error("UNKNOWN: installer controller receipt mismatch");
+  if (installerProcessIdentity(controller.pid) !== controller.identity) throw Error("UNKNOWN: installer controller identity changed");
 }
 function recoveryReceipt(lease: UpdateGateLease, reason: string, installerPid?: number): void {
   const gate = updateGateFilePath(), receipt = `${gate}.recovery-${lease.operationId}.json`;
@@ -117,6 +121,12 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
   if (!controllerIdentity) throw Error("UNKNOWN: controller identity unavailable");
   const current = await retryContention(() => readUpdateGateFile(), state => state.kind === "UNKNOWN");
   if (current.kind !== "OPEN") throw Error("UNKNOWN: gate unavailable or another update owns it");
+  // A foreign receipt is not evidence for this lease. Refuse before REQUEST;
+  // recovery/finalization must remove only their own matching controller.
+  try {
+    lstatSync(updateGateFilePath() + ".controller");
+    throw Error("UNKNOWN: existing controller receipt retained; verified recovery required");
+  } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
     ownerId: randomUUID(), targetSha: process.env.VOICELAYER_UPDATE_TARGET_SHA ?? "" };
   if (!updateGateLeaseSchema.safeParse(lease).success) throw Error("UNKNOWN: verified target SHA required");
@@ -131,12 +141,23 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     return [name, handler] as const;
   });
   const verify: ParticipantProof = participant.verify;
-  const withProcessProof = <T>(read: () => T): T => participant.withProcessProof ? participant.withProcessProof(read) : read();
-  const transition = (command: unknown) => retryContention(() => {
-    if (cancelled) throw Error("UPDATE_CANCELLED"); // Never commit after Cancel during backoff.
-    const apply = () => updateVoiceGate(command, verify);
-    return requested ? withProcessProof(apply) : apply();
-  }, result => result.kind === "REFUSED" && result.reason === "UNKNOWN");
+  const acquire = <T>(read: () => T): Promise<T> => participant.withAcquisitionProof
+    ? participant.withAcquisitionProof(read) : retryInstallerAcquisition(read);
+  const transition = (command: UpdateGateCommand) => {
+    const apply = () => {
+      if (cancelled) throw Error("UPDATE_CANCELLED");
+      const confirm: ParticipantProof = state => {
+        if (!verify(state)) return false;
+        if (command.kind === "COMMIT") return persistInstallerController(updateGateFilePath(), {
+          version: 1, lease: { generation: lease.generation, operationId: lease.operationId },
+          pid: process.pid, identity: controllerIdentity,
+        });
+        return true;
+      };
+      return updateVoiceGate(command, confirm, process.env, { throwOnContention: true });
+    };
+    return requested ? acquire(apply) : retryInstallerAcquisition(apply);
+  };
   try {
     const request = await transition({ kind: "REQUEST", lease });
     if (request.kind !== "APPLIED") throw Error("UNKNOWN: drain request refused");
@@ -147,7 +168,10 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
         console.error(`[update-gate] Update when idle: ${proof.phase}; Cancel: Ctrl-C (before commit)`);
         displayedPhase = proof.phase;
       }
-      const ack = await retryContention(() => withProcessProof(() => acknowledgeVoiceDrain(lease, verify)), result => result === null);
+      const ack = await acquire(() => {
+        if (cancelled) throw Error("UPDATE_CANCELLED");
+        return acknowledgeVoiceDrain(lease, verify, { throwOnContention: true });
+      });
       if (cancelled) break;
       if (!ack && !contended() && readUpdateGateFile().kind === "UNKNOWN") throw Error("UNKNOWN: drain evidence unavailable");
       if (ack && proof.ready && proof.native && proof.daemon) {

@@ -284,7 +284,8 @@ export function withFreshVoiceAdmission<T>(work: () => T): T {
 }
 export type ParticipantProof = (state: UpdateGateState) => boolean;
 /** Trusted updater API, never a raw-client assertion. Proof executes synchronously under G1's lock. */
-export function updateVoiceGate(command: unknown, verify?: ParticipantProof, env: NodeJS.ProcessEnv = process.env): UpdateGateTransition {
+export function updateVoiceGate(command: unknown, verify?: ParticipantProof, env: NodeJS.ProcessEnv = process.env,
+  options: { throwOnContention?: boolean } = {}): UpdateGateTransition {
   return safeGateLock<UpdateGateTransition>(path => {
     const current = snapshot(path);
     if (!current) return { kind: "REFUSED", reason: "UNKNOWN" };
@@ -293,7 +294,7 @@ export function updateVoiceGate(command: unknown, verify?: ParticipantProof, env
       (current.active.length !== 0 || verify?.(current.state) !== true)) return { kind: "REFUSED", reason: "UNKNOWN" };
     if (result.kind === "APPLIED") persistUpdateGateState(path, result.state);
     return result;
-  }, { kind: "REFUSED", reason: "UNKNOWN" }, env, false, false);
+  }, { kind: "REFUSED", reason: "UNKNOWN" }, env, options.throwOnContention === true, false);
 }
 /** G3/updater supplies live identity, handoff, archive-durability and competing-owner evidence.
  * Installers may request the acquisition error so EEXIST is never confused with a fault. */

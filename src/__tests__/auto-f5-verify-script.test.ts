@@ -170,6 +170,24 @@ describe("auto-f5-verify.sh pure helpers", () => {
     );
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
+  for (const [line, installed] of [
+    ["[build-app] Done: /Applications/VoiceBar.app", true],
+    ["[voicelayer-verify] rebuilding VoiceBar.app...", false],
+    ["[voicelayer-verify] VOICELAYER_VERIFY_SKIP_BUILD=1; skipping build.", false],
+    ["[build-app] Done: /tmp/qa.noindex/VoiceBarQA.app", false],
+    ["[build-app] Done: /Applications/VoiceBar.app.partial", false],
+  ] satisfies [string, boolean][]) test(`detects installed branch build before the F5 prompt: ${line}`, () => {
+    const workDir = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "auto-f5-installed-"));
+    try {
+      const logFile = join(workDir, "verify.log");
+      writeFileSync(logFile, `${line}\n`);
+      const result = runFunction("branch_build_was_installed", { VOICELAYER_AUTO_F5_LOG_FILE: logFile });
+      expect(result.exitCode).toBe(installed ? 0 : 1);
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   test("failed branch cycles restore main build and kickstart VoiceBar services", async () => {
     const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
     try {

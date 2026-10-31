@@ -5,6 +5,7 @@ set -euo pipefail
 UPDATE_GATE_ARGS=("$@")
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$SCRIPT_DIR/lib/update-gate.sh"
 DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 REPO_ROOT="${VOICELAYER_VERIFY_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 VERIFY_DIR="$REPO_ROOT/.verified"
@@ -434,7 +435,15 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   exit 0
 fi
 
-running_pids="$(pgrep -x VoiceBar 2>/dev/null || true)"
+# Preserve pre-quit intent across the gate controller's re-exec. PIDs are for
+# comparison only; controlled quit has already verified exit before re-exec.
+if [ -z "${VOICELAYER_INSTALL_OPERATION:-}" ]; then
+  VOICELAYER_VERIFY_PRE_GATE_PIDS="$(pgrep -x VoiceBar 2>/dev/null || true)"
+  export VOICELAYER_VERIFY_PRE_GATE_PIDS
+  export VOICELAYER_VERIFY_PRE_GATE_LAUNCHD=0
+  if is_voicebar_launchd_managed; then export VOICELAYER_VERIFY_PRE_GATE_LAUNCHD=1; fi
+fi
+running_pids="${VOICELAYER_VERIFY_PRE_GATE_PIDS:-}"
 if [ -z "${VOICELAYER_INSTALL_OPERATION:-}" ] && [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
   printf '[voicelayer-verify] VoiceBar is running with PID(s): %s\n' "$(printf '%s' "$running_pids" | tr '\n' ' ')"
   printf 'Rebuild, stop the running VoiceBar, and relaunch the fresh app? (y/N) '
@@ -451,7 +460,6 @@ if [ -z "${VOICELAYER_INSTALL_OPERATION:-}" ] && [ -n "$running_pids" ] && [ "${
   esac
 fi
 
-source "$REPO_ROOT/scripts/lib/update-gate.sh"
 vl_update_gate "$REPO_ROOT" bash "$REPO_ROOT/scripts/voicelayer-verify.sh" ${UPDATE_GATE_ARGS[@]+"${UPDATE_GATE_ARGS[@]}"}
 
 if [ "${VOICELAYER_VERIFY_SKIP_BUILD:-0}" = "1" ]; then
@@ -463,34 +471,9 @@ else
   (cd "$REPO_ROOT/flow-bar" && VOICEBAR_ALLOW_BREW_MANAGED_INSTALL=1 ./build-app.sh)
 fi
 
-if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
-  launchd_managed=0
-  if is_voicebar_launchd_managed; then
-    launchd_managed=1
-  fi
-  daemon_pids="$(find_daemon_pids)"
-
-  printf '[voicelayer-verify] stopping old VoiceBar process(es)...\n'
-  pkill -x VoiceBar 2>/dev/null || true
-  if ! wait_for_voicebar_stop "$running_pids"; then
-    printf '[voicelayer-verify] VoiceBar did not stop cleanly; no artifact written.\n' >&2
-    exit 1
-  fi
-
-  stop_daemon_pids "$daemon_pids"
-
-  if [ "$launchd_managed" -eq 1 ]; then
-    if ! new_pids="$(wait_for_launchd_voicebar_relaunch "$running_pids")"; then
-      printf '[voicelayer-verify] launchd did not relaunch VoiceBar; no artifact written.\n' >&2
-      exit 1
-    fi
-    printf '[voicelayer-verify] launchd relaunched VoiceBar with PID(s): %s\n' "$new_pids"
-  else
-    printf '[voicelayer-verify] relaunching VoiceBar.app...\n'
-    open -a VoiceBar
-    sleep 1
-  fi
-fi
+# The build may already have relaunched VoiceBar. The same idempotent restoration
+# runs on every exit (including validation/build faults and signals).
+vl_gate_restore_voicebar
 
 printf "Press F5 in VoiceBar, speak 'verification test', release, confirm paste fired (Y/n) "
 if ! IFS= read -r -t 300 answer; then
