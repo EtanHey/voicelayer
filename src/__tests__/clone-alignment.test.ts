@@ -90,6 +90,15 @@ test("checked task completion consumes spoken-only done without shifting later d
   expect(result.words.some(w => w.text.includes("done"))).toBe(false);
 });
 
+test("URL task completion is skipped by clone timing while the next word keeps its clock", async () => {
+  const { input } = await request("- [x] see https://example.com/a\n- [ ] next");
+  expect(input.speechText).toBe("see example dot com slash a, done. next.");
+  const result = await alignCloneAudio(input);
+  expect(result.reason).not.toBe("invalid");
+  expect(result.words.find(w => w.text === "https://example.com/a")).toMatchObject({ offset_ms: 300, duration_ms: 960 });
+  expect(result.words.find(w => w.text === "next")).toMatchObject({ offset_ms: 1500, duration_ms: 160 });
+});
+
 const offsets = (result: Awaited<ReturnType<typeof alignCloneAudio>>) => result.words.map(w => w.offset_ms);
 const started = (prefix: string) => waitForPidFile(prefix + ".pid");
 function reaped(pid: number) { expect(() => process.kill(pid, 0)).toThrow(); }

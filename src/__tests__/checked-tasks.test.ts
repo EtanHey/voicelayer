@@ -88,3 +88,61 @@ for (const engine of ["edge", "clone"] as const) {
     }
   });
 }
+
+for (const engine of ["edge", "clone"] as const) {
+  for (const [source, expected] of [
+    ["> - [x] Call Dana", "Call Dana, done."],
+    ["- [x] ✅", "✅, done."],
+    ["- [x] להתקשר לדנה", "להתקשר לדנה, done."],
+    ["- [x] Call Dana  \n  continued line\n- [ ] next", "Call Dana continued line, done. next."],
+  ]) test(`${engine} checked task body and continuation: ${source}`, () => {
+    expect(projectSpeakableText(source, [], engine).speechText).toBe(expected);
+    expect(projectStructuredSpeech(source).speechText).toBe(expected);
+  });
+  test(`${engine} a URL cannot absorb the zero-width done insertion`, () => {
+    const source = "- [x] see https://example.com/a\n- [ ] next";
+    const p = projectSpeakableText(source, [], engine);
+    expect(p.speechText).toBe("see example dot com slash a, done. next.");
+    const inserted = p.ranges.filter(r => r.kind === "insertion" && p.speechText.slice(r.speech.start, r.speech.end).includes("done"));
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].display.start).toBe(inserted[0].display.end);
+    const words = alignWordBoundariesToDisplayText(source, p.speechText, timings(p.speechText), p.ranges);
+    expect(words.find(w => w.text === "https://example.com/a")).toMatchObject({ offset_ms: 300, duration_ms: 1400 });
+    expect(words.find(w => w.text === "next")).toMatchObject({ offset_ms: 2100, duration_ms: 200 });
+  });
+  test(`${engine} a stray backtick cannot pair across a fenced block`, () => {
+    const source = "Stray ` before.\n```ts\nconst value = 1;\n```\n- [x] Call Dana `after`";
+    const selection = projectStructuredSpeech(source).speechText;
+    expect(selection).toContain("Call Dana after, done.");
+    expect(projectSpeakableText(source, [], engine).speechText).toContain("Call Dana after, done.");
+  });
+}
+test("selection keeps only spans that require literal protection on a mixed code line", () => {
+  const selected = projectStructuredSpeech("Write `foo` and `[x]` and `echo $1`").speechText;
+  expect(selected).toBe("Write foo and `[x]` and `echo $1`");
+  for (const engine of ["edge", "clone"] as const) {
+    expect(projectSpeakableText(selected, [], engine).speechText).toBe(engine === "clone" ? "Write foo and open bracket x close bracket and echo $1" : "Write foo and [x] and echo $1");
+  }
+});
+
+for (const engine of ["edge", "clone"] as const) test(`${engine} checked literal code keeps a separate completion at the item end`, () => {
+  const source = "- [x] `echo $1`";
+  const p = projectSpeakableText(source, [], engine);
+  expect(p.speechText).toBe("echo $1, done.");
+  const done = p.ranges.find(r => p.speechText.slice(r.speech.start, r.speech.end).includes("done"));
+  expect(done).toMatchObject({ kind: "insertion", display: {start: source.length, end: source.length} });
+  expect(projectSpeakableText(projectStructuredSpeech(source).speechText, [], engine).speechText).toBe("echo $1, done.");
+});
+test("selection literal placeholders never replace captured private-use characters", () => {
+  const source = "Keep \uE0000\uE001 beside `foo` and `echo $1`";
+  expect(projectStructuredSpeech(source).speechText).toBe("Keep \uE0000\uE001 beside foo and `echo $1`");
+});
+
+for (const engine of ["edge", "clone"] as const) test(`${engine} URL commas remain part of the source replacement before completion`, () => {
+  const source = "- [x] see https://example.com/a,b";
+  const p = projectSpeakableText(source, [], engine);
+  const url = p.ranges.find(r => r.kind === "replacement" && r.display.start === source.indexOf("https://"));
+  expect(url?.display.end).toBe(source.length);
+  expect(p.speechText).toBe("see example dot com slash a,b, done.");
+  expect(p.ranges.find(r => p.speechText.slice(r.speech.start, r.speech.end).includes("done"))?.kind).toBe("insertion");
+});

@@ -5,7 +5,7 @@ import type { ProjectionRange } from "./tts/structured-speech";
 export type SpeakableEngine = "edge" | "clone";
 export interface PronunciationRule { pattern: RegExp; replacement: string }
 export interface SpeakableText { displayText: string; speechText: string; ranges: ProjectionRange[] }
-interface Piece { start: number; end: number; text: string; protected?: boolean; atomic?: boolean }
+interface Piece { start: number; end: number; text: string; protected?: boolean; atomic?: boolean; literal?: boolean }
 const ones = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split(" ");
 const tens = "  twenty thirty forty fifty sixty seventy eighty ninety".split(" ");
 function number(raw: string): string {
@@ -168,15 +168,15 @@ function url(raw: string, rules: readonly PronunciationRule[] = [], engine: Spea
 }
 
 /** A replacement owns its whole source span. Never interpolate inside an edit. */
-function rewrite(pieces: Piece[], pattern: RegExp, replace: (match: RegExpExecArray) => string | undefined, protect = false, skipProtected = false): void {
+function rewrite(pieces: Piece[], pattern: RegExp, replace: (match: RegExpExecArray) => string | undefined, protect = false, skipProtected = false, skipLiteral = true): void {
   const input = pieces.map(p => p.text).join("");
   const edits = Array.from(input.matchAll(pattern)).flatMap(m => {
     const text = replace(m);
     return text === undefined ? [] : [{start: m.index, end: m.index + m[0].length, text}];
   });
-  applyEdits(pieces, input, edits, protect, skipProtected);
+  applyEdits(pieces, input, edits, protect, skipProtected, skipLiteral);
 }
-function applyEdits(pieces: Piece[], input: string, edits: {start: number; end: number; text: string}[], protect: boolean, skipProtected = false): void {
+function applyEdits(pieces: Piece[], input: string, edits: {start: number; end: number; text: string}[], protect: boolean, skipProtected = false, skipLiteral = true): void {
   for (const edit of edits.reverse()) {
     if (!protect && input.slice(edit.start, edit.end) === edit.text) continue;
     if (!protect) {
@@ -187,6 +187,22 @@ function applyEdits(pieces: Piece[], input: string, edits: {start: number; end: 
       edit.start += prefix; edit.end -= suffix;
       edit.text = edit.text.slice(prefix, edit.text.length - suffix);
     }
+    // An insertion at a piece boundary owns no display characters, even when
+    // the preceding URL, filename or literal code is an atomic replacement.
+    if (edit.start === edit.end) {
+      let at = 0, inserted = false;
+      for (const [index, piece] of pieces.entries()) {
+        const end = at + piece.text.length;
+        if (edit.start === at && index === 0 || edit.start === end) {
+          const after = edit.start === end;
+          const source = after ? piece.end : piece.start;
+          pieces.splice(index + Number(after), 0, {start: source, end: source, text: edit.text, protected: protect, atomic: true});
+          inserted = true; break;
+        }
+        at = end;
+      }
+      if (inserted) continue;
+    }
     let cursor = 0, first = -1, last = -1, firstOffset = 0, lastOffset = 0;
     for (let i = 0; i < pieces.length; i++) {
       const end = cursor + pieces[i].text.length;
@@ -196,7 +212,7 @@ function applyEdits(pieces: Piece[], input: string, edits: {start: number; end: 
       if (first >= 0 && end >= edit.end) { last = i; lastOffset = edit.end - cursor; break; }
       cursor = end;
     }
-    if (first < 0 || last < 0 || (skipProtected && pieces.slice(first, last + 1).some(p => p.protected))) continue;
+    if (first < 0 || last < 0 || pieces.slice(first, last + 1).some(p => skipProtected && p.protected || skipLiteral && p.literal)) continue;
     const a = pieces[first], b = pieces[last];
     const aIdentity = !a.atomic;
     const bIdentity = !b.atomic;
@@ -214,10 +230,34 @@ function applyEdits(pieces: Piece[], input: string, edits: {start: number; end: 
 /** Pure projection; clone is the default. Runtime callers choose the actual engine. */
 export function projectSpeakableText(displayText: string, rules: readonly PronunciationRule[] = [], engine: SpeakableEngine = "clone"): SpeakableText {
   const pieces: Piece[] = displayText ? [{start: 0, end: displayText.length, text: displayText}] : [];
-  const edit = (pattern: RegExp, replacement: string | ((m: RegExpExecArray) => string | undefined), protect = false, skip = false) =>
-    rewrite(pieces, pattern, typeof replacement === "string" ? () => replacement : replacement, protect, skip);
+  const edit = (pattern: RegExp, replacement: string | ((m: RegExpExecArray) => string | undefined), protect = false, skip = false, skipLiteral = true) =>
+    rewrite(pieces, pattern, typeof replacement === "string" ? () => replacement : replacement, protect, skip, skipLiteral);
   // Structural syntax first. No generated table headers or guessed capture structure.
   if (/[`~]{3}/.test(displayText)) edit(/^\s{0,3}(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^\s{0,3}\1\s*$/gm, "code block", true);
+  const inlineSpans = () => {
+    const spans = new Map<number, number>();
+    let segment = "", offset = 0;
+    const flush = () => { for (const [start, end] of inlineCodeSpanEnds(segment)) spans.set(offset + start, offset + end); offset += segment.length; segment = ""; };
+    for (const piece of pieces) {
+      if (piece.protected && piece.text === "code block") { flush(); offset += piece.text.length; }
+      else segment += piece.text;
+    }
+    flush();
+    return spans;
+  };
+  // Protect code that the prose amount/rate/decimal/filename passes would
+  // rewrite. Remove delimiters here, before any engine text is produced.
+  {
+    const input = pieces.map(p => p.text).join("");
+    const literals = [...inlineSpans()].flatMap(([start, end]) => {
+      const raw = input.slice(start, end), ticks = raw.match(/^`+/)![0].length;
+      const content = raw.slice(ticks, -ticks);
+      return /[$€£¥₪][ \t]*-?\d|\b\d+(?:\.\d+|\/[A-Za-z])|(?:[\w-]+|\.[A-Za-z]+)\.[A-Za-z]/.test(content)
+        ? [{start, end, text: content.replace(/`/g, "")}] : [];
+    });
+    applyEdits(pieces, input, literals, true, true);
+    for (const piece of pieces) if (piece.protected && piece.text !== "code block") piece.literal = true;
+  }
   const tableRows = (): Set<number> => {
     const lines = pieces.map(p => p.text).join("").split("\n");
     const rows = new Set<number>();
@@ -244,7 +284,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   });
   edit(/^[ \t]*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?[ \t]*(?:\r?\n|$)/gm, "");
   const checkboxInput = pieces.map(p => p.text).join("");
-  const codeSpanEnds = inlineCodeSpanEnds(checkboxInput);
+  const codeSpanEnds = inlineSpans();
   const checkboxEdits: {start: number; end: number; text: string}[] = [];
   let checkboxCursor = 0, bracketDepth = 0;
   for (const m of checkboxInput.matchAll(/\[[ xX]\](?!\()/g)) {
@@ -257,12 +297,14 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     }
     if (checkboxCursor > m.index || bracketDepth) continue;
     const prefix = m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1, m.index);
-    const list = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix);
+    const list = /^[ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix);
     if (!list && !(/^[ \t]*$/.test(prefix) && /^(?:$|[\s"'”’.,;:!?)])/.test(m.input.slice(m.index + m[0].length)))) continue;
     checkboxEdits.push({start: m.index, end: m.index + m[0].length, text: ""});
     if (list && m[0] !== "[ ]") {
-      const body = m.input.slice(m.index + m[0].length).split(/\r?\n/, 1)[0].trimEnd();
-      if (/[\p{L}\p{N}]/u.test(body)) {
+      const tail = m.input.slice(m.index + m[0].length);
+      // A wrapped item's indented continuation belongs before its completion.
+      const body = tail.match(/^[^\r\n]*(?:\r?\n[ \t]+(?![-+*][ \t]|\d+[.)][ \t])[^\r\n]+)*/)?.[0].trimEnd() ?? "";
+      if (/[\p{L}\p{N}\p{S}]/u.test(body)) {
         const end = m.index + m[0].length + body.length;
         const punctuation = body.match(/[.!?,;:]+$/)?.[0].length ?? 0;
         if (punctuation) checkboxEdits.push({start: end - punctuation, end, text: ""});
@@ -272,15 +314,15 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     }
   }
   checkboxEdits.sort((a, b) => a.start - b.start || a.end - b.end);
-  applyEdits(pieces, checkboxInput, checkboxEdits, false);
-  edit(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
+  for (const change of checkboxEdits.reverse()) applyEdits(pieces, pieces.map(p => p.text).join(""), [change], change.start === change.end, true);
+  edit(/^([ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+(?:\r?\n[ \t]+(?![-+*][ \t]|\d+[.)][ \t])[^\r\n]+)*)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
   // Keep the marker's own source span: alignment maps the spoken number back to it.
   edit(/^[ \t]*(\d+)[.)](?=[ \t]+)/gm, m => {
     const line = m.input.slice(m.index).split(/\r?\n/, 1)[0];
     // Let the voice frontend pronounce digits in Hebrew rather than injecting English.
     return `${/[\u0590-\u05ff]/.test(line) || m[1].length > 2 ? m[1] : number(m[1])}.`;
   }, true);
-  edit(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+)/gm, "");
+  edit(/^[ \t]*(?:>[ \t]*)?(?:#{1,6}[ \t]+|[-+*][ \t]+)|^[ \t]*>[ \t]?/gm, "");
   edit(/!?\[([^\]\n]+)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, m => m[1]);
   if (engine === "clone") {
     const input = pieces.map(p => p.text).join("");
@@ -341,17 +383,24 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   }, true);
   // Speak amounts before paths can mistake a rate for a basename. Keep the
   // entire amount/rate atomic so downstream identifiers cannot alter it.
-  edit(/(-?[$€£¥₪])[ \t]*(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:[ \t]?(USD|EUR|GBP|ILS|JPY))?(?:\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year))?(?![\p{L}\p{N}_]|\.\d)/gu, m => {
-    const symbol = m[1].at(-1)!;
-    // Preserve contradictory units rather than silently choosing one.
-    if (m[3] && currencySymbols[m[3]] !== symbol || m[1].startsWith("-") && m[2].startsWith("-")) return m[0];
-    const amount = (m[1].startsWith("-") ? "-" : "") + m[2];
-    return `${decimal(amount)} ${currencies[symbol][Math.abs(Number(amount.replace(/,/g, ""))) === 1 ? 0 : 1]}${m[4] ? " per " + rateUnits[m[4]] : ""}`;
+  const hebrewLine = (m: RegExpExecArray) => /[\u0590-\u05ff]/.test(m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1).split(/\r?\n/, 1)[0]);
+  edit(/-?[$€£¥₪][ \t]*-?\d+(?:,\d{3})*(?:\.\d+)?(?:[ \t]?(?:USD|EUR|GBP|ILS|JPY))?(?:[A-Za-z]+)?(?:[./][\p{L}\p{N}_./-]+)?(?![\p{L}\p{N}_])/gu, m => {
+    const trailing = m[0].match(/[.,!?;:]+$/)?.[0] ?? "";
+    const parsed = m[0].slice(0, m[0].length - trailing.length).match(/^(-?)([$€£¥₪])[ \t]*(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:[ \t]?(USD|EUR|GBP|ILS|JPY))?(?:\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year))?$/);
+    if (!parsed || hebrewLine(m)) return m[0];
+    const [, sign, symbol, digits, code, unit] = parsed;
+    if (code && currencySymbols[code] !== symbol || sign && digits.startsWith("-")) return m[0];
+    const before = m.input[m.index - 1] ?? "";
+    const negative = sign && (!before || /[\s(]/.test(before));
+    const amount = (negative ? "-" : "") + digits;
+    const singular = !digits.includes(".") && Math.abs(Number(digits.replace(/,/g, ""))) === 1;
+    const spoken = `${decimal(amount)} ${currencies[symbol][singular ? 0 : 1]}${unit ? " per " + rateUnits[unit] : ""}`;
+    const prefix = sign && !negative ? "-" : /[\p{L}\p{N}]/u.test(before) ? " " : "";
+    const after = m.input[m.index + m[0].length] ?? "";
+    return prefix + spoken + trailing + (/[\p{L}\p{N}]/u.test(after) ? " " : "");
   }, true, true);
-  // Unsupported amount suffixes stay lexical, without partial integer rewrites.
-  edit(/-?[$€£¥₪][ \t]*-?\d+(?:,\d{3})*(?:\.\d+)?[A-Za-z]+/g, m => m[0], true, true);
-  edit(/(?<![\p{L}\p{N}_./])(-?\d+(?:,\d{3})*(?:\.\d+)?)\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year)(?![\p{L}\p{N}_/])/gu,
-    m => `${decimal(m[1])} per ${rateUnits[m[2]]}`, true, true);
+  edit(/(?<![\p{L}\p{N}_./])(-?\d+(?:,\d{3})*(?:\.\d+)?)\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year)(?![\p{L}\p{N}_/]|\.[\p{L}\p{N}])/gu,
+    m => hebrewLine(m) ? m[0] : `${decimal(m[1])} per ${rateUnits[m[2]]}`, true, true);
   // Keep fractions and times out of path/identifier rules.
   edit(/(?<![\w./])\d+(?:\/\d+)+(?![\w./])/g, m => m[0], true);
   edit(/(?<![\w:])(?:\d{1,2}:\d{2}(?::\d{2})?(?:[ \t]?[AP]M)?|\d{1,2}[AP]M)(?![\w:])/gi, m => m[0], true);
@@ -407,21 +456,34 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     const spoken = projectSpeakableText(stem, rules, engine).speechText + (spokenExtension ? ` dot ${spokenExtension}` : "");
     applyEdits(pieces, pieces.map(p => p.text).join(""), [{start: left, end: right, text: spoken}], true);
   }
-  edit(/(?:https?:\/\/|www\.)[^\s<>\])`]+/g, m => {
-    const trailing = m[0].match(/[.,!?;:]+$/)?.[0] ?? "";
-    return url(m[0].slice(0, m[0].length - trailing.length), [], engine) + trailing;
-  }, true, true);
+  {
+    const input = pieces.map(p => p.text).join("");
+    let offset = 0;
+    const insertions = pieces.flatMap(piece => {
+      const start = offset; offset += piece.text.length;
+      return piece.start === piece.end && piece.protected ? [start] : [];
+    });
+    const urls = Array.from(input.matchAll(/(?:https?:\/\/|www\.)[^\s<>\])`]+/g)).map(m => {
+      // A generated completion is a boundary, while commas in a source URL
+      // remain part of that URL's single display/timing replacement.
+      const end = Math.min(m.index + m[0].length, insertions.find(at => at > m.index) ?? input.length);
+      const raw = input.slice(m.index, end), trailing = raw.match(/[.,!?;:]+$/)?.[0] ?? "";
+      return {start: m.index, end, text: url(raw.slice(0, raw.length - trailing.length), [], engine) + trailing};
+    });
+    applyEdits(pieces, input, urls, true, true);
+  }
   edit(/\bHTTP\/(\d+)\b/gi, m => `H T T P ${number(m[1])}`, true, true);
   const paths = engine === "clone"
     ? /(?<![A-Za-z0-9\u0080-\uffff_])(?:[A-Za-z]:[\\/]|\.{0,2}[\\/]|[\p{L}\p{M}\p{N}_.-]+[\\/])[\p{L}\p{M}\p{N}_./\\-]+/gu
     : /(?<![A-Za-z0-9\u0080-\uffff_])(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+/gu;
   edit(paths, m => {
     const raw = m[0].replace(/[.,;:!?]+$/, "");
-    const spoken = engine === "clone" ? clonePath(raw) : filename(raw, engine);
+    const spoken = engine === "clone" || /^\d+\//.test(raw) ? clonePath(raw) : filename(raw, engine);
     return spoken + (m[0].match(/[.,;:!?]+$/)?.[0] ?? "");
   }, true, true);
   // Extension components require dots so letter runs have only one partition.
   edit(/(?<![A-Za-z0-9\u0080-\uffff_.])(?:v|V|\^|~)?\d+(?:\.\d+)+(?:-(?:rc|alpha|beta)(?:\.\d+)?)?(?![A-Za-z0-9\u0080-\uffff_])/gu, m => {
+    if (hebrewLine(m)) return m[0];
     const before = m.input.slice(Math.max(0, m.index - 40), m.index);
     if (/[$€£¥₪]\s*$/.test(before) || (!/^[vV^~]/.test(m[0]) && !/(?:\b(?:version|release|semver)\s+|[<>]=?\s*)$/i.test(before))) return undefined;
     let raw = m[0], prefix = "";
@@ -429,9 +491,12 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     const [core, suffix] = raw.split("-");
     return prefix + core.split(".").map(number).join(" point ") + (suffix ? " " + suffix.replace(/^rc/, "release candidate").split(".").map(p => /^\d+$/.test(p) ? number(p) : p).join(" ") : "");
   }, true, true);
-  edit(/(?<![\p{L}\p{N}_,./])-?\d+(?:,\d{3})*(?:\.\d+)+(?![\p{L}\p{N}_/]|\.[\p{L}\p{N}])/gu, m => {
-    // Calendar dates stay lexical; explicit versions were handled above.
-    if (/^(?:\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4})$/.test(m[0])) return undefined;
+  edit(/(?<![\p{L}\p{N}_./])(?:-?\d+(?:,\d{3})*\.\d+|-\d+(?:,\d{3})*)(?![\p{L}\p{N}_/]|\.[\p{L}\p{N}])/gu, m => {
+    if (hebrewLine(m)) return m[0];
+    const before = m.input[m.index - 1] ?? "";
+    if (m[0].startsWith("-") && before && !/[\s(]/.test(before)) return m[0];
+    // A comma joining decimals is prose; a malformed grouped integer is not.
+    if (before === "," && /(?:^|[^\p{L}\p{N}_.])\d+(?:,\d+)*,$/u.test(m.input.slice(0, m.index))) return m[0];
     return decimal(m[0]);
   }, true, true);
   edit(/\b0x[0-9a-f]+\b|\b(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gi, m => {
@@ -453,8 +518,8 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     edit(/[{}\[\]]/g, m => " " + ({"{": "open brace", "}": "close brace", "[": "open bracket", "]": "close bracket"}[m[0]]) + " ");
     edit(/["“”]/g, m => /[\p{L}\p{N}]/u.test(m.input[m.index - 1] ?? "") && /[\p{L}\p{N}]/u.test(m.input[m.index + 1] ?? "") ? " " : "");
   }
-  edit(/\s+/g, " ");
-  edit(/^ | $/g, "");
+  edit(/\s+/g, " ", false, false, false);
+  edit(/^ | $/g, "", false, false, false);
   let speech = 0;
   const ranges: ProjectionRange[] = pieces.map(p => {
     const start = speech; speech += p.text.length;

@@ -56,7 +56,7 @@ const cases: [string, string][] = [
   ["../part2-layout/v4/", "dot dot slash part two layout slash v four"],
   ["C:\\part2-layout\\v4\\", "C: slash part two layout slash v four"],
   ["part2-layout/v4/ part2-layout/v4/", "part two layout slash v four part two layout slash v four"],
-  ["5,000 mm and 1 mm, 0.5 mm or -5 mm.", "5,000 millimeters and 1 millimeter, zero point five millimeters or -5 millimeters."],
+  ["5,000 mm and 1 mm, 0.5 mm or -5 mm.", "5,000 millimeters and 1 millimeter, zero point five millimeters or minus five millimeters."],
   ["5 mmHg, 5 MM, 5 mms, 5 mm2; mmm", "5 mm hg, 5 MM, 5 mms, 5 mm two; mmm"],
   ["שלום 5,000 mm", "שלום 5,000 millimeters"],
   ["5,00 mm and 5..0 mm", "5,00 mm and 5..0 mm"],

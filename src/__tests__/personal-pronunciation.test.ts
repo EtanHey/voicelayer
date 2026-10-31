@@ -93,7 +93,8 @@ test("a concurrent private-map edit refuses before reading or replacing another 
   try {
     expect(run(["add", "--term", "OTHER", "--say", "Other"])).toBe(1);
     expect(run(["remove", "--term", "ACMEX"])).toBe(1);
-    expect(errors.join("")).toContain("busy");
+    expect(errors).toEqual(Array(2).fill(`Pronunciation list is busy. If no other edit is running, remove ${path}.lock and retry.\n`));
+    expect(statSync(path + ".lock").isDirectory()).toBe(true);
     expect(readFileSync(path, "utf8")).toBe(original);
   } finally { rmSync(path + ".lock", { recursive: true }); }
   expect(run(["add", "--term", "OTHER", "--say", "Other"])).toBe(0);
@@ -108,4 +109,18 @@ test("bundled pronunciation tables contain no private or synthetic entries", () 
   const privateDigests = new Set(["89a9813b2f22485c43bea6237b6c4876b524ef9c718a082d55fe782a02bba759"]);
   expect(tokens.filter(token => privateDigests.has(createHash("sha256").update(token.toLowerCase()).digest("hex")))).toEqual([]);
   expect(tokens).not.toContain("ACMEX");
+});
+
+test("removing an absent term fails without replacing or creating the list", () => {
+  const { env, path } = fixture();
+  const errors: string[] = [];
+  const run = () => runPronunciationCli(["remove", "--term", "NOPE"], { env, stdout: () => {}, stderr: s => errors.push(s) });
+  expect(run()).toBe(1);
+  expect(() => statSync(path)).toThrow();
+  writeFileSync(path, '{ "ACMEX": "Acmex" }\n');
+  const before = statSync(path);
+  expect(run()).toBe(1);
+  expect(readFileSync(path, "utf8")).toBe('{ "ACMEX": "Acmex" }\n');
+  expect(statSync(path).ino).toBe(before.ino);
+  expect(errors.join("")).toContain("NOPE was not in the pronunciation list");
 });

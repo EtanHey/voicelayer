@@ -188,13 +188,14 @@ export function updatePersonalPronunciation(term: string, spoken: string | undef
   const lock = `${path}.lock`;
   try { mkdirSync(lock, { mode: 0o700 }); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Pronunciation list is busy; retry the edit");
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`Pronunciation list is busy. If no other edit is running, remove ${lock} and retry.`);
     throw error;
   }
   try {
     const entries = new Map(Object.entries(readPersonalPronunciations(env)));
-    if (spoken === undefined) entries.delete(term);
-    else entries.set(term, spoken);
+    if (spoken === undefined) {
+      if (!entries.delete(term)) throw new Error(`${term} was not in the pronunciation list`);
+    } else entries.set(term, spoken);
     const staging = mkdtempSync(`${path}.`);
     try {
       const tmp = join(staging, "map.json");

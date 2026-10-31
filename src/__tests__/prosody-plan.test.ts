@@ -70,8 +70,8 @@ describe("R-ONE clone list numbers", () => {
     {
       name: "Hebrew",
       source: "1. שלום עולם.\n2. האם זה עובד?\n3) גרסה 3.14 נשמרת!",
-      markdown: "1, שלום עולם. 2, האם זה עובד? 3, גרסה three point one four נשמרת!",
-      selection: "1, שלום עולם. 2, האם זה עובד? 3) גרסה three point one four נשמרת!",
+      markdown: "1, שלום עולם. 2, האם זה עובד? 3, גרסה 3.14 נשמרת!",
+      selection: "1, שלום עולם. 2, האם זה עובד? 3) גרסה 3.14 נשמרת!",
     },
     {
       name: "parenthesized sentence stops",

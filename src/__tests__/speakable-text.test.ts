@@ -29,13 +29,13 @@ const corpus: [string, string][] = [
   ["https://github.com/Blaizzy/mlx-audio/issues/910", "link to github dot com"],
   ["POST http://localhost:8880/v1/audio/speech", "POST localhost port eight eight eight zero slash version one slash audio slash speech"],
   ["uv tool install --force mlx-audio --prerelease=allow", "U V tool install dash dash force M L X audio dash dash prerelease equals allow"],
-  ["Check if `repetition_penalty >= 1.5` in _generate_icl.", "Check if repetition penalty greater than or equal to one point five in generate I C L."],
+  ["Check if `repetition_penalty >= 1.5` in _generate_icl.", "Check if repetition_penalty >= 1.5 in generate I C L."],
   ["```python\nmodel = load_model(\"Qwen3\")\n```", "code block"],
   ["| Model | Latency |\n|---|---|\n| Qwen3 | 97ms |", "Model, Latency. qwen three, ninety-seven milliseconds."],
   ["- Install espeak-ng\n- Run KPipeline", "Install espeak N G. Run K pipeline."],
   ["Send a REST API payload via gRPC to AWS S3.", "Send a rest A P I payload via G R P C to A W S S three."],
   ["Compiled for macOS 14 arm64 on M4 Max GPU.", "Compiled for mac O S 14 arm sixty-four on M four Max G P U."],
-  ["שגיאה בקובץ INCIDENT-INVENTORY.md בגרסה v2.2.43", "שגיאה בקובץ incident inventory dot M D בגרסה version two point two point forty-three"],
+  ["שגיאה בקובץ INCIDENT-INVENTORY.md בגרסה v2.2.43", "שגיאה בקובץ incident inventory dot M D בגרסה v2.2.43"],
   ["הרץ את הפקודה --join_audio כדי לשמור קובץ MP3", "הרץ את הפקודה dash dash join audio כדי לשמור קובץ M P three"],
 ];
 for (const [display, speech] of corpus) test(display, () => {
@@ -213,9 +213,9 @@ test("ranges partition original and spoken UTF-16, including repeated words and 
   expect(projectSpeakableText("שלוםMP3 עולם_חדש").speechText).toBe("שלוםMP3 עולם_חדש");
 });
 
-test("ordinary prose and Hebrew survive while decimals expand", () => {
+test("Hebrew lines retain digits without English number words", () => {
   const text = "Hello, don't cut 3.14 or -5. שָׁלוֹם 123!";
-  expect(projectSpeakableText(text).speechText).toBe("Hello, don't cut three point one four or -5. שָׁלוֹם 123!");
+  expect(projectSpeakableText(text).speechText).toBe(text);
 });
 
 for (const text of ["Is that OK with you?", "The meeting is at 3 PM tomorrow.", "US AM PM ID TV UK CEO ABC XYZ", "Meet on 2026.10.15 please.", "2026-10-15, 15.10.2026, 10/15/2026 and 1/2", "At 3:50PM or 10:30 AM and 23:59:02 or 10AM."]) test(`prose passthrough: ${text}`, () => {
