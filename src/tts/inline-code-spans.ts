@@ -28,10 +28,11 @@ export function inlineCodeSpanEnds(input: string, includeUnpaired = false): Map<
     let backslashes = 0;
     for (let at = run.index - 1; at >= 0 && input[at] === "\\"; at--) backslashes++;
     const escaped = backslashes % 2;
+    // A fully escaped tick is prose; a longer run can still open after it.
+    if (run[0].length > escaped) openingOffsets.set(i, run.index + escaped);
     const closing = nextRunByLength.get(run[0].length - escaped);
     if (closing !== undefined) {
       closingRuns.set(i, closing);
-      openingOffsets.set(i, run.index + escaped);
     }
     nextRunByLength.set(run[0].length, i);
   }
@@ -39,8 +40,8 @@ export function inlineCodeSpanEnds(input: string, includeUnpaired = false): Map<
   for (let i = 0; i < runs.length; i++) {
     const closing = closingRuns.get(i), start = openingOffsets.get(i);
     if (closing === undefined || start === undefined) {
-      if (includeUnpaired && !fenced.has(i) && !fenceOffsets.has(runs[i].index)) {
-        const at = runs[i].index;
+      if (includeUnpaired && start !== undefined && !fenced.has(i) && !fenceOffsets.has(runs[i].index)) {
+        const at = start;
         const end = input.slice(at).search(/[\r\n]/);
         const lineEnd = end < 0 ? input.length : at + end;
         ends.set(at, lineEnd);

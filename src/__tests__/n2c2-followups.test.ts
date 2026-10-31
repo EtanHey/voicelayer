@@ -70,3 +70,12 @@ for (const engine of ["edge", "clone"] as const) {
     }
   });
 }
+
+for (const engine of ["edge", "clone"] as const) {
+  for (const [source, expected] of [
+    ["Escaped \\` before $5", "Escaped \\ before five dollars"],
+    ["Escaped \\` then [`reply-draft.md`](https://example.com) $5", "Escaped \\ then reply draft dot M D five dollars"],
+  ]) test(`${engine} escaped backticks cannot protect later prose: ${source}`, () => {
+    expect(projectSpeakableText(source, [], engine).speechText).toBe(expected);
+  });
+}
