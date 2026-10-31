@@ -675,7 +675,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       [["list-item", 0, 1, true]],
       [["list-item", 0, 1, false], ["list-item", 1, 3, true]],
     ]);
-    expect(synths.map(synth => synth.argv.find(arg => arg.startsWith("--text=")))).toEqual(["--text=two.", "--text=Alpha.", "--text=3.", "--text=Beta."]);
+    expect(synths.map(synth => synth.argv.find(arg => arg.startsWith("--text=")))).toEqual(["--text=two.", "--text=Alpha.", "--text=three.", "--text=Beta."]);
     expect(events.filter(event => event.type === "subtitle").flatMap(event => event.words.map((word: { text: string }) => word.text)))
       .toEqual(["2.", "Alpha.", "3.", "Beta."]);
     expect(played.every(event => event.request_id === "structured-read")).toBe(true);

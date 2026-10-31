@@ -1,7 +1,8 @@
-export function inlineCodeSpanEnds(input: string): Map<number, number> {
+export function inlineCodeSpanEnds(input: string, includeUnpaired = false): Map<number, number> {
   // Fences divide inline parsing regions: a stray tick before a block cannot
   // pair with a tick in or after that block. Keep offsets in the original text.
   const fences = Array.from(input.matchAll(/^[ \t]{0,3}(`{3,}|~{3,})[^\r\n]*$/gm));
+  const fenceOffsets = new Set(fences.map(f => f.index! + f[0].indexOf(f[1])));
   const boundaries: { start: number; end: number }[] = [];
   let open: RegExpMatchArray | undefined;
   for (const fence of fences) {
@@ -15,6 +16,7 @@ export function inlineCodeSpanEnds(input: string): Map<number, number> {
   const nextRunByLength = new Map<number, number>();
   const closingRuns = new Map<number, number>();
   const openingOffsets = new Map<number, number>();
+  const fenced = new Set<number>();
   for (let i = runs.length - 1; i >= 0; i--) {
     const run = runs[i];
     while (region >= 0 && run.index < boundaries[region].end) {
@@ -22,7 +24,7 @@ export function inlineCodeSpanEnds(input: string): Map<number, number> {
       if (run.index >= boundaries[region].start) break;
       region--;
     }
-    if (region >= 0 && run.index >= boundaries[region].start && run.index < boundaries[region].end) continue;
+    if (region >= 0 && run.index >= boundaries[region].start && run.index < boundaries[region].end) { fenced.add(i); continue; }
     let backslashes = 0;
     for (let at = run.index - 1; at >= 0 && input[at] === "\\"; at--) backslashes++;
     const escaped = backslashes % 2;
@@ -36,7 +38,17 @@ export function inlineCodeSpanEnds(input: string): Map<number, number> {
   const ends = new Map<number, number>();
   for (let i = 0; i < runs.length; i++) {
     const closing = closingRuns.get(i), start = openingOffsets.get(i);
-    if (closing === undefined || start === undefined) continue;
+    if (closing === undefined || start === undefined) {
+      if (includeUnpaired && !fenced.has(i) && !fenceOffsets.has(runs[i].index)) {
+        const at = runs[i].index;
+        const end = input.slice(at).search(/[\r\n]/);
+        const lineEnd = end < 0 ? input.length : at + end;
+        ends.set(at, lineEnd);
+        // Unpaired protection owns the rest of its line, with no overlapping spans.
+        while (i + 1 < runs.length && runs[i + 1].index < lineEnd) i++;
+      }
+      continue;
+    }
     ends.set(start, runs[closing].index + runs[closing][0].length);
     i = closing;
   }

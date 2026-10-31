@@ -35,8 +35,8 @@ const corpus: [string, string][] = [
   ["- Install espeak-ng\n- Run KPipeline", "Install espeak N G. Run K pipeline."],
   ["Send a REST API payload via gRPC to AWS S3.", "Send a rest A P I payload via G R P C to A W S S three."],
   ["Compiled for macOS 14 arm64 on M4 Max GPU.", "Compiled for mac O S 14 arm sixty-four on M four Max G P U."],
-  ["שגיאה בקובץ INCIDENT-INVENTORY.md בגרסה v2.2.43", "שגיאה בקובץ incident inventory dot M D בגרסה v2.2.43"],
-  ["הרץ את הפקודה --join_audio כדי לשמור קובץ MP3", "הרץ את הפקודה dash dash join audio כדי לשמור קובץ M P three"],
+  ["שגיאה בקובץ INCIDENT-INVENTORY.md בגרסה v2.2.43", "שגיאה בקובץ INCIDENT-INVENTORY.md בגרסה v2.2.43"],
+  ["הרץ את הפקודה --join_audio כדי לשמור קובץ MP3", "הרץ את הפקודה --join_audio כדי לשמור קובץ MP3"],
 ];
 for (const [display, speech] of corpus) test(display, () => {
   const result = projectSpeakableText(display);

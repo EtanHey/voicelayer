@@ -157,7 +157,7 @@ for (const engine of ["edge", "clone"] as const) {
   ]) test(`${engine} list boundaries keep each task's completion with its own body: ${source}`, () => {
     expect(projectSpeakableText(source, [], engine).speechText).toBe(expected);
     const selected = projectStructuredSpeech(source).speechText;
-    expect(projectSpeakableText(selected, [], engine).speechText).toBe(source.includes("1. Child") ? "Parent, done. 1. Child." : expected);
+    expect(projectSpeakableText(selected, [], engine).speechText).toBe(expected);
   });
   for (const code of ["`a[0]`", "`[`", "`cost=$5 [`", "`a[0.5`", "`a[0.5]`"]) {
     test(`${engine} code brackets do not change the state of a later task: ${code}`, () => {

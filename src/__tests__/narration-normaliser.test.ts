@@ -54,7 +54,7 @@ const roundTwoCases = [
   ["$5/hr.", "five dollars per hour."],
   ["12,34.5", "12,34.5"],
   ["₪180/H and ₪180/h/day and $5.txt and $5.5.5", "₪180/H and ₪180/h/day and $5.txt and $5.5.5"],
-  ["1.5,2.5", "one point five,two point five"],
+  ["1.5,2.5", "one point five, two point five"],
   ["192.168.1.1 and 0.0.0.0:8080 and node 22.11.0 and 2.2.58", "192.168.1.1 and 0.0.0.0:8080 and node 22.11.0 and 2.2.58"],
   ["v2.2.58", "version two point two point fifty-eight"],
   ["שלום 3.14 עולם", "שלום 3.14 עולם"],

@@ -159,7 +159,7 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     const handle = speakLongRead(text, { engine: "clone", voice: "fixture", rate: "+0%" }, Date.now(), { structuredDisplay: structure });
     handles.push(handle); await handle.done;
     expect(clone.mock.calls.map(call => call[0])).toEqual(["Release notes.", "Fixed.", "the pill no longer jumps.",
-      ...(selection ? ["1, First item.", "2, Second item."] : ["one, First item.", "two, Second item."])]);
+      ...["one, First item.", "two, Second item."]]);
   });
 
   it("S1 structured clone fallback keeps actual engine provenance and Edge word timings", async () => {
