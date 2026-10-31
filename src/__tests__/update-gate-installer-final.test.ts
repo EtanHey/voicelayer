@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { afterEach, test, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmdirSync, cpSync } from "node:fs";
 import { join } from "node:path";
 import { fixture, waitFor } from "./update-gate-installer.test";
@@ -6,6 +6,9 @@ import * as installer from "../update-gate-installer";
 import { installerProcessIdentity } from "../update-gate-installer-participant";
 import { updateVoiceGate, acknowledgeVoiceDrain } from "../update-gate-admission";
 const repo = process.cwd();
+const originalGate = process.env.VOICELAYER_UPDATE_GATE_PATH, originalProof = process.env.VOICELAYER_TEST_INSTALL_PROOF;
+// fixture() points the process gate at its own gate; restore it here too (see the last test in this file).
+afterEach(() => { process.env.VOICELAYER_UPDATE_GATE_PATH = originalGate; process.env.VOICELAYER_TEST_INSTALL_PROOF = originalProof; });
 const timeout = 30_000;
 test("proof exceptions are false without orphan locks or diagnostic poisoning", () => {
   const f = fixture("idle");
@@ -147,3 +150,11 @@ test("copied committed operation with an arbitrary live PID cannot validate", as
     expect(await new Response(nested.stderr).text()).toContain("UNKNOWN");
   }
 }, timeout);
+
+// Runs last in this file. When update-gate-installer.test.ts was already loaded as its own file, its module-level
+// afterEach does not cover these tests, and a leaked fixture gate (possibly left closed) became the gate of every
+// later voice suite in the same Bun process: all their admissions were refused.
+test("installer fixtures leave the process gate environment as it was", () => {
+  expect(process.env.VOICELAYER_UPDATE_GATE_PATH).toBe(originalGate);
+  expect(process.env.VOICELAYER_TEST_INSTALL_PROOF).toBe(originalProof);
+});
