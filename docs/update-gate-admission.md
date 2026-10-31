@@ -23,3 +23,63 @@ These are G3 entry criteria, not fixes implemented in G2d. The updater remains N
 - **Commit race (SHOULD-FIX 3 / Macroscope :75):** APPLIED COMMIT alone does not authorize quit, unload or replacement. Before the first mutation, wait a short, explicitly specified grace period, then re-check diagnostic entries, the admission ledger and participant identity/acknowledgements. Any new marker/record or missing/contradictory evidence aborts the swap and enters recovery. G3 must supply a serialized abort/authorization handshake and a race test so a fail-open admission after the initial snapshot cannot be missed; a grace timeout never turns UNKNOWN into idle.
 - **Crashed updater lease (SHOULD-FIX 4):** prove owner liveness using process identity, not PID age alone. A proven-dead lease owner becomes durable fault evidence so voice uses immediate unregistered admission. Unverifiable liveness is UNKNOWN. Never expire/reap a lock, silently reopen a generation, or mutate an app merely because a heartbeat is old. Test death in DRAINING and PREPARED.
 - **Verified recovery and orphaned registrations (NIT 2):** if closeSync or lock removal fails after a registration rename, the caller may return an unregistered fallback while the published ledger record has no release closure. It remains blocking evidence. Recovery must reconcile those records, retained locks, diagnostic markers and uncertain PREPARED/COMMITTED bytes, prove the owning operation/process is no longer active, and only then retire owned evidence and restart/rejoin the participant. G2d never ages out or removes those records. Qualify recovery without stopping live dictation and preserve archived words throughout.
+
+## Native admission and live participant adapter (G3)
+
+`NativeUpdateGate` uses the same nonrecursive mkdir lock, strict state schema and
+readable-directory ledger predicate. Swift never writes, bootstraps or repairs gate
+state. A missing gate admits voice unregistered without a marker while the daemon
+initializes; the updater already refuses missing state. Malformed evidence, unsafe
+ledgers, diagnostics and exhausted lock contention admit voice unregistered with
+sticky fault evidence. Native synchronous admissions spin for at most 2 ms on a
+healthy lock collision before diagnosing, matching TS. Only a valid closed gate
+refuses playback. Drain ACK observations refuse UNKNOWN on contention without
+diagnosing a healthy holder; no lock or another owner's registration is reaped.
+
+History's `SettingsAudioPlayback` registers before AVAudioPlayer construction using
+exclusive 0600 staging and rename, with no media sync on the audio boundary. Its
+record spans queued clips, and releases after synchronous backend Stop, failed
+start or final playback completion. Release contention retries its own record.
+F5, Option+F5, replay, retranscription and previews already use G2 daemon admission;
+the native level meter separately registers before opening input (including the
+pre-daemon PTT transition) and retains that admission through wake restart until
+confirmed meter stop/shutdown. Capture wiring and User Stop are unchanged.
+
+Menu, Apple-event and SIGTERM quits refuse during capture, pending handoffs,
+transcription, TTS or History playback, or a valid DRAINING/PREPARED/COMMITTED gate.
+OPEN ignores orphan ledger records; missing, malformed, diagnostic or degraded
+gates permit quit when no live work remains. Inactive disconnected/error modes
+permit quit but never prove update-drain idle. Refusal uses the existing notice band.
+Controlled quit additionally needs the exact COMMITTED lease and is final before
+its ACK is returned; later ingress cannot cancel it. Singleton replacement
+never escalates an incumbent's graceful refusal to force termination. SIGKILL and
+OS force-quit cannot be prevented. A supervising SIGTERM timeout can escalate to
+SIGKILL. Singleton replacement waits both daemon stop intervals plus a one-second
+margin (3 seconds) before treating a surviving incumbent as a refusal. Startup
+failures can leave before owning a server.
+
+The authenticated daemon control endpoint adds `cmd:update_gate_drain|update_gate_quit`,
+`lease`, and its existing private control `token`. It returns UNKNOWN or
+`{kind:"ACKNOWLEDGED",native,daemon,identities}`. Both ACKs retain G2's exact
+`{lease,activeOperations:0,openArchives:0}` format; identities separately contain
+native/daemon `{pid,incarnation}`. Each call brackets a fresh native round trip
+with G2's in-lock snapshot, never a cached ACK. Adopted/unowned daemons refuse.
+
+Wire request `type:update_gate_drain` and reply `cmd:update_gate_drain_ack` carry
+`action:drain|quit,id,pid,incarnation,lease,mac`. HMAC-SHA256 signs UTF-8
+`kind|id|pid|incarnation|generation|operationId|ownerId|targetSha`; kind is the action
+for a request and `ack-` plus the action for a reply. UUID case is preserved.
+An app-incarnation secret is inherited by its owned daemon child and that child's
+descendant processes; it is never persisted. OS peer PID plus owned-child identity
+is the binding, so inheritance alone does not authorize another process.
+Native validates the owned child and OS socket peer PID, one command owner, one
+running VoiceBar bundle identity, pending work and ledger. Nonces, timeout and
+disconnect fence replies. A quit may disconnect before the RPC reply: UNKNOWN
+never proves exit. The updater must observe exact process exit itself.
+
+Receipts are participant evidence, not installer authorization. Target verification,
+off-socket competing-owner probes, mutation fencing, owner liveness and recovery
+remain updater work. Swift/Bun tests prove isolated behavior; installed-app and
+real-agent qualification remain with the lead. Tests inject private temporary gate
+paths into system players and VoiceState; production does not detect test runners.
+No drain writes Stop/Cancel signals.

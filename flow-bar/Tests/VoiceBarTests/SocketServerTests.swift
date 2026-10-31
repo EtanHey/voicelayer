@@ -9,6 +9,32 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testDrainUsesOSPeerPIDAndRepliesOnlyToTheSingleDaemonOwner() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        var calls = 0
+        fixture.server.onUpdateGateDrain = { request in
+            calls += 1
+            return ["cmd": "update_gate_drain_ack", "id": request["id"]!]
+        }
+        func send(_ pid: Int32, to fd: Int32) throws {
+            try writeLine("{\"type\":\"update_gate_drain\",\"id\":\"synthetic\",\"pid\":\(pid)}", to: fd)
+        }
+        try send(getpid() + 1, to: fixture.commandClient)
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.05))
+        try send(getpid(), to: fixture.legacyClient)
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.05))
+        XCTAssertEqual(calls, 0)
+        try send(getpid(), to: fixture.commandClient)
+        XCTAssertTrue(waitUntil(timeout: 1) { calls == 1 })
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains("update_gate_drain_ack"))
+        XCTAssertEqual(calls, 1)
+        try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":111,"accepts_commands":true}"#, to: fixture.legacyClient)
+        try send(getpid(), to: fixture.commandClient)
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.05))
+        XCTAssertEqual(calls, 1, "competing command owners must remain UNKNOWN")
+    }
+
     func testPRIV1DroppedSpeakTextLogsOnlyMetadata() throws {
         let server = SocketServer(state: VoiceState())
         let canary = "CANARY-TXT-\(UUID().uuidString)"

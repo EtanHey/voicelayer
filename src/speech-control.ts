@@ -35,11 +35,14 @@ export function readSpeechSecret(path = speechSecretPath()): string {
 export type SpeechControl = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
 export function createSpeechControl(token: string, handle: (
   command: SocketCommand, lifecycle?: (read: LongReadHandle) => void,
-) => SocketResponse | void | Promise<SocketResponse | void>): SpeechControl {
+) => SocketResponse | void | Promise<SocketResponse | void>,
+  drain?: (lease: unknown, action: "drain" | "quit") => Promise<Record<string, unknown>>): SpeechControl {
   return async (params) => {
     const supplied = typeof params.token === "string" ? Buffer.from(params.token) : Buffer.alloc(0);
     const expected = Buffer.from(token);
     if (!expected.length || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new Error("Unauthorized speech control");
+    if (drain && (params.cmd === "update_gate_drain" || params.cmd === "update_gate_quit"))
+      return drain(params.lease, params.cmd === "update_gate_quit" ? "quit" : "drain");
     if (params.wait !== undefined && typeof params.wait !== "boolean") throw new Error("Invalid wait option");
     const command = parseCommand(JSON.stringify(params));
     if (!command || (command.cmd !== "speak_text" && command.cmd !== "stop")) throw new Error("Invalid speech command");
