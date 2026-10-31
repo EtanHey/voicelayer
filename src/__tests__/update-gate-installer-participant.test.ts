@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { createInstallerParticipant, requestInstallerControl, type InstallerParticipantDependencies } from "../update-gate-installer-participant";
-import { updateVoiceGate } from "../update-gate-admission";
+import { acknowledgeVoiceDrain, updateVoiceGate } from "../update-gate-admission";
 import { type UpdateGateLease } from "../update-gate";
 import { createServer } from "node:net";
 
@@ -21,7 +21,8 @@ function fixture() {
   const calls: string[] = [];
   const deps: InstallerParticipantDependencies = {
     request: async (action, value) => { calls.push(action); expect(value).toEqual(lease); return reply; },
-    processIdentity: pid => exited ? null : `birth-and-command-${pid}`,
+    processIdentity: pid => exited ? null : pid === 101 ? "birth /Applications/VoiceBar.app/Contents/MacOS/VoiceBar" : "birth /opt/homebrew/bin/bun",
+    processParent: () => 101,
     participantsExited: () => exitUnknown ? "UNKNOWN" : exited,
     now: () => now,
     sleep: async () => { now += 100; },
@@ -31,9 +32,9 @@ function fixture() {
   const commit = async () => {
     const proof = await participant.refresh(lease);
     expect(proof.ready).toBe(true);
-    expect(updateVoiceGate({ kind: "PREPARE", lease, native: proof.native, daemon: proof.daemon }, participant.verify).kind).toBe("APPLIED");
+    expect(participant.withProcessProof!(() => updateVoiceGate({ kind: "PREPARE", lease, native: proof.native, daemon: proof.daemon }, participant.verify)).kind).toBe("APPLIED");
     await participant.refresh(lease);
-    expect(updateVoiceGate({ kind: "COMMIT", lease }, participant.verify).kind).toBe("APPLIED");
+    expect(participant.withProcessProof!(() => updateVoiceGate({ kind: "COMMIT", lease }, participant.verify)).kind).toBe("APPLIED");
   };
   return { gate, lease, identities, ack, calls, deps, participant, commit,
     reply: (value: unknown) => { reply = value; }, exit: () => { exited = true; }, unknownExit: () => { exitUnknown = true; },
@@ -65,6 +66,7 @@ test("a replacement participant or process birth cannot reuse a prior receipt", 
   await expect(f.participant.refresh(f.lease)).rejects.toThrow("UNKNOWN");
   expect(f.participant.verify({ version: 1, kind: "DRAINING", lease: f.lease })).toBe(false);
   const g = fixture(); await g.participant.refresh(g.lease); g.deps.processIdentity = () => "different-birth";
+  expect(() => g.participant.withProcessProof!(() => g.participant.verify({ version: 1, kind: "DRAINING", lease: g.lease }))).toThrow("UNKNOWN");
   expect(g.participant.verify({ version: 1, kind: "DRAINING", lease: g.lease })).toBe(false);
 });
 test("COMMITTED lost reply with verified exit continues under the same held lease", async () => {
@@ -124,7 +126,10 @@ test("a malformed quit reply cannot be reclassified as a lost reply", async () =
   await expect(f.participant.quit(f.lease)).rejects.toThrow("UNKNOWN");
 });
 
-test.each([true, false])("controller installs only after a verified lost-reply exit (%s)", async verified => {
+test.each([
+  { verified: true, contention: "none" }, { verified: false, contention: "none" },
+  { verified: true, contention: "quit-authorization" }, { verified: true, contention: "exit-verification" },
+])("controller installs only after verified exit (%j)", async ({ verified, contention }) => {
   const { runGatedInstall } = await import("../update-gate-installer");
   const f = fixture();
   // The real controller creates its own lease from OPEN, never this fixture's lease.
@@ -134,18 +139,27 @@ test.each([true, false])("controller installs only after a verified lost-reply e
   process.env.VOICELAYER_UPDATE_TARGET_SHA = "a".repeat(40);
   writeFileSync(proofPath, JSON.stringify({ phase: "idle", ready: true }));
   process.env.VOICELAYER_TEST_INSTALL_PROOF = proofPath;
-  let now = 0, exited = false;
+  let now = 0, exited = false, ownedLock = false;
+  const hold = () => { mkdirSync(f.gate + ".lock"); ownedLock = true; };
   const actions: string[] = [];
   const participant = createInstallerParticipant({
     request: async (action, lease) => {
       actions.push(action);
-      if (action === "quit") { exited = verified; throw Object.assign(Error("disconnect"), { issued: true, replyLost: true }); }
+      if (action === "quit") {
+        if (contention === "exit-verification") hold();
+        exited = verified; throw Object.assign(Error("disconnect"), { issued: true, replyLost: true });
+      }
+      if (contention === "quit-authorization" && JSON.parse(readFileSync(f.gate, "utf8")).kind === "COMMITTED") hold();
       const ack = { lease, activeOperations: 0, openArchives: 0 };
       return { kind: "ACKNOWLEDGED", native: ack, daemon: ack, identities: f.identities };
     },
-    processIdentity: pid => exited ? null : `birth-${pid}`,
+    processIdentity: pid => exited ? null : pid === f.identities.native.pid ? "birth /Applications/VoiceBar.app/Contents/MacOS/VoiceBar" : "birth /opt/homebrew/bin/bun",
+    processParent: () => f.identities.native.pid,
     participantsExited: () => exited,
-    now: () => now, sleep: async () => { now += 100; },
+    now: () => now, sleep: async () => {
+      now += 100;
+      if (ownedLock) { rmdirSync(f.gate + ".lock"); ownedLock = false; }
+    },
   });
   try {
     const command = [process.execPath, "-e", `await Bun.write(${JSON.stringify(marker)}, 'installed')`];
@@ -155,7 +169,10 @@ test.each([true, false])("controller installs only after a verified lost-reply e
     expect(existsSync(marker)).toBe(verified);
     expect(actions).toEqual(["drain", "drain", "drain", "quit"]);
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
-  } finally { process.env.VOICELAYER_TEST_INSTALL_PROOF = savedProof; process.env.VOICELAYER_UPDATE_TARGET_SHA = savedTarget; }
+  } finally {
+    if (ownedLock) rmdirSync(f.gate + ".lock");
+    process.env.VOICELAYER_TEST_INSTALL_PROOF = savedProof; process.env.VOICELAYER_UPDATE_TARGET_SHA = savedTarget;
+  }
 });
 
 test("exit observer refuses replacement owners, PID reuse and unavailable process evidence", async () => {
@@ -218,7 +235,8 @@ test("installer RPC consumes G3's authenticated control receipts across an isola
   try {
     const participant = createInstallerParticipant({
       request: (action, lease) => requestInstallerControl(action, lease, { socketPath, token: "synthetic" }),
-      processIdentity: pid => exited ? null : `birth-${pid}`,
+      processIdentity: pid => exited ? null : pid === f.identities.native.pid ? "birth /Applications/VoiceBar.app/Contents/MacOS/VoiceBar" : "birth /opt/homebrew/bin/bun",
+      processParent: () => f.identities.native.pid,
       participantsExited: () => exited,
       now: () => performance.now(), sleep: () => Bun.sleep(1),
     });
@@ -232,4 +250,138 @@ test("installer RPC consumes G3's authenticated control receipts across an isola
     expect(actions).toEqual(["drain", "drain", "drain", "quit"]);
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+// G4 Claude fix round: all paths use the preload's private gate and synthetic processes.
+test.each(["quit-authorization", "exit-verification"])("post-COMMIT %s lock contention waits without repeating quit", async moment => {
+  const f = fixture(); await f.commit();
+  let owned = false, sleeps = 0;
+  const hold = () => { mkdirSync(f.gate + ".lock"); owned = true; };
+  if (moment === "quit-authorization") hold();
+  f.deps.request = async action => {
+    f.calls.push(action);
+    if (moment === "exit-verification") hold();
+    f.exit(); return { kind: "UNKNOWN" };
+  };
+  f.deps.sleep = async () => {
+    sleeps++; if (owned) { rmdirSync(f.gate + ".lock"); owned = false; }
+  };
+  try {
+    await f.participant.quit(f.lease);
+    expect(sleeps).toBeGreaterThan(0);
+    expect(f.calls.filter(action => action === "quit")).toHaveLength(1);
+    expect(existsSync(f.gate + ".voice-diag.json")).toBe(false);
+  } finally { if (owned) rmdirSync(f.gate + ".lock"); }
+});
+
+test("post-COMMIT drain UNKNOWN is retried before one quit and installation", async () => {
+  const { runGatedInstall } = await import("../update-gate-installer");
+  const f = fixture(); updateVoiceGate({ kind: "CANCEL", lease: f.lease });
+  const savedProof = process.env.VOICELAYER_TEST_INSTALL_PROOF, savedTarget = process.env.VOICELAYER_UPDATE_TARGET_SHA;
+  process.env.VOICELAYER_TEST_INSTALL_PROOF = f.gate + ".proof";
+  process.env.VOICELAYER_UPDATE_TARGET_SHA = "a".repeat(40);
+  writeFileSync(process.env.VOICELAYER_TEST_INSTALL_PROOF, JSON.stringify({ phase: "idle", ready: true }));
+  const marker = f.gate + ".installed";
+  let committedRefreshes = 0, quits = 0, ready = false;
+  try {
+    const result = await runGatedInstall([process.execPath, "-e", `await Bun.write(${JSON.stringify(marker)}, 'installed')`], {
+      async refresh(lease) {
+        const committed = JSON.parse(readFileSync(f.gate, "utf8")).kind === "COMMITTED";
+        ready = !committed || ++committedRefreshes >= 3;
+        const ack = { lease, activeOperations: 0 as const, openArchives: 0 as const };
+        return { phase: ready ? "idle" : "waiting for live participants", ready, ...(ready ? { native: ack, daemon: ack } : {}) };
+      },
+      verify: () => ready,
+      async quit() { quits++; if (!ready) throw Error("UNKNOWN: not refreshed"); },
+    });
+    expect(result).toBe(0); expect(existsSync(marker)).toBe(true);
+    expect(committedRefreshes).toBe(3); expect(quits).toBe(1);
+  } finally { process.env.VOICELAYER_TEST_INSTALL_PROOF = savedProof; process.env.VOICELAYER_UPDATE_TARGET_SHA = savedTarget; }
+});
+
+test("slow process readers stay outside G1 lock and its 2 ms verifier budget", async () => {
+  const f = fixture(), read = f.deps.processIdentity;
+  let readsUnderLock = 0, maximumVerifierMs = 0;
+  f.deps.processIdentity = pid => {
+    if (existsSync(f.gate + ".lock")) readsUnderLock++;
+    Bun.sleepSync(15); return read(pid);
+  };
+  const verify = f.participant.verify;
+  f.participant.verify = state => {
+    const start = performance.now(), result = verify(state);
+    maximumVerifierMs = Math.max(maximumVerifierMs, performance.now() - start);
+    return result;
+  };
+  await f.commit();
+  // Measure the entire acknowledgement call (including acquisition/snapshot/release),
+  // excluding only the deliberately slow process samples bracketing it.
+  let lockWindowMs = 0;
+  f.participant.withProcessProof!(() => {
+    const start = performance.now();
+    expect(acknowledgeVoiceDrain(f.lease, f.participant.verify)).not.toBeNull();
+    lockWindowMs = performance.now() - start;
+  });
+  expect(lockWindowMs).toBeLessThan(2);
+  f.deps.request = async () => { f.exit(); return { kind: "UNKNOWN" }; };
+  f.deps.participantsExited = () => {
+    if (existsSync(f.gate + ".lock")) readsUnderLock++;
+    Bun.sleepSync(15); return true;
+  };
+  await f.participant.quit(f.lease);
+  expect(readsUnderLock).toBe(0);
+  expect(maximumVerifierMs).toBeLessThan(2);
+});
+
+test("same-birth defunct participant waits for reaping under the exit deadline", async () => {
+  const { observeInstallerExit } = await import("../update-gate-installer-participant");
+  const f = fixture(); await f.commit();
+  const birth = "Sat Oct 31 09:10:11 2026";
+  const proof = { identities: f.identities, native: `${birth} /Applications/VoiceBar.app/Contents/MacOS/VoiceBar`, daemon: `${birth} /opt/homebrew/bin/bun` };
+  let polls = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.participantsExited = () => observeInstallerExit(proof, {
+    identity: pid => ++polls <= 2 && pid === f.identities.daemon.pid ? `${birth} <defunct>` : null,
+    table: () => "123 /usr/bin/other\n",
+  });
+  await f.participant.quit(f.lease);
+  expect(polls).toBeGreaterThan(2);
+  expect(observeInstallerExit(proof, { identity: () => "Fri Oct 30 09:10:11 2026 <defunct>", table: () => "" })).toBe("UNKNOWN");
+});
+
+test("stale receipt never pins identities for a later fresh drain", async () => {
+  const f = fixture(), request = f.deps.request;
+  f.deps.request = async (action, lease) => { const reply = await request(action, lease); f.advance(); return reply; };
+  await expect(f.participant.refresh(f.lease)).rejects.toThrow("stale");
+  f.deps.request = request;
+  f.reply({ kind: "ACKNOWLEDGED", native: f.ack, daemon: f.ack, identities: {
+    ...f.identities, daemon: { ...f.identities.daemon, incarnation: crypto.randomUUID() },
+  } });
+  expect((await f.participant.refresh(f.lease)).ready).toBe(true);
+});
+
+test("installer rejects native impostors and daemons outside the native process family", async () => {
+  const f = fixture(); f.deps.processIdentity = pid => `birth /usr/bin/impostor-${pid} VoiceBar`;
+  await expect(f.participant.refresh(f.lease)).rejects.toThrow("UNKNOWN");
+  const g = fixture();
+  g.deps.processIdentity = pid => pid === 101 ? "birth /Applications/VoiceBar.app/Contents/MacOS/VoiceBar" : "birth /opt/homebrew/bin/bun";
+  g.deps.processParent = () => 999;
+  await expect(g.participant.refresh(g.lease)).rejects.toThrow("UNKNOWN");
+});
+
+test("production installer refuses MCP socket overrides before opening a connection", async () => {
+  const module = await import("../update-gate-installer-participant");
+  expect(typeof module.assertInstallerSocketPath).toBe("function");
+  const check = module.assertInstallerSocketPath;
+  expect(() => check({})).not.toThrow();
+  for (const env of [{ VOICELAYER_MCP_SOCKET_PATH: "/tmp/foreign.sock" }, { QA_VOICE_MCP_SOCKET_PATH: "/tmp/foreign.sock" }, { VOICELAYER_TMP_ROOT: "/tmp/foreign" }]) {
+    expect(() => check(env)).toThrow("noncanonical MCP socket");
+  }
+});
+
+test("installer docs disclose that native receipts rely on the daemon HMAC verification", () => {
+  for (const path of ["docs/update-gate-installers.md", "docs/update-gate-admission.md"]) {
+    const text = readFileSync(path, "utf8");
+    expect(text).toContain("installer trusts the daemon");
+    expect(text).toContain("HMAC-verified native ACK");
+  }
 });

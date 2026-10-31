@@ -9,17 +9,22 @@ admission remains closed for qualified completion/recovery; failure never reopen
 
 The production participant provider now calls G3's authenticated
 `voicelayer/speech` control endpoint with `update_gate_drain` and the exact lease.
-It validates separate native and daemon zero-work/zero-archive ACKs plus their
+It validates native and daemon zero-work/zero-archive ACKs plus their
 PID/incarnation identities. Each new refresh invalidates the previous receipt;
 PREPARE, COMMIT and the postcommit quit each require a fresh round trip. The
-synchronous G2 verifier fences the same lease, participant process births and
-executable names, and a receipt age of at most one second, including time in
-flight, under G1's lock.
+synchronous G2 verifier fences the same lease and receipt age under G1's lock.
+Process births, executable names and the daemon's native parent are sampled just
+before and after each locked proof; no process-table reads run inside the lock.
+A receipt may be at most one second old, including time in flight and sampling.
 Missing/UNKNOWN participants wait with Cancel; malformed/mismatched replies,
 identity changes and transport faults refuse. A timeout never proves idle.
 
 After APPLIED COMMIT, the controller waits a 100 ms fault-publication grace period,
-refreshes G3 evidence and issues exactly one authenticated `update_gate_quit`.
+refreshes G3 evidence (up to four drain attempts on UNKNOWN) and issues exactly
+one authenticated `update_gate_quit`. Quit authorization retries only mkdir-lock
+contention with the same eight-attempt backoff as the precommit controller; the
+quit RPC itself is never retried. Exit verification retries lock contention
+within its existing five-second deadline.
 An ACK still requires observed exit. If a written quit loses its reply through
 socket disconnect or timeout (or G3 reports UNKNOWN after its native connection
 drops), the controller verifies the outcome rather than reporting a plain
@@ -27,11 +32,15 @@ install failure: both pinned processes must be absent, no
 VoiceBar executable may remain in the process table, and G2 must still observe
 the exact COMMITTED lease with no diagnostic or admission records. It observes
 exit for at most five seconds; the deadline only refuses, never proves exit.
-An unreadable process table, reused PID, explicit refusal, malformed reply,
-changed lease, retained process, diagnostic or ledger entry stops UNKNOWN,
+A same-start-time `<defunct>` participant is still exiting and is polled until
+reaped within that deadline. An unreadable process table, reused PID, explicit
+refusal, malformed reply, changed lease, retained process, diagnostic or ledger
+entry stops UNKNOWN,
 writes the recovery receipt and keeps admission closed. Nothing force-stops a
 participant or reopens the gate. Nested helpers validate the retained COMMITTED
-lease and live controller after participant exit, without requesting new ACKs.
+lease and the controller's PID, start time and executable name recorded in the
+operation environment after participant exit, without requesting new ACKs.
+Both identity samples bracketing lease validation must match that record.
 
 **NOT_GREEN for installed use:** This wires the G3 participant contract; staged
 target verification, bootstrap, durable owner/reconnect hardening and qualified
@@ -45,9 +54,12 @@ do not qualify it. Invalid harness evidence never falls through to live sockets.
 Programmatic participant injection for controller tests requires that same proof
 and live capability; it is unavailable in production. A malicious same-user
 process can forge test files, so this is not an authentication boundary or
-installed-runtime evidence. Outside isolation the controller refuses a
-noncanonical gate path, including state and HOME overrides; the canonical root
-is the OS account home, not caller HOME.
+installed-runtime evidence. On the production reply channel, the daemon builds
+the native receipt from the HMAC-verified native ACK; the installer trusts the daemon
+for that verification. A same-user socket owner can forge replies. Outside
+isolation the controller refuses a noncanonical gate path, including state and HOME overrides; the canonical root
+is the OS account home, not caller HOME. The installer also refuses a
+noncanonical MCP socket path, including socket and temp-root overrides.
 
 Recon inventory (scoped scripts, launchd, flow-bar/build-app.sh and src/cli):
 

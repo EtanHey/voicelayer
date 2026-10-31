@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmdirSync, cpSync }
 import { join } from "node:path";
 import { fixture, waitFor } from "./update-gate-installer.test";
 import * as installer from "../update-gate-installer";
+import { installerProcessIdentity } from "../update-gate-installer-participant";
 import { updateVoiceGate, acknowledgeVoiceDrain } from "../update-gate-admission";
 const repo = process.cwd();
 const timeout = 30_000;
@@ -56,7 +57,7 @@ test("nested validation waits through transient lock presence", async () => {
   const f = fixture("idle"), child = f.start(); expect(await child.exited).toBe(0);
   const lease = JSON.parse(readFileSync(f.gate, "utf8")).lease;
   mkdirSync(f.gate + ".lock");
-  const nested = Bun.spawn([process.execPath, "src/update-gate-installer.ts", "--validate"], { env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid }) }, stdout: "pipe", stderr: "pipe" });
+  const nested = Bun.spawn([process.execPath, "src/update-gate-installer.ts", "--validate"], { env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid, identity: installerProcessIdentity(process.pid) }) }, stdout: "pipe", stderr: "pipe" });
   try { await Bun.sleep(300); rmdirSync(f.gate + ".lock"); expect(await nested.exited).toBe(0); }
   finally { if (existsSync(f.gate + ".lock")) rmdirSync(f.gate + ".lock"); }
 }, timeout);
@@ -121,4 +122,28 @@ test("shell validator failure stops nested mutations with nonzero status", async
   const child = Bun.spawn(["/bin/bash", "-ec", 'source scripts/lib/update-gate.sh; vl_update_gate "$1"; brew forbidden-mutation', "_", repo], { env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: "invalid" }, stdout: "pipe", stderr: "pipe" });
   expect(await child.exited).not.toBe(0);
   expect(readFileSync(f.log, "utf8")).toBe("");
+}, timeout);
+
+test("copied committed operation with an arbitrary live PID cannot validate", async () => {
+  const f = fixture("idle"), record = join(f.root, "operation.json");
+  const child = Bun.spawn([process.execPath, "src/update-gate-installer.ts", process.execPath, "-e",
+    `await Bun.write(${JSON.stringify(record)}, process.env.VOICELAYER_INSTALL_OPERATION!)`], {
+    env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe",
+  });
+  expect(await child.exited).toBe(0);
+  const owner = JSON.parse(readFileSync(record, "utf8")), identity = installerProcessIdentity(process.pid)!;
+  expect(owner.identity).toBeString();
+  const forgeries = [
+    { ...owner, pid: process.pid }, // Copied real record with a different live PID.
+    { ...owner, pid: process.pid, identity: undefined },
+    { ...owner, pid: process.pid, identity: "Fri Oct 30 09:10:11 2000" + identity.slice(24) },
+    { ...owner, pid: process.pid, identity: identity.slice(0, 24) + " /foreign/controller" },
+  ];
+  for (const forged of forgeries) {
+    const nested = Bun.spawn([process.execPath, "src/update-gate-installer.ts", "--validate"], {
+      env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify(forged) }, stdout: "pipe", stderr: "pipe",
+    });
+    expect(await nested.exited).not.toBe(0);
+    expect(await new Response(nested.stderr).text()).toContain("UNKNOWN");
+  }
 }, timeout);

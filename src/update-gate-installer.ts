@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
-import { existsSync, lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
+import { assertInstallerSocketPath, installerProcessIdentity, installerGateContended as contended,
+  retryInstallerContention as retryContention, createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
+import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { acknowledgeVoiceDrain, updateVoiceGate, type ParticipantProof } from "./update-gate-admission";
@@ -30,21 +31,7 @@ function assertGatePath(): void {
   } else if (gate !== resolve(userInfo().homedir, ".local/state/voicelayer/update-gate.json")) {
     throw Error("noncanonical gate path; nothing was changed");
   }
-}
-const contended = () => existsSync(updateGateFilePath() + ".lock");
-const backoff = (attempt: number) => Bun.sleep(Math.min(25 * 2 ** attempt, 250));
-// G2 reports contention as REFUSED/UNKNOWN (ack: null), not necessarily a throw.
-async function retryContention<T>(read: () => T, retry: (result: T) => boolean): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const result = read();
-      if (!retry(result) || !contended() || attempt === 7) return result;
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED" || attempt === 7) throw error;
-    }
-    console.error("[update-gate] Waiting for update-gate lock (bounded retry)");
-    await backoff(attempt);
-  }
+  assertInstallerSocketPath();
 }
 export function safeParticipantProof(read: () => { ready: boolean }): boolean {
   try { return read().ready === true; } catch { return false; }
@@ -87,10 +74,11 @@ export async function validateInstallerOperation(): Promise<void> {
   // live owning controller, never fabricate a new participant ACK after quit.
   const owner = JSON.parse(process.env.VOICELAYER_INSTALL_OPERATION!);
   const lease = updateGateLeaseSchema.parse(owner.lease);
+  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.identity !== "string" || !owner.identity ||
+    installerProcessIdentity(owner.pid) !== owner.identity) throw Error("UNKNOWN: installer controller identity mismatch");
   const current = await retryContention(() => readUpdateGateFile(), state => state.kind === "UNKNOWN");
-  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || current.kind !== "COMMITTED" ||
-    !sameLease(current.lease, lease)) throw Error("UNKNOWN: installer lease mismatch");
-  process.kill(owner.pid, 0); // Controller must still own the child operation.
+  if (current.kind !== "COMMITTED" || !sameLease(current.lease, lease)) throw Error("UNKNOWN: installer lease mismatch");
+  if (installerProcessIdentity(owner.pid) !== owner.identity) throw Error("UNKNOWN: installer controller identity changed");
 }
 function recoveryReceipt(lease: UpdateGateLease, reason: string, installerPid?: number): void {
   const gate = updateGateFilePath(), receipt = `${gate}.recovery-${lease.operationId}.json`;
@@ -125,6 +113,8 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     harnessParticipantEvidence(); // Dependency injection has no unqualified production path.
     participant = harnessParticipant;
   }
+  const controllerIdentity = installerProcessIdentity(process.pid);
+  if (!controllerIdentity) throw Error("UNKNOWN: controller identity unavailable");
   const current = await retryContention(() => readUpdateGateFile(), state => state.kind === "UNKNOWN");
   if (current.kind !== "OPEN") throw Error("UNKNOWN: gate unavailable or another update owns it");
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
@@ -141,9 +131,11 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     return [name, handler] as const;
   });
   const verify: ParticipantProof = participant.verify;
+  const withProcessProof = <T>(read: () => T): T => participant.withProcessProof ? participant.withProcessProof(read) : read();
   const transition = (command: unknown) => retryContention(() => {
     if (cancelled) throw Error("UPDATE_CANCELLED"); // Never commit after Cancel during backoff.
-    return updateVoiceGate(command, verify);
+    const apply = () => updateVoiceGate(command, verify);
+    return requested ? withProcessProof(apply) : apply();
   }, result => result.kind === "REFUSED" && result.reason === "UNKNOWN");
   try {
     const request = await transition({ kind: "REQUEST", lease });
@@ -155,7 +147,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
         console.error(`[update-gate] Update when idle: ${proof.phase}; Cancel: Ctrl-C (before commit)`);
         displayedPhase = proof.phase;
       }
-      const ack = await retryContention(() => acknowledgeVoiceDrain(lease, verify), result => result === null);
+      const ack = await retryContention(() => withProcessProof(() => acknowledgeVoiceDrain(lease, verify)), result => result === null);
       if (cancelled) break;
       if (!ack && !contended() && readUpdateGateFile().kind === "UNKNOWN") throw Error("UNKNOWN: drain evidence unavailable");
       if (ack && proof.ready && proof.native && proof.daemon) {
@@ -171,9 +163,14 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
         // Give late fail-open admissions a chance to publish fault/ledger evidence,
         // then revalidate through G3 and G2 before issuing the final controlled quit.
         await Bun.sleep(100);
-        await participant.refresh(lease);
-        await participant.quit(lease);
-        const env = { ...process.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid }) };
+        for (let attempt = 0; ; attempt++) {
+          const proof = await participant.refresh(lease);
+          if (proof.ready && proof.native && proof.daemon) break;
+          if (attempt === 3) throw Error("UNKNOWN: postcommit drain evidence unavailable");
+          await Bun.sleep(Math.min(25 * 2 ** attempt, 250));
+        }
+        await participant.quit(lease); // Never retry: a written quit may already have executed.
+        const env = { ...process.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid, identity: controllerIdentity }) };
         console.error("[update-gate] COMMITTED: Ctrl-C will not stop the installer; waiting for completion.");
         const child = Bun.spawn(command, { env, detached: true, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
         const result = await child.exited;

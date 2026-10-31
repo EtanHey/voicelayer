@@ -77,11 +77,14 @@ running VoiceBar bundle identity, pending work and ledger. Nonces, timeout and
 disconnect fence replies. A quit may disconnect before the RPC reply: UNKNOWN
 never proves exit. G4 now observes the outcome itself: after APPLIED COMMIT,
 a 100 ms grace period and fresh G3 evidence, it issues one controlled quit.
-Separate fresh native/daemon receipts bind the same complete lease and pinned
-PID/incarnation identities; G2's synchronous verifier also checks process birth
-and executable identity and rejects receipts older than one second, including
-time in flight. On a lost post-write reply (including G3 UNKNOWN when its
-native connection drops), both pinned processes must be absent and no VoiceBar
+Fresh native/daemon receipts bind the same complete lease and pinned
+PID/incarnation identities. The daemon builds the native receipt from the
+HMAC-verified native ACK; the installer trusts the daemon for that verification
+on the same-user socket channel, which is not an authentication boundary.
+Process birth, executable identity and native/daemon parentage are sampled
+immediately before and after G2's locked snapshot; the in-lock verifier is
+memory-only and rejects receipts older than one second, including time in flight.
+On a lost post-write reply (including G3 UNKNOWN when its native connection drops), both pinned processes must be absent and no VoiceBar
 executable may remain, while G2 rechecks the exact COMMITTED lease, diagnostics and empty
 ledger under G1's lock. The five-second exit deadline only refuses UNKNOWN;
 it never promotes uncertainty to idle. A malformed/explicit refusal is not a

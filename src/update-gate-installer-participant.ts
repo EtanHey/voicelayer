@@ -1,7 +1,9 @@
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { getMcpSocketPath } from "./paths";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { getMcpSocketPath, updateGateFilePath } from "./paths";
 import { readSpeechSecret } from "./speech-control";
 import { acknowledgeVoiceDrain, type ParticipantProof } from "./update-gate-admission";
 import { sameLease, updateGateAckSchema, type UpdateGateLease } from "./update-gate";
@@ -17,14 +19,38 @@ export type InstallerEvidence = { phase: string; ready: boolean; native?: Receip
 export interface InstallerParticipant {
   refresh(lease: UpdateGateLease): Promise<InstallerEvidence>;
   verify: ParticipantProof;
+  /** Process-table reads bracket a locked operation; verify itself is memory-only. */
+  withProcessProof?<T>(read: () => T): T;
   quit(lease: UpdateGateLease): Promise<void>;
 }
 export interface InstallerParticipantDependencies {
   request(action: "drain" | "quit", lease: UpdateGateLease): Promise<unknown>;
   processIdentity(pid: number): string | null;
+  processParent(pid: number): number | null;
   participantsExited(proof: ProcessProof): boolean | "UNKNOWN";
   now(): number;
-  sleep(): Promise<void>;
+  sleep(ms?: number): Promise<void>;
+}
+
+/** Production installer transport is pinned; isolated tests keep their private sockets. */
+export function assertInstallerSocketPath(env: NodeJS.ProcessEnv = process.env, path = getMcpSocketPath(env)): void {
+  if (env.VOICELAYER_TEST_ISOLATED !== "1" && resolve(path) !== "/tmp/voicelayer-mcp.sock")
+    throw Error("UNKNOWN: noncanonical MCP socket path; nothing was changed");
+}
+export const installerGateContended = () => existsSync(updateGateFilePath() + ".lock");
+/** Retry only a failed non-blocking mkdir acquisition, never an RPC or a gate fault. */
+export async function retryInstallerContention<T>(read: () => T, retry: (result: T) => boolean,
+  sleep = (attempt: number) => Bun.sleep(Math.min(25 * 2 ** attempt, 250))): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const result = read();
+      if (!retry(result) || !installerGateContended() || attempt === 7) return result;
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED" || attempt === 7) throw error;
+    }
+    console.error("[update-gate] Waiting for update-gate lock (bounded retry)");
+    await sleep(attempt);
+  }
 }
 
 /** No retries: a written quit may already have executed when the socket closes. */
@@ -33,7 +59,9 @@ export function requestInstallerControl(action: "drain" | "quit", lease: UpdateG
   return new Promise((resolve, reject) => {
     let issued = false, settled = false, buffer = "";
     const id = randomUUID();
-    const socket = createConnection(options.socketPath ?? getMcpSocketPath());
+    const path = options.socketPath ?? getMcpSocketPath();
+    assertInstallerSocketPath(process.env, path);
+    const socket = createConnection(path);
     const finish = (error?: string, value?: unknown, replyLost = false) => {
       if (settled) return;
       settled = true; clearTimeout(timer); socket.destroy();
@@ -69,7 +97,7 @@ export function requestInstallerControl(action: "drain" | "quit", lease: UpdateG
 }
 
 /** Birth plus executable name fence PID reuse. Unknown process-table reads refuse. */
-function processIdentity(pid: number): string | null {
+export function installerProcessIdentity(pid: number): string | null {
   const result = Bun.spawnSync(["/bin/ps", "-p", String(pid), "-o", "lstart=", "-o", "comm="], { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 1000 });
   const identity = result.stdout.toString().trim();
   if (result.exitCode === 0 && identity) return identity;
@@ -80,15 +108,27 @@ function processIdentity(pid: number): string | null {
   }
   throw Error("UNKNOWN: participant process identity unavailable");
 }
+function processParent(pid: number): number | null {
+  const result = Bun.spawnSync(["/bin/ps", "-p", String(pid), "-o", "ppid="], { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 1000 });
+  const value = result.stdout.toString().trim();
+  if (result.exitCode === 0 && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value))) return Number(value);
+  return null;
+}
 function readProcessTable(): string {
   const result = Bun.spawnSync(["/bin/ps", "-axo", "pid=,comm="], { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 1000 });
   if (result.exitCode !== 0) throw Error("UNKNOWN: process table unavailable");
   return result.stdout.toString();
 }
-export function observeInstallerExit(proof: ProcessProof, probes = { identity: processIdentity, table: readProcessTable }): boolean | "UNKNOWN" {
+export function observeInstallerExit(proof: ProcessProof, probes = { identity: installerProcessIdentity, table: readProcessTable }): boolean | "UNKNOWN" {
   try {
     const native = probes.identity(proof.identities.native.pid), daemon = probes.identity(proof.identities.daemon.pid);
-    if ((native !== null && native !== proof.native) || (daemon !== null && daemon !== proof.daemon)) return "UNKNOWN";
+    const stillExiting = (current: string | null, pinned: string) => {
+      // macOS preserves lstart but replaces comm with <defunct> until reaping.
+      const zombie = current?.match(/^(.{24})\s+<defunct>$/);
+      return !!zombie && pinned.slice(0, 24) === zombie[1];
+    };
+    if ((native !== null && native !== proof.native && !stillExiting(native, proof.native)) ||
+      (daemon !== null && daemon !== proof.daemon && !stillExiting(daemon, proof.daemon))) return "UNKNOWN";
     if (native !== null || daemon !== null) return false;
     // A new/competing native owner is never evidence that replacement is safe.
     const rows = probes.table().split("\n").map(line => line.trim()).filter(Boolean);
@@ -104,46 +144,56 @@ export function observeInstallerExit(proof: ProcessProof, probes = { identity: p
 
 /** Each refresh obtains a fresh authenticated G3 round trip, never persisted ACKs. */
 export function createInstallerParticipant(deps: InstallerParticipantDependencies = {
-  request: requestInstallerControl, processIdentity, participantsExited: observeInstallerExit,
-  now: () => performance.now(), sleep: () => Bun.sleep(100),
+  request: requestInstallerControl, processIdentity: installerProcessIdentity, processParent, participantsExited: observeInstallerExit,
+  now: () => performance.now(), sleep: (ms = 100) => Bun.sleep(ms),
 }): InstallerParticipant {
   let evidence: Receipt | undefined, observedAt = 0, pinned: ProcessProof | undefined;
-  const parse = (input: unknown, lease: UpdateGateLease): Receipt => {
-    const parsed = receiptSchema.safeParse(input);
-    if (!parsed.success || !sameLease(parsed.data.native.lease, lease) || !sameLease(parsed.data.daemon.lease, lease) ||
-      parsed.data.identities.native.pid === parsed.data.identities.daemon.pid) throw Error("UNKNOWN: malformed or mismatched participant acknowledgements");
-    const value = parsed.data;
-    const native = deps.processIdentity(value.identities.native.pid), daemon = deps.processIdentity(value.identities.daemon.pid);
-    if (!native || !daemon) throw Error("UNKNOWN: participant identity disappeared");
-    const proof = { identities: value.identities, native, daemon };
-    if (pinned && JSON.stringify(proof) !== JSON.stringify(pinned)) throw Error("UNKNOWN: participant identity changed during drain");
-    pinned = proof;
-    return value;
+  const fresh = () => deps.now() - observedAt >= 0 && deps.now() - observedAt <= 1000;
+  const processProof = (identities: Identities): ProcessProof => {
+    const native = deps.processIdentity(identities.native.pid), daemon = deps.processIdentity(identities.daemon.pid);
+    const nativeExecutable = native?.replace(/^.{24}\s+/, ""); // Strip ps lstart, retaining the full comm.
+    if (!native || !daemon || !/(?:^|\/)VoiceBar$/.test(nativeExecutable ?? "") || /\s<defunct>$/.test(daemon) ||
+      deps.processParent(identities.daemon.pid) !== identities.native.pid)
+      throw Error("UNKNOWN: participant process identity or role unavailable");
+    return { identities, native, daemon };
   };
-  const verify: ParticipantProof = state => {
-    try {
-      return !!evidence && !!pinned && state.kind !== "OPEN" && sameLease(state.lease, evidence.native.lease) &&
-        deps.now() - observedAt >= 0 && deps.now() - observedAt <= 1000 &&
-        deps.processIdentity(pinned.identities.native.pid) === pinned.native &&
-        deps.processIdentity(pinned.identities.daemon.pid) === pinned.daemon;
-    } catch { return false; }
+  const verify: ParticipantProof = state => !!evidence && !!pinned && state.kind !== "OPEN" &&
+    sameLease(state.lease, evidence.native.lease) && fresh();
+  const withProcessProof = <T>(read: () => T): T => {
+    if (!evidence || !pinned) return read(); // The in-lock verifier will refuse absent evidence.
+    const sample = () => {
+      if (!pinned) throw Error("UNKNOWN: participant identity unavailable");
+      const current = processProof(pinned.identities);
+      if (!evidence || !fresh() || JSON.stringify(current) !== JSON.stringify(pinned))
+        throw Error("UNKNOWN: participant identity changed or receipt expired");
+    };
+    try { sample(); const result = read(); sample(); return result; }
+    catch (error) { evidence = undefined; throw error; }
   };
   return {
-    verify,
+    verify, withProcessProof,
     async refresh(lease) {
       evidence = undefined; // A failed/new request invalidates the preceding receipt.
       const requestedAt = deps.now();
       const reply = await deps.request("drain", lease);
       if (unknownSchema.safeParse(reply).success)
         return { phase: "waiting for live participants", ready: false };
-      const receipt = parse(reply, lease);
+      const parsed = receiptSchema.safeParse(reply);
+      if (!parsed.success || !sameLease(parsed.data.native.lease, lease) || !sameLease(parsed.data.daemon.lease, lease) ||
+        parsed.data.identities.native.pid === parsed.data.identities.daemon.pid)
+        throw Error("UNKNOWN: malformed or mismatched participant acknowledgements");
       if (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000) throw Error("UNKNOWN: stale participant round trip");
-      evidence = receipt; observedAt = requestedAt;
+      const proof = processProof(parsed.data.identities);
+      if (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000) throw Error("UNKNOWN: stale participant round trip");
+      if (pinned && JSON.stringify(proof) !== JSON.stringify(pinned)) throw Error("UNKNOWN: participant identity changed during drain");
+      pinned = proof; // Only a fresh, role-checked round trip may pin identities.
+      evidence = parsed.data; observedAt = requestedAt;
       return { phase: "idle", ready: true, native: evidence.native, daemon: evidence.daemon };
     },
     async quit(lease) {
       // Under G1's lock, recheck lease, diagnostics, ledger and last live identities.
-      const authorized = acknowledgeVoiceDrain(lease, state => state.kind === "COMMITTED" && verify(state));
+      const authorized = await retryInstallerContention(() => withProcessProof(() =>
+        acknowledgeVoiceDrain(lease, state => state.kind === "COMMITTED" && verify(state))), result => result === null, attempt => deps.sleep(Math.min(25 * 2 ** attempt, 250)));
       if (!authorized || !pinned) throw Error("UNKNOWN: controlled quit not authorized");
       evidence = undefined;
       let reply: unknown;
@@ -167,14 +217,16 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
       }
       const deadline = deps.now() + 5000;
       for (;;) {
-        let exited: boolean | "UNKNOWN" = "UNKNOWN";
-        const held = acknowledgeVoiceDrain(lease, state => {
-          if (state.kind !== "COMMITTED") return false;
-          exited = deps.participantsExited(pinned!);
-          return exited !== "UNKNOWN";
-        });
-        if (!held || exited === "UNKNOWN") throw Error("UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery");
-        if (exited === true) return;
+        // Both expensive process samples run outside the mkdir lock. Only the
+        // lease/diagnostic/ledger snapshot is taken inside it.
+        const before = deps.participantsExited(pinned);
+        const held = acknowledgeVoiceDrain(lease, state => state.kind === "COMMITTED");
+        const after = deps.participantsExited(pinned);
+        if (!held && installerGateContended() && deps.now() < deadline) { await deps.sleep(); continue; }
+        if (!held || before === "UNKNOWN" || after === "UNKNOWN")
+          throw Error("UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery");
+        if (deps.now() > deadline) throw Error("UNKNOWN: participants did not exit; gate retained closed for recovery");
+        if (before === true && after === true) return;
         if (deps.now() >= deadline) throw Error("UNKNOWN: participants did not exit; gate retained closed for recovery");
         await deps.sleep();
       }
