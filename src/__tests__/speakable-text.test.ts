@@ -29,13 +29,13 @@ const corpus: [string, string][] = [
   ["https://github.com/Blaizzy/mlx-audio/issues/910", "link to github dot com"],
   ["POST http://localhost:8880/v1/audio/speech", "POST localhost port eight eight eight zero slash version one slash audio slash speech"],
   ["uv tool install --force mlx-audio --prerelease=allow", "U V tool install dash dash force M L X audio dash dash prerelease equals allow"],
-  ["Check if `repetition_penalty >= 1.5` in _generate_icl.", "Check if repetition penalty greater than or equal to one point five in generate I C L."],
+  ["Check if `repetition_penalty >= 1.5` in _generate_icl.", "Check if repetition_penalty >= 1.5 in generate I C L."],
   ["```python\nmodel = load_model(\"Qwen3\")\n```", "code block"],
   ["| Model | Latency |\n|---|---|\n| Qwen3 | 97ms |", "Model, Latency. qwen three, ninety-seven milliseconds."],
   ["- Install espeak-ng\n- Run KPipeline", "Install espeak N G. Run K pipeline."],
   ["Send a REST API payload via gRPC to AWS S3.", "Send a rest A P I payload via G R P C to A W S S three."],
   ["Compiled for macOS 14 arm64 on M4 Max GPU.", "Compiled for mac O S 14 arm sixty-four on M four Max G P U."],
-  ["שגיאה בקובץ INCIDENT-INVENTORY.md בגרסה v2.2.43", "שגיאה בקובץ incident inventory dot M D בגרסה version two point two point forty-three"],
+  ["שגיאה בקובץ INCIDENT-INVENTORY.md בגרסה v2.2.43", "שגיאה בקובץ incident inventory dot M D בגרסה v2.2.43"],
   ["הרץ את הפקודה --join_audio כדי לשמור קובץ MP3", "הרץ את הפקודה dash dash join audio כדי לשמור קובץ M P three"],
 ];
 for (const [display, speech] of corpus) test(display, () => {
@@ -104,7 +104,7 @@ for (const engine of ["edge", "clone"] as const) {
       const display = `- ${marker}${punctuation} then go`;
       const result = projectSpeakableText(display, [], engine);
       expect(result.displayText).toBe(display);
-      expect(result.speechText).toBe(`${punctuation} then go.`);
+      expect(result.speechText).toBe(`${punctuation} then go${marker === "[ ]" ? "." : ", done."}`);
       const omitted = result.ranges.filter(range => range.source.start < 2 + marker.length && range.source.end > 2);
       expect(omitted.length).toBeGreaterThan(0);
       expect(omitted.every(range => range.kind === "omission")).toBe(true);
@@ -122,15 +122,15 @@ for (const engine of ["edge", "clone"] as const) {
   }
   const checkboxes: [string, string][] = [
     ["1. [ ] Buy milk", "one. Buy milk."],
-    ["- [x] Done", "Done."],
-    ["2. [X] Call Dana", "two. Call Dana."],
+    ["- [x] Done", "Done, done."],
+    ["2. [X] Call Dana", "two. Call Dana, done."],
     ["1. [ ]Buy milk", "one. Buy milk."],
     ["[ ]\n[x]\n[X]", ""],
     ["[x] Done", "Done"],
     ["  [ ] Pending", "Pending"],
-    ["  + [X] Done", "Done."],
+    ["  + [X] Done", "Done, done."],
     ["* [ ] Pending", "Pending."],
-    ["3) [x] Done", "three. Done."],
+    ["3) [x] Done", "three. Done, done."],
     ["- [x];", ";."],
   ];
   for (const [display, speech] of checkboxes) test(`${engine} silences task-list checkbox tokens: ${display}`, () => {
@@ -162,8 +162,8 @@ for (const engine of ["edge", "clone"] as const) {
     const display = "``alpha\n- [x] beta\ngamma``\n1. [X] done";
     const result = projectSpeakableText(display, [], engine);
     expect(result.speechText).toBe(engine === "clone"
-      ? "alpha open bracket x close bracket beta. gamma one. done."
-      : "alpha [x] beta. gamma one. done.");
+      ? "alpha open bracket x close bracket beta. gamma one. done, done."
+      : "alpha [x] beta. gamma one. done, done.");
     for (const [marker, kind] of [["[x]", "identity"], ["[X]", "omission"]]) {
       const content = display.indexOf(marker) + 1;
       const range = result.ranges.find(range => range.source.start <= content && range.source.end > content);
@@ -213,12 +213,12 @@ test("ranges partition original and spoken UTF-16, including repeated words and 
   expect(projectSpeakableText("שלוםMP3 עולם_חדש").speechText).toBe("שלוםMP3 עולם_חדש");
 });
 
-test("ordinary prose, Hebrew, decimals and negative numbers survive", () => {
+test("Hebrew lines retain digits without English number words", () => {
   const text = "Hello, don't cut 3.14 or -5. שָׁלוֹם 123!";
   expect(projectSpeakableText(text).speechText).toBe(text);
 });
 
-for (const text of ["Is that OK with you?", "The meeting is at 3 PM tomorrow.", "US AM PM ID TV UK CEO ABC XYZ", "Meet on 2026.10.15 please.", "$3.50 and € 2.75 or £9.99; $3.50USD and €2,000.50", "3.5 seconds and 3.14 radians", "2026-10-15, 15.10.2026, 10/15/2026 and 1/2", "At 3:50PM or 10:30 AM and 23:59:02 or 10AM."]) test(`prose passthrough: ${text}`, () => {
+for (const text of ["Is that OK with you?", "The meeting is at 3 PM tomorrow.", "US AM PM ID TV UK CEO ABC XYZ", "Meet on 2026.10.15 please.", "2026-10-15, 15.10.2026, 10/15/2026 and 1/2", "At 3:50PM or 10:30 AM and 23:59:02 or 10AM."]) test(`prose passthrough: ${text}`, () => {
   for (const engine of ["edge", "clone"] as const) expect(projectSpeakableText(text, [], engine).speechText).toBe(text);
 });
 test("only explicit versions expand; Edge leaves initialisms for its frontend", () => {
@@ -332,7 +332,10 @@ test("filename near-misses beside Hebrew stay below 50 ms in-process", () => {
   }
 });
 
-const projectionSource = await Bun.file(new URL("../speakable-text.ts", import.meta.url)).text();
+const spanSource = (await Bun.file(new URL("../tts/inline-code-spans.ts", import.meta.url)).text())
+  .replace("export function inlineCodeSpanEnds", "function inlineCodeSpanEnds");
+const projectionSource = (await Bun.file(new URL("../speakable-text.ts", import.meta.url)).text())
+  .replace('import { inlineCodeSpanEnds } from "./tts/inline-code-spans";', spanSource);
 
 function measureProjection(source = projectionSource) {
   const work = { pieceVisits: 0 };

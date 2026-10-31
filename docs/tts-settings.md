@@ -1,5 +1,36 @@
 # Speech settings (daemon core)
 
+Personal pronunciations live only in
+`~/.local/state/voicelayer/tts-pronunciations.json`, a JSON map of exact terms to
+spoken text. `VOICELAYER_STATE_DIR` replaces the state directory, including in
+tests. Nothing is seeded into this file or the bundled developer dictionary.
+Use `voicelayer pronounce add --term TERM --say 'spoken text'`,
+`voicelayer pronounce list`, and `voicelayer pronounce remove --term TERM`.
+Writes are atomic with file mode `0600`. Concurrent edits return a busy error
+before reading or changing the map; abandoned locks are never automatically
+removed. Matching is case-sensitive and uses
+whole words (including Unicode word boundaries); spoken values are literal.
+The map is re-read at each pronunciation snapshot and joins the existing YAML
+rule pipeline before Edge/clone synthesis, including long reads and fallback.
+Missing/empty maps do nothing. Malformed maps are ignored for narration;
+CLI edits report an error and preserve the file for repair. No per-read UI is
+required. The legacy `~/.voicelayer/pronunciation.yaml` rules remain supported.
+
+Both engine projections expand currency amounts (`₪180/h` becomes “one hundred
+eighty shekels per hour”), numeric rates (`2.50/kg` becomes “two point five zero
+per kilogram”), decimals and section numbers (`10.3` becomes “ten point three”).
+Fractional digits are spoken individually. Existing filename rules produce
+“reply draft dot M D” for `reply-draft.md`. Display text and source ranges stay
+attached to the original text; fractions, times and dotted calendar dates stay
+lexical.
+
+Checked Markdown list items (`[x]` or `[X]`) end in `, done.`; unchecked
+`[ ]` items remain plain. Raw Markdown projections keep the captured display
+unchanged and represent completion as a zero-width display insertion, which
+both timing adapters skip. Selection reads include `, done.` in their flattened
+teleprompter text, so its displayed word receives its own measured timing.
+Checkboxes inside backtick spans do not acquire completion speech.
+
 The daemon re-reads `~/.local/state/voicelayer/tts-settings.json` on each speak.
 `VOICELAYER_TTS_SETTINGS_PATH` overrides the location. Writes use a temporary
 file and atomic rename, with `version: 1` and an ISO `updated_at` timestamp.

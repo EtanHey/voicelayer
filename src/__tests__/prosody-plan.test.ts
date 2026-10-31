@@ -52,8 +52,8 @@ describe("R-ONE clone list numbers", () => {
     {
       name: "decimals",
       source: "1. Value 3.14 stays.\n2) Keep 2.50.",
-      markdown: "one, Value 3.14 stays. two, Keep 2.50.",
-      selection: "one, Value 3.14 stays. 2) Keep 2.50.",
+      markdown: "one, Value three point one four stays. two, Keep two point five zero.",
+      selection: "one, Value three point one four stays. 2) Keep two point five zero.",
     },
     {
       name: "questions and exclamations",
@@ -82,8 +82,8 @@ describe("R-ONE clone list numbers", () => {
     {
       name: "numbered labels",
       source: "1. **Item:** Keep 1.2.\n2) **Note:** Ask Dr. Smith.",
-      markdown: "one, Item. Keep 1.2. two, Note. Ask Dr. Smith.",
-      selection: "one, Item: Keep 1.2. 2) Note: Ask Dr. Smith.",
+      markdown: "one, Item. Keep one point two. two, Note. Ask Dr. Smith.",
+      selection: "one, Item: Keep one point two. 2) Note: Ask Dr. Smith.",
     },
     {
       name: "label body starting with a year",
@@ -94,14 +94,14 @@ describe("R-ONE clone list numbers", () => {
     {
       name: "label body starting with a version",
       source: "1. **Version:** 2.5. Done.\n2. Second item.\n",
-      markdown: "one, Version. 2.5. Done. two, Second item.",
-      selection: "one, Version: 2.5. Done. 2, Second item.",
+      markdown: "one, Version. two point five. Done. two, Second item.",
+      selection: "one, Version: two point five. Done. 2, Second item.",
     },
     {
       name: "oversized items",
       source: "1. " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "\n2) End.",
-      markdown: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "two, End.",
-      selection: "one, " + "Ask Dr. Smith about value 3.14 and keep every original word. ".repeat(12) + "2) End.",
+      markdown: "one, " + "Ask Dr. Smith about value three point one four and keep every original word. ".repeat(12) + "two, End.",
+      selection: "one, " + "Ask Dr. Smith about value three point one four and keep every original word. ".repeat(12) + "2) End.",
     },
   ];
   for (const fixture of punctuationCases) for (const selection of [false, true]) {

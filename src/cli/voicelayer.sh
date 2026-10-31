@@ -81,6 +81,10 @@ case "${1:-}" in
         shift
         exec bun "$SCRIPT_DIR/vocab.ts" "$@"
         ;;
+    pronounce)
+        shift
+        exec bun "$SCRIPT_DIR/pronounce.ts" "$@"
+        ;;
     update)
         shift
         exec bash "$PACKAGE_ROOT/scripts/voicelayer-update.sh" "$@"
@@ -165,6 +169,7 @@ case "${1:-}" in
         echo "  setup      Install VoiceLayer, wire MCP, and guide macOS permissions"
         echo "  bar        Launch VoiceBar.app (floating pill widget)"
         echo "  vocab      Add, list, or remove STT vocabulary aliases"
+        echo "  pronounce  Add, list, or remove private TTS pronunciations"
         echo "  update     Update app, daemon, model, and personal VoiceLayer data"
         echo "  doctor     Inventory/dedupe VoiceBar.app copies (dry-run by default)"
         echo "  autostart  Install or inspect the VoiceBar login LaunchAgent"
