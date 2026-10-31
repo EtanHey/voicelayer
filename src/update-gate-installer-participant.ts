@@ -159,16 +159,32 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
   };
   const verify: ParticipantProof = state => !!evidence && !!pinned && state.kind !== "OPEN" &&
     sameLease(state.lease, evidence.native.lease) && fresh();
+  const sampleProcessProof = () => {
+    if (!evidence || !pinned) throw Error("UNKNOWN: participant identity unavailable");
+    const current = processProof(pinned.identities);
+    if (!fresh() || JSON.stringify(current) !== JSON.stringify(pinned))
+      throw Error("UNKNOWN: participant identity changed or receipt expired");
+  };
   const withProcessProof = <T>(read: () => T): T => {
     if (!evidence || !pinned) return read(); // The in-lock verifier will refuse absent evidence.
-    const sample = () => {
-      if (!pinned) throw Error("UNKNOWN: participant identity unavailable");
-      const current = processProof(pinned.identities);
-      if (!evidence || !fresh() || JSON.stringify(current) !== JSON.stringify(pinned))
-        throw Error("UNKNOWN: participant identity changed or receipt expired");
-    };
-    try { sample(); const result = read(); sample(); return result; }
+    try { sampleProcessProof(); const result = read(); sampleProcessProof(); return result; }
     catch (error) { evidence = undefined; throw error; }
+  };
+  // EEXIST is reported by mkdir itself. Retry acquisition before any after-sample,
+  // without observing whether the other owner's lock is still present. At most
+  // 99 short sleeps (198 ms), also fenced by elapsed time and receipt/exit expiry.
+  const retryAcquire = async <T>(read: () => T, deadline: number): Promise<T> => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try { return read(); }
+      catch (error) {
+        if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
+        if (attempt === 99 || deps.now() + 2 >= deadline)
+          throw Error("UNKNOWN: update-gate lock acquisition timed out");
+      }
+      await deps.sleep(2); // Failed acquisition owns no lock.
+      if (deps.now() >= deadline) throw Error("UNKNOWN: update-gate lock acquisition timed out");
+    }
+    throw Error("UNKNOWN: update-gate lock acquisition exhausted");
   };
   return {
     verify, withProcessProof,
@@ -192,8 +208,14 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
     },
     async quit(lease) {
       // Under G1's lock, recheck lease, diagnostics, ledger and last live identities.
-      const authorized = await retryInstallerContention(() => withProcessProof(() =>
-        acknowledgeVoiceDrain(lease, state => state.kind === "COMMITTED" && verify(state))), result => result === null, attempt => deps.sleep(Math.min(25 * 2 ** attempt, 250)));
+      let authorized: ReturnType<typeof acknowledgeVoiceDrain>;
+      try {
+        sampleProcessProof();
+        authorized = await retryAcquire(() => acknowledgeVoiceDrain(lease,
+          state => state.kind === "COMMITTED" && verify(state), { throwOnContention: true }),
+          Math.min(deps.now() + 250, observedAt + 1000));
+        sampleProcessProof();
+      } catch (error) { evidence = undefined; throw error; }
       if (!authorized || !pinned) throw Error("UNKNOWN: controlled quit not authorized");
       evidence = undefined;
       let reply: unknown;
@@ -220,12 +242,11 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
         // Both expensive process samples run outside the mkdir lock. Only the
         // lease/diagnostic/ledger snapshot is taken inside it.
         const before = deps.participantsExited(pinned);
-        const held = acknowledgeVoiceDrain(lease, state => state.kind === "COMMITTED");
+        const held = await retryAcquire(() => acknowledgeVoiceDrain(lease,
+          state => state.kind === "COMMITTED", { throwOnContention: true }), Math.min(deps.now() + 250, deadline));
         const after = deps.participantsExited(pinned);
-        if (!held && installerGateContended() && deps.now() < deadline) { await deps.sleep(); continue; }
         if (!held || before === "UNKNOWN" || after === "UNKNOWN")
           throw Error("UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery");
-        if (deps.now() > deadline) throw Error("UNKNOWN: participants did not exit; gate retained closed for recovery");
         if (before === true && after === true) return;
         if (deps.now() >= deadline) throw Error("UNKNOWN: participants did not exit; gate retained closed for recovery");
         await deps.sleep();
