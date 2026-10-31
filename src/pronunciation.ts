@@ -9,11 +9,13 @@
  *   - hebrew: Hebrew names/words (Etan → "Eh tahn")
  *   - acronyms: Letter-by-letter (SQL → "S Q L", API → "A P I")
  *
- * All replacements are case-insensitive and applied as whole-word matches.
+ * Legacy YAML replacements are case-insensitive whole-word matches.
+ * The private state-dir map uses case-sensitive Unicode whole-word matches.
  */
 
-import { existsSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, statSync, mkdirSync, mkdtempSync, writeFileSync, renameSync, rmSync } from "fs";
+import { dirname, join } from "path";
+import { getStateDir } from "./paths";
 
 const PRONUNCIATION_OVERRIDE_ENV = "QA_VOICE_PRONUNCIATION_PATH";
 
@@ -133,7 +135,7 @@ function loadEntries(): PronunciationEntry[] {
  * @returns Text with pronunciation corrections applied
  */
 export function applyPronunciation(text: string): string {
-  const entries = loadEntries();
+  const entries = pronunciationRules();
   if (entries.length === 0) return text;
 
   let result = text;
@@ -145,5 +147,51 @@ export function applyPronunciation(text: string): string {
 
 /** Ordered snapshot for mapped speech preprocessing; shares the YAML hot-reload cache. */
 export function pronunciationRules(): readonly PronunciationEntry[] {
-  return loadEntries();
+  let personal: PronunciationEntry[] = [];
+  try {
+    personal = Object.entries(readPersonalPronunciations()).map(([term, replacement]) => ({
+      pattern: new RegExp(`(?<![\\p{L}\\p{M}\\p{N}_])${escapeRegex(term)}(?![\\p{L}\\p{M}\\p{N}_])`, "gu"),
+      // Rules use String.replace syntax. User entries are literal speech.
+      replacement: replacement.split("$").join("$$"),
+    }));
+  } catch { /* A malformed/unreadable private file must not break narration. */ }
+  return [...loadEntries(), ...personal];
+}
+
+/** Separate from the legacy YAML dictionary; never seeded or shipped. */
+export function personalPronunciationPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(getStateDir(env), "tts-pronunciations.json");
+}
+
+export function readPersonalPronunciations(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  let content: string;
+  try { content = readFileSync(personalPronunciationPath(env), "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return {}; throw error; }
+  if (!content.trim()) return {};
+  const data: unknown = JSON.parse(content);
+  if (!data || Array.isArray(data) || typeof data !== "object") throw new Error("Invalid pronunciation map");
+  for (const [term, spoken] of Object.entries(data)) validatePersonalEntry(term, spoken);
+  return data as Record<string, string>;
+}
+
+function validatePersonalEntry(term: string, spoken: unknown): void {
+  if (!term.trim() || term !== term.trim() || term.length > 200 || /[\x00-\x1f\x7f]/.test(term)
+      || typeof spoken !== "string" || !spoken.trim() || spoken.length > 500 || /[\x00-\x1f\x7f]/.test(spoken)) {
+    throw new Error("Expected a nonempty term and spoken text without control characters");
+  }
+}
+
+export function updatePersonalPronunciation(term: string, spoken: string | undefined, env: NodeJS.ProcessEnv = process.env): void {
+  validatePersonalEntry(term, spoken ?? "remove");
+  const entries = new Map(Object.entries(readPersonalPronunciations(env)));
+  if (spoken === undefined) entries.delete(term);
+  else entries.set(term, spoken);
+  const path = personalPronunciationPath(env);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const staging = mkdtempSync(`${path}.`);
+  try {
+    const tmp = join(staging, "map.json");
+    writeFileSync(tmp, JSON.stringify(Object.fromEntries(entries), null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    renameSync(tmp, path);
+  } finally { rmSync(staging, { recursive: true, force: true }); }
 }

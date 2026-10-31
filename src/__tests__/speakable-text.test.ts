@@ -213,12 +213,12 @@ test("ranges partition original and spoken UTF-16, including repeated words and 
   expect(projectSpeakableText("שלוםMP3 עולם_חדש").speechText).toBe("שלוםMP3 עולם_חדש");
 });
 
-test("ordinary prose, Hebrew, decimals and negative numbers survive", () => {
+test("ordinary prose and Hebrew survive while decimals expand", () => {
   const text = "Hello, don't cut 3.14 or -5. שָׁלוֹם 123!";
-  expect(projectSpeakableText(text).speechText).toBe(text);
+  expect(projectSpeakableText(text).speechText).toBe("Hello, don't cut three point one four or -5. שָׁלוֹם 123!");
 });
 
-for (const text of ["Is that OK with you?", "The meeting is at 3 PM tomorrow.", "US AM PM ID TV UK CEO ABC XYZ", "Meet on 2026.10.15 please.", "$3.50 and € 2.75 or £9.99; $3.50USD and €2,000.50", "3.5 seconds and 3.14 radians", "2026-10-15, 15.10.2026, 10/15/2026 and 1/2", "At 3:50PM or 10:30 AM and 23:59:02 or 10AM."]) test(`prose passthrough: ${text}`, () => {
+for (const text of ["Is that OK with you?", "The meeting is at 3 PM tomorrow.", "US AM PM ID TV UK CEO ABC XYZ", "Meet on 2026.10.15 please.", "2026-10-15, 15.10.2026, 10/15/2026 and 1/2", "At 3:50PM or 10:30 AM and 23:59:02 or 10AM."]) test(`prose passthrough: ${text}`, () => {
   for (const engine of ["edge", "clone"] as const) expect(projectSpeakableText(text, [], engine).speechText).toBe(text);
 });
 test("only explicit versions expand; Edge leaves initialisms for its frontend", () => {

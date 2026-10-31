@@ -12,6 +12,21 @@ function number(raw: string): string {
   if (raw.length > 2 || /^0\d/.test(raw)) return [...raw].map(d => ones[+d]).join(" ");
   return n < 20 ? ones[n] : tens[Math.floor(n / 10)] + (n % 10 ? `-${ones[n % 10]}` : "");
 }
+// Amounts use cardinal hundreds/thousands; fractional digits remain exact.
+function cardinal(raw: string): string {
+  const n = Number(raw.replace(/,/g, ""));
+  if (!Number.isSafeInteger(n) || n >= 1e12) return raw.replace(/,/g, "").split("").map(d => number(d)).join(" ");
+  for (const [size, name] of [[1e9, "billion"], [1e6, "million"], [1e3, "thousand"], [100, "hundred"]] as const) {
+    if (n >= size) return `${cardinal(String(Math.floor(n / size)))} ${name}${n % size ? " " + cardinal(String(n % size)) : ""}`;
+  }
+  return number(String(n));
+}
+function decimal(raw: string): string {
+  const [whole, ...parts] = raw.replace(/^-/, "").split(".");
+  return (raw.startsWith("-") ? "minus " : "") + cardinal(whole) + parts.map(part => " point " + [...part].map(number).join(" ")).join("");
+}
+const rateUnits: Record<string, string> = { h: "hour", hr: "hour", hour: "hour", unit: "unit", item: "item", kg: "kilogram", km: "kilometer", min: "minute", s: "second", day: "day", month: "month", year: "year" };
+const currencies: Record<string, [string, string]> = { $: ["dollar", "dollars"], "€": ["euro", "euros"], "£": ["pound", "pounds"], "¥": ["yen", "yen"], "₪": ["shekel", "shekels"] };
 const lexicon: Record<string, string> = {
   JSON: "JSON", YAML: "yammel", YML: "yammel", TOML: "tommel", REST: "rest", GUI: "gooey",
   RAM: "ram", ROM: "rom", DOM: "dom", CORS: "cors", CUDA: "cooda", ONNX: "onyx",
@@ -334,8 +349,13 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     if (engine === "clone" && /[\\/]/.test((m.input[m.index - 1] ?? "") + (m.input[m.index + m[0].length] ?? ""))) return undefined;
     return /[\u0590-\u05ff]/.test(m[0]) ? m[0] : undefined;
   }, true);
-  // Keep numeric prose out of path/identifier rules, including fractions and times.
-  edit(/[$€£¥₪][ \t]*\d[\d,]*(?:\.\d+)?(?:[ \t]?(?:USD|EUR|GBP|ILS))?/g, m => m[0], true);
+  // Speak amounts before paths can mistake a rate for a basename. Keep the
+  // entire amount/rate atomic so downstream identifiers cannot alter it.
+  edit(/([$€£¥₪])[ \t]*(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:[ \t]?(?:USD|EUR|GBP|ILS|JPY))?(?:\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year))?(?![\p{L}\p{N}_])/gu,
+    m => `${decimal(m[2])} ${currencies[m[1]][Number(m[2].replace(/,/g, "")) === 1 ? 0 : 1]}${m[3] ? " per " + rateUnits[m[3]] : ""}`, true, true);
+  edit(/(?<![\p{L}\p{N}_./])(-?\d+(?:,\d{3})*(?:\.\d+)?)\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year)(?![\p{L}\p{N}_/])/gu,
+    m => `${decimal(m[1])} per ${rateUnits[m[2]]}`, true, true);
+  // Keep fractions and times out of path/identifier rules.
   edit(/(?<![\w./])\d+(?:\/\d+)+(?![\w./])/g, m => m[0], true);
   edit(/(?<![\w:])(?:\d{1,2}:\d{2}(?::\d{2})?(?:[ \t]?[AP]M)?|\d{1,2}[AP]M)(?![\w:])/gi, m => m[0], true);
   if (engine === "clone") {
@@ -357,6 +377,8 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     }
     const start = match.index, end = start + match[0].length;
     if (/^\d+(?:\/\d+)+$/.test(match[0])) continue;
+    // Only revisit dictionary-edited composites, not protected numeric rates.
+    if (!rules.some(rule => new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "")).test(match[0]))) continue;
     // A spoken prose compound keeps both halves; the edge basename rule would drop the first.
     if (match[0].split("").some((c, i) => c === "/" && spokenSlashes.has(start + i))) continue;
     if (!pieces.some(p => p.protected && p.start >= start && p.end <= end)) continue;
@@ -409,6 +431,11 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     if (/^[vV^~]/.test(raw)) { prefix = /^[vV]/.test(raw) ? "version " : raw[0] === "^" ? "caret " : "tilde "; raw = raw.slice(1); }
     const [core, suffix] = raw.split("-");
     return prefix + core.split(".").map(number).join(" point ") + (suffix ? " " + suffix.replace(/^rc/, "release candidate").split(".").map(p => /^\d+$/.test(p) ? number(p) : p).join(" ") : "");
+  }, true, true);
+  edit(/(?<![\p{L}\p{N}_./])-?\d+(?:\.\d+)+(?![\p{L}\p{N}_/]|\.\d)/gu, m => {
+    // Calendar dates stay lexical; explicit versions were handled above.
+    if (/^(?:\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4})$/.test(m[0])) return undefined;
+    return decimal(m[0]);
   }, true, true);
   edit(/\b0x[0-9a-f]+\b|\b(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gi, m => {
     const hex = /^0x/i.test(m[0]);
