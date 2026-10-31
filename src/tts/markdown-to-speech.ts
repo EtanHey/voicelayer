@@ -22,7 +22,7 @@ export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
     const at = line.sourceStart + (marker?.indexOf("[") ?? 0);
     while (span < code.length && code[span][1] <= line.sourceStart) span++;
     const literalTask = !!marker && code[span]?.[0] <= at && at < code[span]?.[1];
-    const completed = !!marker && !marker.endsWith("[ ]") && /[\p{L}\p{N}\p{S}]/u.test(line.text.slice(marker.length)) && !literalTask;
+    const completed = !!marker && !marker.endsWith("[ ]") && !literalTask;
     const literals: {token: string; text: string}[] = [];
     let protectedText = "", cursor = 0;
     for (let i = span; i < code.length && code[i][0] < line.sourceEnd; i++) {
@@ -32,7 +32,7 @@ export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
       // would rewrite. The lead approved visible ticks on these literal spans;
       // plain `foo` displays without ticks and the speakable pass removes all
       // retained ticks before sending text to either TTS engine.
-      const keep = /\[[ xX]\]|[$€£¥₪][ \t]*-?\d|\b\d+(?:\.\d+|\/[A-Za-z])|(?:[\w-]+|\.[A-Za-z]+)\.[A-Za-z]/.test(raw);
+      const keep = /\[[ xX]\]|[$€£¥₪][ \t]*-?\d|\b\d+(?:\.\d+|\/[A-Za-z])|(?:[\w-]+|\.[A-Za-z]+)\.[A-Za-z]|-\d+\b/.test(raw);
       const left = Math.max(start, line.sourceStart) - line.sourceStart;
       const right = Math.min(end, line.sourceEnd) - line.sourceStart;
       let token = `\uE000${literals.length}\uE001`;
@@ -46,7 +46,7 @@ export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
     let text = speechLineText(protectedText, { literalTask });
     // Tokens are local to this line and cannot collide with captured text.
     for (const literal of literals) text = text.split(literal.token).join(literal.text);
-    return { ...line, text, completed };
+    return { ...line, text, completed, taskBody: marker ? line.text.slice(marker.length) : "" };
   });
   // Delay completion until the final indented continuation of a checked item.
   for (let i = 0; i < output.length; i++) {
@@ -54,10 +54,12 @@ export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
     let end = i;
     while (end + 1 < output.length && /^[ \t]+\S/.test(lines[end + 1].text) && !/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/.test(lines[end + 1].text) &&
       !markdown.slice(output[end].sourceEnd, output[end + 1].sourceStart).replace(/\r?\n/, "")) end++;
+    const body = [output[i].taskBody, ...lines.slice(i + 1, end + 1).map(line => line.text)].join(" ");
+    if (!/[\p{L}\p{N}\p{S}]/u.test(body)) continue;
     if (end > i) output[i].text = output[i].text.replace(/\.$/, "");
     output[end].text = output[end].text.replace(/[.!?,;:]+$/, "") + ", done.";
   }
-  return output.map(({ completed, ...line }) => line);
+  return output.map(({ completed, taskBody, ...line }) => line);
 }
 
 function speechLineText(raw: string, { literalTask = false } = {}): string {

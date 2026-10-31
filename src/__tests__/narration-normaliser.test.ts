@@ -69,7 +69,7 @@ for (const engine of ["edge", "clone"] as const) {
     expect(projectSpeakableText("1/day.json", [], engine).speechText)
       .toBe("1 slash day dot JSON");
   });
-  for (const source of ["`echo $1`", "`awk '{print $2}'`", "`3.14`", "`₪180/h`", "`180/h`", "`reply-draft.md`", "run `cost=$5` now"]) {
+  for (const source of ["`echo $1`", "`awk '{print $2}'`", "`3.14`", "`₪180/h`", "`180/h`", "`-5`", "`reply-draft.md`", "run `cost=$5` now"]) {
     test(`${engine} inline code remains literal in raw and selection reads: ${source}`, () => {
       const selected = projectStructuredSpeech(source).speechText;
       for (const read of [source, selected]) {

@@ -239,7 +239,11 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     let segment = "", offset = 0;
     const flush = () => { for (const [start, end] of inlineCodeSpanEnds(segment)) spans.set(offset + start, offset + end); offset += segment.length; segment = ""; };
     for (const piece of pieces) {
-      if (piece.protected && piece.text === "code block") { flush(); offset += piece.text.length; }
+      if ((piece.protected && piece.text === "code block") || piece.literal) {
+        flush();
+        if (piece.literal) spans.set(offset, offset + piece.text.length);
+        offset += piece.text.length;
+      }
       else segment += piece.text;
     }
     flush();
@@ -252,7 +256,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     const literals = [...inlineSpans()].flatMap(([start, end]) => {
       const raw = input.slice(start, end), ticks = raw.match(/^`+/)![0].length;
       const content = raw.slice(ticks, -ticks);
-      return /[$€£¥₪][ \t]*-?\d|\b\d+(?:\.\d+|\/[A-Za-z])|(?:[\w-]+|\.[A-Za-z]+)\.[A-Za-z]/.test(content)
+      return /[$€£¥₪][ \t]*-?\d|\b\d+(?:\.\d+|\/[A-Za-z])|(?:[\w-]+|\.[A-Za-z]+)\.[A-Za-z]|-\d+\b/.test(content)
         ? [{start, end, text: content.replace(/`/g, "")}] : [];
     });
     applyEdits(pieces, input, literals, true, true);
@@ -295,7 +299,8 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
       if (char === "[" || char === "{") bracketDepth++;
       else if (char === "]" || char === "}") bracketDepth = Math.max(0, bracketDepth - 1);
     }
-    if (checkboxCursor > m.index || bracketDepth) continue;
+    // A stripped literal can start exactly at the checkbox match.
+    if (checkboxCursor > m.index || codeSpanEnds.has(m.index) || bracketDepth) continue;
     const prefix = m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1, m.index);
     const list = /^[ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix);
     if (!list && !(/^[ \t]*$/.test(prefix) && /^(?:$|[\s"'”’.,;:!?)])/.test(m.input.slice(m.index + m[0].length)))) continue;
@@ -303,7 +308,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     if (list && m[0] !== "[ ]") {
       const tail = m.input.slice(m.index + m[0].length);
       // A wrapped item's indented continuation belongs before its completion.
-      const body = tail.match(/^[^\r\n]*(?:\r?\n[ \t]+(?![-+*][ \t]|\d+[.)][ \t])[^\r\n]+)*/)?.[0].trimEnd() ?? "";
+      const body = tail.match(/^[^\r\n]*(?:\r?\n(?![ \t]*(?:[-+*][ \t]|\d+[.)][ \t]))[ \t]+[^\r\n]+)*/)?.[0].trimEnd() ?? "";
       if (/[\p{L}\p{N}\p{S}]/u.test(body)) {
         const end = m.index + m[0].length + body.length;
         const punctuation = body.match(/[.!?,;:]+$/)?.[0].length ?? 0;
@@ -315,7 +320,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   }
   checkboxEdits.sort((a, b) => a.start - b.start || a.end - b.end);
   for (const change of checkboxEdits.reverse()) applyEdits(pieces, pieces.map(p => p.text).join(""), [change], change.start === change.end, true);
-  edit(/^([ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+(?:\r?\n[ \t]+(?![-+*][ \t]|\d+[.)][ \t])[^\r\n]+)*)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
+  edit(/^([ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+(?:\r?\n(?![ \t]*(?:[-+*][ \t]|\d+[.)][ \t]))[ \t]+[^\r\n]+)*)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
   // Keep the marker's own source span: alignment maps the spoken number back to it.
   edit(/^[ \t]*(\d+)[.)](?=[ \t]+)/gm, m => {
     const line = m.input.slice(m.index).split(/\r?\n/, 1)[0];

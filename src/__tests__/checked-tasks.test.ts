@@ -146,3 +146,45 @@ for (const engine of ["edge", "clone"] as const) test(`${engine} URL commas rema
   expect(p.speechText).toBe("see example dot com slash a,b, done.");
   expect(p.ranges.find(r => p.speechText.slice(r.speech.start, r.speech.end).includes("done"))?.kind).toBe("insertion");
 });
+
+for (const engine of ["edge", "clone"] as const) {
+  for (const [source, expected] of [
+    ["- [x] Parent\n  - [ ] Child", "Parent, done. Child."],
+    ["- [ ] Parent\n  - [x] Child", "Parent. Child, done."],
+    ["- [x] Parent\n  - Child", "Parent, done. Child."],
+    ["- [x] Parent\n  1. Child", "Parent, done. one. Child."],
+    ["- [x]\n  Call Dana", "Call Dana, done."],
+  ]) test(`${engine} list boundaries keep each task's completion with its own body: ${source}`, () => {
+    expect(projectSpeakableText(source, [], engine).speechText).toBe(expected);
+    const selected = projectStructuredSpeech(source).speechText;
+    expect(projectSpeakableText(selected, [], engine).speechText).toBe(source.includes("1. Child") ? "Parent, done. 1. Child." : expected);
+  });
+  for (const code of ["`a[0]`", "`[`", "`cost=$5 [`", "`a[0.5`", "`a[0.5]`"]) {
+    test(`${engine} code brackets do not change the state of a later task: ${code}`, () => {
+      const source = code + "\n- [x] Task";
+      for (const read of [source, projectStructuredSpeech(source).speechText]) {
+        const p = projectSpeakableText(read, [], engine);
+        expect(p.speechText).toEndWith("Task, done.");
+        expect(p.speechText).not.toContain("[x]");
+      }
+    });
+  }
+}
+
+for (const engine of ["edge", "clone"] as const) {
+  for (const source of ["- `[x] $5`", "- `[x] 3.14`", "- `[x] reply-draft.md`", "`- [x] $5`", "`- [x] 3.14`"]) {
+    test(`${engine} protected code checkboxes never acquire completion: ${source}`, () => {
+      for (const read of [source, projectStructuredSpeech(source).speechText]) {
+        const p = projectSpeakableText(read, [], engine);
+        expect(p.speechText).not.toContain(", done");
+        expect(p.speechText).not.toContain("`");
+      }
+    });
+  }
+  test(`${engine} Bugbot wrapped empty marker shares the continuation-body completion fix`, () => {
+    const source = "- [x]\n  Call Dana";
+    expect(projectStructuredSpeech(source).speechText).toBe("Call Dana, done.");
+    expect(projectSpeakableText(source, [], engine).speechText).toBe("Call Dana, done.");
+    expect(projectSpeakableText(projectStructuredSpeech(source).speechText, [], engine).speechText).toBe("Call Dana, done.");
+  });
+}
