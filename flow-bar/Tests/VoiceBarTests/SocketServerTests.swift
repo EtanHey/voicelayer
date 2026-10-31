@@ -9,6 +9,84 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testQuitDrainWritesAckBeforeRequestingTermination() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        var events: [String] = []
+        var policy = VoiceBarTerminationPolicy()
+        fixture.server.onUpdateGateDrain = { request in
+            policy.authorize(.controlledUpdate)
+            events.append("authorized")
+            return ["cmd": "update_gate_drain_ack", "id": request["id"]!]
+        }
+        fixture.server.onUpdateGateDrainReplySent = { request in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(request["action"] as? String, "quit")
+            do {
+                let line = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 0.05))
+                let ack = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+                XCTAssertEqual(ack["cmd"] as? String, "update_gate_drain_ack")
+                XCTAssertEqual(ack["id"] as? String, "quit-order")
+                events.append("ack-written")
+            } catch { XCTFail("Termination requested before ACK was readable: \(error)") }
+            events.append("termination-requested")
+            XCTAssertEqual(policy.reply(enforcesSingleton: true, voiceBusy: true, gatePermitsQuit: false), .terminateNow,
+                           "Ingress after authorization cannot rescind the acknowledged quit")
+        }
+        try writeLine("{\"type\":\"update_gate_drain\",\"action\":\"quit\",\"id\":\"quit-order\",\"pid\":\(getpid())}",
+                      to: fixture.commandClient)
+        XCTAssertTrue(waitUntil(timeout: 1) { events.contains("termination-requested") })
+        XCTAssertEqual(events, ["authorized", "ack-written", "termination-requested"])
+    }
+
+    func testQuitDrainRequestsTerminationExactlyOnceWhenPeerGoneBeforeAck() throws {
+        try assertQuitDrainFinishesAfterPeerFailure(disconnectBeforeReply: true)
+    }
+
+    func testQuitDrainRequestsTerminationExactlyOnceWhenAckWriteFails() throws {
+        try assertQuitDrainFinishesAfterPeerFailure(disconnectBeforeReply: false)
+    }
+
+    private func assertQuitDrainFinishesAfterPeerFailure(disconnectBeforeReply: Bool) throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        // nil represents the process having accepted termination: no live policy can leak to a later Quit.
+        var livePolicy: VoiceBarTerminationPolicy? = VoiceBarTerminationPolicy()
+        var terminationRequests = 0
+        var authorizations = 0
+        fixture.server.onUpdateGateDrain = { request in
+            livePolicy?.authorize(.controlledUpdate)
+            authorizations += 1
+            if disconnectBeforeReply {
+                XCTAssertEqual(shutdown(fixture.commandClient, SHUT_RDWR), 0)
+                XCTAssertTrue(waitForRegisteredRoles(fixture.server, ["mcp-server"]),
+                              "Peer must be removed before returning the authorized reply")
+            } else {
+                // Leave the peer connected without reading: a reply beyond the Unix socket
+                // buffer forces write(2) to fail with EAGAIN through the bounded retry path.
+                XCTAssertEqual(fixture.server.registeredClientRolesForTesting(), ["mcp-daemon", "mcp-server"])
+            }
+            var reply: [String: Any] = ["cmd": "update_gate_drain_ack", "id": request["id"]!]
+            if !disconnectBeforeReply { reply["padding"] = String(repeating: "x", count: 4 * 1024 * 1024) }
+            return reply
+        }
+        fixture.server.onUpdateGateDrainReplySent = { _ in
+            XCTAssertTrue(Thread.isMainThread)
+            terminationRequests += 1
+            XCTAssertEqual(livePolicy?.reply(enforcesSingleton: true, voiceBusy: true, gatePermitsQuit: false), .terminateNow)
+            livePolicy = nil
+        }
+        try writeLine("{\"type\":\"update_gate_drain\",\"action\":\"quit\",\"id\":\"peer-failure\",\"pid\":\(getpid())}",
+                      to: fixture.commandClient)
+        XCTAssertTrue(waitUntil(timeout: 1) { terminationRequests == 1 })
+        XCTAssertTrue(waitForRegisteredRoles(fixture.server, ["mcp-server"]))
+        _ = fixture.server.bytesReadForTesting()
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(authorizations, 1)
+        XCTAssertEqual(terminationRequests, 1)
+        XCTAssertNil(livePolicy, "No running app may retain a committed quit for a later menu or singleton Quit")
+    }
+
     func testDrainUsesOSPeerPIDAndRepliesOnlyToTheSingleDaemonOwner() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }

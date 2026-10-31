@@ -469,6 +469,20 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(policy.reply(enforcesSingleton: false), .terminateNow)
     }
 
+    func testControlledQuitTerminationIsWiredOnlyAfterDrainReplyAttempt() throws {
+        let source = try voiceBarAppSource()
+        let authorizeStart = try XCTUnwrap(source.range(of: "server.onUpdateGateDrain ="))
+        let continuationStart = try XCTUnwrap(source.range(of: "server.onUpdateGateDrainReplySent =", range: authorizeStart.upperBound..<source.endIndex))
+        let serverStart = try XCTUnwrap(source.range(of: "server.start()", range: continuationStart.upperBound..<source.endIndex))
+        let authorization = source[authorizeStart.upperBound..<continuationStart.lowerBound]
+        let continuation = source[continuationStart.upperBound..<serverStart.lowerBound]
+        XCTAssertTrue(authorization.contains("terminationPolicy.authorize(.controlledUpdate)"))
+        XCTAssertFalse(authorization.contains("requestTermination("), "Never terminate before the socket reply attempt")
+        XCTAssertFalse(authorization.contains(".terminate("))
+        XCTAssertTrue(continuation.contains("request[\"action\"] as? String == \"quit\""))
+        XCTAssertTrue(continuation.contains("requestTermination(.controlledUpdate, lease: request[\"lease\"] as? [String: Any])"))
+    }
+
     func testQuitNeverOverridesCaptureOrClosedGate() {
         var policy = VoiceBarTerminationPolicy()
         for singleton in [true, false] {

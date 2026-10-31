@@ -133,6 +133,8 @@ final class SocketServer {
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
     var onUpdateGateDrain: (([String: Any]) -> [String: Any]?)?
+    /// Main-thread continuation after the accepted reply's write attempt (even if the peer left).
+    var onUpdateGateDrainReplySent: (([String: Any]) -> Void)?
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
     var onCaptureResolved: (() -> Void)?
@@ -363,9 +365,12 @@ final class SocketServer {
                   clients.values.filter({ $0.acceptsCommands }).count == 1 else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self, let reply = onUpdateGateDrain?(dict) else { return }
-                queue.async { [weak self] in
-                    guard let self, clients[fd]?.peerPID == peer else { return }
-                    sendCommandToOwnerOnQueue(command: reply, targetFD: fd)
+                queue.async { [self] in
+                    if self.clients[fd]?.peerPID == peer {
+                        self.sendCommandToOwnerOnQueue(command: reply, targetFD: fd)
+                    }
+                    // Authorization is final even if the peer disconnected or the ACK write failed.
+                    DispatchQueue.main.async { [self] in self.onUpdateGateDrainReplySent?(dict) }
                 }
             }
             return

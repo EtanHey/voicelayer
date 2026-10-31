@@ -80,8 +80,24 @@ import CoreFoundation
               let state = Self.validState(json), try stat(path + ".admissions").st_mode & S_IFMT == S_IFDIR else { throw Fault.unknown }
         return state
     }
+    private func readLedger() throws -> [String] {
+        guard let directory = opendir(path + ".admissions") else { throw Fault.unknown }
+        defer { closedir(directory) }
+        var names: [String] = []
+        while true {
+            errno = 0
+            guard let entry = readdir(directory) else {
+                guard errno == 0 else { throw Fault.unknown }
+                return names
+            }
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                String(cString: UnsafeRawPointer($0).assumingMemoryBound(to: CChar.self))
+            }
+            if name != ".", name != ".." { names.append(name) }
+        }
+    }
     private func snapshot() throws -> (state: [String: Any], active: [String]) {
-        (try state(), try FileManager.default.contentsOfDirectory(atPath: path + ".admissions"))
+        (try state(), try readLedger())
     }
     @discardableResult private func diagnose() -> Bool {
         degraded = true
@@ -133,7 +149,11 @@ import CoreFoundation
             admission = try locked(voice: true) {
                 if absent(path) { return {} }
                 let current = try state()
-                guard current["kind"] as? String == "OPEN" else { return nil }
+                if current["kind"] as? String != "OPEN" {
+                    // Match TS readLedger: only readable closed evidence can refuse voice.
+                    _ = try readLedger()
+                    return nil
+                }
                 // UUIDs and validated integers need no escaping. Match TS insertion order and newline.
                 let generation = (current["generation"] as! NSNumber).int64Value
                 let bytes = Data("{\"token\":\"\(token)\",\"pid\":\(getpid()),\"incarnation\":\"\(incarnation)\",\"generation\":\(generation)}\n".utf8)

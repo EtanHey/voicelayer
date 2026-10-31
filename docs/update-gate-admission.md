@@ -27,8 +27,10 @@ These are G3 entry criteria, not fixes implemented in G2d. The updater remains N
 ## Native admission and live participant adapter (G3)
 
 `NativeUpdateGate` uses the same nonrecursive mkdir lock, strict state schema and
-readable-directory ledger predicate. Swift never writes, bootstraps or repairs gate
-state. A missing gate admits voice unregistered without a marker while the daemon
+readable-directory ledger predicate, including enumeration before refusing a closed
+gate. An unreadable closed ledger admits voice unregistered with a diagnostic.
+Swift never writes, bootstraps or repairs gate state. A missing gate admits voice
+unregistered without a marker while the daemon
 initializes; the updater already refuses missing state. Malformed evidence, unsafe
 ledgers, diagnostics and exhausted lock contention admit voice unregistered with
 sticky fault evidence. Native synchronous admissions spin for at most 2 ms on a
@@ -51,7 +53,9 @@ OPEN ignores orphan ledger records; missing, malformed, diagnostic or degraded
 gates permit quit when no live work remains. Inactive disconnected/error modes
 permit quit but never prove update-drain idle. Refusal uses the existing notice band.
 Controlled quit additionally needs the exact COMMITTED lease and is final before
-its ACK is returned; later ingress cannot cancel it. Singleton replacement
+its ACK is returned; later ingress cannot cancel it. Termination is requested on
+main after the socket queue attempts the ACK write, even if that write fails or
+is skipped because the daemon peer disconnected. Singleton replacement
 never escalates an incumbent's graceful refusal to force termination. SIGKILL and
 OS force-quit cannot be prevented. A supervising SIGTERM timeout can escalate to
 SIGKILL. Singleton replacement waits both daemon stop intervals plus a one-second
