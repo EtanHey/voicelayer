@@ -15,7 +15,7 @@ vl_gate_bun() {
 }
 # Capture only an observed bundle, before controlled quit. Nested helpers do not
 # own restoration: the first caller's re-exec restores after all mutations finish.
-vl_gate_script_path() { (cd "$(dirname "$1")" && printf '%s/%s\n' "$PWD" "$(basename "$1")"); }
+vl_gate_script_path() { (cd "$(dirname "$1")" && printf '%s/%s\n' "$(pwd -P)" "$(basename "$1")"); }
 vl_gate_capture_voicebar() {
     local caller="$1"
     local pids status executable

@@ -34,7 +34,8 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
   stub("bun", `if [[ "$1" == */src/update-gate-installer.ts ]]; then
     if [[ "$2" == --validate ]]; then echo validate >> "$TEST_ROOT/calls"; [[ "$TEST_FAULT" != validate ]]; exit; fi
     echo gate-quit >> "$TEST_ROOT/calls"; : > "$TEST_ROOT/running"
-    export VOICELAYER_INSTALL_OPERATION=fixture; shift; exec "$@"
+    export VOICELAYER_INSTALL_OPERATION=fixture TEST_GATE_CHILD_PID=$$
+    echo "gate-child $$" >> "$TEST_ROOT/calls"; shift; exec "$@"
   fi
   echo "bun $*" >> "$TEST_ROOT/calls"`);
   stub("git", 'case "$*" in *rev-parse*--git-common-dir*) echo "$TEST_ROOT/.git";; *rev-parse*--show-toplevel*) echo "$TEST_ROOT";; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; *branch*) echo fixture;; esac');
@@ -49,18 +50,40 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
       plutil) [[ "$TEST_FAULT" != plist ]];;
       *) exit 0;;
     esac`);
+  if (fault === "build-success") {
+    mkdirSync(join(root, "flow-bar/bundle"), { recursive: true });
+    mkdirSync(join(root, "src"));
+    for (const file of ["package.json", "bun.lock", "flow-bar/bundle/Info.plist", "flow-bar/bundle/VoiceBar.entitlements",
+      "scripts/install-voicebar-f5-hidutil.sh", "scripts/apply-voicebar-f5-hidutil.sh", "launchd/com.voicelayer.f5-to-f18-hidutil.plist"])
+      copyFileSync(file, join(root, file));
+    relocate("launchd/install.sh");
+    for (const check of ["check-voicebar-qa-free.sh", "check-voicebar-test-free.sh"])
+      writeFileSync(join(root, "scripts", check), '#!/bin/bash\necho bundle-check >> "$TEST_ROOT/calls"\n', { mode: 0o755 });
+    stub("swift", 'echo compiler >> "$TEST_ROOT/calls"; mkdir -p "$TEST_ROOT/built"; echo fixture > "$TEST_ROOT/built/VoiceBar"; [[ "$*" != *--show-bin-path* ]] || echo "$TEST_ROOT/built"');
+    stub("bun", readFileSync(join(bin, "bun"), "utf8") + `
+      if [[ "$1" == install ]]; then
+        mkdir -p "$TEST_APP/Contents/Resources/node_modules/zod" "$TEST_APP/Contents/Resources/node_modules/@modelcontextprotocol/sdk"
+        echo fixture > "$TEST_APP/Contents/Resources/node_modules/fixture.dylib"
+      elif [[ "$1" == -e ]]; then echo 1.0.0; fi`);
+    stub("find", '[[ "$*" != *-print0* ]] || printf "%s\\0" "$TEST_APP/Contents/Resources/node_modules/fixture.dylib"');
+    stub("file", "echo Mach-O");
+    stub("security", 'echo "$VOICEBAR_CODESIGN_IDENTITY"');
+    stub("codesign", `echo "codesign $*" >> "$TEST_ROOT/calls"
+      printf '%s\\n' "Authority=$VOICEBAR_CODESIGN_IDENTITY" 'Authority=Developer ID Certification Authority' 'Authority=Apple Root CA' 'TeamIdentifier=PPN23G925Y' >&2`);
+    for (const tool of ["ditto", "rsync", "spctl"]) stub(tool, `echo "${tool} $*" >> "$TEST_ROOT/calls"`);
+  }
   // Non-compiler callers use a fake build that can fail, signal its parent or
   // reopen VoiceBar. The build caller itself always runs the complete real file.
   if (script !== "flow-bar/build-app.sh") writeFileSync(join(root, "flow-bar/build-app.sh"), `#!/bin/bash
     echo build >> "$TEST_ROOT/calls"
-    case "$TEST_FAULT" in build) exit 42;; signal) /bin/kill -TERM "$PPID"; exit 42;; esac
+    case "$TEST_FAULT" in build) exit 42;; signal) /bin/kill -TERM "$PPID"; exit 42;; signal-self) echo "signal-verify $TEST_GATE_CHILD_PID" >> "$TEST_ROOT/calls"; /bin/kill -TERM "$TEST_GATE_CHILD_PID"; exit 0;; esac
     if [[ "$TEST_FAULT" != kickstart && "\${TEST_UPDATE:-0}" != 1 ]]; then echo 202 > "$TEST_ROOT/running"; fi
   `, { mode: 0o755 });
   const env = { ...process.env, HOME: join(root, "home"), PATH: bin, TEST_ROOT: root, TEST_APP: app,
     TEST_ORIGINAL_APP: original, TEST_MANAGED: managed ? "1" : "0", TEST_FAULT: fault,
-    VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_TEST_BUN_CANDIDATES: join(bin, "bun"),
+    VOICELAYER_INSTALL_OPERATION: "", VOICEBAR_CODESIGN_IDENTITY: "Developer ID Application: Fixture (PPN23G925Y)", VOICELAYER_TEST_BUN_CANDIDATES: join(bin, "bun"),
     VOICELAYER_VERIFY_CHANGED_FILES_FILE: join(root, "changed"), VOICEBAR_LEGACY_LOG_DIR: join(root, "legacy"),
-    PLIST_BUDDY: join(bin, "PlistBuddy"), VOICEBAR_PLIST_BUDDY: join(bin, "PlistBuddy"), VOICELAYER_VERIFY_SKIP_BUILD: fault === "skip-build" ? "1" : "0", VOICELAYER_VERIFY_REPO_ROOT: root, VOICEBAR_TEST_BREW_CASK_REGISTERED: "0" };
+    PLIST_BUDDY: join(bin, "PlistBuddy"), VOICEBAR_PLIST_BUDDY: join(bin, "PlistBuddy"), VOICELAYER_VERIFY_SKIP_BUILD: fault === "skip-build" ? "1" : "0", VOICELAYER_VERIFY_REPO_ROOT: "", VOICEBAR_TEST_BREW_CASK_REGISTERED: "0" };
   writeFileSync(join(root, "changed"), "flow-bar/example.swift\n");
   if (script === "scripts/voicelayer-update.sh") {
     for (const helper of ["install-voicebar-f5-hidutil.sh", "verify-voicebar-hotkey-health.sh"])
@@ -70,8 +93,10 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
       BREW_CASK_SYNC_TEST_OFFERED_VERSION: "1.0.0", BREW_CASK_SYNC_TEST_FORMULA_VERSION: "",
       VOICELAYER_UPDATE_TEST_INSTALL_TYPE: "git-checkout", VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "0" });
   }
-  const run = (args: string[] = []) => {
-    const child = Bun.spawnSync(["/bin/bash", join(root, script), ...args], { env: { ...process.env, ...env }, cwd: root,
+  const run = (args: string[] = [], viaSymlink = false) => {
+    const entryRoot = viaSymlink ? `${root}-link` : root;
+    if (viaSymlink) symlinkSync(root, entryRoot);
+    const child = Bun.spawnSync(["/bin/bash", join(entryRoot, script), ...args], { env: { ...process.env, ...env }, cwd: root,
       stdin: new TextEncoder().encode("y\ny\n"), stdout: "pipe", stderr: "pipe", timeout: 15000 });
     return { exit: child.exitCode, out: child.stdout.toString(), err: child.stderr.toString(),
       running: readFileSync(join(root, "running"), "utf8").trim(), calls: readFileSync(join(root, "calls"), "utf8") };
@@ -92,6 +117,32 @@ for (const managed of [false, true]) for (const fault of ["", "build", "validate
     if (!fault) expect(result.calls).not.toContain("launchctl kickstart");
     if (fault === "kickstart" && managed) expect(result.calls).toContain("open ");
   }, 20000);
+
+for (const managed of [false, true]) for (const fault of ["build", "validate", "signal-self"])
+  test(`symlink verify restores owner on ${fault}, launchd=${managed}`, () => {
+    const result = fixture("scripts/voicelayer-verify.sh", fault, managed).run([], true);
+    expect(result.calls).toContain("gate-quit");
+    expect(result.exit).toBe(fault === "build" ? 42 : fault === "validate" ? 1 : 143);
+    if (fault === "signal-self") {
+      const childPid = result.calls.match(/^gate-child (\d+)$/m)?.[1];
+      expect(childPid).toBeDefined();
+      expect(result.calls).toContain(`signal-verify ${childPid}\n`);
+    }
+    expect({ running: result.running, err: result.err }).toMatchObject({ running: "202" });
+    expect(result.calls).toContain(managed ? "launchctl kickstart" : "open ");
+  }, 20000);
+
+for (const [script, args] of [
+  ["flow-bar/build-app.sh", []],
+  ["scripts/install-voicebar-autostart.sh", []],
+  ["scripts/voicelayer-dedupe-voicebar.sh", ["--apply"]],
+  ["scripts/voicelayer-update.sh", ["--no-stop"]],
+  ["launchd/install.sh", []],
+] satisfies [string, string[]][]) test(`symlink gate caller restores after validation failure: ${script}`, () => {
+  const result = fixture(script, "validate").run(args, true);
+  expect(result.calls).toContain("gate-quit");
+  expect({ exit: result.exit, running: result.running, err: result.err }).toMatchObject({ exit: 1, running: "202" });
+});
 
 for (const args of [[], ["--preserve-load-state"]]) for (const fault of ["", "plist"])
   test(`real autostart ${args.join(" ") || "default"} restores on ${fault || "success"}`, () => {
@@ -152,4 +203,17 @@ test("update --no-stop restores the verified canonical bundle after nested dedup
   expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ exit: 0, running: "202" });
   expect(result.calls).toContain(`open ${f.app}`);
   expect(result.calls).not.toContain(`open ${f.original}`);
+});
+
+test("real resident-target build success restores the original QA bundle after the gate quit", () => {
+  const f = fixture("flow-bar/build-app.sh", "build-success", false, true), result = f.run();
+  expect(result.calls).toContain("gate-quit");
+  expect(result.calls).toContain("validate");
+  expect(result.calls).toContain("compiler");
+  expect({ exit: result.exit, err: result.err, out: result.out }).toMatchObject({ exit: 0 });
+  expect(result.out).toContain(`[build-app] Done: ${f.app}`);
+  expect(result.out).toContain("the original bundle is restored on exit if the gate quit it");
+  expect(result.running).toBe("202");
+  expect(result.calls.split("\n").filter(line => line.startsWith("open "))).toEqual([`open ${f.original}`]);
+  expect(result.calls).not.toContain("launchctl kickstart");
 });
