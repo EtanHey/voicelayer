@@ -104,7 +104,7 @@ for (const engine of ["edge", "clone"] as const) {
       const display = `- ${marker}${punctuation} then go`;
       const result = projectSpeakableText(display, [], engine);
       expect(result.displayText).toBe(display);
-      expect(result.speechText).toBe(`${punctuation} then go.`);
+      expect(result.speechText).toBe(`${punctuation} then go${marker === "[ ]" ? "." : ", done."}`);
       const omitted = result.ranges.filter(range => range.source.start < 2 + marker.length && range.source.end > 2);
       expect(omitted.length).toBeGreaterThan(0);
       expect(omitted.every(range => range.kind === "omission")).toBe(true);
@@ -122,15 +122,15 @@ for (const engine of ["edge", "clone"] as const) {
   }
   const checkboxes: [string, string][] = [
     ["1. [ ] Buy milk", "one. Buy milk."],
-    ["- [x] Done", "Done."],
-    ["2. [X] Call Dana", "two. Call Dana."],
+    ["- [x] Done", "Done, done."],
+    ["2. [X] Call Dana", "two. Call Dana, done."],
     ["1. [ ]Buy milk", "one. Buy milk."],
     ["[ ]\n[x]\n[X]", ""],
     ["[x] Done", "Done"],
     ["  [ ] Pending", "Pending"],
-    ["  + [X] Done", "Done."],
+    ["  + [X] Done", "Done, done."],
     ["* [ ] Pending", "Pending."],
-    ["3) [x] Done", "three. Done."],
+    ["3) [x] Done", "three. Done, done."],
     ["- [x];", ";."],
   ];
   for (const [display, speech] of checkboxes) test(`${engine} silences task-list checkbox tokens: ${display}`, () => {
@@ -162,8 +162,8 @@ for (const engine of ["edge", "clone"] as const) {
     const display = "``alpha\n- [x] beta\ngamma``\n1. [X] done";
     const result = projectSpeakableText(display, [], engine);
     expect(result.speechText).toBe(engine === "clone"
-      ? "alpha open bracket x close bracket beta. gamma one. done."
-      : "alpha [x] beta. gamma one. done.");
+      ? "alpha open bracket x close bracket beta. gamma one. done, done."
+      : "alpha [x] beta. gamma one. done, done.");
     for (const [marker, kind] of [["[x]", "identity"], ["[X]", "omission"]]) {
       const content = display.indexOf(marker) + 1;
       const range = result.ranges.find(range => range.source.start <= content && range.source.end > content);
@@ -332,7 +332,10 @@ test("filename near-misses beside Hebrew stay below 50 ms in-process", () => {
   }
 });
 
-const projectionSource = await Bun.file(new URL("../speakable-text.ts", import.meta.url)).text();
+const spanSource = (await Bun.file(new URL("../tts/inline-code-spans.ts", import.meta.url)).text())
+  .replace("export function inlineCodeSpanEnds", "function inlineCodeSpanEnds");
+const projectionSource = (await Bun.file(new URL("../speakable-text.ts", import.meta.url)).text())
+  .replace('import { inlineCodeSpanEnds } from "./tts/inline-code-spans";', spanSource);
 
 function measureProjection(source = projectionSource) {
   const work = { pieceVisits: 0 };

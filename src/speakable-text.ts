@@ -1,4 +1,5 @@
 import { proseSlashMatches } from "./tts/display-tokens";
+import { inlineCodeSpanEnds } from "./tts/inline-code-spans";
 import type { ProjectionRange } from "./tts/structured-speech";
 
 export type SpeakableEngine = "edge" | "clone";
@@ -27,6 +28,7 @@ function decimal(raw: string): string {
 }
 const rateUnits: Record<string, string> = { h: "hour", hr: "hour", hour: "hour", unit: "unit", item: "item", kg: "kilogram", km: "kilometer", min: "minute", s: "second", day: "day", month: "month", year: "year" };
 const currencies: Record<string, [string, string]> = { $: ["dollar", "dollars"], "€": ["euro", "euros"], "£": ["pound", "pounds"], "¥": ["yen", "yen"], "₪": ["shekel", "shekels"] };
+const currencySymbols: Record<string, string> = { USD: "$", EUR: "€", GBP: "£", JPY: "¥", ILS: "₪" };
 const lexicon: Record<string, string> = {
   JSON: "JSON", YAML: "yammel", YML: "yammel", TOML: "tommel", REST: "rest", GUI: "gooey",
   RAM: "ram", ROM: "rom", DOM: "dom", CORS: "cors", CUDA: "cooda", ONNX: "onyx",
@@ -209,33 +211,6 @@ function applyEdits(pieces: Piece[], input: string, edits: {start: number; end: 
   }
 }
 
-function inlineCodeSpanEnds(input: string): Map<number, number> {
-  const runs = Array.from(input.matchAll(/`+/g));
-  const nextRunByLength = new Map<number, number>();
-  const closingRuns = new Map<number, number>();
-  const openingOffsets = new Map<number, number>();
-  for (let i = runs.length - 1; i >= 0; i--) {
-    const run = runs[i];
-    let backslashes = 0;
-    for (let at = run.index - 1; at >= 0 && input[at] === "\\"; at--) backslashes++;
-    const escaped = backslashes % 2;
-    const closing = nextRunByLength.get(run[0].length - escaped);
-    if (closing !== undefined) {
-      closingRuns.set(i, closing);
-      openingOffsets.set(i, run.index + escaped);
-    }
-    nextRunByLength.set(run[0].length, i);
-  }
-  const ends = new Map<number, number>();
-  for (let i = 0; i < runs.length; i++) {
-    const closing = closingRuns.get(i), start = openingOffsets.get(i);
-    if (closing === undefined || start === undefined) continue;
-    ends.set(start, runs[closing].index + runs[closing][0].length);
-    i = closing;
-  }
-  return ends;
-}
-
 /** Pure projection; clone is the default. Runtime callers choose the actual engine. */
 export function projectSpeakableText(displayText: string, rules: readonly PronunciationRule[] = [], engine: SpeakableEngine = "clone"): SpeakableText {
   const pieces: Piece[] = displayText ? [{start: 0, end: displayText.length, text: displayText}] : [];
@@ -268,9 +243,11 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     return atStart || /^\.?$/.test(after) ? "" : ", ";
   });
   edit(/^[ \t]*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?[ \t]*(?:\r?\n|$)/gm, "");
-  const codeSpanEnds = inlineCodeSpanEnds(pieces.map(p => p.text).join(""));
+  const checkboxInput = pieces.map(p => p.text).join("");
+  const codeSpanEnds = inlineCodeSpanEnds(checkboxInput);
+  const checkboxEdits: {start: number; end: number; text: string}[] = [];
   let checkboxCursor = 0, bracketDepth = 0;
-  edit(/\[[ xX]\](?!\()/g, m => {
+  for (const m of checkboxInput.matchAll(/\[[ xX]\](?!\()/g)) {
     for (; checkboxCursor < m.index; checkboxCursor++) {
       const codeEnd = codeSpanEnds.get(checkboxCursor);
       if (codeEnd !== undefined) { checkboxCursor = codeEnd - 1; continue; }
@@ -278,11 +255,24 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
       if (char === "[" || char === "{") bracketDepth++;
       else if (char === "]" || char === "}") bracketDepth = Math.max(0, bracketDepth - 1);
     }
-    if (checkboxCursor > m.index || bracketDepth) return undefined;
+    if (checkboxCursor > m.index || bracketDepth) continue;
     const prefix = m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1, m.index);
-    if (/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix)) return "";
-    return /^[ \t]*$/.test(prefix) && /^(?:$|[\s"'”’.,;:!?)])/.test(m.input.slice(m.index + m[0].length)) ? "" : undefined;
-  });
+    const list = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix);
+    if (!list && !(/^[ \t]*$/.test(prefix) && /^(?:$|[\s"'”’.,;:!?)])/.test(m.input.slice(m.index + m[0].length)))) continue;
+    checkboxEdits.push({start: m.index, end: m.index + m[0].length, text: ""});
+    if (list && m[0] !== "[ ]") {
+      const body = m.input.slice(m.index + m[0].length).split(/\r?\n/, 1)[0].trimEnd();
+      if (/[\p{L}\p{N}]/u.test(body)) {
+        const end = m.index + m[0].length + body.length;
+        const punctuation = body.match(/[.!?,;:]+$/)?.[0].length ?? 0;
+        if (punctuation) checkboxEdits.push({start: end - punctuation, end, text: ""});
+        // Empty display span: timing consumes "done" without highlighting a source word.
+        checkboxEdits.push({start: end, end, text: ", done."});
+      }
+    }
+  }
+  checkboxEdits.sort((a, b) => a.start - b.start || a.end - b.end);
+  applyEdits(pieces, checkboxInput, checkboxEdits, false);
   edit(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
   // Keep the marker's own source span: alignment maps the spoken number back to it.
   edit(/^[ \t]*(\d+)[.)](?=[ \t]+)/gm, m => {
@@ -351,8 +341,15 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   }, true);
   // Speak amounts before paths can mistake a rate for a basename. Keep the
   // entire amount/rate atomic so downstream identifiers cannot alter it.
-  edit(/([$€£¥₪])[ \t]*(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:[ \t]?(?:USD|EUR|GBP|ILS|JPY))?(?:\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year))?(?![\p{L}\p{N}_])/gu,
-    m => `${decimal(m[2])} ${currencies[m[1]][Number(m[2].replace(/,/g, "")) === 1 ? 0 : 1]}${m[3] ? " per " + rateUnits[m[3]] : ""}`, true, true);
+  edit(/(-?[$€£¥₪])[ \t]*(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:[ \t]?(USD|EUR|GBP|ILS|JPY))?(?:\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year))?(?![\p{L}\p{N}_]|\.\d)/gu, m => {
+    const symbol = m[1].at(-1)!;
+    // Preserve contradictory units rather than silently choosing one.
+    if (m[3] && currencySymbols[m[3]] !== symbol || m[1].startsWith("-") && m[2].startsWith("-")) return m[0];
+    const amount = (m[1].startsWith("-") ? "-" : "") + m[2];
+    return `${decimal(amount)} ${currencies[symbol][Math.abs(Number(amount.replace(/,/g, ""))) === 1 ? 0 : 1]}${m[4] ? " per " + rateUnits[m[4]] : ""}`;
+  }, true, true);
+  // Unsupported amount suffixes stay lexical, without partial integer rewrites.
+  edit(/-?[$€£¥₪][ \t]*-?\d+(?:,\d{3})*(?:\.\d+)?[A-Za-z]+/g, m => m[0], true, true);
   edit(/(?<![\p{L}\p{N}_./])(-?\d+(?:,\d{3})*(?:\.\d+)?)\/(h|hr|hour|unit|item|kg|km|min|s|day|month|year)(?![\p{L}\p{N}_/])/gu,
     m => `${decimal(m[1])} per ${rateUnits[m[2]]}`, true, true);
   // Keep fractions and times out of path/identifier rules.
@@ -432,7 +429,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     const [core, suffix] = raw.split("-");
     return prefix + core.split(".").map(number).join(" point ") + (suffix ? " " + suffix.replace(/^rc/, "release candidate").split(".").map(p => /^\d+$/.test(p) ? number(p) : p).join(" ") : "");
   }, true, true);
-  edit(/(?<![\p{L}\p{N}_./])-?\d+(?:\.\d+)+(?![\p{L}\p{N}_/]|\.\d)/gu, m => {
+  edit(/(?<![\p{L}\p{N}_,./])-?\d+(?:,\d{3})*(?:\.\d+)+(?![\p{L}\p{N}_/]|\.[\p{L}\p{N}])/gu, m => {
     // Calendar dates stay lexical; explicit versions were handled above.
     if (/^(?:\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4})$/.test(m[0])) return undefined;
     return decimal(m[0]);

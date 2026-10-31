@@ -1,3 +1,5 @@
+import { inlineCodeSpanEnds } from "./inline-code-spans";
+
 /** Convert markdown to speech text without fetching links or evaluating code. */
 export function markdownToSpeech(markdown: string): string {
   return markdownSpeechLines(markdown).map(line => line.text).filter(Boolean).join(" ");
@@ -12,12 +14,19 @@ export interface MarkdownSpeechLine {
 }
 
 export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
-  return speechLinesFromFences(markdown).map(line => ({
-    ...line, text: speechLineText(line.text),
-  }));
+  const code = [...inlineCodeSpanEnds(markdown)];
+  let span = 0;
+  return speechLinesFromFences(markdown).map(line => {
+    const marker = line.text.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[[xX]\](?!\()/)?.[0];
+    const at = line.sourceStart + (marker?.indexOf("[") ?? 0);
+    while (span < code.length && code[span][1] <= at) span++;
+    const completed = !!marker && /[\p{L}\p{N}]/u.test(line.text.slice(marker.length))
+      && !(code[span]?.[0] <= at && at < code[span]?.[1]);
+    return { ...line, text: speechLineText(line.text, completed) };
+  });
 }
 
-function speechLineText(raw: string): string {
+function speechLineText(raw: string, completed = false): string {
   if (/^\s*\[[^\]]+\]:\s*\S+/.test(raw) || /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(raw) || /^\s*=+\s*$/.test(raw)) return "";
   let line = raw.replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+#+\s*$/, "").replace(/^\s*>\s?/, "");
   if (/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)) return "";
@@ -33,6 +42,7 @@ function speechLineText(raw: string): string {
     .replace(/(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu, "$1");
   if (line.includes("|")) line = line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()).filter(Boolean).join(", ");
   line = line.trim();
+  if (completed && /[\p{L}\p{N}]/u.test(line)) line = line.replace(/[.!?,;:]+$/, "") + ", done.";
   if (line && (list || raw.includes("|")) && !/[.!?…。！？]$/.test(line)) line += ".";
   return line.replace(/\s+/g, " ").trim();
 }

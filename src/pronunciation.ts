@@ -13,7 +13,7 @@
  * The private state-dir map uses case-sensitive Unicode whole-word matches.
  */
 
-import { existsSync, readFileSync, statSync, mkdirSync, mkdtempSync, writeFileSync, renameSync, rmSync } from "fs";
+import { existsSync, readFileSync, statSync, mkdirSync, mkdtempSync, writeFileSync, renameSync, rmSync, rmdirSync } from "fs";
 import { dirname, join } from "path";
 import { getStateDir } from "./paths";
 
@@ -183,15 +183,23 @@ function validatePersonalEntry(term: string, spoken: unknown): void {
 
 export function updatePersonalPronunciation(term: string, spoken: string | undefined, env: NodeJS.ProcessEnv = process.env): void {
   validatePersonalEntry(term, spoken ?? "remove");
-  const entries = new Map(Object.entries(readPersonalPronunciations(env)));
-  if (spoken === undefined) entries.delete(term);
-  else entries.set(term, spoken);
   const path = personalPronunciationPath(env);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const staging = mkdtempSync(`${path}.`);
+  const lock = `${path}.lock`;
+  try { mkdirSync(lock, { mode: 0o700 }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Pronunciation list is busy; retry the edit");
+    throw error;
+  }
   try {
-    const tmp = join(staging, "map.json");
-    writeFileSync(tmp, JSON.stringify(Object.fromEntries(entries), null, 2) + "\n", { mode: 0o600, flag: "wx" });
-    renameSync(tmp, path);
-  } finally { rmSync(staging, { recursive: true, force: true }); }
+    const entries = new Map(Object.entries(readPersonalPronunciations(env)));
+    if (spoken === undefined) entries.delete(term);
+    else entries.set(term, spoken);
+    const staging = mkdtempSync(`${path}.`);
+    try {
+      const tmp = join(staging, "map.json");
+      writeFileSync(tmp, JSON.stringify(Object.fromEntries(entries), null, 2) + "\n", { mode: 0o600, flag: "wx" });
+      renameSync(tmp, path);
+    } finally { rmSync(staging, { recursive: true, force: true }); }
+  } finally { rmdirSync(lock); } // Only the empty directory this writer created; never reap a stale lock.
 }

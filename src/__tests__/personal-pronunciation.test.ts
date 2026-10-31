@@ -1,5 +1,5 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -81,6 +81,24 @@ test("CLI rejects invalid input and preserves malformed private files", () => {
   expect(run(["add", "--term", "OTHER", "--say", "Other"])).toBe(1);
   expect(readFileSync(path, "utf8")).toBe("{broken");
   expect(applyPronunciation("ACMEX")).toBe("ACMEX");
+});
+
+test("a concurrent private-map edit refuses before reading or replacing another writer's data", () => {
+  const { env, path } = fixture();
+  const errors: string[] = [];
+  const run = (args: string[]) => runPronunciationCli(args, { env, stdout: () => {}, stderr: s => errors.push(s) });
+  expect(run(["add", "--term", "ACMEX", "--say", "Acmex"])).toBe(0);
+  const original = readFileSync(path, "utf8");
+  mkdirSync(path + ".lock");
+  try {
+    expect(run(["add", "--term", "OTHER", "--say", "Other"])).toBe(1);
+    expect(run(["remove", "--term", "ACMEX"])).toBe(1);
+    expect(errors.join("")).toContain("busy");
+    expect(readFileSync(path, "utf8")).toBe(original);
+  } finally { rmSync(path + ".lock", { recursive: true }); }
+  expect(run(["add", "--term", "OTHER", "--say", "Other"])).toBe(0);
+  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ ACMEX: "Acmex", OTHER: "Other" });
+  expect(() => statSync(path + ".lock")).toThrow();
 });
 
 test("bundled pronunciation tables contain no private or synthetic entries", () => {
