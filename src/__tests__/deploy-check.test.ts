@@ -52,6 +52,7 @@ function initRepo(root: string, packageName: string, message: string): string {
   mkdirSync(root, { recursive: true });
   // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
   expect(Bun.spawnSync(["git", "init", root], { env: fixtureGitEnv() }).exitCode).toBe(0);
+  expect(readFileSync(join(root, ".git/config"), "utf8")).toContain("[core]");
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: packageName, version: "0.0.0" }));
   // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
   expect(Bun.spawnSync(["git", "-C", root, "add", "package.json"], { env: fixtureGitEnv() }).exitCode).toBe(0);

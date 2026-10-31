@@ -46,6 +46,18 @@ function isDead(pid: number): boolean {
   }
 }
 
+// A busy dead run is cleanup evidence, not a reason to abort a new run.
+// Root creation and every unexpected error still fail closed.
+function handleStaleDirectoryError(path: string, error: unknown): void {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ENOENT") return;
+  if (code === "ENOTEMPTY" || code === "EBUSY") {
+    console.warn(`[voicelayer] retaining busy dead test directory (${code}): ${path}`);
+    return;
+  }
+  throw error;
+}
+
 assertDirectory(TEST_ROOT);
 mkdirSync(TEST_ROOT, { recursive: true, mode: 0o700 });
 mkdirSync(RUN_ROOT, { mode: 0o700 });
@@ -66,7 +78,7 @@ for (const entry of readdirSync(TEST_ROOT, { withFileTypes: true })) {
       dead.push({ path, pid, modified: stat.mtimeMs });
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    handleStaleDirectoryError(path, error);
   }
 }
 // A dead run's hook-fixture index can still point at live setsid fixtures.
@@ -85,7 +97,13 @@ function fixturesSettled(path: string): boolean {
 }
 
 dead.sort((a, b) => b.modified - a.modified || b.pid - a.pid);
-const settled = new Set(dead.filter((entry) => fixturesSettled(entry.path)).map((entry) => entry.path));
+const settled = new Set(dead.filter((entry) => {
+  try { return fixturesSettled(entry.path); }
+  catch (error) {
+    handleStaleDirectoryError(entry.path, error);
+    return false;
+  }
+}).map((entry) => entry.path));
 for (const entry of dead.slice(2)) {
   if (!settled.has(entry.path)) continue;
   try {
@@ -97,7 +115,7 @@ for (const entry of dead.slice(2)) {
       rmSync(entry.path, { recursive: true, force: true });
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    handleStaleDirectoryError(entry.path, error);
   }
 }
 
