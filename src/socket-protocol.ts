@@ -22,6 +22,9 @@ import {
 
 // --- Events: VoiceLayer → Voice Bar ---
 
+export type UpdateGateDrainEvent = { type: "update_gate_drain"; action: "drain" | "quit"; id: string; pid: number; incarnation: string;
+  lease: import("./update-gate").UpdateGateLease; mac: string };
+
 export type VoiceLayerState =
   | "idle"
   | "speaking"
@@ -367,6 +370,7 @@ export interface ReadQueueEvent {
 }
 
 export type SocketEvent =
+  | UpdateGateDrainEvent
   | HistoryPlaybackGateEvent
   | ReadQueueEvent
   | StateEvent

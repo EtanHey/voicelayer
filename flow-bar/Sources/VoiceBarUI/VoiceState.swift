@@ -408,11 +408,35 @@ public final class VoiceState {
     public private(set) var lastTranscriptionPolishReason: String?
     public var speechDetected: Bool = false
     public var isConnected: Bool = false
+    @ObservationIgnored private let nativeUpdateGate: NativeUpdateGate?
     @MainActor @ObservationIgnored public lazy var historyPlayback = SettingsAudioPlayback
-        .system(canPlay: { [weak self] in
+        .system(gate: nativeUpdateGate, canPlay: { [weak self] in
             guard let self else { return false }
             return mode != .speaking && mode != .recording && mode != .transcribing
         })
+    /// Includes pre-daemon handoffs; presentation idle alone is never a drain receipt.
+    @MainActor public var isUpdateDrainIdle: Bool {
+        mode == .idle && !isQuitBusy
+    }
+    /// Ordinary quit protects capture, handoffs and playback, even while disconnected.
+    @MainActor public var isQuitBusy: Bool {
+        !([.idle, .disconnected, .error].contains(mode) && hotkeyPhase == .idle && pendingIntent == nil && !captureLive && !isRecordingHandoffPending &&
+            !isHistoryRetranscriptionPending && !barInitiatedRecording &&
+            !selectionCaptureInFlight && selectionSubmittedText == nil && readQueueCount == 0 &&
+            readQueueCurrentRequestID == nil && speechPending["preview"] == nil && speechControls?.previewActive != true &&
+            historyPlayback.playingURL == nil && !historyPlayback.isVoiceBusy)
+    }
+    public private(set) var quitRefusalMessage: String? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalMessage) }
+    }
+    public func reportQuitRefusal() {
+        let message = "Finish voice work or cancel the update, then quit again."
+        quitRefusalMessage = message
+        expandFromCollapse()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            if self?.quitRefusalMessage == message { self?.quitRefusalMessage = nil }
+        }
+    }
     public var errorMessage: String?
     public private(set) var polishDegradation: STTPolishDegradation?
     public private(set) var polishMenuSignalPending = false
@@ -1060,6 +1084,7 @@ public final class VoiceState {
 
     private var selectionRejectionMessage: String?
     public var selectionFeedbackNote: String? {
+        if let quitRefusalMessage { return quitRefusalMessage }
         guard showsSelectionBusyNote else { return nil }
         return selectionRejectionMessage ?? VoiceBarPresentation.selectionBusyNote(
             isRequested: true, mode: mode, hotkeyPhase: hotkeyPhase)
@@ -1414,8 +1439,10 @@ public final class VoiceState {
         selectionBusyNoteExpiry: @escaping () async -> Void = {
             try? await Task.sleep(for: .seconds(2))
         },
-        keepsExpandedInDevState: Bool = VoiceBarDevState.shouldKeepExpanded()
+        keepsExpandedInDevState: Bool = VoiceBarDevState.shouldKeepExpanded(),
+        nativeUpdateGate: NativeUpdateGate? = nil
     ) {
+        self.nativeUpdateGate = nativeUpdateGate
         self.recentTranscriptionsSaver = recentTranscriptionsSaver
         self.recentTranscriptionEntriesSaver = recentTranscriptionEntriesSaver
         self.transcriptionVocabularyLoader = transcriptionVocabularyLoader

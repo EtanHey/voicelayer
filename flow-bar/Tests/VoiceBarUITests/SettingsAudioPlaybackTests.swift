@@ -9,7 +9,7 @@ final class SettingsAudioPlaybackTests: XCTestCase {
     private let responseURL = URL(fileURLWithPath: "/tmp/voicelayer-ask/audio.wav")
 
     func testIdleHistoryStartsWithDaemonDisconnected() throws {
-        let state = VoiceState()
+        let state = VoiceState(nativeUpdateGate: NativeUpdateGate(path: NSTemporaryDirectory() + UUID().uuidString + "/gate"))
         state.isConnected = false
         let url = try syntheticSilence()
         defer { state.historyPlayback.stop()
@@ -33,7 +33,7 @@ final class SettingsAudioPlaybackTests: XCTestCase {
     func testFirstSystemClickStartsSyntheticSilenceAndItsRealPlaybackClock() async throws {
         let url = try syntheticSilence()
         defer { try? FileManager.default.removeItem(at: url) }
-        let playback = SettingsAudioPlayback.system()
+        let playback = SettingsAudioPlayback.system(gate: NativeUpdateGate(path: NSTemporaryDirectory() + UUID().uuidString + "/gate"))
         defer { playback.stop() }
         playback.toggle(url)
         XCTAssertTrue(playback.isPlaying(url))

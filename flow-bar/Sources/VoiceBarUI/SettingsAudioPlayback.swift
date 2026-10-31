@@ -104,6 +104,8 @@ public final class SettingsAudioPlayback {
         queuedURLs = Array(urls.dropFirst())
     }
 
+    private let admit: @MainActor () throws -> () -> Void
+    private var releaseAdmission: (() -> Void)?
     private let start: @MainActor (URL) -> Bool
     private let stopBackend: @MainActor () -> Void
     private let positionBackend: @MainActor () -> SettingsAudioPlaybackPosition?
@@ -114,8 +116,10 @@ public final class SettingsAudioPlayback {
         stop: @escaping @MainActor () -> Void,
         position: @escaping @MainActor () -> SettingsAudioPlaybackPosition? = { nil },
         seek: @escaping @MainActor (TimeInterval) -> Void = { _ in },
-        canPlay: @escaping @MainActor () -> Bool = { true }
+        canPlay: @escaping @MainActor () -> Bool = { true },
+        admit: @escaping @MainActor () throws -> () -> Void = { {} }
     ) {
+        self.admit = admit
         self.canPlay = canPlay
         self.start = start
         stopBackend = stop
@@ -136,9 +140,12 @@ public final class SettingsAudioPlayback {
         failureMessage = nil
         guard !isVoiceBusy else { return }
         if playingURL != nil { stop() }
+        do { releaseAdmission = try admit() }
+        catch { failureMessage = NativeUpdateGate.busyMessage; return }
         if start(url) {
             playingURL = url
         } else {
+            finishAdmission()
             failureMessage = "Audio couldn't start. Try Play again or reveal the file in Finder."
         }
     }
@@ -149,6 +156,7 @@ public final class SettingsAudioPlayback {
         guard playingURL != nil else { return }
         stopBackend()
         playingURL = nil
+        finishAdmission()
     }
 
     /// The playing clip's position, or nil when `url` is not the clip playing.
@@ -193,28 +201,34 @@ public final class SettingsAudioPlayback {
     public func playbackDidFinish(_ url: URL) {
         guard playingURL == url else { return }
         playingURL = nil
-        guard !queuedURLs.isEmpty else { queueHead = nil; return }
+        guard !queuedURLs.isEmpty else { queueHead = nil; finishAdmission(); return }
         let next = queuedURLs.removeFirst()
         guard !isVoiceBusy, start(next) else {
             queuedURLs = []
             queueHead = nil
+            finishAdmission()
             failureMessage = "Audio couldn't continue. Try Play again."
             return
         }
         playingURL = next
     }
+    private func finishAdmission() {
+        releaseAdmission?()
+        releaseAdmission = nil
+    }
 }
 
 public extension SettingsAudioPlayback {
     /// The real AVAudioPlayer-backed playback used by the app.
-    static func system(canPlay: @escaping @MainActor () -> Bool = { true }) -> SettingsAudioPlayback {
+    static func system(gate: NativeUpdateGate? = nil, canPlay: @escaping @MainActor () -> Bool = { true }) -> SettingsAudioPlayback {
         let holder = SystemPlayerHolder()
         let playback = SettingsAudioPlayback(
             start: { url in holder.play(url) },
             stop: { holder.stop() },
             position: { holder.position },
             seek: { time in holder.seek(to: time) },
-            canPlay: canPlay
+            canPlay: canPlay,
+            admit: { try (gate ?? .shared).acquire() }
         )
         holder.onFinish = { [weak playback] url in
             playback?.playbackDidFinish(url)

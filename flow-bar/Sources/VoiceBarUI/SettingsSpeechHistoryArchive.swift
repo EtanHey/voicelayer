@@ -14,6 +14,7 @@ struct SettingsSpeechHistoryEntry: Identifiable, Equatable, Sendable {
     var audioPath: URL? { audioPaths.first }
 
     var textsDiffer: Bool { originalText != spokenText }
+    var reasonSentence: String? { SettingsSpeechReasonCopy.sentence(status: status, reason: reason) }
     var preview: String { spokenText.isEmpty ? "No generated speech text stored" : String(spokenText.prefix(160)) }
     var durationLabel: String { durationMs.map { SettingsAudioPlaybackPosition.clockLabel(Double($0) / 1000) } ?? "Duration unavailable" }
     var statusLabel: String {

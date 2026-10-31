@@ -469,6 +469,16 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(policy.reply(enforcesSingleton: false), .terminateNow)
     }
 
+    func testQuitNeverOverridesCaptureOrClosedGate() {
+        var policy = VoiceBarTerminationPolicy()
+        for singleton in [true, false] {
+            policy.authorize(.menuBar)
+            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, voiceBusy: true), .terminateCancel)
+            policy.authorize(.internalFailure)
+            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, gatePermitsQuit: false), .terminateCancel)
+        }
+    }
+
     func testCanonicalResidentStillAcceptsExternalSingletonTermination() {
         var policy = VoiceBarTerminationPolicy()
 
@@ -489,6 +499,7 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("private func performTerminationCleanup()"))
         XCTAssertTrue(source.contains("VoiceBarInstanceIsolationRegistry.unregister"))
         XCTAssertTrue(source.contains("audioLevelMonitor.shutdown()"))
+        XCTAssertFalse(source.contains("application.forceTerminate()"), "a refused quit must preserve the incumbent capture")
         XCTAssertTrue(source.contains("signal(SIGTERM, SIG_IGN)"))
         XCTAssertTrue(source.contains("requestTermination(.internalFailure)"))
     }
