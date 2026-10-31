@@ -656,7 +656,8 @@ describe("brew-cask-sync environment contract", () => {
   test("the tap is refreshed with an explicit remote and branch", () => {
     const box = sandbox({});
     // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
-    Bun.spawnSync(["git", "init", "-q", box.tapRepo], { stderr: "ignore", env: fixtureGitEnv() });
+    expect(Bun.spawnSync(["git", "init", "-q", box.tapRepo], { stderr: "ignore", env: fixtureGitEnv() }).exitCode).toBe(0);
+    expect(readFileSync(join(box.tapRepo, ".git/config"), "utf8")).toContain("[core]");
     const result = runInLib(box, "bcs_tap_update etanhey/layers main");
 
     // There is no `origin` in the sandbox; the shape of the call is the point.
