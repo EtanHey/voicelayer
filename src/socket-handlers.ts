@@ -268,7 +268,10 @@ function handleSocketCommandAdmitted(
       try {
         const projection = command.format === "markdown" ? projectStructuredSpeech(command.text) : undefined;
         const structuredDisplay = command.source === "selection" ? projection : undefined;
-        const text = projection?.speechText ?? command.text;
+        // Keep the socket's legacy handoff text; exact source-line context travels
+        // with selections and is restored at synthesis, including queued preparation.
+        const text = structuredDisplay ? structuredDisplay.speechText.replace(/\n/g, " ")
+          : projection?.speechText ?? command.text;
         if (!text.trim()) {
           finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
           return buildAck(command, "reject", "No text selected");

@@ -13,6 +13,7 @@ import { awaitCurrentPlayback, chunkTextForLongRead, loadHistory, speakLongRead,
 import { TTS_HISTORY_FILE } from "../paths";
 import { planProsody } from "../tts/prosody";
 import { projectStructuredSpeech } from "../tts/structured-speech";
+import { normalizedSpeechHash } from "../speech-identity";
 
 /** PROSODY (b): structured edge reads synthesize planned utterances and splice later chunks;
  * plain prose is untouched. Every child (edge synth, ffmpeg, player) is a fake. */
@@ -85,6 +86,37 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     handles.push(h); return h;
   };
   const texts = () => synths.map((s) => s.argv.find((a) => a.startsWith("--text="))!.slice(7));
+
+  for (const engine of ["edge", "clone"] as const) it(`N2-c2 flattened selection handoff restores exact source context (${engine})`, async () => {
+    const source = "1. [x] numbered\n2. [ ] next\nSee note 2) below.\nPress the ` key, then open src/foo.ts next\nRelease v1.2 costs $5 using snake_case and --join_audio.\nשלום src/foo.ts $5 v1.2";
+    const structure = projectStructuredSpeech(source);
+    const projection = projectSpeakableText(structure.speechText, [], engine);
+    expect(projection.speechText).toContain("See note 2) below.");
+    expect(projection.speechText).toContain("foo dot T S next");
+    expect(projection.speechText).toContain("Release version one point two costs five dollars using snake case and dash dash join audio.");
+    expect(projection.speechText).toContain("שלום src/foo.ts $5 v1.2");
+    const plan = planProsody({ readText: structure.speechText, projection, structure, engine,
+      listNumbers: engine === "clone" ? "inline" : "separate", concurrency: 1 });
+    const clone = spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio"));
+    spies.push(clone, spyOn(cloneTiming, "startCloneTiming").mockReturnValue({
+      cancel() {}, childReaped: Promise.resolve(), cleanupDone: Promise.resolve(),
+    }));
+    const text_hash = normalizedSpeechHash(source);
+    const h = speakLongRead(structure.speechText.replace(/\n/g, " "), { engine, voice: "fixture", rate: "+0%" },
+      Date.now(), { request_id: "source-context", text_hash, structuredDisplay: structure });
+    handles.push(h); await h.done;
+    expect(engine === "clone" ? clone.mock.calls.map(call => call[0]) : texts()).toEqual(plan.segments.map(s => s.text));
+    const preparing = events.find(e => e.long_read?.preparing);
+    expect(preparing.long_read.display.text).toBe(structure.speechText);
+    expect(preparing.text_hash).toBe(text_hash);
+  });
+
+  it("unrelated optional source projection cannot replace caller words", async () => {
+    const h = start("Keep every actual word.", projectStructuredSpeech("# Different\nWords"));
+    await h.done;
+    expect(texts()).toEqual(["Keep every actual word."]);
+    expect(events.find(e => e.long_read?.preparing)?.long_read?.display).toBeUndefined();
+  });
 
   it("a structured read sends each planned utterance to the engine, emphasized ones with top-level prosody", async () => {
     const doc = "## Status\n\nThe build is green.\n\n1. Merge now\n2. Wait for the proof";
