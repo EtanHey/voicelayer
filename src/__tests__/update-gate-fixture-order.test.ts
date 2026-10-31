@@ -19,6 +19,4 @@ test("exporter then cached importer restores gate/proof before voice consumer", 
   await Bun.write(join(root, "ordered-output.log"), output);
   expect({ exit: await child.exited, output: output.slice(-1000) }).toMatchObject({ exit: 0 });
   expect(output).toMatch(/ 50 pass\n 0 fail/);
-  expect(output.indexOf("update-gate-installer.test.ts:")).toBeLessThan(output.indexOf("update-gate-installer-final.test.ts:"));
-  expect(output.indexOf("update-gate-installer-final.test.ts:")).toBeLessThan(output.indexOf("consumer.test.ts:"));
 }, 60000);

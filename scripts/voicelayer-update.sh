@@ -4,6 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/update-gate.sh"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/brew-cask-sync.sh
 . "$SCRIPT_DIR/lib/brew-cask-sync.sh"
@@ -859,7 +860,6 @@ main() {
             ;;
     esac
 
-    source "$SCRIPT_DIR/lib/update-gate.sh"
     if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
         vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/voicelayer-update.sh" "$@" || return 1
     else
@@ -867,6 +867,11 @@ main() {
     fi
     update_package
     update_voicebar_app
+    # Dedupe may move the original QA bundle into backup. Only a canonical app
+    # that passed the existing identity/signature check may replace that target.
+    if [[ -n "${VOICELAYER_GATE_RESTORE_APP:-}" ]] && ! voicebar_cask_repair_needed; then
+        export VOICELAYER_GATE_RESTORE_APP="$VOICEBAR_CANONICAL_APP"
+    fi
     if [[ "$(detect_install_type)" != "brew-formula" ]]; then
         update_formula
     fi

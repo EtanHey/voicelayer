@@ -70,3 +70,16 @@ test("release and Cancel remove only the matching controller receipt", async () 
     expect(existsSync(f.gate + ".controller")).toBe(!own);
   }
 });
+
+test("OPEN with an earlier lease's controller refuses before REQUEST and retains its bytes", async () => {
+  const f = fixture(), stale = JSON.stringify({ version: 1,
+    lease: { generation: 7, operationId: crypto.randomUUID() }, pid: process.pid, identity: "old birth /bun" });
+  writeFileSync(f.gate + ".controller", stale);
+  const child = Bun.spawn([process.execPath, "src/update-gate-installer.ts", "/usr/bin/true"], {
+    env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
+  expect(await child.exited).toBe(1);
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual({ version: 1, kind: "OPEN", generation: 0, released: null });
+  expect(readFileSync(f.gate + ".controller", "utf8")).toBe(stale);
+  expect(existsSync(f.gate + ".lock")).toBe(false);
+  expect(existsSync(f.gate + ".voice-diag.json")).toBe(false);
+});

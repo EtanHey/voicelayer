@@ -18,6 +18,7 @@ export function fixture(phase: string | null) {
   for (const name of ["brew", "launchctl", "osascript", "kill", "mv", "swift", "pkill", "open", "codesign", "hidutil", "plutil", "cp", "rm", "ditto"]) {
     writeFileSync(join(bin, name), `#!/bin/bash\nprintf '%s %s\\n' '${name}' "$*" >> "$CALL_LOG"\n`, { mode: 0o755 });
   }
+  writeFileSync(join(bin, "pgrep"), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
   // CLI still routes to the actual updater main; external mutations are PATH stubs.
   writeFileSync(join(bin, "bash"), `#!/bin/bash
 if [[ "$1" == */scripts/voicelayer-update.sh ]]; then

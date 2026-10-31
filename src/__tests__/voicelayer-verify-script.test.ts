@@ -568,7 +568,7 @@ describe("voicelayer-verify.sh", () => {
     const oldPid = "424242";
     const bashEnv = join(tempRoot, "fake-bash-env");
     writeFileSync(changed, "src/socket-handlers.ts\n");
-    writeFileSync(stateFile, "before\n");
+    writeFileSync(stateFile, "down\n");
     writeFileSync(
       bashEnv,
       `kill() {
@@ -588,8 +588,10 @@ set -euo pipefail
 if [ "$1" = "-x" ] && [ "$2" = "VoiceBar" ]; then
   if [ "$(cat "${stateFile}")" = "before" ]; then
     printf '${oldPid}\\n'
-  else
+  elif [ "$(cat "${stateFile}")" = "after" ]; then
     printf '222\\n'
+  else
+    exit 1
   fi
   exit 0
 fi
@@ -633,6 +635,9 @@ exit 0
     const result = run(["bash", scriptPath], {
       env: {
         BASH_ENV: bashEnv,
+        VOICELAYER_GATE_RESTORE_APP: join(tempRoot, "VoiceBar.app"),
+        VOICELAYER_GATE_RESTORE_LAUNCHD: "1",
+        VOICELAYER_GATE_RESTORE_CALLER: scriptPath,
         VOICELAYER_VERIFY_PRE_GATE_PIDS: oldPid,
         VOICELAYER_VERIFY_PRE_GATE_LAUNCHD: "1",
         PATH: `${fakeBin}:${process.env.PATH}`,
@@ -645,7 +650,7 @@ exit 0
     });
 
     expect(result.exitCode).toBe(0);
-    expect(text(result.stdout)).toContain("launchd relaunched VoiceBar");
+    expect(await Bun.file(stateFile).text()).toBe("after\n");
     expect(existsSync(openCalls)).toBe(false);
     const artifacts = readdirSync(join(tempRoot, ".verified"));
     expect(artifacts).toHaveLength(1);

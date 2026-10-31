@@ -91,34 +91,32 @@ test("G4c precommit contention stays within receipt lifetime without identity re
   expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
 });
 
-for (const managed of [false, true]) test(`G4c verify re-exec relaunches initially running VoiceBar, launchd=${managed}`, async () => {
-  const f = fixture(), source = readFileSync("scripts/voicelayer-verify.sh", "utf8");
-  const functions = source.slice(source.indexOf("is_voicebar_launchd_managed()"), source.indexOf("needs_verification=0"));
-  const tail = source.slice(source.indexOf('# Preserve pre-quit intent'), source.indexOf('printf "Press F5'));
-  const harness = join(f.root, "verify-harness.sh"), state = join(f.root, "running"); writeFileSync(state, "101");
-  const gateLib = join(f.root, "scripts/lib"); mkdirSync(gateLib, { recursive: true });
-  writeFileSync(join(gateLib, "update-gate.sh"), `vl_update_gate() { if [[ -z "\u0024{VOICELAYER_INSTALL_OPERATION:-}" ]]; then : > "$STATE"; export VOICELAYER_INSTALL_OPERATION=fixture; exec /bin/bash "$HARNESS"; fi; }\n`);
-  writeFileSync(harness, `#!/bin/bash\nset -euo pipefail\n${functions}\nREPO_ROOT="$ROOT"; UPDATE_GATE_ARGS=(); VOICEBAR_LAUNCHD_LABEL=fake\npgrep() { cat "$STATE"; test -s "$STATE"; }; pkill() { echo forbidden-stop >&2; exit 91; }; lsof() { :; }; sleep() { :; }; kill() { return 1; }\nlaunchctl() { if [[ "$1" == list ]]; then ${managed ? "return 0" : "return 1"}; else echo 202 > "$STATE"; fi; }\nopen() { echo 202 > "$STATE"; }\n${tail}\ntest -s "$STATE"\n`);
-  const child = Bun.spawn(["/bin/bash", harness], { env: { ...process.env, VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_VERIFY_SKIP_BUILD: "1", ROOT: f.root, STATE: state, HARNESS: harness }, stdin: new TextEncoder().encode("y\n"), stdout: "pipe", stderr: "pipe" });
-  const stderr = await new Response(child.stderr).text();
-  expect({ exit: await child.exited, stderr }).toEqual({ exit: 0, stderr: "" });
-  expect(readFileSync(state, "utf8").trim()).toBe("202");
+test("foreign controller arriving after REQUEST makes COMMIT false and Cancel restores OPEN", async () => {
+  const f = fixture(), refresh = f.participant.refresh;
+  const stale = JSON.stringify({ version: 1, lease: { generation: 7, operationId: crypto.randomUUID() },
+    pid: process.pid, identity: "old birth /bun" });
+  f.participant.refresh = async lease => {
+    const proof = await refresh(lease);
+    if (JSON.parse(readFileSync(f.gate, "utf8")).kind === "PREPARED") writeFileSync(f.gate + ".controller", stale);
+    return proof;
+  };
+  await expect(runGatedInstall(["/usr/bin/true"], f.participant)).rejects.toThrow("commit refused");
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
+  expect(readFileSync(f.gate + ".controller", "utf8")).toBe(stale);
+  expect(existsSync(f.gate + ".lock")).toBe(false);
+  expect(existsSync(f.gate + ".voice-diag.json")).toBe(false);
 });
 
-test("G4c build guard retains no-relaunch decision after the original owner exits", async () => {
-  const f = fixture(), app = join(f.root, "candidate.noindex/VoiceBar.app");
-  const script = `VOICEBAR_BUILD_APP_SOURCE_ONLY=1 source flow-bar/build-app.sh
-    APP_DIR="$1"; STOP_RUNNING=1; RELAUNCH_APP=1
-    VOICEBAR_TEST_RUNNING_APP_PATHS=/Applications/VoiceBar.app
-    guard_build_lifecycle_for_running_instances
-    export VOICEBAR_PRE_GATE_APP_DIR="$APP_DIR" VOICEBAR_PRE_GATE_STOP="$STOP_RUNNING"
-    export VOICEBAR_PRE_GATE_RELAUNCH="$RELAUNCH_APP" VOICEBAR_PRE_GATE_LEAVE="$LEAVE_RUNNING_INSTANCE_ALONE"
-    export VOICELAYER_INSTALL_OPERATION=fixture
-    unset VOICEBAR_TEST_RUNNING_APP_PATHS
-    voicebar_running_app_paths() { :; }
-    STOP_RUNNING=1; RELAUNCH_APP=1
-    guard_build_lifecycle_for_running_instances
-    test "$STOP_RUNNING:$RELAUNCH_APP:$LEAVE_RUNNING_INSTANCE_ALONE" = 0:0:1`;
-  const child = Bun.spawn(["/bin/bash", "-c", script, "_", app], { env: process.env, stdout: "pipe", stderr: "pipe" });
-  expect({ exit: await child.exited, stderr: await new Response(child.stderr).text() }).toEqual({ exit: 0, stderr: "" });
+test.each([900, 975])("receipt age %d reserves 50 ms for the measured post-sample", async age => {
+  const f = fixture(); let now = 0;
+  f.deps.now = () => now;
+  f.deps.sleep = async ms => { now += ms ?? 0; };
+  const request = f.deps.request;
+  f.deps.request = async (action, lease) => { const result = await request(action, lease); now += age; return result; };
+  const lease = { generation: 1, operationId: crypto.randomUUID(), ownerId: crypto.randomUUID(), targetSha: "a".repeat(40) };
+  await f.participant.refresh(lease);
+  let reads = 0;
+  await expect(f.participant.withAcquisitionProof!(() => { reads++; throw Error("UPDATE_GATE_LOCKED"); })).rejects.toThrow("lock acquisition timed out");
+  expect(now).toBeLessThanOrEqual(Math.max(950, age));
+  if (age > 950) expect(reads).toBe(0);
 });

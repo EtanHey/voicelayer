@@ -38,6 +38,8 @@ export function assertInstallerSocketPath(env: NodeJS.ProcessEnv = process.env, 
   if (env.VOICELAYER_TEST_ISOLATED !== "1" && resolve(path) !== "/tmp/voicelayer-mcp.sock")
     throw Error("UNKNOWN: noncanonical MCP socket path; nothing was changed");
 }
+// The M4 review measured ~4 ms per post-sample; leave room before the 1 s expiry.
+const POST_SAMPLE_RESERVE_MS = 50;
 export const installerGateContended = () => existsSync(updateGateFilePath() + ".lock");
 /** Retry only a failed non-blocking mkdir acquisition, never an RPC or a gate fault. */
 export async function retryInstallerContention<T>(read: () => T, retry: (result: T) => boolean,
@@ -59,6 +61,7 @@ export async function retryInstallerContention<T>(read: () => T, retry: (result:
 export async function retryInstallerAcquisition<T>(read: () => T, deadline = performance.now() + 250,
   clock = { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) }): Promise<T> {
   for (let attempt = 0; attempt < 100; attempt++) {
+    if (clock.now() >= deadline) throw Error("UNKNOWN: update-gate lock acquisition timed out");
     try { return read(); }
     catch (error) {
       if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
@@ -194,7 +197,7 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
     if (!evidence || !pinned) return retryAcquire(read, deps.now() + 250);
     try {
       sampleProcessProof();
-      const result = await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000));
+      const result = await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
       sampleProcessProof();
       return result;
     } catch (error) { evidence = undefined; throw error; }
@@ -226,7 +229,7 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
         sampleProcessProof();
         authorized = await retryAcquire(() => acknowledgeVoiceDrain(lease,
           state => state.kind === "COMMITTED" && verify(state), { throwOnContention: true }),
-          Math.min(deps.now() + 250, observedAt + 1000));
+          Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
         sampleProcessProof();
       } catch (error) { evidence = undefined; throw error; }
       if (!authorized || !pinned) throw Error("UNKNOWN: controlled quit not authorized");

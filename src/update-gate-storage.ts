@@ -115,16 +115,17 @@ export function readInstallerController(path: string): Controller | null {
   } catch { return null; }
 }
 /** Installer-only proof callback calls this under COMMIT's existing G1 lock. */
-export function persistInstallerController(path: string, value: Controller): void {
+export function persistInstallerController(path: string, value: Controller): boolean {
   const controller = controllerSchema.parse(value), file = path + ".controller";
   try {
     lstatSync(file);
     const previous = readInstallerController(path);
     if (!previous || !sameControllerLease(previous.lease, controller.lease) ||
       previous.pid !== controller.pid || previous.identity !== controller.identity)
-      throw Error("UNKNOWN: foreign or unreadable controller receipt retained");
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      return false;
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false; }
   persistGateRecord(path, file, "controller.json", controller);
+  return true;
 }
 export function persistUpdateGateState(path: string, state: UpdateGateState, exclusive = false): void {
   if (state.kind === "OPEN" && state.released) {

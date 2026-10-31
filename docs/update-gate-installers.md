@@ -23,7 +23,8 @@ After APPLIED COMMIT, the controller waits a 100 ms fault-publication grace peri
 refreshes G3 evidence (up to four drain attempts on UNKNOWN) and issues exactly
 one authenticated `update_gate_quit`. Quit authorization retries only mkdir-lock
 contention with up to 100 acquisition attempts and 2 ms sleeps (at most 198 ms
-sleeping), capped also at 250 ms elapsed or the original receipt's one-second age.
+sleeping), capped also at 250 ms elapsed or the original receipt's one-second age
+minus a 50 ms post-sample reserve.
 The quit RPC itself is never retried. Exit verification uses the same acquisition
 schedule, capped at 250 ms or the remaining polling deadline.
 An ACK still requires observed exit. If a written quit loses its reply through
@@ -49,8 +50,11 @@ F_FULLFSYNC match gate persistence. Nested validation requires this receipt's
 lease, PID and identity to match the committed lease and environment; live
 identity samples must also match. Missing, unreadable, malformed, foreign or
 stale receipts refuse UNKNOWN, including legacy gates without a receipt.
-Release/Cancel removes only its matching receipt. Foreign or unreadable existing
-receipts are retained, never overwritten or reaped. Voice admission never reads
+Release/Cancel and verified finalization/recovery must remove only their matching
+receipt. An existing controller receipt refuses before REQUEST, without changing
+OPEN. A foreign/unreadable receipt appearing later returns false from the COMMIT
+proof so Cancel can restore OPEN; it does not throw inside G1. Foreign receipts
+are retained, never overwritten or reaped. Voice admission never reads
 the sidecar; the strict gate format and Swift decoder remain unchanged.
 
 **NOT_GREEN for installed use:** This wires the G3 participant contract; staged
@@ -85,11 +89,34 @@ Recon inventory (scoped scripts, launchd, flow-bar/build-app.sh and src/cli):
 | `launchd/install.sh` | Before retired agent unload/removal; backup-plist mode does not touch VoiceBar |
 | `scripts/install-voicebar-autostart.sh` | Before plist writes, bootout/bootstrap/kickstart, including reload/no-start/preserve-load-state |
 | `scripts/install-voicebar-f5-hidutil.sh` | Ungated standalone Settings relay configuration: only its hidutil helper/plist/LaunchAgent, never VoiceBar/daemon restart or replacement; legacy Karabiner installer delegates here |
-| `voicelayer doctor` → dedupe `--apply` | Before quit, pkill, unload, bundle moves and autostart repair; inventory stays read-only |
+| `voicelayer doctor` → dedupe `--apply` | Before controlled quit, unload, bundle moves and autostart repair; no osascript/pkill stop; inventory stays read-only |
 | `scripts/voicelayer-verify.sh` | Confirmation precedes admission, including skip-build; inherited re-exec skips the already-approved prompt. Unusable for acceptance until verified completion reopens voice |
 | `scripts/auto-f5-verify.sh` restoration | Requires an inherited operation before invoking an older main checkout's build. Restore remains unusable until the owning completion/recovery flow exists |
 | UI e2e build/release staging helpers | Delegate to guarded build; isolated test process cleanup is not a resident installer |
 | `bar-stop`, recording Stop/Cancel; runtime hidutil mapping | User/runtime controls, not installation; remain usable |
+
+Shell callers capture one observed VoiceBar bundle and the canonical job's loaded
+state before the gate can quit it. Unknown/ambiguous process evidence refuses
+before REQUEST. The owning re-exec arms EXIT/HUP/INT/TERM/QUIT restoration at
+script entry, before argument checks and nested validation. Nested helpers do
+not restore early. On success or failure, an already-running VoiceBar is left
+alone; otherwise the loaded canonical job is kickstarted, then observed for up
+to 50 × 100 ms before falling back to `open` of the observed bundle, followed by
+the same bounded observation. A failed kickstart is also observed before fallback.
+Restoration never releases the gate, repeats quit or changes the original failure
+status; inability to restore reports RECOVERY_REQUIRED and a nonzero exit.
+This covers verify's normal build, skip-build, validation/build failure and
+signals, autostart default/preserve-load-state, update --no-stop, dedupe --apply
+--no-stop and retired-agent cleanup. Opt-outs suppress the caller's lifecycle
+actions, not recovery after the gate's controlled quit. A dormant app is not
+started by recovery. Build-to-/Applications restores the original QA/candidate
+bundle if it would otherwise have left that instance alone; it does not launch
+the newly built target in that case. Dedupe instead selects the verified
+canonical bundle as its recovery target before moving the original stray into backup. The parent updater
+also adopts that target only after its canonical identity/signature check, so a
+nested dedupe cannot invalidate the parent's restoration path. Build refuses an
+unexpected process after controlled quit instead of force-stopping it. These are
+isolated whole-script proofs, not installed-app qualification.
 
 Follow-up rows: tap cask preflight/uninstall hook and old saved recipe ordering
 (separate tap qualification); golems deploy-local-prod cross-repo integration;
@@ -112,7 +139,8 @@ Final review: all updater transitions use `updateVoiceGate`; acknowledgements us
 `UPDATE_GATE_LOCKED` result, before any identity resample. These use up to 100
 attempts with 2 ms sleeps (at most 198 ms sleeping), capped at 250 ms elapsed;
 receipt-backed operations additionally use the original receipt's one-second
-expiry. No retry refreshes trust or resamples processes between failed acquisitions.
+expiry minus a 50 ms post-sample reserve (the review measured about 4 ms).
+No retry refreshes trust or resamples processes between failed acquisitions.
 A real refusal or fault is final. Initial/nested read-only observations and CANCEL
 retain eight attempts with seven 25, 50, 100, 200, 250, 250, 250 ms sleeps
 (1125 ms total), retrying UNKNOWN only while the lock is observed, or an explicit

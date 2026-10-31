@@ -121,6 +121,12 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
   if (!controllerIdentity) throw Error("UNKNOWN: controller identity unavailable");
   const current = await retryContention(() => readUpdateGateFile(), state => state.kind === "UNKNOWN");
   if (current.kind !== "OPEN") throw Error("UNKNOWN: gate unavailable or another update owns it");
+  // A foreign receipt is not evidence for this lease. Refuse before REQUEST;
+  // recovery/finalization must remove only their own matching controller.
+  try {
+    lstatSync(updateGateFilePath() + ".controller");
+    throw Error("UNKNOWN: existing controller receipt retained; verified recovery required");
+  } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
     ownerId: randomUUID(), targetSha: process.env.VOICELAYER_UPDATE_TARGET_SHA ?? "" };
   if (!updateGateLeaseSchema.safeParse(lease).success) throw Error("UNKNOWN: verified target SHA required");
@@ -142,7 +148,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
       if (cancelled) throw Error("UPDATE_CANCELLED");
       const confirm: ParticipantProof = state => {
         if (!verify(state)) return false;
-        if (command.kind === "COMMIT") persistInstallerController(updateGateFilePath(), {
+        if (command.kind === "COMMIT") return persistInstallerController(updateGateFilePath(), {
           version: 1, lease: { generation: lease.generation, operationId: lease.operationId },
           pid: process.pid, identity: controllerIdentity,
         });

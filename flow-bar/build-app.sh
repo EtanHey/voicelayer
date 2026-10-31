@@ -10,6 +10,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PACKAGE_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" != 1 ]]; then
+    source "$REPO_ROOT/scripts/lib/update-gate.sh"
+fi
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 APP_DIR="/Applications/VoiceBar.app"
 VOICEBAR_REQUIRED_TEAM_ID="${VOICEBAR_REQUIRED_TEAM_ID:-PPN23G925Y}"
@@ -1076,7 +1079,6 @@ if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
 fi
 
 parse_build_app_args "$@"
-source "$REPO_ROOT/scripts/lib/update-gate.sh"
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
@@ -1121,7 +1123,12 @@ protect_notarized_resident_before_rebuild
 if [[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 ]]; then
     : # The path-aware guard already explained why lifecycle actions are disabled.
 elif [[ "$STOP_RUNNING" -eq 1 ]]; then
-    stop_voicebar_instances
+    # The gate already verified controlled exit. A newly appeared process has no
+    # quit authorization; refuse rather than using the legacy force-stop path.
+    if [[ -n "$(voicebar_target_pids)" ]]; then
+        echo "[build-app] ERROR: VoiceBar appeared after controlled quit; refusing rebuild." >&2
+        exit 1
+    fi
 else
     echo "[build-app] Skipping VoiceBar stop because --no-stop was provided."
 fi
@@ -1286,7 +1293,7 @@ else
 fi
 
 if [[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 ]]; then
-    echo "[build-app] Built $APP_DIR without launching it; the existing VoiceBar instance is still running."
+    echo "[build-app] Built $APP_DIR without launching it; the original bundle is restored on exit if the gate quit it."
 elif [[ "$RELAUNCH_APP" -eq 1 ]]; then
     relaunch_voicebar_app
 else
