@@ -389,6 +389,11 @@ guard_build_lifecycle_for_running_instances() {
     local matching_target=0
     local unrelated_path=0
     LEAVE_RUNNING_INSTANCE_ALONE=0
+    if [[ -n "${VOICELAYER_INSTALL_OPERATION:-}" && "${VOICEBAR_PRE_GATE_APP_DIR:-}" == "$APP_DIR" ]]; then
+        STOP_RUNNING="${VOICEBAR_PRE_GATE_STOP:-$STOP_RUNNING}"
+        RELAUNCH_APP="${VOICEBAR_PRE_GATE_RELAUNCH:-$RELAUNCH_APP}"
+        LEAVE_RUNNING_INSTANCE_ALONE="${VOICEBAR_PRE_GATE_LEAVE:-0}"
+    fi
     # When callers disable both lifecycle actions, there is no broad stop or
     # second launch for this guard to prevent.
     if [[ "$STOP_RUNNING" -eq 0 && "$RELAUNCH_APP" -eq 0 ]]; then
@@ -1102,6 +1107,9 @@ if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
 fi
 refuse_brew_managed_install_path
 guard_build_lifecycle_for_running_instances
+# Carry the guard's restrictive lifecycle decision through controlled quit/re-exec.
+export VOICEBAR_PRE_GATE_APP_DIR="$APP_DIR" VOICEBAR_PRE_GATE_STOP="$STOP_RUNNING"
+export VOICEBAR_PRE_GATE_RELAUNCH="$RELAUNCH_APP" VOICEBAR_PRE_GATE_LEAVE="$LEAVE_RUNNING_INSTANCE_ALONE"
 # Artifact/staged and nonresident no-stop/no-relaunch QA builds do not mutate the resident owner.
 if [[ "$STOP_RUNNING" -eq 1 || "$RELAUNCH_APP" -eq 1 || "$APP_DIR" == /Applications/* ]] ||
    { is_resident_app_dir && [[ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" != 1 ]]; }; then

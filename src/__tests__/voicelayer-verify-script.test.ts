@@ -561,7 +561,7 @@ describe("voicelayer-verify.sh", () => {
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("treats a launchd VoiceBar respawn as a successful relaunch", async () => {
+  test("explicitly starts a launchd VoiceBar after controlled quit", async () => {
     const changed = join(tempRoot, "changed.txt");
     const stateFile = join(tempRoot, "pgrep-state");
     const openCalls = join(tempRoot, "open-calls");
@@ -613,6 +613,10 @@ set -euo pipefail
 if [ "$1" = "list" ] && [ "$2" = "com.voicelayer.voicebar" ]; then
   exit 0
 fi
+if [ "$1" = "kickstart" ]; then
+  printf 'after\\n' > "${stateFile}"
+  exit 0
+fi
 exit 1
 `,
     );
@@ -629,6 +633,8 @@ exit 0
     const result = run(["bash", scriptPath], {
       env: {
         BASH_ENV: bashEnv,
+        VOICELAYER_VERIFY_PRE_GATE_PIDS: oldPid,
+        VOICELAYER_VERIFY_PRE_GATE_LAUNCHD: "1",
         PATH: `${fakeBin}:${process.env.PATH}`,
         VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
         VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,

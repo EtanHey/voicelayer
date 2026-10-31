@@ -22,25 +22,36 @@ identity changes and transport faults refuse. A timeout never proves idle.
 After APPLIED COMMIT, the controller waits a 100 ms fault-publication grace period,
 refreshes G3 evidence (up to four drain attempts on UNKNOWN) and issues exactly
 one authenticated `update_gate_quit`. Quit authorization retries only mkdir-lock
-contention with the same eight-attempt backoff as the precommit controller; the
-quit RPC itself is never retried. Exit verification retries lock contention
-within its existing five-second deadline.
+contention with up to 100 acquisition attempts and 2 ms sleeps (at most 198 ms
+sleeping), capped also at 250 ms elapsed or the original receipt's one-second age.
+The quit RPC itself is never retried. Exit verification uses the same acquisition
+schedule, capped at 250 ms or the remaining polling deadline.
 An ACK still requires observed exit. If a written quit loses its reply through
 socket disconnect or timeout (or G3 reports UNKNOWN after its native connection
 drops), the controller verifies the outcome rather than reporting a plain
 install failure: both pinned processes must be absent, no
 VoiceBar executable may remain in the process table, and G2 must still observe
 the exact COMMITTED lease with no diagnostic or admission records. It observes
-exit for at most five seconds; the deadline only refuses, never proves exit.
-A same-start-time `<defunct>` participant is still exiting and is polled until
-reaped within that deadline. An unreadable process table, reused PID, explicit
+exit with a five-second polling budget. A clean exit confirmed by the final poll
+continues installation even when that poll finishes just past the deadline;
+otherwise the deadline refuses and never proves exit. A same-start-time
+`<defunct>` participant is still exiting and is polled until reaped. An unreadable process table, reused PID, explicit
 refusal, malformed reply, changed lease, retained process, diagnostic or ledger
 entry stops UNKNOWN,
 writes the recovery receipt and keeps admission closed. Nothing force-stops a
 participant or reopens the gate. Nested helpers validate the retained COMMITTED
 lease and the controller's PID, start time and executable name recorded in the
 operation environment after participant exit, without requesting new ACKs.
-Both identity samples bracketing lease validation must match that record.
+COMMIT's installer proof callback durably writes `<gate>.controller` under that
+same G1 lock before controlled quit: `{ version: 1, lease: { operationId,
+generation }, pid, identity }`. Exclusive staging, rename, fsync and macOS
+F_FULLFSYNC match gate persistence. Nested validation requires this receipt's
+lease, PID and identity to match the committed lease and environment; live
+identity samples must also match. Missing, unreadable, malformed, foreign or
+stale receipts refuse UNKNOWN, including legacy gates without a receipt.
+Release/Cancel removes only its matching receipt. Foreign or unreadable existing
+receipts are retained, never overwritten or reaped. Voice admission never reads
+the sidecar; the strict gate format and Swift decoder remain unchanged.
 
 **NOT_GREEN for installed use:** This wires the G3 participant contract; staged
 target verification, bootstrap, durable owner/reconnect hardening and qualified
@@ -97,11 +108,17 @@ controlled-quit reply loss, verified exit and UNKNOWN recovery; connections are 
 persisted gate/ledger with inherited controller lease (SSH/job recovery deferred).
 
 Final review: all updater transitions use `updateVoiceGate`; acknowledgements use
-`acknowledgeVoiceDrain`, with no G4 commit implementation. Both structured
-REFUSED/UNKNOWN (ack: null) plus observed lock presence, and legacy
-UPDATE_GATE_LOCKED throws, receive 8 bounded attempts with 25–250 ms backoff.
-REQUEST/PREPARE/COMMIT and initial/nested observations follow the same rule.
-Polling can wait again while a lock remains; UNKNOWN without contention refuses.
+`acknowledgeVoiceDrain`, with no G4 commit implementation. REQUEST, drain acknowledgement, PREPARE and COMMIT retry only the acquisition's
+`UPDATE_GATE_LOCKED` result, before any identity resample. These use up to 100
+attempts with 2 ms sleeps (at most 198 ms sleeping), capped at 250 ms elapsed;
+receipt-backed operations additionally use the original receipt's one-second
+expiry. No retry refreshes trust or resamples processes between failed acquisitions.
+A real refusal or fault is final. Initial/nested read-only observations and CANCEL
+retain eight attempts with seven 25, 50, 100, 200, 250, 250, 250 ms sleeps
+(1125 ms total), retrying UNKNOWN only while the lock is observed, or an explicit
+acquisition error. These paths do not consume participant receipts. The idle-drain
+loop polls every 200 ms. Postcommit UNKNOWN drain refreshes make at most four live
+round trips separated by 25, 50 and 100 ms; they never authorize an idle guess.
 Cancel exhaustion emits RECOVERY_REQUIRED and a private fsynced recovery receipt
 beside the retained lease. No foreign lock or ledger entry is removed.
 Proof callbacks return false on exceptions before G2's safeGateLock handles them;

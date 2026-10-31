@@ -21,6 +21,7 @@ export interface InstallerParticipant {
   verify: ParticipantProof;
   /** Process-table reads bracket a locked operation; verify itself is memory-only. */
   withProcessProof?<T>(read: () => T): T;
+  withAcquisitionProof?<T>(read: () => T): Promise<T>;
   quit(lease: UpdateGateLease): Promise<void>;
 }
 export interface InstallerParticipantDependencies {
@@ -51,6 +52,23 @@ export async function retryInstallerContention<T>(read: () => T, retry: (result:
     console.error("[update-gate] Waiting for update-gate lock (bounded retry)");
     await sleep(attempt);
   }
+}
+
+/** Retry mkdir's acquisition result before resampling identities. Never retry a gate fault.
+ * At most 99 sleeps (198 ms), bounded also by elapsed time and receipt expiry. */
+export async function retryInstallerAcquisition<T>(read: () => T, deadline = performance.now() + 250,
+  clock = { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) }): Promise<T> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try { return read(); }
+    catch (error) {
+      if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
+      if (attempt === 99 || clock.now() + 2 >= deadline)
+        throw Error("UNKNOWN: update-gate lock acquisition timed out");
+    }
+    await clock.sleep(2); // Failed acquisition owns no lock.
+    if (clock.now() >= deadline) throw Error("UNKNOWN: update-gate lock acquisition timed out");
+  }
+  throw Error("UNKNOWN: update-gate lock acquisition exhausted");
 }
 
 /** No retries: a written quit may already have executed when the socket closes. */
@@ -170,24 +188,19 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
     try { sampleProcessProof(); const result = read(); sampleProcessProof(); return result; }
     catch (error) { evidence = undefined; throw error; }
   };
-  // EEXIST is reported by mkdir itself. Retry acquisition before any after-sample,
-  // without observing whether the other owner's lock is still present. At most
-  // 99 short sleeps (198 ms), also fenced by elapsed time and receipt/exit expiry.
-  const retryAcquire = async <T>(read: () => T, deadline: number): Promise<T> => {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      try { return read(); }
-      catch (error) {
-        if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
-        if (attempt === 99 || deps.now() + 2 >= deadline)
-          throw Error("UNKNOWN: update-gate lock acquisition timed out");
-      }
-      await deps.sleep(2); // Failed acquisition owns no lock.
-      if (deps.now() >= deadline) throw Error("UNKNOWN: update-gate lock acquisition timed out");
-    }
-    throw Error("UNKNOWN: update-gate lock acquisition exhausted");
+  const retryAcquire = <T>(read: () => T, deadline: number) =>
+    retryInstallerAcquisition(read, deadline, deps);
+  const withAcquisitionProof = async <T>(read: () => T): Promise<T> => {
+    if (!evidence || !pinned) return retryAcquire(read, deps.now() + 250);
+    try {
+      sampleProcessProof();
+      const result = await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000));
+      sampleProcessProof();
+      return result;
+    } catch (error) { evidence = undefined; throw error; }
   };
   return {
-    verify, withProcessProof,
+    verify, withProcessProof, withAcquisitionProof,
     async refresh(lease) {
       evidence = undefined; // A failed/new request invalidates the preceding receipt.
       const requestedAt = deps.now();

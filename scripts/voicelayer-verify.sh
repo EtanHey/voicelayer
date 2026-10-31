@@ -434,7 +434,14 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   exit 0
 fi
 
-running_pids="$(pgrep -x VoiceBar 2>/dev/null || true)"
+# Preserve pre-quit intent across the gate controller's re-exec. PIDs are for
+# comparison only; controlled quit has already verified exit before re-exec.
+if [ -z "${VOICELAYER_INSTALL_OPERATION:-}" ]; then
+  export VOICELAYER_VERIFY_PRE_GATE_PIDS="$(pgrep -x VoiceBar 2>/dev/null || true)"
+  export VOICELAYER_VERIFY_PRE_GATE_LAUNCHD=0
+  if is_voicebar_launchd_managed; then export VOICELAYER_VERIFY_PRE_GATE_LAUNCHD=1; fi
+fi
+running_pids="${VOICELAYER_VERIFY_PRE_GATE_PIDS:-}"
 if [ -z "${VOICELAYER_INSTALL_OPERATION:-}" ] && [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
   printf '[voicelayer-verify] VoiceBar is running with PID(s): %s\n' "$(printf '%s' "$running_pids" | tr '\n' ' ')"
   printf 'Rebuild, stop the running VoiceBar, and relaunch the fresh app? (y/N) '
@@ -464,22 +471,10 @@ else
 fi
 
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
-  launchd_managed=0
-  if is_voicebar_launchd_managed; then
-    launchd_managed=1
-  fi
-  daemon_pids="$(find_daemon_pids)"
-
-  printf '[voicelayer-verify] stopping old VoiceBar process(es)...\n'
-  pkill -x VoiceBar 2>/dev/null || true
-  if ! wait_for_voicebar_stop "$running_pids"; then
-    printf '[voicelayer-verify] VoiceBar did not stop cleanly; no artifact written.\n' >&2
-    exit 1
-  fi
-
-  stop_daemon_pids "$daemon_pids"
-
-  if [ "$launchd_managed" -eq 1 ]; then
+  # The gate owns stop/drain. Never signal stale pre-gate PIDs or wait for
+  # KeepAlive after a clean controlled exit: explicitly start the loaded job.
+  if [ "${VOICELAYER_VERIFY_PRE_GATE_LAUNCHD:-0}" -eq 1 ]; then
+    launchctl kickstart "gui/$(id -u)/$VOICEBAR_LAUNCHD_LABEL"
     if ! new_pids="$(wait_for_launchd_voicebar_relaunch "$running_pids")"; then
       printf '[voicelayer-verify] launchd did not relaunch VoiceBar; no artifact written.\n' >&2
       exit 1
