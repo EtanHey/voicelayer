@@ -181,7 +181,7 @@ test("quit authorization contention stays within receipt freshness", async () =>
   } finally { rmdirSync(f.gate + ".lock"); }
 });
 
-test("clean exit observed across the deadline is accepted", async () => {
+test("clean exit confirmed by the final poll past the deadline continues installation", async () => {
   const f = fixture(); await f.commit();
   let now = 0;
   f.deps.now = () => now;

@@ -59,6 +59,9 @@ test("terminal group interrupt cannot reach committed installer; nested owner re
 test("nested validation waits through transient lock presence", async () => {
   const f = fixture("idle"), child = f.start(); expect(await child.exited).toBe(0);
   const lease = JSON.parse(readFileSync(f.gate, "utf8")).lease;
+  // This fixture's live process owns both the environment and durable receipt.
+  writeFileSync(f.gate + ".controller", JSON.stringify({ version: 1,
+    lease: { generation: lease.generation, operationId: lease.operationId }, pid: process.pid, identity: installerProcessIdentity(process.pid) }));
   mkdirSync(f.gate + ".lock");
   const nested = Bun.spawn([process.execPath, "src/update-gate-installer.ts", "--validate"], { env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid, identity: installerProcessIdentity(process.pid) }) }, stdout: "pipe", stderr: "pipe" });
   try { await Bun.sleep(300); rmdirSync(f.gate + ".lock"); expect(await nested.exited).toBe(0); }

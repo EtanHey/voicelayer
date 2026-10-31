@@ -19,6 +19,7 @@
 # pass --apply. Even with --apply, stray bundles are MOVED to a timestamped
 # backup dir, not deleted.
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/update-gate.sh"
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/voicebar-launchagent.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/voicebar-bundle-identity.sh"
@@ -61,7 +62,6 @@ done
 
 if [[ "$APPLY" -eq 1 ]]; then
   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  source "$ROOT_DIR/scripts/lib/update-gate.sh"
   vl_update_gate "$ROOT_DIR" bash "$ROOT_DIR/scripts/voicelayer-dedupe-voicebar.sh" "$@"
 fi
 
@@ -195,14 +195,9 @@ sect "6. Plan / Apply  (mode: $([[ $APPLY -eq 1 ]] && echo APPLY || echo DRY-RUN
 STAMP="$(date +%Y%m%d-%H%M%S)"
 DEST_BACKUP="$BACKUP_DIR/$STAMP"
 
-# 6a. Quit every running VoiceBar instance (graceful, then force)
-log "-- quit running VoiceBar instances"
-if [[ "$STOP_RUNNING" -eq 1 ]]; then
-  run osascript -e 'tell application "VoiceBar" to quit' || true
-  run pkill -x VoiceBar || true
-else
-  log "  skip: --no-stop was provided"
-fi
+# 6a. The gate already drained and controlled-quit its verified participant.
+# Never signal or force-stop an instance that appeared after that authorization.
+log "-- controlled quit is owned by the update gate"
 
 # 6b. Bootout + back up stray LaunchAgents that don't point at the canonical app
 log "-- prune duplicate VoiceBar LaunchAgents (preserve $LABEL and TTS services)"
@@ -232,6 +227,14 @@ if [[ "$CANON_SOURCE" != "$CANONICAL_APP" ]]; then
     run mv "$CANONICAL_APP" "$DEST_BACKUP/Applications/VoiceBar.app.was-$STAMP"
   fi
   run cp -R "$CANON_SOURCE" "$CANONICAL_APP"
+fi
+
+# Once the canonical copy is verified, it is the recovery target: the original
+# QA/stray bundle can be moved into backup by the following loop.
+if [[ "$APPLY" -eq 1 && -n "${VOICELAYER_GATE_RESTORE_APP:-}" ]]; then
+  voicebar_bundle_identity "$CANONICAL_APP"
+  is_canonical_signature "$CANONICAL_APP"
+  export VOICELAYER_GATE_RESTORE_APP="$CANONICAL_APP"
 fi
 
 # 6d. Back up every OTHER bundle (anything that isn't the canonical path)

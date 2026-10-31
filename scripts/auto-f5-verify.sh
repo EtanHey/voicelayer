@@ -184,7 +184,7 @@ restore_last_known_good_main_build() {
 branch_build_was_installed() {
   [ "$BRANCH_BUILD_INSTALLED" -eq 1 ] && return 0
   [ -f "${LOG_FILE:-}" ] || return 1
-  grep -qF "[voicelayer-verify] relaunching VoiceBar.app" "$LOG_FILE"
+  grep -qxF "[build-app] Done: /Applications/VoiceBar.app" "$LOG_FILE"
 }
 
 recording_state_from_health_json() {
