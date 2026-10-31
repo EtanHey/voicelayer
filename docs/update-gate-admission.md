@@ -54,7 +54,8 @@ gates permit quit when no live work remains. Inactive disconnected/error modes
 permit quit but never prove update-drain idle. Refusal uses the existing notice band.
 Controlled quit additionally needs the exact COMMITTED lease and is final before
 its ACK is returned; later ingress cannot cancel it. Termination is requested on
-main only after the socket queue finishes writing the ACK. Singleton replacement
+main after the socket queue attempts the ACK write, even if that write fails or
+is skipped because the daemon peer disconnected. Singleton replacement
 never escalates an incumbent's graceful refusal to force termination. SIGKILL and
 OS force-quit cannot be prevented. A supervising SIGTERM timeout can escalate to
 SIGKILL. Singleton replacement waits both daemon stop intervals plus a one-second

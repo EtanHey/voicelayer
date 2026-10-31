@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import VoiceBarUI
 
@@ -67,34 +68,69 @@ import XCTest
     }
 
     func testClosedGateRequiresReadableLedgerBeforeRefusingVoice() throws {
+        try XCTSkipIf(getuid() == 0, "Root bypasses the permission fixtures")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        // Same cases as review-641/probe-641: directory readability, not entry readability.
+        let fixtures: [(name: String, mode: Int, readable: Bool)] = [
+            ("m000", 0o000, false), ("m100", 0o100, false),
+            ("m400", 0o400, true), ("m500", 0o500, true),
+            ("inner000", 0o700, true), ("dangling", 0o700, true),
+            ("missing", 0o700, false), ("non-directory", 0o700, false),
+            ("symlink-at-path", 0o700, false),
+        ]
         for kind in ["DRAINING", "PREPARED", "COMMITTED"] {
-            let path = root.appendingPathComponent(kind).path
-            let ledger = path + ".admissions"
-            let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
-                "ownerId": UUID().uuidString, "targetSha": String(repeating: "a", count: 40)]
-            var state: [String: Any] = ["version": 1, "kind": kind, "lease": lease]
-            if kind != "DRAINING" {
-                let ack: [String: Any] = ["lease": lease, "activeOperations": 0, "openArchives": 0]
-                state["native"] = ack; state["daemon"] = ack
+            for fixture in fixtures {
+                let label = "\(kind)/\(fixture.name)"
+                let path = root.appendingPathComponent("\(kind)-\(fixture.name)").path
+                let ledger = path + ".admissions"
+                let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
+                    "ownerId": UUID().uuidString, "targetSha": String(repeating: "a", count: 40)]
+                var state: [String: Any] = ["version": 1, "kind": kind, "lease": lease]
+                if kind != "DRAINING" {
+                    let ack: [String: Any] = ["lease": lease, "activeOperations": 0, "openArchives": 0]
+                    state["native"] = ack; state["daemon"] = ack
+                }
+                try JSONSerialization.data(withJSONObject: state).write(to: URL(fileURLWithPath: path))
+                var expectedEntries: [String] = []
+                if fixture.name == "non-directory" {
+                    try Data().write(to: URL(fileURLWithPath: ledger))
+                } else if fixture.name == "symlink-at-path" {
+                    try FileManager.default.createSymbolicLink(atPath: ledger, withDestinationPath: root.path)
+                } else if fixture.name != "missing" {
+                    try FileManager.default.createDirectory(atPath: ledger, withIntermediateDirectories: false)
+                    if ["m400", "inner000"].contains(fixture.name) {
+                        try Data().write(to: URL(fileURLWithPath: ledger + "/entry"))
+                        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: ledger + "/entry")
+                        expectedEntries = ["entry"]
+                    } else if fixture.name == "dangling" {
+                        try FileManager.default.createSymbolicLink(atPath: ledger + "/entry", withDestinationPath: ledger + "/absent")
+                        expectedEntries = ["entry"]
+                    }
+                    try FileManager.default.setAttributes([.posixPermissions: fixture.mode], ofItemAtPath: ledger)
+                }
+                defer {
+                    if !["missing", "non-directory", "symlink-at-path"].contains(fixture.name) {
+                        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ledger)
+                    }
+                }
+                let gate = NativeUpdateGate(path: path)
+                if fixture.readable {
+                    XCTAssertThrowsError(try gate.acquire(), label) { error in
+                        guard case NativeUpdateGate.Fault.busy = error else { return XCTFail("\(label): expected busy: \(error)") }
+                    }
+                } else {
+                    XCTAssertNoThrow(try gate.acquire()(), "\(label): gate faults never cost voice")
+                }
+                XCTAssertEqual(FileManager.default.fileExists(atPath: path + ".voice-diag.json"), !fixture.readable, label)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".lock"), label)
+                if !["missing", "non-directory", "symlink-at-path"].contains(fixture.name) {
+                    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ledger)
+                    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ledger), expectedEntries,
+                                   "\(label): admission never modifies the closed ledger")
+                }
             }
-            try JSONSerialization.data(withJSONObject: state).write(to: URL(fileURLWithPath: path))
-            try FileManager.default.createDirectory(atPath: ledger, withIntermediateDirectories: false)
-            let gate = NativeUpdateGate(path: path)
-            XCTAssertThrowsError(try gate.acquire()) { error in
-                guard case NativeUpdateGate.Fault.busy = error else { return XCTFail("Expected busy: \(error)") }
-            }
-            XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".voice-diag.json"))
-            try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: ledger)
-            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ledger) }
-            XCTAssertThrowsError(try FileManager.default.contentsOfDirectory(atPath: ledger), "Fixture must be unreadable")
-            XCTAssertNoThrow(try gate.acquire()(), "\(kind): gate faults never cost voice")
-            XCTAssertTrue(FileManager.default.fileExists(atPath: path + ".voice-diag.json"))
-            XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".lock"))
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ledger)
-            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ledger), [], "Voice was admitted unregistered")
         }
     }
 
