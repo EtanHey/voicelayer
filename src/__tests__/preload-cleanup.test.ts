@@ -261,3 +261,51 @@ test("an unresolved fixture sweep keeps the dead run directory and index", () =>
   expect(existsSync(indexed.entry)).toBe(true);
   expect(existsSync(join(indexed.dir, "evidence"))).toBe(true);
 }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+for (const phase of ["removal", "fixture index"]) for (const code of ["ENOTEMPTY", "EBUSY", "EACCES"]) {
+  test(`stale sweep ${code === "EACCES" ? "still rejects" : "retains and logs"} ${code} during ${phase}`, () => {
+    const dir = sandbox();
+    const [blockedPid, removablePid, newer1, newer2] = deadPids(4);
+    const blocked = fixture(dir, `${blockedPid}-cafe`, 1000);
+    mkdirSync(join(blocked, "nested.lock"));
+    writeFileSync(join(blocked, "nested.lock", "owner"), "retained evidence");
+    mkdirSync(join(blocked, "hook-fixtures"));
+    const old = new Date(Date.now() - 1000 * 1000);
+    utimesSync(blocked, old, old);
+    const removable = fixture(dir, removablePid, 900);
+    const newest = [fixture(dir, newer1, 20), fixture(dir, newer2, 10)];
+    const script = `
+      import * as fs from "fs";
+      import { mock } from "bun:test";
+      const remove = fs.rmSync, readDirectory = fs.readdirSync;
+      let attempts = 0;
+      function busy() {
+        if (++attempts > 1) throw new Error("unexpected cleanup retry");
+        throw Object.assign(new Error("injected busy nested.lock"), { code: ${JSON.stringify(code)} });
+      }
+      mock.module("fs", () => ({ ...fs, readdirSync(path, ...options) {
+        if (${JSON.stringify(phase)} === "fixture index" && path === ${JSON.stringify(join(blocked, "hook-fixtures"))}) busy();
+        return readDirectory(path, ...options);
+      }, rmSync(path, options) {
+        if (${JSON.stringify(phase)} === "removal" && path === ${JSON.stringify(blocked)}) {
+          busy();
+        }
+        return remove(path, options);
+      }}));
+      await import(${JSON.stringify(preload)});
+      console.log(process.env.VOICELAYER_TEST_RUN_ROOT);
+    `;
+    const result = Bun.spawnSync([process.execPath, "-e", script], {
+      cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(code === "EACCES" ? 1 : 0);
+    expect(result.stderr.toString()).toContain(code);
+    expect(readFileSync(join(blocked, "nested.lock", "owner"), "utf8")).toBe("retained evidence");
+    expect(newest.every(root => existsSync(root))).toBe(true);
+    if (code !== "EACCES") {
+      expect(result.stderr.toString()).toContain(blocked);
+      expect(existsSync(removable)).toBe(false);
+      expect(existsSync(result.stdout.toString().trim())).toBe(true);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+}
