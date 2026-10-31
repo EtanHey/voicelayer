@@ -27,6 +27,8 @@ final class SettingsSpeechReasonCopyTests: XCTestCase {
                 let range = NSRange(line.startIndex..., in: line)
                 XCTAssertNil(rawCode.firstMatch(in: line, range: range), "\(status) / \(reason ?? "nil") rendered \(line)")
                 XCTAssertFalse(line.contains("_"), line)
+                // No em-dashes in shipped copy, nor an en-dash standing in for one (Etan, 2026-10-31).
+                XCTAssertFalse(line.contains("—") || line.contains("–"), line)
                 if let reason { XCTAssertFalse(line.contains(reason), line) }
                 XCTAssertTrue(line.first?.isUppercase == true, line)
                 XCTAssertTrue(line.hasSuffix(".") || line.hasSuffix("…"), line)
