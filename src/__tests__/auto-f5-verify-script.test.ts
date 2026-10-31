@@ -199,6 +199,8 @@ describe("auto-f5-verify.sh pure helpers", () => {
         { mode: 0o755 },
       );
 
+      // Stub only the gate transport for this already-admitted restoration.
+      writeFileSync(join(binDir, "bun"), '#!/bin/bash\n[[ "$2" == --validate ]]\n', { mode: 0o755 });
       const result = runFunction(
         [
           "BRANCH_BUILD_INSTALLED=1",
@@ -208,6 +210,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
           'printf "cleanup_status=%s\\n" "$?"',
         ].join("; "),
         {
+          VOICELAYER_INSTALL_OPERATION: "fixture-admitted",
           BUILD_LOG: buildLog,
           LAUNCHCTL_LOG: launchctlLog,
           PATH: `${binDir}:${process.env.PATH}`,

@@ -3,6 +3,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+case "${1:-}" in
+  -h|--help) echo "Usage: install-voicebar-f5-hidutil.sh"; exit 0 ;;
+esac
+if [[ "$#" -ne 0 ]]; then echo "ERROR: this installer accepts no arguments" >&2; exit 2; fi
+# Standalone Settings relay setup changes only its hidutil LaunchAgent and mapping.
+# It never quits/replaces/restarts VoiceBar or its daemon, so needs no update lease or Bun.
 LABEL="com.voicelayer.f5-to-f18-hidutil"
 PLIST_SRC="$ROOT_DIR/launchd/$LABEL.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"

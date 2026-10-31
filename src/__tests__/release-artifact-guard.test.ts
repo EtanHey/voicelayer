@@ -1,3 +1,4 @@
+import { stubInstallerTransport } from "./setup/installer-transport";
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -66,7 +67,7 @@ fi
   };
   const run = (output = safe) => {
     const result = Bun.spawnSync(["/bin/bash", "scripts/release-voicebar.sh", "--output-dir", output, "--skip-tap-check"], {
-      cwd: root, env: { ...process.env, BASH_ENV: shellEnv, PYTHONPATH: base, TEST_APPLICATIONS: applications, NOINDEX1B_TRACE: trace, PATH: `${bin}:${process.env.PATH}` },
+      cwd: root, env: { ...process.env, BASH_ENV: shellEnv, PYTHONPATH: base, TEST_APPLICATIONS: applications, NOINDEX1B_TRACE: trace, ...stubInstallerTransport(base, `${bin}:${process.env.PATH}`) },
       stdout: "pipe", stderr: "pipe",
     });
     for (const [path, content] of markers) expect(readFileSync(path, "utf8")).toBe(content);
@@ -202,7 +203,7 @@ fi
     const result = Bun.spawnSync(["/bin/bash", "flow-bar/build-app.sh",
       "--install-path", join(input, "VoiceBar.app"), "--zip-path", join(input, "VoiceBar.zip"),
       "--no-stop", "--no-relaunch"], {
-      cwd: root, env: { ...process.env, BASH_ENV: hook }, stdout: "pipe", stderr: "pipe",
+      cwd: root, env: { ...process.env, ...stubInstallerTransport(f.base), BASH_ENV: hook }, stdout: "pipe", stderr: "pipe",
     });
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);

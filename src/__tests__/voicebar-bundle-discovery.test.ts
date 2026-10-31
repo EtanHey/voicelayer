@@ -1,3 +1,4 @@
+import { stubInstallerTransport } from "./setup/installer-transport";
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -62,17 +63,18 @@ print(value)
   for (const name of ["mv", "cp", "rm", "mkdir", "pkill", "open", "ps", "ioreg"]) {
     stub(name, 'echo "$0 $*" >> "$VB_TEST_EFFECTS"; echo "forbidden OS effect: $0" >&2; exit 90');
   }
-  for (const lib of ["voicebar-launchagent.sh", "voicebar-bundle-identity.sh"]) {
+  for (const lib of ["voicebar-launchagent.sh", "voicebar-bundle-identity.sh", "update-gate.sh"]) {
     writeFileSync(join(root, "lib", lib), readFileSync(new URL(`lib/${lib}`, scriptsRoot)));
   }
   for (const name of scriptNames) {
     // Same isolated script-copy pattern as voicebar-dedupe.test.ts; no product override.
     writeFileSync(join(root, name), readFileSync(new URL(name, scriptsRoot), "utf8")
+      .replaceAll('source "$ROOT_DIR/scripts/lib/update-gate.sh"', `source "${root}/lib/update-gate.sh"`)
       .replaceAll("/Applications/VoiceBar.app", app));
   }
   const run = (name: string, overrides: Record<string, string> = {}, mode = "--dry-run") => Bun.spawnSync(
     ["/bin/bash", join(root, name), name === scriptNames[0] ? "--allow-stopped" : mode],
-    { env: { ...process.env, HOME: root, PATH: `${bin}:/usr/bin:/bin`, TMPDIR: candidates,
+    { env: { ...process.env, HOME: root, ...stubInstallerTransport(root, `${bin}:/usr/bin:/bin`), TMPDIR: candidates,
       PLIST_BUDDY: join(bin, "PlistBuddy"), VOICEBAR_PLIST_BUDDY: join(bin, "PlistBuddy"),
       VOICEBAR_CANONICAL_APP: app, VB_TEST_CANDIDATES: candidates, VB_TEST_SPOTLIGHT: app,
       VB_TEST_EFFECTS: effects, ...overrides } },

@@ -859,6 +859,12 @@ main() {
             ;;
     esac
 
+    source "$SCRIPT_DIR/lib/update-gate.sh"
+    if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
+        vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/voicelayer-update.sh" "$@" || return 1
+    else
+        log "[update-gate] Simulation: would request drain and wait for idle before mutation (no lease taken)."
+    fi
     update_package
     update_voicebar_app
     if [[ "$(detect_install_type)" != "brew-formula" ]]; then

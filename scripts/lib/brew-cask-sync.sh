@@ -85,7 +85,7 @@ bcs_brew() {
 # True when the caller's run_cmd only prints. Post-conditions cannot be asserted
 # in that mode, because nothing was actually done.
 bcs_commands_are_simulated() {
-    if bcs_function_exists bcs_caller_simulates_commands; then
+    if bcs_function_exists run_cmd && bcs_function_exists bcs_caller_simulates_commands; then
         bcs_caller_simulates_commands
         return
     fi
@@ -103,6 +103,7 @@ bcs_commands_are_simulated() {
 # damaged-app `reinstall`), and those have to survive the same state.
 # A real run is still gated: main() calls bcs_require_brew before acting.
 bcs_brew_run() {
+    bcs_update_gate || return 1
     local brew_bin
     if ! brew_bin="$(bcs_brew_bin)"; then
         if bcs_commands_are_simulated; then
@@ -293,6 +294,7 @@ bcs_tap_offered_version() {
 # behind, still serving the destructive `delete:` cask. The tap has no upstream
 # tracking branch, so a bare `git pull` fails — name the remote and branch.
 bcs_tap_update() {
+    bcs_update_gate || return 1
     local tap="$1"
     local branch="${2:-main}"
     local tap_repo
@@ -378,6 +380,7 @@ bcs_caskroom_is_clearable() {
 
 # Move (never delete) the stale registration aside, then adopt the app in place.
 bcs_reregister_cask() {
+    bcs_update_gate || return 1
     local token="$1"
     local backup_root="$2"
     local name caskroom stamp destination
@@ -406,6 +409,7 @@ bcs_reregister_cask() {
 # One idempotent entry point, correct from ANY starting state.
 #   bcs_sync_cask <token> <app path> <backup root> [tap branch]
 bcs_sync_cask() {
+    bcs_update_gate || return 1
     local token="$1"
     local app_path="$2"
     local backup_root="$3"
@@ -484,4 +488,23 @@ bcs_sync_cask() {
     fi
 
     bcs_log "$name is registered and installed at ${offered:-$app_version}."
+}
+
+# Guard every mutating helper, including direct library consumers. Dry-run is read-only.
+bcs_update_gate() {
+    bcs_commands_are_simulated && return 0
+    if [[ -z "${VOICELAYER_INSTALL_OPERATION:-}" ]]; then
+        bcs_err "UNKNOWN: obtain an update operation via voicelayer update before cask/formula mutation"
+        return 1
+    fi
+    local root
+    # Formula upgrade can remove the keg that originally sourced this function.
+    root="${PACKAGE_ROOT:-}"
+    if [[ -z "$root" ]]; then root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || return 1; fi
+    if [[ ! -f "$root/scripts/lib/update-gate.sh" ]]; then
+        bcs_err "REFUSED UNKNOWN: refreshed package validator unavailable; no further mutation authorized"
+        return 1
+    fi
+    source "$root/scripts/lib/update-gate.sh" || return 1
+    vl_update_gate "$root"
 }

@@ -295,12 +295,14 @@ export function updateVoiceGate(command: unknown, verify?: ParticipantProof, env
     return result;
   }, { kind: "REFUSED", reason: "UNKNOWN" }, env, false, false);
 }
-/** G3/updater supplies live identity, handoff, archive-durability and competing-owner evidence. */
-export function acknowledgeVoiceDrain(lease: UpdateGateLease, verify: ParticipantProof) {
+/** G3/updater supplies live identity, handoff, archive-durability and competing-owner evidence.
+ * Installers may request the acquisition error so EEXIST is never confused with a fault. */
+export function acknowledgeVoiceDrain(lease: UpdateGateLease, verify: ParticipantProof,
+  options: { throwOnContention?: boolean } = {}) {
   return safeGateLock(path => {
     const current = snapshot(path);
     if (!current || current.state.kind === "OPEN" || current.active.length ||
       transitionUpdateGate(current.state, { kind: "REQUEST", lease }).kind !== "UNCHANGED" || verify(current.state) !== true) return null;
     return { lease, activeOperations: 0 as const, openArchives: 0 as const };
-  }, null, process.env, false, false);
+  }, null, process.env, options.throwOnContention === true, false);
 }

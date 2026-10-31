@@ -1,3 +1,4 @@
+import { stubInstallerTransport } from "./setup/installer-transport";
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from "fs";
@@ -42,13 +43,15 @@ print(value)
     mkdirSync(join(dir, "lib"));
     writeFileSync(join(dir, "lib/voicebar-launchagent.sh"), readFileSync(new URL("../../scripts/lib/voicebar-launchagent.sh", import.meta.url), "utf8"));
     writeFileSync(join(dir, "lib/voicebar-bundle-identity.sh"), readFileSync(new URL("../../scripts/lib/voicebar-bundle-identity.sh", import.meta.url), "utf8"));
+    writeFileSync(join(dir, "lib/update-gate.sh"), readFileSync(new URL("../../scripts/lib/update-gate.sh", import.meta.url), "utf8"));
     const script = join(dir, "dedupe.sh");
     writeFileSync(script, readFileSync(new URL("../../scripts/voicelayer-dedupe-voicebar.sh", import.meta.url), "utf8")
+      .replaceAll('source "$ROOT_DIR/scripts/lib/update-gate.sh"', `source "${dir}/lib/update-gate.sh"`)
       .replaceAll("/usr/libexec/PlistBuddy", join(bin, "PlistBuddy"))
       .replaceAll("/Applications/VoiceBar.app", app)
       .replaceAll("/Library/LaunchAgents /Library/LaunchDaemons", `${dir}/system-agents ${dir}/system-daemons`));
     const result = Bun.spawnSync(["/bin/bash", script, "--apply", "--no-stop", "--no-relaunch"], {
-      env: {...process.env, HOME: dir, PLIST_BUDDY: join(bin, "PlistBuddy"), PATH: `${bin}:/usr/bin:/bin`},
+      env: {...process.env, HOME: dir, PLIST_BUDDY: join(bin, "PlistBuddy"), ...stubInstallerTransport(dir, `${bin}:/usr/bin:/bin`)},
     });
     expect(result.exitCode).toBe(0);
     expect(existsSync(join(agents, "renamed-tts.plist"))).toBe(true);

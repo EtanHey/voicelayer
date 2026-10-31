@@ -1071,6 +1071,7 @@ if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
 fi
 
 parse_build_app_args "$@"
+source "$REPO_ROOT/scripts/lib/update-gate.sh"
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
@@ -1101,6 +1102,11 @@ if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
 fi
 refuse_brew_managed_install_path
 guard_build_lifecycle_for_running_instances
+# Artifact/staged and nonresident no-stop/no-relaunch QA builds do not mutate the resident owner.
+if [[ "$STOP_RUNNING" -eq 1 || "$RELAUNCH_APP" -eq 1 || "$APP_DIR" == /Applications/* ]] ||
+   { is_resident_app_dir && [[ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" != 1 ]]; }; then
+    vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
+fi
 
 protect_notarized_resident_before_rebuild
 

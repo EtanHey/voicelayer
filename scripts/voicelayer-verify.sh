@@ -2,6 +2,7 @@
 # Runtime verification gate for VoiceLayer daemon/socket/MCP changes.
 
 set -euo pipefail
+UPDATE_GATE_ARGS=("$@")
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -434,7 +435,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
 fi
 
 running_pids="$(pgrep -x VoiceBar 2>/dev/null || true)"
-if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
+if [ -z "${VOICELAYER_INSTALL_OPERATION:-}" ] && [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
   printf '[voicelayer-verify] VoiceBar is running with PID(s): %s\n' "$(printf '%s' "$running_pids" | tr '\n' ' ')"
   printf 'Rebuild, stop the running VoiceBar, and relaunch the fresh app? (y/N) '
   if ! IFS= read -r -t 300 relaunch_answer; then
@@ -449,6 +450,9 @@ if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ];
       ;;
   esac
 fi
+
+source "$REPO_ROOT/scripts/lib/update-gate.sh"
+vl_update_gate "$REPO_ROOT" bash "$REPO_ROOT/scripts/voicelayer-verify.sh" ${UPDATE_GATE_ARGS[@]+"${UPDATE_GATE_ARGS[@]}"}
 
 if [ "${VOICELAYER_VERIFY_SKIP_BUILD:-0}" = "1" ]; then
   printf '[voicelayer-verify] VOICELAYER_VERIFY_SKIP_BUILD=1; skipping build.\n'

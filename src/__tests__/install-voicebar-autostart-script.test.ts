@@ -92,7 +92,10 @@ function makeWorkspace(options: StubOptions): Workspace {
     symlinkSync(resolved, join(stubDir, tool));
   }
 
+  // This suite tests installer effects; the full gate is exercised separately.
+  writeFileSync(join(stubDir, "bun"), '#!/bin/bash\n[[ "$2" == --validate ]]\n', { mode: 0o755 });
   const shellFakes = `
+export VOICELAYER_INSTALL_OPERATION=fixture-admitted
 launchctl() {
   printf 'launchctl %s\\n' "$*" >> "$STUB_LOG"
   if [ "\${1:-}" = "print" ]; then

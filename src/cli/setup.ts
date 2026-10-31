@@ -323,6 +323,7 @@ function chooseAgent(detected: readonly AgentCli[], home: string): AgentId {
 
 async function runCommand(command: string[]): Promise<void> {
   const proc = Bun.spawn(command, {
+    env: process.env,
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -371,17 +372,28 @@ export async function runSetup(
 }
 
 if (import.meta.main) {
+  if (process.argv.slice(2).some(arg => arg === "--help" || arg === "-h")) {
+    console.log("Usage: voicelayer setup (or setup.ts PACKAGE_ROOT)"); process.exit(0);
+  }
+  if (process.argv.length > 3) { console.error("ERROR: setup accepts no options"); process.exit(2); }
   const packageRoot = process.argv[2];
-  if (!packageRoot) {
+  if (!packageRoot || packageRoot.startsWith("-")) {
     console.error("Usage: setup.ts PACKAGE_ROOT");
     process.exit(2);
   }
-  runSetup(packageRoot).catch((error: unknown) => {
+  const { runGatedInstall, validateInstallerOperation } = await import("../update-gate-installer");
+  if (!process.env.VOICELAYER_INSTALL_OPERATION) {
+    process.exit(await runGatedInstall([process.execPath, import.meta.path, ...process.argv.slice(2)]));
+  }
+  try {
+    await validateInstallerOperation();
+    await runSetup(packageRoot);
+  } catch (error: unknown) {
     console.error(
       `[voicelayer] setup failed: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    process.exit(1);
-  });
+    process.exitCode = 1;
+  }
 }
