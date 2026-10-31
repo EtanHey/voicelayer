@@ -41,6 +41,7 @@ function run(command: string[], options: { env?: Record<string, string>; cwd?: s
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
     ...options.env,
+    PATH: `${join(tempRoot, "fake-bin")}:${options.env?.PATH ?? process.env.PATH}`,
   };
   const cwd = options.cwd ?? tempRoot;
   if (!cwd) throw new Error("run() needs a temp repo: tempRoot is not set");
@@ -102,6 +103,8 @@ beforeEach(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
   initialTempRoot = tempRoot;
   initFakeRepo();
+  writeFakeExecutable("lsof", "#!/bin/sh\nexit 1\n");
+  writeFakeExecutable("ps", "#!/bin/sh\necho '0 0 Wed Oct 28 00:00:00 2026 kernel_task'\necho '1 0 Wed Oct 28 00:00:00 2026 /sbin/launchd'\n");
 });
 
 afterEach(() => {
@@ -334,6 +337,111 @@ describe("voicelayer-verify.sh", () => {
       expect(existsSync((await Bun.file(join(tempRoot, "runner.log")).text()).trim())).toBe(false);
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
+
+  for (const scenario of ["resident child", "foreign child", "vanished", "replaced", "restarted daemon", "old child", "unknown daemon", "multiple listeners", "failed process snapshot"] as const) {
+    test(`live whisper transition: ${scenario}`, () => {
+      pidsDir = mkdtempSync(join(tmpdir(), "verify-whisper-transition-"));
+      const changed = join(tempRoot, "changed.txt");
+      const runner = join(tempRoot, "corpus-runner.sh");
+      const state = join(pidsDir, "after");
+      const pids = join(pidsDir, "pids");
+      const before = scenario === "vanished" || scenario === "replaced" ? "100" : "";
+      const after = scenario === "vanished" ? "" : scenario === "multiple listeners" ? "101\n102" : "101";
+      writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+      writeFileSync(pids, `#!/bin/sh\nif [ -f "$STATE" ]; then echo '${after}'; else echo '${before}'; fi\n`, { mode: 0o755 });
+      writeFileSync(runner, '#!/bin/sh\ntouch "$STATE"\necho pass > "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"\necho pass > "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH"\n', { mode: 0o755 });
+      const format = (offset: number) => text(run(["python3", "-c",
+        `import datetime; print((datetime.datetime.now() + datetime.timedelta(seconds=${offset})).strftime('%a %b %d %H:%M:%S %Y'))`,
+      ], { env: { LC_ALL: "C" } }).stdout).trim();
+      const old = format(-120);
+      const newer = format(120);
+      const daemonAfter = scenario === "restarted daemon" ? newer : old;
+      const parent = scenario === "foreign child" ? "999" : "200";
+      const childStart = scenario === "old child" ? old : newer;
+      const fakeBin = writeFakeExecutable("ps", `#!/bin/sh\nif [ -f "$STATE" ]; then\n  echo ' 200 300 ${daemonAfter} bun run /pkg/src/mcp-server-daemon.ts'\n  echo ' 101 ${parent} ${childStart} whisper-server --port 8178'\nelse\n  echo ' 200 ${scenario === "unknown daemon" ? "999" : "300"} ${old} bun run /pkg/src/mcp-server-daemon.ts'\nfi\necho ' 300 1 ${old} /Applications/VoiceBar.app/Contents/MacOS/VoiceBar'\n${scenario === "failed process snapshot" ? "exit 1" : ""}\n`);
+      const result = run(["bash", scriptPath, "--corpus", "1"], { env: {
+        STATE: state, PATH: `${fakeBin}:${process.env.PATH}`, VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed, VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+        VOICELAYER_VERIFY_LIVE_WHISPER_PIDS_CMD: pids,
+      } });
+      if (scenario === "resident child") {
+        if (result.exitCode !== 0) throw new Error(`${text(result.stdout)}\n${text(result.stderr)}`);
+        expect(text(result.stderr)).toBe("");
+        expect(result.exitCode).toBe(0);
+        expect(text(result.stdout)).toContain("resident daemon");
+        const artifact = readdirSync(join(tempRoot, ".verified"))[0];
+        expect(text(run(["cat", join(tempRoot, ".verified", artifact)]).stdout)).toContain("live_whisper_8178_start_evidence: resident daemon pid=200");
+      } else {
+        expect(result.exitCode).not.toBe(0);
+        expect(text(result.stderr)).toContain("corpus run touched the live whisper-server");
+      }
+    }, SAFETY_SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  for (const phase of ["before", "after", "final"] as const) {
+    for (const fault of ["none", "stable listener", "lsof error", "lsof partial error", "lsof diagnostic", "lsof malformed", "lsof timeout", "ps error", "ps partial error", "ps diagnostic", "ps empty", "ps malformed", "ps timeout", "reused listener", "reparented listener", "changed daemon", "changed VoiceBar", "changed port observation"] as const) {
+      test(`live whisper inspection: ${phase} ${fault}`, () => {
+        pidsDir = mkdtempSync(join(tmpdir(), "verify-whisper-inspection-"));
+        const changed = join(tempRoot, "changed.txt");
+        const runner = join(tempRoot, "corpus-runner.sh");
+        writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+        writeFileSync(runner, '#!/bin/sh\ntouch "$STATE/after"\necho pass > "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"\necho pass > "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH"\n', { mode: 0o755 });
+        const bin = writeFakeExecutable("lsof", `#!/bin/sh
+count=0; [ ! -f "$STATE/lsof-count" ] || read count < "$STATE/lsof-count"
+count=$((count + 1)); echo "$count" > "$STATE/lsof-count"
+phase=before; [ ! -f "$STATE/after" ] || phase=after
+[ "$phase" != after ] || [ "$count" -lt 5 ] || phase=final
+if [ "$phase" = '${phase}' ]; then
+${fault === "lsof error" ? "echo inspection-failed >&2; exit 2" : fault === "lsof partial error" ? "echo 101; exit 2" : fault === "lsof diagnostic" ? "echo inspection-warning >&2; exit 1" : fault === "lsof malformed" ? "echo unknown; exit 0" : fault === "lsof timeout" ? "exec sleep 10" : fault === "changed port observation" ? 'test "$((count % 2))" -eq 0 && { echo 102; exit 0; }' : ":"}
+fi
+${fault === "stable listener" || fault === "reused listener" || fault === "reparented listener" || fault === "changed daemon" || fault === "changed VoiceBar" || fault === "changed port observation" ? "echo 101" : '[ -f "$STATE/after" ] && echo 101 || exit 1'}
+`);
+        writeFakeExecutable("ps", `#!/bin/sh
+count=0; [ ! -f "$STATE/ps-count" ] || read count < "$STATE/ps-count"
+count=$((count + 1)); echo "$count" > "$STATE/ps-count"
+phase=before; [ ! -f "$STATE/after" ] || phase=after
+[ "$phase" != after ] || [ "$count" -lt 5 ] || phase=final
+start='Wed Oct 28 00:00:00 2026'; parent=200; daemon_start="$start"; voicebar_start="$start"
+if [ "$phase" = '${phase}' ]; then
+${fault === "ps error" ? "echo inspection-failed >&2; exit 2" : fault === "ps partial error" ? "echo '1 0 Wed Oct 28 00:00:00 2026 /sbin/launchd'; exit 2" : fault === "ps diagnostic" ? "echo inspection-warning >&2" : fault === "ps empty" ? "exit 0" : fault === "ps malformed" ? "echo broken-process-record; exit 0" : fault === "ps timeout" ? "exec sleep 10" : fault === "reused listener" ? 'test "$((count % 2))" -ne 0 || start="Wed Oct 28 00:00:01 2026"' : fault === "reparented listener" ? 'test "$((count % 2))" -ne 0 || parent=999' : fault === "changed daemon" ? 'test "$((count % 2))" -ne 0 || daemon_start="Wed Oct 28 00:00:01 2026"' : fault === "changed VoiceBar" ? 'test "$((count % 2))" -ne 0 || voicebar_start="Wed Oct 28 00:00:01 2026"' : ":"}
+fi
+printf '200 300 %s bun run /pkg/src/mcp-server-daemon.ts\\n' "$daemon_start"
+printf '300 1 %s /Applications/VoiceBar.app/Contents/MacOS/VoiceBar\\n' "$voicebar_start"
+${["stable listener", "reused listener", "reparented listener", "changed daemon", "changed VoiceBar", "changed port observation"].includes(fault) ? ":" : '[ ! -f "$STATE/after" ] || start="Wed Oct 28 23:59:59 2099"'}
+printf '101 %s %s whisper-server --port 8178\\n' "$parent" "$start"
+printf '102 999 %s foreign-listener\\n' "$start"
+`);
+        const result = run(["bash", scriptPath, "--corpus", "1"], { env: {
+          STATE: pidsDir, PATH: `${bin}:${process.env.PATH}`, VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+          VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed, VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+        } });
+        const accepted = fault === "none" || fault === "stable listener";
+        expect({ status: result.exitCode, stderr: text(result.stderr) }).toMatchObject({ status: accepted ? 0 : 1 });
+        expect(existsSync(join(tempRoot, ".verified"))).toBe(accepted);
+        if (fault === "none") {
+          expect(text(result.stdout)).toContain("listener pid=101 ppid=200");
+          expect(text(result.stdout)).toContain("port=8178; identity reverified at certification boundary");
+        }
+      }, SAFETY_SUBPROCESS_TEST_TIMEOUT_MS);
+    }
+  }
+
+  test("same numeric listener PID cannot hide a replacement during the corpus run", () => {
+    const changed = join(tempRoot, "changed.txt"), runner = join(tempRoot, "corpus-runner.sh");
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    writeFileSync(runner, '#!/bin/sh\ntouch "$STATE"\necho pass > "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"\necho pass > "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH"\n', { mode: 0o755 });
+    const bin = writeFakeExecutable("lsof", "#!/bin/sh\necho 101\n");
+    writeFakeExecutable("ps", `#!/bin/sh
+start='Wed Oct 28 00:00:00 2026'; [ ! -f "$STATE" ] || start='Wed Oct 28 00:00:01 2026'
+printf '101 200 %s whisper-server --port 8178\\n' "$start"
+`);
+    const result = run(["bash", scriptPath, "--corpus", "1"], { env: {
+      STATE: join(tempRoot, "pgrep-state"), PATH: `${bin}:${process.env.PATH}`, VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+      VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed, VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+    } });
+    expect(result.exitCode).toBe(1);
+    expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
+  }, SAFETY_SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("refuses to certify a corpus run that killed the live whisper-server", () => {
     run(["git", "checkout", "-b", "feature/corpus-whisper-pid-hop"]);
