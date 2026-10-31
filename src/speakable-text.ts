@@ -277,7 +277,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     for (const piece of pieces) {
       if ((piece.protected && piece.text === "code block") || piece.literal) {
         flush();
-        if (piece.literal) spans.set(offset, offset + piece.text.length);
+        if (piece.literal && piece.text) spans.set(offset, offset + piece.text.length);
         offset += piece.text.length;
       }
       else segment += piece.text;
@@ -361,9 +361,9 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     const body = listBody(m[2], m[1]);
     return m[1] + body + (/[.!?]$/.test(body.trimEnd()) ? "" : ".") + m[2].slice(body.length);
   });
-  // Flattened selection lists also retain numbered markers. Keep each marker's
-  // source span, excluding quoted literals and decimal/version interiors.
-  edit(/(?<!\S)(\d+)[.)](?=[ \t]+)/gu, m => {
+  // Structured selections preserve source-line boundaries, so prose numbers
+  // cannot be mistaken for markers after selection conversion.
+  edit(/^[ \t]*(?:>[ \t]*)*(\d+)[.)](?=[ \t]+)/gmu, m => {
     const line = m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1).split(/\r?\n/, 1)[0];
     // Let the voice frontend pronounce digits in Hebrew rather than injecting English.
     return `${/[\u0590-\u05ff]/.test(line) || m[1].length > 2 ? m[1] : number(m[1])}.`;

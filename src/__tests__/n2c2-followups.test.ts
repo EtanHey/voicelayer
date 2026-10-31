@@ -79,3 +79,45 @@ for (const engine of ["edge", "clone"] as const) {
     expect(projectSpeakableText(source, [], engine).speechText).toBe(expected);
   });
 }
+
+// Round 1: source boundaries must survive the selection projection.
+for (const engine of ["edge", "clone"] as const) for (const selection of [false, true]) {
+  const read = (source: string) => selection ? projectStructuredSpeech(source).speechText : source;
+  test(`${engine} round1 prose numbers stay prose (selection=${selection})`, () => {
+    for (const source of ["See note 2) below.", "Page 3) of 4", "We have 12) items",
+      "It is 5. Then 6. Then 7.", "Go to step 2. Then 3.", "He was 1 of 2. Yes.",
+      "Top 10. Items follow", "קניתי 3) דברים"]) {
+      expect(projectSpeakableText(read(source), [], engine).speechText).toBe(source);
+    }
+  });
+  test(`${engine} round1 stray tick protects only its attached token (selection=${selection})`, () => {
+    const source = "Press the ` key, then open src/foo.ts next";
+    const text = read(source);
+    const p = projectSpeakableText(text, [], engine);
+    expect(p.speechText).toBe(`Press the key, then open ${engine === "edge" ? "" : "src slash "}foo dot T S next`);
+    const timings = p.speechText.split(/\s+/).map((text, i) => ({text, offset_ms: i * 100, duration_ms: 80}));
+    const words = alignWordBoundariesToDisplayText(text, p.speechText, timings, p.ranges, true);
+    for (const [word, at] of [["key,", 200], ["then", 300], ["open", 400], ["src/foo.ts", 500],
+      ["next", engine === "edge" ? 900 : 1100]] as const) {
+      expect(words.find(w => w.text === word)?.offset_ms).toBe(at);
+    }
+    expect(words.find(w => w.text === "key,")?.duration_ms).toBe(80);
+    expect(p.speechText).not.toMatch(/[`\u2013\u2014]/);
+    expect(projectSpeakableText(read("`$5 unpaired"), [], engine).speechText).toBe("$5 unpaired");
+    expect(projectSpeakableText(read("`unclosed list/paragraph"), [], engine).speechText).toBe("unclosed list slash paragraph");
+    if (selection) expect(text).toBe(source);
+  });
+  test(`${engine} round1 Hebrew protection follows source lines (selection=${selection})`, () => {
+    const english = "Run --join_audio on MP3 files in src/foo.ts using snake_case and KPipeline via gRPC.";
+    const release = "Release v1.2 costs $5.";
+    const hebrew = "שלום --join_audio MP3 src/foo.ts snake_case $5 v1.2";
+    const expected = `Run dash dash join audio on ${engine === "edge" ? "MP3" : "M P three"} files in ${engine === "edge" ? "" : "src slash "}foo dot T S using snake case and K pipeline via ${engine === "edge" ? "gRPC" : "G R P C"}. Release version one point two costs five dollars. ${hebrew} Dana said שלום.`;
+    const source = english + "\n" + release + "\n" + hebrew + "\n\nDana said שלום.";
+    const p = projectSpeakableText(read(source), [], engine);
+    expect(p.speechText).toBe(expected);
+    expect(p.speechText).not.toMatch(/[`\u2013\u2014]/);
+    // Reverse order prevents the first line from determining later language handling.
+    expect(projectSpeakableText(read(hebrew + "\n" + release), [], engine).speechText)
+      .toBe(hebrew + " Release version one point two costs five dollars.");
+  });
+}

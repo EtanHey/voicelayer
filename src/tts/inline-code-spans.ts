@@ -42,11 +42,10 @@ export function inlineCodeSpanEnds(input: string, includeUnpaired = false): Map<
     if (closing === undefined || start === undefined) {
       if (includeUnpaired && start !== undefined && !fenced.has(i) && !fenceOffsets.has(runs[i].index)) {
         const at = start;
-        const end = input.slice(at).search(/[\r\n]/);
-        const lineEnd = end < 0 ? input.length : at + end;
-        ends.set(at, lineEnd);
-        // Unpaired protection owns the rest of its line, with no overlapping spans.
-        while (i + 1 < runs.length && runs[i + 1].index < lineEnd) i++;
+        // A stray delimiter owns only its attached token, never later prose.
+        // A separated tick therefore becomes an omission with its own anchor.
+        const tokenEnd = at + input.slice(at).match(/^`+[^\s`]*/u)![0].length;
+        ends.set(at, tokenEnd);
       }
       continue;
     }

@@ -127,7 +127,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
         requested: { mode: null, profile: "long", engine: null, voice: null, rate: null },
         build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null } });
       expect(start).toHaveBeenCalledTimes(1);
-      expect(start.mock.calls[0]).toEqual(["שלום🙂 fu… no, full", "long",
+      expect(start.mock.calls[0]).toEqual(["שלום🙂\nfu… no, full", "long",
         { request_id: "direct", text_hash: normalizedSpeechHash(raw), archiveContext: contexts[0],
           ...(source === "selection" ? { structuredDisplay: projectStructuredSpeech(raw) } : {}) }]);
       expect(observed).toEqual([start.mock.results[0].value]);

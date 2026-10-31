@@ -40,10 +40,9 @@ export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
       let token = `\uE000${literals.length}\uE001`;
       while (markdown.includes(token)) token = "\uE000" + token;
       const literal = line.text.slice(left, right);
-      // Close an unmatched delimiter in this internal read string so flattening
-      // cannot extend literal protection into the following source line.
-      const kept = paired ? literal : ticks + literal.slice(ticks.length).replace(/`/g, "") + ticks;
-      literals.push({token, text: keep ? kept : literal.replace(/`+/g, "")});
+      // Preserve exactly the captured delimiter; unmatched ticks protect only
+      // their attached token in the speakable pass, with no invented closer.
+      literals.push({token, text: keep ? literal : literal.replace(/`+/g, "")});
       protectedText += line.text.slice(cursor, left) + token;
       cursor = right;
     }

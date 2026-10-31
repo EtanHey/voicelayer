@@ -13,10 +13,10 @@ const fixtures = [
 ];
 
 describe("structured speech projections", () => {
-  for (const source of fixtures) it(`conserves source and legacy speech: ${JSON.stringify(source)}`, () => {
+  for (const source of fixtures) it(`conserves source and legacy speech words: ${JSON.stringify(source)}`, () => {
     const result = projectStructuredSpeech(source);
     expect(result.displayText).toBe(source);
-    expect(result.speechText).toBe(markdownToSpeech(source));
+    expect(result.speechText.replace(/\n/g, " ")).toBe(markdownToSpeech(source));
     expect(result.blocks.map(block => source.slice(block.source.start, block.source.end)).join("")).toBe(source);
     let sourceEnd = 0, speechEnd = 0;
     for (const range of result.ranges) {
@@ -38,7 +38,7 @@ describe("structured speech projections", () => {
     expect(result.blocks.map(b => b.kind)).toEqual([
       "paragraph", "list-item", "list-item", "separator", "table-row", "table-separator", "table-row",
     ]);
-    expect(result.speechText).toBe("You confirmed: Cloned voice. Fast voice. A, B. C, D.");
+    expect(result.speechText).toBe("You confirmed:\nCloned voice.\nFast voice.\nA, B.\nC, D.");
     expect(result.blocks.filter(b => b.kind === "table-row").map(b => source.slice(b.source.start, b.source.end)))
       .toEqual(["| A | | B |\n", "| C | | D |"]);
   });

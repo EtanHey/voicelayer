@@ -663,7 +663,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       Date.now(), { request_id: "structured-read", structuredDisplay });
     handles.push(h); await h.done; await flushSpeechArchives();
     const played = events.filter(event => event.state === "speaking" && !event.long_read?.preparing);
-    expect(played.map(event => event.text)).toEqual(["2.", "Alpha. 3. Beta."]);
+    expect(played.map(event => event.text)).toEqual(["2.", "Alpha.\n3. Beta."]);
     const preparing = events.find(event => event.long_read?.preparing);
     expect(preparing.long_read.display.text).toBe(structuredDisplay.speechText);
     expect(JSON.parse(serializeEvent(preparing)).long_read.display).toEqual(preparing.long_read.display);

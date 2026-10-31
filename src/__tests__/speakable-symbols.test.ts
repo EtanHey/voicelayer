@@ -9,11 +9,10 @@ import { projectSpeakableText } from "../speakable-text";
 import { alignWordBoundariesToDisplayText } from "../tts";
 
 // Retain the captured baseline fixtures; these explicit N2-c2 lexical fixes
-// supersede only the old Hebrew and unmatched-backtick expansions.
+// supersede only the old Hebrew expansions.
 const lexicalFollowups: Record<string, string> = {
   "רשימה/פסקה": "רשימה/פסקה",
   "שלום list/paragraph עולם": "שלום list/paragraph עולם",
-  "`unclosed list/paragraph": "unclosed list/paragraph",
 };
 const followups = (rows: typeof originalReviewProbes) => rows.map(row => lexicalFollowups[row.raw] === undefined
   ? row : { ...row, edge: lexicalFollowups[row.raw], clone: lexicalFollowups[row.raw] });
