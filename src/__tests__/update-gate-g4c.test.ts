@@ -120,3 +120,20 @@ test.each([900, 975])("receipt age %d reserves 50 ms for the measured post-sampl
   expect(now).toBeLessThanOrEqual(Math.max(950, age));
   if (age > 950) expect(reads).toBe(0);
 });
+
+for (const source of [undefined, "supervised-bootstrap", "forged"]) test(`R2 nested validator authenticates operation source: ${source}`, async () => {
+  const { validateInstallerOperation } = await import("../update-gate-installer");
+  const f = fixture(), operation = join(f.root, "operation.json");
+  await runGatedInstall([process.execPath, "-e", `await Bun.write(${JSON.stringify(operation)}, process.env.VOICELAYER_INSTALL_OPERATION)`], f.participant);
+  const owner = JSON.parse(readFileSync(operation, "utf8"));
+  if (source !== undefined) owner.source = source;
+  const prior = process.env.VOICELAYER_INSTALL_OPERATION;
+  process.env.VOICELAYER_INSTALL_OPERATION = JSON.stringify(owner);
+  try {
+    if (source === undefined) await validateInstallerOperation();
+    else await expect(validateInstallerOperation()).rejects.toThrow("controller receipt mismatch");
+  } finally {
+    if (prior === undefined) delete process.env.VOICELAYER_INSTALL_OPERATION;
+    else process.env.VOICELAYER_INSTALL_OPERATION = prior;
+  }
+});

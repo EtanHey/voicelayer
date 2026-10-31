@@ -80,7 +80,8 @@ export async function validateInstallerOperation(): Promise<void> {
   if (current.kind !== "COMMITTED" || !sameLease(current.lease, lease)) throw Error("UNKNOWN: installer lease mismatch");
   const controller = readInstallerController(updateGateFilePath());
   if (!controller || controller.lease.operationId !== lease.operationId || controller.lease.generation !== lease.generation ||
-    controller.pid !== owner.pid || controller.identity !== owner.identity)
+    controller.pid !== owner.pid || controller.identity !== owner.identity || controller.source !== owner.source ||
+    (owner.source !== undefined && owner.source !== "supervised-bootstrap"))
     throw Error("UNKNOWN: installer controller receipt mismatch");
   if (installerProcessIdentity(controller.pid) !== controller.identity) throw Error("UNKNOWN: installer controller identity changed");
 }
@@ -161,6 +162,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
         if (command.kind === "COMMIT") return persistInstallerController(updateGateFilePath(), {
           version: 1, lease: { generation: lease.generation, operationId: lease.operationId },
           pid: process.pid, identity: controllerIdentity,
+          ...(bootstrap ? { source: "supervised-bootstrap" as const } : {}),
         });
         return true;
       };
@@ -176,7 +178,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     };
     const result = await (requested ? acquire(apply) : retryInstallerAcquisition(apply));
     if (command.kind === "COMMIT" && result.kind === "APPLIED") {
-      const persisted = await retryInstallerAcquisition(() => readInstallerGateState());
+      const persisted = await retryContention(() => readInstallerGateState(), () => false);
       committed = persisted.kind === "COMMITTED" && sameLease(persisted.lease, lease);
       commitUncertain = !committed;
       if (commitUncertain) throw Error("UNKNOWN: durable COMMIT readback unavailable; recovery required");
@@ -232,7 +234,9 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     return 130;
   } catch (error) {
     if (commitAttempted && !pastCommit()) {
-      const persisted = readUpdateGateFile();
+      let persisted: ReturnType<typeof readInstallerGateState>;
+      try { persisted = await retryContention(() => readInstallerGateState(), () => false); }
+      catch { persisted = { kind: "UNKNOWN" }; }
       committed = persisted.kind === "COMMITTED" && sameLease(persisted.lease, lease);
       commitUncertain = persisted.kind === "UNKNOWN" || (persisted.kind !== "OPEN" && !sameLease(persisted.lease, lease));
       if (pastCommit()) bootstrap?.onCommitted();

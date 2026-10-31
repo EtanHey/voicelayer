@@ -113,7 +113,8 @@ function persistGateRecord(path: string, destination: string, name: string, valu
 
 const controllerSchema = z.strictObject({ version: z.literal(1),
   lease: updateGateLeaseSchema.pick({ generation: true, operationId: true }),
-  pid: z.number().int().positive().safe(), identity: z.string().min(1) });
+  pid: z.number().int().positive().safe(), identity: z.string().min(1),
+  source: z.literal("supervised-bootstrap").optional() });
 type Controller = z.infer<typeof controllerSchema>;
 const sameControllerLease = (a: Controller["lease"], b: Controller["lease"]) =>
   a.generation === b.generation && a.operationId === b.operationId;
@@ -131,7 +132,7 @@ export function persistInstallerController(path: string, value: Controller): boo
     lstatSync(file);
     const previous = readInstallerController(path);
     if (!previous || !sameControllerLease(previous.lease, controller.lease) ||
-      previous.pid !== controller.pid || previous.identity !== controller.identity)
+      previous.pid !== controller.pid || previous.identity !== controller.identity || previous.source !== controller.source)
       return false;
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false; }
   persistGateRecord(path, file, "controller.json", controller);

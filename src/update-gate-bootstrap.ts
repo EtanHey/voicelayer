@@ -1,12 +1,12 @@
 import { createConnection } from "node:net";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync, statSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { getMcpSocketPath, bootstrapDiagnosticPath, updateGateFilePath } from "./paths";
 import { initializeSupervisedVoiceGate } from "./update-gate-admission";
 import { readUpdateGate, sameLease, type UpdateGateLease } from "./update-gate";
 import { readInstallerGateState, withUpdateGateLock } from "./update-gate-storage";
-import { retryInstallerAcquisition, type InstallerParticipant } from "./update-gate-installer-participant";
+import { retryInstallerAcquisition, retryInstallerContention, type InstallerParticipant } from "./update-gate-installer-participant";
 import { runGatedInstall } from "./update-gate-installer";
 
 function binary(command: string[]) {
@@ -82,7 +82,7 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
   const domain = `gui/${process.getuid!()}`;
   const labels = ["com.voicelayer.voicebar", "com.voicelayer.mcp-daemon"];
   const changed: string[] = [];
-  const unloaded: string[] = [];
+  const unloaded = new Map<string, string>();
   function disabled(label: string): boolean {
     const out = checked(["launchctl", "print-disabled", domain]);
     if (!/\{[\s\S]*\}/.test(out)) throw Error("UNKNOWN: launchd disabled inventory unreadable");
@@ -107,20 +107,35 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
     if (health && health.recording_state !== "idle") return String(health.recording_state);
     if (health && health.queue_depth !== 0) return "queued speech";
     const fallback = bootstrapDiagnosticPath();
+    const unknown = `UNKNOWN diagnostics; read ${fallback}; set VOICELAYER_BOOTSTRAP_DIAG_PATH to the active log`;
     const job = binary(["launchctl", "print", `${domain}/${labels[0]}`]);
-    if (job.code !== 0 && !/Could not find (specified )?service/i.test(job.err)) return "UNKNOWN launchd diagnostics";
+    if (job.code !== 0) return unknown;
+    const pid = job.out.match(/^\s*pid\s*=\s*([1-9]\d*)\s*$/m)?.[1];
+    const running = binary(["pgrep", "-fl", native]);
+    const rows = running.out.trim().split("\n");
+    if (!pid || running.code !== 0 || rows.length !== 1 || rows[0]?.match(/^([1-9]\d*) /)?.[1] !== pid) return unknown;
+    const observedProcess = binary(["ps", "-p", pid, "-o", "lstart=", "-o", "comm="]);
+    const identity = observedProcess.out.trim();
+    const started = Date.parse(identity.slice(0, 24));
+    if (observedProcess.code !== 0 || !Number.isFinite(started) || !/\/VoiceBar$/.test(identity.slice(24).trim())) return unknown;
     const declared = job.out.match(/^\s*(?:stderr path|StandardErrorPath)\s*=\s*(.+?)\s*$/m)?.[1]?.replace(/^"(.*)"$/, "$1");
     const files = [...new Set([...(declared && isAbsolute(declared) ? [declared] : []), fallback])];
-    const diagnostics: { line: string; modified: number }[] = [];
+    const diagnostics: { line: string; written: number }[] = [];
     for (const file of files) {
       try {
         const line = readFileSync(file, "utf8").split("\n").filter(s => s.includes("[diag]")).at(-1);
-        if (line) diagnostics.push({ line, modified: statSync(file).mtimeMs });
-      } catch { /* Try the other declared/default file; absent evidence is never idle. */ }
+        // NSLog prefixes each line with its own timestamp. File mtime can be
+        // refreshed by unrelated writes and cannot date a diagnostic.
+        const stamp = line?.match(/^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z| ?[+-]\d{4}|[+-]\d{2}:\d{2})?)(?=\s)/)?.[1];
+        const written = stamp ? Date.parse(stamp) : NaN;
+        if (line && Number.isFinite(written)) diagnostics.push({ line, written });
+        else if (line) return unknown; // An undated last diagnostic may be busy.
+      } catch { /* Missing files never prove idle; another active log may. */ }
     }
-    diagnostics.sort((a, b) => b.modified - a.modified);
-    const line = diagnostics[0]?.line;
-    if (!line) return `UNKNOWN diagnostics; read ${files.join(", ")}; set VOICELAYER_BOOTSTRAP_DIAG_PATH to the active log`;
+    diagnostics.sort((a, b) => b.written - a.written);
+    const diagnostic = diagnostics[0];
+    if (!diagnostic || diagnostic.written < started || diagnostic.written > Date.now()) return unknown;
+    const { line } = diagnostic;
     if (/state_transcribing|voiceMode=transcribing/.test(line)) return "transcribing";
     const mode = line.match(/voiceMode=(\w+)/)?.[1];
     if (mode && mode !== "idle") return `native ${mode}`;
@@ -168,7 +183,15 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
     if (cancelled) return 130;
     for (const label of labels) if (loaded(label)) {
       if (await checkpoint()) return 130;
-      checked(["launchctl", "bootout", `${domain}/${label}`]); unloaded.push(label);
+      const job = checked(["launchctl", "print", `${domain}/${label}`]);
+      const plist = job.match(/^\s*path\s*=\s*(.+?)\s*$/m)?.[1]?.replace(/^"(.*)"$/, "$1");
+      if (!plist || !isAbsolute(plist)) throw Error("UNKNOWN: loaded job plist path unavailable");
+      // Record custody before bootout: it can unload successfully yet return an
+      // error, or its load-state read can itself fail. Restore observes again.
+      unloaded.set(label, plist);
+      const result = binary(["launchctl", "bootout", `${domain}/${label}`]);
+      const stillLoaded = loaded(label);
+      if (result.code !== 0 || stillLoaded) throw Error("UNKNOWN: launchctl bootout failed");
       if (await checkpoint()) return 130;
     }
     if (!ready()) throw Error("UNKNOWN: controlled interval unavailable");
@@ -194,7 +217,7 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
       async withAcquisitionProof(read) {
         sample();
         const result = await retryInstallerAcquisition(read, observedAt + 250);
-        const persisted = await retryInstallerAcquisition(() => readInstallerGateState(), observedAt + 250);
+        const persisted = await retryInstallerContention(() => readInstallerGateState(), () => false);
         if (persisted.kind === "UNKNOWN") throw Error("UNKNOWN: bootstrap acquisition outcome unavailable");
         if (persisted.kind === "COMMITTED") {
           if (requestedLease && sameLease(persisted.lease, requestedLease)) return result;
@@ -212,12 +235,16 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
     const failures: unknown[] = [];
     const attempt = (work: () => void) => { try { work(); } catch (error) { failures.push(error); } };
     let gateOpen = !initialized;
-    if (initialized) {
-      try { gateOpen = (await retryInstallerAcquisition(() => readInstallerGateState())).kind === "OPEN"; }
-      catch (error) { failures.push(error); }
+    let gateUnreadable = false;
+    if (initialized && !committed) {
+      try {
+        const persisted = await retryInstallerContention(() => readInstallerGateState(), () => false);
+        gateOpen = persisted.kind === "OPEN"; gateUnreadable = persisted.kind === "UNKNOWN";
+      }
+      catch (error) { gateUnreadable = true; failures.push(error); }
     }
     const restorePrecommit = !committed && gateOpen;
-    if (!committed && !gateOpen) failures.push(Error("RECOVERY_REQUIRED: persisted gate is not OPEN; legacy jobs retained disabled"));
+    if (!committed && !gateOpen) failures.push(Error(`RECOVERY_REQUIRED: ${gateUnreadable ? "persisted gate state unreadable" : "persisted gate is not OPEN"}; legacy jobs retained disabled`));
     if (restorePrecommit && initialized) attempt(() => {
       // Never reset an arbitrary OPEN state. Remove only our initial generation or
       // G2's exact CANCEL result, with an empty ledger and no fault/controller.
@@ -241,7 +268,7 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
     });
     if (restorePrecommit) {
       for (const label of changed) attempt(() => { checked(["launchctl", "enable", `${domain}/${label}`]); });
-      for (const label of unloaded) attempt(() => { checked(["launchctl", "bootstrap", domain, `${process.env.HOME}/Library/LaunchAgents/${label}.plist`]); });
+      for (const [label, plist] of unloaded) attempt(() => { if (!loaded(label)) checked(["launchctl", "bootstrap", domain, plist]); });
     }
     // Gate faults never cost dictation: restore the observed app even after a
     // committed installer fault. Admission stays closed; no synthetic reopen.

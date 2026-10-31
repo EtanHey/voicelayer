@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlink
 import { join } from "node:path";
 import { testSocket } from "./setup/test-tmp";
 const repo = process.cwd();
+const diagLine = (mode = "idle", at = new Date()) => `${at.toISOString()} [VoiceBar][diag] voiceMode=${mode}\n`;
 let serial = 0;
 const saved = { ...process.env };
 afterEach(() => { for (const key of ["VOICELAYER_UPDATE_GATE_PATH", "VOICELAYER_BOOTSTRAP_DIAG_PATH", "VOICELAYER_MCP_SOCKET_PATH", "VOICELAYER_TEST_INSTALL_PROOF"]) process.env[key] = saved[key]; });
@@ -10,23 +11,23 @@ function fixture(health: unknown = { type: "health", recording_state: "idle", qu
   const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "boot-")), bin = join(root, "bin");
   mkdirSync(bin);
   const gate = join(root, "gate"), diag = join(root, "diag"), log = join(root, "calls"), socket = testSocket(`b${serial++}.sock`);
-  for (const [name, value] of Object.entries({ diag: "[VoiceBar][diag] state_idle voiceMode=idle\n", calls: "", owners: "123 VoiceBar\n", loaded: "yes", disabled: "false", active: "" })) writeFileSync(join(root, name), value);
+  for (const [name, value] of Object.entries({ diag: diagLine(), calls: "", owners: "123 VoiceBar\n", loaded: "yes", disabled: "false", active: "" })) writeFileSync(join(root, name), value);
   const proof = join(root, "proof.json"); writeFileSync(proof, JSON.stringify({ phase: "idle", ready: true }));
   const app = join(root, "VoiceBar.app"); mkdirSync(app);
   const scripts = {
-    ps: 'if [[ "$*" == "-p 123 -o comm=" ]]; then echo "$ROOT/VoiceBar.app/Contents/MacOS/VoiceBar"; else exec /bin/ps "$@"; fi',
+    ps: 'if [[ "$*" == "-p 123 -o lstart= -o comm=" ]]; then echo "Sat Oct 31 09:10:11 2026 $ROOT/VoiceBar.app/Contents/MacOS/VoiceBar"; elif [[ "$*" == "-p 123 -o comm=" ]]; then echo "$ROOT/VoiceBar.app/Contents/MacOS/VoiceBar"; else exec /bin/ps "$@"; fi',
     open: 'echo "open $*" >> "$CALL_LOG"; echo "123 VoiceBar" > "$ROOT/owners"',
     pgrep: 'if [[ -f "$ROOT/post-commit-fault" ]] && /usr/bin/grep -q COMMITTED "$ROOT/gate" 2>/dev/null; then rm "$ROOT/post-commit-fault"; echo postcommit-sample >> "$CALL_LOG"; exit 2; fi; if [[ -f "$ROOT/gate" && -f "$ROOT/proof-fault" ]]; then n=$(cat "$ROOT/proof-count" 2>/dev/null || echo 0); echo $((n+1)) > "$ROOT/proof-count"; [[ "$n" -lt 2 ]] || exit 2; fi; [[ ! -f "$ROOT/pgrep-error" ]] || exit 2; if [[ "$2" == *rec* ]]; then f=active; elif [[ "$2" != *VoiceBar* ]]; then f=direct; else f=owners; fi; if [[ "$2" == *whisper-server* && -s "$ROOT/resident" ]]; then cat "$ROOT/resident"; exit 0; fi; if [[ -s "$ROOT/$f" ]]; then cat "$ROOT/$f"; exit 0; else exit 1; fi',
     launchctl: `case "$1" in
 print-disabled) printf '{\\n"com.voicelayer.voicebar" => %s\\n"com.voicelayer.mcp-daemon" => %s\\n}\\n' "$(cat "$ROOT/disabled")" "$(cat "$ROOT/disabled-mcp" 2>/dev/null || echo true)";;
-print) if [[ ( -f "$ROOT/loaded" && "$2" == *voicebar ) || ( -f "$ROOT/loaded-mcp" && "$2" == *mcp-daemon ) ]]; then [[ ! -f "$ROOT/stderr-path" ]] || printf "stderr path = %s\\n" "$(cat "$ROOT/stderr-path")"; exit 0; else echo 'Could not find service' >&2; exit 113; fi;;
+print) if [[ ( -f "$ROOT/loaded" && "$2" == *voicebar ) || ( -f "$ROOT/loaded-mcp" && "$2" == *mcp-daemon ) ]]; then echo "pid = 123"; echo "path = $ROOT/actual-job.plist"; [[ ! -f "$ROOT/stderr-path" ]] || printf "stderr path = %s\\n" "$(cat "$ROOT/stderr-path")"; exit 0; else echo 'Could not find service' >&2; exit 113; fi;;
 disable) echo "$*" >> "$CALL_LOG"; if [[ "$2" == *voicebar ]]; then echo true > "$ROOT/disabled"; else echo true > "$ROOT/disabled-mcp"; fi; [[ ! -f "$ROOT/race" ]] || echo '456 rec' > "$ROOT/active";;
 enable) echo "$*" >> "$CALL_LOG"; [[ ! -f "$ROOT/fail-enable" ]] || exit 3; if [[ "$2" == *voicebar ]]; then echo false > "$ROOT/disabled"; else echo false > "$ROOT/disabled-mcp"; fi;;
-bootout) echo "$*" >> "$CALL_LOG"; if [[ "$2" == *voicebar ]]; then rm -f "$ROOT/loaded"; else rm -f "$ROOT/loaded-mcp"; fi; [[ ! -f "$ROOT/cancel-bootout" ]] || /bin/kill -INT "$PPID"; [[ ! -f "$ROOT/after-bootout" ]] || echo '456 rec' > "$ROOT/active";;
+bootout) echo "$*" >> "$CALL_LOG"; if [[ "$2" == *voicebar ]]; then rm -f "$ROOT/loaded"; else rm -f "$ROOT/loaded-mcp"; fi; [[ ! -f "$ROOT/bootout-error" ]] || exit 5; [[ ! -f "$ROOT/cancel-bootout" ]] || /bin/kill -INT "$PPID"; [[ ! -f "$ROOT/after-bootout" ]] || echo '456 rec' > "$ROOT/active";;
 bootstrap) echo "$*" >> "$CALL_LOG"; [[ ! -f "$ROOT/fail-bootstrap" ]] || exit 4; echo yes > "$ROOT/loaded";;
 *) exit 2;; esac`,
     osascript: 'echo "quit" >> "$CALL_LOG"; if [[ ! -f "$ROOT/sticky" ]]; then : > "$ROOT/owners"; : > "$ROOT/resident"; fi',
-    brew: 'echo "install" >> "$CALL_LOG"; [[ ! -f "$ROOT/fail-install" ]] || exit 7', kill: 'echo FORBIDDEN >> "$CALL_LOG"; exit 99',
+    brew: 'if [[ -f "$ROOT/finalizer-lock" ]]; then mkdir "$ROOT/gate.lock"; ( /bin/sleep 1.7; rmdir "$ROOT/gate.lock" ) >/dev/null 2>&1 & fi; echo "install" >> "$CALL_LOG"; [[ ! -f "$ROOT/fail-install" ]] || exit 7', kill: 'echo FORBIDDEN >> "$CALL_LOG"; exit 99',
   };
   for (const [name, script] of Object.entries(scripts)) writeFileSync(join(bin, name), `#!/bin/bash\n${script}\n`, { mode: 0o755 });
   const server = Bun.listen({ unix: socket, socket: { data(s, bytes) {
@@ -36,7 +37,13 @@ bootstrap) echo "$*" >> "$CALL_LOG"; [[ ! -f "$ROOT/fail-bootstrap" ]] || exit 4
   const start = (confirmed = true) => {
     process.env.VOICELAYER_TEST_INSTALL_PROOF = proof; process.env.VOICELAYER_UPDATE_GATE_PATH = gate; process.env.VOICELAYER_BOOTSTRAP_DIAG_PATH = diag; process.env.VOICELAYER_MCP_SOCKET_PATH = socket;
     const runner = join(root, "run.ts");
-    writeFileSync(runner, `import { runSupervisedBootstrap } from ${JSON.stringify(join(repo, "src/update-gate-bootstrap.ts"))};
+    writeFileSync(runner, `import { existsSync, readFileSync } from "node:fs";
+if (existsSync(${JSON.stringify(join(root, "late-commit"))})) {
+  const clock = performance.now.bind(performance);
+  Object.defineProperty(performance, "now", { value: () => clock() +
+    (existsSync(${JSON.stringify(gate)}) && JSON.parse(readFileSync(${JSON.stringify(gate)}, "utf8")).kind === "COMMITTED" ? 960 : 0) });
+}
+import { runSupervisedBootstrap } from ${JSON.stringify(join(repo, "src/update-gate-bootstrap.ts"))};
 try { process.exitCode = await runSupervisedBootstrap([process.execPath, ${JSON.stringify(join(repo, "src/update-gate-installer.ts"))}, "brew", "install"], ${confirmed ? "async () => true" : "undefined"}, 40); }
 catch (e) { console.error(String(e)); process.exitCode = 1; }`);
     return Bun.spawn([process.execPath, runner], { env: { ...process.env, ROOT: root, CALL_LOG: log, PATH: `${bin}:${process.env.PATH}`,
@@ -71,7 +78,7 @@ test("idle disables autostart before quit, verifies exit before install, records
     expect(calls.indexOf("disable ")).toBeLessThan(calls.indexOf("quit"));
     expect(calls.indexOf("bootout ")).toBeLessThan(calls.indexOf("install"));
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
-    expect(readFileSync(f.gate + ".controller", "utf8")).toContain("identity");
+    expect(JSON.parse(readFileSync(f.gate + ".controller", "utf8")).source).toBe("supervised-bootstrap");
     expect(readFileSync(join(f.root, "recovery.wav"), "utf8")).toBe("retained audio");
   } finally { f.server.stop(true); }
 });
@@ -115,7 +122,7 @@ test("idle lost after disable refuses and restores autostart before any quit", a
 test("queue depth, diagnostics and direct CLI each block independently", async () => {
   for (const signal of ["queue", "diag", "direct"]) {
     const f = fixture({ type: "health", recording_state: "idle", queue_depth: signal === "queue" ? 1 : 0 });
-    if (signal === "diag") writeFileSync(join(f.root, "diag"), "[VoiceBar][diag] state_transcribing voiceMode=transcribing\n");
+    if (signal === "diag") writeFileSync(join(f.root, "diag"), diagLine("transcribing"));
     if (signal === "direct") writeFileSync(join(f.root, "direct"), "456 bun src/cli/speak.ts\n");
     const c = f.start();
     try { await Bun.sleep(250); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain(signal === "queue" ? "queued speech" : signal === "diag" ? "transcribing" : "direct CLI"); }
@@ -237,7 +244,7 @@ test("R1 loaded legacy stderr diagnostics can establish idle when the default ha
   const f = fixture(), legacy = join(f.root, "legacy-err.log");
   writeFileSync(join(f.root, "stderr-path"), legacy);
   writeFileSync(join(f.root, "diag"), "no diagnostic here\n");
-  writeFileSync(legacy, "[VoiceBar][diag] state_idle voiceMode=idle\n");
+  writeFileSync(legacy, diagLine());
   const c = f.start();
   try { expect(await c.exited).toBe(0); expect(readFileSync(f.log, "utf8")).toContain("install"); }
   finally { f.server.stop(true); }
@@ -246,10 +253,74 @@ test("R1 loaded legacy stderr diagnostics can establish idle when the default ha
 for (const newest of ["legacy", "default"]) test(`R1 newest diagnostic wins across legacy and default logs: ${newest}`, async () => {
   const f = fixture(), legacy = join(f.root, "legacy-err.log"), fallback = join(f.root, "diag");
   writeFileSync(join(f.root, "stderr-path"), legacy);
-  writeFileSync(legacy, `[VoiceBar][diag] voiceMode=${newest === "legacy" ? "transcribing" : "idle"}\n`);
-  writeFileSync(fallback, `[VoiceBar][diag] voiceMode=${newest === "default" ? "transcribing" : "idle"}\n`);
+  writeFileSync(legacy, diagLine(newest === "legacy" ? "transcribing" : "idle", newest === "legacy" ? new Date() : new Date(1000)));
+  writeFileSync(fallback, diagLine(newest === "default" ? "transcribing" : "idle", newest === "default" ? new Date() : new Date(1000)));
   utimesSync(newest === "legacy" ? fallback : legacy, 1, 1);
   const c = f.start();
   try { await Bun.sleep(250); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("transcribing"); }
   finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
+});
+
+for (const fault of ["no-job", "wrong-pid", "old-line", "fresh-nondiag"]) test(`R2 stale diagnostics cannot prove idle: ${fault}`, async () => {
+  const f = fixture(null);
+  if (fault === "no-job") unlinkSync(join(f.root, "loaded"));
+  if (fault === "wrong-pid") {
+    const path = join(f.root, "bin/launchctl");
+    writeFileSync(path, readFileSync(path, "utf8").replace("pid = 123", "pid = 999"));
+  }
+  if (fault !== "wrong-pid") {
+    const old = new Date(Date.now() - 365 * 86400_000);
+    writeFileSync(join(f.root, "diag"), diagLine("idle", old) + (fault === "fresh-nondiag" ? "fresh unrelated log\n" : ""));
+    if (fault === "no-job") utimesSync(join(f.root, "diag"), old, old);
+  }
+  const c = f.start();
+  try {
+    await Bun.sleep(400);
+    expect(readFileSync(f.log, "utf8")).toBe("");
+    expect(await cancel(c)).toContain("UNKNOWN");
+    expect(existsSync(f.gate)).toBe(false);
+  } finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
+});
+
+test("R2 failed-but-effective bootout reloads the actual loaded plist", async () => {
+  const f = fixture(); writeFileSync(join(f.root, "bootout-error"), "yes");
+  const c = f.start();
+  try {
+    expect(await c.exited).toBe(1);
+    expect(existsSync(join(f.root, "loaded"))).toBe(true);
+    expect(readFileSync(join(f.root, "disabled"), "utf8").trim()).toBe("false");
+    expect(readFileSync(f.log, "utf8")).toContain(`${f.root}/actual-job.plist`);
+    expect(readFileSync(f.log, "utf8")).not.toContain("install");
+  } finally { f.server.stop(true); }
+});
+
+test("R2 successful COMMIT finalizer never reads G1 again", async () => {
+  const f = fixture(); writeFileSync(join(f.root, "finalizer-lock"), "yes");
+  const c = f.start();
+  try {
+    expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 0 });
+    expect(readFileSync(f.log, "utf8")).toContain("install");
+    expect(readFileSync(f.log, "utf8")).not.toContain("enable ");
+    await waitFor(() => !existsSync(f.gate + ".lock"));
+  } finally { f.server.stop(true); }
+});
+
+test("R2 bootstrap COMMIT readback outlives the pre-sample deadline", async () => {
+  const f = fixture(); writeFileSync(join(f.root, "late-commit"), "yes");
+  const c = f.start();
+  try {
+    expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 0 });
+    expect(readFileSync(f.log, "utf8")).toContain("install");
+  } finally { f.server.stop(true); }
+});
+
+for (const zone of ["local", "offset"]) test(`R2 NSLog diagnostic timestamp format: ${zone}`, async () => {
+  const f = fixture(null);
+  const date = new Date();
+  const stamp = zone === "offset" ? date.toISOString().replace("T", " ").replace("Z", " +0000")
+    : new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().replace("T", " ").replace("Z", "");
+  writeFileSync(join(f.root, "diag"), `${stamp} VoiceBar[123:456] [VoiceBar][diag] state_idle voiceMode=idle\n`);
+  const c = f.start();
+  try { expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 0 }); }
+  finally { f.server.stop(true); }
 });

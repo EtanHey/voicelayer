@@ -32,8 +32,11 @@ Any mismatch stays intact for recovery. A new supervised invocation can then ret
 
 G2 exclusively initializes the missing gate under G1's lock; G4 owns drain/commit and the
 existing brew reconciliation path. G4c's synced `.controller` receipt, exact lease
-and live controller identity authorize nested validators. The operation records
-supervised-bootstrap as its source. Every changed enablement and unloaded job is
+and live controller identity authorize nested validators. The operation and synced
+controller receipt record
+supervised-bootstrap as their source; nested validation compares both fields
+and refuses unknown or mismatched sources. Every changed enablement and unloaded
+job is
 restored independently before reporting all restoration failures. The observed
 VoiceBar bundle is restored on every exit, including committed failures; the gate
 stays closed after COMMIT. The replacement's autostart repair re-enables VoiceBar
@@ -43,24 +46,54 @@ Bootstrap process/launchd evidence is sampled outside G1's lock, bracketing each
 acquisition. Its locked proof is memory-only. Expected proof exceptions in installer,
 native readiness and the compatibility helper return false; unexpected storage
 persistence failures retain their existing fail-closed behavior. The installer
-reads back durable COMMIT before returning to acquisition wrappers. Matching
+records durable COMMIT custody before returning to acquisition wrappers. Matching
 COMMITTED state skips their post-sample; later validation failures retain closed
-admission with recovery evidence. Legacy restoration requires persisted OPEN.
+admission with recovery evidence. If this invocation initialized the gate, legacy
+restoration requires persisted OPEN; otherwise it restores only the enablement
+and jobs it changed, without a gate read.
 See [the callback audit](update-gate-callback-audit.md).
 
-Bootstrap obtains the loaded VoiceBar job's `stderr path` (`StandardErrorPath`)
-from `launchctl print`, and also checks the current default diagnostics file.
-For each file it reads the last `[diag]` line; when both have diagnostics, the
-more recently modified file wins. Missing files or missing `[diag]` lines never
-prove idle. This supports an in-place legacy job still logging to
-`/tmp/voicebar-err.log` while the current default is
-`~/Library/Logs/voicelayer/voicebar-err.log`.
+Bootstrap requires the running VoiceBar PID to match the loaded legacy job's
+`pid` from `launchctl print`. It reads that PID's process start time and requires
+the newest diagnostic line's own NSLog timestamp to be at or after that start.
+A missing loaded job, mismatched PID, missing/undated diagnostic or older line is
+UNKNOWN, even with human confirmation. A fresh file mtime or unrelated log write
+cannot make an old idle line current.
 
-`VOICELAYER_BOOTSTRAP_DIAG_PATH` changes the fallback file for an unusual legacy
-setup. For example, set `VOICELAYER_BOOTSTRAP_DIAG_PATH=/tmp/voicebar-err.log` on
-the supervised command when that is the active log. If no candidate has a
-`[diag]` line, the UNKNOWN status names the files read and prints this override
-hint; it never promotes the observation timeout to idle.
+The loaded job's `stderr path` (`StandardErrorPath`) and current default file are
+candidates; the diagnostic with the newest line timestamp wins. This supports an
+in-place legacy job still logging to `/tmp/voicebar-err.log` while the default is
+`~/Library/Logs/voicelayer/voicebar-err.log`. `VOICELAYER_BOOTSTRAP_DIAG_PATH`
+changes the fallback for unusual setups; it never bypasses PID or timestamp
+validation. UNKNOWN names the fallback and prints this override hint.
+
+An adopted whisper-server (owned by another process) or a still-running retired
+`com.voicelayer.mcp-daemon` job can remain after normal VoiceBar quit. Bootstrap
+then refuses after the bounded owner-exit wait and restores the observed app.
+Before retrying, finish voice work and use the actual owner's normal shutdown
+path. For an adopted whisper-server, close it through the application or terminal
+that owns it. A retired MCP job needs a separate supervised maintenance interval:
+disable its restart, use that legacy daemon's normal shutdown path, verify its
+process has exited, then unload the empty job and retain its plist for recovery.
+Restore its prior state if the maintenance cannot finish. Never bootout a running
+owner or force-stop one to make bootstrap pass. On an already protected install,
+`bash launchd/install.sh` is the gated retirement helper; it cannot clear this
+pre-gate legacy shape by itself. VoiceBar must remain the sole daemon owner.
+
+A failed precommit bootout is restored by observing load state and using the
+loaded job's original plist `path`, even if bootout unloaded it but returned an
+error. After COMMIT, the finalizer does not reacquire G1 or restore legacy jobs.
+Each persistence readback has its own bounded contention retry budget, separate
+from the pre-COMMIT identity freshness deadline; it always attempts a read.
+
+A SIGKILL can leave `<gate>.bootstrap-lock`. It is never automatically reaped.
+For manual recovery, first establish that the original supervisor and all its
+installer descendants have exited, inspect the preserved gate/controller and
+recovery receipts, and restore the observed app and prior launchd state as
+appropriate. Do not reopen a committed or uncertain gate on a guess. Only after
+exclusive ownership and recovery are established may the operator remove that
+specific empty supervisor directory with `rmdir` and retry. Never remove G1's
+`.lock`, gate evidence or another live supervisor's mutex this way.
 
 Qualification remains pending: real M4 launchd/quit/socket behavior, signed target
 identity and postcommit recovery/readiness; the SHA above is lease bookkeeping,

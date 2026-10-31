@@ -199,7 +199,10 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
     try {
       sampleProcessProof();
       const result = await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
-      const persisted = await retryAcquire(() => readInstallerGateState(), Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
+      // Persistence readback has its own bounded contention budget. The write may
+      // already have consumed the entire pre-acquisition identity-proof budget.
+      const persisted = await retryInstallerContention(() => readInstallerGateState(), () => false, attempt =>
+        deps.sleep(Math.min(25 * 2 ** attempt, 250)));
       if (persisted.kind === "UNKNOWN") throw Error("UNKNOWN: acquisition outcome unavailable");
       if (persisted.kind === "COMMITTED") {
         if (evidence && sameLease(persisted.lease, evidence.native.lease)) return result;

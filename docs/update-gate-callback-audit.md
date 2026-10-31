@@ -53,7 +53,7 @@ uncaught callbacks and asynchronous callbacks.
 When COMMIT returns an APPLIED COMMITTED result, `runGatedInstall` synchronously
 forbids rollback and notifies bootstrap before returning to its acquisition
 wrapper. It then reads persisted state through an acquired G1 snapshot, retrying failed
-acquisition outside the lock.
+acquisition outside the lock with a fresh bounded readback budget.
 A matching COMMITTED lease records the confirmed outcome. An unavailable or
 mismatched readback retains the rollback prohibition and requires recovery.
 Expected readback faults never fabricate OPEN. A separate UNKNOWN observation
@@ -66,10 +66,14 @@ lease refuses immediately; it never becomes permission to sample or restore.
 Postcommit validation runs in the installer's separate refresh/quit phase.
 
 If a later postcommit check fails, the installer writes a recovery receipt and
-retains closed admission. Independently, bootstrap reads persisted state before
-its finalizer: only proven OPEN can permit precommit gate cleanup, legacy
-enablement or job reload. Restoring the observed VoiceBar bundle for voice
-availability remains separate from restoring legacy launchd state.
+retains closed admission. If this invocation initialized the gate, legacy
+restoration requires a persisted OPEN; if it never initialized one, the enablement
+and jobs it changed are restored
+without a gate read. Initialization can refuse after a gate-lock fault left gate
+or diagnostic evidence: prior services are restored, while retained evidence
+blocks retry until recovery. A committed finalizer skips the G1 read entirely.
+Restoring the observed VoiceBar bundle for voice availability remains separate
+from restoring legacy launchd state.
 
 ## Reproducible verification
 
