@@ -21,7 +21,7 @@ test("durable controller passes; copied env with another live PID and matching i
     await installer.validateInstallerOperation();
     await Bun.write(${JSON.stringify(validated)},'yes');
     await Bun.write(${JSON.stringify(record)},process.env.VOICELAYER_INSTALL_OPERATION);
-  `], { env: f.env, stdout: "pipe", stderr: "pipe" });
+  `], { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
   expect({ exit: await child.exited, error: await new Response(child.stderr).text() }).toMatchObject({ exit: 0 });
   expect(existsSync(validated)).toBe(true);
   const owner = JSON.parse(readFileSync(record, "utf8"));
