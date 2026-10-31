@@ -2,6 +2,11 @@ import { expect, test } from "bun:test";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+const CHILD_TIMEOUT_MS = 15_000;
+const scriptTest = (name: string, body: () => void, timeout = CHILD_TIMEOUT_MS + 5_000) => test(name, body, timeout);
+
+// Full-script cases must leave room around the fixture's 15-second child bound
+// for EXIT restoration, as the other 20-second cases below already do.
 // Complete scripts, with only absolute host paths relocated. The entire PATH is
 // fixture-owned: no host app, brew, launchctl, process discovery or audio access.
 function fixture(script: string, fault = "", managed = true, qa = false) {
@@ -97,7 +102,7 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
     const entryRoot = viaSymlink ? `${root}-link` : root;
     if (viaSymlink) symlinkSync(root, entryRoot);
     const child = Bun.spawnSync(["/bin/bash", join(entryRoot, script), ...args], { env: { ...process.env, ...env, VOICELAYER_INSTALL_OPERATION: operation }, cwd: root,
-      stdin: new TextEncoder().encode("y\ny\n"), stdout: "pipe", stderr: "pipe", timeout: 15000 });
+      stdin: new TextEncoder().encode("y\ny\n"), stdout: "pipe", stderr: "pipe", timeout: CHILD_TIMEOUT_MS });
     return { exit: child.exitCode, out: child.stdout.toString(), err: child.stderr.toString(),
       running: readFileSync(join(root, "running"), "utf8").trim(), calls: readFileSync(join(root, "calls"), "utf8") };
   };
@@ -105,7 +110,7 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
 }
 
 for (const managed of [false, true]) for (const fault of ["", "build", "validate", "kickstart", "signal", "skip-build"])
-  test(`real verify restores owner on ${fault || "success"}, launchd=${managed}`, () => {
+  scriptTest(`real verify restores owner on ${fault || "success"}, launchd=${managed}`, () => {
     const result = fixture("scripts/voicelayer-verify.sh", fault, managed).run();
     expect(result.calls).toContain("gate-quit");
 
@@ -119,7 +124,7 @@ for (const managed of [false, true]) for (const fault of ["", "build", "validate
   }, 20000);
 
 for (const managed of [false, true]) for (const fault of ["build", "validate", "signal-self"])
-  test(`symlink verify restores owner on ${fault}, launchd=${managed}`, () => {
+  scriptTest(`symlink verify restores owner on ${fault}, launchd=${managed}`, () => {
     const result = fixture("scripts/voicelayer-verify.sh", fault, managed).run([], true);
     expect(result.calls).toContain("gate-quit");
     expect(result.exit).toBe(fault === "build" ? 42 : fault === "validate" ? 1 : 143);
@@ -138,28 +143,28 @@ for (const [script, args] of [
   ["scripts/voicelayer-dedupe-voicebar.sh", ["--apply"]],
   ["scripts/voicelayer-update.sh", ["--no-stop"]],
   ["launchd/install.sh", []],
-] satisfies [string, string[]][]) test(`symlink gate caller restores after validation failure: ${script}`, () => {
+] satisfies [string, string[]][]) scriptTest(`symlink gate caller restores after validation failure: ${script}`, () => {
   const result = fixture(script, "validate").run(args, true);
   expect(result.calls).toContain("gate-quit");
   expect({ exit: result.exit, running: result.running, err: result.err }).toMatchObject({ exit: 1, running: "202" });
 });
 
 for (const args of [[], ["--preserve-load-state"]]) for (const fault of ["", "plist"])
-  test(`real autostart ${args.join(" ") || "default"} restores on ${fault || "success"}`, () => {
+  scriptTest(`real autostart ${args.join(" ") || "default"} restores on ${fault || "success"}`, () => {
     const result = fixture("scripts/install-voicebar-autostart.sh", fault).run(args);
     expect(result.calls).toContain("gate-quit");
   expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ running: "202" });
     expect(result.exit).toBe(fault ? 1 : 0);
   });
 
-for (const noStop of [true, false]) test(`real dedupe apply restores owner, no-stop=${noStop}`, () => {
+for (const noStop of [true, false]) scriptTest(`real dedupe apply restores owner, no-stop=${noStop}`, () => {
   const result = fixture("scripts/voicelayer-dedupe-voicebar.sh").run(["--apply", ...(noStop ? ["--no-stop"] : [])]);
   expect(result.calls).toContain("gate-quit");
   expect(result.calls).not.toContain("pkill ");
   expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ running: "202" }); expect(result.exit).toBe(0);
 });
 
-test("real resident-target build restores the original QA bundle after compiler failure", () => {
+scriptTest("real resident-target build restores the original QA bundle after compiler failure", () => {
   const f = fixture("flow-bar/build-app.sh", "", false, true), result = f.run();
   expect(result.calls).toContain("gate-quit");
   expect(result.calls).toContain("compiler");
@@ -168,7 +173,7 @@ test("real resident-target build restores the original QA bundle after compiler 
   expect(result.out).toContain("Leaving the running VoiceBar instance alone");
 });
 
-for (const fault of ["", "build", "validate"]) test(`real update --no-stop restores owner on ${fault || "success"}`, () => {
+for (const fault of ["", "build", "validate"]) scriptTest(`real update --no-stop restores owner on ${fault || "success"}`, () => {
   const result = fixture("scripts/voicelayer-update.sh", fault).run(["--no-stop"]);
   expect(result.calls).toContain("gate-quit");
   expect({ exit: result.exit, err: result.err, running: result.running, out: result.out }).toMatchObject({ running: "202", exit: fault === "build" ? 42 : fault ? 1 : 0 });
@@ -176,20 +181,20 @@ for (const fault of ["", "build", "validate"]) test(`real update --no-stop resto
     if (!fault) expect(result.calls).toContain("postflight");
 });
 
-for (const fault of ["", "validate"]) test(`real retired-agent cleanup restores owner on ${fault || "success"}`, () => {
+for (const fault of ["", "validate"]) scriptTest(`real retired-agent cleanup restores owner on ${fault || "success"}`, () => {
   const result = fixture("launchd/install.sh", fault).run();
   expect(result.calls).toContain("gate-quit");
   expect({ running: result.running, exit: result.exit, err: result.err }).toMatchObject({ running: "202", exit: fault ? 1 : 0 });
 });
 
-test("dedupe restores the verified canonical bundle when the original QA bundle moves to backup", () => {
+scriptTest("dedupe restores the verified canonical bundle when the original QA bundle moves to backup", () => {
   const f = fixture("scripts/voicelayer-dedupe-voicebar.sh", "", false, true), result = f.run(["--apply", "--no-stop"]);
   expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ exit: 0, running: "202" });
   expect(result.calls).toContain(`open ${f.app}`);
   expect(result.calls).not.toContain(`open ${f.original}`);
-});
+}, 20000);
 
-test("recovery does not start a VoiceBar that was dormant before preserve-load-state", () => {
+scriptTest("recovery does not start a VoiceBar that was dormant before preserve-load-state", () => {
   const f = fixture("scripts/install-voicebar-autostart.sh");
   writeFileSync(join(f.root, "running"), "");
   const result = f.run(["--preserve-load-state"]);
@@ -198,14 +203,14 @@ test("recovery does not start a VoiceBar that was dormant before preserve-load-s
   expect(result.calls).not.toContain("launchctl kickstart");
 });
 
-test("update --no-stop restores the verified canonical bundle after nested dedupe moves the original QA bundle", () => {
+scriptTest("update --no-stop restores the verified canonical bundle after nested dedupe moves the original QA bundle", () => {
   const f = fixture("scripts/voicelayer-update.sh", "", false, true), result = f.run(["--no-stop"]);
   expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ exit: 0, running: "202" });
   expect(result.calls).toContain(`open ${f.app}`);
   expect(result.calls).not.toContain(`open ${f.original}`);
 });
 
-test("real resident-target build success restores the original QA bundle after the gate quit", () => {
+scriptTest("real resident-target build success restores the original QA bundle after the gate quit", () => {
   const f = fixture("flow-bar/build-app.sh", "build-success", false, true), result = f.run();
   expect(result.calls).toContain("gate-quit");
   expect(result.calls).toContain("validate");
@@ -216,16 +221,16 @@ test("real resident-target build success restores the original QA bundle after t
   expect(result.running).toBe("202");
   expect(result.calls.split("\n").filter(line => line.startsWith("open "))).toEqual([`open ${f.original}`]);
   expect(result.calls).not.toContain("launchctl kickstart");
-});
+}, 20000);
 
 for (const args of [["--help"], ["--unknown"], ["--reload", "--no-start"], []])
-  test(`R1 unvalidated bootstrap cannot enable autostart: ${args.join(" ") || "validation fault"}`, () => {
+  scriptTest(`R1 unvalidated bootstrap cannot enable autostart: ${args.join(" ") || "validation fault"}`, () => {
     const result = fixture("scripts/install-voicebar-autostart.sh", "validate").run(args, false, '{"source":"supervised-bootstrap"}');
     expect(result.calls).not.toContain("launchctl enable");
     expect(result.exit).toBe(args[0] === "--help" ? 0 : args.length ? 2 : 1);
   });
 
-test("R1 validated bootstrap enables VoiceBar only after validation", () => {
+scriptTest("R1 validated bootstrap enables VoiceBar only after validation", () => {
   const result = fixture("scripts/install-voicebar-autostart.sh").run([], false, '{"source":"supervised-bootstrap"}');
   expect(result.exit).toBe(0);
   expect(result.calls.indexOf("validate")).toBeLessThan(result.calls.indexOf("launchctl enable"));
