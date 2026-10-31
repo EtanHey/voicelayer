@@ -67,8 +67,8 @@ test("parenthesis list markers keep their exact display glyph", () => {
 test("numbered task-list items speak the number, drop the checkbox like unnumbered items, and keep raw display", () => {
   const items: [string, string, string][] = [
     ["1. [ ] Buy milk", "one.", "Buy milk."],
-    ["2. [x] Done thing", "two.", "Done thing."],
-    ["3) [X] Caps", "three.", "Caps."],
+    ["2. [x] Done thing", "two.", "Done thing, done."],
+    ["3) [X] Caps", "three.", "Caps, done."],
   ];
   const source = items.map(([line]) => line).join("\n");
   for (const engine of ["edge", "clone"] as const) {
@@ -84,10 +84,10 @@ test("numbered task-list items speak the number, drop the checkbox like unnumber
     }
     const projected = projectSpeakableText(source, [], engine);
     expect(projected.displayText).toBe(source);
-    expect(projected.speechText).toBe("one. Buy milk. two. Done thing. three. Caps.");
+    expect(projected.speechText).toBe("one. Buy milk. two. Done thing, done. three. Caps, done.");
     const structured = projectStructuredSpeech(source);
     expect(structured.displayText).toBe(source);
-    expect(structured.speechText).toBe("1. Buy milk. 2. Done thing. 3) Caps.");
+    expect(structured.speechText).toBe("1. Buy milk. 2. Done thing, done. 3) Caps, done.");
   }
 });
 

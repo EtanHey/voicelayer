@@ -29,6 +29,13 @@ for (const engine of ["edge", "clone"] as const) {
       expect(result.speechText).not.toContain(", done");
       const at = source.search(/\[[xX]\]/) + 1;
       expect(result.ranges.find(r => r.source.start <= at && r.source.end > at)?.kind).not.toBe("omission");
+      const selection = projectStructuredSpeech(source).speechText;
+      const selected = projectSpeakableText(selection, [], engine);
+      expect(selected.speechText).not.toContain(", done");
+      const marker = source.match(/\[[xX]\]/)![0];
+      expect(selection).toContain(marker);
+      const selectedAt = selection.indexOf(marker) + 1;
+      expect(selected.ranges.find(r => r.source.start <= selectedAt && r.source.end > selectedAt)?.kind).not.toBe("omission");
     }
   });
 

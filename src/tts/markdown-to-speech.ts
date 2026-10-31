@@ -15,28 +15,34 @@ export interface MarkdownSpeechLine {
 
 export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
   const code = [...inlineCodeSpanEnds(markdown)];
-  let span = 0;
+  const checkboxCode = code.filter(([start, end]) => /\[[ xX]\]/.test(markdown.slice(start, end)));
+  let span = 0, literalSpan = 0;
   return speechLinesFromFences(markdown).map(line => {
-    const marker = line.text.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[[xX]\](?!\()/)?.[0];
+    const marker = line.text.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[[ xX]\](?!\()/)?.[0];
     const at = line.sourceStart + (marker?.indexOf("[") ?? 0);
     while (span < code.length && code[span][1] <= at) span++;
-    const completed = !!marker && /[\p{L}\p{N}]/u.test(line.text.slice(marker.length))
-      && !(code[span]?.[0] <= at && at < code[span]?.[1]);
-    return { ...line, text: speechLineText(line.text, completed) };
+    while (literalSpan < checkboxCode.length && checkboxCode[literalSpan][1] <= line.sourceStart) literalSpan++;
+    const literalTask = !!marker && code[span]?.[0] <= at && at < code[span]?.[1];
+    const keepCode = checkboxCode[literalSpan]?.[0] < line.sourceEnd && line.sourceStart < checkboxCode[literalSpan]?.[1];
+    const completed = !!marker && !marker.endsWith("[ ]") && /[\p{L}\p{N}]/u.test(line.text.slice(marker.length)) && !literalTask;
+    // Keep literal checkbox delimiters through flattening so the next projection
+    // still distinguishes code from an actual task, including multiline spans.
+    return { ...line, text: speechLineText(line.text, { completed, keepCode, literalTask }) };
   });
 }
 
-function speechLineText(raw: string, completed = false): string {
+function speechLineText(raw: string, { completed = false, keepCode = false, literalTask = false } = {}): string {
   if (/^\s*\[[^\]]+\]:\s*\S+/.test(raw) || /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(raw) || /^\s*=+\s*$/.test(raw)) return "";
   let line = raw.replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+#+\s*$/, "").replace(/^\s*>\s?/, "");
   if (/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)) return "";
   const list = /^\s*(?:[-+*]|\d+[.)])\s+/.test(line);
-  line = line.replace(/^\s*(?:([-+*])|(\d+)([.)]))\s+(?:\[[ xX]\]\s*)?/, (_match, _bullet, digits, punctuation) => digits ? `${digits}${punctuation} ` : "");
+  const listMarker = literalTask ? /^\s*(?:([-+*])|(\d+)([.)]))\s+/ : /^\s*(?:([-+*])|(\d+)([.)]))\s+(?:\[[ xX]\]\s*)?/;
+  line = line.replace(listMarker, (_match, _bullet, digits, punctuation) => digits ? `${digits}${punctuation} ` : "");
   line = stripInlineLinkTargets(line)
     .replace(/!?\[([^\]]+)\]\[[^\]]*\]/g, "$1")
     .replace(/<https?:\/\/[^>]+>/gi, "link")
     .replace(/(?:https?:\/\/|www\.)[^\s<>]+/gi, (url) => `link${url.match(/[.,!?;:]+$/)?.[0] ?? ""}`)
-    .replace(/`+/g, "").replace(/\*\*/g, "").replace(/\*([^*]+)\*/g, "$1")
+    .replace(/`+/g, ticks => keepCode ? ticks : "").replace(/\*\*/g, "").replace(/\*([^*]+)\*/g, "$1")
     // Prefer identifiers for ambiguous __word__; strip underscores only at boundaries.
     .replace(/(?<![\p{L}\p{N}_])__([^_\n]*\s[^_\n]*)__(?![\p{L}\p{N}_])/gu, "$1")
     .replace(/(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu, "$1");
