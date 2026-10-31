@@ -9,6 +9,36 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testQuitDrainWritesAckBeforeRequestingTermination() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        var events: [String] = []
+        var policy = VoiceBarTerminationPolicy()
+        fixture.server.onUpdateGateDrain = { request in
+            policy.authorize(.controlledUpdate)
+            events.append("authorized")
+            return ["cmd": "update_gate_drain_ack", "id": request["id"]!]
+        }
+        fixture.server.onUpdateGateDrainReplySent = { request in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(request["action"] as? String, "quit")
+            do {
+                let line = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 0.05))
+                let ack = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+                XCTAssertEqual(ack["cmd"] as? String, "update_gate_drain_ack")
+                XCTAssertEqual(ack["id"] as? String, "quit-order")
+                events.append("ack-written")
+            } catch { XCTFail("Termination requested before ACK was readable: \(error)") }
+            events.append("termination-requested")
+            XCTAssertEqual(policy.reply(enforcesSingleton: true, voiceBusy: true, gatePermitsQuit: false), .terminateNow,
+                           "Ingress after authorization cannot rescind the acknowledged quit")
+        }
+        try writeLine("{\"type\":\"update_gate_drain\",\"action\":\"quit\",\"id\":\"quit-order\",\"pid\":\(getpid())}",
+                      to: fixture.commandClient)
+        XCTAssertTrue(waitUntil(timeout: 1) { events.contains("termination-requested") })
+        XCTAssertEqual(events, ["authorized", "ack-written", "termination-requested"])
+    }
+
     func testDrainUsesOSPeerPIDAndRepliesOnlyToTheSingleDaemonOwner() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }

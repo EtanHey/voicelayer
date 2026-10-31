@@ -66,6 +66,38 @@ import XCTest
         }
     }
 
+    func testClosedGateRequiresReadableLedgerBeforeRefusingVoice() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for kind in ["DRAINING", "PREPARED", "COMMITTED"] {
+            let path = root.appendingPathComponent(kind).path
+            let ledger = path + ".admissions"
+            let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
+                "ownerId": UUID().uuidString, "targetSha": String(repeating: "a", count: 40)]
+            var state: [String: Any] = ["version": 1, "kind": kind, "lease": lease]
+            if kind != "DRAINING" {
+                let ack: [String: Any] = ["lease": lease, "activeOperations": 0, "openArchives": 0]
+                state["native"] = ack; state["daemon"] = ack
+            }
+            try JSONSerialization.data(withJSONObject: state).write(to: URL(fileURLWithPath: path))
+            try FileManager.default.createDirectory(atPath: ledger, withIntermediateDirectories: false)
+            let gate = NativeUpdateGate(path: path)
+            XCTAssertThrowsError(try gate.acquire()) { error in
+                guard case NativeUpdateGate.Fault.busy = error else { return XCTFail("Expected busy: \(error)") }
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".voice-diag.json"))
+            try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: ledger)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ledger) }
+            XCTAssertThrowsError(try FileManager.default.contentsOfDirectory(atPath: ledger), "Fixture must be unreadable")
+            XCTAssertNoThrow(try gate.acquire()(), "\(kind): gate faults never cost voice")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: path + ".voice-diag.json"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".lock"))
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ledger)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ledger), [], "Voice was admitted unregistered")
+        }
+    }
+
     func testBriefContentionDoesNotDiagnose() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

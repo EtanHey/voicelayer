@@ -133,6 +133,8 @@ final class SocketServer {
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
     var onUpdateGateDrain: (([String: Any]) -> [String: Any]?)?
+    /// Main-thread continuation after the socket queue finishes writing the accepted reply.
+    var onUpdateGateDrainReplySent: (([String: Any]) -> Void)?
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
     var onCaptureResolved: (() -> Void)?
@@ -366,6 +368,7 @@ final class SocketServer {
                 queue.async { [weak self] in
                     guard let self, clients[fd]?.peerPID == peer else { return }
                     sendCommandToOwnerOnQueue(command: reply, targetFD: fd)
+                    DispatchQueue.main.async { [weak self] in self?.onUpdateGateDrainReplySent?(dict) }
                 }
             }
             return

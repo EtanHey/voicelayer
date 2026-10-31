@@ -133,7 +133,11 @@ import CoreFoundation
             admission = try locked(voice: true) {
                 if absent(path) { return {} }
                 let current = try state()
-                guard current["kind"] as? String == "OPEN" else { return nil }
+                if current["kind"] as? String != "OPEN" {
+                    // Match TS readLedger: only readable closed evidence can refuse voice.
+                    _ = try FileManager.default.contentsOfDirectory(atPath: path + ".admissions")
+                    return nil
+                }
                 // UUIDs and validated integers need no escaping. Match TS insertion order and newline.
                 let generation = (current["generation"] as! NSNumber).int64Value
                 let bytes = Data("{\"token\":\"\(token)\",\"pid\":\(getpid()),\"incarnation\":\"\(incarnation)\",\"generation\":\(generation)}\n".utf8)

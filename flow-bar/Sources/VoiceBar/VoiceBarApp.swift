@@ -690,10 +690,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if reply != nil, request["action"] as? String == "quit" {
                 // Commit before returning ACK; later ingress cannot rescind an acknowledged quit.
                 terminationPolicy.authorize(.controlledUpdate)
-                let lease = request["lease"] as? [String: Any]
-                DispatchQueue.main.async { [weak self] in self?.requestTermination(.controlledUpdate, lease: lease) }
             }
             return reply
+        }
+        server.onUpdateGateDrainReplySent = { [weak self] request in
+            guard request["action"] as? String == "quit" else { return }
+            self?.requestTermination(.controlledUpdate, lease: request["lease"] as? [String: Any])
         }
         server.start()
         _ = daemonController.activateIfNeeded()
