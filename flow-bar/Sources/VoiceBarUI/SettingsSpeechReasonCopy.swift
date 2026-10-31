@@ -29,7 +29,8 @@ enum SettingsSpeechReasonCopy {
         case "PROCESS_RESTART": return "VoiceLayer restarted before this finished."
         case "SYNTH_FAILED": return "The voice couldn't generate this speech."
         case "PLAYER_FAILED": return "Audio playback failed."
-        case "OUTPUT_UNAVAILABLE": return "No audio output was available."
+        // Producers write this for any non-refusal speak error (e.g. a missing clone profile), so stay cause-neutral.
+        case "OUTPUT_UNAVAILABLE": return "Speech output failed."
         case "REJECTED": return "VoiceLayer turned this request down before playing it."
         case "SPEECH_FAILED": return "Speech failed before it finished."
         case "ARCHIVE_INCOMPLETE": return "This read was only partly saved."

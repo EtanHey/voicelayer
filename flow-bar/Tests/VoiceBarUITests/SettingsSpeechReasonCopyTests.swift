@@ -64,7 +64,7 @@ final class SettingsSpeechReasonCopyTests: XCTestCase {
             ("interrupted", "PROCESS_RESTART", "VoiceLayer restarted before this finished."),
             ("failed", "SYNTH_FAILED", "The voice couldn't generate this speech."),
             ("failed", "PLAYER_FAILED", "Audio playback failed."),
-            ("failed", "OUTPUT_UNAVAILABLE", "No audio output was available."),
+            ("failed", "OUTPUT_UNAVAILABLE", "Speech output failed."),
             ("failed", "REJECTED", "VoiceLayer turned this request down before playing it."),
             ("rejected", "REJECTED", "VoiceLayer turned this request down before playing it."),
             ("failed", "SPEECH_FAILED", "Speech failed before it finished."),
