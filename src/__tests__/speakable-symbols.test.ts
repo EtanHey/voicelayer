@@ -1,5 +1,5 @@
 import originalReviewProbes from "./fixtures/speakable-symbols-probes.json";
-import protectedProbes from "./fixtures/speakable-symbols-main.json";
+import originalProtectedProbes from "./fixtures/speakable-symbols-main.json";
 import { combineHistoryTimings } from "../tts/history-timings";
 import { longReadDocument } from "../tts/long-read";
 import { chunkTextForTTS } from "../tts";
@@ -8,7 +8,16 @@ import { expect, test } from "bun:test";
 import { projectSpeakableText } from "../speakable-text";
 import { alignWordBoundariesToDisplayText } from "../tts";
 
-const reviewProbes = originalReviewProbes.map(row => row.raw === "1. completion/cancellation"
+// Retain the captured baseline fixtures; these explicit N2-c2 lexical fixes
+// supersede only the old Hebrew expansions.
+const lexicalFollowups: Record<string, string> = {
+  "רשימה/פסקה": "רשימה/פסקה",
+  "שלום list/paragraph עולם": "שלום list/paragraph עולם",
+};
+const followups = (rows: typeof originalReviewProbes) => rows.map(row => lexicalFollowups[row.raw] === undefined
+  ? row : { ...row, edge: lexicalFollowups[row.raw], clone: lexicalFollowups[row.raw] });
+const protectedProbes = followups(originalProtectedProbes);
+const reviewProbes = followups(originalReviewProbes).map(row => row.raw === "1. completion/cancellation"
   ? { ...row, edge: "one. completion slash cancellation.", clone: "one. completion slash cancellation." }
   : row);
 
@@ -106,7 +115,7 @@ test("Unicode-adjacent compounds retain whole display tokens", () => {
   }
 });
 
-test("review protected probes retain exact origin/main projections", () => {
+test("review protected probes retain baseline projections plus N2-c2 lexical fixes", () => {
   for (const row of protectedProbes) for (const engine of ["edge", "clone"] as const) {
     expect(projectSpeakableText(row.raw, [], engine).speechText).toBe(row[engine]);
     expect(displayTokens(row.raw).map(t => t[0])).toEqual(row.raw.split(/\s+/));

@@ -62,7 +62,7 @@ for (const engine of ["edge", "clone"] as const) {
     const source = "- [x] Call Dana\n- [ ] Buy milk";
     const structure = projectStructuredSpeech(source);
     expect(structure.displayText).toBe(source);
-    expect(structure.speechText).toBe("Call Dana, done. Buy milk.");
+    expect(structure.speechText).toBe("Call Dana, done.\nBuy milk.");
     const display = structuredReadDisplay(structure, [structure.speechText], 400)[0]!;
     expect(display.text).toBe(structure.speechText);
     expect(display.text).not.toContain("\u2014");
@@ -73,7 +73,7 @@ for (const engine of ["edge", "clone"] as const) {
 
   test(`${engine} numbered selection keeps mixed checkbox state without duplicating done`, () => {
     const structure = projectStructuredSpeech("1. [ ] Buy milk\n2. [X] Call Dana");
-    expect(structure.speechText).toBe("1. Buy milk. 2. Call Dana, done.");
+    expect(structure.speechText).toBe("1. Buy milk.\n2. Call Dana, done.");
     const p = projectSpeakableText(structure.speechText, [], engine);
     const plan = planProsody({ readText: structure.speechText, projection: p, structure, engine, listNumbers: "inline" });
     expect(plan.speechText.match(/\bdone\b/g)).toHaveLength(1);
@@ -97,7 +97,7 @@ for (const engine of ["edge", "clone"] as const) {
     ["- [x] Call Dana  \n  continued line\n- [ ] next", "Call Dana continued line, done. next."],
   ]) test(`${engine} checked task body and continuation: ${source}`, () => {
     expect(projectSpeakableText(source, [], engine).speechText).toBe(expected);
-    expect(projectStructuredSpeech(source).speechText).toBe(expected);
+    expect(projectStructuredSpeech(source).speechText.replace(/\n/g, " ")).toBe(expected);
   });
   test(`${engine} a URL cannot absorb the zero-width done insertion`, () => {
     const source = "- [x] see https://example.com/a\n- [ ] next";
@@ -157,7 +157,7 @@ for (const engine of ["edge", "clone"] as const) {
   ]) test(`${engine} list boundaries keep each task's completion with its own body: ${source}`, () => {
     expect(projectSpeakableText(source, [], engine).speechText).toBe(expected);
     const selected = projectStructuredSpeech(source).speechText;
-    expect(projectSpeakableText(selected, [], engine).speechText).toBe(source.includes("1. Child") ? "Parent, done. 1. Child." : expected);
+    expect(projectSpeakableText(selected, [], engine).speechText).toBe(expected);
   });
   for (const code of ["`a[0]`", "`[`", "`cost=$5 [`", "`a[0.5`", "`a[0.5]`"]) {
     test(`${engine} code brackets do not change the state of a later task: ${code}`, () => {

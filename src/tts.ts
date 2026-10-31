@@ -2470,7 +2470,7 @@ async function prepareSelectionReadStartAdmitted(
   throwIfAbortedSafe(signal);
   if (isTTSDisabled()) throw new Error("TTS is disabled");
   if (!text.trim() || text.length > SPEAK_TEXT_MAX_CHARS) throw new Error("Speech text must contain 1–200,000 characters");
-  const displayText = sanitizeTtsText(text);
+  const displayText = sanitizeTtsText(structuredReadText(text, structuredDisplay));
   const profile = resolveLongReadProfile(kind, text);
   const prosody = structuredReadPlan(displayText, profile, structuredDisplay);
   const displayChunk = prosody?.plan.chunks[0]?.text ?? chunkTextForLongRead(displayText, profile.engine, clonePlaybackSpeed(profile.rate))[0];
@@ -2511,6 +2511,12 @@ function emphasisRate(rate: string): string {
   const percent = Number.parseInt(rate, 10);
   const value = (Number.isFinite(percent) ? percent : 0) - 10;
   return `${value >= 0 ? "+" : ""}${value}%`;
+}
+
+/** Restore source context only for the exact flattened selection handoff.
+ * Different caller text must never be replaced by unrelated optional layout. */
+function structuredReadText(text: string, structure?: StructuredSpeech): string {
+  return structure && text === structure.speechText.replace(/\n/g, " ") ? structure.speechText : text;
 }
 
 function structuredReadPlan(displayText: string, profile: LongReadProfile, structure?: StructuredSpeech) {
@@ -2589,7 +2595,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
     assertSpeakerClear();
     if (!text.trim() || text.length > SPEAK_TEXT_MAX_CHARS) throw new Error("Speech text must contain 1–200,000 characters");
     if (isTTSDisabled()) throw new Error("TTS is disabled");
-    displayText = sanitizeTtsText(text);
+    displayText = sanitizeTtsText(structuredReadText(text, identity.structuredDisplay));
     if (!displayText.trim()) throw new Error("Speech text is empty after sanitizing");
   } catch (error) { prepared?.dispose(); throw error; }
   const archive = beginSpeechArchive(text, identity.archiveContext);

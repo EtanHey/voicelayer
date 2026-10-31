@@ -59,7 +59,7 @@ describe("stable section map", () => {
     const source = "# H\n- One\n- Two\n- Three";
     const map = check(source, 10);
     const speech = projectStructuredSpeech(source).speechText;
-    expect(map.chunks.map(c => speech.slice(c.speech.start, c.speech.end))).toEqual(["H One.", " Two.", " Three."]);
+    expect(map.chunks.map(c => speech.slice(c.speech.start, c.speech.end))).toEqual(["H\nOne.", "\nTwo.", "\nThree."]);
   });
 
   it("splits oversized replacements conservatively, never interpolating their source offsets", () => {

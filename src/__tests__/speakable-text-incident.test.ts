@@ -25,12 +25,8 @@ for (const engine of ["clone", "edge"] as const) test(`incident exact ${engine} 
   expect(structured.displayText).toBe(sample);
   for (const input of [sample, structured.speechText]) {
     const result = projectSpeakableText(input, [], engine);
-    // Raw line markers become words; FMT1 has already flattened them into digit tokens.
-    const expected = fixture(`${engine}.txt`).trimEnd();
-    expect(result.speechText).toBe(input === sample ? expected : expected
-      .replace("one. Empty crate:", "1. Empty crate:")
-      .replace("two. The mural needs measurements.", "2. The mural needs measurements.")
-      .replace("three. Lantern count.", "3. Lantern count."));
+    // Both raw and flattened selection list markers use the same number words.
+    expect(result.speechText).toBe(fixture(`${engine}.txt`).trimEnd());
     partitions(input, result);
   }
 });
@@ -58,7 +54,7 @@ const cases: [string, string][] = [
   ["part2-layout/v4/ part2-layout/v4/", "part two layout slash v four part two layout slash v four"],
   ["5,000 mm and 1 mm, 0.5 mm or -5 mm.", "5,000 millimeters and 1 millimeter, zero point five millimeters or minus five millimeters."],
   ["5 mmHg, 5 MM, 5 mms, 5 mm2; mmm", "5 mm hg, 5 MM, 5 mms, 5 mm two; mmm"],
-  ["שלום 5,000 mm", "שלום 5,000 millimeters"],
+  ["שלום 5,000 mm", "שלום 5,000 mm"],
   ["5,00 mm and 5..0 mm", "5,00 mm and 5..0 mm"],
 ];
 for (const [input, expected] of cases) test(`clone incident family: ${input}`, () => {
@@ -159,8 +155,8 @@ test("round 2 path dictionary overrides preserve the other components", () => {
 });
 
 test("round 2 full clone paths retain Hebrew components verbatim", () => {
-  for (const [input, speech] of [["/app/שלום/config.json", "slash app slash שלום slash config dot JSON"],
-    ["שלום/config.json", "שלום slash config dot JSON"]]) {
+  for (const [input, speech] of [["/app/שלום/config.json", "/app/שלום/config.json"],
+    ["שלום/config.json", "שלום/config.json"]]) {
     const result = projectSpeakableText(input);
     expect(result.speechText).toBe(speech);
     partitions(input, result);

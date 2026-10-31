@@ -25,7 +25,7 @@ export interface DisplayBlock {
 export interface StructuredSpeech {
   /** Exact captured input. No missing structure is reconstructed. */
   displayText: string;
-  /** Byte-for-byte legacy markdownToSpeech output; metadata is never spoken. */
+  /** Markdown speech with source-line boundaries retained for lexical context. */
   speechText: string;
   blocks: DisplayBlock[];
   /** Ordered partitions of both input and speech (including zero-width edits). */
@@ -50,7 +50,7 @@ export function projectStructuredSpeech(source: string): StructuredSpeech {
   }
   for (const line of lines) {
     if (sourceCursor < line.sourceStart) append(sourceCursor, line.sourceStart, "");
-    if (speechCursor) append(line.sourceStart, line.sourceStart, " ");
+    if (speechCursor) append(line.sourceStart, line.sourceStart, "\n");
     append(line.sourceStart, line.sourceEnd, line.text);
   }
   if (sourceCursor < source.length) append(sourceCursor, source.length, "");
