@@ -1,3 +1,4 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { stubInstallerTransport } from "./setup/installer-transport";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -12,7 +13,6 @@ import {
   writeFileSync,
 } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 
 // Real subprocesses: standalone p95 <= 1095 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
@@ -103,7 +103,7 @@ function writeFakeExecutable(name: string, body: string) {
 }
 
 beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
+  tempRoot = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-verify-test-"));
   initialTempRoot = tempRoot;
   initFakeRepo();
 });
@@ -124,7 +124,7 @@ describe("the fake-repo helper stays inside its temp repo", () => {
   // GIT_CONFIG, so a caller that exports either (a git hook, a rebase --exec)
   // redirects initFakeRepo()'s identity write into another repository.
   test("initFakeRepo writes nothing to a repo named by GIT_COMMON_DIR or GIT_CONFIG", () => {
-    const victim = mkdtempSync(join(tmpdir(), "voicelayer-verify-victim-"));
+    const victim = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-verify-victim-"));
     const saved = { common: process.env.GIT_COMMON_DIR, config: process.env.GIT_CONFIG };
     const realUser = () => text(run(["git", "config", "--local", "--get", "user.name"], { cwd: repoRoot }).stdout);
     const realBefore = realUser();
@@ -135,7 +135,7 @@ describe("the fake-repo helper stays inside its temp repo", () => {
         ["GIT_CONFIG", join(victim, ".git", "config")],
       ] as const) {
         process.env[key] = value;
-        tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
+        tempRoot = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-verify-test-"));
         initFakeRepo();
         delete process.env[key];
         const leaked = text(run(["git", "config", "--local", "--get", "user.name"], { cwd: victim }).stdout);
@@ -343,7 +343,7 @@ describe("voicelayer-verify.sh", () => {
     run(["git", "checkout", "-b", "feature/corpus-whisper-pid-hop"]);
     const changed = join(tempRoot, "changed.txt");
     // Kept outside the fake repo so the pid stub cannot dirty the worktree.
-    pidsDir = mkdtempSync(join(tmpdir(), "voicelayer-verify-whisper-pids-"));
+    pidsDir = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-verify-whisper-pids-"));
     const pidsCmd = join(pidsDir, "live-whisper-pids.sh");
     const runner = join(tempRoot, "corpus-runner.sh");
     writeFileSync(changed, "src/mcp-server-daemon.ts\n");
