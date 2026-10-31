@@ -7,18 +7,47 @@ live controller. Busy waits with the participant phase and Ctrl-C; precommit exi
 CANCELs its own generation. No stop/cancel signals are used to drain. After commit,
 admission remains closed for qualified completion/recovery; failure never reopens it.
 
-**NOT_GREEN for installed use:** The merged gate supplies a synchronous proof callback contract,
-not live native/daemon identity, target verification, handoff, competing-owner or
-archive-durability probes. Production therefore refuses UNKNOWN, including bootstrap.
-The synthetic proof provider requires the isolated preload flag, a nonsymlink run
-root in this checkout's `.test-tmp`, a private random-token marker naming the live
-preload PID, and a nonsymlink proof inside that run. Flags alone do not qualify it.
-This prevents accidental opt-in; a malicious same-user process can forge local test
-files, so this is not an authentication boundary or installed-runtime evidence.
-Outside isolation the controller refuses a noncanonical gate path, including state
-and HOME overrides; the canonical root is the OS account home, not caller HOME. The target SHA environment value alone proves nothing.
-Never enable the updater button or ship these guards as a working installer until
-the live provider, bootstrap and postcommit recovery are qualified.
+The production participant provider now calls G3's authenticated
+`voicelayer/speech` control endpoint with `update_gate_drain` and the exact lease.
+It validates separate native and daemon zero-work/zero-archive ACKs plus their
+PID/incarnation identities. Each new refresh invalidates the previous receipt;
+PREPARE, COMMIT and the postcommit quit each require a fresh round trip. The
+synchronous G2 verifier fences the same lease, participant process births and
+executable names, and a receipt age of at most one second, including time in
+flight, under G1's lock.
+Missing/UNKNOWN participants wait with Cancel; malformed/mismatched replies,
+identity changes and transport faults refuse. A timeout never proves idle.
+
+After APPLIED COMMIT, the controller waits a 100 ms fault-publication grace period,
+refreshes G3 evidence and issues exactly one authenticated `update_gate_quit`.
+An ACK still requires observed exit. If a written quit loses its reply through
+socket disconnect or timeout (or G3 reports UNKNOWN after its native connection
+drops), the controller verifies the outcome rather than reporting a plain
+install failure: both pinned processes must be absent, no
+VoiceBar executable may remain in the process table, and G2 must still observe
+the exact COMMITTED lease with no diagnostic or admission records. It observes
+exit for at most five seconds; the deadline only refuses, never proves exit.
+An unreadable process table, reused PID, explicit refusal, malformed reply,
+changed lease, retained process, diagnostic or ledger entry stops UNKNOWN,
+writes the recovery receipt and keeps admission closed. Nothing force-stops a
+participant or reopens the gate. Nested helpers validate the retained COMMITTED
+lease and live controller after participant exit, without requesting new ACKs.
+
+**NOT_GREEN for installed use:** This wires the G3 participant contract; staged
+target verification, bootstrap, durable owner/reconnect hardening and qualified
+completion/recovery are still separate work. The target SHA environment value
+alone proves nothing. Do not enable the updater button or claim installed-app
+qualification from isolated tests.
+The synthetic proof provider still requires the isolated preload flag, a
+nonsymlink run root in this checkout's `.test-tmp`, a private random-token marker
+naming the live preload PID, and a nonsymlink proof inside that run. Flags alone
+do not qualify it. Invalid harness evidence never falls through to live sockets.
+Programmatic participant injection for controller tests requires that same proof
+and live capability; it is unavailable in production. A malicious same-user
+process can forge test files, so this is not an authentication boundary or
+installed-runtime evidence. Outside isolation the controller refuses a
+noncanonical gate path, including state and HOME overrides; the canonical root
+is the OS account home, not caller HOME.
 
 Recon inventory (scoped scripts, launchd, flow-bar/build-app.sh and src/cli):
 
@@ -41,17 +70,18 @@ Recon inventory (scoped scripts, launchd, flow-bar/build-app.sh and src/cli):
 
 Follow-up rows: tap cask preflight/uninstall hook and old saved recipe ordering
 (separate tap qualification); golems deploy-local-prod cross-repo integration;
-live native/daemon/target proof provider; controller incarnation/reconnect hardening
+staged-target proof; controller incarnation/reconnect hardening
 and durable host job (slice 7); bootstrap/verified postcommit completion/recovery;
 Swift/Bun and installed real-agent proof. SIGKILL/crash before commit leaves a closed
 lease: proven owner-death recovery is a provider-slice blocker, never an age-based
-reopen. The G3 live endpoint and abort/authorization handshake must be qualified
-before wiring a separate provider slice; `participantEvidence()` still refuses
-production UNKNOWN. No updater button may ship enabled on this evidence.
+reopen. The wired G3 live endpoint and postcommit exit check require installed
+real-agent qualification. No updater button may ship enabled on this evidence.
 
-Surface sweep: entry points/clients are listed above; providers use G2 callbacks
-with synthetic fixtures only; G1/G2 wire contracts unchanged; reverse states tested
-are busy→idle, precommit Cancel, duplicate update and UNKNOWN; connections are local
+Surface sweep: entry points/clients are listed above; providers use fresh
+authenticated G3 round trips plus G2 callbacks (with qualified synthetic fixtures
+in tests); G1/G2 wire contracts unchanged; reverse states tested
+are busy→idle, precommit Cancel, duplicate update, stale/mismatched evidence,
+controlled-quit reply loss, verified exit and UNKNOWN recovery; connections are local
 persisted gate/ledger with inherited controller lease (SSH/job recovery deferred).
 
 Final review: all updater transitions use `updateVoiceGate`; acknowledgements use

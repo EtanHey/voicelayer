@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
 import { existsSync, lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -48,13 +49,12 @@ async function retryContention<T>(read: () => T, retry: (result: T) => boolean):
 export function safeParticipantProof(read: () => { ready: boolean }): boolean {
   try { return read().ready === true; } catch { return false; }
 }
-// G2 deliberately has no live participant/target probe. Until that adapter is
-// qualified, production installation refuses UNKNOWN (including first install).
-function participantEvidence(): { phase: string; ready: boolean } {
+// Preserve the qualified preload-only synthetic proof contract unchanged.
+function harnessParticipantEvidence(): { phase: string; ready: boolean } {
   const root = process.env.VOICELAYER_TEST_RUN_ROOT;
   const file = process.env.VOICELAYER_TEST_INSTALL_PROOF;
   if (process.env.VOICELAYER_TEST_ISOLATED !== "1" || !root || !file) {
-    throw Error("UNKNOWN: nothing was changed; installer updates are disabled until live participant proof lands");
+    throw Error("UNKNOWN: missing qualified harness participant proof");
   }
   const resolvedRoot = harnessRoot(), resolvedFile = realpathSync(file);
   const tail = relative(resolvedRoot, resolvedFile);
@@ -67,9 +67,24 @@ function participantEvidence(): { phase: string; ready: boolean } {
     typeof proof.ready !== "boolean") throw Error("UNKNOWN: malformed harness proof");
   return proof;
 }
+function participantEvidence(): InstallerParticipant {
+  if (process.env.VOICELAYER_TEST_ISOLATED !== "1") return createInstallerParticipant();
+  harnessParticipantEvidence(); // Never fall through to live sockets on a harness fault.
+  return {
+    async refresh(lease) {
+      const proof = harnessParticipantEvidence();
+      const ack = { lease, activeOperations: 0 as const, openArchives: 0 as const };
+      return { ...proof, native: ack, daemon: ack };
+    },
+    verify: () => safeParticipantProof(harnessParticipantEvidence),
+    async quit() { harnessParticipantEvidence(); },
+  };
+}
 export async function validateInstallerOperation(): Promise<void> {
   assertGatePath();
-  participantEvidence();
+  if (process.env.VOICELAYER_TEST_ISOLATED === "1") harnessParticipantEvidence();
+  // Native/daemon are already gone. Nested helpers validate the closed lease and
+  // live owning controller, never fabricate a new participant ACK after quit.
   const owner = JSON.parse(process.env.VOICELAYER_INSTALL_OPERATION!);
   const lease = updateGateLeaseSchema.parse(owner.lease);
   const current = await retryContention(() => readUpdateGateFile(), state => state.kind === "UNKNOWN");
@@ -98,14 +113,18 @@ async function cancelLease(lease: UpdateGateLease): Promise<void> {
   recoveryReceipt(lease, `precommit Cancel failed: ${failure}`);
   throw Error("RECOVERY_REQUIRED: Cancel could not restore admission; inspect the preserved lease and receipt");
 }
-export async function runGatedInstall(command: string[]): Promise<number> {
+export async function runGatedInstall(command: string[], harnessParticipant?: InstallerParticipant): Promise<number> {
   assertGatePath();
   if (!command.length) throw Error("UNKNOWN: missing installer command");
   if (process.env.VOICELAYER_INSTALL_OPERATION) {
     await validateInstallerOperation();
     return await Bun.spawn(command, { env: process.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exited;
   }
-  participantEvidence(); // No synthetic production acknowledgement or idle fallback.
+  let participant = participantEvidence(); // No synthetic production acknowledgement or idle fallback.
+  if (harnessParticipant) {
+    harnessParticipantEvidence(); // Dependency injection has no unqualified production path.
+    participant = harnessParticipant;
+  }
   const current = await retryContention(() => readUpdateGateFile(), state => state.kind === "UNKNOWN");
   if (current.kind !== "OPEN") throw Error("UNKNOWN: gate unavailable or another update owns it");
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
@@ -121,7 +140,7 @@ export async function runGatedInstall(command: string[]): Promise<number> {
     process.on(name, handler);
     return [name, handler] as const;
   });
-  const verify: ParticipantProof = () => safeParticipantProof(participantEvidence);
+  const verify: ParticipantProof = participant.verify;
   const transition = (command: unknown) => retryContention(() => {
     if (cancelled) throw Error("UPDATE_CANCELLED"); // Never commit after Cancel during backoff.
     return updateVoiceGate(command, verify);
@@ -131,7 +150,7 @@ export async function runGatedInstall(command: string[]): Promise<number> {
     if (request.kind !== "APPLIED") throw Error("UNKNOWN: drain request refused");
     requested = true;
     while (!cancelled) {
-      const proof = participantEvidence();
+      const proof = await participant.refresh(lease);
       if (displayedPhase !== proof.phase) {
         console.error(`[update-gate] Update when idle: ${proof.phase}; Cancel: Ctrl-C (before commit)`);
         displayedPhase = proof.phase;
@@ -139,13 +158,21 @@ export async function runGatedInstall(command: string[]): Promise<number> {
       const ack = await retryContention(() => acknowledgeVoiceDrain(lease, verify), result => result === null);
       if (cancelled) break;
       if (!ack && !contended() && readUpdateGateFile().kind === "UNKNOWN") throw Error("UNKNOWN: drain evidence unavailable");
-      if (ack) {
-        const prepared = await transition({ kind: "PREPARE", lease, native: ack, daemon: ack });
+      if (ack && proof.ready && proof.native && proof.daemon) {
+        const prepared = await transition({ kind: "PREPARE", lease, native: proof.native, daemon: proof.daemon });
         if (prepared.kind !== "APPLIED") throw Error("UNKNOWN: preparation refused");
         if (cancelled) break; // PREPARE retries await backoff, allowing Cancel to arrive.
+        // PREPARED bytes alone cannot authorize COMMIT; obtain another live round trip.
+        await participant.refresh(lease);
+        if (cancelled) break;
         const commit = await transition({ kind: "COMMIT", lease });
         if (commit.kind !== "APPLIED") throw Error("UNKNOWN: commit refused; mutation not authorized");
         committed = true;
+        // Give late fail-open admissions a chance to publish fault/ledger evidence,
+        // then revalidate through G3 and G2 before issuing the final controlled quit.
+        await Bun.sleep(100);
+        await participant.refresh(lease);
+        await participant.quit(lease);
         const env = { ...process.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid }) };
         console.error("[update-gate] COMMITTED: Ctrl-C will not stop the installer; waiting for completion.");
         const child = Bun.spawn(command, { env, detached: true, stdin: "inherit", stdout: "inherit", stderr: "inherit" });

@@ -75,7 +75,20 @@ is the binding, so inheritance alone does not authorize another process.
 Native validates the owned child and OS socket peer PID, one command owner, one
 running VoiceBar bundle identity, pending work and ledger. Nonces, timeout and
 disconnect fence replies. A quit may disconnect before the RPC reply: UNKNOWN
-never proves exit. The updater must observe exact process exit itself.
+never proves exit. G4 now observes the outcome itself: after APPLIED COMMIT,
+a 100 ms grace period and fresh G3 evidence, it issues one controlled quit.
+Separate fresh native/daemon receipts bind the same complete lease and pinned
+PID/incarnation identities; G2's synchronous verifier also checks process birth
+and executable identity and rejects receipts older than one second, including
+time in flight. On a lost post-write reply (including G3 UNKNOWN when its
+native connection drops), both pinned processes must be absent and no VoiceBar
+executable may remain, while G2 rechecks the exact COMMITTED lease, diagnostics and empty
+ledger under G1's lock. The five-second exit deadline only refuses UNKNOWN;
+it never promotes uncertainty to idle. A malformed/explicit refusal is not a
+lost reply. Unverifiable exit or lease ownership writes a recovery receipt and
+retains the closed gate without force-stop. Even a received quit ACK requires
+observed exit before the installer starts. Nested helpers then validate the
+closed lease and live controller, without contacting the exited participants.
 
 Receipts are participant evidence, not installer authorization. Target verification,
 off-socket competing-owner probes, mutation fencing, owner liveness and recovery
