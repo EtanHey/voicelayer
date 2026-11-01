@@ -180,7 +180,7 @@ export function fallbackReasonFromBackend(
 ): string | null {
   return (
     backend?.match(
-      /\+fallback-(timeout|empty-response|server-error)(?=->|$)/,
+      /\+fallback-(timeout|empty-response|server-error|parakeet-startup-failed|language|prompt|input-format|input-identity|provider-error|provider-timeout|provider-partial|provider-invalid|invalid-response|invalid-timing|incomplete-response|unsupported-language|sparse-response|uncovered-tail|zero-pcm-response)(?=->|$)/,
     )?.[1] ?? null
   );
 }

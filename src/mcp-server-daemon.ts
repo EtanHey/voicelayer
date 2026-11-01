@@ -26,7 +26,7 @@ import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from 
  */
 
 import { createSpeechControl, loadSpeechSecret } from "./speech-control";
-import { getBackend } from "./stt";
+import { getBackend, shutdownSTTBackends } from "./stt";
 import {
   DISABLE_VOICELAYER,
   MCP_SOCKET_PATH,
@@ -44,6 +44,7 @@ import {
 } from "./socket-client";
 import { handleSocketCommand } from "./socket-handlers";
 import { createMcpDaemon, isSocketLive, logUnhandledNdjsonMessage } from "./mcp-daemon";
+import { registerParakeetDaemonOwner } from "./parakeet-server";
 import { getConnectionCount, getUptimeSeconds } from "./daemon-health";
 import {
   isProcessAlive,
@@ -194,6 +195,7 @@ async function main() {
 
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
   // it independently and force-restarts an owned child that wedges in JS.
+  registerParakeetDaemonOwner();
   daemonHeartbeat = startDaemonHeartbeat();
   void recoverSpeechArchives();
 
@@ -305,7 +307,8 @@ async function main() {
     stopLogRotation();
     unsubscribePolishStatus();
     stopSTTPolishServer();
-    daemon.stop();
+    daemon.stop(); // Stop new admissions before cancelling/draining STT.
+    await shutdownSTTBackends();
     disconnectFromBar();
     await flushSpeechArchives();
     releaseProcessLock();
