@@ -148,6 +148,7 @@ test("malformed inherited verification cache takes the full enforcement check", 
 });
 
 test("non-darwin admission ignores verified inherited stubs but refuses real and tampered tools", () => {
+  if (process.env.QA_VOICE_GOLDEN_LIVE === "1") return;
   const parentBin = process.env.PATH!.split(delimiter).find(path => basename(path) === "stt-disabled-bin")!;
   const root = mkdtempSync(join(tmpdir(), "stt-child-roots-")), child = join(root, "child");
   const lookalike = join(root, "stt-disabled-bin"); mkdirSync(child); mkdirSync(lookalike);
@@ -169,4 +170,15 @@ for (const missing of [false, true]) test(`denial keeps its message and exit 78 
   expect(result.exitCode).toBe(78);
   expect(result.stderr.toString()).toContain("STT_GUARD_LOG_UNAVAILABLE");
   expect(result.stderr.toString()).toContain("STT_LIVE_OPT_IN_REQUIRED");
+});
+
+for (const kind of ["directory", "non-executable file"]) test(`non-darwin admission ignores ${kind} named whisper-cli`, () => {
+  if (process.env.QA_VOICE_GOLDEN_LIVE === "1") return;
+  const root = mkdtempSync(join(tmpdir(), "stt-non-engine-"));
+  const path = join(root, "whisper-cli");
+  try {
+    if (kind === "directory") mkdirSync(path);
+    else writeFileSync(path, "not an executable engine\n", { mode: 0o600 });
+    expect(() => assertNoInstalledStt([root], [])).not.toThrow();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, realpathSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, statSync, lstatSync, mkdirSync, realpathSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, delimiter, isAbsolute, join, resolve, sep } from "node:path";
 
 const STT_TOOLS = ["whisper-cli", "whisper-cpp", "whisper-server"] as const;
@@ -30,7 +30,12 @@ export function assertNoInstalledStt(dirs: string[], roots: string[]): void {
     if (STT_TOOLS.some(tool => {
       const path = join(dir, tool);
       if (!existsSync(path)) return false;
-      try { const actual = realpathSync(path); return !roots.some(root => actual.startsWith(root + sep)); }
+      try {
+        const stat = statSync(path);
+        if (!stat.isFile() || (stat.mode & 0o111) === 0) return false;
+        const actual = realpathSync(path);
+        return !roots.some(root => actual.startsWith(root + sep));
+      }
       catch { return true; }
     })) throw new Error("STT guard requires descendant enforcement on a host with installed Whisper; live tests need explicit opt-in");
   }
