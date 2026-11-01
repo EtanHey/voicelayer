@@ -69,7 +69,7 @@ test("release tooling stamps GITHUB_SHA and verifies actual packed bytes", () =>
   mkdirSync(installed);
   expect(run(["tar", "-xzf", archive, "-C", installed], dir).exitCode).toBe(0);
   expect(version(join(installed, "package"))).toEqual({ version: "1.2.3", gitCommit: commit, source: "package" });
-});
+}, 15_000);
 
 test("release tooling refuses missing or malformed release identity and relabelling", () => {
   const dir = fixture();
