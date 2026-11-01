@@ -3490,7 +3490,10 @@ function observeRecognizerBackend<T extends STTBackend>(backend: T): T {
       const reason = result.backend.match(/\+fallback-([^>]+)->/)?.[1] ?? (result.backend.includes("+vad-no-speech") ? "vad-no-speech" : null);
       if (finalProvider.startsWith("parakeet")) noteRecognizerEffective("parakeet", reason);
       else if (finalProvider.startsWith("whisper")) {
-        noteRecognizerEngine("whisper", { phase: finalProvider.startsWith("whisper-server") ? "ready" : "sleeping", available: true, error: null });
+        // A CLI transcript can follow an empty reply without unloading the
+        // resident server. Its producer lifecycle still owns that readiness.
+        const residentReady = readRecognizerStatus().engines.whisper.phase === "ready";
+        noteRecognizerEngine("whisper", { phase: finalProvider.startsWith("whisper-server") || residentReady ? "ready" : "sleeping", available: true, error: null });
         noteRecognizerEffective("whisper", reason);
       }
       return result;

@@ -482,6 +482,9 @@ describe("decorated backend names are normalised, not rejected", () => {
     }
     expect(fallbackReasonFromBackend("parakeet-resident")).toBeNull();
     expect(normalizeWhisperBackend("parakeet-resident")).toBeNull();
+    const restoredParakeet = "whisper-server+fallback-whisper-startup-failed->parakeet-resident";
+    expect(fallbackReasonFromBackend(restoredParakeet)).toBe("whisper-startup-failed");
+    expect(normalizeWhisperBackend(restoredParakeet)).toBeNull();
   });
 
   const PROBE: RecordingProvenanceProbe = {
