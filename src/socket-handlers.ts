@@ -1,5 +1,7 @@
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
+import { selectRecognizer } from "./recognizer-controller";
+import { readRecognizerStatus, onRecognizerStatusChange, beginRecognizerMaintenance, finishRecognizerTransition } from "./recognizer-state";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
  * Socket command handlers — logic for Voice Bar socket commands.
@@ -115,6 +117,7 @@ function publishModelStatusEvent(): void {
   });
 }
 onWhisperModelStateChange(publishModelStatusEvent);
+onRecognizerStatusChange(status => { if (isConnected()) broadcast({ type: "recognizer_status", recognizer_status: status }); });
 
 function finishRawSpeakReceipt(context: SpeakArchiveContext | undefined, status: "rejected" | "failed",
   error_code: SpeakLifecycle["summary"]["error_code"]): void {
@@ -187,7 +190,7 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
   }
   return undefined;
 }
-const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay"]);
+const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", "set_recognizer"]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if (args[0].cmd === "stop" || args[0].cmd === "cancel") {
     const capture = cancelPendingVoiceAdmissions("capture");
@@ -202,6 +205,9 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
   if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
   const refuse = (error: unknown) => {
+    if (args[0].cmd === "set_recognizer" && (error instanceof VoiceAdmissionCancelledError || error instanceof UpdateBusyError)) {
+      return { ...buildAck(args[0], "reject", error.message), recognizer_status: readRecognizerStatus() };
+    }
     if (error instanceof VoiceAdmissionCancelledError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "noop", error.message);
     if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message);
     throw error;
@@ -620,6 +626,7 @@ function handleSocketCommandAdmitted(
       }
     }
     case "set_whisper_effort":
+      if (readRecognizerStatus().desired === "parakeet" || readRecognizerStatus().effective === "parakeet") return buildAck(command, "reject", "select-whisper-first");
       if (residencyLoadPending) {
         return buildAck(command, "reject", "Model load in progress");
       }
@@ -629,9 +636,19 @@ function handleSocketCommandAdmitted(
         return buildAck(command, "reject", booking.booked && !booking.ownedByUs
           ? EXTERNAL_VOICE_SESSION_REASON : "busy");
       }
-      return handleEffortCommand(command);
+      return withRecognizerMaintenance(command, () => handleEffortCommand(command));
     case "set_whisper_residency":
-      return handleResidencyCommand(command);
+      if (residencyLoadPending) return buildAck(command, "reject", "Model load in progress");
+      if (["transition-active", "request-active"].includes(readRecognizerStatus().switch_refusal_reason ?? "")) return buildAck(command, "reject", "busy");
+      if (command.action === "load" && (readRecognizerStatus().desired === "parakeet" || readRecognizerStatus().effective === "parakeet")) return buildAck(command, "reject", "select-whisper-first");
+      // The existing handler refuses synchronously before provider work when
+      // voice is busy, then returns its reason and fresh residency snapshot.
+      if (residencyBusy()) return handleResidencyCommand(command);
+      return withRecognizerMaintenance(command, () => handleResidencyCommand(command));
+    case "get_recognizer_status":
+      return { type: "recognizer_status", ...(command.id ? { id: command.id } : {}), recognizer_status: readRecognizerStatus() };
+    case "set_recognizer":
+      return selectRecognizer(command.recognizer).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
     case "preview_tts_profile": {
       const reject = (reason: string) => ({...buildAck(command, "reject", reason), tts_controls: readTTSControlsStatus()});
       const sample = "Here is a sample of this voice. Clear speech, at your preferred pace.";
@@ -721,6 +738,11 @@ function residencyBusyReason(): string {
 // Settings requests reserve their own admission slot. Capture booking remains
 // higher priority: it can proceed while load is pending, and the load then
 // rejects at its next busy check rather than refusing a live dictation.
+async function withRecognizerMaintenance(command: Extract<SocketCommand, { cmd: "set_whisper_residency" | "set_whisper_effort" }>, work: () => Promise<AckEvent>): Promise<AckEvent> {
+  try { beginRecognizerMaintenance(); } catch { return buildAck(command, "reject", "busy"); }
+  try { return await work(); } finally { finishRecognizerTransition(); }
+}
+
 let residencyLoadPending = false;
 
 async function handleResidencyCommand(

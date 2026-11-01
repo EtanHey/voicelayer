@@ -333,6 +333,7 @@ export type AckCommand =
   | "set_whisper_effort"
   | "set_whisper_residency"
   | "set_processing_setting"
+  | "set_recognizer"
   | "set_tts_setting"
   | "preview_tts_profile";
 
@@ -348,7 +349,10 @@ export interface AckEvent {
   residency?: WhisperModelResidency;
   tts_controls?: import("./tts-controls-status").TTSControlsStatus;
   polish_controls?: import("./polish-controls-status").PolishControlsStatus;
+  recognizer_status?: import("./recognizer-state").RecognizerStatus;
 }
+
+export interface RecognizerStatusEvent { type: "recognizer_status"; id?: string; recognizer_status: import("./recognizer-state").RecognizerStatus; }
 
 export interface ModelStatusEvent {
   type: "model_status";
@@ -391,7 +395,8 @@ export type SocketEvent =
   | CommandModeEvent
   | ClipMarkerEvent
   | AckEvent
-  | ModelStatusEvent;
+  | ModelStatusEvent
+  | RecognizerStatusEvent;
 
 // --- Commands: Voice Bar → VoiceLayer ---
 
@@ -548,6 +553,9 @@ export interface SetWhisperResidencyCommand extends SocketCommandBase {
   action: "load" | "unload";
 }
 
+export interface SetRecognizerCommand extends SocketCommandBase { cmd: "set_recognizer"; recognizer: import("./recognizer-state").Recognizer; }
+export interface GetRecognizerStatusCommand extends SocketCommandBase { cmd: "get_recognizer_status"; }
+
 export interface SetRecordingHoldCommand extends SocketCommandBase {
   cmd: "set_recording_hold";
   engaged: boolean;
@@ -596,7 +604,9 @@ export type SocketCommand =
   | PreviewTTSProfileCommand
   | SetTTSSettingCommand
   | SetProcessingSettingCommand
-  | SetWhisperResidencyCommand;
+  | SetWhisperResidencyCommand
+  | SetRecognizerCommand
+  | GetRecognizerStatusCommand;
 
 export interface HealthResponse {
   type: "health";
@@ -618,7 +628,7 @@ export interface VocabListResponse {
   display_entries: STTDictionaryDisplayEntry[];
 }
 
-export type SocketResponse = HealthResponse | AckEvent | VocabListResponse;
+export type SocketResponse = HealthResponse | AckEvent | VocabListResponse | RecognizerStatusEvent;
 
 // --- Serialization ---
 
@@ -1020,6 +1030,11 @@ export function parseCommand(line: string): SocketCommand | null {
           { cmd: "set_whisper_residency", action: parsed.action }, id,
         );
       }
+      case "set_recognizer": {
+        if (parsed.recognizer !== "parakeet" && parsed.recognizer !== "whisper") return null;
+        return withCommandId<SetRecognizerCommand>({ cmd: "set_recognizer", recognizer: parsed.recognizer }, id);
+      }
+      case "get_recognizer_status": return withCommandId<GetRecognizerStatusCommand>({ cmd: "get_recognizer_status" }, id);
       case "set_recording_hold": {
         if (typeof parsed.engaged !== "boolean") {
           return null;

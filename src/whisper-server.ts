@@ -172,6 +172,31 @@ const whisperResidency = new ModelResidency(async () => {
   return true;
 }, undefined, residencyBusy);
 const launchPromises = new Map<number, Promise<number>>();
+const ensureOperations = new Set<Promise<number>>();
+const startingChildren = new Set<KillableWhisperServerProcess>();
+const ownerShutdown = new AbortController();
+function assertWhisperOwnerOpen(): void {
+  if (ownerShutdown.signal.aborted) throw new Error("STT owner is shut down");
+}
+async function whileWhisperOwnerOpen<T>(work: Promise<T>): Promise<T> {
+  assertWhisperOwnerOpen();
+  let abort!: () => void;
+  const cancelled = new Promise<never>((_, reject) => { abort = () => reject(new Error("STT owner is shut down")); });
+  ownerShutdown.signal.addEventListener("abort", abort, { once: true });
+  try { const value = await Promise.race([work, cancelled]); assertWhisperOwnerOpen(); return value; }
+  finally { ownerShutdown.signal.removeEventListener("abort", abort); }
+}
+/** Close admission before cancelling exact owned pre-health children. Join their
+ * producer promises before stopping the ready child; never signal an adoptee. */
+export async function shutdownWhisperServer(): Promise<void> {
+  ownerShutdown.abort();
+  for (const proc of startingChildren) killWhisperProcess(proc, "SIGTERM");
+  const results = await Promise.allSettled([...ensureOperations]);
+  await stopServerAndWait();
+  // Startup cancellation is expected; cleanup uncertainty must survive shutdown.
+  const cleanupFailure = results.find(result => result.status === "rejected" && String(result.reason).includes("cleanup unconfirmed"));
+  if (cleanupFailure?.status === "rejected") throw cleanupFailure.reason;
+}
 
 interface WhisperServerTestHooks {
   findServerBinary?: () => string | null;
@@ -277,15 +302,16 @@ export interface WhisperServerLaunchRecord {
 }
 
 let lastLaunchRecord: WhisperServerLaunchRecord | null = null;
-const modelStateListeners = new Set<() => void>();
+export interface WhisperModelStateEvent { reason?: "unexpected-exit" }
+const modelStateListeners = new Set<(event?: WhisperModelStateEvent) => void>();
 
-export function onWhisperModelStateChange(listener: () => void): () => void {
+export function onWhisperModelStateChange(listener: (event?: WhisperModelStateEvent) => void): () => void {
   modelStateListeners.add(listener);
   return () => modelStateListeners.delete(listener);
 }
 
-function notifyWhisperModelStateChange(): void {
-  for (const listener of modelStateListeners) listener();
+function notifyWhisperModelStateChange(event?: WhisperModelStateEvent): void {
+  for (const listener of modelStateListeners) listener(event);
 }
 
 export function whisperServerLaunchRecord(): WhisperServerLaunchRecord | null {
@@ -620,7 +646,7 @@ async function terminateFailedLaunch(
   if (await waitForWhisperProcessExit(proc)) return;
 
   killWhisperProcess(proc, "SIGKILL");
-  await waitForWhisperProcessExit(proc);
+  if (!(await waitForWhisperProcessExit(proc))) throw new Error("Whisper cleanup unconfirmed: child exit unconfirmed");
 }
 
 function isPidAlive(pid: number): boolean {
@@ -874,10 +900,15 @@ async function reclaimExternalWhisperServers(port: number): Promise<boolean> {
  * Returns the port number.
  */
 export function ensureServer(portOverride?: number): Promise<number> {
-  return whisperResidency.use(() => whisperLifecycleGate.use(() => ensureServerReserved(portOverride)));
+  if (ownerShutdown.signal.aborted) return Promise.reject(new Error("STT owner is shut down"));
+  const operation = whisperResidency.use(() => whisperLifecycleGate.use(() => ensureServerReserved(portOverride)));
+  ensureOperations.add(operation);
+  void operation.then(() => ensureOperations.delete(operation), () => ensureOperations.delete(operation));
+  return operation;
 }
 
 function ensureServerReserved(portOverride?: number): Promise<number> {
+  assertWhisperOwnerOpen();
   const port =
     portOverride ||
     parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT || "", 10) ||
@@ -950,11 +981,12 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     if (!(await waitForWhisperProcessExit(proc))) {
       throw new Error("Whisper unload unconfirmed: child exit unconfirmed");
     }
+    assertWhisperOwnerOpen();
     detachExitedWhisperServer(state, stoppingRecord);
   }
   // Already running?
   if (serverState && serverState.port === port) {
-    if (await checkServerHealthy(port)) return port;
+    if (await whileWhisperOwnerOpen(checkServerHealthy(port))) return port;
     // Server died — clean up and restart
     console.error("[voicelayer] whisper-server died, restarting...");
     serverState = null;
@@ -965,7 +997,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
   // A healthy occupant is somebody's live server. Adopt it — never kill it,
   // never relaunch over it. Incompatible launch flags are surfaced on the
   // launch record, not resolved with a signal.
-  if (await checkServerHealthy(port)) {
+  if (await whileWhisperOwnerOpen(checkServerHealthy(port))) {
     adoptHealthyServer(port);
     return port;
   }
@@ -973,8 +1005,8 @@ async function ensureServerUnlocked(port: number): Promise<number> {
   // The port is occupied but not serving: a wedged whisper-server from a
   // crashed launch. Nothing can bind until it is gone, and it is not serving
   // anyone, so reclaiming it is safe.
-  if (await reclaimExternalWhisperServers(port)) {
-    if (await checkServerHealthy(port)) {
+  if (await whileWhisperOwnerOpen(reclaimExternalWhisperServers(port))) {
+    if (await whileWhisperOwnerOpen(checkServerHealthy(port))) {
       // Something healthy appeared while we were reclaiming — adopt, do not
       // race it.
       adoptHealthyServer(port);
@@ -1060,6 +1092,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
       console.error(`[voicelayer] ${warning}`);
     }
 
+    assertWhisperOwnerOpen();
     const proc =
       testHooks.spawn?.(plan.args, {
         stdout: "pipe",
@@ -1072,78 +1105,96 @@ async function ensureServerUnlocked(port: number): Promise<number> {
         env: plan.env,
       });
 
-    // Drain stderr in background (server logs)
-    if (proc.stderr) {
-      const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done } = await reader.read();
-            if (done) break;
-          }
-        } catch {}
-      })();
-    }
-
-    // Wait for server to become healthy
-    const startupTimeoutMs = getStartupTimeoutMs();
-    const deadline = Date.now() + startupTimeoutMs;
-    while (Date.now() < deadline) {
-      if (await checkServerHealthy(port)) {
-        // Healthy is not the same as ours. Publishing an unowned listener would
-        // stamp every recording with a binary/args/PID that did not produce it.
-        if (!launchIsOwnedByChild(proc, port)) {
-          console.error(
-            `[voicelayer] Port ${port} is served by another process, not our whisper-server child (PID ${proc.pid}); not adopting it.`,
-          );
-          break;
-        }
-        // One instant for both the launch record and the on-disk ownership
-        // record: a reader that compares them must not see them disagree.
-        const startedAt = new Date().toISOString();
-        serverState = {
-          proc: proc as WhisperServerProcess,
-          port,
-          pid: proc.pid,
-          adopted: false,
-        };
-        lastLaunchRecord = {
-          binary,
-          modelPath: model,
-          args: plan.args,
-          performanceEffort: launchedPerformanceEffort,
-          accelerationMode: plan.acceleration.mode,
-          pid: proc.pid,
-          startedAt,
-        };
-        // Tell every other process on this machine who owns this server, so
-        // none of them mistakes it for an orphan and kills it.
-        writeWhisperServerOwnership(port, {
-          pid: proc.pid,
-          owner_pid: process.pid,
-          started_at: startedAt,
-          binary,
-          args: plan.args,
-          model_path: model,
-          performance_effort: launchedPerformanceEffort,
-          acceleration_mode: plan.acceleration.mode,
-        });
-        console.error(
-          `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
-        );
-        notifyWhisperModelStateChange();
-        return true;
+    startingChildren.add(proc);
+    let cleanupAttempted = false;
+    try {
+      // Drain stderr in background (server logs)
+      if (proc.stderr) {
+        const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
+        (async () => {
+          try {
+            while (true) {
+              const { done } = await reader.read();
+              if (done) break;
+            }
+          } catch {}
+        })();
       }
-      await sleep(500);
-    }
 
-    // Timeout — kill and report failure to caller.
-    await terminateFailedLaunch(proc);
-    return false;
+      // Wait for server to become healthy
+      const startupTimeoutMs = getStartupTimeoutMs();
+      const deadline = Date.now() + startupTimeoutMs;
+      while (Date.now() < deadline) {
+        if (await whileWhisperOwnerOpen(checkServerHealthy(port))) {
+          assertWhisperOwnerOpen();
+          // Healthy is not the same as ours. Publishing an unowned listener would
+          // stamp every recording with a binary/args/PID that did not produce it.
+          if (!launchIsOwnedByChild(proc, port)) {
+            console.error(
+              `[voicelayer] Port ${port} is served by another process, not our whisper-server child (PID ${proc.pid}); not adopting it.`,
+            );
+            break;
+          }
+          // One instant for both the launch record and the on-disk ownership
+          // record: a reader that compares them must not see them disagree.
+          const startedAt = new Date().toISOString();
+          serverState = {
+            proc: proc as WhisperServerProcess,
+            port,
+            pid: proc.pid,
+            adopted: false,
+          };
+          lastLaunchRecord = {
+            binary,
+            modelPath: model,
+            args: plan.args,
+            performanceEffort: launchedPerformanceEffort,
+            accelerationMode: plan.acceleration.mode,
+            pid: proc.pid,
+            startedAt,
+          };
+          // Tell every other process on this machine who owns this server, so
+          // none of them mistakes it for an orphan and kills it.
+          writeWhisperServerOwnership(port, {
+            pid: proc.pid,
+            owner_pid: process.pid,
+            started_at: startedAt,
+            binary,
+            args: plan.args,
+            model_path: model,
+            performance_effort: launchedPerformanceEffort,
+            acceleration_mode: plan.acceleration.mode,
+          });
+          console.error(
+            `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
+          );
+          const generation = serverState;
+          const record = lastLaunchRecord;
+          // Observe the actual producer, not a read/probe. Object identity prevents
+          // a late old exit from clearing a replacement or another owner's record.
+          void proc.exited?.then(() => {
+            if (serverState !== generation || generation.stoppingRecord || lastLaunchRecord !== record) return;
+            detachExitedWhisperServer(generation, record, { reason: "unexpected-exit" });
+          }, () => { /* Rejected exit is not confirmed termination. */ });
+          notifyWhisperModelStateChange();
+          return true;
+        }
+        await whileWhisperOwnerOpen(sleep(500));
+      }
+
+      // Timeout — kill and report failure to caller.
+      cleanupAttempted = true;
+      await terminateFailedLaunch(proc);
+      return false;
+    } catch (error) {
+      if (!cleanupAttempted) await terminateFailedLaunch(proc);
+      throw error;
+    } finally { startingChildren.delete(proc); }
   };
 
   if (await startLaunch(launch)) return port;
 
+  assertWhisperOwnerOpen();
   if (launch.acceleration.mode === "coreml") {
     console.error(
       "[voicelayer] whisper-server Core ML startup failed; retrying with Metal fallback.",
@@ -1216,11 +1267,11 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
   return unloadOwnedServerWithEscalation(isBusy, false);
 }
 
-function detachExitedWhisperServer(state: WhisperServerState, record: WhisperServerLaunchRecord): void {
+function detachExitedWhisperServer(state: WhisperServerState, record: WhisperServerLaunchRecord, event?: WhisperModelStateEvent): void {
   if (serverState === state) {
     serverState = null;
     lastLaunchRecord = null;
-    notifyWhisperModelStateChange();
+    notifyWhisperModelStateChange(event);
   }
   const owner = readWhisperServerOwnership(state.port);
   if (owner?.pid === state.pid && owner.owner_pid === process.pid && owner.started_at === record.startedAt) {
