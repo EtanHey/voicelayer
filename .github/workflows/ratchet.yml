@@ -1,7 +1,12 @@
 name: Ratchet
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
+concurrency:
+  group: ratchet-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -12,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -28,12 +33,34 @@ jobs:
           bun --version
       - name: Harness safety and comment validation
         run: python3 -m unittest discover -s ratchet -p 'test_*.py'
+      - name: Cache identity
+        id: identity
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          HARNESS_HASH: ${{ hashFiles('ratchet/**', '.github/workflows/ratchet.yml') }}
+        run: |
+          tools=$( { sw_vers; xcodebuild -version; swift --version; bun --version; python3 --version; printf '%s' "$ImageOS-$ImageVersion"; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "key=ratchet-base-$BASE_SHA-$HARNESS_HASH-$tools" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        with:
+          path: .verified/ratchet/cache
+          key: ${{ steps.identity.outputs.key }}
       - name: Main baseline
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 ratchet/run.py --ref "$BASE_SHA" --output .verified/ratchet/baseline
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: python3 ratchet/base_cache.py --ref "$BASE_SHA" --cached .verified/ratchet/cache --output .verified/ratchet/baseline
+      - name: Stage clean baseline
+        if: ${{ success() && hashFiles('.verified/ratchet/baseline/cacheable') != '' }}
+        run: |
+          mkdir -p .verified/ratchet/cache
+          cp .verified/ratchet/baseline/result.json .verified/ratchet/cache/result.json
+      - uses: actions/cache/save@v4
+        if: ${{ success() && hashFiles('.verified/ratchet/baseline/cacheable') != '' }}
+        with:
+          path: .verified/ratchet/cache
+          key: ${{ steps.identity.outputs.key }}
       - name: PR head
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 ratchet/run.py --ref "$HEAD_SHA" --output .verified/ratchet/head
