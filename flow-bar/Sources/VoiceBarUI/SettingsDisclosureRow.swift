@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// The one Settings drawer: General › Advanced's look and animation, used by every expandable section.
 ///
@@ -11,19 +12,21 @@ import SwiftUI
 struct SettingsDisclosureRow<Content: View>: View {
     let title: String
     @Binding var isExpanded: Bool
+    let animation: Animation?
     @ViewBuilder let content: () -> Content
 
-    init(_ title: String, isExpanded: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) {
+    init(_ title: String, isExpanded: Binding<Bool>, animation: Animation? = .easeInOut(duration: 0.2), @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         _isExpanded = isExpanded
+        self.animation = animation
         self.content = content
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingsDisclosureHeader(title, isExpanded: $isExpanded)
+            SettingsDisclosureHeader(title, isExpanded: $isExpanded, animation: animation)
             if isExpanded {
-                content()
+                content().transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -38,6 +41,7 @@ struct SettingsDisclosureHeader<Label: View>: View {
     /// false: nothing to open (the chevron keeps its column but is hidden, and the row is not a button).
     let isEnabled: Bool
     let hint: String?
+    let animation: Animation?
     @ViewBuilder let label: () -> Label
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -47,19 +51,21 @@ struct SettingsDisclosureHeader<Label: View>: View {
         isExpanded: Binding<Bool>,
         isEnabled: Bool = true,
         hint: String? = nil,
+        animation: Animation? = .easeInOut(duration: 0.2),
         @ViewBuilder label: @escaping () -> Label
     ) {
         self.title = title
         _isExpanded = isExpanded
         self.isEnabled = isEnabled
         self.hint = hint
+        self.animation = animation
         self.label = label
     }
 
     var body: some View {
         if isEnabled {
             Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                withAnimation(reduceMotion || NSApp.currentEvent?.type == .keyDown ? nil : animation) {
                     isExpanded.toggle()
                 }
             } label: {
@@ -93,7 +99,7 @@ struct SettingsDisclosureHeader<Label: View>: View {
 }
 
 extension SettingsDisclosureHeader where Label == Text {
-    init(_ title: String, isExpanded: Binding<Bool>, isEnabled: Bool = true, hint: String? = nil) {
-        self.init(title, isExpanded: isExpanded, isEnabled: isEnabled, hint: hint) { Text(title) }
+    init(_ title: String, isExpanded: Binding<Bool>, isEnabled: Bool = true, hint: String? = nil, animation: Animation? = .easeInOut(duration: 0.2)) {
+        self.init(title, isExpanded: isExpanded, isEnabled: isEnabled, hint: hint, animation: animation) { Text(title) }
     }
 }

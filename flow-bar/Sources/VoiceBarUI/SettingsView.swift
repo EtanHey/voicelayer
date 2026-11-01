@@ -438,6 +438,8 @@ public struct SettingsView: View {
     public let onRefreshModelsStatus: () -> Void
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
+    public let recognizerStatus: () -> RecognizerPickerState
+    public let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
     public let speechControls: () -> SpeechControlsState?
     public let speechConnected: () -> Bool
     public let speechBusyReason: () -> String?
@@ -489,6 +491,9 @@ public struct SettingsView: View {
     public let onCopyHistoryTranscript: (String) -> Void
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
+    public let historyRunLog: () -> SettingsHistoryRunLog
+    public let historyDiagnostics: @Sendable (URL) async -> SettingsHistoryDiagnostics
+    public let historyAttempts: SettingsHistoryAttemptLogReader
     public let isHistoryRetranscribing: (String) -> Bool
     public let isAnyHistoryRetranscribing: () -> Bool
     public let isRecordingActive: () -> Bool
@@ -514,6 +519,7 @@ public struct SettingsView: View {
     @State private var isHistoryLoading = false
     @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
+    private let historyDetailsInitiallyExpanded: Bool
     private let speechHistoryRoot: URL
     @State private var speechLoading = SettingsSpeechHistoryLoading()
     @State private var speechEntries: [SettingsSpeechHistoryEntry] = []
@@ -583,6 +589,8 @@ public struct SettingsView: View {
         onRefreshModelsStatus: @escaping () -> Void,
         residencyNotice: @escaping () -> String? = { nil },
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
+        recognizerStatus: @escaping () -> RecognizerPickerState = { .unavailable },
+        onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil,
         speechControls: @escaping () -> SpeechControlsState? = { nil },
         speechConnected: @escaping () -> Bool = { false },
         speechBusyReason: @escaping () -> String? = { nil },
@@ -642,6 +650,13 @@ public struct SettingsView: View {
         onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
         onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
         onRetranscribeHistoryEntry: @escaping (String) -> Void = { _ in },
+        historyRunLog: @escaping () -> SettingsHistoryRunLog = { SettingsHistoryRunLog() },
+        historyDiagnostics: @escaping @Sendable (URL) async -> SettingsHistoryDiagnostics = { url in
+            await Task.detached(priority: .utility) {
+                SettingsHistoryDiagnostics.load(audioPath: url, root: SettingsHistoryArchive.defaultRoot)
+            }.value
+        },
+        historyAttempts: @escaping SettingsHistoryAttemptLogReader = { _ in nil },
         isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
         isAnyHistoryRetranscribing: @escaping () -> Bool = { false },
         isRecordingActive: @escaping () -> Bool = { false },
@@ -660,6 +675,7 @@ public struct SettingsView: View {
         initialTab: SettingsTab = .general,
         tabRequest: SettingsTabRequest? = nil,
         initialHistoryScope: SettingsHistoryScope = .recording,
+        historyDetailsInitiallyExpanded: Bool = false,
         speechHistoryRoot: URL = SettingsHistoryArchive.defaultRoot,
         initialSpeechEntryID: String? = nil,
         initialDictionarySearch: String = "",
@@ -692,6 +708,8 @@ public struct SettingsView: View {
         self.onRefreshModelsStatus = onRefreshModelsStatus
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
+        self.recognizerStatus = recognizerStatus
+        self.onSelectRecognizer = onSelectRecognizer
         self.speechControls = speechControls
         self.speechConnected = speechConnected
         self.speechBusyReason = speechBusyReason
@@ -741,6 +759,7 @@ public struct SettingsView: View {
             self.historyPage = historyPage
         }
         self._selectedSpeechID = State(initialValue: initialSpeechEntryID)
+        self.historyDetailsInitiallyExpanded = historyDetailsInitiallyExpanded
         self.speechHistoryRoot = speechHistoryRoot
         self.askHistoryPage = askHistoryPage
         self.historySearchPage = historySearchPage
@@ -749,6 +768,9 @@ public struct SettingsView: View {
         self.onCopyHistoryTranscript = onCopyHistoryTranscript
         self.onPasteHistoryTranscript = onPasteHistoryTranscript
         self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
+        self.historyRunLog = historyRunLog
+        self.historyDiagnostics = historyDiagnostics
+        self.historyAttempts = historyAttempts
         self.isHistoryRetranscribing = isHistoryRetranscribing
         self.isAnyHistoryRetranscribing = isAnyHistoryRetranscribing
         self.isRecordingActive = isRecordingActive
@@ -1270,7 +1292,9 @@ public struct SettingsView: View {
                 onDismissDegradation: onDismissPolishDegradation,
                 processingPending: processingPending(),
                 processingNotice: processingNotice(),
-                onToggleProcessing: onToggleProcessing
+                onToggleProcessing: onToggleProcessing,
+                recognizerState: recognizerStatus(),
+                onSelectRecognizer: onSelectRecognizer
             )
             VStack(alignment: .leading, spacing: 4) {
                 if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {
@@ -1325,6 +1349,8 @@ public struct SettingsView: View {
                         .historyScopeVisibility(selectedHistoryScope == .ask)
                 }
             }
+            // The glass pill owns the spring; retained scope content swaps without an inherited fade.
+            .transaction { $0.animation = nil }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: historyNoticeKind)
         // AIDEV-NOTE: A scope not yet mounted in this History visit is out of the view hierarchy, so its
@@ -1460,13 +1486,7 @@ public struct SettingsView: View {
     }
 
     private var historyScopePicker: some View {
-        Picker("History scope", selection: $selectedHistoryScope) {
-            ForEach(SettingsHistoryScope.allCases, id: \.self) { scope in
-                Text(scope.title).tag(scope)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+        SettingsHistoryScopePicker(selection: $selectedHistoryScope)
         .padding(.horizontal, 18)
         .padding(.top, 14)
         .padding(.bottom, 10)
@@ -1497,64 +1517,61 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         Text("No transcript history yet")
                             .font(.headline)
-                        Text("Completed recordings will appear here.")
+                        Text("Saved recordings, including failed or cancelled ones, will appear here. Select one to see Errors & runs.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    GeometryReader { geometry in
-                        VStack(alignment: .leading, spacing: 0) {
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 2) {
-                                    Color.clear.frame(height: 1).id(latestHistoryAnchorID)
+                    VStack(alignment: .leading, spacing: 0) {
+                        SettingsHistoryWorkspace {
+                            ScrollView(.vertical) {
+                                LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                                    Color.clear.frame(height: 0).id(latestHistoryAnchorID)
                                     ForEach(historyDayGroups) { group in
-                                        ForEach(group.entries) { entry in
-                                            Button {
-                                                selectedHistoryEntryID = entry.id
-                                            } label: {
-                                                recordingHistoryListRow(entry)
+                                        Section {
+                                            ForEach(group.entries) { entry in
+                                                Button { selectedHistoryEntryID = entry.id } label: {
+                                                    recordingHistoryListRow(entry)
+                                                }.buttonStyle(.plain)
                                             }
-                                            .buttonStyle(.plain)
-                                        }
+                                        } header: { historyDayHeader(group.dayTitle()) }
                                     }
-                                }
-                                .padding(12)
-                            }
-                            .frame(minHeight: 100, maxHeight: .infinity)
-
+                                }.padding(12)
+                            }.clipped()
+                        } detail: {
                             if let entry = selectedHistoryEntry {
-                                Divider()
-                                ScrollView {
-                                    recordingHistoryDetail(entry)
-                                        .padding(18)
-                                }
-                                // Each entry gets its own detail: switching entries starts at its top and carries no
-                                // view state (scroll offset, in-flight animation) over from the previous one (C7, C9).
-                                .id(entry.id)
-                                // UI pass #9: the list gets most of the height.
-                                .frame(height: SettingsHistoryLayout.detailHeight(available: geometry.size.height))
-                            }
-
-                            Divider()
-                            HStack {
-                                Text(SettingsHistorySearch(historySearch).isActive
-                                    ? "\(historyLoadedEntryCount) matches shown"
-                                    : "\(historyLoadedEntryCount) saved shown")
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                if historyHasMore {
-                                    Button(isHistoryLoading ? "Loading…" : "Load more") {
-                                        loadOlderHistory()
+                                SettingsHistoryAttemptDetailPane(entry: entry, load: historyDiagnostics,
+                                    loadAttempts: historyAttempts, runs: historyRunLog().runs(for: entry.audioPath.path),
+                                    omittedCount: historyRunLog().omittedCount) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("Selected dictation").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                        Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.headline)
                                     }
-                                    .disabled(isHistoryLoading)
+                                } content: { displayedEntry in
+                                    recordingHistoryDetail(displayedEntry)
+                                } actions: { displayedEntry in
+                                    recordingHistoryActions(displayedEntry)
                                 }
+                                .id(entry.id)
+                            } else {
+                                Text("Select a dictation to read its transcript.")
+                                    .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                             }
-                            .font(.caption)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 10)
                         }
+                        Divider()
+                        HStack {
+                            Text(SettingsHistorySearch(historySearch).isActive
+                                ? "\(historyLoadedEntryCount) matches shown"
+                                : "\(historyLoadedEntryCount) saved shown").foregroundStyle(.secondary)
+                            Spacer()
+                            if historyHasMore {
+                                Button(isHistoryLoading ? "Loading…" : "Load more") { loadOlderHistory() }
+                                    .disabled(isHistoryLoading)
+                            }
+                        }.font(.caption).padding(.horizontal, 18).padding(.vertical, 10)
                     }
+
                 }
             }
             .onAppear {
@@ -1606,22 +1623,23 @@ public struct SettingsView: View {
     }
 
     private func recordingHistoryDetail(_ entry: SettingsHistoryEntry) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            historyMediaPartRow(SettingsHistoryRowModel.recording(entry).parts[0])
-            Divider()
-            Label("Saved on this Mac", systemImage: "internaldrive")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            SettingsCopyButton(text: SettingsDiagnosticSummary.historyMetadata(entry), label: "recording details")
-            let attribution = [entry.inputDeviceLabel, entry.modelLabel, entry.performanceEffort?.displayName]
-                .compactMap { $0 }.joined(separator: " · ")
-            if !attribution.isEmpty {
-                Text(attribution)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        SettingsHistoryTranscriptDetail(entry: entry, initiallyExpanded: historyDetailsInitiallyExpanded)
+    }
+
+    private func recordingHistoryActions(_ entry: SettingsHistoryEntry) -> some View {
+        let part = SettingsHistoryRowModel.recording(entry).parts[0]
+        let retranscribing = isHistoryRetranscribing(entry.audioPath.path)
+        let enablement = SettingsHistoryActionEnablement(
+            isRetranscribing: isAnyHistoryRetranscribing(), isRecording: isRecordingActive(),
+            isTranscribing: isTranscribingActive(), retranscribingPath: retranscribing ? entry.audioPath.path : nil,
+            isVoiceBusy: historyPlayback.isVoiceBusy)
+        return VStack(alignment: .leading, spacing: 6) {
+            historyMediaPartStats(part)
+            historyMediaPartActions(part, isRetranscribing: retranscribing, enablement: enablement)
+            if historyPlayback.playingURL == part.audioPath {
+                SettingsPlaybackScrubBar(playback: historyPlayback, url: entry.audioPath, accessibilityNoun: part.accessibilityNoun)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - History Tab (Ask scope)
@@ -1847,21 +1865,18 @@ public struct SettingsView: View {
     // AIDEV-NOTE: both scope stacks pin this same Section header. Its opaque background keeps
     // Recording's existing behavior and prevents tall Ask cards from scrolling through it.
     private func historyDayHeader(_ title: String) -> some View {
-        HStack(spacing: 10) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor))
-                .frame(height: 1)
-        }
-        .padding(.vertical, 6)
-        .background(
-            Rectangle()
-                .fill(Color(nsColor: .windowBackgroundColor))
-                .padding(.horizontal, -18)
-                .padding(.top, -18)
-        )
+        Text(title)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
+            .accessibilityAddTraits(.isHeader)
+            .background(
+                Rectangle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .padding(.horizontal, -18)
+                    .padding(.top, -18)
+            )
     }
 
     private func historyEntryRow(_ row: SettingsHistoryRowModel) -> some View {
@@ -1954,39 +1969,50 @@ public struct SettingsView: View {
         if audioLabel != nil || heardLabel != nil || spokenLabel != nil || processingLabel != nil
             || micDisconnectLabel != nil
         {
-            HStack(spacing: 12) {
-                if let audioLabel {
-                    Label(audioLabel, systemImage: "waveform")
-                        .help(part.role == .speech ? "Retained speech duration; playback time when generated duration is unavailable" : "Audio length: how long the mic was on")
-                        .accessibilityLabel("Audio length \(audioLabel)")
-                }
-                if let heardLabel {
-                    Label(heardLabel, systemImage: "text.viewfinder")
-                        .help(
-                            "Transcribed: the audio VoiceBar transcribed, after cutting the silence at the end"
-                        )
-                        .accessibilityLabel("Transcribed length \(heardLabel)")
-                }
-                if let spokenLabel {
-                    Label(spokenLabel, systemImage: "waveform.path")
-                        .help("Spoken: speech time without pauses, estimated in quarter-second steps")
-                        .accessibilityLabel("Spoken length about \(spokenLabel)")
-                }
-                if let processingLabel {
-                    Label(processingLabel, systemImage: "timer")
-                        .help("Processing: from the end of recording to the finished transcript")
-                        .accessibilityLabel("Processing time \(processingLabel)")
-                }
-                if let micDisconnectLabel {
-                    Label(micDisconnectLabel, systemImage: "mic.slash")
-                        .foregroundStyle(.orange)
-                        .help("The microphone signal was lost here; the whole recording is kept, and only the audio before it was transcribed")
-                        .accessibilityLabel(micDisconnectLabel)
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { historyStatLabels(part) }
+                VStack(alignment: .leading, spacing: 4) { historyStatLabels(part) }
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
             .labelStyle(.titleAndIcon)
+        }
+    }
+
+    @ViewBuilder
+    private func historyStatLabels(_ part: SettingsHistoryMediaPart) -> some View {
+        let audioLabel = part.durationLabel
+        let heardLabel = part.transcribedDurationLabel
+        let spokenLabel = part.spokenDurationLabel
+        let processingLabel = part.processingLabel
+        let micDisconnectLabel = part.micDisconnectLabel
+        if let audioLabel {
+            Label(audioLabel, systemImage: "waveform")
+                .help(part.role == .speech ? "Retained speech duration; playback time when generated duration is unavailable" : "Audio length: how long the mic was on")
+                .accessibilityLabel("Audio length \(audioLabel)")
+        }
+        if let heardLabel {
+            Label(heardLabel, systemImage: "text.viewfinder")
+                .help(
+                    "Transcribed: the audio VoiceBar transcribed, after cutting the silence at the end"
+                )
+                .accessibilityLabel("Transcribed length \(heardLabel)")
+        }
+        if let spokenLabel {
+            Label(spokenLabel, systemImage: "waveform.path")
+                .help("Spoken: speech time without pauses, estimated in quarter-second steps")
+                .accessibilityLabel("Spoken length about \(spokenLabel)")
+        }
+        if let processingLabel {
+            Label(processingLabel, systemImage: "timer")
+                .help("Processing: from the end of recording to the finished transcript")
+                .accessibilityLabel("Processing time \(processingLabel)")
+        }
+        if let micDisconnectLabel {
+            Label(micDisconnectLabel, systemImage: "mic.slash")
+                .foregroundStyle(.orange)
+                .help("The microphone signal was lost here; the whole recording is kept, and only the audio before it was transcribed")
+                .accessibilityLabel(micDisconnectLabel)
         }
     }
 

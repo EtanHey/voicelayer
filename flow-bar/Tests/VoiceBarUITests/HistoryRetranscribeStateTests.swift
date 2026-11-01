@@ -195,7 +195,18 @@ final class HistoryRetranscribeStateTests: XCTestCase {
     private func capture(_ host: NSView) throws -> RenderedImage {
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
-        return try RenderedImage(XCTUnwrap(bitmap.cgImage))
+        func scrolls(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrolls)
+        }
+        let detail = try XCTUnwrap(scrolls(host).last)
+        let rect = detail.convert(detail.bounds, to: host)
+        let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
+        // Search the real selected-detail footer, not the old stacked pane's
+        // leftmost columns. Duration is above the final icon band.
+        let region = RenderedImage.Region(
+            x: Int((rect.minX + 16) * scale)..<Int((rect.maxX - 16) * scale),
+            y: Int(rect.maxY * scale)..<Int((host.bounds.maxY - 34) * scale))
+        return try RenderedImage(XCTUnwrap(bitmap.cgImage), actionsSearchRegion: region)
     }
 
     private func settle(milliseconds: Int) {
@@ -260,8 +271,10 @@ struct RenderedImage {
     let width: Int
     let height: Int
     private let bytes: [UInt8]
+    let actionsSearchRegion: Region?
 
-    init(_ image: CGImage) throws {
+    init(_ image: CGImage, actionsSearchRegion: Region? = nil) throws {
+        self.actionsSearchRegion = actionsSearchRegion
         let w = image.width
         let h = image.height
         var buffer = [UInt8](repeating: 0, count: w * h * 4)
@@ -394,10 +407,10 @@ extension RenderedImage {
     /// are.
     func actionRowRegion() -> Region? {
         let dividers = dividerRows()
-        guard dividers.count >= 3 else { return nil }
-        let top = dividers[dividers.count - 3].upperBound
-        let bottom = dividers[dividers.count - 2].lowerBound
-        let columns = Int(Double(width) * 0.2) ..< Int(Double(width) * 0.55)
+        guard actionsSearchRegion != nil || dividers.count >= 3 else { return nil }
+        let top = actionsSearchRegion?.y.lowerBound ?? dividers[dividers.count - 3].upperBound
+        let bottom = actionsSearchRegion?.y.upperBound ?? dividers[dividers.count - 2].lowerBound
+        let columns = actionsSearchRegion?.x ?? (Int(Double(width) * 0.2)..<Int(Double(width) * 0.55))
         var bands: [Range<Int>] = []
         for y in top ..< bottom where columns.contains(where: { isInk(pixel(x: $0, y: y)) }) {
             if let last = bands.last, y - last.upperBound <= 2 {

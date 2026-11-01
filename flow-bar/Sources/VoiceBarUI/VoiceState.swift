@@ -394,6 +394,7 @@ public final class VoiceState {
             synchronizeParkedRead(from: oldValue)
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
+            refreshRecognizerForVoiceTransition(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
@@ -437,7 +438,10 @@ public final class VoiceState {
             if self?.quitRefusalMessage == message { self?.quitRefusalMessage = nil }
         }
     }
-    public var errorMessage: String?
+    public var errorMessage: String? {
+        // The resident notch owns a copied feedback value even when mode stays .error.
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != errorMessage) }
+    }
     public private(set) var polishDegradation: STTPolishDegradation?
     public private(set) var polishMenuSignalPending = false
     private var dismissedPolishDegradation: STTPolishDegradation?
@@ -884,6 +888,8 @@ public final class VoiceState {
     private var pendingIdleAfterAutoPasteCompletion = false
     private var pendingRecoveredTranscriptionPaste = false
     private var historyRetranscriptionRequest = HistoryRetranscriptionRequest()
+    /// Presentation-only, bounded in-memory observation; never persisted into the archive.
+    public private(set) var historyRunLog = SettingsHistoryRunLog()
     private var canRecoverLateRecordStart = false
 
     public var isHistoryRetranscriptionPending: Bool {
@@ -1465,6 +1471,133 @@ public final class VoiceState {
 
     // MARK: - Commands
 
+    // MARK: - Authoritative recognizer picker (PICKER-API v1)
+    public private(set) var recognizerSnapshot: RecognizerStatusSnapshot?
+    public private(set) var recognizerNotice: String?
+    private var recognizerAcceptedSnapshot: RecognizerStatusSnapshot?
+    private var recognizerRevision = -1
+    private var recognizerRefreshID: String?
+    private var recognizerSelectionID: String?
+    private var recognizerSelectionTarget: RecognizerPickerEngine?
+    public var onRecognizerStatusChange: (() -> Void)?
+
+    public var recognizerPickerState: RecognizerPickerState {
+        guard isConnected else { return .unavailable }
+        guard let snapshot = recognizerSnapshot else {
+            return RecognizerPickerState(selected: nil, effective: nil, parakeet: .unknown, whisper: .unknown,
+                disabledReason: RecognizerPickerState.unavailable.disabledReason, notice: recognizerNotice)
+        }
+        let busyReason = mode == .recording ? "Finish recording before switching recognizers."
+            : (mode == .transcribing ? "Wait for transcription before switching recognizers." : nil)
+        return RecognizerPickerState(snapshot: snapshot, pending: recognizerSelectionID != nil,
+                                     notice: recognizerNotice, busyReason: busyReason)
+    }
+
+    private func refreshRecognizerForVoiceTransition(from previous: VoiceMode, to next: VoiceMode) {
+        guard previous != next, previous == .recording || previous == .transcribing
+            || previous == .speaking || next == .recording || next == .transcribing
+            || next == .speaking else { return }
+        refreshRecognizerStatus()
+        onRecognizerStatusChange?()
+    }
+
+    /// The app supplies actual window/tab visibility. Event bursts coalesce once;
+    /// there is no periodic poll, and visibility is checked again before any send.
+    public var recognizerSettingsIsVisible: () -> Bool = { false }
+    var recognizerStatusReadClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    private var lastRecognizerStatusRead: TimeInterval?
+    private var coalescedRecognizerRead: Task<Void, Never>?
+    public static let recognizerStatusReadMinimumInterval: TimeInterval = 1
+
+    public func refreshRecognizerStatus() { requestRecognizerStatus(coalesce: true) }
+
+    private func requestRecognizerStatus(coalesce: Bool) {
+        guard isConnected, recognizerSettingsIsVisible(), let sendCommand else { return }
+        let now = recognizerStatusReadClock()
+        guard now.isFinite else { return }
+        if let last = lastRecognizerStatusRead, now - last < Self.recognizerStatusReadMinimumInterval {
+            guard coalesce, coalescedRecognizerRead == nil else { return }
+            let delay = Self.recognizerStatusReadMinimumInterval - (now - last)
+            coalescedRecognizerRead = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(max(0, delay))) } catch { return }
+                guard !Task.isCancelled, let self else { return }
+                self.coalescedRecognizerRead = nil
+                self.requestRecognizerStatus(coalesce: false)
+            }
+            return
+        }
+        coalescedRecognizerRead?.cancel()
+        coalescedRecognizerRead = nil
+        lastRecognizerStatusRead = now
+        let id = UUID().uuidString
+        recognizerRefreshID = id
+        sendCommand(["cmd": "get_recognizer_status", "id": id])
+    }
+
+    public func selectRecognizer(_ engine: RecognizerPickerEngine) {
+        guard isConnected, let sendCommand,
+              recognizerPickerState.canSelect(engine) else { return }
+        let id = UUID().uuidString
+        recognizerSelectionID = id
+        recognizerSelectionTarget = engine
+        recognizerNotice = nil
+        onRecognizerStatusChange?()
+        sendCommand(["cmd": "set_recognizer", "recognizer": engine.rawValue, "id": id])
+    }
+
+    private func handleRecognizerEvent(_ event: [String: Any]) {
+        guard isConnected else { return }
+        let ack = event["type"] as? String == "ack"
+        if ack {
+            guard event["command"] as? String == "set_recognizer",
+                  let id = event["id"] as? String, id == recognizerSelectionID,
+                  let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return }
+            // Terminal correlation settles intent independently of snapshot authority.
+            recognizerSelectionID = nil
+            recognizerSelectionTarget = nil
+        } else if let id = event["id"] as? String {
+            guard id == recognizerRefreshID else { return }
+        } else if event["id"] != nil { return }
+        // A stale malformed response must not erase a newer authoritative Ready state.
+        if let payload = event["recognizer_status"] as? [String: Any],
+           let revision = payload["revision"] as? Int, revision < recognizerRevision {
+            if ack {
+                recognizerNotice = event["outcome"] as? String == "reject"
+                    ? RecognizerPickerState.message(for: event["reason"] as? String) : nil
+                onRecognizerStatusChange?()
+            }
+            return
+        }
+        guard let payload = event["recognizer_status"] as? [String: Any],
+              let snapshot = RecognizerStatusSnapshot(payload: payload) else {
+            recognizerSnapshot = nil
+            recognizerNotice = "Recognizer status couldn't be read; refresh to try again."
+            onRecognizerStatusChange?()
+            return
+        }
+        if snapshot.revision >= recognizerRevision {
+            // Engine authority advances only with revision. Correlated reads can
+            // refresh the busy permission that the daemon computes on every read.
+            if snapshot.revision > recognizerRevision || (recognizerSnapshot == nil && snapshot == recognizerAcceptedSnapshot) {
+                recognizerSnapshot = snapshot
+                recognizerAcceptedSnapshot = snapshot
+                recognizerRevision = snapshot.revision
+                if recognizerSelectionTarget == snapshot.desired {
+                    recognizerSelectionID = nil
+                    recognizerSelectionTarget = nil
+                }
+            } else if snapshot.revision == recognizerRevision,
+                      ack || event["id"] is String, let accepted = recognizerAcceptedSnapshot {
+                let current = accepted.updatingSwitchPermission(from: snapshot)
+                recognizerSnapshot = current
+                recognizerAcceptedSnapshot = current
+            }
+            recognizerNotice = ack && event["outcome"] as? String == "reject"
+                ? RecognizerPickerState.message(for: event["reason"] as? String) : nil
+        }
+        onRecognizerStatusChange?()
+    }
+
     public func refreshModelsSettingsStatus() {
         guard isConnected else {
             modelsSettingsState = .disconnected
@@ -1809,6 +1942,7 @@ public final class VoiceState {
         guard !trimmedPath.isEmpty else { return }
         let id = UUID().uuidString
         guard historyRetranscriptionRequest.begin(path: trimmedPath, intentID: id) else { return }
+        historyRunLog.begin(id: id, path: trimmedPath)
         sendCommand?([
             "cmd": "retranscribe_recording",
             "audio_path": trimmedPath,
@@ -2368,6 +2502,9 @@ public final class VoiceState {
         playbackAmplitude: PlaybackAmplitudeEnvelope? = nil
     ) {
         guard let type = event["type"] as? String else { return }
+        if !historyRunLog.runs.isEmpty, ["ack", "transcription", "error", "state"].contains(type) {
+            historyRunLog.observe(event)
+        }
 
         switch type {
         case "history_playback_gate":
@@ -2624,7 +2761,11 @@ public final class VoiceState {
                 break
             }
 
+        case "recognizer_status":
+            handleRecognizerEvent(event)
+
         case "ack":
+            if event["command"] as? String == "set_recognizer" { handleRecognizerEvent(event) }
             handleAckEvent(event)
 
         case "read_queue":
@@ -2994,6 +3135,15 @@ public final class VoiceState {
         let previous = isConnected
         isConnected = connected
         guard previous != connected else { return }
+        recognizerSnapshot = nil
+        recognizerRevision = -1
+        recognizerAcceptedSnapshot = nil
+        recognizerRefreshID = nil
+        recognizerSelectionID = nil
+        recognizerSelectionTarget = nil
+        recognizerNotice = nil
+        if connected { refreshRecognizerStatus() }
+        onRecognizerStatusChange?()
         remoteSTTConfigured = nil
         let hadPendingSpeech = !speechPending.isEmpty
         speechControls = nil

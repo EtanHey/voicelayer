@@ -86,8 +86,7 @@ final class ProcessingTogglesTests: XCTestCase {
         let serverOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
         XCTAssertEqual(
             rows[2].line,
-            "Recordings of 90 s or more split at your pauses instead of every 30 s; shorter ones are never split. "
-                + serverOnly
+            "Splits long Whisper recordings at pauses."
         )
         XCTAssertFalse(rows.contains { $0.line.contains("Every dictation") })
     }
@@ -149,7 +148,7 @@ final class ProcessingTogglesTests: XCTestCase {
             "id": commands.last?["id"] as Any, "reason": "busy",
         ])
         XCTAssertNil(state.processingPending[.smartChunks])
-        XCTAssertEqual(state.processingNotice, "Couldn't change Smart chunks - busy")
+        XCTAssertEqual(state.processingNotice, "Couldn't change Split long recordings at pauses - busy")
 
         state.setProcessingSetting(.smartChunks, true)
         XCTAssertEqual(state.processingPending[.smartChunks], true)

@@ -3,10 +3,12 @@ import XCTest
 
 final class ModelsSettingsStateTests: XCTestCase {
     func testModelStatusEventUpdatesActiveEffortWithoutHealthRequestOrTabReopen() throws {
-        let state = VoiceState()
+        let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.setConnectionStatus(true)
+        XCTAssertTrue(commands.isEmpty, "Hidden Transcription page sends no recognizer status read")
+        commands.removeAll() // The connect read is independent of the action under test.
         var health = Self.availableHealth
         health["polish_controls"] = [
             "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
@@ -24,7 +26,7 @@ final class ModelsSettingsStateTests: XCTestCase {
 
     /// Spec §5 busy reasons carry the ellipsis on the runtime path, not only in the health initializer.
     func testRuntimeBusyReasonsKeepTheEllipsis() {
-        let fromHealth = VoiceState()
+        let fromHealth = makeState()
         fromHealth.setConnectionStatus(true)
         var recordingHealth = Self.availableHealth
         recordingHealth["recording_state"] = "recording"
@@ -35,7 +37,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         fromHealth.handleEvent(transcribingHealth)
         XCTAssertEqual(fromHealth.modelsSettingsState.busyReason, "Transcribing…")
 
-        let fromMode = VoiceState()
+        let fromMode = makeState()
         fromMode.setConnectionStatus(true)
         fromMode.handleEvent(Self.availableHealth)
         fromMode.mode = .recording
@@ -86,7 +88,7 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testRecordingIdleEventClearsModelsBusyWithoutPolling() throws {
-        let state = VoiceState()
+        let state = makeState()
         state.setConnectionStatus(true)
         var health = Self.availableHealth
         health["recording_state"] = "transcribing"
@@ -99,10 +101,12 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testResidencyAckRetainsPolishUntilFreshFullHealthAndReturnsIdle() throws {
-        let state = VoiceState()
+        let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.setConnectionStatus(true)
+        XCTAssertTrue(commands.isEmpty, "Hidden Transcription page sends no recognizer status read")
+        commands.removeAll() // The connect read is independent of the action under test.
         var health = Self.availableHealth
         health["polish_controls"] = [
             "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
@@ -126,7 +130,7 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testLostResidencyAckExpiresWithVisibleError() {
-        let state = VoiceState()
+        let state = makeState()
         state.sendCommand = { _ in }
         state.setConnectionStatus(true)
         state.handleEvent(Self.availableHealth)
@@ -138,10 +142,12 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testLateResidencyRejectReplacesTimeoutWithDaemonReason() throws {
-        let state = VoiceState()
+        let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.setConnectionStatus(true)
+        XCTAssertTrue(commands.isEmpty, "Hidden Transcription page sends no recognizer status read")
+        commands.removeAll() // The connect read is independent of the action under test.
         state.handleEvent(Self.availableHealth)
         state.setWhisperResidency(.loaded)
         let id = try XCTUnwrap(commands.last?["id"] as? String)
@@ -159,10 +165,12 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testLoadingAckKeepsResidencyPendingUntilFinalAck() throws {
-        let state = VoiceState()
+        let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.setConnectionStatus(true)
+        XCTAssertTrue(commands.isEmpty, "Hidden Transcription page sends no recognizer status read")
+        commands.removeAll() // The connect read is independent of the action under test.
         state.handleEvent(Self.availableHealth)
         state.setWhisperResidency(.notLoaded)
         let id = try XCTUnwrap(commands.last?["id"] as? String)
@@ -180,10 +188,12 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testResidencyCommandUsesAckedModelStatusAndClearsOnDisconnect() throws {
-        let state = VoiceState()
+        let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.setConnectionStatus(true)
+        XCTAssertTrue(commands.isEmpty, "Hidden Transcription page sends no recognizer status read")
+        commands.removeAll() // The connect read is independent of the action under test.
         state.handleEvent(Self.availableHealth)
         state.setWhisperResidency(.loaded)
         XCTAssertEqual(commands.last?["cmd"] as? String, "set_whisper_residency")
@@ -220,10 +230,12 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testPlaybackAndPendingResidencyKeepControlBusyAcrossHealth() {
-        let state = VoiceState()
+        let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.setConnectionStatus(true)
+        XCTAssertTrue(commands.isEmpty, "Hidden Transcription page sends no recognizer status read")
+        commands.removeAll() // The connect read is independent of the action under test.
         var playbackHealth = Self.availableHealth
         playbackHealth["queue_depth"] = 1
         state.handleEvent(playbackHealth)
@@ -250,7 +262,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertEqual(commands.count, 1)
 
         for recordingState in ["recording", "transcribing"] {
-            let active = VoiceState()
+            let active = makeState()
             active.setConnectionStatus(true)
             var busyHealth = Self.availableHealth
             busyHealth["recording_state"] = recordingState
@@ -262,7 +274,7 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testRefreshFailsClosedOfflineAndSendsOnlyReadOnlyHealthWhenConnected() {
-        let voiceState = VoiceState()
+        let voiceState = makeState()
         var commands: [[String: Any]] = []
         voiceState.sendCommand = { commands.append($0) }
 
@@ -271,6 +283,8 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertTrue(commands.isEmpty)
 
         voiceState.setConnectionStatus(true)
+        XCTAssertTrue(commands.isEmpty, "Hidden Transcription page sends no recognizer status read")
+        commands.removeAll()
         voiceState.handleEvent(Self.availableHealth)
         voiceState.refreshModelsSettingsStatus()
 
@@ -295,7 +309,7 @@ final class ModelsSettingsStateTests: XCTestCase {
                 "active_effort": "accurate",
             ],
         ]
-        let voiceState = VoiceState()
+        let voiceState = makeState()
 
         voiceState.setConnectionStatus(true)
         voiceState.handleEvent(health)
@@ -327,7 +341,7 @@ final class ModelsSettingsStateTests: XCTestCase {
                 "active_effort": "balanced",
             ],
         ]
-        let voiceState = VoiceState()
+        let voiceState = makeState()
         voiceState.handleEvent(event)
         let state = voiceState.modelsSettingsState
         XCTAssertEqual(state.availability, .available)
@@ -364,7 +378,7 @@ final class ModelsSettingsStateTests: XCTestCase {
     }
 
     func testPolishControlsRequireAuthoritativeHealthAndClearOnDisconnect() {
-        let voiceState = VoiceState()
+        let voiceState = makeState()
         voiceState.setConnectionStatus(true)
         voiceState.handleEvent(Self.availableHealth)
         XCTAssertNil(voiceState.modelsSettingsState.polishControls)
@@ -410,9 +424,15 @@ final class ModelsSettingsStateTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift")
         let source = try String(contentsOf: url)
-        XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Recognizer details\""))
-        XCTAssertEqual(ModelsSettingsView.recognizerDetailRows(for: state).map(\.label), ["Model", "Effort"])
+        XCTAssertTrue(source.contains("RecognizerPickerView("))
+        XCTAssertEqual(ModelsSettingsView.recognizerDetailRows(for: state).map(\.label), ["Model"])
         XCTAssertFalse(source.contains("no measurable word difference"))
+    }
+
+    private func makeState() -> VoiceState {
+        VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                   recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
+                   transcriptionVocabularyLoader: { [] }, transcriptionVocabularyAliasLoader: { [] })
     }
 
     private static let availableHealth: [String: Any] = [

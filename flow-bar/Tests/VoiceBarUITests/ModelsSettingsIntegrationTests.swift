@@ -5,8 +5,8 @@ import XCTest
 
 @MainActor
 final class ModelsSettingsIntegrationTests: XCTestCase {
-    func testResidencyControlFollowsFreshHealthAndBusyState() throws {
-        let voiceState = VoiceState()
+    func testRecognizerControlFollowsAuthoritativeBusyAndDisconnectState() throws {
+        let voiceState = RecognizerBindingTests.voice()
         voiceState.setConnectionStatus(true)
         voiceState.handleEvent(Self.availableHealth)
         let host = NSHostingView(rootView: makeSettingsView(
@@ -18,6 +18,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
         let availablePixels = try renderedPixels(host)
 
         voiceState.mode = .recording
+        voiceState.handleEvent(RecognizerBindingTests.event(2, allowed: false, refusal: "capture-active"))
         settle(host)
         XCTAssertNotEqual(try renderedPixels(host), availablePixels)
 
@@ -28,7 +29,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
     }
 
     func testProductionModelsViewRendersFreshPolishStatusAndClearsItOnDisconnect() throws {
-        let voiceState = VoiceState()
+        let voiceState = RecognizerBindingTests.voice()
         voiceState.setConnectionStatus(true)
         var health = Self.availableHealth
         health["polish_controls"] = [
@@ -57,7 +58,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
         for effort in VoiceBarPerformanceEffort.allCases {
             let original = Data("{ \"effort\": \"\(effort.rawValue)\" }\n".utf8)
             try original.write(to: savedFile)
-            let voiceState = VoiceState()
+            let voiceState = RecognizerBindingTests.voice()
             voiceState.setConnectionStatus(true)
             voiceState.handleEvent(Self.availableHealth)
             var writes: [VoiceBarPerformanceEffort] = []
@@ -90,7 +91,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
     }
 
     func testProductionModelsFormUsesTheRemaining780By620HostHeight() throws {
-        let voiceState = VoiceState()
+        let voiceState = RecognizerBindingTests.voice()
         voiceState.setConnectionStatus(true)
         voiceState.handleEvent(Self.availableHealth)
         let host = NSHostingView(rootView: makeSettingsView(voiceState: voiceState))
@@ -110,7 +111,10 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
         onSelectEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil
     ) -> SettingsView {
-        SettingsView(
+        let empty = SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
+        let emptyAsk = SettingsAskHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
+        voiceState.handleEvent(RecognizerBindingTests.event())
+        return SettingsView(
             hotkeyEnabled: true,
             missingPermissions: [],
             availableDevices: { [] },
@@ -121,8 +125,16 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
             modelsStatus: { voiceState.modelsSettingsState },
             onRefreshModelsStatus: {},
             onSelectResidency: onSelectResidency,
+            recognizerStatus: { voiceState.recognizerPickerState },
+            onSelectRecognizer: { voiceState.selectRecognizer($0) },
             vocabularyRevision: { 0 },
-            initialTab: .transcription
+            historyPage: { _ in empty }, initialHistoryPage: empty,
+            askHistoryPage: { _ in emptyAsk }, historySearchPage: { _, _ in empty },
+            askHistorySearchPage: { _, _ in emptyAsk }, searchPrewarm: {}, initialAskHistoryPage: emptyAsk,
+            historyRunLog: { SettingsHistoryRunLog() },
+            initialTab: .transcription,
+            speechHistoryRoot: FileManager.default.temporaryDirectory,
+            historyPlayback: SettingsAudioPlayback(start: { _ in XCTFail("No audio"); return false }, stop: {})
         )
     }
 

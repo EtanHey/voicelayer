@@ -10,7 +10,8 @@ public struct ModelsSettingsView: View {
     private let processingNotice: String?
     private let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
     private let onSelectResidency: ((VoiceModelResidency) -> Void)?
-    @State private var isRecognizerDetailsExpanded = false
+    private let recognizerState: RecognizerPickerState
+    private let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
 
     public init(
         state: ModelsSettingsState,
@@ -21,8 +22,12 @@ public struct ModelsSettingsView: View {
         onDismissDegradation: @escaping () -> Void = {},
         processingPending: [ProcessingKey: Bool] = [:],
         processingNotice: String? = nil,
-        onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil
+        onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil,
+        recognizerState: RecognizerPickerState = .unavailable,
+        onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil
     ) {
+        self.recognizerState = recognizerState
+        self.onSelectRecognizer = onSelectRecognizer
         self.state = state
         self.notice = notice
         self.residencyNotice = residencyNotice
@@ -48,59 +53,22 @@ public struct ModelsSettingsView: View {
                 }
             }
 
-            Section {
-                LabeledContent("Local recognizer") {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .trailing, spacing: 3) {
-                            Text(modelSummary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .multilineTextAlignment(.trailing)
-                                .accessibilityIdentifier("models-recognizer")
-                            if state.availability == .available {
-                                Text(residencyLabel)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .accessibilityIdentifier("models-residency")
-                            }
-                        }
-                        if state.availability == .available,
-                           let onSelectResidency,
-                           state.residency != .unknown {
-                            Button(state.residency == .loaded ? "Unload" : "Load") {
-                                onSelectResidency(state.residency == .loaded ? .notLoaded : .loaded)
-                            }
-                            .disabled(state.isBusy)
-                            .accessibilityIdentifier("models-residency-control")
-                        }
-                    }
-                }
-                // SETUI1: the page's one busy line. It sits above everything it disables (Load/Unload and the
-                // Processing toggles), so Processing no longer repeats it.
+            Section("Recognizer") {
+                RecognizerPickerView(state: recognizerState, onSelect: onSelectRecognizer,
+                    suppressDisabledExplanation: state.availability == .available && state.isBusy && recognizerState.selected != nil)
+                // One shared reason above the controls it disables. The picker keeps
+                // command/fallback notices, but omits its duplicate disabled explanation.
                 if state.availability == .available, let reason = Self.effortDisabledReason(for: state) {
                     Text(reason)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("models-busy-reason")
                 }
-                if state.availability == .available {
-                    SettingsDisclosureRow("Recognizer details", isExpanded: $isRecognizerDetailsExpanded) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Self.recognizerDetailRows(for: state), id: \.label) { row in
-                                LabeledContent(row.label, value: row.value)
-                            }
-                            recognizerNotes
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-                if let residencyNotice {
-                    Text(residencyNotice).font(.caption).foregroundStyle(.orange)
-                }
             }
 
             Section("Processing") {
                 if let controls = state.polishControls, state.availability == .available {
-                    ForEach(Self.processingRows(for: controls), id: \.key) { row in
+                    ForEach(Self.processingRows(for: controls, recognizer: recognizerState), id: \.key) { row in
                         processingToggle(row)
                     }
                     Text("Applies to your next dictation.")
@@ -151,7 +119,8 @@ public struct ModelsSettingsView: View {
             "Model",
             configured: VoiceModelDisplayName.normalize(state.configuredModelName),
             active: VoiceModelDisplayName.normalize(state.activeModelName)
-        ) + rows("Effort", configured: state.configuredEffort?.displayName, active: state.activeEffort?.displayName)
+        ) + (state.residency == .loaded && state.configuredEffort == state.activeEffort
+            ? [] : rows("Recognition preset", configured: state.configuredEffort?.displayName, active: state.activeEffort?.displayName))
     }
 
     private var modelSummary: String {
@@ -221,6 +190,8 @@ public struct ModelsSettingsView: View {
 
     private func processingToggle(_ row: ProcessingRow) -> some View {
         let busyReason = Self.effortDisabledReason(for: state)
+        let disabled = row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
+            || processingPending[row.key] != nil
         return VStack(alignment: .leading, spacing: 2) {
             Toggle(isOn: Binding(
                 get: { processingPending[row.key] ?? row.isOn },
@@ -237,8 +208,10 @@ public struct ModelsSettingsView: View {
                     }
                 }
             }
-            .disabled(row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
-                || processingPending[row.key] != nil)
+            .disabled(disabled)
+            // SwiftUI's default macOS Form toggle leaves a saved-on switch looking active.
+            // Keep its saved value but mute the entire control when it cannot be used.
+            .opacity(disabled ? 0.45 : 1)
             .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
             ForEach(row.captionLines, id: \.self) { caption in
                 Text(caption)
@@ -268,7 +241,7 @@ public struct ModelsSettingsView: View {
     /// whisper-cli and Wispr Flow return no segments, and a server request that falls back to the CLI skips them.
     static let whisperServerOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
 
-    static func processingRows(for controls: PolishControlsState) -> [ProcessingRow] {
+    static func processingRows(for controls: PolishControlsState, recognizer: RecognizerPickerState? = nil) -> [ProcessingRow] {
         func locked(_ key: ProcessingKey, _ setting: PolishSetting<some Any>) -> String? {
             setting.source == .environment ? "Set by \(key.environmentVariable)" : nil
         }
@@ -292,11 +265,10 @@ public struct ModelsSettingsView: View {
             ),
             ProcessingRow(
                 key: .smartChunks,
-                line: "Recordings of 90 s or more split at your pauses instead of every 30 s; shorter ones are "
-                    + "never split. " + Self.whisperServerOnly,
+                line: "Splits long Whisper recordings at pauses.",
                 experimental: true,
                 isOn: controls.smartChunks.effective,
-                lockedReason: locked(.smartChunks, controls.smartChunks)
+                lockedReason: recognizer.map { $0.smartChunkingApplicable ? locked(.smartChunks, controls.smartChunks) : "Only used with Whisper" } ?? locked(.smartChunks, controls.smartChunks)
             ),
         ]
     }

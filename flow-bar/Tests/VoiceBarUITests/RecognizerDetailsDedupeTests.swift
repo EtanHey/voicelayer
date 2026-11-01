@@ -9,7 +9,6 @@ final class RecognizerDetailsDedupeTests: XCTestCase {
         let rows = ModelsSettingsView.recognizerDetailRows(for: ModelsSettingsState(healthEvent: Self.health()))
         XCTAssertEqual(rows, [
             .init(label: "Model", value: "large-v3-turbo"),
-            .init(label: "Effort", value: "Accurate"),
         ])
     }
 
@@ -20,8 +19,8 @@ final class RecognizerDetailsDedupeTests: XCTestCase {
         XCTAssertEqual(rows, [
             .init(label: "Configured model", value: "large-v3-turbo"),
             .init(label: "Active model", value: "large-v3"),
-            .init(label: "Configured effort", value: "Accurate"),
-            .init(label: "Active effort", value: "Fast"),
+            .init(label: "Configured recognition preset", value: "Accurate"),
+            .init(label: "Active recognition preset", value: "Fast"),
         ])
     }
 
@@ -29,14 +28,14 @@ final class RecognizerDetailsDedupeTests: XCTestCase {
         let rows = ModelsSettingsView.recognizerDetailRows(for: ModelsSettingsState(healthEvent: Self.health(
             activeEffort: "balanced"
         )))
-        XCTAssertEqual(rows.map(\.label), ["Model", "Configured effort", "Active effort"])
+        XCTAssertEqual(rows.map(\.label), ["Model", "Configured recognition preset", "Active recognition preset"])
     }
 
     func testNotLoadedShowsThePairEvenWhenTheNamesMatch() {
         let rows = ModelsSettingsView.recognizerDetailRows(for: ModelsSettingsState(healthEvent: Self.health(
             residency: "not_loaded"
         )))
-        XCTAssertEqual(rows.map(\.label), ["Configured model", "Active model", "Configured effort", "Active effort"])
+        XCTAssertEqual(rows.map(\.label), ["Configured model", "Active model", "Configured recognition preset", "Active recognition preset"])
     }
 
     func testAMissingActiveValueIsNeverCollapsedIntoTheConfiguredOne() {
@@ -49,8 +48,8 @@ final class RecognizerDetailsDedupeTests: XCTestCase {
         XCTAssertEqual(rows, [
             .init(label: "Configured model", value: "large-v3-turbo"),
             .init(label: "Active model", value: "Unknown"),
-            .init(label: "Configured effort", value: "Accurate"),
-            .init(label: "Active effort", value: "Unknown"),
+            .init(label: "Configured recognition preset", value: "Accurate"),
+            .init(label: "Active recognition preset", value: "Unknown"),
         ])
     }
 
