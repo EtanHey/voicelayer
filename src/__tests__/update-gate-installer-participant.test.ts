@@ -391,3 +391,43 @@ test("installer docs disclose that native receipts rely on the daemon HMAC verif
     expect(text).toContain("HMAC-verified native ACK");
   }
 });
+
+test("R1 acquisition never samples identities after its durable COMMIT write", async () => {
+  const f = fixture(), proof = await f.participant.refresh(f.lease);
+  expect(updateVoiceGate({ kind: "PREPARE", lease: f.lease, native: proof.native, daemon: proof.daemon }, f.participant.verify).kind).toBe("APPLIED");
+  const identity = f.deps.processIdentity;
+  f.deps.processIdentity = pid => {
+    if (JSON.parse(readFileSync(f.gate, "utf8")).kind === "COMMITTED") throw Error("postcommit identity sample forbidden");
+    return identity(pid);
+  };
+  const result = await f.participant.withAcquisitionProof!(() => updateVoiceGate({ kind: "COMMIT", lease: f.lease }, f.participant.verify));
+  expect(result.kind).toBe("APPLIED");
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+  expect(existsSync(f.gate + ".lock")).toBe(false);
+});
+
+for (const delay of [960, 1200]) test(`R2 durable COMMIT at +${delay}ms outlives its sample budget`, async () => {
+  const f = fixture(); let now = 0; f.deps.now = () => now;
+  const proof = await f.participant.refresh(f.lease);
+  expect(updateVoiceGate({ kind: "PREPARE", lease: f.lease, native: proof.native, daemon: proof.daemon }, f.participant.verify).kind).toBe("APPLIED");
+  const result = await f.participant.withAcquisitionProof!(() => {
+    const result = updateVoiceGate({ kind: "COMMIT", lease: f.lease }, f.participant.verify);
+    now = delay; return result;
+  });
+  expect(result.kind).toBe("APPLIED");
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+});
+
+test("R2 participant COMMIT readback retries a 700ms holder without a post-sample", async () => {
+  const f = fixture(), proof = await f.participant.refresh(f.lease);
+  expect(updateVoiceGate({ kind: "PREPARE", lease: f.lease, native: proof.native, daemon: proof.daemon }, f.participant.verify).kind).toBe("APPLIED");
+  f.deps.sleep = ms => Bun.sleep(ms ?? 100);
+  const result = await f.participant.withAcquisitionProof!(() => {
+    const result = updateVoiceGate({ kind: "COMMIT", lease: f.lease }, f.participant.verify);
+    mkdirSync(f.gate + ".lock"); setTimeout(() => rmdirSync(f.gate + ".lock"), 700);
+    f.deps.processIdentity = () => { throw Error("postcommit sample forbidden"); };
+    return result;
+  });
+  expect(result.kind).toBe("APPLIED");
+  expect(existsSync(f.gate + ".lock")).toBe(false);
+});

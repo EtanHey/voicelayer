@@ -96,7 +96,7 @@ describe("explicit whisper-server unload", () => {
     let exit!: (code: number) => void;
     const exited = new Promise<number>((resolve) => { exit = resolve; });
     let spawns = 0;
-    let alive = false;
+    let alive = false, bornAt = 0;
     const signals: string[] = [];
     __setWhisperServerTestHooksForTests({
       reserveVoiceMaintenance: () => () => {},
@@ -105,13 +105,14 @@ describe("explicit whisper-server unload", () => {
       findModel: () => "/tmp/model.bin",
       readHelpText: () => ({ helpText: "" }),
       isPidAlive: () => alive,
-      processStartTimeMs: () => Date.now() - 1_000,
+      processStartTimeMs: () => bornAt,
       isServerHealthy: async () => alive,
       findPortListenerPids: () => alive ? [55110 + spawns] : [],
       findExternalWhisperServerPids: () => [],
       spawn: () => {
         spawns++;
         alive = true;
+        bornAt = Date.now() - 1_000;
         return {
           pid: 55110 + spawns, stderr: null, exitCode: null,
           exited: spawns === 1 ? exited : new Promise<number>(() => {}),

@@ -62,13 +62,15 @@ bcs_caller_simulates_commands() {
 
 usage() {
     cat <<'EOF'
-Usage: voicelayer update [--dry-run] [--data-mode skip|direct|brain-drive] [--data-source SOURCE_HOME] [--no-stop] [--no-relaunch]
+Usage: voicelayer update [--supervised-bootstrap] [--dry-run] [--data-mode skip|direct|brain-drive] [--data-source SOURCE_HOME] [--no-stop] [--no-relaunch]
 
 Runs on the target Mac. SOURCE_HOME is optional personal runtime data, either:
   direct:      <host>:<home>
   brain-drive: /Volumes/BrainDrive/VoiceLayerBackup/<user>
 
 Environment overrides:
+  VOICELAYER_SUPERVISED_BOOTSTRAP=1    supervised legacy bootstrap; local TTY required
+  VOICELAYER_UPDATE_TARGET_SHA         candidate commit for the gate lease
   VOICELAYER_UPDATE_DATA_SOURCE
   VOICELAYER_UPDATE_DATA_MODE
   VOICELAYER_UPDATE_QWEN3_MODEL_REPO
@@ -154,6 +156,10 @@ ensure_command() {
 parse_args() {
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
+            --supervised-bootstrap)
+                export VOICELAYER_SUPERVISED_BOOTSTRAP=1
+                shift
+                ;;
             --dry-run)
                 DRY_RUN=1
                 shift
@@ -275,6 +281,9 @@ voicebar_cask_installed() {
 }
 
 voicebar_app_update_mode() {
+    if [[ "${VOICELAYER_SUPERVISED_BOOTSTRAP:-}" == "1" || "${VOICELAYER_INSTALL_OPERATION:-}" == *'"source":"supervised-bootstrap"'* ]]; then
+        printf 'cask-sync\n'; return
+    fi
     if voicebar_cask_installed; then
         printf 'cask-sync\n'
         return

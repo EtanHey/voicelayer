@@ -52,7 +52,10 @@ export function createVoiceDrainControl(participant: Pick<ReturnType<typeof crea
     const parsed = updateGateLeaseSchema.safeParse(input);
     if (!parsed.success) return { kind: "UNKNOWN" };
     const lease = parsed.data;
-    const proof = (state: import("./update-gate").UpdateGateState) => ready() && (action !== "quit" || state.kind === "COMMITTED");
+    const proof = (state: import("./update-gate").UpdateGateState) => {
+      try { return ready() === true && (action !== "quit" || state.kind === "COMMITTED"); }
+      catch { return false; } // Expected participant-evidence faults never become storage faults.
+    };
     if (!acknowledgeVoiceDrain(lease, proof)) return { kind: "UNKNOWN" };
     const native = await participant.request(lease, action);
     const daemon = native && acknowledgeVoiceDrain(lease, proof);

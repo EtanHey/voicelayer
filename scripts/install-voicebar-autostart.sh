@@ -225,6 +225,10 @@ if [[ ! -f "$PLIST_SRC" ]]; then
 fi
 
 vl_update_gate "$ROOT_DIR" bash "$ROOT_DIR/scripts/install-voicebar-autostart.sh" ${UPDATE_GATE_ARGS[@]+"${UPDATE_GATE_ARGS[@]}"}
+# A validated bootstrap keeps old jobs disabled until the replacement's repair.
+if [[ "${VOICELAYER_INSTALL_OPERATION:-}" == *'"source":"supervised-bootstrap"'* ]]; then
+  launchctl enable "$DOMAIN/$LABEL"
+fi
 release_quarantine
 prepare_log_dir
 

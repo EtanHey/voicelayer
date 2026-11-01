@@ -75,6 +75,11 @@ export function updateGateFilePath(env: NodeJS.ProcessEnv = process.env): string
   return env.VOICELAYER_UPDATE_GATE_PATH?.trim() || join(getStateDir(env), "update-gate.json");
 }
 
+export function bootstrapDiagnosticPath(env: NodeJS.ProcessEnv = process.env): string {
+  requireIsolatedOverride(env, "VOICELAYER_BOOTSTRAP_DIAG_PATH");
+  return env.VOICELAYER_BOOTSTRAP_DIAG_PATH || join(homedir(), "Library/Logs/voicelayer/voicebar-err.log");
+}
+
 /** Persistent recording archive; test runs must supply their own archive root. */
 export function getRecordingsArchiveRoot(env: NodeJS.ProcessEnv = process.env): string {
   requireIsolatedOverride(env, "QA_VOICE_RECORDINGS_DIR");

@@ -5,7 +5,7 @@ import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSy
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { acknowledgeVoiceDrain, updateVoiceGate, type ParticipantProof } from "./update-gate-admission";
-import { persistInstallerController, readInstallerController, readUpdateGateFile } from "./update-gate-storage";
+import { persistInstallerController, readInstallerController, readInstallerGateState, readUpdateGateFile } from "./update-gate-storage";
 import { updateGateFilePath } from "./paths";
 import { sameLease, updateGateLeaseSchema, type UpdateGateLease, type UpdateGateCommand } from "./update-gate";
 
@@ -80,7 +80,8 @@ export async function validateInstallerOperation(): Promise<void> {
   if (current.kind !== "COMMITTED" || !sameLease(current.lease, lease)) throw Error("UNKNOWN: installer lease mismatch");
   const controller = readInstallerController(updateGateFilePath());
   if (!controller || controller.lease.operationId !== lease.operationId || controller.lease.generation !== lease.generation ||
-    controller.pid !== owner.pid || controller.identity !== owner.identity)
+    controller.pid !== owner.pid || controller.identity !== owner.identity || controller.source !== owner.source ||
+    (owner.source !== undefined && owner.source !== "supervised-bootstrap"))
     throw Error("UNKNOWN: installer controller receipt mismatch");
   if (installerProcessIdentity(controller.pid) !== controller.identity) throw Error("UNKNOWN: installer controller identity changed");
 }
@@ -105,14 +106,23 @@ async function cancelLease(lease: UpdateGateLease): Promise<void> {
   recoveryReceipt(lease, `precommit Cancel failed: ${failure}`);
   throw Error("RECOVERY_REQUIRED: Cancel could not restore admission; inspect the preserved lease and receipt");
 }
-export async function runGatedInstall(command: string[], harnessParticipant?: InstallerParticipant): Promise<number> {
+export type BootstrapInstall = {
+  participant: InstallerParticipant;
+  cancelled(): boolean;
+  onRequested(lease: UpdateGateLease): void;
+  onCommitted(): void;
+};
+export async function runGatedInstall(command: string[], harnessParticipant?: InstallerParticipant, bootstrap?: BootstrapInstall): Promise<number> {
   assertGatePath();
   if (!command.length) throw Error("UNKNOWN: missing installer command");
   if (process.env.VOICELAYER_INSTALL_OPERATION) {
     await validateInstallerOperation();
     return await Bun.spawn(command, { env: process.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exited;
   }
-  let participant = participantEvidence(); // No synthetic production acknowledgement or idle fallback.
+  if (!bootstrap && process.env.VOICELAYER_SUPERVISED_BOOTSTRAP === "1") {
+    return await (await import("./update-gate-bootstrap")).runSupervisedBootstrap(command);
+  }
+  let participant = bootstrap?.participant ?? participantEvidence(); // Ordinary updates always use live participants.
   if (harnessParticipant) {
     harnessParticipantEvidence(); // Dependency injection has no unqualified production path.
     participant = harnessParticipant;
@@ -130,60 +140,77 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
     ownerId: randomUUID(), targetSha: process.env.VOICELAYER_UPDATE_TARGET_SHA ?? "" };
   if (!updateGateLeaseSchema.safeParse(lease).success) throw Error("UNKNOWN: verified target SHA required");
-  let requested = false, committed = false, cancelled = false, displayedPhase = "";
+  let requested = false, committed = false, commitAttempted = false, commitUncertain = false, cancelled = false, displayedPhase = "";
+  const pastCommit = () => committed || commitUncertain;
   const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const;
   const handlers = signals.map(name => {
     const handler = () => {
-      if (!committed) { cancelled = true; return; }
+      if (!pastCommit()) { cancelled = true; return; }
       console.error(`[update-gate] ${name}: Cancel unavailable after COMMIT. Ctrl-C will not stop the installer; waiting for completion.`);
     };
     process.on(name, handler);
     return [name, handler] as const;
   });
-  const verify: ParticipantProof = participant.verify;
+  const verify: ParticipantProof = state => safeParticipantProof(() => ({ ready: participant.verify(state) }));
   const acquire = <T>(read: () => T): Promise<T> => participant.withAcquisitionProof
     ? participant.withAcquisitionProof(read) : retryInstallerAcquisition(read);
-  const transition = (command: UpdateGateCommand) => {
+  const transition = async (command: UpdateGateCommand) => {
     const apply = () => {
-      if (cancelled) throw Error("UPDATE_CANCELLED");
+      if (cancelled || bootstrap?.cancelled()) { cancelled = true; throw Error("UPDATE_CANCELLED"); }
       const confirm: ParticipantProof = state => {
         if (!verify(state)) return false;
         if (command.kind === "COMMIT") return persistInstallerController(updateGateFilePath(), {
           version: 1, lease: { generation: lease.generation, operationId: lease.operationId },
           pid: process.pid, identity: controllerIdentity,
+          ...(bootstrap ? { source: "supervised-bootstrap" as const } : {}),
         });
         return true;
       };
-      return updateVoiceGate(command, confirm, process.env, { throwOnContention: true });
+      if (command.kind === "COMMIT") commitAttempted = true;
+      const result = updateVoiceGate(command, confirm, process.env, { throwOnContention: true });
+      // Publish durable COMMIT custody before an acquisition wrapper's post-check
+      // can throw. No evidence check may turn this outcome back into precommit.
+      if (command.kind === "COMMIT" && result.kind === "APPLIED" && result.state.kind === "COMMITTED") {
+        commitUncertain = true; // Durability acknowledged; never roll back while readback waits.
+        bootstrap?.onCommitted();
+      }
+      return result;
     };
-    return requested ? acquire(apply) : retryInstallerAcquisition(apply);
+    const result = await (requested ? acquire(apply) : retryInstallerAcquisition(apply));
+    if (command.kind === "COMMIT" && result.kind === "APPLIED") {
+      const persisted = await retryContention(() => readInstallerGateState(), () => false);
+      committed = persisted.kind === "COMMITTED" && sameLease(persisted.lease, lease);
+      commitUncertain = !committed;
+      if (commitUncertain) throw Error("UNKNOWN: durable COMMIT readback unavailable; recovery required");
+    }
+    return result;
   };
   try {
     const request = await transition({ kind: "REQUEST", lease });
     if (request.kind !== "APPLIED") throw Error("UNKNOWN: drain request refused");
     requested = true;
-    while (!cancelled) {
+    bootstrap?.onRequested(lease);
+    while (!cancelled && !bootstrap?.cancelled()) {
       const proof = await participant.refresh(lease);
       if (displayedPhase !== proof.phase) {
         console.error(`[update-gate] Update when idle: ${proof.phase}; Cancel: Ctrl-C (before commit)`);
         displayedPhase = proof.phase;
       }
       const ack = await acquire(() => {
-        if (cancelled) throw Error("UPDATE_CANCELLED");
+        if (cancelled || bootstrap?.cancelled()) { cancelled = true; throw Error("UPDATE_CANCELLED"); }
         return acknowledgeVoiceDrain(lease, verify, { throwOnContention: true });
       });
-      if (cancelled) break;
+      if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; }
       if (!ack && !contended() && readUpdateGateFile().kind === "UNKNOWN") throw Error("UNKNOWN: drain evidence unavailable");
       if (ack && proof.ready && proof.native && proof.daemon) {
         const prepared = await transition({ kind: "PREPARE", lease, native: proof.native, daemon: proof.daemon });
         if (prepared.kind !== "APPLIED") throw Error("UNKNOWN: preparation refused");
-        if (cancelled) break; // PREPARE retries await backoff, allowing Cancel to arrive.
+        if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; } // PREPARE retries await backoff, allowing Cancel to arrive.
         // PREPARED bytes alone cannot authorize COMMIT; obtain another live round trip.
         await participant.refresh(lease);
-        if (cancelled) break;
+        if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; }
         const commit = await transition({ kind: "COMMIT", lease });
         if (commit.kind !== "APPLIED") throw Error("UNKNOWN: commit refused; mutation not authorized");
-        committed = true;
         // Give late fail-open admissions a chance to publish fault/ledger evidence,
         // then revalidate through G3 and G2 before issuing the final controlled quit.
         await Bun.sleep(100);
@@ -194,7 +221,8 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
           await Bun.sleep(Math.min(25 * 2 ** attempt, 250));
         }
         await participant.quit(lease); // Never retry: a written quit may already have executed.
-        const env = { ...process.env, VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid, identity: controllerIdentity }) };
+        const env = { ...process.env, VOICELAYER_SUPERVISED_BOOTSTRAP: "", VOICELAYER_INSTALL_OPERATION: JSON.stringify({ lease, pid: process.pid, identity: controllerIdentity,
+          ...(bootstrap ? { source: "supervised-bootstrap" } : {}) }) };
         console.error("[update-gate] COMMITTED: Ctrl-C will not stop the installer; waiting for completion.");
         const child = Bun.spawn(command, { env, detached: true, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
         const result = await child.exited;
@@ -205,12 +233,20 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     }
     return 130;
   } catch (error) {
-    if (cancelled && !committed && error instanceof Error && error.message === "UPDATE_CANCELLED") return 130;
-    if (committed) recoveryReceipt(lease, `installer failed: ${error}`);
+    if (commitAttempted && !pastCommit()) {
+      let persisted: ReturnType<typeof readInstallerGateState>;
+      try { persisted = await retryContention(() => readInstallerGateState(), () => false); }
+      catch { persisted = { kind: "UNKNOWN" }; }
+      committed = persisted.kind === "COMMITTED" && sameLease(persisted.lease, lease);
+      commitUncertain = persisted.kind === "UNKNOWN" || (persisted.kind !== "OPEN" && !sameLease(persisted.lease, lease));
+      if (pastCommit()) bootstrap?.onCommitted();
+    }
+    if (cancelled && !pastCommit() && error instanceof Error && error.message === "UPDATE_CANCELLED") return 130;
+    if (pastCommit()) recoveryReceipt(lease, `installer failed: ${error}`);
     throw error;
   } finally {
-    if (committed) console.error("[update-gate] COMMITTED: admission retained closed pending verified completion/recovery");
-    try { if (requested && !committed) await cancelLease(lease); }
+    if (pastCommit()) console.error("[update-gate] COMMITTED or uncertain: admission retained closed pending verified completion/recovery");
+    try { if (requested && !pastCommit()) await cancelLease(lease); }
     finally { for (const [name, handler] of handlers) process.off(name, handler); }
   }
 }

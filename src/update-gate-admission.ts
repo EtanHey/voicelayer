@@ -134,6 +134,18 @@ export function initializeVoiceGate(env: NodeJS.ProcessEnv = process.env): Promi
   try { attempt(); return Promise.resolve(); }
   catch { return retryGate(attempt, () => safeGateLock(path => { initializeUnderLock(path); }, undefined, env), 1500); }
 }
+/** Supervised updater only: prove this invocation created the missing gate.
+ * A concurrent voice initializer wins without its state being adopted or deleted. */
+export function initializeSupervisedVoiceGate(env: NodeJS.ProcessEnv = process.env): boolean {
+  return safeGateLock(path => {
+    for (const suffix of ["", ".admissions", ".controller", ".voice-diag.json"]) {
+      try { lstatSync(path + suffix); return false; }
+      catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return false; }
+    }
+    const state = initializeUnderLock(path);
+    return state.kind === "OPEN" && state.generation === 0 && state.released === null;
+  }, false, env, false, false);
+}
 function acquire(retryContention = false): Admission {
   const env = { ...process.env };
   // This MUST precede lock acquisition: known faults never delay another capture.

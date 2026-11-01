@@ -57,6 +57,16 @@ export function readUpdateGateFile(env: NodeJS.ProcessEnv = process.env): Return
   return readState(path);
 }
 
+/** Updater readback acquires G1 so a short holder is an acquisition retry,
+ * never an UNKNOWN observation that races a separate lock-presence probe. */
+export function readInstallerGateState(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof readUpdateGate> {
+  return withUpdateGateLock(path => {
+    try { lstatSync(path + ".voice-diag.json"); return { kind: "UNKNOWN" }; }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return { kind: "UNKNOWN" }; }
+    return readState(path); // Read/parser evidence failures already return UNKNOWN.
+  }, env);
+}
+
 /**
  * POSIX mkdir, without recursive=true, is the sole acquisition operation.
  * Swift uses Darwin.mkdir on exactly the same path. Never reap a stale lock.
@@ -103,7 +113,8 @@ function persistGateRecord(path: string, destination: string, name: string, valu
 
 const controllerSchema = z.strictObject({ version: z.literal(1),
   lease: updateGateLeaseSchema.pick({ generation: true, operationId: true }),
-  pid: z.number().int().positive().safe(), identity: z.string().min(1) });
+  pid: z.number().int().positive().safe(), identity: z.string().min(1),
+  source: z.literal("supervised-bootstrap").optional() });
 type Controller = z.infer<typeof controllerSchema>;
 const sameControllerLease = (a: Controller["lease"], b: Controller["lease"]) =>
   a.generation === b.generation && a.operationId === b.operationId;
@@ -121,7 +132,7 @@ export function persistInstallerController(path: string, value: Controller): boo
     lstatSync(file);
     const previous = readInstallerController(path);
     if (!previous || !sameControllerLease(previous.lease, controller.lease) ||
-      previous.pid !== controller.pid || previous.identity !== controller.identity)
+      previous.pid !== controller.pid || previous.identity !== controller.identity || previous.source !== controller.source)
       return false;
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false; }
   persistGateRecord(path, file, "controller.json", controller);
@@ -142,5 +153,7 @@ export function persistUpdateGateState(path: string, state: UpdateGateState, exc
 /** Compatibility entrypoint: all commands now use the admission-aware commit path. */
 export function applyUpdateGateCommand(command: unknown, env: NodeJS.ProcessEnv = process.env,
   verifyCommit?: (state: UpdateGateState) => boolean): UpdateGateTransition {
-  return updateVoiceGate(command, verifyCommit, env);
+  return updateVoiceGate(command, verifyCommit && (state => {
+    try { return verifyCommit(state) === true; } catch { return false; }
+  }), env);
 }
