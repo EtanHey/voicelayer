@@ -3,6 +3,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Refuse before sourcing a restore trap, writing HOME or invoking a host tool.
+if [[ "${VOICELAYER_TEST_ISOLATED:-}" == 1 ]]; then
+  isolated_root="$(cd "${VOICELAYER_TEST_RUN_ROOT:?isolated root required}" && pwd -P)" || exit 1
+  isolated_home="$(cd "${HOME:?HOME required}" && pwd -P)" || exit 1
+  isolated_launchctl="$(command -v launchctl)" || exit 1
+  [[ "$HOME" == "$isolated_root/"* && "$isolated_home" == "$isolated_root/"* &&
+     "$isolated_launchctl" == "$isolated_root/"* && ! -L "$isolated_launchctl" ]] || {
+    echo "UNKNOWN: installer HOME or launchctl escaped isolated root" >&2; exit 1;
+  }
+  isolated_tool_dir="$(cd "$(dirname "$isolated_launchctl")" && pwd -P)" || exit 1
+  [[ "$isolated_tool_dir" == "$isolated_root/"* ]] || exit 1
+fi
 case "${1:-}" in
   -h|--help) echo "Usage: install-voicebar-f5-hidutil.sh"; exit 0 ;;
 esac
@@ -34,6 +46,14 @@ mkdir -p "$HOME/Library/LaunchAgents"
 cp "$PLIST_SRC" "$PLIST_DST"
 plutil -lint "$PLIST_DST" >/dev/null
 
+if [[ "${VOICELAYER_SETUP_AVAILABILITY:-}" == 1 ]]; then
+  # Cask setup restores the relay without unloading or force-kicking a live job.
+  if [[ "${VOICELAYER_SETUP_PLISTS_ONLY:-}" == 1 ]]; then exit 0; fi
+  if ! launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
+    launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"
+  fi
+  exit 0
+fi
 launchctl bootout "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"
 launchctl kickstart -k "gui/$(id -u)/$LABEL"
