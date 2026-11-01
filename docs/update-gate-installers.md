@@ -1,5 +1,58 @@
 # Installer integration (G4, update-button §3 / §5 slice 8, script half)
 
+## Cask postflight availability (G4d)
+
+Homebrew removes all services, deletes their plists, quits VoiceBar and replaces
+its bundle before running setup. Postflight restores availability for the bundle
+Homebrew will keep; it never requests an update lease or calls `runGatedInstall`.
+The tap should explicitly call `voicelayer setup --cask-postflight`. Until that
+follow-up lands, no-flag setup with the canonical installed bundle uses the same
+availability path. Manual nested setup (`VOICELAYER_INSTALL_OPERATION`) instead
+validates its lease and never owns recovery, including on failure.
+
+* Absent means `lstat` returned ENOENT. Under the shared `.bootstrap-lock`, setup
+  rechecks stopped-process evidence and exclusively initializes OPEN through
+  `initializeSupervisedVoiceGate`. Retained `.bootstrap`, `.lock`, `.admissions`,
+  `.controller` and `.voice-diag.json` evidence refuses initialization. Signals
+  SIGINT, SIGTERM, SIGHUP and SIGQUIT unwind the owned mutex; cleanup errors are
+  reported separately. Existing locks are named and never reaped.
+* An OPEN gate needs only canonical agents and startup. Its bytes are unchanged.
+* A closed gate whose controller receipt names a live process identity receives
+  **plists only**, with no enable, bootstrap, kickstart or open. Identity uses the
+  same PID/start-time/executable check as `--validate`. The updater exports its
+  operation as `HOMEBREW_VOICELAYER_INSTALL_OPERATION` because brew uses `env -i`.
+  Postflight validates that exact lease with `--validate` before trusting it.
+  The owning controller's EXIT restoration starts VoiceBar after all mutations.
+* Faults print a loud `RECOVERY_REQUIRED`, retain gate bytes and evidence, and
+  restore both agents and VoiceBar from `/Applications/VoiceBar.app`. Verified
+  canonical startup returns zero so brew keeps that bundle instead of deleting
+  a running bundle during revert. Agent errors remain loud even if app startup
+  succeeds. Only failure to establish availability returns nonzero; plists stay.
+  A live controller always fences startup, including on validation failure.
+
+`--restore-availability` is internal, omitted from autostart help, and requires
+setup's marker plus a read-only live-controller fence before startup. Relay setup
+has an internal plist-only branch and a startup repair branch without bootout or
+force-kick. Ordinary standalone relay configuration retains its existing behavior.
+Setup verifies the running PID's executable is the canonical bundle, rather than
+accepting any VoiceBar process. It observes asynchronous launchd startup before
+using `open`, which is allowed only for an absent job or one that never started.
+
+Under `VOICELAYER_TEST_ISOLATED=1`, setup and both installers reject HOME and
+launchctl outside the run root before actions. Setup and startup restoration also
+check the canonical app's resolved path. The real script-chain tests use relocated
+paths, brew's filtered environment, real live controller identities, actual bundle
+moves on revert, and checks of the final running bundle/version. They cover absent,
+OPEN, closed/live, malformed, locked and orphaned states, nested failure, internal
+mode refusal, isolation and mutex signal cleanup. These are isolated proofs, not
+real cask, launchd or installed-app qualification.
+
+Tap follow-up: pass `--cask-postflight` explicitly; move the cask's uninstall
+`delete:` of LaunchAgents to `zap` only. This PR does not change the tap or qualify
+its earlier stop/delete/replace sequence as an idle-gated update.
+
+## Protected installation
+
 Consumes the merged G1/G2 voice-side API on main: REQUEST → acknowledge → PREPARE → COMMIT,
 without adding transitions. Only APPLIED COMMIT starts mutation. A second request
 cannot repeat installation. Nested helpers validate the same committed lease and
