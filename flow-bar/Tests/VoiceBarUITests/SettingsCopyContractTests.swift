@@ -11,12 +11,14 @@ final class SettingsCopyContractTests: XCTestCase {
     func testProductionCopySitesKeepCanonicalTermsAndFullFeedback() throws {
         let source = try String(contentsOf: sourceRoot.appendingPathComponent("SettingsView.swift"))
         for site in ["SettingsCopyButton(text: entry.canonical", "SettingsDiagnosticSummary.build(",
-                     "SettingsDiagnosticSummary.historyMetadata(entry)", "result.failureCopyText",
+                     "result.failureCopyText",
                      "SettingsCopyButton(text: failure", "SettingsCopyButton(text: shortcutCheckFeedback.message",
                      "SettingsCopyButton(text: hotkeyListenerRestartLine.text",
                      "SettingsCopyButton(text: failure, label: \"processing error\")"] {
             XCTAssertTrue(source.contains(site), site)
         }
+        let details = try String(contentsOf: sourceRoot.appendingPathComponent("SettingsHistoryDiagnosticsView.swift"))
+        XCTAssertTrue(details.contains("SettingsDiagnosticSummary.historyMetadata(entry)"))
         let header = try XCTUnwrap(source.range(of: "private func dictionaryEntryHeader"))
         let body = source[header.lowerBound...]
         XCTAssertLessThan(try XCTUnwrap(body.range(of: "SettingsCopyButton(text: entry.canonical")).lowerBound,

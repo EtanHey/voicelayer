@@ -6,6 +6,7 @@ import XCTest
 
 @MainActor
 final class SettingsHistoryNoticeTests: XCTestCase {
+    private var renderedPickerMinX: CGFloat?
     func testTheBusySentenceIsOneConstantInTheBannerAndTheTooltip() {
         XCTAssertEqual(SettingsHistoryCopy.playBusy, "Can't play while VoiceBar is recording, transcribing or speaking.")
 
@@ -169,11 +170,10 @@ final class SettingsHistoryNoticeTests: XCTestCase {
     }
 
     private func scopePickerMinX(above noticeTop: CGFloat) throws -> CGFloat {
-        let dictations = try render(scope: .recording, playback: Self.idlePlayback())
-        let ask = try render(scope: .ask, playback: Self.idlePlayback())
-        let rows = max(0, Int(noticeTop) - Int(40 * scale)) ..< Int(noticeTop)
-        return try CGFloat(XCTUnwrap(changedColumns(from: dictations, to: ask, rows: rows).first,
-                                     "the selected Dictations segment"))
+        _ = try render(scope: .recording, playback: Self.idlePlayback())
+        // Stock macOS26 selection ink is inset from the control's frame. Align
+        // notice padding to the actual control, not to a changed-pixel capsule.
+        return try XCTUnwrap(renderedPickerMinX, "native History scope control frame")
     }
 
     private func firstChangedBand(from before: RenderedImage, to after: RenderedImage, height: CGFloat) -> CGRect? {
@@ -239,6 +239,13 @@ final class SettingsHistoryNoticeTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.6))
         host.layoutSubtreeIfNeeded()
+
+        func scopeControl(_ view: NSView) -> NSSegmentedControl? {
+            if let control = view as? NSSegmentedControl, control.segmentCount == 3 { return control }
+            return view.subviews.compactMap { scopeControl($0) }.first
+        }
+        let control = try XCTUnwrap(scopeControl(host))
+        renderedPickerMinX = control.convert(control.bounds, to: host).minX * scale
 
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),

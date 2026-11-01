@@ -231,7 +231,7 @@ public enum VoiceBarPresentation {
         ) && !(input.mode == .idle && hasCompactStatus) && !isPlaybackPaused(input)
         let keepsIdleExpanded = input.mode == .idle && !input.isCollapsed
 
-        return VoiceBarNotchPresentation.resolve(
+        let resolved = VoiceBarNotchPresentation.resolve(
             hasTeleprompter: hasTeleprompter,
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
@@ -254,6 +254,8 @@ public enum VoiceBarPresentation {
             visibleCoreOcclusionInset: input.visibleCoreOcclusionInset,
             transientNoteWidth: input.transientNote.map(Theme.intrinsicPillStatusWidth(for:))
         )
+        return VoiceBarNotchFeedback.resolve(input: input, presentation: resolved)
+            .map { resolved.addingFeedback($0) } ?? resolved
     }
 
     private static func compactStatusLeadingWingWidth(

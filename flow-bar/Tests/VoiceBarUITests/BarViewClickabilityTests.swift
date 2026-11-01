@@ -1171,15 +1171,16 @@ final class BarViewClickabilityTests: XCTestCase {
         NSPoint(x: host.bounds.minX + 14 + 3 + 8 + 9, y: host.bounds.midY)
     }
 
-    private func click(_ host: NSView, at point: NSPoint) {
+    private func click(_ host: NSView, at point: NSPoint, inHostCoordinates: Bool = false) {
         guard host.hitTest(point) != nil else {
             XCTFail("Expected a hit-test target at \(point)")
             return
         }
 
+        let eventPoint = inHostCoordinates ? host.convert(point, to: nil) : point
         guard let window = host.window,
-              let downEvent = mouseEvent(type: .leftMouseDown, at: point, windowNumber: window.windowNumber),
-              let upEvent = mouseEvent(type: .leftMouseUp, at: point, windowNumber: window.windowNumber) else {
+              let downEvent = mouseEvent(type: .leftMouseDown, at: eventPoint, windowNumber: window.windowNumber),
+              let upEvent = mouseEvent(type: .leftMouseUp, at: eventPoint, windowNumber: window.windowNumber) else {
             XCTFail("Expected to create mouse events")
             return
         }
@@ -1189,10 +1190,14 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func clickFirstPrimaryTap(in host: NSView, router: SpyCommandRouter) {
+        // Expanded feedback adds a selectable lower band. The primary action stays
+        // in the top row; probing the whole host's midpoint enters text selection.
+        let y = host.isFlipped ? host.bounds.minY + VoiceBarNotchContract.topHeight / 2
+            : host.bounds.maxY - VoiceBarNotchContract.topHeight / 2
         var x = host.bounds.minX
         while x <= host.bounds.midX {
             let before = router.primaryTapCount
-            click(host, at: NSPoint(x: x, y: host.bounds.midY))
+            click(host, at: NSPoint(x: x, y: y), inHostCoordinates: true)
             if router.primaryTapCount > before {
                 return
             }

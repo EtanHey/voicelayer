@@ -239,6 +239,26 @@ public struct VoiceBarNotchPresentation: Equatable {
     /// NOTCH1: the measured width of a transient note (the selection busy/rejection note). Non-nil means
     /// the notch grows a band directly under its top row to hold the note.
     public private(set) var transientNoteWidth: CGFloat? = nil
+    public private(set) var feedback: VoiceBarNotchFeedback? = nil
+
+    public var feedbackHeight: CGFloat {
+        feedback?.height ?? (transientNoteWidth == nil ? 0 : VoiceBarNotchContract.transientNoteBandHeight)
+    }
+
+    /// Adds readable text using the existing lower-note shell; all top-row geometry is preserved.
+    public func addingFeedback(_ feedback: VoiceBarNotchFeedback) -> Self {
+        let oldHeight = transientNoteWidth == nil ? 0 : VoiceBarNotchContract.transientNoteBandHeight
+        let extent = max(0, (feedback.width - geometry.coreWidth) / 2)
+        let grown = VoiceBarNotchGeometry(coreWidth: geometry.coreWidth, topHeight: geometry.topHeight,
+            leadingWingWidth: geometry.leadingWingWidth, trailingWingWidth: geometry.trailingWingWidth,
+            bodyLeadingExtent: max(geometry.bodyLeadingExtent, extent),
+            bodyTrailingExtent: max(geometry.bodyTrailingExtent, extent),
+            lowerSurfaceHeight: geometry.lowerSurfaceHeight - oldHeight + feedback.height)
+        return VoiceBarNotchPresentation(visualState: visualState, geometry: grown,
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset, virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
+            contentRoles: contentRoles, accessibilityLabel: accessibilityLabel,
+            transientNoteWidth: transientNoteWidth, feedback: feedback)
+    }
 
     /// Where the transient note draws: the band directly under the top row, across the lower body. Any
     /// existing lower content (teleprompter, History) sits below it.
@@ -248,7 +268,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             x: geometry.bodyOriginX,
             y: geometry.topHeight,
             width: geometry.bodyWidth,
-            height: VoiceBarNotchContract.transientNoteBandHeight
+            height: feedback?.noteHeight ?? VoiceBarNotchContract.transientNoteBandHeight
         )
     }
 
@@ -262,7 +282,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles,
             accessibilityLabel: accessibilityLabel,
-            transientNoteWidth: transientNoteWidth
+            transientNoteWidth: transientNoteWidth, feedback: feedback
         )
     }
 
@@ -281,7 +301,8 @@ public struct VoiceBarNotchPresentation: Equatable {
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
         visibleCoreOcclusionInset: CGFloat = 0,
         virtualNotchIdleCoreHeight: CGFloat? = nil,
-        transientNoteWidth: CGFloat? = nil
+        transientNoteWidth: CGFloat? = nil,
+        feedback: VoiceBarNotchFeedback? = nil
     ) -> VoiceBarNotchPresentation {
         let visualState: VoiceBarNotchVisualState = if hasTeleprompter {
             .teleprompter
@@ -345,7 +366,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             baseGeometry
         }
 
-        return VoiceBarNotchPresentation(
+        let resolved = VoiceBarNotchPresentation(
             visualState: visualState,
             geometry: transientNoteWidth.map {
                 VoiceBarNotchContract.addingTransientNoteBand(to: geometry.bodyFlushWithWings, noteWidth: $0)
@@ -356,6 +377,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             accessibilityLabel: accessibilityLabel(for: visualState),
             transientNoteWidth: transientNoteWidth
         )
+        return feedback.map { resolved.addingFeedback($0) } ?? resolved
     }
 
     private static func contentRoles(
@@ -448,7 +470,10 @@ public enum VoiceBarNotchContract {
     public static let transientNoteClearance: CGFloat = 6
     /// NOTCH2: everything a visible notch's canvas holds below its resting body, so a note can arrive and
     /// leave without resizing the window under the animating shell.
-    public static let transientNoteCanvasReserve: CGFloat = transientNoteBandHeight + transientNoteClearance
+    // Reserve the bounded worst-case status + note even while hidden. Otherwise clearing long feedback
+    // shrinks the AppKit window before the shell has finished closing and clips the morph.
+    public static let transientNoteCanvasReserve: CGFloat =
+        2 * VoiceBarNotchFeedback.maximumTextHeight + 16 + 34 + 10 + transientNoteClearance
     public static let transientNoteHorizontalInset: CGFloat = 16
     /// Spec §4 / Etan: the History panel is the teleprompter's shell, "narrower and taller" (the teleprompter
     /// body is 465 × 196 pt).

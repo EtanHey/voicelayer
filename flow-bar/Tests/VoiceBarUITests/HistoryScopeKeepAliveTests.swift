@@ -50,7 +50,7 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
         if let root { try? FileManager.default.removeItem(at: root) }
     }
 
-    private func host(counter: Counter, index: SettingsArchiveIndex = SettingsArchiveIndex())
+    private func host(counter: Counter, index: SettingsArchiveIndex = SettingsArchiveIndex(), width: CGFloat = 780)
         -> (NSWindow, NSHostingView<SettingsView>) {
         let archive = root!
         let view = SettingsView(
@@ -70,7 +70,7 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
             initialTab: .history
         )
         let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 620),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 620),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
@@ -85,7 +85,7 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
             window.contentView = nil
         }
         XCTAssertTrue(settle { counter.count("dictations") >= 1 && counter.count("ask") >= 1 }, "open + Ask prefetch")
-        let segmented = try XCTUnwrap(firstSegmentedControl(in: host))
+        let segmented = try XCTUnwrap(firstHistoryScopeControl(in: host))
 
         select(segmented, 1)
         XCTAssertTrue(settle { counter.count("ask") >= 2 }, "the first Ask visit loads")
@@ -109,12 +109,12 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
     func testAHiddenScopeStillPicksUpAnArchiveChange() throws {
         let counter = Counter()
         let index = SettingsArchiveIndex()
-        let (window, host) = host(counter: counter, index: index)
+        let (window, host) = host(counter: counter, index: index, width: 1280)
         defer { window.orderOut(nil)
             window.contentView = nil
         }
         XCTAssertTrue(settle { counter.count("ask") >= 1 })
-        let segmented = try XCTUnwrap(firstSegmentedControl(in: host))
+        let segmented = try XCTUnwrap(firstHistoryScopeControl(in: host))
         select(segmented, 1)
         XCTAssertTrue(settle { counter.count("ask") >= 2 })
         pause()
@@ -157,7 +157,7 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
             window.contentView = nil
         }
         XCTAssertTrue(settle { counter.count("ask") >= 1 })
-        let segmented = try XCTUnwrap(firstSegmentedControl(in: host))
+        let segmented = try XCTUnwrap(firstHistoryScopeControl(in: host))
         select(segmented, 1)
         XCTAssertTrue(settle { counter.count("ask") >= 2 })
         select(segmented, 0)
@@ -172,7 +172,7 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
         table.selectRowIndexes([history], byExtendingSelection: false)
         pause()
         let ask = counter.count("ask")
-        let segmentedAgain = try XCTUnwrap(firstSegmentedControl(in: host))
+        let segmentedAgain = try XCTUnwrap(firstHistoryScopeControl(in: host))
         select(segmentedAgain, 1)
 
         XCTAssertTrue(settle { counter.count("ask") > ask }, "Ask missed changes while unmounted, so it reloads")
@@ -228,10 +228,12 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
         return condition()
     }
 
-    private func firstSegmentedControl(in view: NSView) -> NSSegmentedControl? {
-        if let control = view as? NSSegmentedControl { return control }
+    private func firstHistoryScopeControl(in view: NSView) -> NSSegmentedControl? {
+        if let control = view as? NSSegmentedControl,
+           control.segmentCount == SettingsHistoryScope.allCases.count,
+           (0..<control.segmentCount).map({ control.label(forSegment: $0) }) == SettingsHistoryScope.allCases.map({ Optional($0.title) }) { return control }
         for subview in view.subviews {
-            if let control = firstSegmentedControl(in: subview) { return control }
+            if let control = firstHistoryScopeControl(in: subview) { return control }
         }
         return nil
     }

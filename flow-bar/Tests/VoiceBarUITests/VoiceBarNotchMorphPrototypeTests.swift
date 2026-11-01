@@ -1,6 +1,15 @@
 @testable import VoiceBarUI
 import XCTest
 
+// Morph selection uses only these three APIs. No persistent-domain setter/remover is called.
+// A real UserDefaults persistence integration test needs its own physically verified sandbox.
+private final class MemoryMorphDefaults: UserDefaults, @unchecked Sendable {
+    private var values: [String: Any] = [:]
+    override func object(forKey key: String) -> Any? { values[key] }
+    override func set(_ value: Any?, forKey key: String) { values[key] = value }
+    override func removeObject(forKey key: String) { values.removeValue(forKey: key) }
+}
+
 @MainActor
 final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
     func testEnvironmentSelectsEachRuntimePrototypeAndUnknownFallsBackToP1() {
@@ -90,8 +99,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
     /// dev/capture environment variable still selects a variant.
     func testSelectionIgnoresAndForgetsAPersistedPrototype() throws {
         let suiteName = "VoiceBarNotchMorphPrototypeTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let defaults = try XCTUnwrap(MemoryMorphDefaults(suiteName: suiteName))
         defaults.set(
             VoiceBarNotchMorphVariant.p3SpringDelight.rawValue,
             forKey: VoiceBarNotchMorphSelection.defaultsKey
@@ -105,8 +113,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
 
     func testSelectionStillHonoursTheDevEnvironmentVariable() throws {
         let suiteName = "VoiceBarNotchMorphPrototypeTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let defaults = try XCTUnwrap(MemoryMorphDefaults(suiteName: suiteName))
 
         let selection = VoiceBarNotchMorphSelection(
             environment: [VoiceBarNotchMorphVariant.environmentVariable: VoiceBarNotchMorphVariant.p2NativeGlass
@@ -126,8 +133,8 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         XCTAssertEqual(recordingCanvas.canvasGeometry.totalWidth, 465)
         XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalWidth, 465)
         // NOTCH2: each canvas keeps the transient-note band plus clearance (26 + 6 pt) below its resting body.
-        XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32 + 32)
-        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight, 228 + 32)
+        XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32 + VoiceBarNotchContract.transientNoteCanvasReserve)
+        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight, 228 + VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertEqual(
             recording.geometry.coreOriginX + recordingCanvas.contentOffsetX,
             recordingCanvas.canvasGeometry.coreOriginX
@@ -199,9 +206,10 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         XCTAssertEqual(recordingFrame.maxY, teleprompterFrame.maxY)
         XCTAssertEqual(recordingCoreMidX, screen.housingFrame.midX)
         XCTAssertEqual(teleprompterCoreMidX, screen.housingFrame.midX)
-        // Below the recording window's note reserve (1117 - 81 = 1036) the teleprompter's body still reaches.
-        XCTAssertFalse(recordingFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1020)))
-        XCTAssertTrue(teleprompterFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1020)))
+        // A point between the state-sized window bottoms belongs only to the taller teleprompter.
+        let betweenWindowsY = (recordingFrame.minY + teleprompterFrame.minY) / 2
+        XCTAssertFalse(recordingFrame.contains(CGPoint(x: screen.housingFrame.midX, y: betweenWindowsY)))
+        XCTAssertTrue(teleprompterFrame.contains(CGPoint(x: screen.housingFrame.midX, y: betweenWindowsY)))
         XCTAssertFalse(
             recordingLayout.containsInteractiveContent(
                 CGPoint(

@@ -98,7 +98,7 @@ final class SettingsViewContractTests: XCTestCase {
         let modelSource = try String(contentsOf: URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift"), encoding: .utf8)
-        XCTAssertTrue(modelSource.contains("LabeledContent(\"Local recognizer\")"))
+        XCTAssertTrue(modelSource.contains("RecognizerPickerView("))
         XCTAssertFalse(modelSource.contains("LabeledContent(\"Speech model\")"))
     }
 
@@ -208,8 +208,10 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("historyScopePicker"))
-        XCTAssertTrue(source.contains("Picker(\"History scope\""))
-        XCTAssertTrue(source.contains(".pickerStyle(.segmented)"))
+        XCTAssertTrue(source.contains("SettingsHistoryScopePicker(selection: $selectedHistoryScope)"))
+        let picker = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/SettingsHistoryScopePicker.swift"))
+        XCTAssertTrue(picker.contains("Picker(\"History scope\""))
+        XCTAssertTrue(picker.contains(".pickerStyle(.segmented)"))
         XCTAssertTrue(source.contains("initialHistoryScope: SettingsHistoryScope = .recording"))
         XCTAssertTrue(source.contains("case .recording:"))
         XCTAssertTrue(source.contains("case .ask:"))
@@ -231,10 +233,10 @@ final class SettingsViewContractTests: XCTestCase {
 
         XCTAssertEqual(
             source.components(separatedBy: "pinnedViews: [.sectionHeaders]").count - 1,
-            1
+            2
         )
         XCTAssertTrue(source.contains("recordingHistoryListRow(entry)"))
-        XCTAssertTrue(source.contains("recordingHistoryDetail(entry)"))
+        XCTAssertTrue(source.contains("recordingHistoryDetail(displayedEntry)"))
         XCTAssertTrue(source.contains("private func historyDaySection"))
         XCTAssertTrue(source.contains("private func historyDayHeader"))
         XCTAssertTrue(source.contains("private func historyEntryRow"))
