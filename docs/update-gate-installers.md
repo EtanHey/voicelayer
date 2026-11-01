@@ -1,5 +1,43 @@
 # Installer integration (G4, update-button §3 / §5 slice 8, script half)
 
+## Pre-gate cask postflight (G4d)
+
+Homebrew 2.2.58 upgrades remove the LaunchAgents before replacing the app and
+calling `voicelayer setup`. With an installed canonical app, an absent gate and
+no running VoiceBar, setup exclusively initializes OPEN through G2's
+`initializeSupervisedVoiceGate` and G1's crash-safe storage. It shares the
+supervised bootstrap mutex, checks process inventory again, and refuses retained
+locks, ledgers, controllers or diagnostics. Existing or malformed gate files do
+not take this path. No lock is reaped and no existing gate is reopened.
+
+The cask has already completed bundle replacement. This narrow path runs the
+normal setup wiring and canonical agent installers in startup-only mode; it
+cannot build, quit, unload or replace VoiceBar. Autostart's
+`--restore-availability` writes the canonical plist, enables/loads the job if the
+bar is stopped, and starts the installed `/Applications/VoiceBar.app`. It never
+kicks a running bar. The gate stays OPEN. This availability action deliberately
+does not acquire a COMMITTED update lease: the existing G4 path has no qualified
+completion API that could reopen one. Setup on an existing gate retains the
+normal installer path and its refusal/closed-admission rules.
+
+On setup failure, both canonical agent installers are attempted independently,
+then a stopped app is opened through its canonical path and observed. Recovery
+also runs on malformed/locked gate refusal, leaves that evidence intact and
+preserves setup's failure status. Persistent repair/start failures report
+RECOVERY_REQUIRED. The retired MCP owner is never recreated. Canonical paths
+continue to name the app after brew rolls back the bundle; this does not verify
+the version of an already-running process following a real brew rollback.
+
+`legacy-cask-setup.test.ts` drives fake cask removal, replacement, real setup and
+rollback with relocated paths and fake host commands. Setup and startup-only
+repair both reject an unrelocated/escaping app path in isolated mode before
+repair commands can reach the resident app. Real cask/launchd rollback
+and installed-app qualification remain pending. The tap's destructive
+`uninstall delete:` and saved-recipe ordering require a separate tap follow-up;
+this PR does not change the tap.
+
+## Protected installation
+
 Consumes the merged G1/G2 voice-side API on main: REQUEST → acknowledge → PREPARE → COMMIT,
 without adding transitions. Only APPLIED COMMIT starts mutation. A second request
 cannot repeat installation. Nested helpers validate the same committed lease and

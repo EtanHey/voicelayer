@@ -4,6 +4,20 @@ Update-button plan §3 / §5 slice 8. This opt-in exception establishes a contro
 interval for the first protected install over a legacy build with no gate. It
 does not upgrade the safety of arbitrary old Homebrew commands.
 
+G4d adds a separate cask-postflight availability case: when the canonical app is
+already installed, the gate is absent and VoiceBar is stopped, `voicelayer setup`
+uses the same exclusive G2/G1 initializer under the shared bootstrap mutex.
+Malformed gates, retained locks/evidence, a running VoiceBar or unreadable
+process inventory refuse initialization. No interactive supervision is needed
+to start the app that the cask has already replaced. This path installs startup
+infrastructure only, leaves the newly initialized gate OPEN, and never enters a
+COMMITTED lease or builds/quits/replaces the app. Existing-gate setup still uses
+the normal gated installer. On failure, availability recovery restores canonical
+autostart/F5 agents and attempts to start the installed app without repairing
+gate evidence. See [installer integration](update-gate-installers.md#pre-gate-cask-postflight-g4d)
+for the boundary, rollback limitation and isolated proof. It does not qualify
+the legacy cask's earlier stop/delete/replace steps as safe.
+
 From the **qualified 2.2.59-converse.1 candidate checkout on the M4**, with the
 matching release offered by the approved tap, in a local terminal:
 

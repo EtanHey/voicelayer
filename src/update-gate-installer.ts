@@ -23,7 +23,7 @@ function harnessRoot(): string {
   process.kill(marker.pid, 0);
   return resolvedRoot;
 }
-function assertGatePath(): void {
+export function assertGatePath(): void {
   const gate = resolve(updateGateFilePath());
   if (process.env.VOICELAYER_TEST_ISOLATED === "1") {
     const tail = relative(harnessRoot(), gate);

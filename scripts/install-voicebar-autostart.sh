@@ -26,6 +26,7 @@ VOICEBAR_APP="${VOICEBAR_APP_PATH:-/Applications/VoiceBar.app}"
 RELOAD=0
 NO_START=0
 PRESERVE_LOAD_STATE=0
+RESTORE_AVAILABILITY=0
 
 # launchd does not expand $HOME (or ~) inside a plist string -- it would take the
 # literal characters and create a directory called "$HOME" next to whatever it
@@ -194,9 +195,13 @@ while [[ "$#" -gt 0 ]]; do
       PRESERVE_LOAD_STATE=1
       shift
       ;;
+    --restore-availability)
+      RESTORE_AVAILABILITY=1
+      shift
+      ;;
     -h|--help)
       cat <<'EOF'
-Usage: install-voicebar-autostart.sh [--reload|--no-start|--preserve-load-state]
+Usage: install-voicebar-autostart.sh [--reload|--no-start|--preserve-load-state|--restore-availability]
 
   --reload  reload an already-loaded LaunchAgent after writing the canonical
             plist. Use only when the caller has already stopped VoiceBar.
@@ -204,6 +209,8 @@ Usage: install-voicebar-autostart.sh [--reload|--no-start|--preserve-load-state]
             install the canonical plist and leave the LaunchAgent unloaded.
   --preserve-load-state
             refresh the plist without loading or unloading the LaunchAgent.
+  --restore-availability
+            restore canonical startup only; never unload, stop or replace VoiceBar.
 EOF
       exit 0
       ;;
@@ -214,8 +221,8 @@ EOF
   esac
 done
 
-if ((RELOAD + NO_START + PRESERVE_LOAD_STATE > 1)); then
-  echo "ERROR: --reload, --no-start, and --preserve-load-state are mutually exclusive" >&2
+if ((RELOAD + NO_START + PRESERVE_LOAD_STATE + RESTORE_AVAILABILITY > 1)); then
+  echo "ERROR: autostart modes are mutually exclusive" >&2
   exit 2
 fi
 
@@ -224,6 +231,31 @@ if [[ ! -f "$PLIST_SRC" ]]; then
   exit 1
 fi
 
+if [[ "$RESTORE_AVAILABILITY" -eq 1 ]]; then
+  # Starting the already-installed canonical app restores voice availability even
+  # with a broken gate. This mode cannot unload/restart/replace any participant.
+  if [[ "${VOICELAYER_TEST_ISOLATED:-}" == 1 ]]; then
+    [[ -n "${VOICELAYER_TEST_RUN_ROOT:-}" && "$VOICEBAR_APP" == "$VOICELAYER_TEST_RUN_ROOT/"* ]] || exit 1
+    resolved_app="$(cd "$VOICEBAR_APP" && pwd -P)" || exit 1
+    [[ "$resolved_app" == "$VOICELAYER_TEST_RUN_ROOT/"* ]] || exit 1
+  fi
+  [[ "$VOICEBAR_APP" == /Applications/VoiceBar.app && -d "$VOICEBAR_APP" ]] || exit 1
+  mkdir -p "$HOME/Library/LaunchAgents"
+  write_plist
+  if pgrep -x VoiceBar >/dev/null 2>&1; then exit 0; else status=$?; fi
+  [[ "$status" -eq 1 ]] || exit 1
+  release_quarantine
+  prepare_log_dir
+  launchctl enable "$DOMAIN/$LABEL"
+  if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+    launchctl bootstrap "$DOMAIN" "$PLIST_DST"
+  fi
+  # bootstrap may have RunAtLoad-started it already. Never kick a running bar.
+  if pgrep -x VoiceBar >/dev/null 2>&1; then exit 0; else status=$?; fi
+  [[ "$status" -eq 1 ]] || exit 1
+  launchctl kickstart "$DOMAIN/$LABEL"
+  exit 0
+fi
 vl_update_gate "$ROOT_DIR" bash "$ROOT_DIR/scripts/install-voicebar-autostart.sh" ${UPDATE_GATE_ARGS[@]+"${UPDATE_GATE_ARGS[@]}"}
 # A validated bootstrap keeps old jobs disabled until the replacement's repair.
 if [[ "${VOICELAYER_INSTALL_OPERATION:-}" == *'"source":"supervised-bootstrap"'* ]]; then

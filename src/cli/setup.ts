@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { constants, accessSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname, join, resolve } from "path";
+import { constants, accessSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmdirSync, writeFileSync } from "fs";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 
 export type AgentId = "claude" | "codex" | "cursor" | "gemini";
@@ -22,6 +22,7 @@ export interface TccGrantStep {
 }
 
 export interface SetupCommandPlanOptions {
+  availabilityOnly?: boolean;
   appBundlePath?: string;
   appBundleExists?: (path: string) => boolean;
   autostartInstallerExists?: (path: string) => boolean;
@@ -270,7 +271,7 @@ export function getSetupCommandPlan(
       join(packageRoot, "scripts", "install-voicebar-autostart.sh"),
     )
   ) {
-    commands.push(["bash", cli, "autostart", "install"]);
+    commands.push(["bash", cli, "autostart", "install", ...(options.availabilityOnly ? ["--restore-availability"] : [])]);
   }
   commands.push(["bash", cli, "hotkey", "install"]);
   return commands;
@@ -371,6 +372,82 @@ export async function runSetup(
   });
 }
 
+function assertSetupAppPath(): void {
+  if (process.env.VOICELAYER_TEST_ISOLATED !== "1") return;
+  const root = process.env.VOICELAYER_TEST_RUN_ROOT;
+  if (!root) throw Error("UNKNOWN: setup requires isolated root");
+  const tail = relative(resolve(root), VOICEBAR_APP_PATH);
+  if (!tail || tail.startsWith("..") || isAbsolute(tail)) throw Error("UNKNOWN: setup app escaped isolated root");
+  const resolvedTail = relative(realpathSync(root), realpathSync(VOICEBAR_APP_PATH));
+  if (!resolvedTail || resolvedTail.startsWith("..") || isAbsolute(resolvedTail)) throw Error("UNKNOWN: setup app symlink escaped isolated root");
+}
+
+function voiceBarStopped(): boolean {
+  const result = Bun.spawnSync(["pgrep", "-x", "VoiceBar"], { env: process.env, stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode === 1) return true;
+  if (result.exitCode === 0 && result.stdout.toString().trim()) return false;
+  throw Error("UNKNOWN: VoiceBar process inventory unavailable");
+}
+
+async function runLegacyCaskSetup(packageRoot: string): Promise<boolean> {
+  assertSetupAppPath();
+  const { assertGatePath } = await import("../update-gate-installer");
+  assertGatePath();
+  const { updateGateFilePath } = await import("../paths");
+  const gate = updateGateFilePath();
+  try { lstatSync(gate); return false; }
+  catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+  if (!existsSync(VOICEBAR_APP_PATH) || !voiceBarStopped()) throw Error("UNKNOWN: legacy setup requires an installed, stopped VoiceBar");
+  for (const suffix of [".bootstrap", ".lock"]) {
+    try { lstatSync(gate + suffix); throw Error("UNKNOWN: gate recovery evidence retained"); }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+  }
+  const mutex = gate + ".bootstrap-lock";
+  mkdirSync(dirname(mutex), { recursive: true, mode: 0o700 });
+  mkdirSync(mutex, { mode: 0o700 }); // Shared with supervised bootstrap; never reap.
+  try {
+    if (!voiceBarStopped()) throw Error("UNKNOWN: VoiceBar started during legacy initialization");
+    const { initializeSupervisedVoiceGate } = await import("../update-gate-admission");
+    // Same exclusive, crash-safe G1 initialization as supervised bootstrap. It
+    // refuses every existing ledger/controller/diagnostic and never reaps a lock.
+    if (!initializeSupervisedVoiceGate()) throw Error("UNKNOWN: legacy gate initialization refused");
+    if (!voiceBarStopped()) throw Error("UNKNOWN: VoiceBar started during legacy initialization");
+    const { readInstallerGateState } = await import("../update-gate-storage");
+    if (readInstallerGateState().kind !== "OPEN") throw Error("UNKNOWN: legacy gate unavailable");
+    // Cask replacement is finished: startup repair cannot build, quit or replace
+    // anything. Ordinary setup on an existing gate still uses runGatedInstall.
+    await runSetup(packageRoot, { getCommandPlan: root => getSetupCommandPlan(root, {
+      availabilityOnly: true, appBundleExists: () => true,
+    }) });
+    for (let n = 0; n < 50 && voiceBarStopped(); n++) await Bun.sleep(100);
+    if (voiceBarStopped()) throw Error("UNKNOWN: VoiceBar did not start after legacy setup");
+    return true;
+  } finally { rmdirSync(mutex); } // Only this invocation's empty supervisor lock.
+}
+
+async function restoreSetupAvailability(packageRoot: string): Promise<void> {
+  assertSetupAppPath();
+  // Availability recovery never quits/replaces a bundle or reopens gate evidence.
+  // The plist names /Applications, so brew rollback retains the same launch path.
+  voiceBarStopped(); // Unreadable inventory refuses before any repair command.
+  if (!existsSync(VOICEBAR_APP_PATH)) return;
+  const failures: unknown[] = [];
+  for (const command of [
+    ["bash", join(packageRoot, "scripts/install-voicebar-autostart.sh"), "--restore-availability"],
+    ["bash", join(packageRoot, "scripts/install-voicebar-f5-hidutil.sh")],
+  ]) {
+    try { await runCommand(command); } catch (error) { failures.push(error); }
+  }
+  // launchd starts asynchronously; observe before an open fallback can race it.
+  for (let n = 0; n < 50 && voiceBarStopped(); n++) await Bun.sleep(100);
+  if (voiceBarStopped()) {
+    try { await runCommand(["open", VOICEBAR_APP_PATH]); } catch (error) { failures.push(error); }
+    for (let n = 0; n < 50 && voiceBarStopped(); n++) await Bun.sleep(100);
+    if (voiceBarStopped()) failures.push(Error("VoiceBar did not start"));
+  }
+  if (failures.length) throw new AggregateError(failures, "RECOVERY_REQUIRED: setup availability restoration incomplete");
+}
+
 if (import.meta.main) {
   if (process.argv.slice(2).some(arg => arg === "--help" || arg === "-h")) {
     console.log("Usage: voicelayer setup (or setup.ts PACKAGE_ROOT)"); process.exit(0);
@@ -382,12 +459,16 @@ if (import.meta.main) {
     process.exit(2);
   }
   const { runGatedInstall, validateInstallerOperation } = await import("../update-gate-installer");
-  if (!process.env.VOICELAYER_INSTALL_OPERATION) {
-    process.exit(await runGatedInstall([process.execPath, import.meta.path, ...process.argv.slice(2)]));
-  }
+  const nested = !!process.env.VOICELAYER_INSTALL_OPERATION;
   try {
-    await validateInstallerOperation();
-    await runSetup(packageRoot);
+    if (!nested && await runLegacyCaskSetup(packageRoot)) {
+      // Startup-only legacy setup completed; the gate remains OPEN.
+    } else if (!nested) {
+      process.exitCode = await runGatedInstall([process.execPath, import.meta.path, ...process.argv.slice(2)]);
+    } else {
+      await validateInstallerOperation();
+      await runSetup(packageRoot);
+    }
   } catch (error: unknown) {
     console.error(
       `[voicelayer] setup failed: ${
@@ -395,5 +476,9 @@ if (import.meta.main) {
       }`,
     );
     process.exitCode = 1;
+  }
+  if (process.exitCode) {
+    try { await restoreSetupAvailability(packageRoot); }
+    catch (error) { console.error(String(error)); process.exitCode = 1; }
   }
 }
