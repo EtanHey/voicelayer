@@ -29,6 +29,122 @@ awk '
 test -s "$FIXTURE/gate.sh"
 grep -q 'fetch-depth: 0' "$WORKFLOW"
 
+# BEGIN classifier-only controls
+# Exercise the extracted gate without commits, real runtime proof or a PR body.
+# The function exists only in a subshell; the real Git fixture below is unchanged.
+classifier_cases=0
+classifier_failures=0
+classifier_case() {
+    local label="$1" expected="$2" files="$3" diff_status="${4:-0}"
+    local status actual ok=1
+    classifier_cases=$((classifier_cases + 1))
+    if (
+        git() {
+            if [ "$#" -ne 3 ] || [ "$1" != diff ] || [ "$2" != --name-only ] \
+                || [ "$3" != "$BASE_SHA...$HEAD_SHA" ]; then
+                printf 'Unexpected git invocation in classifier fixture\n' >&2
+                return 97
+            fi
+            if [ "$GATE_FIXTURE_DIFF_STATUS" -ne 0 ]; then
+                printf 'Synthetic unavailable diff\n' >&2
+                return "$GATE_FIXTURE_DIFF_STATUS"
+            fi
+            printf '%s\n' "$GATE_FIXTURE_FILES"
+        }
+        export -f git
+        BASE_SHA='fixture base' HEAD_SHA='fixture head' PR_BODY='' \
+            GATE_FIXTURE_FILES="$files" GATE_FIXTURE_DIFF_STATUS="$diff_status" \
+            TMPDIR="$FIXTURE" bash "$FIXTURE/gate.sh"
+    ) > "$FIXTURE/gate.out" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+    actual="$(sed -n 's/^- //p' "$FIXTURE/gate.out")"
+    if [ "$diff_status" -ne 0 ]; then
+        [ "$status" -eq "$diff_status" ] && [ -z "$actual" ] \
+            && grep -Fq 'Synthetic unavailable diff' "$FIXTURE/gate.out" \
+            && ! grep -Fq 'runtime gate not required' "$FIXTURE/gate.out" && ok=0
+    elif [ -z "$expected" ]; then
+        [ "$status" -eq 0 ] && [ -z "$actual" ] \
+            && grep -Fq 'No daemon/socket/MCP files changed' "$FIXTURE/gate.out" && ok=0
+    else
+        [ "$status" -eq 1 ] && [ "$actual" = "$expected" ] \
+            && grep -Fq 'Missing runtime verification marker.' "$FIXTURE/gate.out" && ok=0
+    fi
+    if [ "$ok" -eq 0 ]; then
+        printf 'PASS: classifier %s (gate exit %s)\n' "$label" "$status"
+    else
+        classifier_failures=$((classifier_failures + 1))
+        printf 'FAIL: classifier %s (gate exit %s)\n' "$label" "$status" >&2
+        cat "$FIXTURE/gate.out" >&2
+    fi
+}
+
+ui_test='flow-bar/Tests/VoiceBarUITests/SettingsAudioPlaybackTests.swift'
+classifier_case 'empty diff' '' ''
+classifier_case 'documentation only' '' 'docs/daemon.md'
+classifier_case 'A test path only' '' "$ui_test"
+classifier_case 'nested tests and space in filename' '' \
+    "$(printf '%s\n' "$ui_test" 'flow-bar/Tests/VoiceBarTests/deep/Audio Fixture.swift')"
+classifier_case 'test then runtime' 'flow-bar/Sources/VoiceBar/main.swift' \
+    "$(printf '%s\n' "$ui_test" 'flow-bar/Sources/VoiceBar/main.swift')"
+classifier_case 'runtime then test' 'src/mcp-server.ts' \
+    "$(printf '%s\n' 'src/mcp-server.ts' "$ui_test")"
+
+# Include every existing non-VoiceBar alternative and VoiceBar build/package/bundle
+# paths, plus near-miss names and unknown future VoiceBar/launchd descendants.
+while IFS= read -r path; do
+    classifier_case "$path remains runtime" "$path" "$path"
+done <<'RUNTIME_PATHS'
+flow-bar/Sources/VoiceBar/main.swift
+flow-bar/build-app.sh
+flow-bar/Package.swift
+flow-bar/Package.resolved
+flow-bar/VoiceBar.app/Contents/Info.plist
+flow-bar/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json
+flow-bar/UnknownFutureRuntime/file
+flow-bar/Tests
+flow-bar/Test/Audio.swift
+flow-bar/Testing/Audio.swift
+flow-bar/tests/Audio.swift
+flow-bar/TestsBackup/Audio.swift
+flow-bar/Tests.swift
+flow-bar/Tests../Audio.swift
+flow-bar/Tests /Audio.swift
+flow-bar/Other/Tests/Audio.swift
+flow-bar/Source With Spaces.swift
+launchd/com.voicelayer.plist
+launchd/UnknownFutureRuntime/file
+src/whisper-server.ts
+src/mcp-server.ts
+src/mcp-server-daemon.ts
+src/mcp-daemon.ts
+src/mcp-framing.ts
+src/mcp-handler.ts
+src/mcp-socket-owner.ts
+src/mcp-tools.ts
+src/daemon.ts
+src/daemon-health.ts
+src/log-rotation.ts
+src/paths.ts
+src/process-lock.ts
+src/resolve-binary.ts
+src/socket-future.ts
+src/socket-client.ts
+src/socket-handlers.ts
+src/socket-protocol.ts
+src/cli/voicelayer.sh
+RUNTIME_PATHS
+
+classifier_case 'existing non-runtime paths unchanged' '' \
+    "$(printf '%s\n' 'tests/daemon.test.ts' 'flow-bar-other/Tests/a.swift' \
+        'src/mcp-server/sub.ts' 'src/socket-directory/sub.ts' 'unclassified/future.txt')"
+classifier_case 'unavailable diff fails closed' '' "$ui_test" 128
+printf 'Classifier controls: %s cases, %s failures\n' "$classifier_cases" "$classifier_failures"
+[ "$classifier_failures" -eq 0 ] || exit 1
+# END classifier-only controls
+
 git init -q "$FIXTURE/repo"
 cd "$FIXTURE/repo"
 git config user.name 'Gate Fixture'
