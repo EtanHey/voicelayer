@@ -96,18 +96,7 @@ function makeWorkspace(options: StubOptions): Workspace {
   writeFileSync(join(stubDir, "bun"), '#!/bin/bash\n[[ "$2" == --validate ]]\n', { mode: 0o755 });
   const shellFakes = `
 export VOICELAYER_INSTALL_OPERATION=fixture-admitted
-launchctl() {
-  printf 'launchctl %s\\n' "$*" >> "$STUB_LOG"
-  if [ "\${1:-}" = "print" ]; then
-    local count=0
-    if [ -f "$STUB_STATE" ]; then read -r count < "$STUB_STATE" || true; fi
-    count=$((count + 1))
-    printf '%s' "$count" > "$STUB_STATE"
-    if [ "$count" -le "${options.printLoaded}" ]; then return 0; fi
-    return 1
-  fi
-  return 0
-}
+
 plutil() {
   printf 'plutil %s\\n' "$*" >> "$STUB_LOG"
   return 0
@@ -124,6 +113,16 @@ xattr() {
 }
 `}
 `;
+  writeFileSync(join(stubDir, "launchctl"), `#!/bin/bash\n  printf 'launchctl %s\\n' "$*" >> "$STUB_LOG"
+  if [ "\${1:-}" = "print" ]; then
+    count=0
+    if [ -f "$STUB_STATE" ]; then read -r count < "$STUB_STATE" || true; fi
+    count=$((count + 1))
+    printf '%s' "$count" > "$STUB_STATE"
+    if [ "$count" -le "${options.printLoaded}" ]; then exit 0; fi
+    exit 1
+  fi
+  exit 0\n`, { mode: 0o755 });
   writeFileSync(join(stubDir, "shell-fakes.bash"), shellFakes);
 
   const legacyLogDir = join(root, "legacy-tmp");

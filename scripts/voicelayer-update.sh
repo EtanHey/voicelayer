@@ -871,6 +871,9 @@ main() {
 
     if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
         vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/voicelayer-update.sh" "$@" || return 1
+        # Homebrew filters its environment with env -i; only HOMEBREW_* survives.
+        # Postflight validates this exact operation against the durable controller.
+        export HOMEBREW_VOICELAYER_INSTALL_OPERATION="$VOICELAYER_INSTALL_OPERATION"
     else
         log "[update-gate] Simulation: would request drain and wait for idle before mutation (no lease taken)."
     fi

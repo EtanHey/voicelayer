@@ -11,6 +11,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Refuse before sourcing a restore trap, writing HOME or invoking a host tool.
+if [[ "${VOICELAYER_TEST_ISOLATED:-}" == 1 ]]; then
+  isolated_root="$(cd "${VOICELAYER_TEST_RUN_ROOT:?isolated root required}" && pwd -P)" || exit 1
+  isolated_home="$(cd "${HOME:?HOME required}" && pwd -P)" || exit 1
+  isolated_launchctl="$(command -v launchctl)" || exit 1
+  [[ "$HOME" == "$isolated_root/"* && "$isolated_home" == "$isolated_root/"* &&
+     "$isolated_launchctl" == "$isolated_root/"* && ! -L "$isolated_launchctl" ]] || {
+    echo "UNKNOWN: installer HOME or launchctl escaped isolated root" >&2; exit 1;
+  }
+  isolated_tool_dir="$(cd "$(dirname "$isolated_launchctl")" && pwd -P)" || exit 1
+  [[ "$isolated_tool_dir" == "$isolated_root/"* ]] || exit 1
+fi
 source "$ROOT_DIR/scripts/lib/update-gate.sh"
 UPDATE_GATE_ARGS=("$@")
 LABEL="com.voicelayer.voicebar"
@@ -201,7 +213,7 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<'EOF'
-Usage: install-voicebar-autostart.sh [--reload|--no-start|--preserve-load-state|--restore-availability]
+Usage: install-voicebar-autostart.sh [--reload|--no-start|--preserve-load-state]
 
   --reload  reload an already-loaded LaunchAgent after writing the canonical
             plist. Use only when the caller has already stopped VoiceBar.
@@ -209,8 +221,6 @@ Usage: install-voicebar-autostart.sh [--reload|--no-start|--preserve-load-state|
             install the canonical plist and leave the LaunchAgent unloaded.
   --preserve-load-state
             refresh the plist without loading or unloading the LaunchAgent.
-  --restore-availability
-            restore canonical startup only; never unload, stop or replace VoiceBar.
 EOF
       exit 0
       ;;
@@ -232,20 +242,27 @@ if [[ ! -f "$PLIST_SRC" ]]; then
 fi
 
 if [[ "$RESTORE_AVAILABILITY" -eq 1 ]]; then
-  # Starting the already-installed canonical app restores voice availability even
-  # with a broken gate. This mode cannot unload/restart/replace any participant.
-  if [[ "${VOICELAYER_TEST_ISOLATED:-}" == 1 ]]; then
-    [[ -n "${VOICELAYER_TEST_RUN_ROOT:-}" && "$VOICEBAR_APP" == "$VOICELAYER_TEST_RUN_ROOT/"* ]] || exit 1
-    resolved_app="$(cd "$VOICEBAR_APP" && pwd -P)" || exit 1
-    [[ "$resolved_app" == "$VOICELAYER_TEST_RUN_ROOT/"* ]] || exit 1
-  fi
+  [[ "${VOICELAYER_SETUP_AVAILABILITY:-}" == 1 ]] || { echo "UNKNOWN: internal setup marker required" >&2; exit 1; }
   [[ "$VOICEBAR_APP" == /Applications/VoiceBar.app && -d "$VOICEBAR_APP" ]] || exit 1
+  if [[ "${VOICELAYER_TEST_ISOLATED:-}" == 1 ]]; then
+    resolved_app="$(cd "$VOICEBAR_APP" && pwd -P)" || exit 1
+    [[ "$resolved_app" == "$isolated_root/"* ]] || exit 1
+  fi
+  # Plist-only is the safe nested postflight mode. It never changes load state.
+  if [[ "${VOICELAYER_SETUP_PLISTS_ONLY:-}" == 1 ]]; then
+    mkdir -p "$HOME/Library/LaunchAgents"
+    write_plist
+    exit 0
+  fi
+  runtime="$(vl_gate_bun)" || exit 1
+  "$runtime" "$ROOT_DIR/src/update-gate-installer.ts" --setup-availability || exit 1
   mkdir -p "$HOME/Library/LaunchAgents"
   write_plist
   if pgrep -x VoiceBar >/dev/null 2>&1; then exit 0; else status=$?; fi
   [[ "$status" -eq 1 ]] || exit 1
   release_quarantine
   prepare_log_dir
+  "$runtime" "$ROOT_DIR/src/update-gate-installer.ts" --setup-availability || exit 1
   launchctl enable "$DOMAIN/$LABEL"
   if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     launchctl bootstrap "$DOMAIN" "$PLIST_DST"

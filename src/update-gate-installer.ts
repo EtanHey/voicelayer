@@ -85,6 +85,17 @@ export async function validateInstallerOperation(): Promise<void> {
     throw Error("UNKNOWN: installer controller receipt mismatch");
   if (installerProcessIdentity(controller.pid) !== controller.identity) throw Error("UNKNOWN: installer controller identity changed");
 }
+/** Read-only identity fence shared by postflight and its internal startup helper. */
+export function hasLiveInstallerController(): boolean {
+  assertGatePath();
+  const controller = readInstallerController(updateGateFilePath());
+  return controller !== null && installerProcessIdentity(controller.pid) === controller.identity;
+}
+export function assertSetupAvailability(): void {
+  if (process.env.VOICELAYER_SETUP_AVAILABILITY !== "1" || process.env.VOICELAYER_INSTALL_OPERATION)
+    throw Error("UNKNOWN: availability restoration requires the internal setup marker");
+  if (hasLiveInstallerController()) throw Error("UNKNOWN: live installer controller owns restoration");
+}
 function recoveryReceipt(lease: UpdateGateLease, reason: string, installerPid?: number): void {
   const gate = updateGateFilePath(), receipt = `${gate}.recovery-${lease.operationId}.json`;
   console.error(`[update-gate] RECOVERY_REQUIRED: ${reason}; admission remains closed; gate=${gate}; receipt=${receipt}`);
@@ -253,11 +264,13 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
 if (import.meta.main) {
   const option = process.argv[2];
   if (option === "--help" || option === "-h") { console.log("Usage: update-gate-installer.ts COMMAND [ARGS...] | --validate"); process.exit(0); }
-  if (!option || (option.startsWith("-") && option !== "--validate") || (option === "--validate" && process.argv.length !== 3)) {
+  if (!option || (option.startsWith("-") && option !== "--validate" && option !== "--setup-availability") ||
+      ((option === "--validate" || option === "--setup-availability") && process.argv.length !== 3)) {
     console.error("Usage: update-gate-installer.ts COMMAND [ARGS...] | --validate"); process.exit(2);
   }
   try {
-    if (process.argv[2] === "--validate") { await validateInstallerOperation(); }
+    if (process.argv[2] === "--setup-availability") { assertSetupAvailability(); }
+    else if (process.argv[2] === "--validate") { await validateInstallerOperation(); }
     else process.exitCode = await runGatedInstall(process.argv.slice(2));
   } catch (error) { console.error(`[update-gate] REFUSED UNKNOWN: ${String(error instanceof Error ? error.message : error).replace(/^UNKNOWN: /, "")}`); process.exitCode = 1; }
 }
