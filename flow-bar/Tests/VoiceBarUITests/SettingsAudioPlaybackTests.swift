@@ -9,6 +9,7 @@ final class SettingsAudioPlaybackTests: XCTestCase {
     private let responseURL = URL(fileURLWithPath: "/tmp/voicelayer-ask/audio.wav")
 
     func testIdleHistoryStartsWithDaemonDisconnected() throws {
+        try requireLiveAudio()
         let state = VoiceState(nativeUpdateGate: NativeUpdateGate(path: NSTemporaryDirectory() + UUID().uuidString + "/gate"))
         state.isConnected = false
         let url = try syntheticSilence()
@@ -31,6 +32,7 @@ final class SettingsAudioPlaybackTests: XCTestCase {
     }
 
     func testFirstSystemClickStartsSyntheticSilenceAndItsRealPlaybackClock() async throws {
+        try requireLiveAudio()
         let url = try syntheticSilence()
         defer { try? FileManager.default.removeItem(at: url) }
         let playback = SettingsAudioPlayback.system(gate: NativeUpdateGate(path: NSTemporaryDirectory() + UUID().uuidString + "/gate"))
@@ -40,6 +42,14 @@ final class SettingsAudioPlaybackTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertGreaterThan(try XCTUnwrap(playback.position(of: url)).currentTime, 0)
         XCTAssertNil(playback.failureMessage)
+    }
+
+    private func requireLiveAudio() throws {
+        // Synthetic silence still starts the real audio device and must be explicitly requested.
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["VOICELAYER_TEST_REAL_AUDIO"] == "1",
+            "Real system playback requires VOICELAYER_TEST_REAL_AUDIO=1; default tests use injected players."
+        )
     }
 
     func testFailedFirstClickIsVisibleAndDoesNotStartAClock() {

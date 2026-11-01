@@ -16,6 +16,9 @@ import { spawnSync } from "child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { randomBytes } from "crypto";
+import { installSttSpawnGuard } from "./stt-spawn-guard";
+
+const parentRunRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
 
 const TEST_ROOT = join(process.cwd(), ".test-tmp");
 // Four hex characters leave room for TEST1 sockets on deep worktree paths.
@@ -157,13 +160,16 @@ for (const socket of [voiceBarSocket, mcpSocket]) {
 
 // Declares the isolation to the live-host guard; an inherited 0 cannot disable it.
 process.env.VOICELAYER_TEST_ISOLATED = "1";
+// Exact live-STT opt-in is captured before tests mutate env. PATH protects shell
+// children; the spawn wrapper also covers installed absolute binary paths.
+const guardSttSpawn = installSttSpawnGuard(RUN_ROOT, parentRunRoot);
 
 // Bun defaults to its STARTUP environment, not process.env after this preload.
 // Explicit subset envs must retain the test paths too; caller values cannot
 // disable the preload contract. Read current values when each child is spawned.
 const isolationKeys = [
   "VOICELAYER_UPDATE_GATE_PATH", "VOICELAYER_TEST_INSTALL_PROOF", "VOICELAYER_TEST_INSTALL_TOKEN",
-  "VOICELAYER_TEST_ISOLATED", "VOICELAYER_TEST_RUN_ROOT", "QA_VOICE_MCP_PID_PATH",
+  "VOICELAYER_TEST_ISOLATED", "VOICELAYER_TEST_RUN_ROOT", "VOICELAYER_TEST_STT_GUARD_ROOT", "QA_VOICE_MCP_PID_PATH",
   "VOICELAYER_LOG_ROTATION_DIR",
   "VOICELAYER_TMP_ROOT", "VOICELAYER_STATE_DIR", "VOICELAYER_CONTROL_LAYER_BASE",
   "VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "QA_VOICE_RECORDINGS_DIR",
@@ -176,13 +182,14 @@ for (const api of ["spawn", "spawnSync"] as const) {
   const original = Bun[api];
   (Bun[api] as unknown) = ((command: unknown, options?: Record<string, unknown>) => {
     const arrayForm = Array.isArray(command);
-    const requested = (arrayForm ? options : command) as { env?: NodeJS.ProcessEnv } | undefined;
+    const requested = (arrayForm ? options : command) as { env?: NodeJS.ProcessEnv; cmd?: unknown } | undefined;
     const env = { ...(requested?.env ?? process.env) };
     if (process.env.VOICELAYER_TEST_ISOLATED === "1") {
       for (const key of isolationKeys) env[key] = process.env[key];
     }
-    const isolatedOptions = { ...requested, env };
-    return arrayForm ? (original as Function)(command, isolatedOptions) : (original as Function)(isolatedOptions);
+    const guardedCommand = guardSttSpawn ? guardSttSpawn(arrayForm ? command : requested?.cmd, env) : (arrayForm ? command : requested?.cmd);
+    const isolatedOptions = { ...requested, env, ...(arrayForm ? {} : { cmd: guardedCommand }) };
+    return arrayForm ? (original as Function)(guardedCommand, isolatedOptions) : (original as Function)(isolatedOptions);
   }) as unknown;
 }
 

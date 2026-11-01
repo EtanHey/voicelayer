@@ -88,6 +88,8 @@ describe("TEST3 review: setup and private specimen safety", () => {
       test(`${file} registers private tests only after opt-in (overrides=${explicit})`, () => {
         const env = {
           HOME: "/sandbox/private-home", VOICELAYER_TEST_REAL_ARCHIVE: "1",
+          // This VM registers test bodies without executing a tool or model.
+          ...(file === "rules-engine-number-audio.test.ts" ? { QA_VOICE_GOLDEN_LIVE: "1" } : {}),
           ...(explicit ? { VOICELAYER_TEST_SPECIMEN_DIR: "/sandbox/private-corpus",
             VOICELAYER_NUMBERS_CORPUS_PATH: "/sandbox/manifest.json",
             QA_VOICE_STT_POLISH_LOG_PATH: "/sandbox/shadow.jsonl" } : {}),
