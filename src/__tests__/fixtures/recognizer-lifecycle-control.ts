@@ -22,7 +22,34 @@ spyOn(model, "readWhisperModelStatus").mockResolvedValue({ residency: "unknown" 
 spyOn(globalThis, "fetch").mockImplementation(Object.assign(() => { throw new Error("Unexpected real network probe"); }, { preconnect: () => {} }));
 const tick = async () => { for (let n = 0; n < 40; n++) await Promise.resolve(); };
 
-if (scenario === "cli-only-sleeping") {
+if (scenario.startsWith("wispr-failure")) {
+  process.env.QA_VOICE_STT_BACKEND = "wispr";
+  stt.WisprFlowBackend.prototype.isAvailable = async () => true;
+  let fail = true;
+  stt.WisprFlowBackend.prototype.transcribe = async () => {
+    if (fail) throw new Error("synthetic cloud refusal");
+    return { text: "retained words", backend: "wispr-flow", durationMs: 0 };
+  };
+  if (scenario === "wispr-failure-resident") {
+    state.noteRecognizerEngine("whisper", { phase: "ready", available: true, error: null });
+    state.noteRecognizerEffective("whisper");
+  }
+  const backend = await stt.getBackend();
+  const before = state.readRecognizerStatus();
+  await assert.rejects(backend.transcribe("synthetic-no-file"), /synthetic cloud refusal/);
+  assert.deepEqual(state.readRecognizerStatus().engines, before.engines, "a cloud refusal must not change local-engine lifecycle");
+  fail = false;
+  assert.equal((await backend.transcribe("synthetic-no-file")).backend, "wispr-flow");
+  assert.deepEqual(state.readRecognizerStatus().engines, before.engines, "cloud recovery must not retain a false local error");
+} else if (scenario === "whisper-failure-status") {
+  process.env.QA_VOICE_STT_BACKEND = "whisper";
+  stt.WhisperCppBackend.prototype.isAvailable = async () => true;
+  stt.WhisperCppBackend.prototype.transcribe = async () => { throw new Error("synthetic local refusal"); };
+  const backend = await stt.getBackend();
+  await assert.rejects(backend.transcribe("synthetic-no-file"), /synthetic local refusal/);
+  assert.equal(state.readRecognizerStatus().engines.whisper.error, "transcription-failed");
+  assert.equal(state.readRecognizerStatus().engines.whisper.phase, "error");
+} else if (scenario === "cli-only-sleeping") {
   process.env.QA_VOICE_STT_BACKEND = "whisper";
   stt.WhisperCppBackend.prototype.isAvailable = async () => true;
   stt.WhisperCppBackend.prototype.transcribe = async () => ({ text: "retained words", backend: "whisper.cpp", durationMs: 0 });
