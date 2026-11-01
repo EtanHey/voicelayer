@@ -284,7 +284,10 @@ function preferOverlapWord(
   // A cutoff is spoken content, not a punctuation preference. Equal lexical
   // bases may share their overlap occurrence, but must keep its cutoff marker.
   if (isMarkedCutoff(current)) return current;
-  if (isMarkedCutoff(next)) return next;
+  if (isMarkedCutoff(next)) {
+    return compactSeamKey(current) === compactSeamKey(next)
+      ? next : current;
+  }
   const punctuated = preferPunctuatedOverlapWord(current, next, nextContinues);
   if (punctuated !== current) return punctuated;
   const currentKey = normalizeChunkWordForOverlap(current);
