@@ -36,11 +36,33 @@ class CacheTests(unittest.TestCase):
         calls, base, clean = self.run_case(self.rows(), {})
         self.assertEqual(calls, [])
         self.assertTrue(clean)
-        import test_runner
-        result = unittest.TestResult()
-        test_runner.RunnerTests('test_missing_binary_emits_fail_rows_and_nonzero_exit').run(result)
-        self.assertTrue(result.wasSuccessful(), (result.errors, result.failures))
-        self.assertTrue(all(item['value'] == 0 for item in base))
+        import comment
+        head = {item['row']: dict(item) for item in base}
+        head[base[0]['row']].update(value=1, status='FAIL')
+        table = comment.render({item['row']: item for item in base}, head, 'a'*40, 'a'*40)
+        self.assertIn('| 0 | 1 | +1 | 0 | FAIL |', table)
+        self.assertIn('baseline cached @' + 'a'*40, table)
+
+    def test_partial_save_survives_crash_and_retries_only_missing_row(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = []
+            def execute(argv):
+                row = argv[argv.index('--row') + 1]
+                calls.append(row)
+                if row == list(cache.ROWS)[-1]:
+                    return type('Result', (), {'returncode': 1})()
+                item = next(item for item in self.rows() if item['row'] == row)
+                (Path(argv[-1]) / 'result.json').write_text(json.dumps([item]))
+                return type('Result', (), {'returncode': 0})()
+            results, clean = cache.baseline('a'*40, root/'empty', root/'first', execute)
+            self.assertFalse(clean)
+            self.assertEqual(results[-1]['error'], 'no result')
+            self.assertEqual(len(list((root/'first'/'cache').glob('*/result.json'))), 4)
+            calls.clear()
+            cache.baseline('a'*40, root/'first'/'cache', root/'second', execute)
+            self.assertEqual(calls, [list(cache.ROWS)[-1]])
+            self.assertTrue(all(item['baseline_receipt'] == 'baseline measured @' + 'a'*40 for item in results))
 
     def test_failed_or_deadline_base_is_rerun_and_cannot_fail_clean_pr(self):
         for changes in ({'error': 'deadline expired', 'status': 'FAIL', 'value': 1},
