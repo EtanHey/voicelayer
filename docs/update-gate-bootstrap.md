@@ -4,6 +4,26 @@ Update-button plan §3 / §5 slice 8. This opt-in exception establishes a contro
 interval for the first protected install over a legacy build with no gate. It
 does not upgrade the safety of arbitrary old Homebrew commands.
 
+G4d separates cask postflight availability from gated updating. The explicit
+`setup --cask-postflight` marker selects it; no-flag setup with an installed
+canonical bundle retains compatibility with the current cask. An absent gate
+uses the exclusive G2/G1 initializer under the shared mutex and remains OPEN;
+an existing OPEN gate is unchanged. A closed gate with a live controller writes
+canonical plists only. The updater carries its exact operation through brew's
+filtered environment as `HOMEBREW_VOICELAYER_INSTALL_OPERATION`; setup validates
+it before trusting it. The owning re-exec alone restores after all mutations.
+
+Faults never initialize, reopen or reap gate evidence. They print
+`RECOVERY_REQUIRED` and restore availability, returning zero after verifying
+VoiceBar runs from the final canonical bundle so brew keeps it. Failed canonical
+startup returns nonzero with plists retained. Nested manual setup never restores,
+even after validation failure. SIGINT/SIGTERM/SIGHUP/SIGQUIT unwind only the
+owned bootstrap mutex, with cleanup errors reported separately. Both installers
+and setup enforce isolated HOME and launchctl paths before actions. See
+[installer integration](update-gate-installers.md#cask-postflight-availability-g4d)
+for the contract and isolated script-chain proof. Real installed qualification
+and tap hook ordering remain separate.
+
 From the **qualified 2.2.59-converse.1 candidate checkout on the M4**, with the
 matching release offered by the approved tap, in a local terminal:
 
