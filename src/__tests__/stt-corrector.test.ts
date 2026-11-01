@@ -98,8 +98,9 @@ describe("stt-corrector", () => {
     expect(result.changed).toBe(false);
   });
 
-  it("suppresses non-speech hallucinations in rules mode", () => {
-    expect(correctTranscriptionText("thank you", { mode: "rules" }).text).toBe("");
+  it("preserves short speech and rejects structured non-speech in rules mode", () => {
+    expect(correctTranscriptionText("thank you", { mode: "rules" }).text).toBe("Thank you");
+    expect(correctTranscriptionText("[BLANK_AUDIO]", { mode: "rules" }).text).toBe("");
   });
 
   it("preserves every Phase-0 should_change:false tripwire", () => {

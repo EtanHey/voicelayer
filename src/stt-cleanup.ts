@@ -1,3 +1,4 @@
+import { dictionarySurfacePattern, isWholeDictionarySurface } from "./stt-dictionary-matching";
 import { requireIsolatedOverride } from "./test-isolation";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
@@ -159,8 +160,6 @@ const CLEANUP_ONLY_ALIAS_VALUES = new Set([
   "RRF",
   ...canonicalTermsFromEntries(BUILTIN_STT_DICTIONARY_ENTRIES),
 ]);
-const DUPLICATED_FUNCTION_WORD_PATTERN =
-  /\b(the|an|and|to|of|a|i)\b(?:\s+\1\b)+/giu;
 
 function buildCanonicalTermPatterns(
   aliases: Record<string, string>,
@@ -168,13 +167,9 @@ function buildCanonicalTermPatterns(
   return [...new Set(Object.values(aliases))]
     .filter((term) => !POST_DECODE_ONLY_CANONICAL_TERMS.has(term))
     .map((term) => {
-      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return [
         term.toLowerCase(),
-        new RegExp(
-          `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
-          "giu",
-        ),
+        dictionarySurfacePattern(term),
         term,
       ] as [string, RegExp, string];
     });
@@ -656,12 +651,14 @@ export function cleanupTranscriptionText(
     hebrewLatinAliasSources: BUILTIN_HEBREW_LATIN_ALIAS_SOURCES,
     shouldApplyAlias: shouldApplySTTAlias,
     aggressiveFillerRemoval: isAggressiveFillerRemovalEnabled(env),
+    // Pure acoustic fillers retain the documented default removal policy.
+    // Speech repetitions, stutters and retractions remain preserved.
   };
   const cleaned = applyRules(trimmed, rulesConfig);
   const oneNormalized = normalizeConversationalOne(cleaned);
-  const deduplicated = collapseDuplicatedFunctionWords(oneNormalized);
+  // A text-only duplicate can be a real restart ("I I", "the the").
   const normalized = normalizeCanonicalTerms(
-    deduplicated,
+    oneNormalized,
     buildCanonicalTermPatterns({
       ...aliases,
       ...Object.fromEntries((snapshot?.entries ?? []).filter((entry) => entry.cleanup_spelling).map((entry) => [entry.canonical, entry.cleanup_spelling!])),
@@ -710,12 +707,6 @@ function normalizeAgentSpawnFlags(text: string): string {
   );
 }
 
-function collapseDuplicatedFunctionWords(text: string): string {
-  return text.replace(
-    DUPLICATED_FUNCTION_WORD_PATTERN,
-    (_match, word: string) => word,
-  );
-}
 
 function normalizeConversationalOne(text: string): string {
   return text
@@ -798,35 +789,7 @@ function isMeaningfulTranscription(text: string): boolean {
     return true;
   }
 
-  const lower = trimmed.toLowerCase();
-  const normalizedWords = lower
-    .replace(/^[\s"'`]+|[\s"'`]+$/g, "")
-    .replace(/[.!?]+$/g, "")
-    .trim();
-  const speechWords = lower
-    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const exactNoisePhrases = new Set([
-    "blank audio",
-    "music playing",
-    "sad music",
-    "subtitle by rev com",
-    "subtitle by rev.com",
-    "subtitle by rev dot com",
-    "thank you",
-    "thanks",
-    "thanks for watching",
-    "oh my god",
-  ]);
-
-  if (
-    exactNoisePhrases.has(normalizedWords) ||
-    exactNoisePhrases.has(speechWords)
-  ) {
-    return false;
-  }
+  // An unbracketed phrase can be real speech; text is not silence evidence.
 
   const nonSpeechCue =
     "\\s*(?:blank[_\\s-]*audio|music|music playing|sad music|applause|laughter|laughs|noise|silence|inaudible)\\s*";
@@ -857,7 +820,10 @@ function normalizeCanonicalTerms(
   const lowerResult = result.toLowerCase();
   for (const [termLower, pattern, term] of patterns) {
     if (!lowerResult.includes(termLower)) continue;
-    result = result.replace(pattern, term);
+    result = result.replace(pattern, (match: string, offset: number) =>
+      isWholeDictionarySurface(result, offset, offset + match.length, term)
+        ? term : match);
+
   }
   return result;
 }
