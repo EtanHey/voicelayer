@@ -129,7 +129,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
   }
   const controllerIdentity = installerProcessIdentity(process.pid);
   if (!controllerIdentity) throw Error("UNKNOWN: controller identity unavailable");
-  const current = await retryContention(() => readUpdateGateFile(), state => state.kind === "UNKNOWN");
+  const current = await retryContention(() => readInstallerGateState(), () => false);
   if (current.kind !== "OPEN") throw Error("UNKNOWN: gate unavailable or another update owns it");
   // A foreign receipt is not evidence for this lease. Refuse before REQUEST;
   // recovery/finalization must remove only their own matching controller.
