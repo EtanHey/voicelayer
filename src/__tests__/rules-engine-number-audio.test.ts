@@ -7,10 +7,12 @@ import { applyRules } from "../rules-engine";
 import { privateCorpusPaths } from "./setup/private-specimens";
 
 // Private inputs are read-only; a path override never authorizes access.
-const corpus = privateCorpusPaths("number-audio");
+const liveEngineOptIn = process.env.QA_VOICE_GOLDEN_LIVE === "1";
+const corpus = liveEngineOptIn ? privateCorpusPaths("number-audio") : null;
 const manifestPath = corpus?.numbersManifest ?? "";
 const available = Boolean(corpus) && existsSync(manifestPath);
 const corpusTest = corpus && (available || process.env.VOICELAYER_NUMBERS_CORPUS_PATH) ? test : test.skip;
+if (!liveEngineOptIn) console.error("[number-audio] SKIPPING real STT; set QA_VOICE_GOLDEN_LIVE=1 (VOICELAYER_TEST_REAL_ARCHIVE=1 also required).");
 if (corpus && !available && !process.env.VOICELAYER_NUMBERS_CORPUS_PATH) {
   console.error("[number-audio] SKIPPING: private local corpus manifest absent.");
 }

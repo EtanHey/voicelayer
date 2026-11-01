@@ -43,16 +43,17 @@ import {
 const N_RUNS = 5;
 const SMART_CHUNK_ENV = "VOICELAYER_STT_SMART_CHUNKS";
 
-const optedIn = process.env.VOICELAYER_SMART_CHUNK_GOLDEN === "1";
-const golden = loadSmartChunkGolden();
-const modelInfo = new WhisperCppBackend().getModelInfo();
-const hasWhisper = Boolean(modelInfo.binary && modelInfo.model);
+const liveEngineOptIn = process.env.QA_VOICE_GOLDEN_LIVE === "1";
+const optedIn = liveEngineOptIn && process.env.VOICELAYER_SMART_CHUNK_GOLDEN === "1";
+const golden = optedIn ? loadSmartChunkGolden() : null;
+const modelInfo = optedIn ? new WhisperCppBackend().getModelInfo() : null;
+const hasWhisper = Boolean(modelInfo?.binary && modelInfo?.model);
 const ready = optedIn && Boolean(golden) && hasWhisper;
 
 if (!ready) {
   console.error(
     `[smart-chunk-golden] SKIPPING — ${[
-      optedIn ? null : "VOICELAYER_SMART_CHUNK_GOLDEN=1 not set",
+      optedIn ? null : "QA_VOICE_GOLDEN_LIVE=1 and VOICELAYER_SMART_CHUNK_GOLDEN=1 not set",
       golden ? null : `no fixture at ${GOLDEN_FIXTURE_PATH}`,
       hasWhisper ? null : "no whisper binary/model",
     ]
