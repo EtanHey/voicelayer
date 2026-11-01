@@ -285,7 +285,7 @@ function preferOverlapWord(
   // bases may share their overlap occurrence, but must keep its cutoff marker.
   if (isMarkedCutoff(current)) return current;
   if (isMarkedCutoff(next)) {
-    return normalizeChunkWordForOverlap(current) === normalizeChunkWordForOverlap(next)
+    return compactSeamKey(current) === compactSeamKey(next)
       ? next : current;
   }
   const punctuated = preferPunctuatedOverlapWord(current, next, nextContinues);
