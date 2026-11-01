@@ -61,26 +61,48 @@ enum VoiceBarReleaseVersion {
     }
 }
 
-/// Reads `version "X.Y.Z"` out of the tap's `Casks/voicebar.rb`.
+/// Reads `version "X.Y.Z"` out of the tap's `Casks/voicebar.rb`. This is not a Ruby parser, so it accepts one
+/// exact shape and fails closed on anything else: a false "available" for a newer build is worse than
+/// "Could not check for updates".
 public enum VoiceBarCaskVersion {
-    /// The cask's first `version` stanza, or nil when the text is not the voicebar cask or the version is not
-    /// a plain dotted number (an HTML error page, a truncated body, a renamed cask).
+    /// Words that make a `version` line conditional or ambiguous (`on_arm`, `on_intel` and every other `on_`
+    /// block are matched by prefix).
+    private static let unsupportedWords: Set<String> = ["if", "unless", "elsif", "else", "case", "when"]
+
+    /// The version, or nil unless all of these hold: the first code line is exactly `cask "voicebar" do`, the
+    /// last is `end`, there is no other `cask` line, no `=begin`/`=end` block comment, no conditional or `on_`
+    /// block, and exactly one line (heredoc bodies included) starts with `version`, which must read
+    /// `version "X.Y.Z"` with at most a trailing comment. `#` comment lines are skipped.
     public static func parse(_ caskText: String) -> String? {
-        let lines = caskText.split(whereSeparator: \.isNewline).map {
-            $0.trimmingCharacters(in: .whitespaces)
+        let code = caskText.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        guard code.first == "cask \"voicebar\" do", code.last == "end",
+              code.filter({ firstWord($0) == "cask" }).count == 1 else { return nil }
+        for line in code {
+            if line.hasPrefix("=begin") || line.hasPrefix("=end") { return nil }
+            let word = firstWord(line)
+            if unsupportedWords.contains(word) || word.hasPrefix("on_") { return nil }
         }
-        guard lines.contains(where: { $0.hasPrefix("cask \"voicebar\"") }) else { return nil }
-        for line in lines where line.hasPrefix("version") {
-            let rest = line.dropFirst("version".count)
-            guard rest.first == " " || rest.first == "\t" else { continue }
-            let value = rest.trimmingCharacters(in: .whitespaces)
-            guard value.hasPrefix("\""), let close = value.dropFirst().firstIndex(of: "\"") else { return nil }
-            let version = String(value[value.index(after: value.startIndex)..<close])
-            let trailing = value[value.index(after: close)...].trimmingCharacters(in: .whitespaces)
-            guard trailing.isEmpty || trailing.hasPrefix("#") else { return nil }
-            return VoiceBarReleaseVersion.components(version) == nil ? nil : version
-        }
-        return nil
+        let versionLines = code.filter { firstWord($0) == "version" }
+        guard versionLines.count == 1 else { return nil }
+        return quotedVersion(versionLines[0])
+    }
+
+    /// The leading Ruby identifier: `version "2.2.58"` gives `version`, `on_arm do` gives `on_arm`.
+    private static func firstWord(_ line: String) -> String {
+        String(line.prefix { $0.isLetter || $0.isNumber || $0 == "_" })
+    }
+
+    private static func quotedVersion(_ line: String) -> String? {
+        let rest = line.dropFirst("version".count)
+        guard rest.first == " " || rest.first == "\t" else { return nil }
+        let value = rest.trimmingCharacters(in: .whitespaces)
+        guard value.hasPrefix("\""), let close = value.dropFirst().firstIndex(of: "\"") else { return nil }
+        let version = String(value[value.index(after: value.startIndex)..<close])
+        let trailing = value[value.index(after: close)...].trimmingCharacters(in: .whitespaces)
+        guard trailing.isEmpty || trailing.hasPrefix("#") else { return nil }
+        return VoiceBarReleaseVersion.components(version) == nil ? nil : version
     }
 }
 

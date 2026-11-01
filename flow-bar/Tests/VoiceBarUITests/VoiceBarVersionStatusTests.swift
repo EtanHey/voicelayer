@@ -40,6 +40,95 @@ final class VoiceBarVersionStatusTests: XCTestCase {
         XCTAssertNil(VoiceBarCaskVersion.parse("cask \"voicebar\" do\n  version \"\"\nend"))
     }
 
+    /// The tap's real voicebar.rb (2026-11-01): nested do/end blocks, a heredoc and comments all parse.
+    private static let liveCask = """
+    # frozen_string_literal: true
+
+    cask "voicebar" do
+      version "2.2.58"
+      sha256 "c9123e11977229029d8602ca4d6c701ed6fc75871103741e34a0cf10d717262b"
+
+      url "https://github.com/EtanHey/voicelayer/releases/download/v#{version}/VoiceBar.zip"
+      name "VoiceBar"
+      desc "VoiceLayer menu-bar app and local voice daemon"
+      homepage "https://github.com/EtanHey/voicelayer"
+
+      depends_on macos: :sonoma
+      depends_on formula: "voicelayer"
+
+      app "VoiceBar.app"
+
+      postflight do
+        system_command "#{HOMEBREW_PREFIX}/bin/voicelayer",
+                       args:         ["setup"],
+                       print_stdout: true
+      end
+
+      uninstall launchctl: [
+                  "com.voicelayer.voicebar",
+                ],
+                quit:      "com.voicelayer.voicebar",
+                # `delete:` always shells out to `sudo rm`.
+                trash:     [
+                  "~/Library/LaunchAgents/com.voicelayer.voicebar.plist",
+                ]
+
+      caveats <<~EOS
+        If setup did not complete during cask install, run:
+          voicelayer setup
+      EOS
+    end
+    """
+
+    func testParsesTheLiveCaskShape() {
+        XCTAssertEqual(VoiceBarCaskVersion.parse(Self.liveCask), "2.2.58")
+    }
+
+    /// Codex review of #658, round 1: each of these once parsed as 2.2.60 and told a 2.2.59 build that
+    /// "VoiceBar 2.2.60 is available". Anything but one unambiguous version line must fail closed.
+    func testAmbiguousCaskTextFailsClosed() {
+        let cases: [(String, String)] = [
+            ("duplicate-version", "cask \"voicebar\" do\n  version \"2.2.60\"\n  version \"2.2.58\"\nend"),
+            ("later-latest", "cask \"voicebar\" do\n  version \"2.2.60\"\n  version :latest\nend"),
+            ("missing-end", "cask \"voicebar\" do\n  version \"2.2.60\""),
+            ("fake-cask-prefix", "cask \"voicebar\"_not_a_cask\nversion \"2.2.60\""),
+            ("block-comment", "cask \"voicebar\" do\n=begin\n  version \"2.2.60\"\n=end\n  version \"2.2.58\"\nend"),
+            ("on-arm", "cask \"voicebar\" do\n  on_arm do\n    version \"2.2.60\"\n  end\nend"),
+            ("on-intel", "cask \"voicebar\" do\n  version \"2.2.58\"\n  on_intel do\n    url \"x\"\n  end\nend"),
+            ("if-block", "cask \"voicebar\" do\n  if MacOS.version >= :sonoma\n    version \"2.2.60\"\n  end\nend"),
+            ("if-modifier", "cask \"voicebar\" do\n  version \"2.2.60\" if Hardware::CPU.arm?\nend"),
+            ("unless-block", "cask \"voicebar\" do\n  unless false\n    version \"2.2.60\"\n  end\nend"),
+            ("version-in-heredoc", "cask \"voicebar\" do\n  version \"2.2.58\"\n  caveats <<~EOS\n  version \"2.2.60\"\n  EOS\nend"),
+            ("second-cask", "cask \"voicebar\" do\n  version \"2.2.58\"\nend\ncask \"voicebar\" do\n  version \"2.2.60\"\nend"),
+            ("code-before-cask", "version \"2.2.60\"\ncask \"voicebar\" do\n  version \"2.2.58\"\nend"),
+            ("no-version", "cask \"voicebar\" do\n  name \"VoiceBar\"\nend"),
+        ]
+        for (name, body) in cases {
+            XCTAssertNil(VoiceBarCaskVersion.parse(body), name)
+            XCTAssertEqual(
+                VoiceBarVersionStatus.resolve(installed: "2.2.59", latest: VoiceBarCaskVersion.parse(body)),
+                .couldNotCheck, name
+            )
+        }
+    }
+
+    func testCommentedOutVersionLineIsIgnored() {
+        let body = "cask \"voicebar\" do\n  # version \"2.2.60\"\n  version \"2.2.58\"\nend"
+        XCTAssertEqual(VoiceBarCaskVersion.parse(body), "2.2.58")
+    }
+
+    func testAmbiguousCaskIsNeverCached() async {
+        let fetches = Counter()
+        let check = VoiceBarVersionCheck(fetch: {
+            fetches.increment()
+            return "cask \"voicebar\" do\n  version \"2.2.60\"\n  version \"2.2.58\"\nend"
+        })
+        let first = await check.status(installed: "2.2.59")
+        XCTAssertEqual(first, .couldNotCheck)
+        _ = await check.status(installed: "2.2.59")
+        XCTAssertEqual(fetches.value, 2, "an ambiguous body is a failure, so the next open fetches again")
+    }
+
     // MARK: - Compare
 
     func testEqualIsLatest() {
