@@ -9,7 +9,7 @@ import type { UpdateGateLease } from "../update-gate";
 
 const installerPath = fileURLToPath(new URL("../update-gate-installer.ts", import.meta.url));
 const storagePath = fileURLToPath(new URL("../update-gate-storage.ts", import.meta.url));
-type Mode = "collision" | "malformed" | "diagnostic";
+type Mode = "collision" | "malformed" | "diagnostic" | "exhaustion";
 type Event = { event: string; kind?: string; error?: string; gate?: string; lock?: boolean; value?: boolean };
 
 // This creates an instrumented *copy*, never rewrites the loaded production module
@@ -20,7 +20,8 @@ function instrument(source: string, key: string): string {
   const original = source.replaceAll(anchors, JSON.stringify(resolve(process.cwd(), ".test-tmp")))
     .replace(/from "(\.\/[^"\n]+)"/g, (_, path: string) => `from ${JSON.stringify(resolve(dirname(installerPath), path))}`)
     .replace('import("./update-gate-bootstrap")', `import(${JSON.stringify(resolve(dirname(installerPath), "update-gate-bootstrap"))})`)
-    .replace("acknowledgeVoiceDrain, updateVoiceGate", "acknowledgeVoiceDrain as originalAck, updateVoiceGate")
+    .replace("acknowledgeVoiceDrain, updateVoiceGate", "acknowledgeVoiceDrain as originalAck, updateVoiceGate as originalUpdate")
+    .replace("retryInstallerContention as retryContention", "retryInstallerContention as originalRetry")
     .replace("readInstallerGateState, readUpdateGateFile }", "readInstallerGateState as originalAtomic, readUpdateGateFile as originalObserve }")
     .replace("installerGateContended as contended", "installerGateContended as originalContended");
   const probeImport = source.includes("installerGateContended as contended") ? ""
@@ -31,6 +32,25 @@ const d = (globalThis as unknown as Record<string, {
   mode: string; armed: boolean; injected: boolean; request: string; ready: string; release: string;
   events: Array<{event: string; kind?: string; error?: string; gate?: string; lock?: boolean; value?: boolean}>;
 }>)[${JSON.stringify(key)}]!;
+function updateVoiceGate(...args: Parameters<typeof originalUpdate>) {
+  const result = originalUpdate(...args);
+  if (result.kind === "APPLIED") d.events.push({event: "applied-transition", kind: result.state.kind});
+  return result;
+}
+async function retryContention<T>(read: () => T, retry: (result: T) => boolean): Promise<T> {
+  try { return await originalRetry(read, retry); }
+  catch (error) {
+    if (d.mode === "exhaustion" && d.armed && error instanceof Error && error.message === "UPDATE_GATE_LOCKED") {
+      // Release only AFTER the actual helper has exhausted its entire budget.
+      // Keeping cleanup possible lets the caller preserve admission and refuse.
+      d.events.push({event: "budget-exhausted", error: String(error),
+        lock: testExists(updateGateFilePath()+".lock"),
+        gate: JSON.parse(readFileSync(updateGateFilePath(), "utf8")).kind});
+      writeFileSync(d.release, "release");
+    }
+    throw error;
+  }
+}
 function acknowledgeVoiceDrain(...args: Parameters<typeof originalAck>) {
   const ack = originalAck(...args);
   if (!ack && !d.injected) { d.armed = true; d.events.push({event: "actual-null-ack"}); }
@@ -41,7 +61,7 @@ function injectAfterNegativeProbe(value: boolean) {
   d.events.push({event: "actual-negative-probe", value});
   if (value) throw Error("fixture requires uncontended probe");
   d.injected = true;
-  if (d.mode === "collision") {
+  if (d.mode === "collision" || d.mode === "exhaustion") {
     writeFileSync(d.request, "acquire");
     const deadline = performance.now() + 2000;
     while (!testExists(d.ready)) {
@@ -102,6 +122,7 @@ async function scenario(mode: Mode) {
     VOICELAYER_UPDATE_TARGET_SHA: "a".repeat(40), VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_SUPERVISED_BOOTSTRAP: "" });
   let finish!: () => void;
   const work = withVoiceAdmission(() => new Promise<void>(done => { finish = done; }));
+  const admitted = readdirSync(gate + ".admissions");
   const holderSource = `import {existsSync,writeFileSync} from "node:fs";
     import {withUpdateGateLock} from ${JSON.stringify(storagePath)};
     const deadline=performance.now()+2000;
@@ -110,12 +131,12 @@ async function scenario(mode: Mode) {
     }
     withUpdateGateLock(()=>{
       writeFileSync(${JSON.stringify(d.ready)},JSON.stringify({pid:process.pid}));
-      const deadline=performance.now()+2000;
+      const deadline=performance.now()+${mode === "exhaustion" ? 5000 : 2000};
       while(!existsSync(${JSON.stringify(d.release)})) {
         if(performance.now()>deadline)throw Error("holder release timeout");Bun.sleepSync(1);
       }
     });`;
-  const holder = mode === "collision" ? Bun.spawn([process.execPath, "-e", holderSource],
+  const holder = mode === "collision" || mode === "exhaustion" ? Bun.spawn([process.execPath, "-e", holderSource],
     { env: process.env, stdout: "pipe", stderr: "pipe" }) : undefined;
   const holderOut = holder ? new Response(holder.stdout).text() : Promise.resolve("");
   const holderErr = holder ? new Response(holder.stderr).text() : Promise.resolve("");
@@ -157,14 +178,33 @@ async function scenario(mode: Mode) {
     expect(d.injected).toBe(true);
     expect(d.events.find(e => e.event === "actual-null-ack")).toBeDefined();
     expect(d.events.find(e => e.event === "actual-negative-probe")?.value).toBe(false);
-    if (mode === "collision") {
+    if (mode === "exhaustion") {
+      expect(String(error)).toBe("Error: UPDATE_GATE_LOCKED");
+      expect(result).toBeUndefined(); expect(refreshes).toBe(1); expect(quits).toBe(0);
+      expect(d.events.filter(e => e.event === "atomic-acquisition-failed")).toHaveLength(8);
+      expect(d.events.find(e => e.event === "budget-exhausted"))
+        .toMatchObject({ lock: true, gate: "DRAINING", error: "Error: UPDATE_GATE_LOCKED" });
+      expect(d.events.filter(e => e.event === "applied-transition" && e.kind === "COMMITTED")).toHaveLength(0);
+      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(gate + ".controller")).toBe(false);
+      expect(existsSync(gate + ".lock")).toBe(false);
+      expect(readInstallerGateState().kind).toBe("OPEN");
+      expect(admitted).toHaveLength(1);
+      expect(readdirSync(gate + ".admissions")).toEqual(admitted);
+      d.events.push({event: "exhaustion-refusal", error: String(error), kind: "OPEN"});
+      // Same fixture, real pending admission and caller: a later retry succeeds.
+      // The second refresh settles the work, rather than deleting its admission.
+      error = undefined;
+      result = await runGatedInstall([process.execPath, "-e", command], participant);
+    }
+    if (mode === "collision" || mode === "exhaustion") {
       expect(d.events.find(e => e.event === "holder-acquired")).toMatchObject({ lock: true, gate: "DRAINING" });
       // Both outcome and the failed real mkdir are required: green cannot skip.
       expect(String(error)).toBe("undefined");
       expect(result).toBe(0);
       expect(d.events.filter(e => e.event === "atomic-acquisition-failed").length).toBeGreaterThan(0);
       expect(d.events.filter(e => e.event === "atomic-acquisition-failed").every(e => e.error === "Error: UPDATE_GATE_LOCKED")).toBe(true);
-      expect(d.events.find(e => e.event === "atomic-read")?.kind).toBe("DRAINING");
+      if (mode === "collision") expect(d.events.find(e => e.event === "atomic-read")?.kind).toBe("DRAINING");
       expect(messages.some(m => m.includes("Waiting for update-gate lock"))).toBe(true);
       expect(refreshes).toBe(4); expect(quits).toBe(1);
       expect(readFileSync(marker, "utf8")).toBe("authorized");
@@ -200,5 +240,5 @@ async function scenario(mode: Mode) {
   }
 }
 
-for (const mode of ["collision", "malformed", "diagnostic"] as const)
+for (const mode of ["collision", "malformed", "diagnostic", "exhaustion"] as const)
   test(`drain readback: ${mode}`, () => scenario(mode), 30_000);
