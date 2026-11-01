@@ -1,8 +1,8 @@
 import { test, expect, spyOn } from "bun:test";
-import { readFileSync, existsSync, mkdirSync, writeFileSync, symlinkSync, mkdtempSync, rmSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, symlinkSync, mkdtempSync, rmSync, copyFileSync } from "node:fs";
+import { join, dirname, delimiter, basename } from "node:path";
 import { tmpdir } from "node:os";
-import { installSttSpawnGuard, trustedParentRunRoot } from "./setup/stt-spawn-guard";
+import { installSttSpawnGuard, trustedParentRunRoot, assertNoInstalledStt } from "./setup/stt-spawn-guard";
 import { testTmp } from "./setup/test-tmp";
 
 test("plain preload denies PATH and installed absolute STT with private callsite logs", async () => {
@@ -145,4 +145,28 @@ test("malformed inherited verification cache takes the full enforcement check", 
     spawn.mockRestore();
     keys.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; });
   }
+});
+
+test("non-darwin admission ignores verified inherited stubs but refuses real and tampered tools", () => {
+  const parentBin = process.env.PATH!.split(delimiter).find(path => basename(path) === "stt-disabled-bin")!;
+  const root = mkdtempSync(join(tmpdir(), "stt-child-roots-")), child = join(root, "child");
+  const lookalike = join(root, "stt-disabled-bin"); mkdirSync(child); mkdirSync(lookalike);
+  try {
+    expect(() => assertNoInstalledStt([parentBin], [child])).not.toThrow();
+    for (const tool of ["whisper-cli", "whisper-cpp", "whisper-server"]) copyFileSync(join(parentBin, tool), join(lookalike, tool));
+    expect(() => assertNoInstalledStt([lookalike], [child])).not.toThrow();
+    writeFileSync(join(lookalike, "whisper-server"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    expect(() => assertNoInstalledStt([lookalike], [child])).toThrow("installed Whisper");
+    writeFileSync(join(root, "whisper-cli"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    expect(() => assertNoInstalledStt([root], [child])).toThrow("installed Whisper");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const missing of [false, true]) test(`denial keeps its message and exit 78 when logging fails: missing=${missing}`, () => {
+  const denied = join(import.meta.dir, "setup/stt-denied.ts");
+  const code = `${missing ? "delete process.env.VOICELAYER_TEST_STT_STUB_LOG" : "process.env.VOICELAYER_TEST_STT_STUB_LOG=process.argv[1]"};await import(process.argv[2]);`;
+  const result = Bun.spawnSync([process.execPath, "-e", code, process.env.VOICELAYER_TEST_RUN_ROOT!, denied], { env: process.env });
+  expect(result.exitCode).toBe(78);
+  expect(result.stderr.toString()).toContain("STT_GUARD_LOG_UNAVAILABLE");
+  expect(result.stderr.toString()).toContain("STT_LIVE_OPT_IN_REQUIRED");
 });

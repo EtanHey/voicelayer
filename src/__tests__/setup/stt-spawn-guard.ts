@@ -1,5 +1,40 @@
 import { existsSync, lstatSync, mkdirSync, realpathSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, delimiter, join, resolve, sep } from "node:path";
+import { basename, delimiter, isAbsolute, join, resolve, sep } from "node:path";
+
+const STT_TOOLS = ["whisper-cli", "whisper-cpp", "whisper-server"] as const;
+const stubSource = (tool: string, executable: string, denied: string) =>
+  `#!${executable}\nprocess.env.VOICELAYER_TEST_STT_ENGINE = ${JSON.stringify(tool)};\nawait import(${JSON.stringify(denied)});\n`;
+
+function isGuardStubDirectory(dir: string): boolean {
+  if (basename(dir) !== "stt-disabled-bin") return false;
+  try {
+    const first = join(dir, STT_TOOLS[0]);
+    if (lstatSync(first).size > 16_384) return false;
+    const match = /^#!([^\n]+)\nprocess\.env\.VOICELAYER_TEST_STT_ENGINE = "whisper-cli";\nawait import\((.+)\);\n$/.exec(readFileSync(first, "utf8"));
+    if (!match || !isAbsolute(match[1]!) || realpathSync(match[1]!) !== realpathSync(process.execPath)) return false;
+    const denied: unknown = JSON.parse(match[2]!);
+    if (typeof denied !== "string" || !isAbsolute(denied) || lstatSync(denied).size > 16_384 ||
+        !readFileSync(denied).equals(readFileSync(join(import.meta.dir, "stt-denied.ts")))) return false;
+    return STT_TOOLS.every(tool => {
+      const path = join(dir, tool), stat = lstatSync(path);
+      return stat.isFile() && !stat.isSymbolicLink() && stat.size <= 16_384 &&
+        readFileSync(path, "utf8") === stubSource(tool, match[1]!, denied);
+    });
+  } catch { return false; }
+}
+
+/** Non-darwin policy; inherited denial scripts are not installed engines. */
+export function assertNoInstalledStt(dirs: string[], roots: string[]): void {
+  for (const dir of dirs) {
+    if (isGuardStubDirectory(dir)) continue;
+    if (STT_TOOLS.some(tool => {
+      const path = join(dir, tool);
+      if (!existsSync(path)) return false;
+      try { const actual = realpathSync(path); return !roots.some(root => actual.startsWith(root + sep)); }
+      catch { return true; }
+    })) throw new Error("STT guard requires descendant enforcement on a host with installed Whisper; live tests need explicit opt-in");
+  }
+}
 
 export function trustedParentRunRoot(parentRoot?: string): string | undefined {
   try {
@@ -15,7 +50,7 @@ export function trustedParentRunRoot(parentRoot?: string): string | undefined {
  * physically inside an isolated test root remain usable by protocol tests. */
 export function installSttSpawnGuard(runRoot: string, parentRoot?: string) {
   if (process.env.QA_VOICE_GOLDEN_LIVE === "1") return null;
-  const tools = new Set(["whisper-cli", "whisper-cpp", "whisper-server"]);
+  const tools = new Set<string>(STT_TOOLS);
   const bin = join(runRoot, "stt-disabled-bin"); mkdirSync(bin, { mode: 0o700 });
   const denied = join(import.meta.dir, "stt-denied.ts");
   const inheritedLog = process.env.VOICELAYER_TEST_STT_STUB_LOG;
@@ -30,7 +65,7 @@ export function installSttSpawnGuard(runRoot: string, parentRoot?: string) {
   // A shell intermediary can expose argv but no env through KERN_PROCARGS2.
   // Keep hook cleanup identity visible from the first executable onward.
   for (const tool of tools) writeFileSync(join(bin, tool),
-    `#!${process.execPath}\nprocess.env.VOICELAYER_TEST_STT_ENGINE = ${JSON.stringify(tool)};\nawait import(${JSON.stringify(denied)});\n`, { mode: 0o700 });
+    stubSource(tool, process.execPath, denied), { mode: 0o700 });
   process.env.PATH = bin + delimiter + (process.env.PATH ?? "");
   process.env.QA_VOICE_WHISPER_MODEL = join(runRoot, "NO-LIVE-WHISPER-MODEL.bin");
   process.env.VOICELAYER_TEST_STT_STUB_LOG = log;
@@ -119,12 +154,7 @@ export function installSttSpawnGuard(runRoot: string, parentRoot?: string) {
     // This host cannot install the macOS descendant policy. Do not run an
     // unopted suite against an installed engine with only PATH interception.
     const dirs = [...(process.env.PATH ?? "").split(delimiter), "/usr/local/bin", "/usr/bin", "/opt/homebrew/bin"];
-    if (dirs.some(dir => [...tools].some(tool => existsSync(join(dir, tool)) && !fakeCandidate(join(dir, tool))))) {
-      throw new Error("STT guard requires descendant enforcement on a host with installed Whisper; live tests need explicit opt-in");
-    }
-  }
-  function fakeCandidate(path: string): boolean {
-    try { const actual = realpathSync(path); return roots.some(root => within(actual, root)); } catch { return false; }
+    assertNoInstalledStt(dirs, roots);
   }
   const fake = (path: string) => {
     try { const actual = realpathSync(path); return roots.some((root) => within(actual, root)) && !within(actual, bin); }

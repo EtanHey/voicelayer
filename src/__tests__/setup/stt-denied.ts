@@ -11,7 +11,11 @@ const record = {
     prompt: process.argv.includes("--prompt"), help: process.argv.includes("--help") },
 };
 const log = process.env.VOICELAYER_TEST_STT_STUB_LOG;
-if (!log) throw new Error("STT guard log missing");
-appendFileSync(log, JSON.stringify(record) + "\n", { mode: 0o600 });
+try {
+  if (!log) throw new Error("STT guard log missing");
+  appendFileSync(log, JSON.stringify(record) + "\n", { mode: 0o600 });
+} catch {
+  console.error("[STT_GUARD_LOG_UNAVAILABLE] Could not record the refusal.");
+}
 console.error(`[STT_LIVE_OPT_IN_REQUIRED] ${engine}: real STT disabled; use QA_VOICE_GOLDEN_LIVE=1 explicitly.`);
 process.exit(78);
