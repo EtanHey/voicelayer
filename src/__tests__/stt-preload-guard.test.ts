@@ -16,7 +16,7 @@ test("plain preload denies PATH and installed absolute STT with private callsite
     const [code, err] = await Promise.all([p.exited, new Response(p.stderr).text(), new Response(p.stdout).text()]);
     expect(code).toBe(78); expect(err).toContain("STT_LIVE_OPT_IN_REQUIRED");
   }
-  const rows = readFileSync(process.env.VOICELAYER_TEST_STT_STUB_LOG!, "utf8").trim().split("\n").map(JSON.parse);
+  const rows = readFileSync(process.env.VOICELAYER_TEST_STT_STUB_LOG!, "utf8").trim().split("\n").map(line => JSON.parse(line));
   expect(rows.some((x) => x.engine === "whisper-server" && x.callsite.includes("stt-preload-guard.test.ts"))).toBe(true);
 });
 
@@ -78,12 +78,13 @@ test("descendant fixture exception admits own nested roots but refuses unrelated
 for (const coldCompletes of [true, false]) test(`cold probe is bounded and reports raw failures: ${coldCompletes}`, () => {
   if (process.env.QA_VOICE_GOLDEN_LIVE === "1" || process.platform !== "darwin") return;
   const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "cold-probe-"));
-  const keys = ["PATH", "QA_VOICE_WHISPER_MODEL", "VOICELAYER_TEST_STT_STUB_LOG", "VOICELAYER_TEST_STT_GUARD_ROOT"];
+  const keys = ["PATH", "QA_VOICE_WHISPER_MODEL", "VOICELAYER_TEST_STT_STUB_LOG", "VOICELAYER_TEST_STT_GUARD_ROOT", "VOICELAYER_PARAKEET_PYTHON"];
   const saved = keys.map(k => process.env[k]);
+  delete process.env.VOICELAYER_PARAKEET_PYTHON;
   const timeouts: number[] = [];
   const spawn = spyOn(Bun, "spawnSync").mockImplementation(((command: string[], options: { timeout: number }) => {
     timeouts.push(options.timeout);
-    if (command[0].endsWith("voicelayer-test-stt-kernel-canary")) throw Object.assign(Error("denied fixture canary"), { code: "EPERM" });
+    if (command[0].endsWith("voicelayer-test-stt-kernel-canary-v3")) throw Object.assign(Error("denied fixture canary"), { code: "EPERM" });
     if (coldCompletes && options.timeout >= 10000) return { exitCode: 77, signalCode: null, success: false };
     throw Object.assign(Error("cold synthetic timeout"), { code: "ETIMEDOUT" });
   }) as never);
@@ -105,7 +106,7 @@ test("inherited verification cache skips neutral execution and still requires ke
   const cachedRoot = process.env.VOICELAYER_TEST_STT_GUARD_ROOT!;
   expect(cachedRoot).toBeTruthy();
   const root = mkdtempSync(join(parent, "cached-guard-"));
-  const keys = ["PATH", "QA_VOICE_WHISPER_MODEL", "VOICELAYER_TEST_STT_STUB_LOG", "VOICELAYER_TEST_STT_GUARD_ROOT"];
+  const keys = ["PATH", "QA_VOICE_WHISPER_MODEL", "VOICELAYER_TEST_STT_STUB_LOG", "VOICELAYER_TEST_STT_GUARD_ROOT", "VOICELAYER_PARAKEET_PYTHON"];
   const saved = keys.map(k => process.env[k]);
   const commands: string[][] = [];
   const original = Bun.spawnSync;
@@ -115,7 +116,7 @@ test("inherited verification cache skips neutral execution and still requires ke
   }) as never);
   try {
     installSttSpawnGuard(root, parent);
-    expect(commands).toEqual([[join(cachedRoot, "voicelayer-test-stt-kernel-canary")]]);
+    expect(commands).toEqual([[join(cachedRoot, "voicelayer-test-stt-kernel-canary-v3")]]);
     expect(process.env.VOICELAYER_TEST_STT_GUARD_ROOT).toBe(cachedRoot);
     expect(existsSync(join(root, "stt-neutral-exec-probe"))).toBe(false);
   } finally {
@@ -128,7 +129,7 @@ test("malformed inherited verification cache takes the full enforcement check", 
   if (process.env.QA_VOICE_GOLDEN_LIVE === "1" || process.platform !== "darwin") return;
   const parent = process.env.VOICELAYER_TEST_RUN_ROOT!;
   const root = mkdtempSync(join(parent, "uncached-guard-"));
-  const keys = ["PATH", "QA_VOICE_WHISPER_MODEL", "VOICELAYER_TEST_STT_STUB_LOG", "VOICELAYER_TEST_STT_GUARD_ROOT"];
+  const keys = ["PATH", "QA_VOICE_WHISPER_MODEL", "VOICELAYER_TEST_STT_STUB_LOG", "VOICELAYER_TEST_STT_GUARD_ROOT", "VOICELAYER_PARAKEET_PYTHON"];
   const saved = keys.map(k => process.env[k]);
   const commands: string[][] = [];
   const original = Bun.spawnSync;
@@ -139,7 +140,7 @@ test("malformed inherited verification cache takes the full enforcement check", 
   try {
     process.env.VOICELAYER_TEST_STT_GUARD_ROOT = "/opt/homebrew";
     installSttSpawnGuard(root, parent);
-    expect(commands).toEqual([[join(root, "stt-neutral-exec-probe")], [join(root, "voicelayer-test-stt-kernel-canary")]]);
+    expect(commands).toEqual([[join(root, "stt-neutral-exec-probe")], [join(root, "voicelayer-test-stt-kernel-canary-v3")]]);
     expect(process.env.VOICELAYER_TEST_STT_GUARD_ROOT).toBeUndefined();
   } finally {
     spawn.mockRestore();

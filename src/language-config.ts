@@ -19,6 +19,16 @@
 
 export type LanguageMode = "auto" | "hebrew" | "english";
 
+/** Normalize a caller's explicit/detected language without assuming English. */
+export function requestedLanguageCode(value?: string): string | null {
+  if (typeof value !== "string") return null;
+  const raw = value.toLowerCase().trim();
+  if (raw === "english") return "en";
+  if (raw === "hebrew") return "he";
+  if (raw === "auto") return "auto";
+  return /^[a-z]{2,3}(?:[-_][a-z0-9]{2,8})?$/i.test(raw) ? raw.split(/[-_]/)[0] : null;
+}
+
 export interface LanguageConfig {
   mode: LanguageMode;
   /** Whisper language code: "en", "he", or "auto" */

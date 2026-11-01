@@ -7,6 +7,11 @@ import ts from "typescript";
 // Exact lines AND occurrence budgets: adding a home path even in an allowed
 // file needs review. These exceptions are fixtures, isolation or path contracts.
 const ALLOWED: Record<string, Array<[string, number]>> = {
+  // Structural STT safety guard: cache entry/target metadata only, no corpus,
+  // audio or transcript reads. Exactly one cache-base resolver is authorized.
+  "src/__tests__/setup/stt-parakeet-policy.ts": [
+    ['const cache = env.XDG_CACHE_HOME || join(homedir(), ".cache");', 1],
+  ],
   // Synthetic protocol payloads, no archive access.
   "src/__tests__/ack-protocol.test.ts": [
     ["\"/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav\";", 2],
@@ -256,11 +261,12 @@ for (const file of ["tests/new.test.ts", "src/__tests__/qwen3.test.ts"]) {
 }
 
 test("allowlist budgets reject duplicate and modified exceptions", () => {
-  const file = "src/__tests__/preload-git-env.test.ts";
-  const line = ALLOWED[file][0][0];
-  expect(unexpected(file, line)).toEqual([]);
-  expect(unexpected(file, `${line}\n${line}`)).toEqual([line]);
-  expect(unexpected(file, `${line} Bun.env.HOME;`)).toHaveLength(1);
+  for (const file of ["src/__tests__/preload-git-env.test.ts", "src/__tests__/setup/stt-parakeet-policy.ts"]) {
+    const line = ALLOWED[file][0][0];
+    expect(unexpected(file, line)).toEqual([]);
+    expect(unexpected(file, `${line}\n${line}`)).toEqual([line]);
+    expect(unexpected(file, `${line} Bun.env.HOME;`)).toHaveLength(1);
+  }
 });
 
 

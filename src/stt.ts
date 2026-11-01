@@ -6,12 +6,13 @@
  *   2. Wispr Flow WebSocket API → cloud fallback (requires QA_VOICE_WISPR_KEY)
  *
  * Environment variables:
- *   QA_VOICE_STT_BACKEND   — "whisper-server" | "whisper" | "wispr" | "auto" (default: "auto")
+ *   QA_VOICE_STT_BACKEND   — "parakeet" (opt-in) | "whisper-server" | "whisper" | "wispr" | "auto"
  *   QA_VOICE_WHISPER_MODEL — path to GGML model file (auto-detected if not set)
  *   QA_VOICE_WISPR_KEY     — Wispr Flow API key (required for wispr backend)
  */
 
 import { processingEnv } from "./processing-settings";
+import { recognizerRecovery, recognizerRecoveryWhisper, recognizerPreference, beginRecognizerRequestAfterMaintenance, closeRecognizerOwner, joinRecognizerMaintenance, assertRecognizerCleanupConfirmed, finishRecognizerRequest, readRecognizerStatus, noteRecognizerEffective, noteRecognizerEngine } from "./recognizer-state";
 import { existsSync, readdirSync, appendFileSync, mkdirSync } from "fs";
 import { getStateDir, SESSION_TOKEN } from "./paths";
 import { chooseSeamVariant } from "./stt-seam-stride";
@@ -20,6 +21,7 @@ import { join } from "path";
 import { calculateRMS } from "./audio-utils";
 import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
 import {
+  shutdownWhisperServer,
   isServerAvailable,
   transcribeViaServer,
   type WhisperServerTranscribeOptions,
@@ -28,8 +30,11 @@ import {
   getInitialPrompt,
   getLanguageConfig,
   getLanguageModeFromEnv,
+  requestedLanguageCode,
 } from "./language-config";
 import { getSTTVocabularyPrompt } from "./stt-cleanup";
+import { ParakeetBackend } from "./parakeet-backend";
+import { parakeetOwnerShutdownSignal, shutdownParakeetEngines } from "./parakeet-server";
 import { createHash } from "crypto";
 import {
   chooseChunkEnd,
@@ -55,6 +60,12 @@ export interface STTResult extends TranscriptionResult {
   text: string;
   backend: string;
   durationMs: number;
+  /** Advisory only; automatic language is not classified English. */
+  languageWarning?: "auto-language-unverified" | "unsupported-language-advisory" | "language-detection-low-confidence";
+  /** Optional, request-scoped warning; never an engine-selection gate. */
+  languageEvidence?: import("./parakeet-lid").ParakeetLanguageEvidence;
+  /** Private alternate-attempt diagnostic when Parakeet retries via Whisper. */
+  fallbackEvidencePath?: string;
   /**
    * Whisper segment timestamps on the source recording's absolute timeline.
    * Present when the outro gate requests verbose responses. On the chunked path, overlap words keep the earlier chunk's
@@ -91,6 +102,8 @@ function residentBackendWithFallbackReason(
 }
 
 export interface STTTranscribeOptions extends TranscribeAudioOptions {
+  /** Cancel admission while an already admitted capture awaits maintenance. */
+  signal?: AbortSignal;
   promptOverride?: string;
 }
 
@@ -2139,10 +2152,20 @@ function getBrewPrefix(): string | null {
   return cachedBrewPrefix;
 }
 
+const ownedFallbackExits = new Set<Promise<number>>();
+
+export class WhisperCliError extends Error {
+  readonly outcome = "UNRESOLVED_FALLBACK_FAILED";
+  constructor(readonly attempt: { stdout: string; stderr: string; exitCode: number }) {
+    super(`whisper-cpp failed (exit ${attempt.exitCode})`); this.name = "WhisperCliError";
+  }
+}
+
 export class WhisperCppBackend implements STTBackend {
   name = "whisper.cpp";
   private binaryPath: string | null = null;
   private modelPath: string | null = null;
+  constructor(private readonly lifecycle: { signal?: AbortSignal; noVocabularyPrompt?: boolean } = {}) {}
 
   async isAvailable(): Promise<boolean> {
     this.binaryPath = findWhisperBinary();
@@ -2154,6 +2177,7 @@ export class WhisperCppBackend implements STTBackend {
     audioPath: string,
     options?: STTTranscribeOptions,
   ): Promise<STTResult> {
+    if (this.lifecycle.signal?.aborted) throw new Error("STT owner is shut down");
     if (!this.binaryPath) this.binaryPath = findWhisperBinary();
     if (!this.modelPath) this.modelPath = findModel();
 
@@ -2190,7 +2214,7 @@ export class WhisperCppBackend implements STTBackend {
     // Initial prompt primes vocabulary for dev terms in the configured language.
     const langMode = getLanguageModeFromEnv();
     const langConfig = getLanguageConfig(langMode);
-    const basePrompt = [getInitialPrompt(langMode), getSTTVocabularyPrompt()]
+    const basePrompt = this.lifecycle.noVocabularyPrompt || langConfig.mode === "auto" ? "" : [getInitialPrompt(langMode), getSTTVocabularyPrompt()]
       .filter(Boolean)
       .join(" ")
       .trim();
@@ -2198,9 +2222,16 @@ export class WhisperCppBackend implements STTBackend {
       ? `${basePrompt} ${options.promptOverride}`.trim()
       : basePrompt;
     const whisperArgs = [...langConfig.whisperArgs];
+    const requestedLanguage = requestedLanguageCode(options?.detectedLanguage ?? options?.language);
+    if (requestedLanguage) {
+      whisperArgs[whisperArgs.indexOf("-l") + 1] = requestedLanguage;
+    }
     const promptIndex = whisperArgs.indexOf("--prompt");
     if (promptIndex >= 0 && promptIndex + 1 < whisperArgs.length) {
-      whisperArgs[promptIndex + 1] = prompt;
+      if (prompt) whisperArgs[promptIndex + 1] = prompt;
+      else whisperArgs.splice(promptIndex, 2);
+    } else if (options?.promptOverride?.trim()) {
+      whisperArgs.push("--prompt", prompt);
     }
 
     const args = [
@@ -2218,7 +2249,13 @@ export class WhisperCppBackend implements STTBackend {
       stdout: "pipe",
       stderr: "pipe",
       env,
+      ...(this.lifecycle.signal ? { signal: this.lifecycle.signal, killSignal: "SIGKILL" } : {}),
     });
+    if (this.lifecycle.signal) {
+      const exited = proc.exited;
+      ownedFallbackExits.add(exited);
+      void exited.then(() => ownedFallbackExits.delete(exited), () => ownedFallbackExits.delete(exited));
+    }
 
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -2227,9 +2264,7 @@ export class WhisperCppBackend implements STTBackend {
     const exitCode = await proc.exited;
 
     if (exitCode !== 0) {
-      throw new Error(
-        `whisper-cpp failed (exit ${exitCode}): ${stderr.slice(0, 500)}`,
-      );
+      throw new WhisperCliError({ stdout, stderr, exitCode });
     }
 
     // whisper-cpp outputs transcription text, clean it up
@@ -2244,6 +2279,7 @@ export class WhisperCppBackend implements STTBackend {
       text,
       backend: this.name,
       durationMs: Date.now() - start,
+      attemptEvidence: { status: text.trim() ? "RETURNED" : "EMPTY_RESPONSE", processExitCode: exitCode, inputPath: audioPath, decodeCoverage: "UNKNOWN", tail: "UNKNOWN" },
     };
   }
 
@@ -2301,7 +2337,7 @@ export class WhisperServerBackend implements STTBackend {
     this.transcribeResident =
       deps.transcribeViaServer ??
       ((wavData, options) => transcribeViaServer(wavData, undefined, options));
-    this.fallbackBackend = deps.fallbackBackend ?? new WhisperCppBackend();
+    this.fallbackBackend = deps.fallbackBackend ?? new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal });
   }
 
   async isAvailable(): Promise<boolean> {
@@ -3286,7 +3322,8 @@ export function buildWhisperServerOptions(
     .trim();
 
   const result: WhisperServerTranscribeOptions = {};
-  result.language = languageConfig.whisperLang;
+  const requestedLanguage = requestedLanguageCode(options?.detectedLanguage ?? options?.language);
+  result.language = requestedLanguage ?? languageConfig.whisperLang;
   if (prompt) {
     result.prompt = prompt;
   }
@@ -3436,21 +3473,90 @@ export class WisprFlowBackend implements STTBackend {
 // --- Backend Detection ---
 
 let cachedBackend: STTBackend | null = null;
+const activeBackendRequests = new Set<Promise<STTResult>>();
 
 /**
  * Detect and return the best available STT backend.
  * Result is cached for the lifetime of the process.
  */
+function observeRecognizerBackend<T extends STTBackend>(backend: T): T {
+  const transcribe = backend.transcribe.bind(backend);
+  const observed: STTBackend["transcribe"] = async (path, options) => {
+    await beginRecognizerRequestAfterMaintenance(options?.signal);
+    try {
+      if (backend.name.startsWith("whisper")) {
+        if (readRecognizerStatus().engines.whisper.phase !== "ready") noteRecognizerEngine("whisper", { phase: "loading", error: null });
+        noteRecognizerEffective("whisper");
+      }
+      const result = await transcribe(path, options);
+      const finalProvider = result.backend.split("->").pop() ?? result.backend;
+      const reason = result.backend.match(/\+fallback-([^>]+)->/)?.[1] ?? (result.backend.includes("+vad-no-speech") ? "vad-no-speech" : null);
+      if (finalProvider.startsWith("parakeet")) noteRecognizerEffective("parakeet", reason);
+      else if (finalProvider.startsWith("whisper")) {
+        // A CLI transcript can follow an empty reply without unloading the
+        // resident server. Its producer lifecycle still owns that readiness.
+        const residentReady = readRecognizerStatus().engines.whisper.phase === "ready";
+        noteRecognizerEngine("whisper", { phase: finalProvider.startsWith("whisper-server") || residentReady ? "ready" : "sleeping", available: true, error: null });
+        noteRecognizerEffective("whisper", reason);
+      }
+      return result;
+    } catch (error) {
+      // A cloud failure says nothing about either local engine's lifecycle.
+      if (!backend.name.startsWith("wispr")) {
+        const engine = readRecognizerStatus().effective ?? (backend.name.startsWith("parakeet") ? "parakeet" : "whisper");
+        if (readRecognizerStatus().engines[engine].error !== "cleanup-unconfirmed") noteRecognizerEngine(engine, { phase: "error", error: "transcription-failed" });
+      }
+      throw error;
+    } finally { finishRecognizerRequest(); }
+  };
+  backend.transcribe = (path, options) => {
+    const request = observed(path, options);
+    activeBackendRequests.add(request);
+    void request.then(() => activeBackendRequests.delete(request), () => activeBackendRequests.delete(request));
+    return request;
+  };
+  return backend;
+}
+
 export async function getBackend(): Promise<STTBackend> {
   if (cachedBackend) return cachedBackend;
 
-  const preference = (process.env.QA_VOICE_STT_BACKEND || "auto").toLowerCase();
+  const saved = recognizerPreference();
+  const preference = saved.source === "settings" ? saved.recognizer === "parakeet" ? "parakeet" : "whisper-server" : (process.env.QA_VOICE_STT_BACKEND || "auto").toLowerCase();
+
+  const restored = recognizerRecovery();
+  if (restored?.engine === "parakeet") {
+    // A failed Whisper selection restored the previous owned P. Do not launch
+    // Whisper again beside it just because desired still records that click.
+    const backend = new ParakeetBackend({ fallbackBackend: new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal, noVocabularyPrompt: true }) });
+    const transcribe = backend.transcribe.bind(backend);
+    backend.transcribe = async (path, options) => {
+      const result = await transcribe(path, options);
+      return { ...result, backend: `whisper-server+fallback-whisper-startup-failed->${result.backend}`,
+        fallbackEvidencePath: result.fallbackEvidencePath ?? restored.evidencePath };
+    };
+    cachedBackend = observeRecognizerBackend(backend);
+    return cachedBackend;
+  }
+
+  if (preference === "parakeet" || preference === "parakeet-resident") {
+    // This router unloads P before fallback. A one-shot Whisper child then
+    // exits with the request instead of leaving a second model resident when
+    // the next user-selected P request arrives. The ordinary auto/server
+    // selections below keep their existing resident Whisper behavior.
+    const recovery = recognizerRecoveryWhisper();
+    const backend = new ParakeetBackend({ fallbackBackend: recovery ? new WhisperServerBackend() : new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal, noVocabularyPrompt: true }), recoveryWhisper: recognizerRecoveryWhisper });
+    // The selected P remains authoritative; fallback is for failed/incomplete
+    // responses, never an automatic language or prompt-based switch.
+    cachedBackend = observeRecognizerBackend(backend);
+    return cachedBackend;
+  }
 
   if (preference === "whisper") {
-    const backend = new WhisperCppBackend();
+    const backend = new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal });
     if (await backend.isAvailable()) {
-      cachedBackend = backend;
-      return backend;
+      cachedBackend = observeRecognizerBackend(backend);
+      return cachedBackend;
     }
     throw new Error(
       "whisper backend requested but not available. " +
@@ -3461,8 +3567,8 @@ export async function getBackend(): Promise<STTBackend> {
   if (preference === "whisper-server" || preference === "resident") {
     const backend = new WhisperServerBackend();
     if (await backend.isAvailable()) {
-      cachedBackend = backend;
-      return backend;
+      cachedBackend = observeRecognizerBackend(backend);
+      return cachedBackend;
     }
     throw new Error(
       "whisper-server backend requested but not available. " +
@@ -3473,8 +3579,8 @@ export async function getBackend(): Promise<STTBackend> {
   if (preference === "wispr") {
     const backend = new WisprFlowBackend();
     if (await backend.isAvailable()) {
-      cachedBackend = backend;
-      return backend;
+      cachedBackend = observeRecognizerBackend(backend);
+      return cachedBackend;
     }
     throw new Error("wispr backend requested but QA_VOICE_WISPR_KEY not set.");
   }
@@ -3484,25 +3590,25 @@ export async function getBackend(): Promise<STTBackend> {
   // if the sidecar dies during inference.
   const resident = new WhisperServerBackend();
   if (await resident.isAvailable()) {
-    cachedBackend = resident;
+    cachedBackend = observeRecognizerBackend(resident);
     console.error("[voicelayer] STT backend: whisper-server (resident)");
-    return resident;
+    return cachedBackend;
   }
 
-  const whisper = new WhisperCppBackend();
+  const whisper = new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal });
   if (await whisper.isAvailable()) {
-    cachedBackend = whisper;
+    cachedBackend = observeRecognizerBackend(whisper);
     console.error(
       `[voicelayer] STT backend: whisper.cpp (${whisper.getModelInfo().model})`,
     );
-    return whisper;
+    return cachedBackend;
   }
 
   const wispr = new WisprFlowBackend();
   if (await wispr.isAvailable()) {
-    cachedBackend = wispr;
+    cachedBackend = observeRecognizerBackend(wispr);
     console.error("[voicelayer] STT backend: Wispr Flow (cloud fallback)");
-    return wispr;
+    return cachedBackend;
   }
 
   throw new Error(
@@ -3522,6 +3628,22 @@ export async function getBackend(): Promise<STTBackend> {
 export function resetBackendCache(): void {
   cachedBackend = null;
   cachedBrewPrefix = undefined;
+}
+
+/** Controlled daemon shutdown confirms both P and opt-in one-shot W children. */
+export async function shutdownSTTBackends(): Promise<void> {
+  closeRecognizerOwner();
+  // Start every cancellation before awaiting any cleanup; join all owners even
+  // when one cleanup reports UNKNOWN. Daemon ownership must not escape a picker.
+  const p = shutdownParakeetEngines();
+  const w = shutdownWhisperServer();
+  const { joinRecognizerSelections } = await import("./recognizer-controller");
+  const results = await Promise.allSettled([p, w, joinRecognizerSelections(), joinRecognizerMaintenance(),
+    Promise.all([...ownedFallbackExits]), Promise.allSettled([...activeBackendRequests]),
+    cachedBackend instanceof ParakeetBackend ? cachedBackend.drain() : Promise.resolve()]);
+  const failed = results.find(result => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+  assertRecognizerCleanupConfirmed();
 }
 
 export class VoiceLayerSTTBackendSelector implements SpeechToTextBackendSelector {

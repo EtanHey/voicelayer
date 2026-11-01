@@ -319,3 +319,9 @@ export function releaseProcessLock(pidPath: string = getMcpPidFilePath()): void 
     // Best-effort cleanup
   }
 }
+
+/** Read-only ownership check for daemon-owned local model children. */
+export function isCurrentProcessLockOwner(pidPath: string = getMcpPidFilePath()): boolean {
+  if (testMode) assertTestPidPath(pidPath);
+  return readPidFile(pidPath)?.pid === process.pid;
+}
