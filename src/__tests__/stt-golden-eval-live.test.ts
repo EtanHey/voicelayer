@@ -25,7 +25,8 @@ import { assessGoldenTranscript } from "../stt-golden-eval";
 // punctuation, no fabricated/non-overlapping append, no large drop, and bounded
 // decode time. The detector RED→GREEN lives in stt-golden-eval.test.ts (CI-safe);
 // this harness is the live-outcome probe and SKIPS cleanly when whisper / `say`
-// / `sox` are unavailable (e.g. Linux CI). The 20-minute fixture is opt-in via
+// / `sox` are unavailable (e.g. Linux CI). All real inference also requires
+// QA_VOICE_GOLDEN_LIVE=1. The 20-minute fixture is opt-in via
 // QA_VOICE_GOLDEN_LONG=1 (heavy decode) — its skip is logged, never silent.
 
 const SAMPLE_RATE = 16000;
@@ -38,14 +39,17 @@ function whichOk(bin: string): boolean {
   }
 }
 
-const modelInfo = new WhisperCppBackend().getModelInfo();
-const hasWhisper = Boolean(modelInfo.binary && modelInfo.model);
-const hasSay = whichOk("say");
-const hasSox = whichOk("sox");
-const toolsReady = hasWhisper && hasSay && hasSox;
+const liveEngineOptIn = process.env.QA_VOICE_GOLDEN_LIVE === "1";
+const modelInfo = liveEngineOptIn ? new WhisperCppBackend().getModelInfo() : null;
+const hasWhisper = Boolean(modelInfo?.binary && modelInfo?.model);
+const hasSay = liveEngineOptIn && whichOk("say");
+const hasSox = liveEngineOptIn && whichOk("sox");
+const toolsReady = liveEngineOptIn && hasWhisper && hasSay && hasSox;
 const live = toolsReady ? test : test.skip;
 
-if (!toolsReady) {
+if (!liveEngineOptIn) {
+  console.error("[golden-eval] SKIPPING real STT; set QA_VOICE_GOLDEN_LIVE=1. Pure detector tests remain ordinary.");
+} else if (!toolsReady) {
   // eslint-disable-next-line no-console
   console.error(
     `[golden-eval] SKIPPING live golden-WAV suite — missing: ${[

@@ -15,9 +15,11 @@ import { finalizeTranscriptionText } from "../input";
 // test in stt-punctuation.test.ts holds the hard RED→GREEN.
 
 const FIXTURE = join(import.meta.dir, "fixtures", "golden-punctuation.wav");
-const modelInfo = new WhisperCppBackend().getModelInfo();
-const hasWhisper = Boolean(modelInfo.binary && modelInfo.model);
+const liveEngineOptIn = process.env.QA_VOICE_GOLDEN_LIVE === "1";
+const modelInfo = liveEngineOptIn ? new WhisperCppBackend().getModelInfo() : null;
+const hasWhisper = Boolean(modelInfo?.binary && modelInfo?.model);
 const maybe = hasWhisper ? test : test.skip;
+if (!liveEngineOptIn) console.error("[punctuation-golden] SKIPPING real STT; set QA_VOICE_GOLDEN_LIVE=1.");
 
 describe("golden-WAV STT punctuation", () => {
   test("the golden fixture exists", () => {
