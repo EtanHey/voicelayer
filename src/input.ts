@@ -25,7 +25,7 @@ import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission,
  */
 
 import { applyPauseParagraphs, MIN_PARAGRAPH_CHARS, pauseParagraphsEnabled } from "./stt-paragraphs";
-import { applyCoherentParagraphs, coherentParagraphsEnabled } from "./stt-coherent-paragraphs";
+import { applyCoherentParagraphFallback, coherentParagraphsEnabled } from "./stt-coherent-paragraphs";
 import { processingEnv } from "./processing-settings";
 import { physicalStopInput, STOP_CAPTURE_DRAIN_MS as PUSH_TO_END_STOP_CAPTURE_DRAIN_MS, STOP_POLL_MS } from "./physical-stop-input";
 import { createHash, randomBytes } from "crypto";
@@ -553,13 +553,18 @@ export async function finalizeTranscriptionResultForSurface(
   boundaryContext?: BoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
-  // Coherent paragraphs read only the text, so when enabled they own paragraphing.
-  const paragraphText = (text: string): string =>
-    coherentParagraphsEnabled(env)
-      ? applyCoherentParagraphs(text)
-      : pauseParagraphsEnabled(env) && boundaryContext
+  // A long unformatted final needs paragraphs regardless of polish state.
+  // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
+  const paragraphText = (text: string): string => {
+    // Code whitespace is content: abstain before either paragraph stage.
+    if (text.includes("`") || text.includes("~~~")) return text;
+    const paused = !coherentParagraphsEnabled(env) && pauseParagraphsEnabled(env) && boundaryContext
       ? applyPauseParagraphs(text, boundaryContext.segments, boundaryContext.pauses)
       : text;
+    const formatted = applyCoherentParagraphFallback(paused);
+    const strip = (value: string) => value.replace(/\s/gu, "");
+    return strip(formatted) === strip(text) ? formatted : text;
+  };
   if (!surface) return { text: paragraphText(cleanedText) };
   const polished = await polishTranscriptionText({
     rawText,

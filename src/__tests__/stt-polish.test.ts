@@ -10,6 +10,7 @@ import {
   getSTTPolishSocketTimeoutMs,
   getSTTPolishTimeoutMs,
   polishTranscriptionText,
+  type STTPolishResult,
 } from "../stt-polish";
 import * as sttPolish from "../stt-polish";
 import * as polishServerManager from "../stt-polish-server";
@@ -89,6 +90,24 @@ function warmPolishEndpointForTest() {
   return warmPolishEndpoint;
 }
 
+function expectConservedRejection(
+  result: STTPolishResult,
+  cleanedText: string,
+  candidate: string,
+) {
+  expect(result).toMatchObject({
+    status: "rejected",
+    polished: false,
+    polishedText: candidate,
+    error: "polish response changed lexical content or order",
+    reason: "polish response changed lexical content or order",
+  });
+  // Fallback may project punctuation and casing, but must keep every word.
+  // No number, article, code-join or other validator equivalences here.
+  const words = (text: string) => text.toLowerCase().match(/[\p{L}\p{N}'’]+/gu);
+  expect(words(result.text)).toEqual(words(cleanedText));
+}
+
 describe("stt-polish", () => {
   let server: MockPolishServer | null = null;
 
@@ -110,6 +129,34 @@ describe("stt-polish", () => {
       TEST_LOG = "";
     }
   });
+
+  it.each([undefined, "noop", "rejected"] as const)(
+    "accepts every positive example in the %s prompt through the real validator",
+    async (retryReason) => {
+      const prompt = sttPolish.buildPolishSystemPrompt(retryReason).split("Forbidden rewrite:")[0];
+      const examples = [...prompt.matchAll(/(?:^|\n)Input: ([^\n]+)\nOutput:[ \t]*([\s\S]*?)(?=\nInput: |$)/g)]
+        .map((match) => ({ cleanedText: match[1], candidate: match[2].trim() }));
+      expect(examples.length).toBeGreaterThan(15);
+      expect(examples.some(({ cleanedText }) => cleanedText.includes("fu…"))).toBe(true);
+      expect(examples.some(({ candidate }) => candidate.includes("um") && candidate.includes("uh"))).toBe(true);
+      server = createMockPolishServer((request) => ({
+        text: examples.find(({ cleanedText }) => cleanedText === request.cleaned_text)?.candidate,
+      }));
+      for (const { cleanedText, candidate } of examples) {
+        const result = await polishTranscriptionText({
+          rawText: cleanedText,
+          cleanedText,
+          env: {
+            QA_VOICE_STT_POLISH: "on",
+            QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+            QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+          },
+        });
+        expect(result).toMatchObject({ status: "applied", text: candidate, polishedText: candidate });
+      }
+      expect(server.received).toHaveLength(examples.length);
+    },
+  );
 
   it("scales long polish budgets while preserving short latency and explicit overrides", () => {
     expect(getSTTPolishTimeoutMs({}, "x".repeat(900))).toBe(18_000);
@@ -799,7 +846,7 @@ describe("stt-polish", () => {
     });
   });
 
-  it("allows standalone filler removal despite the content-loss threshold", async () => {
+  it("rejects standalone filler deletion even below the old content-loss threshold", async () => {
     const cleanedText = "Alpha um bravo charlie delta echo foxtrot golf.";
     const polishedText = "Alpha, bravo charlie delta echo foxtrot golf.";
     server = createMockPolishServer(() => ({ text: polishedText }));
@@ -814,12 +861,70 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      text: polishedText,
-      polishedText,
-      status: "applied",
-      changed: true,
+    expectConservedRejection(result, cleanedText, polishedText);
+  });
+
+  for (const legacyGuard of [undefined, "off", "on"] as const) {
+    it.each(["dictation", "voice_ask"] as const)(
+      `rejects exact 16-to-15 ordinary-word loss on %s (legacy guard: ${legacyGuard})`,
+      async (surface) => {
+        const cleanedText = "Please keep the amber lantern beside the garden gate while we inspect every saved recording today.";
+        const candidate = "Please keep the lantern beside the garden gate while we inspect every saved recording today.";
+        expect(cleanedText.split(/\s+/)).toHaveLength(16);
+        expect(candidate.split(/\s+/)).toHaveLength(15);
+        server = createMockPolishServer(() => ({ text: candidate }));
+        const result = await polishTranscriptionText({
+          rawText: cleanedText,
+          cleanedText,
+          surface,
+          env: {
+            QA_VOICE_STT_POLISH: "on",
+            QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+            QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+            VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD: legacyGuard,
+          },
+        });
+        expectConservedRejection(result, cleanedText, candidate);
+        expect(result.text).toBe(cleanedText);
+        expect(result.changed).toBe(false);
+      },
+    );
+  }
+
+  it.each(["dictation", "voice_ask"] as const)(
+    "accepts filler, article, repetition and paragraph formatting without lexical repair on %s",
+    async (surface) => {
+      const cleanedText = "so um choose a ultra detailed answer uh keep every every word and save the result";
+      const candidate = "So, um, choose a ultra detailed answer.\n\nUh, keep every every word, and save the result.";
+      server = createMockPolishServer(() => ({ text: candidate }));
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        surface,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      expect(result).toMatchObject({ status: "applied", text: candidate, polished: true, changed: true });
+    },
+  );
+
+  it("accepts prose dash formatting while leaving split words untouched", async () => {
+    const cleanedText = "Keep the sub-ag ents here - wait for the final result.";
+    const candidate = "Keep the sub-ag ents here — wait for the final result.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
     });
+    expect(result).toMatchObject({ status: "applied", text: candidate, changed: true });
   });
 
   it("rejects a deleted retraction even when its content loss is below two percent", async () => {
@@ -847,7 +952,7 @@ describe("stt-polish", () => {
     expect(result.error).toContain("deleted retraction");
   });
 
-  it("counts astral letters once when applying the retraction minimum", async () => {
+  it("rejects deletion of a short astral fragment below the old retraction minimum", async () => {
     const prefix = "Context remains stable. ".repeat(12);
     const cleanedText = `${prefix}𞤀𞤁- Continue with the plan.`;
     const polishedText = `${prefix}Continue with the plan.`;
@@ -863,12 +968,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      text: polishedText,
-      polishedText,
-      status: "applied",
-      changed: true,
-    });
+    expectConservedRejection(result, cleanedText, polishedText);
   });
 
   it("keeps astral letters aligned with the retraction window boundary", async () => {
@@ -896,7 +996,7 @@ describe("stt-polish", () => {
     });
   });
 
-  it("fails closed only when the retraction alignment exceeds its bound", async () => {
+  it("keeps the alignment bound refusal and rejects short-word loss below it", async () => {
     const fixture = (repetitions: number) => {
       const context = "context ".repeat(repetitions).trimEnd();
       return {
@@ -939,12 +1039,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(underBoundResult).toMatchObject({
-      text: underBound.polished,
-      polishedText: underBound.polished,
-      status: "applied",
-      changed: true,
-    });
+    expectConservedRejection(underBoundResult, underBound.cleaned, underBound.polished);
   });
 
   it("rejects polish candidates that remove code punctuation", async () => {
@@ -972,7 +1067,7 @@ describe("stt-polish", () => {
     expect(result.error).toContain("removed code punctuation");
   });
 
-  it("allows whitespace-delimited hyphens to become em dashes", async () => {
+  it("rejects an arbitrary split-word join even alongside valid prose dash formatting", async () => {
     const cleanedText =
       "As in if Astra is actually usable for that I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet wait until you get all the sub-agents back and then everything at once or atomically but don't put things where I won't see them once your sub-ag ents come back okay - Okay.";
     const polishedText =
@@ -989,12 +1084,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      text: polishedText,
-      polishedText,
-      status: "applied",
-      changed: true,
-    });
+    expectConservedRejection(result, cleanedText, polishedText);
   });
 
   it("still rejects removal of punctuation that belongs to code tokens", async () => {
@@ -1211,7 +1301,7 @@ describe("stt-polish", () => {
     });
   });
 
-  it("removes a filler while keeping a self-correction that Whisper punctuates", async () => {
+  it("rejects filler deletion even when the punctuated self-correction survives", async () => {
     server = createMockPolishServer(() => ({
       text: "Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
     }));
@@ -1228,14 +1318,10 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      text: "Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
-      status: "applied",
-      changed: true,
-    });
+    expectConservedRejection(result, cleanedText, "Okay, let's do Gemini Deep, well, no, Claude Deep Research.");
   });
 
-  it("allows grammatical article agreement in punctuation polish containing a correction cue", async () => {
+  it("rejects article replacement even alongside punctuation and numeric rendering", async () => {
     const polished =
       "I don't see, oh okay, now I see: codex lead austerity — should that one " +
       "be pushed to an ultra-ultra effort? Maybe also, I don't think you answered: " +
@@ -1257,22 +1343,18 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      text: polished,
-      status: "applied",
-      polished: true,
-    });
+    expectConservedRejection(result, cleanedText, polished);
   });
 
-  it("allows filler and punctuation polish that keeps the rejected phrase and its no/not scaffolding", async () => {
+  it("rejects filler deletion despite preserved no/not correction scaffolding", async () => {
+    const cleanedText = "Okay um let's do a Claude well no not Claude let's do a Gemini deep research.";
     server = createMockPolishServer(() => ({
       text: "Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.",
     }));
 
     const result = await polishTranscriptionText({
       rawText: "okay um let's do a Claude well no not Claude let's do a Gemini deep research",
-      cleanedText:
-        "Okay um let's do a Claude well no not Claude let's do a Gemini deep research.",
+      cleanedText,
       env: {
         QA_VOICE_STT_POLISH: "on",
         QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
@@ -1280,14 +1362,10 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      text: "Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.",
-      status: "applied",
-      changed: true,
-    });
+    expectConservedRejection(result, cleanedText, "Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.");
   });
 
-  it("allows punctuation polish for non-correction text that preserves existing negation meaning", async () => {
+  it("rejects replacing a supplied zero with no in non-correction text", async () => {
     const polished =
       "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's no numbering and there's no corrections. The .at file seems to be one of the only things that's fixed; other than punctuation, it seems to work now pretty reliably.";
     server = createMockPolishServer(() => ({ text: polished }));
@@ -1305,11 +1383,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      text: polished,
-      status: "applied",
-      changed: true,
-    });
+    expectConservedRejection(result, cleanedText, polished);
   });
 
   it("keeps self-corrections when polish returns the candidate unchanged", async () => {
@@ -1387,7 +1461,7 @@ describe("stt-polish", () => {
     expect(result.error).toContain("added ungrounded content");
   });
 
-  it("leaves the added-content guard off by default for the hotfix", async () => {
+  it("rejects an invented ordinary word with the legacy added-content flag unset", async () => {
     const cleanedText = "We can publish the release after the checks finish and the package is ready for review by the whole team.";
     const candidate = "We can publish the approved release after the checks finish and the package is ready for review by the whole team.";
     server = createMockPolishServer(() => ({ text: candidate }));
@@ -1402,8 +1476,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result.status).toBe("applied");
-    expect(result.text).toBe(candidate);
+    expectConservedRejection(result, cleanedText, candidate);
   });
 
   it("rejects an extra copy of a word already present in the source", async () => {
@@ -1494,7 +1567,7 @@ describe("stt-polish", () => {
     });
   }
 
-  it("accepts punctuated bare First and Second as a spoken list", async () => {
+  it("rejects a numbered list that deletes spoken First and Second", async () => {
     const cleanedText = "First, verify the recording state before release. Second, inspect the transcript before sending it.";
     const candidate = "1. Verify the recording state before release.\n2. Inspect the transcript before sending it.";
     server = createMockPolishServer(() => ({ text: candidate }));
@@ -1507,8 +1580,7 @@ describe("stt-polish", () => {
         QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
       },
     });
-    expect(result.status).toBe("applied");
-    expect(result.text).toBe(candidate);
+    expectConservedRejection(result, cleanedText, candidate);
   });
 
   it("does not treat unpunctuated bare ordinals as list heads", async () => {
@@ -1528,37 +1600,44 @@ describe("stt-polish", () => {
     expect(result.error).toContain("polish response invented a list item");
   });
 
-  for (const [name, cleanedText] of [
+  for (const [name, cleanedText, cues] of [
     [
       "first of all / second / third",
       "First of all, verify the recording state before sending it to the team. Second, inspect the transcript and keep every spoken word. Third, save the recording in the archive for later review.",
+      ["First of all,", "Second,", "Third,"],
     ],
     [
       "first of all / second of all / third",
       "First of all, verify the recording state before sending it to the team. Second of all, inspect the transcript and keep every spoken word. Third, save the recording in the archive for later review.",
+      ["First of all,", "Second of all,", "Third,"],
     ],
     [
       "firstly / secondly / finally",
       "Firstly, verify the recording state before sending it to the team. Secondly, inspect the transcript and keep every spoken word. Finally, save the recording in the archive for later review.",
+      ["Firstly,", "Secondly,", "Finally,"],
     ],
     [
       "comma-less first of all / second of all / third of all",
       "First of all verify the recording state before sending it to the team. Second of all inspect the transcript and keep every spoken word. Third of all save the recording in the archive for later review.",
+      ["First of all", "Second of all", "Third of all"],
     ],
     [
       "comma-less firstly / secondly / thirdly",
       "Firstly verify the recording state before sending it to the team. Secondly inspect the transcript and keep every spoken word. Thirdly save the recording in the archive for later review.",
+      ["Firstly", "Secondly", "Thirdly"],
     ],
     [
       "comma-less number 1 / number 2 / number 3",
       "Number 1 verify the recording state before sending it to the team. Number 2 inspect the transcript and keep every spoken word. Number 3 save the recording in the archive for later review.",
+      ["Number 1", "Number 2", "Number 3"],
     ],
     [
       "mixed comma-less first of all / secondly / and thirdly",
       "First of all verify the recording state before sending it to the team, secondly inspect the transcript and keep every spoken word, and thirdly save the recording in the archive for later review.",
+      ["First of all", "Secondly", "And thirdly"],
     ],
   ] as const) {
-    it(`accepts a genuine mixed-cue list: ${name}`, async () => {
+    it(`rejects deletion of spoken list cues: ${name}`, async () => {
       const candidate = [
         "1. Verify the recording state before sending it to the team.",
         "2. Inspect the transcript and keep every spoken word.",
@@ -1576,8 +1655,26 @@ describe("stt-polish", () => {
         },
       });
 
-      expect(result.status).toBe("applied");
-      expect(result.text).toBe(candidate);
+      expectConservedRejection(result, cleanedText, candidate);
+    });
+
+    it(`accepts a numbered list retaining every supplied cue and connective: ${name}`, async () => {
+      const candidate = [
+        `1. ${cues[0]} verify the recording state before sending it to the team.`,
+        `2. ${cues[1]} inspect the transcript and keep every spoken word.`,
+        `3. ${cues[2]} save the recording in the archive for later review.`,
+      ].join("\n");
+      server = createMockPolishServer(() => ({ text: candidate }));
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      expect(result).toMatchObject({ status: "applied", text: candidate, polished: true, changed: true });
     });
   }
 
@@ -1599,6 +1696,33 @@ describe("stt-polish", () => {
     expect(result.text).toBe(cleanedText);
   });
 
+  for (const fragment of ["f…", "fu…", "fu..."]) {
+    it.each(["dictation", "voice_ask"] as const)(
+      `preserves ${fragment} markers and multiplicity on %s through the integrated fragment guard`,
+      async (surface) => {
+        const cleanedText = `Keep ${fragment} then ${fragment} before the final saved recording.`;
+        let candidate = cleanedText.replace(fragment, fragment.replace(/[.…]/gu, ""));
+        server = createMockPolishServer(() => ({ text: candidate }));
+        const env = {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        };
+        const refused = await polishTranscriptionText({ rawText: cleanedText, cleanedText, surface, env });
+        expect(refused).toMatchObject({
+          status: "rejected",
+          error: "polish response deleted retraction content",
+          text: cleanedText,
+          polishedText: candidate,
+          changed: false,
+        });
+        candidate = `Keep ${fragment}, then ${fragment}, before the final saved recording.`;
+        const accepted = await polishTranscriptionText({ rawText: cleanedText, cleanedText, surface, env });
+        expect(accepted).toMatchObject({ status: "applied", text: candidate, changed: true });
+      },
+    );
+  }
+
   it("falls back to the complete retraction and fragment when polish drops them", async () => {
     const cleanedText = "I want the red — no, the blue one fu… before release.";
     server = createMockPolishServer(() => ({ text: "I want the blue one before release." }));
@@ -1617,7 +1741,7 @@ describe("stt-polish", () => {
     expect(result.text).toBe(cleanedText);
   });
 
-  it("allows explicit spoken-list restructuring into numbered markdown", async () => {
+  it("rejects spoken-list restructuring that deletes framing and ordinal cues", async () => {
     server = createMockPolishServer(() => ({
       text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
     }));
@@ -1634,11 +1758,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
-      status: "applied",
-      changed: true,
-    });
+    expectConservedRejection(result, cleanedText, "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.");
   });
 
   it("does not count deterministic upstream list markers as invented numbers", async () => {
@@ -1868,7 +1988,7 @@ describe("stt-polish", () => {
       expect(messages[0].content).toContain("dictation finalizer");
       expect(messages[0].content).toContain("well no");
       expect(messages[0].content).toContain("numbered markdown lists");
-      expect(messages[0].content).toContain("ANY ordinal sequence");
+      expect(messages[0].content).toContain("Preserve every spoken ordering cue and connective");
       expect(messages[0].content).toContain("Input: So first of all");
       expect(messages[0].content).toContain("third, I'm very frustrated");
       expect(messages[0].content).toContain("not Claude let's do a Gemini");
@@ -1888,14 +2008,18 @@ describe("stt-polish", () => {
     }
   });
 
-  it("retries rejected truncated HTTP polish for long punctuation-poor dictation", async () => {
+  it.each(["preserve conjunction", "delete conjunction"])("validates HTTP retry content independently of transport success (%s)", async (scenario) => {
+    const preserveConjunction = scenario === "preserve conjunction";
     const cleanedText =
       "please compare the settings on the first mac with the settings on this mac and make sure the permissions line up before you change anything i want the accessibility entries the microphone entries the automation entries and the full disk access entries checked carefully because the two machines should mostly match and the only real difference should be how the brain layer data is separated for that project also look for stale duplicates and tell me which entries are safe to remove after you verify the app versions";
     const polishedText =
-      "Please compare the settings on the first Mac with the settings on this Mac, and make sure the permissions line up before you change anything. I want the accessibility entries, the microphone entries, the automation entries, and the full disk access entries checked carefully, because the two machines should mostly match. The only real difference should be how the BrainLayer data is separated for that project. Also, look for stale duplicates and tell me which entries are safe to remove after you verify the app versions.";
+      "Please compare the settings on the first Mac with the settings on this Mac, and make sure the permissions line up before you change anything. I want the accessibility entries, the microphone entries, the automation entries, and the full disk access entries checked carefully, because the two machines should mostly match. And the only real difference should be how the BrainLayer data is separated for that project. Also, look for stale duplicates and tell me which entries are safe to remove after you verify the app versions.";
+    const retryCandidate = preserveConjunction
+      ? polishedText
+      : polishedText.replace("mostly match. And the only", "mostly match. The only");
     const responses = [
       "Please compare the settings on the first Mac with the settings on this Mac. I want the accessibility entries, the microphone entries, and",
-      polishedText,
+      retryCandidate,
     ];
     const requests: Record<string, unknown>[] = [];
     const server = Bun.serve({
@@ -1929,12 +2053,12 @@ describe("stt-polish", () => {
         },
       });
 
-      expect(result).toMatchObject({
-        text: polishedText,
-        status: "applied",
-        changed: true,
-        retried: true,
-      });
+      if (preserveConjunction) {
+        expect(result).toMatchObject({ text: retryCandidate, status: "applied", changed: true });
+      } else {
+        expectConservedRejection(result, cleanedText, retryCandidate);
+      }
+      expect(result.retried).toBe(true);
       expect(requests).toHaveLength(2);
       expect(requests[0].max_tokens).toBeGreaterThanOrEqual(512);
       expect(requests[1].max_tokens).toBeGreaterThanOrEqual(512);
@@ -2937,28 +3061,28 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
     );
   });
 
-  it("still allows filler removal and still restricts polish to formatting", () => {
+  it("keeps supplied fillers and repetition while restricting polish to safe formatting", () => {
     const text = prompt();
-    // Etan: "keep filtering" um/uh — fillers remain explicitly removable.
-    expect(text).toContain(
-      "Beyond standalone filler sounds (um, uh, er, mm), ordinal cues folded into numbered list items, and confirmed chunk-boundary duplicates, you may not remove words.",
-    );
+    expect(text).toContain("Keep all supplied fillers (um, uh, er, mm)");
+    expect(text).toContain("Never remove text-only duplicates");
     expect(text).toContain("Keep the English discourse word ah");
-    expect(text).toContain(
-      "preserve all input content and spoken order",
-    );
-    expect(text).toContain(
-      "required identifier and slash-command normalization plus punctuation, capitalization, spacing, and formatting",
-    );
+    expect(text).toContain("in its original order and multiplicity");
+    expect(text).toContain("Equivalent numeric spellings and existing safe code/slash-command renderings");
+    expect(text).toContain("Do not correct grammar, paraphrase, or guess recognition repairs");
+    expect(text).toContain("never join arbitrary split words");
+    expect(text).not.toContain("Apart from standalone fillers");
+    expect(text).not.toContain("high-confidence recognition errors");
     expect(text).toContain(
       "Never summarize, translate, add content, change tone, or invent code identifiers.",
     );
   });
 
-  it("keeps the ordinal → numbered list rule untouched", () => {
+  it("requires spoken ordering cues to survive list formatting", () => {
     const text = prompt();
-    expect(text).toContain("Format ANY ordinal sequence into numbered markdown lists.");
-    expect(text).toContain("ANY ordinal sequence");
+    expect(text).toContain("numbered markdown lists only when every item has its own spoken ordering cue");
+    expect(text).toContain("Preserve every spoken ordering cue and connective within its item");
+    expect(text).not.toContain("ordinal cues folded into numbered list items");
+    expect(text).not.toContain("Format ANY ordinal sequence");
   });
 
   it("keeps the KEEP rule in both retry variants", () => {
@@ -2968,6 +3092,10 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
         "Keep every clause the speaker said, including false starts, retractions, and self-corrections",
       );
       expect(text).not.toContain("superseded by a self-correction");
+      expect(text).toContain("Preserve ALL supplied lexical content");
+      expect(text).toContain("Preserve cut-off fragments and their ellipsis markers exactly");
+      expect(text).toContain("every supplied word, fragment, and repetition in order");
+      expect(text).not.toContain("safe dictation cleanup");
     }
   });
 });

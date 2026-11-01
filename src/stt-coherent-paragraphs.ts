@@ -189,3 +189,45 @@ export function applyCoherentParagraphs(text: string): string {
   const strip = (s: string) => s.replace(/\s+/gu, " ").trim();
   return strip(out) === strip(text) ? out : text;
 }
+
+/** Initial eligibility must not promise paragraphs that size preferences prevent. */
+function applyBalancedSentenceFallback(text: string): string {
+  const boundaries = sentenceBoundaries(text);
+  const total = wordCount(text);
+  if (total < COHERENT_MIN_WORDS || boundaries.length + 1 < COHERENT_MIN_SENTENCES) return text;
+  let selected: Boundary | undefined;
+  let distance = Infinity;
+  for (const boundary of boundaries) {
+    const left = wordCount(text.slice(0, boundary.start)), right = total - left;
+    if (!left || !right) continue;
+    const candidate = Math.abs(left - right);
+    if (candidate < distance) { selected = boundary; distance = candidate; }
+  }
+  if (!selected) return text;
+  const out = text.slice(0, selected.start) + "\n\n" + text.slice(selected.end);
+  const strip = (value: string) => value.replace(/\s/gu, "");
+  return strip(out) === strip(text) ? out : text;
+}
+
+/** The deterministic paragraph floor also handles one oversized, unwrapped list item.
+ * Keep its marker and indent continuation paragraphs within that same item.
+ * Existing paragraphs, multi-line lists and literal code retain their layout.
+ * The caller selects the primary paragraph stage; existing layout always wins.
+ */
+export function applyCoherentParagraphFallback(text: string): string {
+  // Whitespace is content inside literal code, so abstain before any formatting.
+  if (text.includes("`") || text.includes("~~~")) return text;
+  const formatted = applyCoherentParagraphs(text);
+  if (formatted !== text) return formatted;
+  if (/[\r\n]/u.test(text)) return text;
+  const prefix = /^ {0,3}(?:\d+[.)]|[-*•]) +/u.exec(text)?.[0];
+  if (!prefix) return applyBalancedSentenceFallback(text);
+  const body = text.slice(prefix.length);
+  const grouped = applyCoherentParagraphs(body);
+  const paragraphs = grouped === body ? applyBalancedSentenceFallback(body) : grouped;
+  if (paragraphs === body) return text;
+  const continuation = " ".repeat(prefix.length);
+  const out = prefix + paragraphs.replace(/\n\n/gu, "\n\n" + continuation);
+  const strip = (value: string) => value.replace(/\s/gu, "");
+  return strip(out) === strip(text) ? out : text;
+}

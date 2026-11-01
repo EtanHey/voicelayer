@@ -40,6 +40,7 @@ import {
 } from "./stt-pause-map";
 import type { TranscriptSegment } from "./stt-transcript-alignment";
 import { outroGateEnabled, stripHallucinatedOutro } from "./stt-outro-gate";
+import { stripAudioUnsupportedEcho } from "./stt-echo-gate";
 import { stripHallucinatedCaption } from "./stt-caption-gate";
 import type {
   SpeechToTextBackend,
@@ -280,6 +281,10 @@ function preferOverlapWord(
   next: string,
   nextContinues: boolean,
 ): string {
+  // A cutoff is spoken content, not a punctuation preference. Equal lexical
+  // bases may share their overlap occurrence, but must keep its cutoff marker.
+  if (isMarkedCutoff(current)) return current;
+  if (isMarkedCutoff(next)) return next;
   const punctuated = preferPunctuatedOverlapWord(current, next, nextContinues);
   if (punctuated !== current) return punctuated;
   const currentKey = normalizeChunkWordForOverlap(current);
@@ -288,6 +293,18 @@ function preferOverlapWord(
     return next;
   }
   return current;
+}
+
+function retainedOverlapWords(current: string, next: string, nextContinues: boolean): string[] {
+  if (
+    (isMarkedCutoff(current) || isMarkedCutoff(next)) &&
+    normalizeChunkWordForOverlap(current) !== normalizeChunkWordForOverlap(next)
+  ) {
+    // Retain both readings at this position; following exact anchor words
+    // still represent one overlap occurrence and must not be appended twice.
+    return [current, next];
+  }
+  return [preferOverlapWord(current, next, nextContinues)];
 }
 
 function containsSimilarWordSequence(
@@ -437,13 +454,10 @@ function skippedPrefixIsOverlap(prefixKeys: string[], beforeKeys: string[]): boo
  * are dropped only when they re-decode the merged words right before it
  * (skippedPrefixIsOverlap); two cut-edge words only when the next chunk
  * re-says them. Anything else is concatenated rather than guessed.
- * KNOWN LIMITATION (lead's call, #139 round 2): ONE cut-edge word is replaced
- * by the next chunk's reading whenever that chunk decodes past the match. That
- * is right for a word cut mid-audio ("harbor" / "harness"), but a genuine
- * cut-off fragment ("fu…") the next decode omits is lost. A text heuristic
- * cost +49 looped words per corpus run; the planned fix is timing-based
- * (replace only when the next word starts inside the cut word's audio span,
- * and never drop a word the decoder ended with "…", "-" or "—").
+ * ONE unmarked cut-edge word may still be replaced by the next reading
+ * ("harbor" / "harness"). Explicit cutoff markers are conserved by the caller
+ * while the shared anchor folds; preserving them does not duplicate the anchor.
+ * Unmarked word substitutions remain an acoustic-validation limitation.
  */
 function findCompactChunkSeam(
   mergedWords: string[],
@@ -495,7 +509,11 @@ function findCompactChunkSeam(
 
 type ChunkSeam =
   | { kind: "exact"; overlap: number; skipPrefix: number }
-  | { kind: "compact"; dropMerged: number; skipNext: number };
+  | { kind: "compact"; dropMerged: number; skipNext: number; preserveRagged: boolean };
+
+function isMarkedCutoff(word: string): boolean {
+  return /[\p{L}\p{N}\p{M}](?:…|\.\.\.|[\p{Pd}])["'”’)]*$/u.test(word);
+}
 
 /** The exact anchor merge, unless the compact match covers more of the overlap. */
 function findChunkSeam(mergedWords: string[], nextWords: string[]): ChunkSeam {
@@ -512,7 +530,10 @@ function findChunkSeam(mergedWords: string[], nextWords: string[]): ChunkSeam {
   }
   const compact = findCompactChunkSeam(mergedWords, nextWords);
   if (compact && compact.matchedNext > exact.overlap) {
-    return { kind: "compact", dropMerged: compact.dropMerged, skipNext: compact.skipNext };
+    const preserveRagged = compact.dropMerged > 0 && mergedWords
+      .slice(-compact.dropMerged)
+      .some(isMarkedCutoff);
+    return { kind: "compact", dropMerged: compact.dropMerged, skipNext: compact.skipNext, preserveRagged };
   }
   return { kind: "exact", ...exact };
 }
@@ -1462,10 +1483,11 @@ export function mergeChunkTranscripts(
 
     const seam = findChunkSeam(merged, nextWords);
     if (seam.kind === "compact") {
-      merged.splice(merged.length - seam.dropMerged);
-      // Carry the seam-end punctuation the way the exact merge does.
-      merged[merged.length - 1] = preferOverlapWord(
-        merged[merged.length - 1],
+      const anchorIndex = merged.length - seam.dropMerged - 1;
+      if (!seam.preserveRagged) merged.splice(merged.length - seam.dropMerged);
+      // Punctuation belongs to the anchor, not to a retained cutoff fragment.
+      merged[anchorIndex] = preferOverlapWord(
+        merged[anchorIndex],
         nextWords[seam.skipNext - 1],
         seam.skipNext < nextWords.length,
       );
@@ -1475,14 +1497,16 @@ export function mergeChunkTranscripts(
     const { overlap, skipPrefix } = seam;
 
     if (overlap > 0) {
+      const retained: string[] = [];
       for (let index = 0; index < overlap; index++) {
         const mergedIndex = merged.length - overlap + index;
-        merged[mergedIndex] = preferOverlapWord(
+        retained.push(...retainedOverlapWords(
           merged[mergedIndex],
           nextWords[skipPrefix + index],
           skipPrefix + index < nextWords.length - 1,
-        );
+        ));
       }
+      merged.splice(merged.length - overlap, overlap, ...retained);
     }
 
     merged.push(...nextWords.slice(skipPrefix + overlap));
@@ -1766,8 +1790,9 @@ export function mergeChunkTranscriptsWithSegments(
     }
 
     if (seam.kind === "compact") {
-      merged.splice(merged.length - seam.dropMerged);
-      const last = merged[merged.length - 1]!;
+      const anchorIndex = merged.length - seam.dropMerged - 1;
+      if (!seam.preserveRagged) merged.splice(merged.length - seam.dropMerged);
+      const last = merged[anchorIndex]!;
       last.text = preferOverlapWord(
         last.text,
         nextWords[seam.skipNext - 1]!.text,
@@ -1778,15 +1803,21 @@ export function mergeChunkTranscriptsWithSegments(
     }
     const { overlap, skipPrefix } = seam;
     if (overlap > 0) {
+      const retained: TimedChunkWord[] = [];
       for (let index = 0; index < overlap; index++) {
         const mergedIndex = merged.length - overlap + index;
         const nextIndex = skipPrefix + index;
-        merged[mergedIndex]!.text = preferOverlapWord(
-          merged[mergedIndex]!.text,
-          nextWords[nextIndex]!.text,
+        const earlier = merged[mergedIndex]!;
+        const later = nextWords[nextIndex]!;
+        const words = retainedOverlapWords(
+          earlier.text,
+          later.text,
           nextIndex < nextWords.length - 1,
         );
+        if (words.length === 2) retained.push(earlier, later);
+        else retained.push({ ...earlier, text: words[0]! });
       }
+      merged.splice(merged.length - overlap, overlap, ...retained);
     }
     merged.push(...nextWords.slice(skipPrefix + overlap));
   }
@@ -1991,32 +2022,6 @@ function containsWordSequence(words: string[], sequence: string[]): boolean {
     }
   }
   return false;
-}
-
-function trimEchoedTrailingPhrase(
-  text: string,
-  options: { allowAdjacentEcho: boolean },
-): string {
-  let current = text.trim();
-  let allowAdjacentEchoContinuation = false;
-  for (let passes = 0; passes < 8; passes++) {
-    const result = trimOneEchoedTrailingPhrase(current, {
-      ...options,
-      allowAdjacentEchoContinuation,
-    });
-    const trimmed = result.text;
-    if (trimmed === current) return current;
-    allowAdjacentEchoContinuation = result.trimmedAdjacentEcho;
-    current = trimmed;
-  }
-  return current;
-}
-
-function allowsAdjacentTailEchoCleanup(wavData: Uint8Array): boolean {
-  const info = parseWavPcmInfo(wavData);
-  return (
-    !!info && info.durationSeconds >= WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS
-  );
 }
 
 function combinePromptOverride(
@@ -2356,7 +2361,8 @@ export class WhisperServerBackend implements STTBackend {
           text: gated.text,
           backend: backendParts.join("+"),
           durationMs: Date.now() - start,
-          ...(chunkedResult.segments.length > 0
+          ...(chunkedResult.segments.length > 0 &&
+              chunkedResult.segmentsText === gated.text
             ? {
                 segments: chunkedResult.segments,
                 segmentsAudioSha256: createHash("sha256")
@@ -2410,18 +2416,19 @@ export class WhisperServerBackend implements STTBackend {
         options,
       );
       const verifiedText = tail.text;
-      const cleanedText = trimEchoedTrailingPhrase(verifiedText, {
-        allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
+      const echo = stripAudioUnsupportedEcho(verifiedText, wavData, {
+        segments, segmentsText: text, segmentsMatchAudio: !tail.wouldRewrite,
       });
+      const cleanedText = echo.text;
       // Last, on the finished text: an invented closer is only removable
       // against the audio it was attributed to, and `segments` describe THIS
       // decode of THIS wav.
       //
       // `segmentsText` is the raw decode output, so the gate can refuse when an
       // earlier stage rewrote the transcript out from under those timings.
-      // `verifyLeadingPunctuation` can swap in a whole retry decode and
-      // `trimEchoedTrailingPhrase` can remove words — each shifts the word
-      // positions the span lookup counts on. A repaired transcript therefore
+      // `verifyLeadingPunctuation` can swap in a whole retry decode, shifting
+      // the word positions the span lookup counts on. Echo cleanup returns
+      // retained timings only for a proven segment-boundary cut. A repaired transcript therefore
       // gets NO outro gating, which is the deliberate trade: skipping a
       // hallucinated closer is recoverable, deleting a real word is not.
       //
@@ -2437,8 +2444,8 @@ export class WhisperServerBackend implements STTBackend {
         : tail.wouldRewrite
           ? { text: cleanedText, removed: [], reason: "segments-stale" as const }
           : stripHallucinatedOutro(cleanedText, wavData, {
-              segments,
-              segmentsText: text,
+              segments: echo.segments,
+              segmentsText: echo.segmentsText,
             });
       if (outroGate && gated.reason === "segments-stale") {
         console.error(
@@ -2458,8 +2465,8 @@ export class WhisperServerBackend implements STTBackend {
       // pass or trusting stitched segment timing for deletion.
       const caption = outroGate && !tail.wouldRewrite
         ? await stripHallucinatedCaption(gated.text, wavData, {
-            segments,
-            segmentsText: text,
+            segments: echo.segments,
+            segmentsText: echo.segmentsText,
           })
         : { text: gated.text, removed: null };
       if (caption.removed) {
@@ -2477,9 +2484,10 @@ export class WhisperServerBackend implements STTBackend {
         text: caption.text,
         backend: backendParts.join("+"),
         durationMs: Date.now() - start,
-        ...(segments && segments.length > 0
+        ...(echo.segments && echo.segments.length > 0 &&
+            echo.segmentsText === caption.text
           ? {
-              segments,
+              segments: echo.segments,
               segmentsAudioSha256: createHash("sha256")
                 .update(wavData)
                 .digest("hex"),
@@ -3181,7 +3189,9 @@ export class WhisperServerBackend implements STTBackend {
           buildWhisperServerOptions({ ...options, promptOverride: undefined }),
         );
         if (!shortFinalChunkAgrees(text, unpromptedText)) {
-          break;
+          // Two decodes disagreeing does not prove that the first one's words
+          // were not spoken. Keep the original attempt; do not drop its tail.
+          console.error("[voicelayer] short final chunk: decode disagreement; retaining original words");
         }
       }
       seamKinds[transcripts.length] = seamKindBeforeThisChunk;
@@ -3207,16 +3217,17 @@ export class WhisperServerBackend implements STTBackend {
       mergedText,
       options,
     );
-    const cleanedText = trimEchoedTrailingPhrase(headResult.text, {
-      allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
+    const echo = stripAudioUnsupportedEcho(headResult.text, wavData, {
+      segments: merged.segments, segmentsText: mergedText,
     });
+    const cleanedText = echo.text;
     return {
       text: cleanedText,
       witnessed,
       headChanged: headResult.changed,
       cleaned: cleanedText !== headResult.text,
-      segments: merged.segments,
-      segmentsText: mergedText,
+      segments: echo.segments ?? [],
+      segmentsText: echo.segmentsText ?? mergedText,
     };
   }
 

@@ -865,7 +865,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+head-cli");
     });
 
-    it("trims a short echoed phrase from the end of medium resident decodes", async () => {
+    it("preserves a repeated trailing phrase without occurrence-to-audio evidence", async () => {
       const wavPath = testTmp("voicelayer-whisper-server-tail-echo-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       const backend = new WhisperServerBackend({
@@ -879,9 +879,9 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(
-        "what we were supposed to. For fuck's sake, this is getting sickening.",
+        "what we were supposed to. For fuck's sake, this is getting sickening. For fuck's sake.",
       );
-      expect(result.backend).toBe("whisper-server+clean");
+      expect(result.backend).toBe("whisper-server");
     });
 
     it("keeps a compressed final sentence when prompted tail decode has no overlap (log-only)", async () => {
@@ -1080,7 +1080,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server");
     });
 
-    it("still trims separated echoed phrases in medium resident decodes", async () => {
+    it("preserves separated repeated phrases in medium resident decodes", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-medium-separated-echo-test.wav");
       await Bun.write(wavPath, makePcm16Wav(17));
@@ -1095,12 +1095,12 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(
-        "what we were supposed to. For fuck's sake, this is getting sickening.",
+        "what we were supposed to. For fuck's sake, this is getting sickening. For fuck's sake.",
       );
-      expect(result.backend).toBe("whisper-server+clean");
+      expect(result.backend).toBe("whisper-server");
     });
 
-    it("trims repeated adjacent echoed phrases until only the first dictated phrase remains", async () => {
+    it("preserves all adjacent repeated phrases without acoustic rejection", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-multi-adjacent-tail-echo-test.wav");
       await Bun.write(wavPath, makePcm16Wav(71));
@@ -1116,9 +1116,9 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(
-        "we should keep working through the night, I don't want to leave anything for Anthropic,",
+        `we should keep working through the night, ${repeated}, ${repeated}, ${repeated}`,
       );
-      expect(result.backend).toBe("whisper-server+clean");
+      expect(result.backend).toBe("whisper-server");
     });
 
     it("preserves real tail filler when it was already in the full-window decode", async () => {
@@ -2148,7 +2148,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks");
     });
 
-    it("trims repeated tail loops after chunked long recordings are merged", async () => {
+    it("preserves repeated tails after chunked recordings are merged", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-chunked-tail-loop-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
@@ -2167,12 +2167,12 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(
-        "first chunk middle near final leave for anthropic",
+        "first chunk middle near final leave for anthropic leave for anthropic leave for anthropic",
       );
-      expect(result.backend).toBe("whisper-server+chunks+clean");
+      expect(result.backend).toBe("whisper-server+chunks");
     });
 
-    it("ignores non-overlapping hallucinations from a very short final chunk", async () => {
+    it("preserves a non-overlapping final chunk when a witness disagrees", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-chunked-short-final-hallucination-test.wav");
       await Bun.write(wavPath, makePcm16Wav(108));
@@ -2195,7 +2195,7 @@ describe("STT backends", () => {
 
       expect(calls).toBe(6);
       expect(result.text).toBe(
-        "intro setup middle plan look at ponytail skill",
+        "intro setup middle plan look at ponytail skill so I am going to put it in the middle of the ponytail",
       );
       expect(result.backend).toBe("whisper-server+chunks");
     });
@@ -2254,7 +2254,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks");
     });
 
-    it("drops a short final chunk when two tokens only match by independent edits", async () => {
+    it("preserves the original final chunk when both witness tokens differ", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-chunked-short-final-double-edit-test.wav");
       await Bun.write(wavPath, makePcm16Wav(108));
@@ -2276,7 +2276,7 @@ describe("STT backends", () => {
 
       expect(calls).toBe(6);
       expect(result.text).toBe(
-        "intro setup middle plan look at ponytail skill",
+        "intro setup middle plan look at ponytail skill house plane",
       );
       expect(result.backend).toBe("whisper-server+chunks");
     });
@@ -2635,7 +2635,12 @@ describe("STT backends", () => {
       // KNOWN LIMITATION (lead's call, #139 round 2): one cut-edge word is replaced
       // by the next chunk's reading, so a genuine "fu…" the next decode omits is lost.
       // Needs segment timing; see the AIDEV-NOTE on findCompactChunkSeam.
-      it.todo("keeps a cut-off fragment at the seam when the next decode omits it (review #139 P4)");
+      it("keeps a cut-off fragment at the seam when the next decode omits it (review #139 P4)", () => {
+        expect(mergeChunkTranscripts([
+          "Start with the long shared anchor fu…",
+          "the long shared anchor frustrating and continue",
+        ])).toBe("Start with the long shared anchor fu… frustrating and continue");
+      });
 
       it("keeps next-chunk lead-in words the earlier chunk never had (review #139)", () => {
         const merged = mergeChunkTranscripts([

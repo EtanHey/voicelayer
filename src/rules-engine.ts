@@ -1,3 +1,5 @@
+import { dictionarySurfacePattern, dictionaryOccurrencePattern, isWholeDictionarySurface } from "./stt-dictionary-matching";
+
 /**
  * Dev-aware post-processing rule engine for dictation output.
  *
@@ -843,11 +845,25 @@ function applyPunctuation(text: string): string {
     const [spacePattern, spaceReplacement] = SPACE_COMMAND;
     result = replaceUnlessSpokenAsNoun(result, spacePattern, spaceReplacement);
   }
-  // Clean up space before punctuation that should attach left
+  const closingQuotes = new Set([
+    ...quoteBoundaryPositions(result, '"').closing,
+    ...quoteBoundaryPositions(result, "'").closing,
+  ]);
+  const quotedCodeExpression = isCodeShaped(result) ||
+    /\?\s*["'][^"']*["']\s*:\s*["']/u.test(result);
+  // A quote attaches left only when it closes a quoted span. Treating every
+  // quote as closing also glues the preceding word to an opening quote.
   result = result.replace(
     /\s+([.,;:?%)}\]`'"]|!(?!=))/g,
     (match: string, punctuation: string, offset: number) => {
       const nextChar = result[offset + match.length] ?? "";
+      const followsCodeOperator = quotedCodeExpression &&
+        /[?:=+*\/<>]$/u.test(result.slice(0, offset).trimEnd());
+      if (
+        (punctuation === '"' || punctuation === "'") &&
+        !closingQuotes.has(offset + match.length - 1) &&
+        !followsCodeOperator
+      ) return match;
       if (punctuation === "." && /[A-Za-z_]/u.test(nextChar)) {
         return match;
       }
@@ -871,8 +887,16 @@ function applyPunctuation(text: string): string {
   result = result.replace(/,{2,}/g, ",");
   result = result.replace(/,\s*([!?])(?=\s*$)/g, "$1");
   result = result.replace(/\bsecond\s*-\s*s\b/gi, "second-S");
-  // Clean up space after open brackets
-  result = result.replace(/([({[\[`'"])\s+/g, "$1");
+  // Brackets have an unambiguous direction. Straight quotes and possessive
+  // apostrophes do not: never consume the boundary after a closing/orphan mark.
+  result = result.replace(/([({\[\x60])\s+/g, "$1");
+  const openingQuotes = new Set([
+    ...quoteBoundaryPositions(result, '"').opening,
+    ...quoteBoundaryPositions(result, "'").opening,
+  ]);
+  result = result.replace(/["']\s+/gu, (match, offset) =>
+    openingQuotes.has(offset) ? match[0]! : match,
+  );
   result = result.replace(
     /([\p{L}\p{N}])"(?=\p{L}[^"]*[.!?]")/gu,
     (match, prefix: string, offset: number) => {
@@ -897,6 +921,29 @@ function hasCodeStringPrefixBeforeQuote(text: string, quoteIndex: number): boole
   return /(?:^|[^\p{L}\p{N}_])(?:[rRuUbBfF]|[rR][fFbB]|[fFbB][rR])$/u.test(
     beforeQuote,
   );
+}
+
+function quoteBoundaryPositions(text: string, quote: string): {
+  opening: Set<number>; closing: Set<number>;
+} {
+  const opening = new Set<number>(), closing = new Set<number>();
+  let active = false;
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] !== quote) continue;
+    let escapes = 0;
+    for (let before = index - 1; before >= 0 && text[before] === "\\"; before--) escapes++;
+    if (escapes % 2) continue;
+    const before = text[index - 1] ?? "", after = text[index + 1] ?? "";
+    if (quote === "'" && /[\p{L}\p{N}\p{M}]/u.test(before) && /[\p{L}\p{N}\p{M}]/u.test(after)) continue;
+    if (active) {
+      closing.add(index);
+      active = false;
+    } else if (!before || /[\s([{?:=+*\/<>]/u.test(before) || hasCodeStringPrefixBeforeQuote(text, index)) {
+      opening.add(index);
+      active = true;
+    }
+  }
+  return { opening, closing };
 }
 
 function spaceAfterClosingProseQuotes(text: string): string {
@@ -1257,10 +1304,9 @@ function applyAliases(
             : escaped;
         return [
           from.toLowerCase(),
-          new RegExp(
-            `(?<=^|\\s|[^\\p{L}])${source}(?=$|\\s|[^\\p{L}])`,
-            "giu",
-          ),
+          prefixMode === "plain"
+            ? dictionarySurfacePattern(from, to)
+            : dictionaryOccurrencePattern(source),
           to,
           prefixMode,
         ];
@@ -1288,6 +1334,7 @@ function applyAliases(
       const match = matches[index];
       const start = match.index;
       const end = start + match[0].length;
+      if (!isWholeDictionarySurface(result, start, end, fromLower, to)) continue;
       if (rewrittenSpans.some(([left, right]) => start < right && end > left)) continue;
       const prefix = match[1];
       const replacement = !prefix || prefixMode === "plain"

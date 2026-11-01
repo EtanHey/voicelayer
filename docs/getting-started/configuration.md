@@ -12,7 +12,8 @@ VoiceLayer is configured entirely via environment variables. All settings have s
 | `QA_VOICE_WHISPER_MODEL` | auto-detected | Absolute path to a whisper.cpp GGML model file |
 | `QA_VOICE_WISPR_KEY` | — | Wispr Flow API key (cloud fallback only) |
 | `VOICELAYER_STT_PAUSE_PARAGRAPHS` | `1` | Insert blank lines at existing sentence ends supported by long pauses; `0` disables |
-| `VOICELAYER_STT_COHERENT_PARAGRAPHS` | `0` | Opt-in, text-only paragraphs: blank lines at existing sentence ends, preferring topic turns; replaces pause paragraphs when on |
+| `VOICELAYER_STT_COHERENT_PARAGRAPHS` | unset | `1` gives text-only paragraphs priority over acoustic boundaries; `0` or unset uses the pause setting first. The deterministic paragraph floor still formats an otherwise unformatted long final; see below. |
+| `VOICELAYER_STT_AGGRESSIVE_FILLERS` | `0` | Default cleanup removes pure acoustic fillers while preserving repeated words. `1` additionally enables the legacy aggressive policy; `QA_VOICE_STT_AGGRESSIVE_FILLERS` is an alias. |
 
 **Auto-detection** (`auto` mode) checks for whisper.cpp first, falls back to Wispr Flow if `QA_VOICE_WISPR_KEY` is set.
 
@@ -29,6 +30,12 @@ VoiceLayer is configured entirely via environment variables. All settings have s
 Pause paragraphs also accept the boolean `pause_paragraphs` key in the processing settings file. Precedence is environment > file > default. The VoiceBar Settings row is planned separately. This step preserves every non-whitespace character, existing line breaks and numbered-list item lines, and keeps existing paragraphs. It needs audio-bound segment times: providers without them, the live streaming path, decodes with both segment-producing controls disabled, and empty acoustic pause maps keep their existing output. The longest sentence-end pauses are ranked toward one break per 450 characters, with at least 200 characters per paragraph and a 0.6-second pause floor.
 
 With pause paragraphs enabled by default, long dictations automatically type Shift+Return between paragraphs, the same delivery path as spoken “new paragraph”. VoiceBar sends newlines as Shift+Return; a bare shell can treat these as submit, just as it does for explicitly spoken line breaks.
+
+Every otherwise unformatted long final gets a deterministic text-only paragraph fallback, regardless of whether model polish is off, skipped, shadowed, unavailable, timed out, rejected or returns no paragraphs. Calls without a polish surface use the same floor. Code is vetoed before either paragraph stage; existing paragraphs and list layout stay intact. Safe acoustic boundaries take priority unless the explicit coherent setting selects text-only paragraphing. Paragraph flags select that primary stage rather than disabling the final floor. The floor changes only whitespace at existing sentence boundaries: every non-whitespace byte, retraction, struck-through word and fragment is preserved.
+
+The default fallback can also paragraph one long list item on a single unwrapped line. It keeps the original marker and indents continuation paragraphs within that item. When prose meets the initial 80-word and four-sentence-unit floors but preferred paragraph sizes prevent a split, the floor uses the most balanced safe sentence boundary. Existing multi-line lists, paragraphs and code spans retain their layout; text without safe sentence boundaries stays unchanged.
+
+Default transcription cleanup removes pure acoustic fillers such as “um”, “uh” and “er”, while retaining retractions, cut-off fragments and repeated speech. The explicit aggressive-filler option additionally removes legacy discourse expressions. Dictionary, numeric and spoken-command transformations remain distinct.
 
 ### TTS (Text-to-Speech)
 

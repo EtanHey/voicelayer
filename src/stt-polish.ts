@@ -264,14 +264,15 @@ export function buildPolishSystemPrompt(
   const lines = [
     "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
-    "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, confirmed chunk-boundary duplicates, and Hebrew/English spacing. A confirmed chunk-boundary duplicate is a transcription artifact, not an intentional word the speaker repeated.",
-    "Be decisive. When one of the dictation-finalizer patterns below appears, apply it instead of leaving the text unchanged.",
-    "Format ANY ordinal sequence into numbered markdown lists. Ordinal cues include first, first of all, second, second of all, third, third of all, fourth, number one, number two, and similar spoken ordering. This applies even with conversational framing such as so, okay, and then, or third without 'of all'.",
+    "Preserve ALL supplied lexical content in the VoiceLayer cleaned text, in its original order and multiplicity. Raw Whisper text is context; format the cleaned text without borrowing or guessing words.",
+    "Fix missing or duplicate punctuation and sentence-start capitalization. Add sentence and paragraph boundaries and Hebrew/English spacing without changing words. Equivalent numeric spellings and existing safe code/slash-command renderings are allowed.",
+    "Format explicit spoken ordinal sequences into numbered markdown lists only when every item has its own spoken ordering cue. Preserve every spoken ordering cue and connective within its item; add list markers without replacing or deleting words. Keep bare unpunctuated first/second sequences as prose. Preserve existing numbered items.",
     "Keep every clause the speaker said, including false starts, retractions, and self-corrections. When the speaker replaces an earlier phrase with a later one (cues: well no, well, no, no wait, sorry, I mean, actually, rather, scratch that, let me start over), keep BOTH the abandoned phrase and its replacement, in the order spoken. The thinking process is the content. Never collapse, merge, shorten, or delete a retracted phrase, and never resolve a 'did X ... no/actually Y' pattern down to Y.",
     "Preserve literal/code/path tokens exactly, including leading-dot tokens like .env, .at, and .gitignore. Do not attach a leading-dot token to the previous word.",
-    "Beyond standalone filler sounds (um, uh, er, mm), ordinal cues folded into numbered list items, and confirmed chunk-boundary duplicates, you may not remove words. Everything else is content, including hedges, intensifiers, asides, words the speaker repeated, and abandoned clauses. Keep the English discourse word ah, as in 'Ah, I see.'",
+    "Keep all supplied fillers (um, uh, er, mm), hedges, intensifiers, asides, ordering cues, repeated words and sentences, and abandoned clauses. Keep the English discourse word ah, as in 'Ah, I see.' Never remove text-only duplicates or infer chunk-boundary artifacts from repeated text.",
+    "Preserve cut-off fragments and their ellipsis markers exactly, including fu… and fu...; never complete, expand, drop, or merge fragments.",
     "Never summarize, translate, add content, change tone, or invent code identifiers.",
-    "Do not delete wanted content. Apart from standalone fillers, ordinal cues folded into numbered list items, and confirmed chunk-boundary transcription duplicates, preserve all input content and spoken order. Your remaining job is required identifier and slash-command normalization plus punctuation, capitalization, spacing, and formatting.",
+    "Do not correct grammar, paraphrase, or guess recognition repairs. Safe code joins are brain layer to BrainLayer and handle socket command to handleSocketCommand; never join arbitrary split words. Preserve slash-command words while fixing spacing and hyphens.",
     "Preserve Hebrew as Hebrew and English/code terms as English.",
     "For already-good dictation with no applicable rule, output the cleaned text with only minimal punctuation/capitalization fixes.",
     "Output only the corrected text.",
@@ -279,8 +280,8 @@ export function buildPolishSystemPrompt(
     "Examples:",
     "Input: Also, do / what's new and output that as your summary.",
     "Output: Also, do /whats-new and output that as your summary.",
-    "Input: ask c mux whether brain layer is ready",
-    "Output: Ask cmux whether BrainLayer is ready",
+    "Input: ask whether brain layer is ready",
+    "Output: Ask whether BrainLayer is ready.",
     "Input: תרים את ה handle socket command",
     "Output: תרים את ה-handleSocketCommand",
     "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
@@ -296,15 +297,19 @@ export function buildPolishSystemPrompt(
     "Input: I started a build, actually I started the test suite and then came back.",
     "Output: I started a build, actually I started the test suite and then came back.",
     "Input: So um I think uh we should ship it.",
-    "Output: So, I think we should ship it.",
+    "Output: So, um, I think, uh, we should ship it.",
+    "Input: keep the fu… fragment and both repeated repeated words",
+    "Output: Keep the fu… fragment and both repeated repeated words.",
+    "Input: review 42 files before release",
+    "Output: Review forty-two files before release.",
     "Input: wait actually let me start over the recent benchmarks show a 20% no 22% drop",
     "Output: Wait, actually, let me start over. The recent benchmarks show a 20%, no, 22% drop.",
     "Input: First of all, I wanted to do x, y, and z, and then second of all, I wanted to talk to him, and third of all, I wanted to go home.",
-    "Output:\n1. I wanted to do x, y, and z.\n2. And then, I wanted to talk to him.\n3. And I wanted to go home.",
+    "Output:\n1. First of all, I wanted to do x, y, and z.\n2. And then second of all, I wanted to talk to him.\n3. And third of all, I wanted to go home.",
     "Input: So first of all, I came back home right now, and then second of all, you've been paused, third, I'm very frustrated.",
-    "Output:\n1. So, I came back home right now.\n2. And then, you've been paused.\n3. I'm very frustrated.",
+    "Output:\n1. So first of all, I came back home right now.\n2. And then second of all, you've been paused.\n3. Third, I'm very frustrated.",
     "Input: Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.",
-    "Output: Or if I say, okay:\n1. I want to do x, y, z.\n2. And then, I want to do the other thing.\n3. And then, I want to do this, that, and this.",
+    "Output: Or if I say, okay:\n1. First of all, I want to do x, y, z.\n2. And then second of all, I want to do the other thing.\n3. And then third of all, I want to do this, that, and this.",
     "Input: Also, if I say the .at file. Thank you.",
     "Output: Also, if I say the .at file. Thank you.",
     "Input: This is already good.",
@@ -323,12 +328,12 @@ export function buildPolishSystemPrompt(
   if (retryReason === "noop") {
     lines.push(
       "",
-      "Retry instruction: the previous response copied the input unchanged. Add sentence punctuation and split obvious run-on questions without changing meaning.",
+      "Retry instruction: the previous response copied the input unchanged. Add sentence punctuation and split obvious run-on questions while preserving every supplied word, fragment, and repetition in order.",
     );
   } else if (retryReason === "rejected") {
     lines.push(
       "",
-      "Retry instruction: the previous response was rejected. Return the full corrected text, not a summary or partial prefix. Preserve all content, only adding punctuation, sentence boundaries, casing, and safe dictation cleanup.",
+      "Retry instruction: the previous response was rejected. Return the full corrected text, not a summary or partial prefix. Preserve every supplied word, fragment, and repetition in order; only add punctuation, sentence boundaries, casing, and the safe renderings above.",
     );
   }
   return lines.join("\n");
@@ -470,6 +475,7 @@ const POLISH_REJECTION_REASONS = {
   INVENTED_LIST_ITEM: "polish response invented a list item",
   DROPPED_TOO_MUCH_TEXT: "polish response dropped too much text",
   DROPPED_TOO_MANY_WORDS: "polish response dropped too many words",
+  CHANGED_LEXICAL_CONTENT: "polish response changed lexical content or order",
 } as const;
 
 const RETRYABLE_POLISH_REJECTION_REASONS = new Set<string>([
@@ -615,6 +621,20 @@ function retractionContentLoss(
   cleanedText: string,
   candidate: string,
 ): "deleted" | "unavailable" | null {
+  // An ellipsis can mark even a one-letter unfinished word. Protect the exact
+  // fragment with multiplicity before the older minimum-length alignment net.
+  // NFKC treats U+2026 and three dots alike, without guessing the intended word.
+  const fragments = (text: string): string[] =>
+    text.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}\p{M}]+\.{3}/gu) ?? [];
+  const available = new Map<string, number>();
+  for (const fragment of fragments(candidate)) {
+    available.set(fragment, (available.get(fragment) ?? 0) + 1);
+  }
+  for (const fragment of fragments(cleanedText)) {
+    const count = available.get(fragment) ?? 0;
+    if (count === 0) return "deleted";
+    available.set(fragment, count - 1);
+  }
   const markerPositions = falseStartMarkerStreamPositions(cleanedText);
   if (markerPositions.length === 0) return null;
 
@@ -1256,6 +1276,34 @@ function compactContentSequence(text: string): string {
     .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
+function conservedContentTokens(text: string): string[] {
+  // Do not use compactContentSequence: erasing word boundaries would equate
+  // "the rapist" with "therapist". contentTokens also equates "a" with "an"
+  // and zero with "no". Only numeric spelling and known code joins belong here.
+  const tokens = normalizeSpokenNumberPairs(text.normalize("NFKC"))
+    .match(/[\p{L}\p{N}'’]+(?:\.{3})?/gu)
+    ?.map((token) => {
+      const lower = token.toLowerCase().replace(/['’]/gu, "");
+      const cutoff = lower.endsWith("...");
+      const base = cutoff ? lower.slice(0, -3) : lower;
+      // Bind the cutoff to this occurrence in the ordered stream; a later
+      // identical word cannot pay for moving a fragment marker forward.
+      return String(NUMBER_WORD_VALUES[base] ?? base) + (cutoff ? "..." : "");
+    }) ?? [];
+  const conserved: string[] = [];
+  for (let start = 0; start < tokens.length; start++) {
+    let token = tokens[start];
+    for (const words of [["brain", "layer"], ["handle", "socket", "command"]]) {
+      if (!words.every((word, index) => tokens[start + index] === word)) continue;
+      token = words.join("");
+      start += words.length - 1;
+      break;
+    }
+    conserved.push(token);
+  }
+  return conserved;
+}
+
 function hasUngroundedContent(cleanedText: string, candidate: string): boolean {
   const source = contentTokens(cleanedText);
   const used = new Set<number>();
@@ -1438,6 +1486,16 @@ function validatePolishCandidate(
     compactContentSequence(cleanedText) !== compactContentSequence(contentCandidate)
   ) {
     return POLISH_REJECTION_REASONS.ADDED_UNGROUNDED_CONTENT;
+  }
+
+  // Raw-accurate is the default on both transports and surfaces. Similarity,
+  // token bags and retraction windows cannot prove that an ordinary word,
+  // repeated beat or short fragment survived in its original position.
+  if (!sameTokenSequence(
+    conservedContentTokens(cleanedText),
+    conservedContentTokens(contentCandidate),
+  )) {
+    return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
   }
 
   return null;
