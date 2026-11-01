@@ -3498,8 +3498,11 @@ function observeRecognizerBackend<T extends STTBackend>(backend: T): T {
       }
       return result;
     } catch (error) {
-      const engine = readRecognizerStatus().effective ?? (backend.name.startsWith("parakeet") ? "parakeet" : "whisper");
-      if (readRecognizerStatus().engines[engine].error !== "cleanup-unconfirmed") noteRecognizerEngine(engine, { phase: "error", error: "transcription-failed" });
+      // A cloud failure says nothing about either local engine's lifecycle.
+      if (!backend.name.startsWith("wispr")) {
+        const engine = readRecognizerStatus().effective ?? (backend.name.startsWith("parakeet") ? "parakeet" : "whisper");
+        if (readRecognizerStatus().engines[engine].error !== "cleanup-unconfirmed") noteRecognizerEngine(engine, { phase: "error", error: "transcription-failed" });
+      }
       throw error;
     } finally { finishRecognizerRequest(); }
   };

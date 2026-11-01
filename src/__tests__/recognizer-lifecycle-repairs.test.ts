@@ -3,7 +3,7 @@ import { join } from "path";
 
 // Owner shutdown is permanent. Each control imports the actual production graph
 // in a fresh preloaded process; providers/processes below it are explicit fakes.
-for (const scenario of ["capture-maintenance", "capture-cancel", "capture-cleanup", "picker-refusal", "shutdown-picker-p", "shutdown-picker-w", "shutdown-picker-p-unknown", "shutdown-direct-w", "shutdown-adopted", "shutdown-legacy-w", "unexpected-exit", "intentional-exit", "late-old-exit", "resident-cli-fallback", "cli-only-sleeping"]) {
+for (const scenario of ["capture-maintenance", "capture-cancel", "capture-cleanup", "picker-refusal", "shutdown-picker-p", "shutdown-picker-w", "shutdown-picker-p-unknown", "shutdown-direct-w", "shutdown-adopted", "shutdown-legacy-w", "unexpected-exit", "intentional-exit", "late-old-exit", "resident-cli-fallback", "cli-only-sleeping", "wispr-failure-unselected", "wispr-failure-resident", "whisper-failure-status"]) {
   test(`recognizer lifecycle: ${scenario}`, async () => {
     const child = Bun.spawn([process.execPath, "--preload", join(import.meta.dir, "setup/preload.ts"), join(import.meta.dir, "fixtures/recognizer-lifecycle-control.ts"), scenario], {
       cwd: join(import.meta.dir, "../.."), env: process.env, stdout: "pipe", stderr: "pipe",
