@@ -517,7 +517,7 @@ describe("input recording durability", () => {
     for (const suppressed of [false, true]) {
       it(`PRIV11 PRIV1 R2 ${surface} ${suppressed ? "suppressed" : "final"} logs metadata while retaining content`, async () => {
         const input = await import("../input");
-        backendText = suppressed ? "music playing" : `PRIVATE_TRANSCRIPT_שלום ${process.env.PRIV11_TEXT ?? "keep my words"}.`;
+        backendText = suppressed ? "[Music playing]" : `PRIVATE_TRANSCRIPT_שלום ${process.env.PRIV11_TEXT ?? "keep my words"}.`;
         const originalError = console.error;
         const log = spyOn(console, "error").mockImplementation((...args) => {
           if (process.env.PRIV11_CHILD) originalError(...args);

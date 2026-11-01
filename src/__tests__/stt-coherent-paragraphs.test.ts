@@ -146,13 +146,14 @@ describe('coherent paragraphs', () => {
     expect(shouldBuildBoundaryContext(long, { VOICELAYER_STT_COHERENT_PARAGRAPHS: '1', VOICELAYER_STT_SMART_BOUNDARIES: '1' })).toBe(false);
   });
 
-  test('finalize applies it without any audio evidence when enabled', async () => {
+  test('finalizer floor applies without polish or audio regardless of explicit text toggle', async () => {
     const input = [...deploy, ...dinner].join(' ');
-    const base = { QA_VOICE_STT_POLISH: 'off', VOICELAYER_PROCESSING_SETTINGS_PATH: '/nonexistent/p.json' };
+    const base = { QA_VOICE_STT_POLISH: 'off', QA_VOICE_CORRECTOR: 'identity', VOICELAYER_PROCESSING_SETTINGS_PATH: '/nonexistent/p.json' };
     const off = await finalizeTranscriptionResultForSurface(input, null, base);
     const on = await finalizeTranscriptionResultForSurface(input, null, { ...base, VOICELAYER_STT_COHERENT_PARAGRAPHS: '1' });
-    expect(off.text).not.toContain('\n\n');
+    expect(off.text).toContain('\n\n');
     expect(on.text).toContain('\n\n');
-    expectOnlyBreaksInserted(off.text, on.text);
+    expect(on.text).toBe(off.text);
+    expectOnlyBreaksInserted(input, off.text);
   });
 });
