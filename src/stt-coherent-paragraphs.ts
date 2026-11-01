@@ -62,6 +62,35 @@ function opener(sentence: string): string {
 
 interface Boundary { start: number; end: number }
 
+/** null means fenced or multiline code; inline code remains an indivisible span. */
+function inlineCodeSpans(text: string): Boundary[] | null {
+  if (/^[^\S\r\n]*(?:`{3,}|~{3,})/mu.test(text)) return null;
+  const runs = [...text.matchAll(/`+/gu)];
+  const spans: Boundary[] = [];
+  for (let i = 0; i < runs.length; i++) {
+    const open = runs[i];
+    let close = i + 1;
+    while (close < runs.length && runs[close][0].length !== open[0].length) close++;
+    const end = close < runs.length ? runs[close].index! + runs[close][0].length : text.length;
+    if (/[\r\n]/u.test(text.slice(open.index!, end))) return null;
+    spans.push({ start: open.index!, end });
+    i = close;
+  }
+  return spans;
+}
+
+export function hasParagraphCodeBlock(text: string): boolean {
+  return inlineCodeSpans(text) === null;
+}
+
+/** Acoustic formatting must retain inline bytes as well as the surrounding words. */
+export function preservesInlineCode(before: string, after: string): boolean {
+  const left = inlineCodeSpans(before), right = inlineCodeSpans(after);
+  if (!left || !right) return before === after;
+  return left.length === right.length && left.every((span, index) =>
+    before.slice(span.start, span.end) === after.slice(right[index].start, right[index].end));
+}
+
 // Titles, months, days and common short forms the shared set does not cover.
 const EXTRA_ABBREVIATIONS = new Set((
   "capt col gen lt sgt cmdr adm gov sen rep rev hon pres supt det insp fr br sr jr st mt ft " +
@@ -95,9 +124,12 @@ function plainSentenceToken(text: string, at: number, next: string): boolean {
 
 /** Whitespace runs after a completed sentence that may become "\n\n". */
 function sentenceBoundaries(text: string): Boundary[] {
+  const code = inlineCodeSpans(text);
+  if (!code) return [];
   const out: Boundary[] = [];
   for (const m of text.matchAll(/[.!?]["'”’»)\]]*([^\S\r\n]+)(?=\S)/gu)) {
     const at = m.index!;
+    if (code.some(span => at >= span.start && at < span.end)) continue;
     // A single mark after a word: "...", "?." or a bare mark is not a sentence end.
     if (!/[\p{L}\p{N}\p{M}'’"”)\]%]/u.test(text[at - 1] ?? "")) continue;
     if (text[at] === "." && endsWithAbbreviation(text, at)) continue;
@@ -216,7 +248,7 @@ function applyBalancedSentenceFallback(text: string): string {
  */
 export function applyCoherentParagraphFallback(text: string): string {
   // Whitespace is content inside literal code, so abstain before any formatting.
-  if (text.includes("`") || text.includes("~~~")) return text;
+  if (hasParagraphCodeBlock(text)) return text;
   const formatted = applyCoherentParagraphs(text);
   if (formatted !== text) return formatted;
   if (/[\r\n]/u.test(text)) return text;

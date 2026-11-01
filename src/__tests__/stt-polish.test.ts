@@ -3067,7 +3067,8 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
     expect(text).toContain("Never remove text-only duplicates");
     expect(text).toContain("Keep the English discourse word ah");
     expect(text).toContain("in its original order and multiplicity");
-    expect(text).toContain("Equivalent numeric spellings and existing safe code/slash-command renderings");
+    expect(text).toContain("Keep digits, PR numbers, ports, versions and counts exactly as supplied");
+    expect(text).toContain("Existing safe code/slash-command renderings");
     expect(text).toContain("Do not correct grammar, paraphrase, or guess recognition repairs");
     expect(text).toContain("never join arbitrary split words");
     expect(text).not.toContain("Apart from standalone fillers");

@@ -2912,3 +2912,33 @@ describe("STT backends", () => {
     });
   });
 });
+
+
+describe("default resident silence conservation", () => {
+  it("returns empty for a silent WAV with same-decode segment evidence, without enabling a special gate", async () => {
+    const keys = ["VOICELAYER_STT_OUTRO_GATE", "VOICELAYER_PROCESSING_SETTINGS_PATH"];
+    const saved = keys.map(key => process.env[key]);
+    delete process.env.VOICELAYER_STT_OUTRO_GATE;
+    process.env.VOICELAYER_PROCESSING_SETTINGS_PATH = testTmp("silent-default-processing.json");
+    const audioPath = testTmp("silent-default.wav");
+    await Bun.write(audioPath, makePcm16Wav(4, 0));
+    let calls = 0;
+    const backend = new WhisperServerBackend({
+      isServerAvailable: () => true,
+      transcribeViaServer: async (_wav, options) => {
+        calls++;
+        options?.onSegments?.([{ text: "Thank you.", startS: 0.75, endS: 1.5 }]);
+        return "Thank you.";
+      },
+      fallbackBackend: { name:"forbidden-fallback", isAvailable:async()=>false,
+        transcribe:async()=>{ throw new Error("silent resident success must not invoke fallback"); } },
+    });
+    try {
+      const result = await backend.transcribe(audioPath);
+      expect(result.text).toBe("");
+      expect(calls).toBe(1);
+    } finally {
+      keys.forEach((key,index) => { if(saved[index]===undefined) delete process.env[key]; else process.env[key]=saved[index]; });
+    }
+  });
+});

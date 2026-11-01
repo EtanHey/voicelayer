@@ -25,7 +25,7 @@ import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission,
  */
 
 import { applyPauseParagraphs, MIN_PARAGRAPH_CHARS, pauseParagraphsEnabled } from "./stt-paragraphs";
-import { applyCoherentParagraphFallback, coherentParagraphsEnabled } from "./stt-coherent-paragraphs";
+import { applyCoherentParagraphFallback, coherentParagraphsEnabled, hasParagraphCodeBlock, preservesInlineCode } from "./stt-coherent-paragraphs";
 import { processingEnv } from "./processing-settings";
 import { physicalStopInput, STOP_CAPTURE_DRAIN_MS as PUSH_TO_END_STOP_CAPTURE_DRAIN_MS, STOP_POLL_MS } from "./physical-stop-input";
 import { createHash, randomBytes } from "crypto";
@@ -557,10 +557,11 @@ export async function finalizeTranscriptionResultForSurface(
   // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
   const paragraphText = (text: string): string => {
     // Code whitespace is content: abstain before either paragraph stage.
-    if (text.includes("`") || text.includes("~~~")) return text;
-    const paused = !coherentParagraphsEnabled(env) && pauseParagraphsEnabled(env) && boundaryContext
+    if (hasParagraphCodeBlock(text)) return text;
+    const candidate = !coherentParagraphsEnabled(env) && pauseParagraphsEnabled(env) && boundaryContext
       ? applyPauseParagraphs(text, boundaryContext.segments, boundaryContext.pauses)
       : text;
+    const paused = preservesInlineCode(text, candidate) ? candidate : text;
     const formatted = applyCoherentParagraphFallback(paused);
     const strip = (value: string) => value.replace(/\s/gu, "");
     return strip(formatted) === strip(text) ? formatted : text;
