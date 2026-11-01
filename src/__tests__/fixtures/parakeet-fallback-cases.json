@@ -1,0 +1,459 @@
+{
+  "scope": "Synthetic control flow only; no private audio identities or reference payloads copied. Test audio is independently generated.",
+  "source_matrix_sha256": "a7b0a9ba666df2549f5c61e6e5b0f89fdde24ce7cd363298fccd1b71a1ec04cc",
+  "fixtures": [
+    {
+      "id": "empty_to_nonempty_unknown_tail",
+      "native": {
+        "status": "EMPTY_RESPONSE",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Nonempty is a hypothesis; no acoustic/tail gold."
+      }
+    },
+    {
+      "id": "error_to_nonempty",
+      "native": {
+        "status": "ERROR",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true,
+        "error_type": "RuntimeError"
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Preserve original error and full input identity."
+      }
+    },
+    {
+      "id": "timeout_with_retained_partial",
+      "native": {
+        "status": "TIMEOUT",
+        "text": "synthetic partial words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true,
+        "timeout_s": 45
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Timeout never becomes native success; retain partial output and deadline."
+      }
+    },
+    {
+      "id": "partial_nonempty",
+      "native": {
+        "status": "PARTIAL",
+        "text": "synthetic partial words",
+        "process_exit": 0,
+        "coverage": "PARTIAL_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Partial nonempty text needs fallback and independent completeness evidence."
+      }
+    },
+    {
+      "id": "invalid_text_type",
+      "native": {
+        "status": "RETURNED",
+        "text": null,
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Validate output shape before text operations."
+      }
+    },
+    {
+      "id": "nonempty_truncated_text",
+      "native": {
+        "status": "RETURNED",
+        "text": "synthetic truncated words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "KNOWN_MISSING",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Native text present does not prove its tail complete."
+      }
+    },
+    {
+      "id": "both_empty",
+      "native": {
+        "status": "EMPTY_RESPONSE",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "EMPTY_RESPONSE",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "UNRESOLVED_BOTH_EMPTY",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Acoustic speech UNKNOWN; never silently call silence or success."
+      }
+    },
+    {
+      "id": "fallback_error",
+      "native": {
+        "status": "ERROR",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true,
+        "error_type": "RuntimeError"
+      },
+      "whisper": {
+        "status": "ERROR",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true,
+        "error_type": "RuntimeError"
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "UNRESOLVED_FALLBACK_FAILED",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Retain both errors and retained WAV."
+      }
+    },
+    {
+      "id": "fallback_timeout",
+      "native": {
+        "status": "EMPTY_RESPONSE",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "TIMEOUT",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true,
+        "timeout_s": 235
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "UNRESOLVED_FALLBACK_FAILED",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Deadline and partial transport receipt remain visible."
+      }
+    },
+    {
+      "id": "fallback_partial_nonempty",
+      "native": {
+        "status": "EMPTY_RESPONSE",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "PARTIAL",
+        "text": "synthetic fallback fragment",
+        "process_exit": 0,
+        "coverage": "PARTIAL_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "UNRESOLVED_FALLBACK_INCOMPLETE",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Partial fallback cannot qualify complete output."
+      }
+    },
+    {
+      "id": "nonzero_exit_with_text",
+      "native": {
+        "status": "RETURNED",
+        "text": "synthetic words",
+        "process_exit": 1,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Text does not erase process failure."
+      }
+    },
+    {
+      "id": "fallback_identity_mismatch",
+      "native": {
+        "status": "EMPTY_RESPONSE",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": true,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "REFUSED_AUDIO_IDENTITY_MISMATCH",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Fallback must receive exact original retained bytes/path."
+      }
+    },
+    {
+      "id": "incomplete_wav_nonempty",
+      "native": {
+        "status": "PARTIAL",
+        "text": "synthetic truncated words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fixture words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": false,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_CAPTURE_TRUNCATED",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Full retained bytes decoded does not repair missing capture frames."
+      }
+    },
+    {
+      "id": "explicit_tail_evidence_qualified",
+      "native": {
+        "status": "EMPTY_RESPONSE",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic verified words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "VERIFIED_BY_EXTERNAL_EVIDENCE",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_TAIL_VERIFIED",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Even tail-verified machine output is not an unqualified acoustic accuracy pass."
+      }
+    },
+    {
+      "id": "native_invalid_timestamps",
+      "native": {
+        "status": "RETURNED",
+        "text": "synthetic words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": false
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fallback words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Native out-of-range times require fallback; retain raw times unchanged."
+      }
+    },
+    {
+      "id": "fallback_invalid_timestamps",
+      "native": {
+        "status": "EMPTY_RESPONSE",
+        "text": "",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": true
+      },
+      "whisper": {
+        "status": "RETURNED",
+        "text": "synthetic fallback words",
+        "process_exit": 0,
+        "coverage": "COMPLETE_RETAINED_PCM",
+        "tail": "UNKNOWN",
+        "times_valid": false
+      },
+      "capture_complete": true,
+      "identity_mismatch": false,
+      "expected": {
+        "must_fallback": true,
+        "terminal": "FALLBACK_NONEMPTY_INVALID_TIMESTAMPS",
+        "unqualified_SUCCESS_allowed": false,
+        "retained_attempts": 2,
+        "reason": "Raw fallback timestamp overrun cannot prove complete tail; no silent clamp."
+      }
+    }
+  ]
+}

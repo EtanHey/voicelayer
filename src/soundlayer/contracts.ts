@@ -11,10 +11,40 @@ export interface TranscriptionResult {
   text: string;
   backend: string;
   durationMs: number;
+  /** Provider/transport facts, separate from acoustic accuracy. */
+  attemptEvidence?: STTAttemptEvidence;
+  outcome?: STTOutcome;
 }
+
+export interface STTAttemptEvidence {
+  status?: "RETURNED" | "EMPTY_RESPONSE" | "ERROR" | "TIMEOUT" | "PARTIAL" | "INVALID";
+  processExitCode?: number | null;
+  inputSha256?: string;
+  inputPath?: string;
+  decodeCoverage?: "FULL_INPUT" | "PARTIAL" | "UNKNOWN";
+  tail?: "UNKNOWN" | "KNOWN_MISSING" | "VERIFIED_BY_EXTERNAL_EVIDENCE";
+  timesValid?: boolean;
+}
+
+export type STTOutcome =
+  | "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN"
+  | "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN"
+  | "FALLBACK_NONEMPTY_CAPTURE_TRUNCATED"
+  | "FALLBACK_NONEMPTY_TAIL_VERIFIED"
+  | "FALLBACK_NONEMPTY_INVALID_TIMESTAMPS"
+  | "UNRESOLVED_BOTH_EMPTY"
+  | "UNRESOLVED_FALLBACK_EMPTY"
+  | "UNRESOLVED_FALLBACK_FAILED"
+  | "UNRESOLVED_FALLBACK_INCOMPLETE"
+  | "REFUSED_AUDIO_IDENTITY_MISMATCH"
+  | "VERIFIED_ZERO_PCM"
+  | "VAD_NO_SPEECH";
 
 export interface TranscribeAudioOptions {
   promptOverride?: string;
+  /** Explicit language selection, or trusted audio-LID result; never guessed from script. */
+  language?: string;
+  detectedLanguage?: string;
 }
 
 export interface SpeechToTextBackend {

@@ -29,6 +29,7 @@ import {
   buildRecordingProvenance,
   isWhisperBackend,
   normalizeWhisperBackend,
+  fallbackReasonFromBackend,
   primeMachineProvenance,
   primeRecordingProvenanceProbes,
   primeWhisperCppVersion,
@@ -472,6 +473,16 @@ describe("the prime path never blocks on binary resolution", () => {
 describe("decorated backend names are normalised, not rejected", () => {
   beforeEach(resetProbeState);
   afterEach(resetProbeState);
+
+  it("retains Parakeet fallback reasons without stamping Whisper provenance on native P", () => {
+    for (const reason of ["language", "prompt", "provider-error", "empty-response", "incomplete-response", "sparse-response", "uncovered-tail", "input-format", "invalid-timing", "zero-pcm-response"]) {
+      const backend = `parakeet-resident+fallback-${reason}->whisper.cpp+qualified-fallback`;
+      expect(fallbackReasonFromBackend(backend)).toBe(reason);
+      expect(normalizeWhisperBackend(backend)).toBe("cli");
+    }
+    expect(fallbackReasonFromBackend("parakeet-resident")).toBeNull();
+    expect(normalizeWhisperBackend("parakeet-resident")).toBeNull();
+  });
 
   const PROBE: RecordingProvenanceProbe = {
     machine: READY_MACHINE,
