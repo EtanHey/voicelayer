@@ -3240,7 +3240,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             initialTab: lastSettingsTab,
             tabRequest: settingsTabRequest,
             onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab },
-            historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback }
+            historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback },
+            versionCheck: .live
         )
     }
 
