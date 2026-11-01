@@ -22,7 +22,15 @@ spyOn(model, "readWhisperModelStatus").mockResolvedValue({ residency: "unknown" 
 spyOn(globalThis, "fetch").mockImplementation(Object.assign(() => { throw new Error("Unexpected real network probe"); }, { preconnect: () => {} }));
 const tick = async () => { for (let n = 0; n < 40; n++) await Promise.resolve(); };
 
-if (scenario.startsWith("capture") || scenario === "picker-refusal") {
+if (scenario === "cli-only-sleeping") {
+  process.env.QA_VOICE_STT_BACKEND = "whisper";
+  stt.WhisperCppBackend.prototype.isAvailable = async () => true;
+  stt.WhisperCppBackend.prototype.transcribe = async () => ({ text: "retained words", backend: "whisper.cpp", durationMs: 0 });
+  const backend = await stt.getBackend();
+  await backend.transcribe("synthetic-no-file");
+  assert.equal(state.readRecognizerStatus().engines.whisper.phase, "sleeping");
+  assert.equal(server.whisperServerLaunchRecord(), null);
+} else if (scenario.startsWith("capture") || scenario === "picker-refusal") {
   let providers = 0;
   stt.WhisperServerBackend.prototype.isAvailable = async () => true;
   stt.WhisperServerBackend.prototype.transcribe = async () => { providers++; return { text: "all retained words", backend: "whisper-server", durationMs: 0 }; };
@@ -143,6 +151,17 @@ if (scenario.startsWith("capture") || scenario === "picker-refusal") {
   } else {
     await server.ensureServer(19143);
     const before = state.readRecognizerStatus(); assert.equal(before.engines.whisper.phase, "ready");
+    if (scenario === "resident-cli-fallback") {
+      stt.WhisperServerBackend.prototype.isAvailable = async () => true;
+      stt.WhisperServerBackend.prototype.transcribe = async () => ({ text: "retained words", backend: "whisper-server+fallback-empty-response->whisper.cpp", durationMs: 0 });
+      const backend = await stt.getBackend();
+      const result = await backend.transcribe("synthetic-no-file");
+      assert.equal(result.text, "retained words");
+      assert.equal(server.whisperServerLaunchRecord()?.pid, 41001);
+      assert.equal(state.readRecognizerStatus().engines.whisper.phase, "ready", "CLI fallback must not put a still-resident server to sleep");
+      assert.equal(state.readRecognizerStatus().fallback_reason, "empty-response");
+      console.log(`PASS ${scenario}`); process.exit(0);
+    }
     if (scenario === "intentional-exit" || scenario === "late-old-exit") {
       server.stopServer();
       if (scenario === "late-old-exit") { currentPid++; await server.ensureServer(19143); }
