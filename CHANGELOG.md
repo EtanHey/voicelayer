@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.59] - 2026-11-01
+
+### Added
+- Add a private pronunciation list managed with `voicelayer pronounce` (#639).
+- Add internal foundations for conversation capture and playback ownership (#626).
+
+### Fixed
+- Make updates and installs wait for active dictation and speech to finish, with shared update coordination across VoiceBar, the daemon and command-line tools (#629, #630, #636, #637, #638, #641).
+- Keep VoiceBar available through installer failures and safely supervise updates from older versions (#631, #633, #644).
+- Show readable reasons for interrupted or failed reads in Speech history, with no reason line on completed reads (#640).
+- Read amounts such as ₪180/h, decimals and filenames naturally, and say ", done" for checked tasks (#639).
+- Preserve literal text, link labels, source boundaries and selection context when preparing narration (#643).
+
+### Developer / QA
+- Stabilize nested test discovery, fixture identities and subprocess time limits (#642).
+
 ## [2.2.58] - 2026-10-28
 
 ### Added
