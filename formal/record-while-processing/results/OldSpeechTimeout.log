@@ -1,0 +1,13 @@
+{
+  "role": "historical",
+  "kind": "invariant",
+  "target": "NoTimeoutWhileTalking",
+  "status": "EXPECTED_FAIL",
+  "generated": 15,
+  "distinct": 8,
+  "trace": [
+    "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"init\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"none\" ]",
+    "s = [ stage |-> [A |-> \"recording\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"F5\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]",
+    "s = [ stage |-> [A |-> \"recording\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"speech\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> TRUE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]"
+  ]
+}

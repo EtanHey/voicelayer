@@ -11,14 +11,211 @@
     "src/mcp-server-daemon.ts"
   ],
   "checks": {
-    "Current": null,
-    "OldSocketBusy": "N6StartsB",
-    "OldF5CancelsA": "N6PreservesA",
-    "OldUnguardedCancel": "N7GuardedClick",
-    "OldDisplayFloor": "N8ImmediatePaste",
-    "OldDeferredFinalDrop": "N8FinalNotSuperseded",
-    "ConcurrentGlobalCancel": "N7ScopedCancel",
-    "DropCancelledMutant": "D3EveryTakeKept",
-    "Fixed": null
-  }
+    "Current": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OldSocketBusy": {
+      "role": "historical",
+      "target": "N6StartsB",
+      "kind": "invariant"
+    },
+    "OldF5CancelsA": {
+      "role": "historical",
+      "target": "N6PreservesA",
+      "kind": "invariant"
+    },
+    "OldUnguardedCancel": {
+      "role": "historical",
+      "target": "N7GuardedClick",
+      "kind": "invariant"
+    },
+    "OldDisplayFloor": {
+      "role": "historical",
+      "target": "N8ImmediatePaste",
+      "kind": "invariant"
+    },
+    "OldDeferredFinalDrop": {
+      "role": "historical",
+      "target": "N8FinalNotSuperseded",
+      "kind": "invariant"
+    },
+    "OldSpeechTimeout": {
+      "role": "historical",
+      "target": "NoTimeoutWhileTalking",
+      "kind": "invariant"
+    },
+    "MutType": {
+      "role": "mutant",
+      "target": "TypeOK",
+      "kind": "invariant"
+    },
+    "MutTwoMics": {
+      "role": "mutant",
+      "target": "OneMic",
+      "kind": "invariant"
+    },
+    "MutTwoDecoders": {
+      "role": "mutant",
+      "target": "OneDecoder",
+      "kind": "invariant"
+    },
+    "MutDuplicatePaste": {
+      "role": "mutant",
+      "target": "NoDuplicatePaste",
+      "kind": "invariant"
+    },
+    "MutPasteAfterCancel": {
+      "role": "mutant",
+      "target": "NoCancelledPaste",
+      "kind": "invariant"
+    },
+    "MutRing": {
+      "role": "mutant",
+      "target": "N7CooldownRing",
+      "kind": "invariant"
+    },
+    "MutDropTimeout": {
+      "role": "mutant",
+      "target": "D3EveryTakeKept",
+      "kind": "invariant"
+    },
+    "MutStallRecord": {
+      "role": "mutant",
+      "target": "N6Admissible",
+      "kind": "invariant"
+    },
+    "MutRejectRecord": {
+      "role": "mutant",
+      "target": "N6StartsB",
+      "kind": "invariant"
+    },
+    "MutDisableRecordStart": {
+      "role": "mutant",
+      "target": "N6StartsB",
+      "kind": "invariant"
+    },
+    "MutRecordCancels": {
+      "role": "mutant",
+      "target": "N6PreservesA",
+      "kind": "invariant"
+    },
+    "MutDisableRecordPreserve": {
+      "role": "mutant",
+      "target": "N6PreservesA",
+      "kind": "invariant"
+    },
+    "MutWrongVictim": {
+      "role": "mutant",
+      "target": "N7ScopedCancel",
+      "kind": "invariant"
+    },
+    "MutUnscopedSignal": {
+      "role": "mutant",
+      "target": "N7ScopedCancel",
+      "kind": "invariant"
+    },
+    "MutDisableCancelB": {
+      "role": "mutant",
+      "target": "N7ScopedCancel",
+      "kind": "invariant"
+    },
+    "MutUnguardedClick": {
+      "role": "mutant",
+      "target": "N7GuardedClick",
+      "kind": "invariant"
+    },
+    "MutDisableCancelBGuard": {
+      "role": "mutant",
+      "target": "N7GuardedClick",
+      "kind": "invariant"
+    },
+    "MutDisableClick": {
+      "role": "mutant",
+      "target": "N7GuardedClick",
+      "kind": "invariant"
+    },
+    "MutIgnoreIdentity": {
+      "role": "mutant",
+      "target": "N7Identity",
+      "kind": "invariant"
+    },
+    "MutHoldResult": {
+      "role": "mutant",
+      "target": "N8ImmediatePaste",
+      "kind": "invariant"
+    },
+    "MutResultStopsB": {
+      "role": "mutant",
+      "target": "N8ImmediatePaste",
+      "kind": "invariant"
+    },
+    "MutDelayedPaste": {
+      "role": "mutant",
+      "target": "N8ImmediatePaste",
+      "kind": "invariant"
+    },
+    "MutSupersede": {
+      "role": "mutant",
+      "target": "N8FinalNotSuperseded",
+      "kind": "invariant"
+    },
+    "MutSpeechTimeout": {
+      "role": "mutant",
+      "target": "NoTimeoutWhileTalking",
+      "kind": "invariant"
+    },
+    "MutUnfairProcessing": {
+      "role": "mutant",
+      "target": "ProcessingSettles",
+      "kind": "temporal"
+    },
+    "MutNoOverlapProgress": {
+      "role": "mutant",
+      "target": "OverlapPastes",
+      "kind": "temporal"
+    },
+    "MutNoIdle": {
+      "role": "mutant",
+      "target": "EventuallyIdle",
+      "kind": "temporal"
+    },
+    "WitnessOverlapPaste": {
+      "role": "witness",
+      "target": "NoOverlapPaste",
+      "kind": "invariant"
+    },
+    "WitnessScopedCancel": {
+      "role": "witness",
+      "target": "NoScopedCancelDuringDecode",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "D3EveryTakeKept",
+    "EventuallyIdle",
+    "N6Admissible",
+    "N6PreservesA",
+    "N6StartsB",
+    "N7CooldownRing",
+    "N7GuardedClick",
+    "N7Identity",
+    "N7ScopedCancel",
+    "N8FinalNotSuperseded",
+    "N8ImmediatePaste",
+    "NoCancelledPaste",
+    "NoDuplicatePaste",
+    "NoTimeoutWhileTalking",
+    "OneDecoder",
+    "OneMic",
+    "OverlapPastes",
+    "ProcessingSettles",
+    "TypeOK"
+  ]
 }
