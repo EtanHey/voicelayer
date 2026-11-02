@@ -2548,6 +2548,11 @@ export async function recordToBuffer(
           (sum, chunk) => sum + chunk.byteLength,
           0,
         );
+        if (captureState?.pttLastSpeechEndSample !== undefined) {
+          // Ask pre-roll selection changes the origin of the shared D3b decode window.
+          captureState.pttLastSpeechEndSample = Math.max(0, captureState.pttLastSpeechEndSample -
+            (capturedPcmBytes - selectedPcmBytes) / BYTES_PER_SAMPLE);
+        }
         // Concatenate all PCM chunks
         const result = new Uint8Array(selectedPcmBytes);
         let offset = 0;
@@ -2625,7 +2630,7 @@ export async function recordToBuffer(
         // Classify queued/in-flight PCM before concluding that no speech occurred.
         const unclassified = pttVadPending || chunkQueue.length > 0;
         if (unclassified) {
-          classificationGraceEndsAtMs ??= Date.now() + NO_ANSWER_CLASSIFY_GRACE_MS;
+          classificationGraceEndsAtMs ??= noAnswerDeadlineAtMs + NO_ANSWER_CLASSIFY_GRACE_MS;
           if (Date.now() < classificationGraceEndsAtMs) {
             timer = setTimeout(onTimeout, STOP_POLL_MS);
             return;
@@ -2640,7 +2645,7 @@ export async function recordToBuffer(
         // A slow inference or queued PCM may contain speech. Classify it before deciding it was silence.
         const remaining = pttSilenceTimeoutMs - (Date.now() - pttLastSpeechAtMs);
         if (voiceAsk && remaining <= 0 && (pttVadPending || chunkQueue.length > 0)) {
-          classificationGraceEndsAtMs ??= Date.now() + NO_ANSWER_CLASSIFY_GRACE_MS;
+          classificationGraceEndsAtMs ??= pttLastSpeechAtMs + pttSilenceTimeoutMs + NO_ANSWER_CLASSIFY_GRACE_MS;
           if (Date.now() >= classificationGraceEndsAtMs) {
             if (captureState) captureState.noAnswerExpired = "unclassified";
             finish();

@@ -738,7 +738,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   }
 
   // Capture's existing watchdog allowance is separate from playback deadlines.
-  // MCP VAD uses timeout_seconds only until first speech; input owns its safety ceiling.
+  // MCP VAD uses timeout_seconds only until first speech; HOLD uses the shared silence deadline.
   const outerTimeoutMs =
     (timeoutSeconds + VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS) * 1000;
   const inputAbortController = new AbortController();

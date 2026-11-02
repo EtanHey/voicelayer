@@ -1482,6 +1482,33 @@ describe("input recording durability", () => {
     } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
   });
 
+  it("D5 locked Ask shares the last-speech-plus-three-seconds decode after pre-roll selection", async () => {
+    const { waitForInput } = await import("../input");
+    const { setRecordingHold } = await import("../recording-hold");
+    const recorder = installFakeRecorder([], true);
+    const clock = installRecordingClock([120_000, 600_000]);
+    const abort = new AbortController();
+    let archivePath = "";
+    vadProbabilityForCall = call => call > 40 && call <= 65 ? 0.95 : 0;
+    const recording = waitForInput(120_000, "thoughtful", false, {
+      archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
+      onArchiveCreated: path => { archivePath = path; },
+    });
+    try {
+      await recorder.waitForSpawn(); setRecordingHold(true); clock.advance(0);
+      for (let n = 0; n < 225; n++) recorder.push(makePcmChunk(n >= 40 && n < 65 ? 1800 : 0));
+      await waitUntil(() => vadCallCount === 225, "held Ask pause and speech classified");
+      clock.advance(600_000); expect(await recording).toBe("Retained transcript.");
+      const pcm = readFileSync(join(archivePath, "audio.wav")).subarray(44);
+      let lastSpeechByte = 0;
+      for (let n = 0; n < pcm.byteLength; n += 2) if (pcm.readInt16LE(n)) lastSpeechByte = n + 2;
+      const expected = pcm.subarray(0, lastSpeechByte + 3 * 16_000 * 2);
+      expect(expected.byteLength).toBeLessThan(pcm.byteLength);
+      expect(backendTranscribedWav?.subarray(44)).toEqual(expected);
+      expectValidRetainedWav(join(archivePath, "audio.wav"));
+    } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
+  });
+
   it("D5 HOLD protects a silent Ask at 120s, then ten-minute silence closes and archives", async () => {
     const { waitForInput, getRecordingState } = await import("../input");
     const { setRecordingHold } = await import("../recording-hold");
@@ -1870,7 +1897,7 @@ describe("input recording durability", () => {
     }
   });
 
-  it("archives queued PCM when a backlogged capture reaches its normal timeout", async () => {
+  for (const lateTimer of [false, true]) it(`archives queued PCM when a backlogged capture reaches its normal timeout; lateTimer=${lateTimer}`, async () => {
     let releaseVad!: () => void;
     vadProcessSpy?.mockImplementation(async () => {
       vadCallCount += 1;
@@ -1899,11 +1926,14 @@ describe("input recording durability", () => {
 
     try {
       await waitUntil(() => vadCallCount === 1, "timeout VAD backlog");
-      clock.advance(100);
-      expect((await import("../input")).getRecordingState()).toBe("recording");
-      clock.advance(1_999);
-      expect((await import("../input")).getRecordingState()).toBe("recording");
-      clock.advance(50);
+      if (lateTimer) clock.advance(2_150); // A late callback must not grant a fresh grace.
+      else {
+        clock.advance(100);
+        expect((await import("../input")).getRecordingState()).toBe("recording");
+        clock.advance(1_999);
+        expect((await import("../input")).getRecordingState()).toBe("recording");
+        clock.advance(50);
+      }
       await expect(capture).resolves.toBeNull();
       expect(uncertain).toBe(true);
       expect(backendTranscribeCalls).toBe(0);
