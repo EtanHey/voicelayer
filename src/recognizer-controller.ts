@@ -1,6 +1,7 @@
 import { getRecordingState } from "./input";
 import { residencyBusy } from "./model-residency-busy";
 import { parakeetServer } from "./parakeet-server";
+import { migrateLegacyParakeetRuntime } from "./parakeet-runtime";
 import { ensureServer, unloadOwnedServer, whisperServerLaunchRecord, probeWhisperServerListeners, onWhisperModelStateChange } from "./whisper-server";
 import { resetBackendCache } from "./stt";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
@@ -65,6 +66,7 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
     return engine === "parakeet" ? deps.startP() : deps.startW();
   };
   try {
+    if (value === "parakeet" && deps === defaults && parakeetServer.pid === null) migrateLegacyParakeetRuntime();
     if (!(deps.assetsPresent?.(value) ?? readRecognizerStatus().engines[value].assets_present)) throw new Error("assets-not-present");
     // Never mutate preference or load a successor until both prior owners have
     // accepted cleanup. A foreign/adopted Whisper is not ours to signal.
@@ -128,6 +130,7 @@ export async function setRecognizerResidency(engine: Recognizer, action: "load" 
   try {
     assertRecognizerNotDownloading(engine);
     beginRecognizerMaintenance(); acquired = true;
+    if (action === "load" && engine === "parakeet" && deps === defaults && parakeetServer.pid === null) migrateLegacyParakeetRuntime();
     const status = readRecognizerStatus();
     if (action === "load") {
       if (status.desired !== engine || status.effective !== null && status.effective !== engine) throw new Error("select-recognizer-first");

@@ -3,6 +3,7 @@
  */
 import { existsSync } from "fs";
 import { defaultParakeetModelPath, parakeetPython } from "./recognizer-assets";
+import { migrateLegacyParakeetRuntime } from "./parakeet-runtime";
 import { isAbsolute, join } from "path";
 import { homedir } from "os";
 import type { Subprocess } from "bun";
@@ -35,7 +36,7 @@ export class ParakeetServiceError extends Error {
 
 export interface ParakeetServerOptions {
   /** Tests may use an isolated protocol-only child; no model imports. */
-  command?: string[];
+  command?: string[] | (() => string[] | null);
   startupMs?: number;
   requestMs?: number;
   stopMs?: number;
@@ -195,7 +196,9 @@ export class ParakeetServer {
       if (this.child.proc.exitCode === null && !this.child.fault) return this.child;
       await this.stopChild();
     }
-    const command = this.options.command ?? parakeetCommand();
+    migrateLegacyParakeetRuntime();
+    const configured = this.options.command;
+    const command = typeof configured === "function" ? configured() : configured ?? parakeetCommand();
     if (!command) throw new Error("Configure local Parakeet Python and model paths");
     if (process.env.VOICELAYER_TEST_ISOLATED === "1" && !this.options.command) {
       throw new Error("Real Parakeet loading is disabled under the unit-test preload");
