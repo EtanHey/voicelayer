@@ -2,18 +2,17 @@ import XCTest
 @testable import VoiceBarUI
 
 final class SettingsHistoryDiagnosticsTests: XCTestCase {
-    func testSelectionChangeAppliesResultDefaultAndClearsTechnicalExpansion() {
+    func testSelectionChangeAppliesResultDefault() {
         var state = SettingsHistoryDiagnosticsDisclosure(selection: "2026-11-01/a")
         XCTAssertFalse(state.expanded)
         state.expanded = false
-        state.detailsExpanded = true
         state.select("2026-11-01/a")
         XCTAssertFalse(state.expanded, "same-entry refresh preserves deliberate collapse")
-        XCTAssertTrue(state.detailsExpanded)
         state.select("2026-11-01/b", defaultExpanded: true)
         XCTAssertTrue(state.expanded, "new entry diagnostics remain accessible")
-        XCTAssertFalse(state.detailsExpanded, "private error expansion does not cross selections")
         XCTAssertEqual(state.selection, "2026-11-01/b")
+        state.select("2026-11-01/a")
+        XCTAssertFalse(state.expanded, "an expansion does not cross into a successful selection's quiet default")
     }
 
     func testRecordingObservationsDoNotInventAttemptOutcomes() {
