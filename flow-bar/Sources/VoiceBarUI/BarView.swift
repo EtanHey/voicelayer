@@ -634,6 +634,10 @@ public struct BarView: View {
                 }
                 statusLabel
             }
+            // Removing overflowing copy must not recenter the queue badge away
+            // from its existing core-side slot.
+            .frame(maxWidth: state.queueDepth > 0 && notchPresentation.feedback?.replacesWingText == true
+                ? .infinity : nil, alignment: .leading)
         case .disconnected:
             statusLabel
         case .recording:

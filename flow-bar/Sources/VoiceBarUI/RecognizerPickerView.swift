@@ -101,12 +101,15 @@ public struct RecognizerPickerView: View {
                 .help(residency == .load && state.selected != engine ? "Select this recognizer first" : "\(residency == .load ? "Load into" : "Unload from") memory")
                 .accessibilityIdentifier("recognizer-residency-\(engine.rawValue)")
             ForEach(state.assetActions(for: engine), id: \.rawValue) { action in
+            let isLastInstalled = !state.assetsPresent(for: engine == .parakeet ? .whisper : .parakeet)
             Button {
                 if action == .delete { deleting = engine } else { onManage?(engine, .download) }
             } label: { Image(systemName: action == .delete ? "trash" : "arrow.down.circle").font(.system(size: 14)) }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .disabled(onManage == nil || !state.canManage(engine, action: action))
-                .help(action == .delete ? "Delete model files (unload first)" : "Download model and required runtime")
+                .help(action == .delete && isLastInstalled
+                    ? "Download another recognizer before deleting this one"
+                    : action == .delete ? "Delete model files (unload first)" : "Download model and required runtime")
                 .accessibilityLabel("\(action == .delete ? "Delete" : "Download") \(engine.title)")
                 .accessibilityIdentifier("recognizer-\(action.rawValue)-\(engine.rawValue)")
             }
