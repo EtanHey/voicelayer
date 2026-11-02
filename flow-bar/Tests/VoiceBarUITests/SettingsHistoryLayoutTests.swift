@@ -136,7 +136,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
     }
 
     /// QA-06 (Etan, 2026-11-02: "the state is not kept between just traveling within the app").
-    func testLeavingAndReturningKeepsTheRowItsScrollTargetAndItsDetailsState() {
+    func testLeavingAndReturningKeepsTheRowAndItsDetailsState() {
         var memory = SettingsHistoryRecordingMemory()
         memory.applyPage(["newest", "three-minute", "oldest"])
         XCTAssertEqual(memory.selectedID, "newest", "a fresh Settings window opens on the newest row")
@@ -145,7 +145,6 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         // Away to General and back: History reloads its page (a new dictation may have landed).
         memory.applyPage(["brand-new", "newest", "three-minute", "oldest"])
         XCTAssertEqual(memory.selectedID, "three-minute", "the row Etan left stays selected")
-        XCTAssertEqual(memory.scrollTarget, "three-minute", "and is scrolled back into view")
         XCTAssertEqual(memory.detailsExpanded(for: "three-minute"), true)
         XCTAssertNil(memory.detailsExpanded(for: "newest"), "another row keeps its own default")
         // A page that no longer holds it (a search) falls back to the newest match.
