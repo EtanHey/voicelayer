@@ -183,7 +183,7 @@ not exercise a real mic, input synthesis, or the installed application.
 | Scoped cancel / durable take signal | `src/socket-handlers.ts:363`; `src/recording-jobs.ts:115` |
 | Guard/cooldown; newest Escape; stale guard | `VoiceState.swift:1019`, `:2009`, `:2667` |
 | Captured app/window/element delivery | `VoiceState.swift:2643`, `:4588`; `CommandModeAXHelper.swift:97`; `SynthesizedKeyEvents.swift:9` |
-| Delivery ACK bound and unverified persistence | `src/recording-jobs.ts:143`; `VoiceState.swift:4769` |
+| Delivery ACK bound and unverified persistence | `src/recording-jobs.ts:143`; `VoiceState.swift:4776` |
 | Disconnect/new owner reset | `VoiceState.swift:3399`, `:3412`; `SocketServer.swift:497` |
 | Transcript commit then Lane D gate evidence | `src/input.ts:3581`, `:4365`, `:4538`, `:4661` |
 

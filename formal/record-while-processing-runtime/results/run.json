@@ -104,8 +104,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 252314,
-      "distinct": 80198
+      "generated": 137951,
+      "distinct": 45508
     },
     "RetargetMutant": {
       "role": "mutant",
@@ -144,8 +144,8 @@
       "kind": "temporal",
       "target": "DeliveryAckBound",
       "status": "EXPECTED_FAIL",
-      "generated": 184400,
-      "distinct": 55144
+      "generated": 149582,
+      "distinct": 46781
     },
     "StallMutant": {
       "role": "mutant",
