@@ -678,6 +678,10 @@ export interface NoSpeechGateResult {
 export interface RecordingCaptureState {
   recorderExited?: Promise<void>;
   physicalPressStop?: boolean;
+  /** Locked PTT silence expiry keeps the complete archive and bounds only STT input. */
+  pttSilenceTimeout?: true;
+  /** End-exclusive sample offset of the last Silero speech chunk in captured mono 16 kHz PCM. */
+  pttLastSpeechEndSample?: number;
   vadSpeechDetected?: boolean;
   noAnswerExpired?: boolean;
   noAnswerStartedAtMs?: number;
@@ -2279,11 +2283,11 @@ export function isPushToEndStopDrainComplete(
  *
  * Two modes:
  * - VAD mode (default): Silero VAD detects speech/silence, auto-stops on silence
- * - push-to-end mode (pushToEnd=true): Records until stop signal or timeout, no VAD
+ * - push-to-end mode (pushToEnd=true): Stop signal or speech-renewed silence deadline; no short VAD close
  *
  * @param timeoutMs - Recording limit; MCP VAD asks use it only before first speech
  * @param silenceMode - VAD silence threshold (ignored in push-to-end mode)
- * @param pushToEnd - If true, skip VAD — only stop on user signal or timeout
+ * @param pushToEnd - If true, use Silero for silence timing and decoder boundaries, preserving captured PCM
  */
 export async function recordToBuffer(
   timeoutMs: number,
@@ -2359,7 +2363,7 @@ export async function recordToBuffer(
     );
   }
 
-  // PTT uses speech evidence only to renew its silence deadline, never to trim audio or end on VAD silence.
+  // PTT keeps all captured PCM. Silero renews the deadline and records the decoder-only end boundary.
   let pttSpeechDetectionAvailable = true;
   try {
     await resetVAD();
@@ -2381,6 +2385,7 @@ export async function recordToBuffer(
 
   return new Promise<Uint8Array | null>((resolve, reject) => {
     let totalChunksProcessed = 0;
+    let processedPcmBytes = 0;
     let hasSpeech = false;
     let firstSpeechChunkIndex = -1;
     let readBuffer: Uint8Array[] = [];
@@ -2573,7 +2578,7 @@ export async function recordToBuffer(
     let recordingHeld = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let speechSafetyTimer: ReturnType<typeof setTimeout> | undefined;
-    const pttSilenceTimeoutMs = captureState?.archiveSource === "voicebar" ? 60_000 : timeoutMs;
+    const pttSilenceTimeoutMs = captureState?.archiveSource === "voicebar" ? 10 * 60_000 : timeoutMs;
     const synchronizeRecordingHold = () => {
       if (pushToEnd || resolved) return false;
       const held = isRecordingHoldEngaged();
@@ -2616,6 +2621,7 @@ export async function recordToBuffer(
           return;
         }
       }
+      if (pushToEnd && captureState?.archiveSource === "voicebar") captureState.pttSilenceTimeout = true;
       finish();
     };
     // PTT and MCP VAD start their silence budget only once the microphone opens.
@@ -2696,9 +2702,6 @@ export async function recordToBuffer(
           : pttSilenceTimeoutMs;
         timer = setTimeout(onTimeout, remaining);
       }
-      if (pushToEnd) speechSafetyTimer = setTimeout(() => {
-        if (!resolved) finish(); // ETAN-ASKS D3: keep and transcribe the complete take at the 20-minute ceiling.
-      }, 20 * 60_000);
       invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
       if (resolved) return;
 
@@ -2810,6 +2813,7 @@ export async function recordToBuffer(
           const chunk = chunkQueue.shift()!;
 
           pcmChunks.push(chunk);
+          processedPcmBytes += chunk.byteLength;
           totalChunksProcessed++;
           recoveryWriter.appendCapturedChunk(chunk, pcmChunks);
 
@@ -2835,6 +2839,7 @@ export async function recordToBuffer(
                     timer = setTimeout(onTimeout, pttSilenceTimeoutMs);
                     invokeCaptureObserver("speech_start", captureState?.onSpeechStart);
                   }
+                  if (captureState) captureState.pttLastSpeechEndSample = processedPcmBytes / BYTES_PER_SAMPLE;
                 }
               } catch {
                 pttSpeechDetectionAvailable = false;
@@ -3086,7 +3091,7 @@ export async function waitForInput(
     }
     throw err;
   }
-  // MICDROP2/3: the archive and the decoder both get the whole kept PCM; at_ms is the observed loss.
+  // MICDROP2/3 retain the whole capture; silence expiry may bound only decoder input below.
   const micDisconnect = captureState.micDisconnect ?? null;
   const unconfirmedDeviceLoss = captureState.unconfirmedDeviceLoss ?? null;
   if (unconfirmedDeviceLoss) {
@@ -3150,10 +3155,20 @@ export async function waitForInput(
   }
   // Physical-stop fallback must really keep everything. The legacy silence
   // trimmer could otherwise cut seconds before this feature's bounded window.
+  // D3b bounds only silence-expired STT input by Silero speech + 3s; the archive stays complete.
   // MICDROP3 R1 (Sol): any loss evidence (EOF, or a CoreAudio report confirmed or not) decodes the
   // complete kept capture: no trimmer, so the backend WAV, the rebuilt session and recovery are whole.
   const hasMicLossEvidence = micDisconnect !== null || unconfirmedDeviceLoss !== null;
-  const sttTrim = hasMicLossEvidence ? {
+  const pttNoSpeech = captureState.pttSilenceTimeout === true && captureState.pttLastSpeechEndSample === undefined;
+  const pttDecodeEndBytes = captureState.pttLastSpeechEndSample === undefined ? 0 : Math.min(
+    pcmData.byteLength, (captureState.pttLastSpeechEndSample + 3 * SAMPLE_RATE) * BYTES_PER_SAMPLE,
+  );
+  const pttDecodePcm = pcmData.subarray(0, pttDecodeEndBytes);
+  const sttTrim = captureState.pttSilenceTimeout ? {
+    pcmData: pttDecodePcm, trimmed: pttDecodePcm.byteLength < pcmData.byteLength,
+    rawDurationMs: pcmDurationMs(pcmData),
+    transcribedDurationMs: pcmDurationMs(pttDecodePcm),
+  } : hasMicLossEvidence ? {
     pcmData, trimmed: false,
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pcmData),
@@ -3289,7 +3304,7 @@ export async function waitForInput(
 
   if (sttTrim.trimmed) {
     console.error(
-      `[voicelayer] ${isPhysicalStop ? "Physical-stop cutoff" : "Trimmed trailing silence"} before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
+      `[voicelayer] ${captureState.pttSilenceTimeout ? "Silero speech window" : isPhysicalStop ? "Physical-stop cutoff" : "Trimmed trailing silence"} before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
     );
     appendControlLayerEvent("capture.stt_trim", {
       raw_duration_ms: sttTrim.rawDurationMs,
@@ -3303,7 +3318,7 @@ export async function waitForInput(
 
   const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
   const vadNoSpeech = !pushToEnd && captureState.vadSpeechDetected === false;
-  const transcriptionAllowed = noSpeechGate.allowed && !vadNoSpeech;
+  const transcriptionAllowed = captureState.pttSilenceTimeout ? !pttNoSpeech : noSpeechGate.allowed && !vadNoSpeech;
   console.error(
     `[voicelayer] Recording gate: duration=${noSpeechGate.durationMs}ms, ` +
       `rms=${noSpeechGate.rms.toFixed(0)}, ` +
@@ -3313,10 +3328,10 @@ export async function waitForInput(
       (sttTrim.trimmed ? `, raw_duration=${sttTrim.rawDurationMs}ms` : ""),
   );
   if (!transcriptionAllowed) {
-    const noSpeechReason = vadNoSpeech ? "vad-no-speech" : noSpeechGate.reason;
+    const noSpeechReason = pttNoSpeech ? "no-speech" : vadNoSpeech ? "vad-no-speech" : noSpeechGate.reason;
     // A device that was live and then lost is not a TCC failure: never respawn the daemon for it.
     // A never-live one keeps main's broken-mic classification (sox may exit on a TCC denial).
-    const captureFailure = vadNoSpeech || micDisconnect?.atMs != null
+    const captureFailure = pttNoSpeech || vadNoSpeech || micDisconnect?.atMs != null
       ? null
       : classifyCaptureFailure(noSpeechGate);
     console.error(
@@ -3328,7 +3343,7 @@ export async function waitForInput(
     if (voiceBarArchivePath) {
       markArchivedRecordingNotTranscribed(
         join(voiceBarArchivePath, "audio.wav"),
-        noSpeechArchiveReason(
+        pttNoSpeech ? "no-speech" : noSpeechArchiveReason(
           noSpeechReason === "vad-no-speech" ||
             noSpeechReason === "too-short" ||
             noSpeechReason === "too-quiet"
@@ -3368,7 +3383,7 @@ export async function waitForInput(
     return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
   }
 
-  if (pushToEnd) {
+  if (pushToEnd && !captureState.pttSilenceTimeout) {
     try {
       const pushToEndSpeechGate = await evaluatePushToEndSpeechGate(
         sttTrim.pcmData,

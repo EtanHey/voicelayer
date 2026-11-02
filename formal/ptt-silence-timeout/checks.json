@@ -36,18 +36,24 @@
       "target": "SpeechRenewsDeadline",
       "kind": "invariant"
     },
-    "NoCapMutant": {
+    "ReintroducedCapMutant": {
       "role": "mutant",
-      "target": "CapStops",
+      "target": "RecurringSpeechNeverTimesOut",
+      "kind": "invariant"
+    },
+    "NoTimeoutMutant": {
+      "role": "mutant",
+      "target": "SilenceTimesOut",
       "kind": "temporal"
     }
   },
   "acceptance": [
-    "CapStops",
     "EveryEndedTakeRetained",
     "NoTimeoutDuringSpeech",
     "RawAccurate",
     "SettlesAfterSilence",
-    "SpeechRenewsDeadline"
+    "SpeechRenewsDeadline",
+    "RecurringSpeechNeverTimesOut",
+    "SilenceTimesOut"
   ]
 }

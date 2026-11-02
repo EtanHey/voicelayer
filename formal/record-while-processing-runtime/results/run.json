@@ -22,7 +22,7 @@
     "src/recording-jobs.ts": "f26e7a12c193f773744e3dd38f6e7590925ad0ed900d2c0667be8e991a7dd989",
     "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
     "src/socket-handlers.ts": "b82c1c831dd4986adff5685c3a0df318c585e848ec92980116a50f3c9f15a5a1",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "f296f4d72cb7a54527734c4bf4ecf17adb47e135bdd05c7b3c7493d3aec3a779",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "3f78dfbfa851157cde32717ae8941e889b1463b023cf8f1c3824744218be7929",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "71f2bcef238f431baa75d4d67134eaf518c2ba1a047911490b39b8f0b71a6102",
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368"
   },
@@ -104,8 +104,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 137951,
-      "distinct": 45508
+      "generated": 252314,
+      "distinct": 80198
     },
     "RetargetMutant": {
       "role": "mutant",
@@ -144,8 +144,8 @@
       "kind": "temporal",
       "target": "DeliveryAckBound",
       "status": "EXPECTED_FAIL",
-      "generated": 149582,
-      "distinct": 46781
+      "generated": 194596,
+      "distinct": 57620
     },
     "StallMutant": {
       "role": "mutant",

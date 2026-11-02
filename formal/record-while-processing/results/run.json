@@ -2,69 +2,67 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/record-while-processing/RecordWhileProcessing.tla": "0faafad2a4a135234889a0878d94da3e0b2f911fa11206f00a8c425bd553e810",
-    "formal/record-while-processing/checks.json": "28c2d208b4da8f06fb02ae76abd58c861499c118fedb5decaa191691ec48e13b",
+    "formal/record-while-processing/RecordWhileProcessing.tla": "da505eb1fd0fca588419cc40a55b46757d72918e71087795f1fc131db95221f8",
+    "formal/record-while-processing/checks.json": "4f766cfad885a89c306c1722bc9f05093d6766e0765b48891d939973d313d11b",
     "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
-    "formal/record-while-processing/MutSupersede.cfg": "c348013866a0638b0681a5a0b462caf244620575a8be989b4f8d40693412df61",
-    "formal/record-while-processing/ProductClock.cfg": "a39fb08db91ae7daab23bd13e8c5043d85237f26eb59c61e0f969d3b35209bed",
-    "formal/record-while-processing/MutUnfairProcessing.cfg": "aea11c8fab151e6d09906b3de3365e3ddff33db8f7ce7d5aad08379a724e271e",
-    "formal/record-while-processing/MutEarlyTimeout.cfg": "0c7eefc3082c4b8d08f305ea5308e0951faf6167bed0da7eebefbb17e5e06495",
-    "formal/record-while-processing/MutWrongVictim.cfg": "345a86fc7f03a573627903865811e8ba7fd9995ee6d800ad2c1a7c2c0da94789",
-    "formal/record-while-processing/MutIgnoreIdentity.cfg": "e094a3515cedfcda55b73be34d4e94509ee7a1c70292ed9d2e4e9e0f1782258c",
-    "formal/record-while-processing/MutDropTimeout.cfg": "9e1f1ec6de879dc624b2d9c9a88323156d18cc3d4804271bd5db725f46adbbf7",
-    "formal/record-while-processing/OldSocketBusy.cfg": "e39cf11919e92fb3b5b82902c8833faa7cbc52b62e9feb3d85ff810ac6024e83",
-    "formal/record-while-processing/MutDuplicatePaste.cfg": "930db437449c868b3c11335c4a20aea4ef6139060687bd8ec03121d6f35772ae",
-    "formal/record-while-processing/MutDisableClick.cfg": "a92e9555fd004c38999af463daa0bdf95901d5f8dd58c1c375ba1fac365e7897",
-    "formal/record-while-processing/MutResultStopsB.cfg": "6fd36c4b5fb72ce46ac38d21dae031f68d1f174b54d64724b25c5b10accac1db",
-    "formal/record-while-processing/MutNoDecodeFairness.cfg": "0c9c0635afcb57ec9a73a010a7a2bd60e8c8ac08aec9833a1557fb65dd9471ee",
-    "formal/record-while-processing/MutStaleGuard.cfg": "476d7a600bfd8f3718d1f4c227365de5016b6f4a83dc0b838a10f7de3d6191c1",
-    "formal/record-while-processing/MutHeldDecodeImmediate.cfg": "107e5e139dee8e4892e20f3b27a04d3105286aee00df6037e31e84e8ccba20ef",
-    "formal/record-while-processing/MutNoOverlapProgress.cfg": "60e392dce607ba8cfb3399bd56eb5db75db92038aa23f5ed480791faf1087c9f",
-    "formal/record-while-processing/MutPasteAfterCancel.cfg": "d427e0eb41eb7766d0cc8d480d17f573bd557f726e75cdfebd68e1c60f30ebd2",
-    "formal/record-while-processing/MutRecordCancels.cfg": "43cde7021facf07b19a75484f8535358a9c121d6d8352ac715090b71c09b8c2d",
-    "formal/record-while-processing/ConcurrentGlobalCancel.cfg": "46895f09bb03019f0ce310e187025dd0f8cbb31dc49438655448b0c7db08bdb9",
-    "formal/record-while-processing/WitnessDecodeOverlap.cfg": "4c8f3f05b7d22c8338d74abb2515aac4606fc0dfb3df9c452133c56fe85a4fd8",
-    "formal/record-while-processing/MutDelayedPaste.cfg": "b30835c3513b0341946b440f7f1376ed5dec7b758ed3dc870aec2961ddae980b",
-    "formal/record-while-processing/N8Fixed.cfg": "bec0ae77e5567e142916580361eceebac18ec4f8b5430a94b07de277a9df1269",
-    "formal/record-while-processing/WitnessScopedCancel.cfg": "1ecc0be3fa0f2884c30100d25fedd25eb9b6cce4e1b20e40847a84d3532d1420",
-    "formal/record-while-processing/MutTwoMics.cfg": "2e9577ef3ade30163933739266172a748bedca1db83e2fe53068ed54fe97d7a2",
-    "formal/record-while-processing/MutDisableCancelB.cfg": "251da6d2680107f779946df4fb21f9bad029482a47a44fed3d95ec9f200f4941",
-    "formal/record-while-processing/MutUnscopedSignal.cfg": "46895f09bb03019f0ce310e187025dd0f8cbb31dc49438655448b0c7db08bdb9",
-    "formal/record-while-processing/OldSpeechTimeout.cfg": "f7b06566381127a3b2ba42839dbd1e4516508ba9e190b7660e5edf16f8c2f524",
-    "formal/record-while-processing/MutRing.cfg": "5bccd822703a455c5202523f562ed4316b9932299b6b6eb59c6349de76878c0c",
-    "formal/record-while-processing/MutSpeechDisabled.cfg": "0676529a0decb61ac80a4f21d3c9898d428817abb0fc885068e39ac7ef653e5c",
-    "formal/record-while-processing/MutCapBlockedBySpeech.cfg": "900695aa5e9f52e30139fb82ba9e2c541b2655e7e61954080f26844a1b82b433",
-    "formal/record-while-processing/MutNoCapBound.cfg": "1fa7646086d6ef1db1b1d9eee52e3f3fb4c83354fcd0910c62e23d2c235c3c0b",
-    "formal/record-while-processing/OldF5CancelsA.cfg": "db584b59b478b3995e87d65d92de36ca3fe82c74945e3d95d9ced703fb8ea176",
-    "formal/record-while-processing/MutDisableCancelBGuard.cfg": "35c12f64cd5f8329265e3e33e27349d7b32cde0ad7f2b6099351395895458238",
-    "formal/record-while-processing/MutStallRecord.cfg": "1899f1057cc2120acd49261c8ab564ee3afd948b3f2b6cb20696c80cc3c2a990",
-    "formal/record-while-processing/MutSpeechNoRenew.cfg": "09f7dbbf58741d641e6e997d0f06c518d8f8c578413d44a551a5ca4f6c93ae8c",
-    "formal/record-while-processing/MutEscapeMic.cfg": "82991991f90a32ef73a688a7e2438faa0067a0f9e84cef2f66b1dabb8cac710c",
-    "formal/record-while-processing/MutTwoDecoders.cfg": "d164e3a5ea334d6d9a65d949e9c597db35496eafcfdeb2b86560084218f00a21",
-    "formal/record-while-processing/MutUnguardedClick.cfg": "23bf0482086761c4820f3a36377c27970601aede2928c7e009eacd983c3616cc",
-    "formal/record-while-processing/MutCapRenewedBySpeech.cfg": "5cbb054b1cd412d444da45d1fcc4f5276adaac3c9603fc543e4964d9a0bf8a92",
-    "formal/record-while-processing/MutHoldResult.cfg": "3d5034dbd46168b1b10b590641d5b83faf158354dec9d7c5c991075fa960b3ed",
-    "formal/record-while-processing/OldDisplayFloor.cfg": "63d4f1f8876ae6fdc246ae96eb4c77205de20ba6a1fc80c3c0e0ec43ef82b005",
-    "formal/record-while-processing/WitnessOverlapPaste.cfg": "5afd836bedb4b51e20a0cb7f7c43dbd1799034f4b9a474699c86a30b68621c00",
-    "formal/record-while-processing/MutType.cfg": "e43522c3e464ba209463ad3d45bf4f6bb869058ced6214e6937d3c4070773fe7",
-    "formal/record-while-processing/OldDeferredFinalDrop.cfg": "1ff2b1f76fea4dc0ab1021a4046e332d5b4c1849515f1006dd60069c8b7cf983",
-    "formal/record-while-processing/MutNoCap.cfg": "cd5df8b5e84308c9e27ffa564e7c7866c228f76a7473831c2e5e47f79166c4b8",
-    "formal/record-while-processing/MutTimeoutNeverFires.cfg": "aef5053a29eb57810d12eda8c950a73c0e10c27bb6d8308cc5ad1bf93ad1451e",
-    "formal/record-while-processing/MutSpeechTimeout.cfg": "61ecb9d95901a569dcacf4b125fe90ad6016fdb6302348cd1a2908f7f270f1e3",
-    "formal/record-while-processing/Current.cfg": "285b3b76850cb468ba643efe24e380a62435db84f8457ba0210571536271274d",
-    "formal/record-while-processing/MutDisableRecordPreserve.cfg": "9bce3d43cb5ab3c88cb5ee5825984c5a6411605d31dd6cbc4ed1d1c82fab7eb5",
-    "formal/record-while-processing/WitnessSpeechSilenceTimeout.cfg": "e0593cc8226fbacad8a20cd28cf0141ded594cf40d73c012c7f38e8cb2671010",
-    "formal/record-while-processing/MutHeldDecode.cfg": "244e1a8fa57566f22605f1b0867385e812db6a326e502336dc412c27f58836d4",
-    "formal/record-while-processing/MutDisableRecordStart.cfg": "8f24003ef34fb57fe356fb92ad95f2d72bdb8cd9470174eb4280d2a206d4840f",
-    "formal/record-while-processing/MutHeldDecodeOverlap.cfg": "c7e88ee4cd81a4e71dace7edb74fa661a6cd506c006d1a8c2db46ac35a4a6a7b",
-    "formal/record-while-processing/MutEscapeOlder.cfg": "a8c32313b92c702308fbf89a7b710d82ff6db64f5e082e6c1c63745f89d7f8ca",
-    "formal/record-while-processing/DropCancelledMutant.cfg": "a06997d09c1f0bd3d6736352b0f9d976d56c290a3d81e0992bb2af5a06a7d634",
-    "formal/record-while-processing/MutNoIdle.cfg": "3b9dd917ff2927565bf83e2d7a520e469f31f526c98a19e7084d45fbc3d3f261",
-    "formal/record-while-processing/MutRejectRecord.cfg": "e8a9209391fa4dd6a4704d33dbcf62b45c33094e592e0166251a6b8d5abbbf59",
-    "formal/record-while-processing/OldUnguardedCancel.cfg": "feb07afac58162144140da6acb628d6a26785257438bf4b159db39c7c91a3fc2",
-    "formal/record-while-processing/Fixed.cfg": "20441bd737de2cd7e31131984b37bdf0f3bbb0d1fbc706f395356391039095de",
+    "formal/record-while-processing/MutSupersede.cfg": "d1ce59b6d68c906682dc196c77fe8e762274362bd79d68ebfe82e70d7700384a",
+    "formal/record-while-processing/ProductClock.cfg": "40a247229480fdef374322164c07a1b05b5678e011708cded539848cb74b8669",
+    "formal/record-while-processing/MutUnfairProcessing.cfg": "a157e47a219efec4fc6e96e4e0591f013732938ed3908dae56c5f3b152840621",
+    "formal/record-while-processing/MutEarlyTimeout.cfg": "67205ecb27d62f4060621a4ca4c52013f25576587166d098a84cfd8356da2198",
+    "formal/record-while-processing/MutWrongVictim.cfg": "c31b086159e70271d391d154c30eb92bf6ce7bae3e7de0832b44c9dd5acf5779",
+    "formal/record-while-processing/MutIgnoreIdentity.cfg": "4a25441d85caf0216a41f828d125ffe9c6b3df0d7e04644fb6bf1116ce900650",
+    "formal/record-while-processing/MutDropTimeout.cfg": "d124654e84c9945244ad2ec2d08fb51631f942740ef0201266b25ad4a06ea131",
+    "formal/record-while-processing/OldSocketBusy.cfg": "c6788c30491abb31f52b6039f8abc256736d964125d862310d3980f854d5662d",
+    "formal/record-while-processing/MutDuplicatePaste.cfg": "b058f3c93288f98a3b88830749e4347d46d3756090483518e3b6b5a6e2f71bf5",
+    "formal/record-while-processing/MutDisableClick.cfg": "6761923968499bf8d17f1405bbdff5bc3f6e86847c15eefdc20180eebdbfc815",
+    "formal/record-while-processing/MutResultStopsB.cfg": "5959ba05d5fc5619121c4bda11d0256951e30dc8c5e2ca63b9fb5ed05cce6d49",
+    "formal/record-while-processing/MutNoDecodeFairness.cfg": "55212402a027ebfdf99feb8af1e73179e26dd42d61086725683aacb705aab7c9",
+    "formal/record-while-processing/MutStaleGuard.cfg": "9cac3f2f791bee389fa8ad535995377a42b75177a0b8ea755796f5f53fd32e0f",
+    "formal/record-while-processing/MutHeldDecodeImmediate.cfg": "0097f2651e525f08dc70f6743aaf7448057b825dc2c5d2d4dc7b3d90ece5f101",
+    "formal/record-while-processing/MutNoOverlapProgress.cfg": "0ece095f2d480d6e41a9c89c8eb131d08f4ed44b958d69751f7efb83b25f1092",
+    "formal/record-while-processing/MutPasteAfterCancel.cfg": "005dd59b84a98953ebb28e648ea763572e2dc61368e0f72f7b2043b0078224cb",
+    "formal/record-while-processing/WitnessSpeechPastFormerCap.cfg": "4886e6945316461a0879840673682227534493bc2e3cf3dfec262c327c52173a",
+    "formal/record-while-processing/MutReintroducedCap.cfg": "ed862b516e978fe25b94eb2f8b7d5c50dab8f7501609de58bcfe6b5d2cc532ca",
+    "formal/record-while-processing/MutRecordCancels.cfg": "e799d5c3dcce49fb03bafc388c0ebe3ec0ae338de5ac6c0669ba40229f77a0a7",
+    "formal/record-while-processing/ConcurrentGlobalCancel.cfg": "d1cb7e57cb0ed9a5b97569bbc973f4affce8c2f5df58dea3e69fbcbe0a923a8e",
+    "formal/record-while-processing/WitnessDecodeOverlap.cfg": "980772bbf65f977e84247ab95f4367f89357a9d4ec5e3638b83154cd2c19a091",
+    "formal/record-while-processing/MutDelayedPaste.cfg": "2532bc9d0d9c5c0fa9425ad64f46675892ba482b41d3052c949b1424667ad8ae",
+    "formal/record-while-processing/N8Fixed.cfg": "4547b0d3b338cfaba8e0c5b05171efc55b48fe6102fb00d9d780bacf0a1caa9e",
+    "formal/record-while-processing/WitnessScopedCancel.cfg": "92985439b0216f61c8cab771bd154934bd155eb61cc8c09371d41a89489f0641",
+    "formal/record-while-processing/MutTwoMics.cfg": "5aa0bc9ff29e0e59d8033204594570005a9cd5378de3688350f9fef4a92011b6",
+    "formal/record-while-processing/MutDisableCancelB.cfg": "9643facdca3b0d9605310870bb492591899a612dbbbbad89b9129042921d7c3d",
+    "formal/record-while-processing/MutUnscopedSignal.cfg": "d1cb7e57cb0ed9a5b97569bbc973f4affce8c2f5df58dea3e69fbcbe0a923a8e",
+    "formal/record-while-processing/OldSpeechTimeout.cfg": "7380dab01df62b718aa00f7de57e92056d26e66377b711fbe55b1299e066c80e",
+    "formal/record-while-processing/MutRing.cfg": "ecfefdccea87fbdaa6f6135032540d5d7d382755fdf4d4a84afb19684b7c22a2",
+    "formal/record-while-processing/MutSpeechDisabled.cfg": "962af8fc5361742bc84ad89ee13e7c8510bd4bd5defbba4eba38342db3b20d23",
+    "formal/record-while-processing/OldF5CancelsA.cfg": "a32cdfd4eb1556d63dae89c48b614922abb0fc15bbbdefa573057e46e06bfee7",
+    "formal/record-while-processing/MutDisableCancelBGuard.cfg": "82bb6cb2d7c9dc0ae7b95c9d40bd549ea55ccc6fe247cf3b1475edfd00518e04",
+    "formal/record-while-processing/MutStallRecord.cfg": "9e91fd2006e92b9dfdf2c33ee43a5f1037b6c4fde0923db47bd7ac95b1a33042",
+    "formal/record-while-processing/MutSpeechNoRenew.cfg": "2bd0d43e889d93bd21cb8c07ea6b1788065faf0955c6f621399424b581040545",
+    "formal/record-while-processing/MutEscapeMic.cfg": "e317e6f1a80417732da14f4acb827b32d8b08172837efc881fabcbbb68d18e0f",
+    "formal/record-while-processing/MutTwoDecoders.cfg": "cf3db837982b3d0de14b7cb9b68d414e309eb21db68c0da701609e0b8a16618f",
+    "formal/record-while-processing/MutUnguardedClick.cfg": "838fa1ab19de90ca3ee8f05651efd34796cd2882508ecaf2822d08a746277e03",
+    "formal/record-while-processing/MutHoldResult.cfg": "986a3dfd6b495c69aa6b973595b3c2ceab4b2fb91f07ac904ea854b4d8756e12",
+    "formal/record-while-processing/OldDisplayFloor.cfg": "e4927f400a557cfb7d1d4b3cdc369093a0b01058ca92d1ae866a558ad6593026",
+    "formal/record-while-processing/WitnessOverlapPaste.cfg": "2d0ea8ad8f02273b561a1597827edf01eaeb7c32154e61543c6015f65383ecc1",
+    "formal/record-while-processing/MutType.cfg": "47f573cf41b2dc9b9da8d8cd5839ca879d4d7b50404720fac50755e99530e6b9",
+    "formal/record-while-processing/OldDeferredFinalDrop.cfg": "d0365230cbb9a4a3b18389a01ebc6db0095895beeb688c5621c0648811812627",
+    "formal/record-while-processing/MutTimeoutNeverFires.cfg": "e457a1fbb17b14ac84c0089980ac9b87467cc7d0ffd601250603dacf9796a79d",
+    "formal/record-while-processing/MutSpeechTimeout.cfg": "23aca436cf4d602b9287be04ab7772a2de354f14a2efe18587d3728073d61759",
+    "formal/record-while-processing/Current.cfg": "56f5d7cbce976b1110c55e0f971a6f0c75d7de816a5cfd1136f8d762b19ed03c",
+    "formal/record-while-processing/MutDisableRecordPreserve.cfg": "e23523182f29664e7a5c9aa89495a73b03bcade545526a6c8df8a0892a99ac0b",
+    "formal/record-while-processing/WitnessSpeechSilenceTimeout.cfg": "d2b838536fcad538b4de67189b87c67efb0b3df3f014c220b197bf4d06797edd",
+    "formal/record-while-processing/MutHeldDecode.cfg": "e0a854d17ac908205afa9e5d08ae6dbd9db8e86b014e4b05b23625e8bbf0cf16",
+    "formal/record-while-processing/MutDisableRecordStart.cfg": "069845573217a5a0f8c8d92dbd1df1033f7b3f23a8703420b0162a56d285ef5b",
+    "formal/record-while-processing/MutHeldDecodeOverlap.cfg": "98c82e8220ff384793823e761170ef74a49767427b61d7397d8ce1803cb1799a",
+    "formal/record-while-processing/MutEscapeOlder.cfg": "84c90a88e4eb59ece41abd1024c4c988ef05d4f2b5fcf12f4cc86bdf7cbc90ce",
+    "formal/record-while-processing/DropCancelledMutant.cfg": "4916a9d8ef4e8ba93ba35e3ff38008a57f5b516f649a6aa15764e1edac728c87",
+    "formal/record-while-processing/MutNoIdle.cfg": "48be8a380dee19074e191a19e65cd5cdc81bd45736925013a63952a9ab06a5b4",
+    "formal/record-while-processing/MutRejectRecord.cfg": "1cf72febd29735f32339b1f429b5a5b2a13ee272debd75f48b00955dbc42c3ec",
+    "formal/record-while-processing/OldUnguardedCancel.cfg": "70dbca0c9a0d9ef0b2086f42f3d24c1794a3328e705cb506a81ff2756c8808d2",
+    "formal/record-while-processing/Fixed.cfg": "4933ae51c46ec4d14dc2310d2ab6ba63907bd9a81cb7a5e1eea77aba1b7b7c68",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "71f2bcef238f431baa75d4d67134eaf518c2ba1a047911490b39b8f0b71a6102",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "f296f4d72cb7a54527734c4bf4ecf17adb47e135bdd05c7b3c7493d3aec3a779",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "3f78dfbfa851157cde32717ae8941e889b1463b023cf8f1c3824744218be7929",
     "src/input.ts": "526a8b2fd27c88b275f97810161c3fc8c12c159123280c4ef890d2d7b671f87a",
     "src/socket-handlers.ts": "b82c1c831dd4986adff5685c3a0df318c585e848ec92980116a50f3c9f15a5a1",
     "src/recording-state.ts": "db2b9617e38ed6da0fea264ead439f3a4ba88619252b84ac76bbb420274b90da",
@@ -75,17 +73,13 @@
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368"
   },
   "mutants": {
-    "CapAlwaysFires": [
-      "MutNoCap",
-      "MutCapRenewedBySpeech",
-      "MutCapBlockedBySpeech"
-    ],
-    "CaptureWithinCap": [
-      "MutNoCapBound"
-    ],
     "D3EveryTakeKept": [
       "MutDropTimeout",
       "DropCancelledMutant"
+    ],
+    "EscapeTargetsNewest": [
+      "MutEscapeMic",
+      "MutEscapeOlder"
     ],
     "EventuallyIdle": [
       "MutNoIdle",
@@ -140,6 +134,9 @@
     "NoEarlySilenceTimeout": [
       "MutEarlyTimeout"
     ],
+    "NoStaleGuard": [
+      "MutStaleGuard"
+    ],
     "NoTimeoutWhileTalking": [
       "MutSpeechTimeout"
     ],
@@ -156,6 +153,9 @@
     "ProcessingSettles": [
       "MutUnfairProcessing"
     ],
+    "RecurringSpeechNeverTimesOut": [
+      "MutReintroducedCap"
+    ],
     "SilenceTimesOut": [
       "MutTimeoutNeverFires"
     ],
@@ -165,18 +165,11 @@
     ],
     "TypeOK": [
       "MutType"
-    ],
-    "EscapeTargetsNewest": [
-      "MutEscapeMic",
-      "MutEscapeOlder"
-    ],
-    "NoStaleGuard": [
-      "MutStaleGuard"
     ]
   },
   "graphHashes": {
-    "Current": "78ca0e20b14c939295c408658d8b18cce7b5d87e662febf4f0820fe41cff8a17",
-    "Fixed": "c3de22c4e55b71af00672d71c7c0c43920d84d6c7ed97b0c980e3f755e043ef8"
+    "Current": "586d29e2bf05bf1961d6b18d2b93705d73cb6fc19cb9b1c7f9cba857dc4ce4ed",
+    "Fixed": "a49572f72338795ea793f3d1256af7588ef6ba7995c9be4ccafdb85b6a6e33c3"
   },
   "checks": {
     "Current": {
@@ -184,31 +177,39 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 912399,
-      "distinct": 11231
+      "generated": 740551,
+      "distinct": 10519
     },
     "Fixed": {
       "role": "positive",
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 1129574,
-      "distinct": 35514
+      "generated": 741871,
+      "distinct": 30010
     },
     "ProductClock": {
       "role": "positive",
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 24535,
-      "distinct": 683
+      "generated": 63460,
+      "distinct": 1151
+    },
+    "N8Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 365991,
+      "distinct": 5091
     },
     "OldSocketBusy": {
       "role": "historical",
       "kind": "invariant",
       "target": "N6StartsB",
       "status": "EXPECTED_FAIL",
-      "generated": 496,
+      "generated": 494,
       "distinct": 20
     },
     "OldF5CancelsA": {
@@ -216,7 +217,7 @@
       "kind": "invariant",
       "target": "N6PreservesA",
       "status": "EXPECTED_FAIL",
-      "generated": 990,
+      "generated": 986,
       "distinct": 22
     },
     "OldUnguardedCancel": {
@@ -232,7 +233,7 @@
       "kind": "invariant",
       "target": "N8ImmediatePaste",
       "status": "EXPECTED_FAIL",
-      "generated": 990,
+      "generated": 986,
       "distinct": 22
     },
     "OldDeferredFinalDrop": {
@@ -240,8 +241,8 @@
       "kind": "invariant",
       "target": "N8FinalNotSuperseded",
       "status": "EXPECTED_FAIL",
-      "generated": 15570,
-      "distinct": 316
+      "generated": 13572,
+      "distinct": 292
     },
     "OldSpeechTimeout": {
       "role": "historical",
@@ -272,40 +273,40 @@
       "kind": "invariant",
       "target": "OneDecoder",
       "status": "EXPECTED_FAIL",
-      "generated": 4991,
-      "distinct": 328
+      "generated": 4801,
+      "distinct": 317
     },
     "MutDuplicatePaste": {
       "role": "mutant",
       "kind": "invariant",
       "target": "NoDuplicatePaste",
       "status": "EXPECTED_FAIL",
-      "generated": 10831,
-      "distinct": 681
+      "generated": 10099,
+      "distinct": 649
     },
     "MutPasteAfterCancel": {
       "role": "mutant",
       "kind": "invariant",
       "target": "NoCancelledPaste",
       "status": "EXPECTED_FAIL",
-      "generated": 1534,
-      "distinct": 89
+      "generated": 1516,
+      "distinct": 86
     },
     "MutRing": {
       "role": "mutant",
       "kind": "invariant",
       "target": "N7CooldownRing",
       "status": "EXPECTED_FAIL",
-      "generated": 1907,
-      "distinct": 135
+      "generated": 1889,
+      "distinct": 132
     },
     "MutDropTimeout": {
       "role": "mutant",
       "kind": "invariant",
       "target": "D3EveryTakeKept",
       "status": "EXPECTED_FAIL",
-      "generated": 354,
-      "distinct": 22
+      "generated": 20985,
+      "distinct": 672
     },
     "MutStallRecord": {
       "role": "mutant",
@@ -368,8 +369,8 @@
       "kind": "invariant",
       "target": "N7ScopedCancel",
       "status": "EXPECTED_FAIL",
-      "generated": 270,
-      "distinct": 34
+      "generated": 269,
+      "distinct": 33
     },
     "MutUnguardedClick": {
       "role": "mutant",
@@ -384,8 +385,8 @@
       "kind": "invariant",
       "target": "N7GuardedClick",
       "status": "EXPECTED_FAIL",
-      "generated": 270,
-      "distinct": 34
+      "generated": 269,
+      "distinct": 33
     },
     "MutDisableClick": {
       "role": "mutant",
@@ -408,16 +409,16 @@
       "kind": "invariant",
       "target": "N8ImmediatePaste",
       "status": "EXPECTED_FAIL",
-      "generated": 477,
-      "distinct": 34
+      "generated": 476,
+      "distinct": 33
     },
     "MutResultStopsB": {
       "role": "mutant",
       "kind": "invariant",
       "target": "N8ImmediatePaste",
       "status": "EXPECTED_FAIL",
-      "generated": 478,
-      "distinct": 34
+      "generated": 477,
+      "distinct": 33
     },
     "MutDelayedPaste": {
       "role": "mutant",
@@ -432,8 +433,8 @@
       "kind": "invariant",
       "target": "N8FinalNotSuperseded",
       "status": "EXPECTED_FAIL",
-      "generated": 3923,
-      "distinct": 243
+      "generated": 3735,
+      "distinct": 232
     },
     "MutSpeechTimeout": {
       "role": "mutant",
@@ -448,24 +449,24 @@
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 296895,
-      "distinct": 13059
+      "generated": 314752,
+      "distinct": 13704
     },
     "MutNoOverlapProgress": {
       "role": "mutant",
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 235813,
-      "distinct": 11335
+      "generated": 273559,
+      "distinct": 13086
     },
     "MutNoIdle": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 400668,
-      "distinct": 16411
+      "generated": 438432,
+      "distinct": 18614
     },
     "MutHeldDecode": {
       "role": "mutant",
@@ -488,16 +489,16 @@
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 277421,
-      "distinct": 12808
+      "generated": 322263,
+      "distinct": 14763
     },
     "MutNoDecodeFairness": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 372092,
-      "distinct": 15743
+      "generated": 440169,
+      "distinct": 18698
     },
     "MutSpeechNoRenew": {
       "role": "mutant",
@@ -528,72 +529,16 @@
       "kind": "temporal",
       "target": "SilenceTimesOut",
       "status": "EXPECTED_FAIL",
-      "generated": 33909,
-      "distinct": 795
+      "generated": 68855,
+      "distinct": 1213
     },
-    "MutNoCap": {
-      "role": "mutant",
-      "kind": "temporal",
-      "target": "CapAlwaysFires",
-      "status": "EXPECTED_FAIL",
-      "generated": 25390,
-      "distinct": 692
-    },
-    "MutNoCapBound": {
+    "MutReintroducedCap": {
       "role": "mutant",
       "kind": "invariant",
-      "target": "CaptureWithinCap",
+      "target": "RecurringSpeechNeverTimesOut",
       "status": "EXPECTED_FAIL",
-      "generated": 23046,
-      "distinct": 675
-    },
-    "MutCapRenewedBySpeech": {
-      "role": "mutant",
-      "kind": "temporal",
-      "target": "CapAlwaysFires",
-      "status": "EXPECTED_FAIL",
-      "generated": 21173,
-      "distinct": 643
-    },
-    "MutCapBlockedBySpeech": {
-      "role": "mutant",
-      "kind": "temporal",
-      "target": "CapAlwaysFires",
-      "status": "EXPECTED_FAIL",
-      "generated": 25181,
-      "distinct": 691
-    },
-    "WitnessOverlapPaste": {
-      "role": "witness",
-      "kind": "invariant",
-      "target": "NoOverlapPaste",
-      "status": "EXPECTED_FAIL",
-      "generated": 1607,
-      "distinct": 102
-    },
-    "WitnessScopedCancel": {
-      "role": "witness",
-      "kind": "invariant",
-      "target": "NoScopedCancelDuringDecode",
-      "status": "EXPECTED_FAIL",
-      "generated": 1612,
-      "distinct": 107
-    },
-    "WitnessDecodeOverlap": {
-      "role": "witness",
-      "kind": "invariant",
-      "target": "NoDecodeDuringRecording",
-      "status": "EXPECTED_FAIL",
-      "generated": 514,
-      "distinct": 46
-    },
-    "WitnessSpeechSilenceTimeout": {
-      "role": "witness",
-      "kind": "invariant",
-      "target": "NoSpeechSilenceTimeout",
-      "status": "EXPECTED_FAIL",
-      "generated": 2823,
-      "distinct": 199
+      "generated": 51978,
+      "distinct": 1051
     },
     "MutEscapeMic": {
       "role": "mutant",
@@ -608,24 +553,16 @@
       "kind": "invariant",
       "target": "EscapeTargetsNewest",
       "status": "EXPECTED_FAIL",
-      "generated": 612,
-      "distinct": 48
+      "generated": 611,
+      "distinct": 47
     },
     "MutStaleGuard": {
       "role": "mutant",
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 289893,
-      "distinct": 12692
-    },
-    "N8Fixed": {
-      "role": "positive",
-      "kind": "pass",
-      "target": null,
-      "status": "PASS",
-      "generated": 479335,
-      "distinct": 5555
+      "generated": 344573,
+      "distinct": 14835
     },
     "ConcurrentGlobalCancel": {
       "role": "mutant",
@@ -642,6 +579,46 @@
       "status": "EXPECTED_FAIL",
       "generated": 20,
       "distinct": 6
+    },
+    "WitnessOverlapPaste": {
+      "role": "witness",
+      "kind": "invariant",
+      "target": "NoOverlapPaste",
+      "status": "EXPECTED_FAIL",
+      "generated": 1589,
+      "distinct": 99
+    },
+    "WitnessScopedCancel": {
+      "role": "witness",
+      "kind": "invariant",
+      "target": "NoScopedCancelDuringDecode",
+      "status": "EXPECTED_FAIL",
+      "generated": 1594,
+      "distinct": 104
+    },
+    "WitnessDecodeOverlap": {
+      "role": "witness",
+      "kind": "invariant",
+      "target": "NoDecodeDuringRecording",
+      "status": "EXPECTED_FAIL",
+      "generated": 513,
+      "distinct": 45
+    },
+    "WitnessSpeechSilenceTimeout": {
+      "role": "witness",
+      "kind": "invariant",
+      "target": "NoSpeechSilenceTimeout",
+      "status": "EXPECTED_FAIL",
+      "generated": 24158,
+      "distinct": 712
+    },
+    "WitnessSpeechPastFormerCap": {
+      "role": "witness",
+      "kind": "invariant",
+      "target": "NoSpeakingPastFormerCap",
+      "status": "EXPECTED_FAIL",
+      "generated": 55140,
+      "distinct": 1089
     }
   }
 }

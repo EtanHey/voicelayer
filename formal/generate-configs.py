@@ -1,10 +1,13 @@
 """Author the explicit model configs and exact-property mutant manifests."""
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
 def generate(name, module, base, current, invariants, temporal, historical, mutants, witnesses=(), positives=()):
+    if len(sys.argv) > 1 and name not in sys.argv[1:]:
+        return
     directory = ROOT / name
     old = json.loads((directory / "checks.json").read_text())
     checks = {}
@@ -25,8 +28,9 @@ def generate(name, module, base, current, invariants, temporal, historical, muta
     for label, target, fault, changes in mutants:
         is_temporal = target in temporal["fixed"]
         config(label, {"Fault": fault, **changes}, [] if is_temporal else [target], [target] if is_temporal else [], role="mutant", target=target)
-    for label, target in witnesses:
-        config(label, {}, [target], role="witness", target=target)
+    for row in witnesses:
+        label, target, *changes = row
+        config(label, changes[0] if changes else {}, [target], role="witness", target=target)
     for file in directory.glob("*.cfg"):
         if file.stem not in checks: file.unlink()
     acceptance = set(invariants["fixed"]) | set(temporal["fixed"])
@@ -51,10 +55,10 @@ generate("notch-presentation", "NotchPresentation", dict(Variant="fixed", Fault=
           ("MutantStuck","NoteNeverStuck","timer-reset",{})])
 
 ri = ["TypeOK","OneMic","OneDecoder","NoDuplicatePaste","NoCancelledPaste","N7CooldownRing","D3EveryTakeKept",
-      "N6Admissible","N6StartsB","N6PreservesA","N7ScopedCancel","N7GuardedClick","N7Identity","N8ImmediatePaste","N8FinalNotSuperseded","NoTimeoutWhileTalking","N8DecodeAdmissible","SpeechRenewsDeadline","NoEarlySilenceTimeout","CaptureWithinCap"]
-rt = ["ProcessingSettles","OverlapPastes","EventuallyIdle","CapAlwaysFires","SilenceTimesOut"]
+      "N6Admissible","N6StartsB","N6PreservesA","N7ScopedCancel","N7GuardedClick","N7Identity","N8ImmediatePaste","N8FinalNotSuperseded","NoTimeoutWhileTalking","N8DecodeAdmissible","SpeechRenewsDeadline","NoEarlySilenceTimeout","RecurringSpeechNeverTimesOut","EscapeTargetsNewest"]
+rt = ["ProcessingSettles","OverlapPastes","EventuallyIdle","SilenceTimesOut","NoStaleGuard"]
 generate("record-while-processing", "RecordWhileProcessing",
-         dict(Admission="fixed",CancelPolicy="scoped",PastePolicy="immediate",RetentionPolicy="keep",Ingress="both",Fault="none",SilenceLimit=1,CapLimit=3,Scenario="pipeline"),
+         dict(Admission="fixed",CancelPolicy="scoped",PastePolicy="immediate",RetentionPolicy="keep",Ingress="both",Fault="none",SilenceLimit=2,ObservationLimit=20,Scenario="pipeline"),
          dict(Admission="current",CancelPolicy="global",PastePolicy="current"),
          dict(current=["TypeOK","OneMic","OneDecoder","NoDuplicatePaste","N7CooldownRing","D3EveryTakeKept"],fixed=ri),
          dict(current=["ProcessingSettles"],fixed=rt),
@@ -64,7 +68,7 @@ generate("record-while-processing", "RecordWhileProcessing",
          [("MutType","TypeOK","type",{}),("MutTwoMics","OneMic","two-mics",{}),
           ("MutTwoDecoders","OneDecoder","two-decoders",{}),("MutDuplicatePaste","NoDuplicatePaste","duplicate",{}),
           ("MutPasteAfterCancel","NoCancelledPaste","paste-after-cancel",{}),("MutRing","N7CooldownRing","ring",{}),
-          ("MutDropTimeout","D3EveryTakeKept","drop-timeout",dict(Scenario="clock",CapLimit=20)),("MutStallRecord","N6Admissible","stall-record",{}),
+          ("MutDropTimeout","D3EveryTakeKept","drop-timeout",dict(Scenario="clock",SilenceLimit=10,ObservationLimit=20)),("MutStallRecord","N6Admissible","stall-record",{}),
           ("MutRejectRecord","N6StartsB","reject-record",{}),("MutDisableRecordStart","N6StartsB","stall-record",{}),
           ("MutRecordCancels","N6PreservesA","record-cancels",{}),("MutDisableRecordPreserve","N6PreservesA","stall-record",{}),
           ("MutWrongVictim","N7ScopedCancel","wrong-victim",{}),("MutUnscopedSignal","N7ScopedCancel","unscoped-signal",{}),("MutDisableCancelB","N7ScopedCancel","stall-cancel",{}),
@@ -72,22 +76,27 @@ generate("record-while-processing", "RecordWhileProcessing",
           ("MutIgnoreIdentity","N7Identity","ignore-id",{}),("MutHoldResult","N8ImmediatePaste","hold-result",{}),("MutResultStopsB","N8ImmediatePaste","result-stops-mic",{}),
           ("MutDelayedPaste","N8ImmediatePaste","none",dict(PastePolicy="current")),
           ("MutSupersede","N8FinalNotSuperseded","supersede",dict(PastePolicy="current")),
-          ("MutSpeechTimeout","NoTimeoutWhileTalking","timeout-speaking",dict(Scenario="clock",CapLimit=20)),
+          ("MutSpeechTimeout","NoTimeoutWhileTalking","timeout-speaking",dict(Scenario="clock",SilenceLimit=10,ObservationLimit=20)),
           ("MutUnfairProcessing","ProcessingSettles","unfair",{}),("MutNoOverlapProgress","OverlapPastes","hold-result",{}),
           ("MutNoIdle","EventuallyIdle","unfair",{}),
           ("MutHeldDecode","N8DecodeAdmissible","hold-decode",{}),
           ("MutHeldDecodeImmediate","N8ImmediatePaste","hold-decode",{}),
           ("MutHeldDecodeOverlap","OverlapPastes","hold-decode",{}),
           ("MutNoDecodeFairness","EventuallyIdle","unfair-decode",{}),
-          ("MutSpeechNoRenew","SpeechRenewsDeadline","no-renew",dict(Scenario="clock",CapLimit=20)),
-          ("MutSpeechDisabled","SpeechRenewsDeadline","no-speech",dict(Scenario="clock",CapLimit=20)),
-          ("MutEarlyTimeout","NoEarlySilenceTimeout","early-timeout",dict(Scenario="clock",CapLimit=20)),
-          ("MutTimeoutNeverFires","SilenceTimesOut","no-timeout",dict(Scenario="clock",CapLimit=20)),
-          ("MutNoCap","CapAlwaysFires","no-cap",dict(Scenario="clock",CapLimit=20)),
-          ("MutNoCapBound","CaptureWithinCap","no-cap",dict(Scenario="clock",CapLimit=20)),
-          ("MutCapRenewedBySpeech","CapAlwaysFires","cap-renew",dict(Scenario="clock",CapLimit=20)),
-          ("MutCapBlockedBySpeech","CapAlwaysFires","cap-blocked-speaking",dict(Scenario="clock",CapLimit=20))],
-         [("WitnessOverlapPaste","NoOverlapPaste"),("WitnessScopedCancel","NoScopedCancelDuringDecode"),("WitnessDecodeOverlap","NoDecodeDuringRecording"),("WitnessSpeechSilenceTimeout","NoSpeechSilenceTimeout")],
-         [("ProductClock",dict(Scenario="clock",CapLimit=20),
-           ["TypeOK","D3EveryTakeKept","NoTimeoutWhileTalking","NoEarlySilenceTimeout","SpeechRenewsDeadline","CaptureWithinCap"],
-           ["CapAlwaysFires","SilenceTimesOut"])])
+          ("MutSpeechNoRenew","SpeechRenewsDeadline","no-renew",dict(Scenario="clock",SilenceLimit=10,ObservationLimit=20)),
+          ("MutSpeechDisabled","SpeechRenewsDeadline","no-speech",dict(Scenario="clock",SilenceLimit=10,ObservationLimit=20)),
+          ("MutEarlyTimeout","NoEarlySilenceTimeout","early-timeout",dict(Scenario="clock",SilenceLimit=10,ObservationLimit=20)),
+          ("MutTimeoutNeverFires","SilenceTimesOut","no-timeout",dict(Scenario="clock",SilenceLimit=10,ObservationLimit=20)),
+          ("MutReintroducedCap","RecurringSpeechNeverTimesOut","reintroduced-cap",dict(Scenario="clock",SilenceLimit=10,ObservationLimit=20)),
+          ("MutEscapeMic","EscapeTargetsNewest","escape-mic",{}),
+          ("MutEscapeOlder","EscapeTargetsNewest","escape-older",{}),
+          ("MutStaleGuard","NoStaleGuard","stale-guard",{}),
+          ("ConcurrentGlobalCancel","N7ScopedCancel","unscoped-signal",{}),
+          ("DropCancelledMutant","D3EveryTakeKept","none",dict(RetentionPolicy="dropCancel"))],
+         [("WitnessOverlapPaste","NoOverlapPaste"),("WitnessScopedCancel","NoScopedCancelDuringDecode"),("WitnessDecodeOverlap","NoDecodeDuringRecording"),("WitnessSpeechSilenceTimeout","NoSpeechSilenceTimeout",dict(Scenario="clock",SilenceLimit=10)),("WitnessSpeechPastFormerCap","NoSpeakingPastFormerCap",dict(Scenario="clock",SilenceLimit=10))],
+         [("ProductClock",dict(Scenario="clock",SilenceLimit=10,ObservationLimit=20),
+           ["TypeOK","D3EveryTakeKept","NoTimeoutWhileTalking","NoEarlySilenceTimeout","SpeechRenewsDeadline","RecurringSpeechNeverTimesOut"],
+           ["SilenceTimesOut"]),
+          ("N8Fixed",dict(Admission="current",CancelPolicy="current"),
+           ["TypeOK","OneMic","OneDecoder","NoDuplicatePaste","NoCancelledPaste","N7CooldownRing","D3EveryTakeKept","N8ImmediatePaste","N8FinalNotSuperseded"],
+           ["ProcessingSettles"])])
