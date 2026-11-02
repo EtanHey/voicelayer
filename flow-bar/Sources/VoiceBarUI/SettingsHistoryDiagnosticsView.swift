@@ -39,17 +39,7 @@ public struct SettingsHistoryDiagnosticsPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             SettingsDisclosureHeader("Recording details", isExpanded: $disclosure.expanded,
                                      animation: .timingCurve(0.23, 1, 0.32, 1, duration: 0.23)) {
-                HStack {
-                    Label("Recording details", systemImage: "list.bullet.rectangle").font(.callout.weight(.semibold))
-                    Spacer(minLength: 8)
-                    if !disclosure.expanded {
-                        Text(copy.statusChip).font(.caption.weight(.medium))
-                            .foregroundStyle(copy.shouldExpand ? .orange : .secondary)
-                            .padding(.horizontal, 7).padding(.vertical, 3)
-                            .background(Color.secondary.opacity(0.12), in: Capsule())
-                            .accessibilityIdentifier("history-diagnostics-status")
-                    }
-                }
+                Label("Recording details", systemImage: "list.bullet.rectangle").font(.callout.weight(.semibold))
             }
             if disclosure.expanded {
                 VStack(alignment: .leading, spacing: 10) {

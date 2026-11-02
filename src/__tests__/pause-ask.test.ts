@@ -330,7 +330,7 @@ for (const paused of [false, true]) it(`Disconnect during ${paused ? "paused" : 
 for (const shutdown of [false, true]) for (const framing of ["mcp", "ndjson"]) it(`${framing} ${shutdown ? "daemon shutdown" : "client disconnect"} cancels its owned Ask without capture`, async () => {
   let disconnectSignal: AbortSignal | undefined;
   const daemon = await createMcpDaemon({
-    socketPath: testSocket("ask-client.sock"),
+    socketPath: testSocket("ask.sock"),
     toolExecutor: { executeTool(_name, args, context) {
       disconnectSignal = context.disconnectSignal;
       pending = handleVoiceAsk(args, context);
@@ -338,7 +338,7 @@ for (const shutdown of [false, true]) for (const framing of ["mcp", "ndjson"]) i
     } },
   });
   const client = await Bun.connect({
-    unix: testSocket("ask-client.sock"),
+    unix: testSocket("ask.sock"),
     socket: { data() {}, close() {}, error() {} },
   });
   try {

@@ -6,9 +6,10 @@ import { privateCorpusEnabled, privateCorpusPaths } from "./setup/private-specim
 
 // Execute the actual suite registration/hooks with a virtual filesystem. Test
 // bodies, native imports, private recordings and resident PID files never run.
-function register(file: string, deps: Record<string, unknown>, until?: string) {
+function register(file: string, deps: Record<string, unknown>, until?: string, transform = (source: string) => source) {
   let source = readFileSync(join(import.meta.dir, file), "utf8");
   if (until) source = source.slice(0, source.indexOf(until));
+  source = transform(source);
   source = source.replaceAll("import.meta.dir", JSON.stringify(import.meta.dir));
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const body = ts.factory.updateSourceFile(ast, ast.statements.filter(n => !ts.isImportDeclaration(n)));
@@ -17,6 +18,49 @@ function register(file: string, deps: Record<string, unknown>, until?: string) {
   }).outputText;
   new Function(...Object.keys(deps), js)(...Object.values(deps));
 }
+
+describe("TTS fixture subprocess isolation", () => {
+  function fixture(fault: "import" | "stop" | "wait") {
+    const hooks = { before: [] as Array<() => void>, after: [] as Array<() => Promise<void>> };
+    const calls: unknown[] = [];
+    const spawn = () => {};
+    const spawnSync = (_command: unknown, options: unknown) => { calls.push(options); return {}; };
+    const sandbox = { spawn, spawnSync };
+    register("tts.test.ts", {
+      Bun: sandbox, TEST_TMP: "/sandbox", process: { pid: 1, env: { FIXTURE: "parent" } },
+      actualPaths: { TTS_HISTORY_FILE: "/sandbox/history" }, mock: { module() {} },
+      describe: (_name: string, body: () => void) => body(), it() {},
+      beforeEach: (hook: () => void) => hooks.before.push(hook),
+      afterEach: (hook: () => Promise<void>) => hooks.after.push(hook),
+      unlinkSync() {}, writeFileSync() {},
+      loadTts: async () => {
+        if (fault === "import") throw Error("missing TTS dependency");
+        return {
+          stopPlayback() { if (fault === "stop") throw Error("stop failed"); },
+          async awaitCurrentPlayback() { throw Error("wait failed"); },
+        };
+      },
+    }, 'describe("tts ring buffer"', source => source.replaceAll('await import("../tts")', "await loadTts()"));
+    hooks.before[0]();
+    return { hooks, calls, sandbox, spawn, spawnSync };
+  }
+
+  for (const fault of ["import", "stop", "wait"] as const) {
+    test(`restores subprocesses when TTS cleanup fails during ${fault}`, async () => {
+      const f = fixture(fault);
+      await expect(f.hooks.after[0]()).rejects.toThrow();
+      expect(f.sandbox.spawn).toBe(f.spawn);
+      expect(f.sandbox.spawnSync).toBe(f.spawnSync);
+    });
+  }
+
+  test("unhandled subprocesses preserve fixture cwd, env and stdin", () => {
+    const f = fixture("import");
+    const options = { cwd: "/sandbox/fake-repo", env: { FIXTURE: "child" }, stdin: "fixture input" };
+    f.sandbox.spawnSync(["git", "status"], options);
+    expect(f.calls).toEqual([options]);
+  });
+});
 
 describe("TEST3 review: setup and private specimen safety", () => {
   for (const unsafe of ["daemon", "mcp"]) {

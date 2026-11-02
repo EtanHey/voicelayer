@@ -12,15 +12,13 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
     func testSuccessfulSelectionStartsCollapsed() {
         XCTAssertFalse(SettingsHistoryDiagnosticsDisclosure(selection: "successful-recording").expanded)
     }
-    func testOnlyFailureOrExplicitPartialAutoExpandsAndSuccessHasAChip() {
+    func testOnlyFailureOrExplicitPartialAutoExpands() {
         let success = SettingsHistoryDiagnosticsCopy(snapshot: snapshot(), runs: [], omittedCount: 0, attemptHistory: nil)
         XCTAssertFalse(success.shouldExpand)
-        XCTAssertEqual(success.statusChip, "Text saved")
         XCTAssertTrue(SettingsHistoryDiagnosticsCopy(snapshot: snapshot(.failed), runs: [], omittedCount: 0, attemptHistory: nil).shouldExpand)
         let partial = SettingsHistoryAttemptHistory(recordingPath: path.path, attempts: [], isComplete: true, hasPartialResult: true)
         let copy = SettingsHistoryDiagnosticsCopy(snapshot: snapshot(), runs: [], omittedCount: 0, attemptHistory: partial)
         XCTAssertTrue(copy.shouldExpand)
-        XCTAssertEqual(copy.statusChip, "Partial text")
         var disclosure = SettingsHistoryDiagnosticsDisclosure(selection: "same", defaultExpanded: false)
         disclosure.expanded = true
         disclosure.select("same", defaultExpanded: false)

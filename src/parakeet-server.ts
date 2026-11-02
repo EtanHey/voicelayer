@@ -2,6 +2,8 @@
  * No launchd owner, shared port, process adoption or startup-time model loading.
  */
 import { existsSync } from "fs";
+import { defaultParakeetModelPath, parakeetPython } from "./recognizer-assets";
+import { migrateLegacyParakeetRuntime } from "./parakeet-runtime";
 import { isAbsolute, join } from "path";
 import { homedir } from "os";
 import type { Subprocess } from "bun";
@@ -9,7 +11,7 @@ import { ModelResidency, modelIdleSeconds } from "./model-residency";
 import { residencyBusy } from "./model-residency-busy";
 import type { STTAttemptEvidence } from "./soundlayer/contracts";
 import { isCurrentProcessLockOwner } from "./process-lock";
-import { noteRecognizerEngine, confirmRecognizerCleanup, markRecognizerCleanupUnconfirmed } from "./recognizer-state";
+import { assertRecognizerNotDownloading, noteRecognizerEngine, confirmRecognizerCleanup, markRecognizerCleanupUnconfirmed } from "./recognizer-state";
 
 export interface ParakeetResponse {
   text: string;
@@ -34,7 +36,7 @@ export class ParakeetServiceError extends Error {
 
 export interface ParakeetServerOptions {
   /** Tests may use an isolated protocol-only child; no model imports. */
-  command?: string[];
+  command?: string[] | (() => string[] | null);
   startupMs?: number;
   requestMs?: number;
   stopMs?: number;
@@ -60,11 +62,9 @@ interface Child {
 
 /** Same multilingual v3 checkpoint as the measured SPEED lane. No download. */
 export const DEFAULT_PARAKEET_CHECKPOINT = "mlx-community/parakeet-tdt-0.6b-v3";
-export function defaultParakeetModelPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "voicelayer", "models", "parakeet-tdt-0.6b-v3");
-}
+export { defaultParakeetModelPath } from "./recognizer-assets";
 export function parakeetCommand(env: NodeJS.ProcessEnv = process.env): string[] | null {
-  const python = env.VOICELAYER_PARAKEET_PYTHON;
+  const python = parakeetPython(env);
   const model = env.VOICELAYER_PARAKEET_MODEL || defaultParakeetModelPath(env);
   if (!python || !model || !isAbsolute(python) || !isAbsolute(model) || !existsSync(python) ||
       !["config.json", "model.safetensors", "tokenizer.model"].every(name => existsSync(join(model, name)))) return null;
@@ -189,13 +189,16 @@ export class ParakeetServer {
   }
 
   private async ensure(): Promise<Child> {
+    assertRecognizerNotDownloading("parakeet");
     if (this.closed) throw new Error("Parakeet owner is shut down");
     if (!this.options.command && !this.options.canLaunch?.()) throw new Error("Parakeet must be owned by the VoiceBar MCP daemon");
     if (this.child) {
       if (this.child.proc.exitCode === null && !this.child.fault) return this.child;
       await this.stopChild();
     }
-    const command = this.options.command ?? parakeetCommand();
+    migrateLegacyParakeetRuntime();
+    const configured = this.options.command;
+    const command = typeof configured === "function" ? configured() : configured ?? parakeetCommand();
     if (!command) throw new Error("Configure local Parakeet Python and model paths");
     if (process.env.VOICELAYER_TEST_ISOLATED === "1" && !this.options.command) {
       throw new Error("Real Parakeet loading is disabled under the unit-test preload");

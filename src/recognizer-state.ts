@@ -2,12 +2,14 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync } from "fs";
 import { dirname, join } from "path";
 import { getStateDir, safeWriteFileSync } from "./paths";
+import { readRecognizerAssets } from "./recognizer-assets";
 import { modelIdleSeconds } from "./model-residency";
 export type Recognizer = "parakeet" | "whisper";
 export type RecognizerPhase = "loading" | "ready" | "sleeping" | "error";
+export interface RecognizerDownloadStatus { state: "idle" | "downloading" | "verifying" | "runtime" | "complete" | "cancelled" | "error"; received_bytes: number; total_bytes: number; error: string | null }
 export interface RecognizerStatus {
   revision: number; desired: Recognizer; effective: Recognizer | null; phase: RecognizerPhase;
-  engines: Record<Recognizer, { phase: RecognizerPhase; available: boolean | null; error: string | null }>;
+  engines: Record<Recognizer, { assets_present: boolean; disk_bytes: number; download: RecognizerDownloadStatus; phase: RecognizerPhase; available: boolean | null; error: string | null }>;
   fallback_reason: string | null; switch_allowed: boolean; switch_refusal_reason: string | null;
   idle_unload_seconds: number; source: "settings" | "env" | "default";
 }
@@ -30,6 +32,19 @@ export function persistRecognizer(recognizer: Recognizer): void {
 }
 let revision = 0, effective: Recognizer | null = null, phase: RecognizerPhase = "sleeping", fallbackReason: string | null = null;
 let requests = 0, transition = false, queuedRequests = 0;
+// Downloads own only their engine; admitted requests never join this work.
+const downloads = new Set<Recognizer>();
+export function assertRecognizerNotDownloading(engine: Recognizer): void {
+  if (downloads.has(engine)) throw new Error("download-active");
+}
+export function beginRecognizerDownload(engine: Recognizer): void {
+  assertRecognizerOwnerOpen();
+  assertRecognizerNotDownloading(engine);
+  if (transition) throw new Error("transition-active");
+  assertRecognizerCleanupConfirmed();
+  downloads.add(engine);
+}
+export function finishRecognizerDownload(engine: Recognizer): void { downloads.delete(engine); }
 let maintenance: Promise<void> | null = null;
 let releaseMaintenance: (() => void) | null = null;
 const owner = new AbortController();
@@ -58,9 +73,9 @@ export function setRecognizerRecoveryWhisper(value: { attempt: unknown } | null)
 }
 export function markRecognizerCleanupUnconfirmed(engine: Recognizer): void { cleanupBarriers.add(engine); publish(); }
 export function confirmRecognizerCleanup(engine: Recognizer): void { if (cleanupBarriers.delete(engine)) publish(); }
-const engines: RecognizerStatus["engines"] = {
-  parakeet: { phase: "sleeping", available: null, error: null },
-  whisper: { phase: "sleeping", available: null, error: null },
+const engines: Record<Recognizer, Omit<RecognizerStatus["engines"][Recognizer], "assets_present" | "disk_bytes">> = {
+  parakeet: { phase: "sleeping", available: null, error: null, download: { state: "idle", received_bytes: 0, total_bytes: 0, error: null } },
+  whisper: { phase: "sleeping", available: null, error: null, download: { state: "idle", received_bytes: 0, total_bytes: 0, error: null } },
 };
 let busyProbe: () => string | null = () => null;
 const listeners = new Set<(status: RecognizerStatus) => void>();
@@ -76,7 +91,7 @@ export function recognizerSwitchRefusal(): string | null {
 export function readRecognizerStatus(): RecognizerStatus {
   const preference = recognizerPreference(), reason = recognizerSwitchRefusal();
   return { revision, desired: preference.recognizer, effective, phase,
-    engines: { parakeet: { ...engines.parakeet }, whisper: { ...engines.whisper } },
+    engines: { parakeet: { ...engines.parakeet, ...readRecognizerAssets("parakeet") }, whisper: { ...engines.whisper, ...readRecognizerAssets("whisper") } },
     fallback_reason: fallbackReason, switch_allowed: reason === null, switch_refusal_reason: reason,
     idle_unload_seconds: modelIdleSeconds(), source: preference.source };
 }

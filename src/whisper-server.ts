@@ -9,6 +9,7 @@
  * We POST WAV audio chunks to /inference and get back JSON transcriptions.
  */
 
+import { assertRecognizerNotDownloading } from "./recognizer-state";
 import { residencyBusy } from "./model-residency-busy";
 import { ModelResidency } from "./model-residency";
 import { homedir } from "os";
@@ -162,6 +163,8 @@ interface CoreMLRuntimeFlag {
 }
 
 let serverState: WhisperServerState | null = null;
+/** Includes adopted handles: disk mutation must not race any resident engine. */
+export function whisperHasResidentHandle(): boolean { return serverState !== null; }
 const whisperResidency = new ModelResidency(async () => {
   if (!serverState || serverState.adopted) return;
   const result = await unloadOwnedServerWithEscalation(residencyBusy, true);
@@ -909,6 +912,7 @@ export function ensureServer(portOverride?: number): Promise<number> {
 
 function ensureServerReserved(portOverride?: number): Promise<number> {
   assertWhisperOwnerOpen();
+  assertRecognizerNotDownloading("whisper");
   const port =
     portOverride ||
     parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT || "", 10) ||

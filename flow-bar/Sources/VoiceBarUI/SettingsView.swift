@@ -439,6 +439,7 @@ public struct SettingsView: View {
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
     public let recognizerStatus: () -> RecognizerPickerState
+    public let onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)?
     public let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
     public let speechControls: () -> SpeechControlsState?
     public let speechConnected: () -> Bool
@@ -502,6 +503,10 @@ public struct SettingsView: View {
     public let footerPresentation: () -> VoiceBarFooterPresentation
     /// Opens the setup wizard (F3): General › Setup › Run setup again.
     public let onRunSetup: () -> Void
+    /// Sidebar footer: the running bundle's version and release commit.
+    public let installedVersion: VoiceBarInstalledVersion
+    /// Nil (tests, the UI E2E host) means no network check; the row then shows the version only.
+    public let versionCheck: VoiceBarVersionCheck?
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -571,6 +576,8 @@ public struct SettingsView: View {
     @State private var isAdvancedExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @State private var microphoneDrag: MicrophoneDragState
+    /// Nil until Settings first appears with a checker; then checking, then the result.
+    @State private var versionStatus: VoiceBarVersionStatus?
     @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
@@ -591,6 +598,7 @@ public struct SettingsView: View {
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
         recognizerStatus: @escaping () -> RecognizerPickerState = { .unavailable },
         onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil,
+        onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)? = nil,
         speechControls: @escaping () -> SpeechControlsState? = { nil },
         speechConnected: @escaping () -> Bool = { false },
         speechBusyReason: @escaping () -> String? = { nil },
@@ -691,7 +699,9 @@ public struct SettingsView: View {
         initialYourTermsExpanded: Bool = true,
         initialSelectedTermRowID: String? = nil,
         onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in },
-        historyPlayback: SettingsAudioPlayback? = nil
+        historyPlayback: SettingsAudioPlayback? = nil,
+        installedVersion: VoiceBarInstalledVersion = .current(),
+        versionCheck: VoiceBarVersionCheck? = nil
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -709,6 +719,7 @@ public struct SettingsView: View {
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
         self.recognizerStatus = recognizerStatus
+        self.onManageRecognizer = onManageRecognizer
         self.onSelectRecognizer = onSelectRecognizer
         self.speechControls = speechControls
         self.speechConnected = speechConnected
@@ -778,6 +789,8 @@ public struct SettingsView: View {
         self.onRevealHistoryFile = onRevealHistoryFile
         self.footerPresentation = footerPresentation
         self.onRunSetup = onRunSetup
+        self.installedVersion = installedVersion
+        self.versionCheck = versionCheck
         self.tabRequest = tabRequest
         self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
@@ -817,7 +830,10 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        SettingsNavigationShell(selection: $selectedTab, footer: footerPresentation()) {
+        SettingsNavigationShell(
+            selection: $selectedTab, footer: footerPresentation(),
+            installedVersion: installedVersion, versionStatus: versionStatus
+        ) {
             switch selectedTab {
             case .dictionary:
                 dictionaryTab
@@ -852,6 +868,12 @@ public struct SettingsView: View {
         }
         // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
         .onAppear { onSelectedTabChange(selectedTab) }
+        // Once per Settings open; the checker retains its six-hour cache across windows.
+        .task {
+            guard let versionCheck, versionStatus == nil else { return }
+            versionStatus = .checking
+            versionStatus = await versionCheck.status(installed: installedVersion.version)
+        }
         .task(id: selectedTab) {
             guard selectedTab == .dictionary else { return }
             // UXP-1: the bundled rows come only from the daemon's reply; ask again if they never arrived.
@@ -1294,7 +1316,7 @@ public struct SettingsView: View {
                 processingNotice: processingNotice(),
                 onToggleProcessing: onToggleProcessing,
                 recognizerState: recognizerStatus(),
-                onSelectRecognizer: onSelectRecognizer
+                onSelectRecognizer: onSelectRecognizer, onManageRecognizer: onManageRecognizer
             )
             VStack(alignment: .leading, spacing: 4) {
                 if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {

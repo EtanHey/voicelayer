@@ -7,15 +7,21 @@ struct SettingsNavigationShell<Detail: View>: View {
     @State private var isFooterHovered = false
     @State private var showsErrorDetails = false
     let footer: VoiceBarFooterPresentation
+    let installedVersion: VoiceBarInstalledVersion
+    let versionStatus: VoiceBarVersionStatus?
     @ViewBuilder let detail: Detail
 
     init(
         selection: Binding<SettingsTab>,
         footer: VoiceBarFooterPresentation,
+        installedVersion: VoiceBarInstalledVersion = .current(),
+        versionStatus: VoiceBarVersionStatus? = nil,
         @ViewBuilder detail: () -> Detail
     ) {
         _selection = selection
         self.footer = footer
+        self.installedVersion = installedVersion
+        self.versionStatus = versionStatus
         self.detail = detail()
     }
 
@@ -55,7 +61,11 @@ struct SettingsNavigationShell<Detail: View>: View {
                         selection = .general
                     }
                 } label: {
-                    VoiceBarStatusFooter(presentation: footer)
+                    VStack(alignment: .leading, spacing: 5) {
+                        VoiceBarStatusIndicator(presentation: footer)
+                        SettingsVersionFooter(installed: installedVersion, status: versionStatus)
+                    }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
                         .background(isFooterHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.clear),
                                     in: RoundedRectangle(cornerRadius: 8))
@@ -65,8 +75,9 @@ struct SettingsNavigationShell<Detail: View>: View {
                 .buttonStyle(.plain)
                 .onHover { isFooterHovered = $0 }
                 .accessibilityLabel(footer.errorDetails != nil ? "Show error details" : "Open General settings")
-                .accessibilityValue("\(footer.status). \(footer.privacy)")
-                .help(footer.errorDetails != nil ? "Show full current error details" : "Open General settings for permissions and setup")
+                .accessibilityValue("\(footer.status). VoiceBar \(installedVersion.label). \(versionStatus?.message ?? "")")
+                .help("VoiceBar \(installedVersion.label). \(versionStatus?.message ?? "")\n" +
+                      (footer.errorDetails != nil ? "Show full current error details" : "Open General settings for permissions and setup"))
                 .popover(isPresented: $showsErrorDetails) {
                     if let details = footer.errorDetails {
                         VStack(alignment: .leading, spacing: 12) {
@@ -132,6 +143,54 @@ public enum SettingsDictionarySource: Hashable, Sendable {
             "Included terms"
         case .unknown:
             "Terms"
+        }
+    }
+}
+
+/// A single secondary status line; full release provenance and update copy stay available on hover.
+struct SettingsVersionFooter: View {
+    let installed: VoiceBarInstalledVersion
+    let status: VoiceBarVersionStatus?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(installed.version.map { "v\($0)" } ?? "Unknown")
+                .monospacedDigit()
+                .fixedSize()
+            if let status {
+                Text("·")
+                Image(systemName: status.symbolName)
+                    .foregroundStyle(tint(status))
+                Text(status.sidebarMessage)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .help("VoiceBar \(installed.label). \(status?.message ?? "")")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("VoiceBar \(installed.label)")
+        .accessibilityValue(status?.message ?? "")
+    }
+
+    private func tint(_ status: VoiceBarVersionStatus) -> Color {
+        switch status {
+        case .latest, .ahead: .green
+        case .available: .accentColor
+        case .checking, .couldNotCheck: .secondary
+        }
+    }
+}
+
+extension VoiceBarVersionStatus {
+    var sidebarMessage: String {
+        switch self {
+        case .checking: "Checking…"
+        case .latest: "Up to date"
+        case .ahead: "Ahead of release"
+        case .available: "Update available"
+        case .couldNotCheck: "Check failed"
         }
     }
 }

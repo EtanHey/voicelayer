@@ -148,6 +148,6 @@ final class SettingsHistoryAttemptSelectionTests: XCTestCase {
         }
         let partial = SettingsHistoryAttemptHistory(recordingPath: e.audioPath.path, attempts: [], isComplete: true, hasPartialResult: true)
         let copy = SettingsHistoryDiagnosticsCopy(snapshot: nil, runs: [], omittedCount: 0, attemptHistory: partial)
-        XCTAssertTrue(copy.shouldExpand); XCTAssertEqual(copy.statusChip, "Partial text")
+        XCTAssertTrue(copy.shouldExpand)
     }
 }

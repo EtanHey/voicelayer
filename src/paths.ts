@@ -69,6 +69,12 @@ export function getStateDir(env: NodeJS.ProcessEnv = process.env): string {
   return value ? value : defaultStateDir();
 }
 
+/** Re-creatable assets belong beside models, outside backed-up user state. */
+export function getCacheDir(env: NodeJS.ProcessEnv = process.env): string {
+  requireIsolatedOverride(env, "XDG_CACHE_HOME");
+  return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "voicelayer");
+}
+
 /** Dedicated update admission gate; never reuse session-booking locks. */
 export function updateGateFilePath(env: NodeJS.ProcessEnv = process.env): string {
   requireIsolatedOverride(env, "VOICELAYER_UPDATE_GATE_PATH");

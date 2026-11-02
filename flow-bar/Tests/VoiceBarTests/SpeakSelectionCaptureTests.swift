@@ -5,6 +5,38 @@ import VoiceBarUI
 import XCTest
 
 final class SpeakSelectionCaptureTests: XCTestCase {
+    func testTimedOutCopyDistinguishesEmptyAndUnreadableAX() {
+        for axText: String? in ["", nil] {
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            seed(board)
+            let original = contents(board)
+            var time = 0.0
+            var copies = 0
+            let capture = makeCapture(readAXSelection: { axText }, pasteboard: board, postCopy: {
+                copies += 1
+                return true // No selection was copied: the clipboard generation stays unchanged.
+            }, now: { time += 1; return time })
+            let done = expectation(description: axText == nil ? "unreadable AX" : "empty AX")
+            capture.capture { result in
+                XCTAssertEqual(result.outcome, axText == nil ? .copyTimedOut : .nothingSelected)
+                XCTAssertNil(result.text)
+                XCTAssertEqual(copies, 1)
+                XCTAssertEqual(self.contents(board), original)
+                let report = self.reportToState(result)
+                XCTAssertEqual(report.message, axText == nil ? "Timed out\nReselect" : "Select text\nfirst")
+                XCTAssertEqual(report.commands, 0)
+                XCTAssertEqual(report.details["outcome"], axText == nil ? "copy_timeout" : "nothing_selected")
+                XCTAssertEqual(report.details["ax_read"], axText == nil ? "unavailable" : "empty")
+                XCTAssertEqual(report.details["path"], "copy")
+                XCTAssertEqual(report.details["copy_attempted"], "true")
+                XCTAssertEqual(report.details["copy_resolution"], "copy_timeout")
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+        }
+    }
+
     func testBrowserCopyRoutingRestoresEveryClipboardRepresentation() {
         for bundle in ["com.t3tools.t3code", "net.imput.helium", "com.google.Chrome", "com.google.Chrome.beta",
                        "company.thebrowser.Browser", "com.brave.Browser", "com.microsoft.edgemac", "org.chromium.Chromium"] {

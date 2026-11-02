@@ -107,6 +107,7 @@ if (scenario.startsWith("wispr-failure")) {
   // Initial previous provider gives restoration a concrete opposite engine.
   state.noteRecognizerEffective(desired === "parakeet" ? "whisper" : "parakeet");
   const deps = {
+    assetsPresent: () => true, // Explicit fake prerequisite; never inspect real weights.
     stopP: async () => { trace.push("stopP"); }, stopW: async () => { trace.push("stopW"); },
     startP: async () => { trace.push("startP"); if (desired === "parakeet") { started.resolve(); await new Promise((_, reject) => p.parakeetOwnerShutdownSignal.addEventListener("abort", () => reject(new Error("owner closed")), { once: true })); } },
     startW: async () => { trace.push("startW"); if (desired === "whisper") { started.resolve(); await new Promise((_, reject) => p.parakeetOwnerShutdownSignal.addEventListener("abort", () => reject(new Error("owner closed")), { once: true })); } },

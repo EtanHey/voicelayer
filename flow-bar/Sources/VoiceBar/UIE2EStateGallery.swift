@@ -24,6 +24,7 @@ final class UIE2EStateGallery {
         .init(id: "busy-f5-preview", family: "busy", expectedText: "Busy with F5. Selection not read", expiry: 2),
         .init(id: "selection-clipboard-changed", family: "selection-error", expectedText: "Clipboard\nReselect", expiry: 1.5),
         .init(id: "selection-copy-timeout", family: "selection-error", expectedText: "Timed out\nReselect", expiry: 1.5),
+        .init(id: "selection-nothing-selected", family: "selection-error", expectedText: "Select text\nfirst", expiry: 1.5),
         .init(id: "selection-copy-empty", family: "selection-error", expectedText: "No text\nReselect", expiry: 1.5),
         .init(id: "selection-copy-failed", family: "selection-error", expectedText: "Can't copy\nCheck A11y", expiry: 1.5),
     ]
@@ -140,6 +141,7 @@ final class UIE2EStateGallery {
             switch spec.id {
             case "selection-clipboard-changed": done(.clipboardChanged)
             case "selection-copy-timeout": done(.copyTimedOut)
+            case "selection-nothing-selected": done(.nothingSelected)
             case "selection-copy-empty": done(.copyEmpty)
             case "selection-copy-failed": done(.copyFailed)
             default: done(.completed(nil))

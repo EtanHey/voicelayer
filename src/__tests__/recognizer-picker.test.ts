@@ -18,7 +18,7 @@ afterEach(() => {
   if (saved.state === undefined) delete process.env.VOICELAYER_STATE_DIR; else process.env.VOICELAYER_STATE_DIR = saved.state;
   if (saved.backend === undefined) delete process.env.QA_VOICE_STT_BACKEND; else process.env.QA_VOICE_STT_BACKEND = saved.backend;
 });
-function ops() { const calls: string[] = []; const deps: RecognizerTransitionDeps = { stopP: async () => { calls.push("stopP"); }, stopW: async () => { calls.push("stopW"); }, startP: async () => { calls.push("startP"); }, startW: async () => { calls.push("startW"); }, reset: () => { calls.push("reset"); } }; return { calls, deps }; }
+function ops() { const calls: string[] = []; const deps: RecognizerTransitionDeps = { assetsPresent: () => true, stopP: async () => { calls.push("stopP"); }, stopW: async () => { calls.push("stopW"); }, startP: async () => { calls.push("startP"); }, startW: async () => { calls.push("startW"); }, reset: () => { calls.push("reset"); } }; return { calls, deps }; }
 test("published commands parse exactly, not arbitrary engine/field aliases", () => {
   expect(parseCommand('{"cmd":"set_recognizer","recognizer":"parakeet","id":"x"}')).toEqual({ cmd: "set_recognizer", recognizer: "parakeet", id: "x" });
   expect(parseCommand('{"cmd":"set_recognizer","recognizer":"whisper"}')).toEqual({ cmd: "set_recognizer", recognizer: "whisper" });
@@ -155,4 +155,10 @@ test("getBackend reuses the resident recovery provider instead of allocating P o
   const path=testTmp("recognizer-picker","recovery.wav");writeFileSync(path,b);
   try { const result=await (await stt.getBackend()).transcribe(path,{language:"en"});expect(result.backend).toContain("fallback-parakeet-startup-failed->whisper-server");expect(w).toHaveBeenCalledTimes(1);expect(cli).not.toHaveBeenCalled();expect(p).not.toHaveBeenCalled(); }
   finally { w.mockRestore();cli.mockRestore();p.mockRestore();stop.mockRestore();stt.resetBackendCache();setRecognizerRecoveryWhisper(null); }
+});
+
+test("unprovisioned engine is refused before cleanup, preference or load", async () => {
+  const { calls, deps } = ops(); deps.assetsPresent = () => false;
+  expect(await selectRecognizer("parakeet", deps)).toMatchObject({ outcome: "reject", reason: "assets-not-present" });
+  expect(calls).toEqual([]); expect(existsSync(recognizerSettingsPath())).toBe(false);
 });

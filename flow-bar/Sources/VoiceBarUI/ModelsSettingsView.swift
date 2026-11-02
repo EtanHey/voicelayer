@@ -11,6 +11,7 @@ public struct ModelsSettingsView: View {
     private let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
     private let onSelectResidency: ((VoiceModelResidency) -> Void)?
     private let recognizerState: RecognizerPickerState
+    private let onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)?
     private let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
 
     public init(
@@ -24,8 +25,10 @@ public struct ModelsSettingsView: View {
         processingNotice: String? = nil,
         onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil,
         recognizerState: RecognizerPickerState = .unavailable,
-        onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil
+        onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil,
+        onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)? = nil
     ) {
+        self.onManageRecognizer = onManageRecognizer
         self.recognizerState = recognizerState
         self.onSelectRecognizer = onSelectRecognizer
         self.state = state
@@ -54,7 +57,7 @@ public struct ModelsSettingsView: View {
             }
 
             Section("Recognizer") {
-                RecognizerPickerView(state: recognizerState, onSelect: onSelectRecognizer,
+                RecognizerPickerView(state: recognizerState, onSelect: onSelectRecognizer, onManage: onManageRecognizer,
                     suppressDisabledExplanation: state.availability == .available && state.isBusy && recognizerState.selected != nil)
                 // One shared reason above the controls it disables. The picker keeps
                 // command/fallback notices, but omits its duplicate disabled explanation.

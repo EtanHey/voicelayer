@@ -1,0 +1,92 @@
+import { mkdirSync, mkdtempSync, renameSync, rmSync, statfsSync, createReadStream, openSync, writeSync, closeSync, existsSync, rmdirSync, statSync, readdirSync } from "fs";
+import { dirname, join, isAbsolute } from "path";
+import { createHash } from "crypto";
+import { recognizerAssetPaths, defaultParakeetModelPath, readRecognizerAssets } from "./recognizer-assets";
+import { RECOGNIZER_DOWNLOADS, type RecognizerDownloadFile } from "./recognizer-download-manifest";
+import { provisionParakeetRuntime } from "./parakeet-runtime";
+import { beginRecognizerDownload, finishRecognizerDownload, noteRecognizerEngine, readRecognizerStatus,
+  recognizerOwnerSignal, type Recognizer } from "./recognizer-state";
+export interface DownloadDeps {
+  files(engine: Recognizer): RecognizerDownloadFile[];
+  transfer(file: RecognizerDownloadFile, path: string, signal: AbortSignal, progress: (bytes: number) => void): Promise<void>;
+  runtime(signal: AbortSignal): Promise<void>;
+  freeBytes(path: string): number;
+}
+async function transfer(file: RecognizerDownloadFile, path: string, signal: AbortSignal, progress: (bytes: number) => void): Promise<void> {
+  if (process.env.VOICELAYER_TEST_ISOLATED === "1") throw new Error("download-network-denied-in-tests");
+  const response = await fetch(file.url, { signal });
+  if (!response.ok || !response.body) throw new Error("download-http-failed");
+  const fd = openSync(path, "wx", 0o600); let bytes = 0;
+  try { for await (const chunk of response.body) {
+    signal.throwIfAborted(); bytes += chunk.length; if (bytes > file.bytes) throw new Error("download-size-mismatch");
+    let offset = 0; while (offset < chunk.length) offset += writeSync(fd, chunk, offset, chunk.length - offset);
+    progress(chunk.length);
+  } } finally { closeSync(fd); }
+}
+const defaults: DownloadDeps = { files: engine => RECOGNIZER_DOWNLOADS[engine], transfer, runtime: provisionParakeetRuntime,
+  freeBytes: path => { const s = statfsSync(path); return s.bavail * s.bsize; } };
+const active = new Map<Recognizer, AbortController>();
+export function cancelRecognizerDownload(engine: Recognizer): boolean {
+  const controller = active.get(engine);
+  if (!controller) return false; controller.abort(); return true;
+}
+export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps = defaults) {
+  let acquired = false, tmp: string | undefined, outcome: "accept" | "reject" = "accept", reason: string | undefined;
+  const controller = new AbortController(), signal = AbortSignal.any([controller.signal, recognizerOwnerSignal]);
+  const files = deps.files(engine), total = files.reduce((sum, f) => sum + f.bytes, 0); let received = 0, lastPublish = 0;
+  const report = (state: "downloading" | "verifying" | "runtime" | "complete" | "cancelled" | "error", error: string | null = null) =>
+    noteRecognizerEngine(engine, { download: { state, received_bytes: received, total_bytes: total, error } });
+  try {
+    if (deps === defaults && process.env.VOICELAYER_TEST_ISOLATED === "1") throw new Error("download-network-denied-in-tests");
+    beginRecognizerDownload(engine); acquired = true; active.set(engine, controller);
+    if (readRecognizerAssets(engine).assets_present) throw new Error("assets-already-present");
+    if (readRecognizerStatus().engines[engine].phase !== "sleeping") throw new Error("recognizer-loaded");
+    const destination = engine === "whisper" ? recognizerAssetPaths(engine)[0]! : process.env.VOICELAYER_PARAKEET_MODEL || defaultParakeetModelPath();
+    if (!isAbsolute(destination)) throw new Error("invalid-model-path");
+    const parent = dirname(destination); mkdirSync(parent, { recursive: true, mode: 0o700 });
+    const existingModels = engine === "parakeet" && files.every(f => {
+      try { return statSync(join(destination, f.name)).isFile() && statSync(join(destination, f.name)).size === f.bytes; } catch { return false; }
+    });
+    if (engine === "parakeet" && existsSync(destination) && !existingModels && readdirSync(destination).length) throw new Error("assets-exist-delete-first");
+    // Reserve model bytes + 3 GiB for the venv/wheels, on both destination filesystems.
+    const reserve = engine === "parakeet" ? 3 * 1024 ** 3 : 256 * 1024 ** 2;
+    if (deps.freeBytes(parent) < (existingModels ? 0 : total) + reserve) throw new Error("insufficient-disk-space");
+    if (engine === "parakeet") {
+      const { getStateDir } = await import("./paths"); const state = getStateDir(); mkdirSync(state, { recursive: true, mode: 0o700 });
+      if (deps.freeBytes(state) < reserve) throw new Error("insufficient-disk-space");
+    }
+    tmp = mkdtempSync(join(parent, ".recognizer-download-")); report("downloading");
+    for (const file of files) {
+      const path = join(existingModels ? destination : tmp, file.name);
+      if (!existingModels) await deps.transfer(file, path, signal, bytes => { received += bytes; if (Date.now() - lastPublish > 200) { lastPublish = Date.now(); report("downloading"); } });
+      signal.throwIfAborted(); report("verifying"); const hash = createHash("sha256"); let size = 0;
+      for await (const chunk of createReadStream(path)) { signal.throwIfAborted(); size += chunk.length; hash.update(chunk); }
+      if (size !== file.bytes || hash.digest("hex") !== file.sha256) throw new Error("download-checksum-mismatch");
+    }
+    if (engine === "parakeet") { report("runtime"); await deps.runtime(signal); }
+    signal.throwIfAborted();
+    // Publication is synchronous and protected by per-engine ownership. Busy
+    // dictation must never discard verified files or wait for this download.
+    if (engine === "whisper") {
+      if (existsSync(destination)) throw new Error("assets-exist-delete-first");
+      renameSync(join(tmp, files[0]!.name), destination);
+    } else if (!existingModels) {
+      // Empty directories from a prior explicit delete are safe; never replace
+      // a partial/external model tree or remove unrelated user files implicitly.
+      if (existsSync(destination)) { try { rmdirSync(destination); } catch { throw new Error("assets-exist-delete-first"); } }
+      renameSync(tmp, destination); tmp = undefined;
+    }
+    if (!readRecognizerAssets(engine).assets_present) throw new Error("assets-validation-failed");
+    report("complete");
+  } catch (error) {
+    outcome = "reject"; reason = signal.aborted ? "download-cancelled" : error instanceof Error ? error.message : "download-failed";
+    if (acquired) report(signal.aborted ? "cancelled" : "error", reason);
+  } finally {
+    try { if (tmp) rmSync(tmp, { recursive: true, force: true }); }
+    catch { outcome = "reject"; reason = "download-cleanup-failed"; report("error", reason); }
+    finally {
+      if (acquired) { active.delete(engine); finishRecognizerDownload(engine); }
+    }
+  }
+  return { outcome, ...(reason ? { reason } : {}), recognizer_status: readRecognizerStatus() };
+}

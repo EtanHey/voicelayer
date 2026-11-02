@@ -78,7 +78,7 @@ describe("tts module", () => {
       };
     };
     // @ts-ignore — mock Bun.spawnSync so getAudioPlayer() is deterministic on all platforms
-    Bun.spawnSync = (cmd: string[]) => {
+    Bun.spawnSync = (cmd: string[], options?: Parameters<typeof originalSpawnSync>[1]) => {
       if (cmd[0] === "which" && ["ffmpeg", "ffprobe"].includes(cmd[1])) return {exitCode: 0, stdout: Buffer.from(`${cmd[1]}\n`), stderr: Buffer.alloc(0)};
       if (cmd[1] === "-version") return {exitCode: ["ffmpeg", "ffprobe"].includes(cmd[0]) ? 0 : 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
       if (Array.isArray(cmd) && cmd[0] === "which") {
@@ -88,7 +88,8 @@ describe("tts module", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd, { env: process.env });
+      // isolation-exempt: Preserve caller sanitized environment without reintroducing inherited Git selection.
+      return originalSpawnSync(cmd, { ...options, env: options?.env ?? process.env });
     };
 
     // Clean up history file before each test
@@ -102,17 +103,20 @@ describe("tts module", () => {
   });
 
   afterEach(async () => {
-    const { stopPlayback, awaitCurrentPlayback } = await import("../tts");
-    stopPlayback();
-    await awaitCurrentPlayback();
-    Bun.spawn = originalSpawn;
-    Bun.spawnSync = originalSpawnSync;
     try {
-      unlinkSync(actualPaths.TTS_HISTORY_FILE);
-    } catch {}
-    try {
-      unlinkSync(TEST_TTS_DISABLED_FILE);
-    } catch {}
+      const { stopPlayback, awaitCurrentPlayback } = await import("../tts");
+      stopPlayback();
+      await awaitCurrentPlayback();
+    } finally {
+      Bun.spawn = originalSpawn;
+      Bun.spawnSync = originalSpawnSync;
+      try {
+        unlinkSync(actualPaths.TTS_HISTORY_FILE);
+      } catch {}
+      try {
+        unlinkSync(TEST_TTS_DISABLED_FILE);
+      } catch {}
+    }
   });
 
   it("speak() calls edge-tts then audio player (non-blocking)", async () => {
@@ -205,7 +209,7 @@ describe("tts module", () => {
 
   it("speak() tolerates missing ffprobe", async () => {
     // @ts-ignore — simulate ffprobe missing from PATH
-    Bun.spawnSync = (cmd: string[]) => {
+    Bun.spawnSync = (cmd: string[], options?: Parameters<typeof originalSpawnSync>[1]) => {
       if (cmd[0] === "which" && ["ffmpeg", "ffprobe"].includes(cmd[1])) return {exitCode: 0, stdout: Buffer.from(`${cmd[1]}\n`), stderr: Buffer.alloc(0)};
       if (cmd[1] === "-version") return {exitCode: ["ffmpeg", "ffprobe"].includes(cmd[0]) ? 0 : 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
       if (Array.isArray(cmd) && cmd[0] === "ffprobe") {
@@ -218,7 +222,8 @@ describe("tts module", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd, { env: process.env });
+      // isolation-exempt: Preserve caller sanitized environment without reintroducing inherited Git selection.
+      return originalSpawnSync(cmd, { ...options, env: options?.env ?? process.env });
     };
 
     const { speak } = await import("../tts");

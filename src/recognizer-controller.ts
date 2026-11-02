@@ -1,6 +1,7 @@
 import { getRecordingState } from "./input";
 import { residencyBusy } from "./model-residency-busy";
 import { parakeetServer } from "./parakeet-server";
+import { migrateLegacyParakeetRuntime } from "./parakeet-runtime";
 import { ensureServer, unloadOwnedServer, whisperServerLaunchRecord, probeWhisperServerListeners, onWhisperModelStateChange } from "./whisper-server";
 import { resetBackendCache } from "./stt";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
@@ -8,7 +9,7 @@ import { mkdirSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { getStateDir, safeWriteFileSync } from "./paths";
-import { beginRecognizerTransition, finishRecognizerTransition, configureRecognizerBusyProbe, noteRecognizerEffective,
+import { assertRecognizerNotDownloading, beginRecognizerTransition, beginRecognizerMaintenance, finishRecognizerTransition, configureRecognizerBusyProbe, noteRecognizerEffective,
   noteRecognizerEngine, persistRecognizer, readRecognizerStatus, recheckRecognizerBusy, setRecognizerRecovery,
   confirmRecognizerCleanup, markRecognizerCleanupUnconfirmed, assertRecognizerOwnerOpen, recognizerOwnerClosed, type Recognizer, type RecognizerStatus } from "./recognizer-state";
 configureRecognizerBusyProbe(() => getRecordingState() === "recording" ? "capture-active" : residencyBusy() ? "voice-busy" : whisperLifecycleGate.isInUse || whisperLifecycleGate.isUnloading ? "transition-active" : null);
@@ -21,6 +22,7 @@ onWhisperModelStateChange((event) => {
   noteRecognizerEngine("whisper", { phase: record ? "ready" : "sleeping", ...(record ? { available: true, error: null } : {}) });
 });
 export interface RecognizerTransitionDeps {
+  assetsPresent?(engine: Recognizer): boolean;
   stopP(): Promise<unknown>; stopW(): Promise<unknown>; startP(): Promise<unknown>; startW(): Promise<unknown>; reset(): void;
 }
 const defaults: RecognizerTransitionDeps = {
@@ -47,7 +49,7 @@ export function selectRecognizer(value: Recognizer, deps: RecognizerTransitionDe
 async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransitionDeps = defaults): Promise<{ outcome: "accept" | "reject"; reason?: string; recognizer_status: RecognizerStatus }> {
   if (value !== "parakeet" && value !== "whisper") return { outcome: "reject", reason: "invalid-recognizer", recognizer_status: readRecognizerStatus() };
   const previous = readRecognizerStatus();
-  try { beginRecognizerTransition(); }
+  try { assertRecognizerNotDownloading(value); beginRecognizerTransition(); }
   catch (error) { return { outcome: "reject", reason: error instanceof Error ? error.message : "voice-busy", recognizer_status: readRecognizerStatus() }; }
   let outcome: "accept" | "reject" = "accept", reason: string | undefined;
   let preferenceChanged = false;
@@ -60,9 +62,12 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
   };
   const start = (engine: Recognizer) => {
     assertRecognizerOwnerOpen();
+    assertRecognizerNotDownloading(engine);
     return engine === "parakeet" ? deps.startP() : deps.startW();
   };
   try {
+    if (value === "parakeet" && deps === defaults && parakeetServer.pid === null) migrateLegacyParakeetRuntime();
+    if (!(deps.assetsPresent?.(value) ?? readRecognizerStatus().engines[value].assets_present)) throw new Error("assets-not-present");
     // Never mutate preference or load a successor until both prior owners have
     // accepted cleanup. A foreign/adopted Whisper is not ours to signal.
     await stop("parakeet");
@@ -114,5 +119,38 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
     reason = error instanceof Error ? error.message : "cleanup-unconfirmed"; outcome = "reject";
     noteRecognizerEngine(value, { phase: "error", error: reason });
   } finally { try { if (preferenceChanged) deps.reset(); } finally { finishRecognizerTransition(); } }
+  return { outcome, ...(reason ? { reason } : {}), recognizer_status: readRecognizerStatus() };
+}
+
+/** Symmetric explicit residency; loading never changes the desired recognizer. */
+export async function setRecognizerResidency(engine: Recognizer, action: "load" | "unload", deps: RecognizerTransitionDeps = defaults) {
+  const current = readRecognizerStatus();
+  if (action === "load" && current.desired === engine && current.effective !== null && current.effective !== engine) return selectRecognizer(engine, deps);
+  let acquired = false, loading = false, outcome: "accept" | "reject" = "accept", reason: string | undefined;
+  try {
+    assertRecognizerNotDownloading(engine);
+    beginRecognizerMaintenance(); acquired = true;
+    if (action === "load" && engine === "parakeet" && deps === defaults && parakeetServer.pid === null) migrateLegacyParakeetRuntime();
+    const status = readRecognizerStatus();
+    if (action === "load") {
+      if (status.desired !== engine || status.effective !== null && status.effective !== engine) throw new Error("select-recognizer-first");
+      if (!status.engines[engine].assets_present) throw new Error("assets-not-present");
+      loading = true; noteRecognizerEngine(engine, { phase: "loading", error: null });
+      await (engine === "parakeet" ? deps.startP() : deps.startW());
+      assertRecognizerOwnerOpen(); noteRecognizerEngine(engine, { phase: "ready", available: true, error: null }); noteRecognizerEffective(engine);
+    } else {
+      try { await (engine === "parakeet" ? deps.stopP() : deps.stopW()); }
+      catch { markRecognizerCleanupUnconfirmed(engine); throw new Error("cleanup-unconfirmed"); }
+      confirmRecognizerCleanup(engine); noteRecognizerEngine(engine, { phase: "sleeping", error: null });
+    }
+  } catch (error) {
+    outcome = "reject"; reason = error instanceof Error ? error.message : "residency-failed";
+    if (loading) {
+      try { await (engine === "parakeet" ? deps.stopP() : deps.stopW()); confirmRecognizerCleanup(engine); }
+      catch { markRecognizerCleanupUnconfirmed(engine); reason = "cleanup-unconfirmed"; }
+      noteRecognizerEngine(engine, { phase: "error", available: false, error: reason });
+    }
+  }
+  finally { if (acquired) finishRecognizerTransition(); }
   return { outcome, ...(reason ? { reason } : {}), recognizer_status: readRecognizerStatus() };
 }

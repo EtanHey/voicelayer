@@ -1,0 +1,67 @@
+$ java -XX:+UseParallelGC -cp /Users/etanheyman/.cache/tla/tla2tools.jar tlc2.TLC -config OldDownloadBlocks.cfg ResidentRecognizer.tla
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 32 and seed -7449739475965423478 with 1 worker on 14 cores with 8192MB heap and 64MB offheap memory [pid: 22931] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-26cd88d9/formal/parakeet-residency/ResidentRecognizer.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module ResidentRecognizer
+Starting... (2026-11-02 04:26:04)
+Computing initial states...
+Finished computing initial states: 2 distinct states generated at 2026-11-02 04:26:05.
+Error: Invariant DownloadNeverBlocksAdmittedRequest is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ owner = "none"
+/\ request = FALSE
+/\ pendingLegacy = FALSE
+/\ capture = FALSE
+/\ target = "P"
+/\ attempted = {}
+/\ desired = "W"
+/\ recovery = "none"
+/\ models = {}
+/\ assetsPresent = {"W"}
+/\ hold = FALSE
+/\ previous = "W"
+/\ stage = "idle"
+
+State 2: <DownloadBegin line 85, col 18 to line 88, col 118 of module ResidentRecognizer>
+/\ owner = "download"
+/\ request = FALSE
+/\ pendingLegacy = TRUE
+/\ capture = FALSE
+/\ target = "P"
+/\ attempted = {}
+/\ desired = "W"
+/\ recovery = "none"
+/\ models = {}
+/\ assetsPresent = {"W"}
+/\ hold = FALSE
+/\ previous = "W"
+/\ stage = "transfer"
+
+State 3: <DownloadAdmit line 92, col 18 to line 94, col 136 of module ResidentRecognizer>
+/\ owner = "download"
+/\ request = FALSE
+/\ pendingLegacy = TRUE
+/\ capture = TRUE
+/\ target = "P"
+/\ attempted = {}
+/\ desired = "W"
+/\ recovery = "none"
+/\ models = {}
+/\ assetsPresent = {"W"}
+/\ hold = FALSE
+/\ previous = "W"
+/\ stage = "transfer"
+
+6 states generated, 6 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-11-02 04:26:05)
+
+EXIT_STATUS=12

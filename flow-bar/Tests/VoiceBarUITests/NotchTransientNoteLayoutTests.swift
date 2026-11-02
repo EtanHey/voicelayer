@@ -64,7 +64,7 @@ final class NotchTransientNoteLayoutTests: XCTestCase {
                     XCTAssertEqual(geometry.trailingWingWidth, plain.geometry.trailingWingWidth, label)
                     XCTAssertEqual(
                         geometry.lowerSurfaceHeight,
-                        plain.geometry.lowerSurfaceHeight + VoiceBarNotchContract.transientNoteBandHeight,
+                        plain.geometry.lowerSurfaceHeight + presentation.feedbackHeight,
                         label
                     )
                 }
@@ -78,14 +78,17 @@ final class NotchTransientNoteLayoutTests: XCTestCase {
                     CGRect(origin: .zero, size: surface.totalSize).contains(noteRect),
                     "\(label): note outside the notch surface"
                 )
-                // The full sentence fits with the band's side padding, so it never truncates.
-                let textWidth = Theme.intrinsicPillStatusWidth(for: note)
-                XCTAssertLessThanOrEqual(
-                    textWidth + 2 * VoiceBarNotchContract.transientNoteHorizontalInset,
-                    noteRect.width,
-                    label
-                )
-
+                // Notes inherit the existing shell width; long text grows down instead of making wings.
+                let shell = plain.visualState == .idle
+                    ? VoiceBarNotchContract.geometry(for: .hoverLauncher, coreWidth: input.coreWidth)
+                    : plain.geometry
+                XCTAssertEqual(geometry.bodyLeadingExtent, shell.bodyFlushWithWings.bodyLeadingExtent, label)
+                XCTAssertEqual(geometry.bodyTrailingExtent, shell.bodyFlushWithWings.bodyTrailingExtent, label)
+                XCTAssertLessThanOrEqual(noteRect.width, shell.totalWidth, label)
+                if let feedback = presentation.feedback {
+                    XCTAssertEqual(feedback.noteText, note)
+                    XCTAssertEqual(feedback.width, shell.bodyFlushWithWings.bodyWidth)
+                }
                 // The fixed morph canvas (and so the panel) holds the grown notch.
                 let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
                 XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalHeight, geometry.totalHeight, label)
