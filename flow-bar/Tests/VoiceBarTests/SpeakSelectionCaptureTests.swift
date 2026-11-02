@@ -332,10 +332,12 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         let pasteboardName = board.name.rawValue
         DispatchQueue.global(qos: .utility).async {
             let started = ProcessInfo.processInfo.systemUptime
+            var failureReason: String?
             let snapshot = SelectionPasteboardSnapshot.readInHelper(
                 name: pasteboardName, executable: URL(fileURLWithPath: "/bin/sleep"),
-                arguments: ["30"], timeout: 0.2)
+                arguments: ["30"], timeout: 0.2, onFailure: { failureReason = $0 })
             XCTAssertNil(snapshot)
+            XCTAssertEqual(failureReason, "helper_termination_2_9", "owned helper was killed at its deadline")
             XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 2)
             finished.fulfill()
         }
