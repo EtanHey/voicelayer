@@ -60,3 +60,16 @@ Every ratchet daemon has a parent-side 45 s SIGKILL watchdog, armed from spawn t
 R4's recorder paces cumulative emitted PCM against a monotonic sample clock and batches overdue frames after scheduling or disk delays. Receipts update at most every 250 ms, plus termination, and count bytes actually written. A 120 ms receipt-I/O regression observes 3 s of capture and checks real stdout silence, sample accounting, clock drift and no accelerated playback. The final receipt freezes its elapsed clock at the first SIGTERM, excluding receipt I/O after capture stops. Synchronized regressions cover immediate termination during a receipt write and SIGTERM targeted 200 ms into a 1-second write; the longer stall avoids a narrow signal-delivery precondition, while the unchanged `.9` pace bound still decides acceptable drift. A committed #283-style accumulating-delay negative control must still fail that bound even with the corrected terminal clock. Both final PCM and the receipt taken **before stop/unlock** must contain at least 15 s of silence; missing phase evidence is FAIL. The silence guard, held observation and daemon cap are unchanged.
 
 The committed `R4-{bug,fix,main}.json` receipts and `R4-replay-harness.sha256` pin the pre-change recorder fixture digest `088e55abd788afae02ef6a39bdd68e8047d7b4b78e064e89ad162c7b1ec18d88`. They remain historical evidence and do not measure this fixture revision. Receipt regeneration is scheduled for the M1 later; several hosted `ratchet` runs at the PR head are required before merge.
+
+### Baseline cache
+
+Each clean BASE row is saved independently, only by push-to-main or dispatch on main.
+The exact key pins the base commit's tracked runner, row definitions and fixture scripts and runner/tool versions;
+BASE executes that commit's harness in a separate CI worktree. PR head always runs.
+Failed/crashed BASE rows are reported and retried, without failing main.
+Each receipt records `baseline cached @<sha>` or `baseline measured @<sha>` and
+`baseline_run_id` identifies the measuring workflow run. The comment renderer
+uses this provenance once this change reaches the default branch.
+Fresh row logs live under `baseline/<row>/<row>.build.log`; cache hits carry
+JSON receipts only, with the original run id, rather than copied build logs.
+Reusing an output directory is rejected explicitly to avoid stale results.

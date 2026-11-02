@@ -88,6 +88,8 @@ def render(baseline, head, base_sha, head_sha):
               "Values count violations, including missing events/sockets/binaries; 0 is PASS."]
     for row in ROWS:
         item = head[row]
+        source = 'cached' if baseline[row].get('baseline_source') == 'cached' else 'measured'
+        lines.append(f'- `{row}`: baseline {source} @{base_sha}')
         lines.append(f'- `{row}`: bug `{item["bug_sha"]}`, fix `{item["fix_sha"]}`' +
                      (f', overlay SHA-256 `{item["overlay_sha256"]}`' if row in ("socket-isolation", "recents-newest-after-retranscribe") else ""))
     return "\n".join(lines) + "\n"
