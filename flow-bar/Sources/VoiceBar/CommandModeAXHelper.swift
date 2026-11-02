@@ -141,9 +141,10 @@ final class CommandModeAXHelper {
         selectedTextSettable: Bool, valueSettable: Bool, protectedContent: Bool,
         matchesCurrentFocus: @escaping () -> Bool
     ) -> DictationFocusedTargetEligibility {
+        // TextEdit omits AXEnabled; writable text is disabled only by an explicit false.
         DictationFocusedTargetEligibility(
             processIdentifier: processIdentifier, role: role,
-            isEditable: enabled == true && (editable ?? (selectedTextSettable || valueSettable)),
+            isEditable: enabled != false && (editable ?? (selectedTextSettable || valueSettable)),
             isSecure: subrole == kAXSecureTextFieldSubrole || protectedContent,
             matchesCurrentFocus: matchesCurrentFocus,
             diagnosticDetails: [
@@ -246,7 +247,7 @@ final class CommandModeAXHelper {
                 guard readAttributeBool(element, attribute: "AXProtectedContent" as CFString) != true else {
                     return axDeclined("protected_content")
                 }
-                guard readAttributeBool(element, attribute: kAXEnabledAttribute as CFString) == true else {
+                guard readAttributeBool(element, attribute: kAXEnabledAttribute as CFString) != false else {
                     return axDeclined("not_enabled")
                 }
                 guard isSettable(element, attribute: kAXSelectedTextAttribute as CFString) else {

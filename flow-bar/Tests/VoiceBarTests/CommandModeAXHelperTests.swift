@@ -39,19 +39,61 @@ final class CommandModeAXHelperTests: XCTestCase {
         }
     }
 
-    func testNativeEligibilityRequiresEnabledEditableTextAndRejectsSecureOrChangedIdentity() {
-        for reason in ["editable", "explicit_editable", "disabled", "unknown_enabled", "readonly", "file_list", "secure", "protected", "identity_changed"] {
+    func testNativeEligibilityRejectsExplicitlyDisabledReadonlySecureOrChangedIdentity() {
+        for reason in ["editable", "explicit_editable", "disabled", "absent_enabled", "readonly", "file_list", "secure", "protected", "identity_changed"] {
             let eligibility = CommandModeAXHelper.typingEligibility(
                 processIdentifier: 51515, role: reason == "file_list" ? "AXOutline" : "AXTextField",
                 subrole: reason == "secure" ? "AXSecureTextField" : nil,
-                enabled: reason == "unknown_enabled" ? nil : reason != "disabled",
+                enabled: reason == "absent_enabled" ? nil : reason != "disabled",
                 editable: reason == "readonly" ? false : reason == "explicit_editable" ? true : nil,
                 selectedTextSettable: false, valueSettable: reason != "explicit_editable",
                 protectedContent: reason == "protected", matchesCurrentFocus: { reason != "identity_changed" }
             )
             XCTAssertEqual(eligibility.permitsTyping(into: 51515),
-                           ["editable", "explicit_editable"].contains(reason), reason)
+                           ["editable", "explicit_editable", "absent_enabled"].contains(reason), reason)
             XCTAssertFalse(eligibility.permitsTyping(into: 62626), reason)
+        }
+    }
+
+    func testTextEditAbsentEnabledAndEditableMetadataAllowsOnlySafeAutomaticFallback() {
+        let fixtures: [(String, Bool?, String?)] = [
+            ("textedit", nil, nil), ("disabled", false, nil), ("secure", nil, "AXSecureTextField"),
+        ]
+        for (name, enabled, subrole) in fixtures {
+            let state = VoiceState(
+                recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+            )
+            let editor = FakeRunningApplication(bundleIdentifier: "com.apple.TextEdit", processIdentifier: 51515)
+            let text = "ADD שלום 👩‍💻\nsecond line"
+            let eligibility = CommandModeAXHelper.typingEligibility(
+                processIdentifier: 51515, role: "AXTextArea", subrole: subrole,
+                enabled: enabled, editable: nil, selectedTextSettable: true, valueSettable: true,
+                protectedContent: false, matchesCurrentFocus: { true }
+            )
+            var typed: [String] = []
+            state.sendCommand = { _ in }
+            state.minimumTranscribingDisplayDuration = 0
+            state.frontmostAppProvider = { editor }
+            state.targetAppActivator = { _ in }
+            state.pasteScheduler = { _, work in work() }
+            state.focusedTargetEligibilityProvider = { eligibility }
+            state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
+            state.guardedTextTypingHandler = { text, pid in
+                XCTAssertEqual(pid, 51515, name)
+                typed.append(text)
+                return .posted
+            }
+            state.textTypingHandler = { _ in XCTFail("Use guarded typing: \(name)"); return false }
+            state.pasteboardWriter = { _ in XCTFail("Keep clipboard: \(name)") }
+            state.simulatedPasteHandler = { XCTFail("No Cmd+V: \(name)"); return false }
+
+            XCTAssertEqual(eligibility.permitsTyping(into: 51515), name == "textedit", name)
+            state.record()
+            state.handleEvent(["type": "transcription", "text": text])
+            XCTAssertEqual(typed, name == "textedit" ? [text] : [], name)
+            XCTAssertEqual(state.latestDictationInsertionStatus, name == "textedit" ? .typed : .notInserted, name)
+            XCTAssertEqual(state.latestReusableTranscript, text, name)
         }
     }
 
