@@ -1,0 +1,68 @@
+name: Formal models and source conformance
+
+on:
+  push:
+    branches: [main]
+    paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
+  pull_request:
+    branches: [main]
+    paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  formal:
+    name: TLC mutants and both-policy conformance
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      TLC: ${{ github.workspace }}/formal/tlc.sh
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/tla/v1.8.0
+          key: tlc-${{ hashFiles('formal/tlc.lock.json') }}
+      - name: Verify checksum-pinned TLC
+        run: python3 -B formal/setup-tlc.py
+      - uses: actions/cache@v4
+        with:
+          path: .build.noindex/swift
+          key: formal-swift-${{ runner.os }}-${{ hashFiles('flow-bar/Package.swift', 'flow-bar/Sources/**', 'flow-bar/Tests/**') }}
+      - name: Install dependencies and legacy speech-queue timeout
+        run: |
+          bun install --frozen-lockfile
+          if ! command -v timeout >/dev/null; then
+            brew list coreutils >/dev/null 2>&1 || brew install coreutils
+            mkdir -p "$HOME/.local/bin"
+            ln -s "$(brew --prefix coreutils)/bin/gtimeout" "$HOME/.local/bin/timeout"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Check every formal runner, including exact-property mutants
+        run: |
+          for check in formal/*/check.sh; do
+            bash "$check"
+          done
+      - name: Replay Current and Fixed against real Swift code (no skip gate)
+        run: bash formal/notch-presentation/conformance.sh
+      - name: Replay Current and Fixed against real daemon admission and cancel
+        run: bash formal/record-while-processing/conformance.sh
+      - name: Preserve raw TLC and replay diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-diagnostics
+          path: .build.noindex/*/*.log
+          if-no-files-found: warn

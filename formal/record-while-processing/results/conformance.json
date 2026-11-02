@@ -1,0 +1,40 @@
+{
+  "command": "bash formal/record-while-processing/conformance.sh",
+  "status": "PASS_WITH_EXPLICIT_BASELINE_EXPECTED_FAILURES",
+  "corpora": [
+    "Current",
+    "Fixed"
+  ],
+  "skips": 0,
+  "productionPolicy": "current",
+  "remoteCI": "NOT_RUN",
+  "installedOrLiveAcceptance": "NOT_RUN",
+  "sourceSHA256": {
+    "formal/record-while-processing/conformance.test.ts": "a74dc8f68ffbceb7791f015598e197a11f386c2595f976fd347680b3870dd21f",
+    "formal/record-while-processing/runtime-adapter.ts": "d0701d298af8e77fb725077980e2e77e018183cd5dfe8125778e570e19b9f164",
+    "formal/runtime-contract.json": "ab6305773cb1884474e665a1c421dfcd78250fe49613625de6aef6b4fcf877d8"
+  },
+  "tests": 5,
+  "strictPasses": 3,
+  "expectedFailureTests": 2,
+  "unexpectedFailures": 0,
+  "wireContexts": 410,
+  "contexts": {
+    "Current/record": {
+      "cases": 26,
+      "divergences": 0
+    },
+    "Current/cancel": {
+      "cases": 206,
+      "divergences": 0
+    },
+    "Fixed/record": {
+      "cases": 38,
+      "divergences": 12
+    },
+    "Fixed/cancel": {
+      "cases": 140,
+      "divergences": 280
+    }
+  }
+}

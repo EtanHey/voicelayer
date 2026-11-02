@@ -1,80 +1,14 @@
-TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 92453] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
-Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-3dfef06b/formal/record-while-processing/RecordWhileProcessing.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
-Semantic processing of module Naturals
-Semantic processing of module Sequences
-Semantic processing of module FiniteSets
-Semantic processing of module RecordWhileProcessing
-Starting... (2026-11-02 09:08:56)
-Implied-temporal checking--satisfiability problem has 2 branches.
-Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 09:08:56.
-Error: Invariant N8ImmediatePaste is violated.
-Error: The behavior up to this point is:
-State 1: <Initial predicate>
-s = [ stage |-> [A |-> "fresh", B |-> "fresh"],
-  event |-> "init",
-  target |-> "none",
-  violations |-> {},
-  saved |-> {},
-  deliveries |-> [A |-> 0, B |-> 0],
-  floor |-> [A |-> 0, B |-> 0],
-  guard |-> "none",
-  cooldown |-> 0,
-  ring |-> FALSE ]
-
-State 2: <Record line 27, col 6 to line 29, col 42 of module RecordWhileProcessing>
-s = [ stage |-> [A |-> "recording", B |-> "fresh"],
-  event |-> "F5",
-  target |-> "A",
-  violations |-> {},
-  saved |-> {},
-  deliveries |-> [A |-> 0, B |-> 0],
-  floor |-> [A |-> 0, B |-> 0],
-  guard |-> "none",
-  cooldown |-> 0,
-  ring |-> FALSE ]
-
-State 3: <Capture line 30, col 23 to line 31, col 103 of module RecordWhileProcessing>
-s = [ stage |-> [A |-> "captured", B |-> "fresh"],
-  event |-> "stop",
-  target |-> "A",
-  violations |-> {},
-  saved |-> {"A"},
-  deliveries |-> [A |-> 0, B |-> 0],
-  floor |-> [A |-> 0, B |-> 0],
-  guard |-> "none",
-  cooldown |-> 0,
-  ring |-> FALSE ]
-
-State 4: <Decode line 32, col 14 to line 33, col 95 of module RecordWhileProcessing>
-s = [ stage |-> [A |-> "transcribing", B |-> "fresh"],
-  event |-> "decode",
-  target |-> "A",
-  violations |-> {},
-  saved |-> {"A"},
-  deliveries |-> [A |-> 0, B |-> 0],
-  floor |-> [A |-> 2, B |-> 0],
-  guard |-> "none",
-  cooldown |-> 0,
-  ring |-> FALSE ]
-
-State 5: <Complete line 38, col 6 to line 39, col 91 of module RecordWhileProcessing>
-s = [ stage |-> [A |-> "ready", B |-> "fresh"],
-  event |-> "result",
-  target |-> "A",
-  violations |-> {"N8Immediate"},
-  saved |-> {"A"},
-  deliveries |-> [A |-> 0, B |-> 0],
-  floor |-> [A |-> 2, B |-> 0],
-  guard |-> "none",
-  cooldown |-> 0,
-  ring |-> FALSE ]
-
-46 states generated, 20 distinct states found, 5 states left on queue.
-The depth of the complete state graph search is 5.
-The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 4 and the 95th percentile is 4).
-Finished in 00s at (2026-11-02 09:08:56)
+{
+  "role": "historical",
+  "kind": "invariant",
+  "target": "N8ImmediatePaste",
+  "status": "EXPECTED_FAIL",
+  "generated": 306,
+  "distinct": 20,
+  "trace": [
+    "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"init\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"none\" ]",
+    "s = [ stage |-> [A |-> \"recording\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"F5\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]",
+    "s = [ stage |-> [A |-> \"captured\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"timeout\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {\"A\"},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]",
+    "s = [ stage |-> [A |-> \"transcribing\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"decode\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {\"A\"},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 2, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]"
+  ]
+}

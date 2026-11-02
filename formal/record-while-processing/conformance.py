@@ -1,49 +1,46 @@
-"""Real daemon admission cases and non-vacuity witnesses from exhaustive TLC states."""
+"""Export real Current/Fixed graph edges, including cancellation identity and native paths."""
+import argparse
 import json
 from pathlib import Path
-import re
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from corpus_support import graphs, paths, write_corpus
 
-root = Path(__file__).resolve().parents[2]
-cache = root / ".build.noindex/record-while-processing"
-current = json.loads((cache / "current-states.json").read_text())
-fixed = json.loads((cache / "fixed-states.json").read_text())
-graph = json.loads((cache / "fixed-graph.json").read_text())
-
-
-def field(label, key):
-    return re.search(rf'\b{key} \|-> "([^"]+)"', label)[1]
-
-
-def stage(label):
-    return dict(re.findall(r'(A|B) \|-> "([^"]+)"', label))
-
-
-cases = {}
-for label in current:
-    if field(label, "event") != "socket":
-        continue
-    target = field(label, "target")
-    after = stage(label)
-    outcome = "accept" if after[target] == "recording" else "reject"
-    worker = any(value in {"transcribing", "cancelling"} for value in after.values())
-    assert outcome == ("reject" if worker else "accept"), "Daemon and UI ownership were conflated"
-    row = {"state": "transcribing" if worker else "idle", "outcome": outcome}
-    cases[json.dumps(row, sort_keys=True)] = row
-assert {row["outcome"] for row in cases.values()} == {"accept", "reject"}
-(cache / "conformance.json").write_text(json.dumps(list(cases.values())))
-predicates = {
-    "A pastes while B records": lambda x: stage(x) == {"A": "pasted", "B": "recording"},
-    "B cancelled while A still transcribes": lambda x: stage(x) == {"A": "transcribing", "B": "cancelled"},
-    "cooldown ring armed for A": lambda x: field(x, "guard") == "A" and "ring |-> TRUE" in x,
-    "stale A guard after A pasted while B records": lambda x: field(x, "guard") == "A" and stage(x) == {"A": "pasted", "B": "recording"},
-    "timeout retains a take": lambda x: field(x, "event") == "timeout" and "saved |-> {}" not in x,
-}
-coverage = {name: sum(predicate(label) for label in fixed) for name, predicate in predicates.items()}
-coverage["Escape cancels before cooldown completes"] = sum(
-    "ring |-> TRUE" in graph["nodes"][source] and field(graph["nodes"][target], "event") == "Escape"
-    and "ring |-> FALSE" in graph["nodes"][target]
-    for source, target in graph["edges"])
-assert all(coverage.values()), coverage
-coverage.update(currentStates=len(current), fixedStates=len(fixed), daemonAdmissionCases=len(cases))
-(root / "formal/record-while-processing/results/coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
-print(json.dumps(coverage, indent=2))
+parser = argparse.ArgumentParser()
+parser.add_argument('--record', action='store_true')
+args = parser.parse_args()
+directory = Path(__file__).resolve().parent
+wire, native, counts = {}, {}, {}
+for policy, graph in graphs(directory).items():
+    nodes = graph['nodes']
+    counts[policy] = len(nodes)
+    initial, = [key for key, node in nodes.items() if node['s']['event'] == 'init']
+    shortest = paths(graph, initial)
+    for source, target in sorted(graph['edges'], key=lambda edge: json.dumps([nodes[edge[0]], nodes[edge[1]]], sort_keys=True)):
+        before, after = nodes[source]['s'], nodes[target]['s']
+        event, take = after['event'], after['target']
+        mic = [t for t in ['A', 'B'] if before['stage'][t] == 'recording']
+        worker = [t for t in ['A', 'B'] if before['stage'][t] in ['transcribing', 'cancelling']]
+        if event in ['socket', 'click', 'Escape'] and take in ['A', 'B']:
+            phase = 'recording' if mic else 'transcribing' if worker else 'idle'
+            row = dict(policy=policy, command='record' if event == 'socket' else 'cancel', origin=event,
+                       phase=phase, before=before['stage'], target=take, requestId=after['requestId'],
+                       outcome=after['reply'], token=after['cancelToken'] if event != 'socket' else 'none')
+            wire[json.dumps(row, sort_keys=True)] = row
+        if event == 'F5' and take == 'B' and before['stage']['A'] == 'transcribing' and before['stage']['B'] == 'fresh' and not mic:
+            native[f'{policy}:F5'] = dict(policy=policy, kind='F5', command='record' if after['stage']['B'] == 'recording' else 'cancel', take='B' if after['stage']['B'] == 'recording' else 'A')
+        if take == 'A' and before['stage']['A'] == 'transcribing' and before['stage']['B'] == 'fresh' and before['guard'] == 'none':
+            if event in ['arm', 'click']:
+                native[f'{policy}:click'] = dict(policy=policy, kind='click', command='none' if event == 'arm' else 'cancel', take='A')
+            if event == 'Escape' and after['requestId'] == 'A':
+                native[f'{policy}:Escape'] = dict(policy=policy, kind='Escape', command='cancel', take='A')
+        timeline = (policy == 'Current' and event == 'new-recording-event' and take == 'A') or (
+                    policy == 'Fixed' and event in ['socket','F5'] and take == 'B' and before['stage']['A'] == 'pasted' and before['stage']['B'] == 'fresh')
+        if timeline and f'{policy}:delivery' not in native:
+            trace = [{field: nodes[key]['s'][field] for field in ['event', 'target']} for key in shortest[source] + [target]]
+            native[f'{policy}:delivery'] = dict(policy=policy, kind='delivery', trace=trace,
+                                               delivered=[t for t in ['A','B'] if after['deliveries'][t] > 0])
+assert len(native) == 8, native.keys()
+assert {row['policy'] for row in wire.values()} == {'Current','Fixed'}
+counts.update(wireCases=len(wire), nativeCases=len(native))
+write_corpus(directory, dict(wire=[wire[key] for key in sorted(wire)], native=[native[key] for key in sorted(native)], counts=counts), args.record)

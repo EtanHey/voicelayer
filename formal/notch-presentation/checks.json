@@ -11,12 +11,111 @@
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift"
   ],
   "checks": {
-    "Current": null,
-    "OldWing": "N1CompactNote",
-    "OldProcessingNote": "N2NoProcessingBand",
-    "OldSubstitute": "N4NoSubstitute",
-    "OldBusyHistory": "N5InlineHistory",
-    "OldQuitCause": "NoteHasCause",
-    "Fixed": null
-  }
+    "Current": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OldWing": {
+      "role": "historical",
+      "target": "N1CompactNote",
+      "kind": "invariant"
+    },
+    "OldProcessingNote": {
+      "role": "historical",
+      "target": "N2NoProcessingBand",
+      "kind": "invariant"
+    },
+    "OldSubstitute": {
+      "role": "historical",
+      "target": "N4NoSubstitute",
+      "kind": "invariant"
+    },
+    "OldBusyHistory": {
+      "role": "historical",
+      "target": "N5InlineHistory",
+      "kind": "invariant"
+    },
+    "OldQuitCause": {
+      "role": "historical",
+      "target": "NoteHasCause",
+      "kind": "invariant"
+    },
+    "MutType": {
+      "role": "mutant",
+      "target": "TypeOK",
+      "kind": "invariant"
+    },
+    "MutNoShell": {
+      "role": "mutant",
+      "target": "VisibleHasShell",
+      "kind": "invariant"
+    },
+    "MutWideWing": {
+      "role": "mutant",
+      "target": "N1CompactNote",
+      "kind": "invariant"
+    },
+    "MutTextWing": {
+      "role": "mutant",
+      "target": "N1CompactNote",
+      "kind": "invariant"
+    },
+    "MutProcessingNote": {
+      "role": "mutant",
+      "target": "N2NoProcessingBand",
+      "kind": "invariant"
+    },
+    "MutTruncate": {
+      "role": "mutant",
+      "target": "N3GrowsDown",
+      "kind": "invariant"
+    },
+    "MutErrorSubstitute": {
+      "role": "mutant",
+      "target": "N4NoSubstitute",
+      "kind": "invariant"
+    },
+    "MutDetailsSubstitute": {
+      "role": "mutant",
+      "target": "N4NoSubstitute",
+      "kind": "invariant"
+    },
+    "MutBusyHistory": {
+      "role": "mutant",
+      "target": "N5InlineHistory",
+      "kind": "invariant"
+    },
+    "MutErrorHistory": {
+      "role": "mutant",
+      "target": "N5InlineHistory",
+      "kind": "invariant"
+    },
+    "MutStaleNote": {
+      "role": "mutant",
+      "target": "NoteHasCause",
+      "kind": "invariant"
+    },
+    "MutNeverExpire": {
+      "role": "mutant",
+      "target": "NoteNeverStuck",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "N1CompactNote",
+    "N2NoProcessingBand",
+    "N3GrowsDown",
+    "N4NoSubstitute",
+    "N5InlineHistory",
+    "NoteHasCause",
+    "NoteNeverStuck",
+    "TypeOK",
+    "VisibleHasShell"
+  ]
 }
