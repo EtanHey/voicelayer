@@ -966,8 +966,7 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        compactStatusLabel(notchPresentation.feedback?.replacesWingText != true || notchPresentation.feedback?.statusText == nil ? statusText :
-            (state.mode == .error ? "Error" : "Details below"), confirmationText: state.confirmationText)
+        compactStatusLabel(statusText, confirmationText: state.confirmationText)
     }
 
     private func compactStatusLabel(_ text: String, confirmationText: String? = nil) -> some View {

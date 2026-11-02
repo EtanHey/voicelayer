@@ -1,7 +1,7 @@
 # Compact notch feedback visual QA
 
 Before: main `9e5355bd150cdc65dd838e175c27ccbfd1610946`.
-After: this PR's presentation-only change. All images use identical synthetic inputs,
+After: this PR's presentation-only change, with normal wing content retained. All images use identical synthetic inputs,
 a 185 pt core, a 640 × 280 pt canvas and dark appearance (1280 × 560 PNGs).
 
 Rendered with the existing silent `NotchStatusLab` executable source from
@@ -30,9 +30,9 @@ GIF: none: no animation or interaction changed.
 
 | Run | Tests | Skipped | Failures |
 | --- | ---: | ---: | ---: |
-| Immutable main 9e5355bd, all VoiceBarUITests | 1758 | 65 | 0 |
-| Branch, all VoiceBarUITests | 1760 | 65 | 0 |
-| Branch, focused feedback/layout/hit-gate suites | 69 | 1 | 0 |
+| Immutable main d500e4ee, all VoiceBarUITests | 1758 | 65 | 0 |
+| Branch, all VoiceBarUITests | 1761 | 65 | 0 |
+| Branch, focused feedback/layout/hit-gate suites | 70 | 1 | 0 |
 
 No new failure names. The focused run includes all 14 NotchStatusFeedbackTests.
 Full command: `swift test --package-path <revision>/flow-bar --scratch-path <isolated-build> --filter VoiceBarUITests`.
