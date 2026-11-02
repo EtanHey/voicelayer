@@ -8,13 +8,30 @@ final class NotchStatusFeedbackTests: XCTestCase {
     private func resolve(_ input: VoiceBarNotchOperationalInput) -> VoiceBarNotchPresentation {
         VoiceBarPresentation.notchPresentation(from: input)
     }
-    func testProcessingStageIsVisibleAndFullErrorSurvives() {
-        for mode in [VoiceMode.transcribing, .error] {
-            let p = resolve(.init(mode: mode, statusText: long))
-            XCTAssertEqual(p.feedback?.statusText, long)
-            XCTAssertGreaterThan(p.geometry.lowerSurfaceHeight, 26)
-            XCTAssertEqual(p.feedback?.opensHistory, mode == .error)
+    func testTranscribingNeverAddsAStatusBand() {
+        for text in ["Transcribing", long] {
+            let p = resolve(.init(mode: .transcribing, statusText: text))
+            XCTAssertNil(p.feedback)
+            XCTAssertEqual(p.geometry.lowerSurfaceHeight, 0)
         }
+    }
+    func testFullErrorSurvivesInsideCompactNoteShellWithHistory() throws {
+        let p = resolve(.init(mode: .error, statusText: long))
+        let f = try XCTUnwrap(p.feedback)
+        XCTAssertEqual(f.statusText, long)
+        XCTAssertTrue(f.opensHistory)
+        XCTAssertEqual(f.width, p.geometry.topWidth)
+        XCTAssertEqual(p.geometry.bodyLeadingExtent, p.geometry.leadingWingWidth)
+        XCTAssertEqual(p.geometry.bodyTrailingExtent, p.geometry.trailingWingWidth)
+    }
+    func testQuitRefusalWrapsDownwardWithoutWideningTheCompactShell() throws {
+        let text = "Finish voice work or cancel the update, then quit again."
+        let p = resolve(.init(mode: .idle, confirmationText: text, statusText: text, coreWidth: 120))
+        let f = try XCTUnwrap(p.feedback)
+        XCTAssertEqual(f.statusText, text)
+        XCTAssertEqual(f.width, p.geometry.topWidth)
+        XCTAssertGreaterThan(f.statusHeight, VoiceBarNotchContract.transientNoteBandHeight)
+        XCTAssertFalse(f.opensHistory)
     }
     func testFitTextKeepsOriginalWingAndNoExtraBand() {
         for text in ["Typed", "Copied", "F5 to talk", "Not pasted\nIn History"] {
@@ -42,8 +59,14 @@ final class NotchStatusFeedbackTests: XCTestCase {
     func testProcessingNoteAndStatusCoexistWithoutOverlappingPanels() throws {
         for mode in [VoiceMode.transcribing, .error] {
             let p = resolve(.init(mode: mode, statusText: long, transientNote: "Busy transcribing. Selection not read"))
+            if mode == .transcribing {
+                XCTAssertNil(p.feedback)
+                XCTAssertNotNil(p.transientNoteRect, "The original compact selection note remains visible")
+                continue
+            }
             let f = try XCTUnwrap(p.feedback)
             XCTAssertNotNil(f.noteText)
+            XCTAssertEqual(f.statusText, mode == .error ? long : nil)
             XCTAssertEqual(f.height, f.statusHeight + f.noteHeight)
             XCTAssertEqual(p.transientNoteRect?.maxY, p.geometry.topHeight + f.noteHeight)
         }
