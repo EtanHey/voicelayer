@@ -2550,11 +2550,8 @@ public struct SettingsView: View {
         historyDayGroups = updated.groups
         historyLoadedEntryCount = updated.loadedEntryCount
         historyLoadedEntryLimit = max(historyLoadedEntryLimit, updated.loadedEntryCount)
-        // Keep the selection unless this row stopped matching the active search.
-        if let selectedHistoryEntryID,
-           !updated.groups.contains(where: { $0.entries.contains(where: { $0.id == selectedHistoryEntryID }) }) {
-            self.selectedHistoryEntryID = updated.groups.first?.entries.first?.id
-        }
+        // Keep the selection unless this row stopped matching the active search (then the newest row).
+        historyMemory.applyPage(updated.groups.flatMap(\.entries).map(\.id))
     }
 
     private func applyAskHistoryChange(_ change: SettingsHistoryArchiveChange) {
