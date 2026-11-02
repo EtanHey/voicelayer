@@ -1,5 +1,5 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 1 and seed -5398650011001098606 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 6739] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 93 and seed 5062154973175771373 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 1680] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file <model-check>/ResidentRecognizer.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
@@ -8,9 +8,9 @@ Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
 Semantic processing of module ResidentRecognizer
-Starting... (2026-11-02 09:47:12)
+Starting... (2026-11-02 10:18:45)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 09:47:12.
+Finished computing initial states: 1 distinct state generated at 2026-11-02 10:18:45.
 Error: Invariant DeleteExcludesRequest is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -64,4 +64,4 @@ State 3: <DeleteBegin line 117, col 16 to line 122, col 97 of module ResidentRec
 8 states generated, 8 distinct states found, 4 states left on queue.
 The depth of the complete state graph search is 3.
 The average outdegree of the complete state graph is 3 (minimum is 3, the maximum 3 and the 95th percentile is 3).
-Finished in 00s at (2026-11-02 09:47:12)
+Finished in 00s at (2026-11-02 10:18:45)
