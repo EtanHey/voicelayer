@@ -771,7 +771,8 @@ with path.open("w+") as lock:
                     assert wait_until(group_gone), "daemon process group remains"
                 assert wait_until(lambda: run_dir.exists() == (case == "debug")), "RUN_DIR retention incorrect"
                 # Supervisor and any descendants bearing the run identity must also be gone.
-                processes = subprocess.check_output(["ps", "-ax", "-o", "pid=,command="], text=True)
+                # Foreign argv may contain arbitrary bytes; retain them without losing the run-path check.
+                processes = subprocess.check_output(["ps", "-ax", "-o", "pid=,command="], text=True, errors="surrogateescape")
                 assert str(run_dir) not in processes, "process with RUN_DIR remains"
                 output.seek(0)
                 text = output.read()

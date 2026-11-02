@@ -31,6 +31,8 @@ import { PreparedReadStart } from "../tts/selection-read-preparation";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
+// Five M1 standalone baselines: max 3.58 s including teardown; allow >= 3x once.
+const QWEN_FIXTURE_TIMEOUT_MS = 12_000;
 
 describe("long-read real runtime with owned synth/player fakes", () => {
   const originalSpawn = Bun.spawn, originalSpawnSync = Bun.spawnSync;
@@ -38,6 +40,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let players: { exit: ReturnType<typeof deferred<number>>; killed: boolean; synthCount: number; argv: string[]; signals: string[] }[];
   let events: any[];
   let holdSynth: boolean, autoPlay: boolean, holdPlayerExit: boolean;
+  let archiveBeforePlayerExit: boolean;
   let handles: { done: Promise<void> }[];
   let spies: ReturnType<typeof spyOn>[];
   let historyInputs: string[][];
@@ -58,6 +61,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
+    archiveBeforePlayerExit = false;
     clockMs = 100_000;
     releaseAlignments = [];
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
@@ -103,7 +107,11 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       }
       if (failPlayerSpawn) throw new Error("player launch failed");
       const exit = deferred<number>(); const item = { exit, killed: false, synthCount: synths.length, argv, signals: [] as string[] }; players.push(item); playerBarrier.push(item);
-      if (autoPlay) exit.resolve(0);
+      if (autoPlay) {
+        // The large Qwen fixture must not leave hundreds of durable writes for afterEach.
+        if (archiveBeforePlayerExit) void flushSpeechArchives().then(() => exit.resolve(0), exit.reject);
+        else exit.resolve(0);
+      }
       return { pid: 73000 + players.length, exited: exit.promise, kill: (signal: string) => { item.signals.push(signal); item.killed = true; if (!holdPlayerExit) exit.resolve(143); } };
     }) as any;
   });
@@ -959,13 +967,14 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(async (part, _voice, signal) => {
       calls.push(part); signals.push(signal!); return Buffer.from("clone audio");
     }));
+    archiveBeforePlayerExit = true;
     autoPlay = true; await start("clone", longText).done;
     expect(longText.length).toBeGreaterThan(50_000);
     expect(calls.join(" ")).toBe(longText); expect(calls.length).toBeGreaterThan(1);
     expect(new Set(signals).size).toBe(1);
     expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine: "qwen3-tts", origin: "speak", fallback: false});
     expect(events.some((e) => e.type === "subtitle")).toBe(false); expect(loadHistory()).toHaveLength(1);
-  });
+  }, QWEN_FIXTURE_TIMEOUT_MS);
 
   it("history failure warns without failing a successful playback completion", async () => {
     failHistory = true; autoPlay = true;
