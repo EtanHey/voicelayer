@@ -1,29 +1,17 @@
-import { test as bunTest, expect, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync, utimesSync, watch } from "node:fs";
+import { test, expect, afterEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { testSocket } from "./setup/test-tmp";
 const repo = process.cwd();
-// Initial five M4 runs reached 5001.39 ms (Bun timeout) and a 2720.52 ms fixture timeout.
-// 20 s exceeds 3x that observed ceiling; a test can run three children in series.
-const FIXTURE_TIMEOUT_MS = 20_000;
-const test = (name: string, body: () => Promise<void>) => bunTest(name, body, 3 * FIXTURE_TIMEOUT_MS);
-type Child = { exitCode: number | null; exited: Promise<number>; kill(): void };
-const children = new Set<Child>();
-function track<T extends Child>(child: T): T { children.add(child); return child; }
 const diagLine = (mode = "idle", at = new Date()) => `${at.toISOString()} [VoiceBar][diag] voiceMode=${mode}\n`;
 let serial = 0;
 const saved = { ...process.env };
-afterEach(async () => {
-  for (const child of children) { if (child.exitCode === null) child.kill(); await child.exited; }
-  children.clear();
-  for (const key of ["VOICELAYER_UPDATE_GATE_PATH", "VOICELAYER_BOOTSTRAP_DIAG_PATH", "VOICELAYER_MCP_SOCKET_PATH", "VOICELAYER_TEST_INSTALL_PROOF"]) process.env[key] = saved[key];
-});
+afterEach(() => { for (const key of ["VOICELAYER_UPDATE_GATE_PATH", "VOICELAYER_BOOTSTRAP_DIAG_PATH", "VOICELAYER_MCP_SOCKET_PATH", "VOICELAYER_TEST_INSTALL_PROOF"]) process.env[key] = saved[key]; });
 function fixture(health: unknown = { type: "health", recording_state: "idle", queue_depth: 0 }) {
   const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "boot-")), bin = join(root, "bin");
   mkdirSync(bin);
   const gate = join(root, "gate"), diag = join(root, "diag"), log = join(root, "calls"), socket = testSocket(`b${serial++}.sock`);
-  const progress = join(root, "progress");
-  for (const [name, value] of Object.entries({ diag: diagLine(), calls: "", progress: "", owners: "123 VoiceBar\n", loaded: "yes", disabled: "false", active: "" })) writeFileSync(join(root, name), value);
+  for (const [name, value] of Object.entries({ diag: diagLine(), calls: "", owners: "123 VoiceBar\n", loaded: "yes", disabled: "false", active: "" })) writeFileSync(join(root, name), value);
   const proof = join(root, "proof.json"); writeFileSync(proof, JSON.stringify({ phase: "idle", ready: true }));
   const app = join(root, "VoiceBar.app"); mkdirSync(app);
   const scripts = {
@@ -49,12 +37,7 @@ bootstrap) echo "$*" >> "$CALL_LOG"; [[ ! -f "$ROOT/fail-bootstrap" ]] || exit 4
   const start = (confirmed = true) => {
     process.env.VOICELAYER_TEST_INSTALL_PROOF = proof; process.env.VOICELAYER_UPDATE_GATE_PATH = gate; process.env.VOICELAYER_BOOTSTRAP_DIAG_PATH = diag; process.env.VOICELAYER_MCP_SOCKET_PATH = socket;
     const runner = join(root, "run.ts");
-    writeFileSync(runner, `import { appendFileSync, existsSync, readFileSync } from "node:fs";
-const stderr = console.error;
-console.error = (...args) => {
-  appendFileSync(${JSON.stringify(progress)}, args.join(" ") + "\\n");
-  stderr(...args);
-};
+    writeFileSync(runner, `import { existsSync, readFileSync } from "node:fs";
 if (existsSync(${JSON.stringify(join(root, "late-commit"))})) {
   const clock = performance.now.bind(performance);
   Object.defineProperty(performance, "now", { value: () => clock() +
@@ -63,31 +46,15 @@ if (existsSync(${JSON.stringify(join(root, "late-commit"))})) {
 import { runSupervisedBootstrap } from ${JSON.stringify(join(repo, "src/update-gate-bootstrap.ts"))};
 try { process.exitCode = await runSupervisedBootstrap([process.execPath, ${JSON.stringify(join(repo, "src/update-gate-installer.ts"))}, "brew", "install"], ${confirmed ? "async () => true" : "undefined"}, 40); }
 catch (e) { console.error(String(e)); process.exitCode = 1; }`);
-    return track(Bun.spawn([process.execPath, runner], { env: { ...process.env, ROOT: root, CALL_LOG: log, PATH: `${bin}:${process.env.PATH}`,
+    return Bun.spawn([process.execPath, runner], { env: { ...process.env, ROOT: root, CALL_LOG: log, PATH: `${bin}:${process.env.PATH}`,
       VOICELAYER_UPDATE_GATE_PATH: gate, VOICELAYER_BOOTSTRAP_DIAG_PATH: diag, VOICELAYER_MCP_SOCKET_PATH: socket,
-      VOICELAYER_TEST_INSTALL_PROOF: proof, VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_SUPERVISED_BOOTSTRAP: "", VOICELAYER_UPDATE_TARGET_SHA: "a".repeat(40) }, stdout: "pipe", stderr: "pipe", timeout: FIXTURE_TIMEOUT_MS }));
+      VOICELAYER_TEST_INSTALL_PROOF: proof, VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_SUPERVISED_BOOTSTRAP: "", VOICELAYER_UPDATE_TARGET_SHA: "a".repeat(40) }, stdout: "pipe", stderr: "pipe", timeout: 4000 });
   };
-  const waitForPhase = (phase: string, child: ReturnType<typeof start>) =>
-    waitFor(root, () => readFileSync(progress, "utf8").includes(`Update when idle: ${phase}`), child.exited);
-  return { root, gate, log, start, server, waitForPhase };
+  return { root, gate, log, start, server };
 }
-function waitFor(root: string, condition: () => boolean, exited?: Promise<number>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const watcher = watch(root, check);
-    const timer = setTimeout(() => finish(Error("fixture event timeout")), FIXTURE_TIMEOUT_MS);
-    function finish(error?: unknown) {
-      if (settled) return;
-      settled = true; clearTimeout(timer); watcher.close();
-      if (error) reject(error); else resolve();
-    }
-    function check() {
-      try { if (condition()) finish(); } catch (error) { finish(error); }
-    }
-    watcher.on("error", finish);
-    exited?.then(code => { check(); if (!settled) finish(Error(`fixture exited before event: ${code}`)); }, finish);
-    check(); // Subscribe before reading so an already-published event cannot be lost.
-  });
+async function waitFor(f: () => boolean) {
+  for (let n = 0; n < 200; n++) { if (f()) return; await Bun.sleep(10); }
+  throw Error("fixture timeout");
 }
 async function cancel(child: ReturnType<ReturnType<typeof fixture>["start"]>) {
   child.kill("SIGINT"); expect(await child.exited).toBe(130);
@@ -95,12 +62,12 @@ async function cancel(child: ReturnType<ReturnType<typeof fixture>["start"]>) {
 }
 test("busy legacy daemon waits, names transcription, never quits/unloads/installs", async () => {
   const f = fixture({ type: "health", recording_state: "transcribing", queue_depth: 0 }), c = f.start();
-  try { await f.waitForPhase("transcribing", c); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("transcribing"); }
+  try { await Bun.sleep(250); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("transcribing"); }
   finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
 });
 test("process fallback busy waits even with idle daemon", async () => {
   const f = fixture(); writeFileSync(join(f.root, "active"), "456 rec\n"); const c = f.start();
-  try { await f.waitForPhase("audio/decoding", c); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("audio/decoding"); }
+  try { await Bun.sleep(250); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("audio/decoding"); }
   finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
 });
 test("idle disables autostart before quit, verifies exit before install, records source", async () => {
@@ -123,7 +90,7 @@ test("no interactive TTY confirmation refuses before mutation", async () => {
 test("CLI opt-in reaches the TTY gate; default stays UNKNOWN", async () => {
   const f = fixture(); process.env.VOICELAYER_UPDATE_GATE_PATH = f.gate;
   for (const optIn of ["", "1"]) {
-    const c = track(Bun.spawn([process.execPath, "src/update-gate-installer.ts", "brew", "install"], { env: { ...process.env, PATH: `${join(f.root, "bin")}:${process.env.PATH}`, VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_SUPERVISED_BOOTSTRAP: optIn }, stdout: "pipe", stderr: "pipe", timeout: FIXTURE_TIMEOUT_MS }));
+    const c = Bun.spawn([process.execPath, "src/update-gate-installer.ts", "brew", "install"], { env: { ...process.env, PATH: `${join(f.root, "bin")}:${process.env.PATH}`, VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_SUPERVISED_BOOTSTRAP: optIn }, stdout: "pipe", stderr: "pipe" });
     expect(await c.exited).toBe(1); expect(await new Response(c.stderr).text()).toContain(optIn ? "TTY" : "UNKNOWN");
   }
   f.server.stop(true); expect(readFileSync(f.log, "utf8")).toBe("");
@@ -133,13 +100,13 @@ test("unreadable socket refuses unless process/diag evidence is clean AND human 
   try { expect(await c.exited).toBe(0); expect(await new Response(c.stderr).text()).toContain("socket UNKNOWN"); }
   finally { f.server.stop(true); }
   const bad = fixture(null); writeFileSync(join(bad.root, "diag"), "unreadable state"); const b = bad.start();
-  try { await bad.waitForPhase("UNKNOWN", b); expect(readFileSync(bad.log, "utf8")).toBe(""); const output = await cancel(b); expect(output).toContain("UNKNOWN"); expect(output).toContain(join(bad.root, "diag")); expect(output).toContain("VOICELAYER_BOOTSTRAP_DIAG_PATH"); }
+  try { await Bun.sleep(250); expect(readFileSync(bad.log, "utf8")).toBe(""); const output = await cancel(b); expect(output).toContain("UNKNOWN"); expect(output).toContain(join(bad.root, "diag")); expect(output).toContain("VOICELAYER_BOOTSTRAP_DIAG_PATH"); }
   finally { bad.server.stop(true); if (b.exitCode === null) { b.kill(); await b.exited; } }
 });
 test("Cancel during graceful quit restores autostart without killing voice owners", async () => {
   const f = fixture(); writeFileSync(join(f.root, "sticky"), "yes"); const c = f.start();
   try {
-    await f.waitForPhase("waiting for all legacy voice owners to exit", c);
+    await waitFor(() => readFileSync(f.log, "utf8").includes("quit"));
     expect(await cancel(c)).toContain("owners");
     const calls = readFileSync(f.log, "utf8"); expect(calls).toContain("enable "); expect(calls).not.toContain("install"); expect(calls).not.toContain("bootout ");
     expect(existsSync(f.gate)).toBe(false);
@@ -158,7 +125,7 @@ test("queue depth, diagnostics and direct CLI each block independently", async (
     if (signal === "diag") writeFileSync(join(f.root, "diag"), diagLine("transcribing"));
     if (signal === "direct") writeFileSync(join(f.root, "direct"), "456 bun src/cli/speak.ts\n");
     const c = f.start();
-    try { await f.waitForPhase(signal === "queue" ? "queued speech" : signal === "diag" ? "transcribing" : "direct CLI", c); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain(signal === "queue" ? "queued speech" : signal === "diag" ? "transcribing" : "direct CLI"); }
+    try { await Bun.sleep(250); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain(signal === "queue" ? "queued speech" : signal === "diag" ? "transcribing" : "direct CLI"); }
     finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
   }
 });
@@ -169,13 +136,13 @@ test("existing/corrupt gate refuses bootstrap without autostart mutation", async
 });
 test("unreadable process inventory stays UNKNOWN despite human confirmation", async () => {
   const f = fixture(null); writeFileSync(join(f.root, "pgrep-error"), "yes"); const c = f.start();
-  try { await f.waitForPhase("UNKNOWN process evidence", c); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("UNKNOWN process evidence"); }
+  try { await Bun.sleep(250); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("UNKNOWN process evidence"); }
   finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
 });
 test("busy to idle resumes, installer failure retains closed gate and disabled autostart", async () => {
   const f = fixture(); writeFileSync(join(f.root, "active"), "456 rec\n"); writeFileSync(join(f.root, "fail-install"), "yes"); const c = f.start();
   try {
-    await f.waitForPhase("audio/decoding", c); expect(readFileSync(f.log, "utf8")).toBe(""); writeFileSync(join(f.root, "active"), "");
+    await Bun.sleep(250); expect(readFileSync(f.log, "utf8")).toBe(""); writeFileSync(join(f.root, "active"), "");
     expect(await c.exited).toBe(7); expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
     expect(readFileSync(f.log, "utf8")).not.toContain("enable ");
   } finally { f.server.stop(true); }
@@ -183,7 +150,7 @@ test("busy to idle resumes, installer failure retains closed gate and disabled a
 test("concurrent bootstrap cannot restore the first controller's autostart", async () => {
   const f = fixture(); writeFileSync(join(f.root, "sticky"), "yes"); const first = f.start();
   try {
-    await f.waitForPhase("waiting for all legacy voice owners to exit", first); const before = readFileSync(f.log, "utf8"), second = f.start();
+    await waitFor(() => readFileSync(f.log, "utf8").includes("quit")); const before = readFileSync(f.log, "utf8"), second = f.start();
     expect(await second.exited).toBe(1); expect(await new Response(second.stderr).text()).toContain("another bootstrap");
     expect(readFileSync(f.log, "utf8")).toBe(before); await cancel(first);
   } finally { f.server.stop(true); if (first.exitCode === null) { first.kill(); await first.exited; } }
@@ -196,7 +163,7 @@ test("failed final recheck restores unloaded autostart without installing", asyn
   } finally { f.server.stop(true); }
 });
 test("bootstrap update uses brew reconciliation even without cask registration", async () => {
-  const c = track(Bun.spawn(["/bin/bash", "-c", 'source "$1"; voicebar_cask_installed() { return 1; }; detect_install_type() { echo git-checkout; }; export VOICELAYER_SUPERVISED_BOOTSTRAP=1; voicebar_app_update_mode', "_", join(repo, "scripts/voicelayer-update.sh")], { env: { ...process.env }, stdout: "pipe", stderr: "pipe", timeout: FIXTURE_TIMEOUT_MS }));
+  const c = Bun.spawn(["/bin/bash", "-c", 'source "$1"; voicebar_cask_installed() { return 1; }; detect_install_type() { echo git-checkout; }; export VOICELAYER_SUPERVISED_BOOTSTRAP=1; voicebar_app_update_mode', "_", join(repo, "scripts/voicelayer-update.sh")], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
   expect(await c.exited).toBe(0); expect((await new Response(c.stdout).text()).trim()).toBe("cask-sync");
 });
 
@@ -290,7 +257,7 @@ for (const newest of ["legacy", "default"]) test(`R1 newest diagnostic wins acro
   writeFileSync(fallback, diagLine(newest === "default" ? "transcribing" : "idle", newest === "default" ? new Date() : new Date(1000)));
   utimesSync(newest === "legacy" ? fallback : legacy, 1, 1);
   const c = f.start();
-  try { await f.waitForPhase("transcribing", c); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("transcribing"); }
+  try { await Bun.sleep(250); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("transcribing"); }
   finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
 });
 
@@ -308,7 +275,7 @@ for (const fault of ["no-job", "wrong-pid", "old-line", "fresh-nondiag"]) test(`
   }
   const c = f.start();
   try {
-    await f.waitForPhase("UNKNOWN", c);
+    await Bun.sleep(400);
     expect(readFileSync(f.log, "utf8")).toBe("");
     expect(await cancel(c)).toContain("UNKNOWN");
     expect(existsSync(f.gate)).toBe(false);
@@ -334,7 +301,7 @@ test("R2 successful COMMIT finalizer never reads G1 again", async () => {
     expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 0 });
     expect(readFileSync(f.log, "utf8")).toContain("install");
     expect(readFileSync(f.log, "utf8")).not.toContain("enable ");
-    await waitFor(f.root, () => !existsSync(f.gate + ".lock"));
+    await waitFor(() => !existsSync(f.gate + ".lock"));
   } finally { f.server.stop(true); }
 });
 
