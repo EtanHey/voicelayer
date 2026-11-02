@@ -218,6 +218,9 @@ choice, while effective and the result backend identify the actually restored
 provider. Later requests reuse that provider; legacy W load/effort controls
 cannot allocate W beside a restored P. Cleanup uncertainty blocks restoration.
 A failed restoration is Error with no effective engine, never a Ready claim.
+Selecting an already-ready desired engine is a no-op; sleeping and failed engines
+still warm on selection. Explicit desired-choice writes log the requested and
+previous engine enums so a later switch can be distinguished from recovery.
 
 The default idle timeout remains600seconds for either selected engine. The
 real lab daemon switch/idle checks use5seconds only to observe both unloads.

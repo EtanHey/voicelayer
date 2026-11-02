@@ -57,7 +57,18 @@ export function selectRecognizer(value: Recognizer, deps: RecognizerTransitionDe
 async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransitionDeps = defaults): Promise<{ outcome: "accept" | "reject"; reason?: string; recognizer_status: RecognizerStatus }> {
   if (value !== "parakeet" && value !== "whisper") return { outcome: "reject", reason: "invalid-recognizer", recognizer_status: readRecognizerStatus() };
   const previous = readRecognizerStatus();
-  try { assertRecognizerNotDownloading(value); beginRecognizerTransition(); }
+  try {
+    assertRecognizerNotDownloading(value);
+    const other = value === "parakeet" ? "whisper" : "parakeet";
+    // A replayed/duplicate selection must not evict a ready engine and pay a
+    // second cold load. A sleeping/error engine still takes the ordinary path.
+    if (previous.switch_allowed && previous.desired === value && previous.effective === value &&
+        previous.engines[value].phase === "ready" && previous.engines[value].available === true &&
+        (deps.assetsPresent?.(value) ?? previous.engines[value].assets_present) && previous.engines[other].phase === "sleeping") {
+      return { outcome: "accept", recognizer_status: previous };
+    }
+    beginRecognizerTransition();
+  }
   catch (error) { return { outcome: "reject", reason: error instanceof Error ? error.message : "voice-busy", recognizer_status: readRecognizerStatus() }; }
   let outcome: "accept" | "reject" = "accept", reason: string | undefined;
   let preferenceChanged = false;
@@ -77,6 +88,8 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
     await stop("whisper");
     recheckRecognizerBusy();
     try { persistRecognizer(value); preferenceChanged = true; } catch { throw new Error("settings-write-failed"); }
+    console.error("[voicelayer] " + JSON.stringify({ event: "recognizer_selection_persisted",
+      requested: value, previous_desired: previous.desired, cause: "explicit-selection" }));
     setRecognizerRecovery(null); noteRecognizerEffective(null);
     noteRecognizerEngine(value, { phase: "loading", error: null });
     try {

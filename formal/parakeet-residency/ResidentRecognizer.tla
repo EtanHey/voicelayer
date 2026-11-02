@@ -9,6 +9,7 @@ Init == /\ models = {} /\ owner = "none" /\ stage = "idle"
         /\ pendingLegacy = FALSE /\ request = FALSE /\ capture = FALSE /\ hold = FALSE
         /\ assetsPresent \in {{"W"}, {"W","P"}} /\ attempted = {}
 BeginPicker(t) == /\ owner = "none" /\ ~request /\ ~capture /\ ~hold
+                  /\ (models # {t} \/ desired # t)
                   /\ owner' = "picker" /\ stage' = "stopP" /\ target' = t
                   /\ previous' = IF models = {} THEN desired ELSE CHOOSE e \in models: TRUE
                   /\ UNCHANGED <<models,desired,recovery,pendingLegacy,request,capture,hold>>
@@ -145,4 +146,17 @@ IdleLoadedCanDelete == (owner = "none" /\ ~request /\ ~capture /\ ~hold /\
                        => ENABLED DeleteBegin
 DeletedModelNotResident == models \subseteq assetsPresent
 DeleteExcludesRequest == owner = "delete" => ~request
+
+\* QA-04 projection: duplicate selection of the already-ready desired engine.
+\* Old BeginPicker tears it down; fixed admission returns an unchanged status.
+ReadySelect == /\ owner = "none" /\ models = {desired}
+               /\ IF BrokenLegacy THEN
+                    /\ owner' = "picker" /\ stage' = "stopP" /\ target' = desired /\ previous' = desired
+                    /\ UNCHANGED <<models,desired,recovery,pendingLegacy,request,capture,hold,assetsPresent,attempted>>
+                  ELSE UNCHANGED vars
+ReselectNext == ReadySelect \/
+                ((StopP \/ StopW \/ Load) /\ UNCHANGED <<assetsPresent,attempted>>)
+ReselectSpec == DeleteInit /\ [][ReselectNext]_vars
+ReadyDuplicateKeepsLoaded == models = {desired}
+
 =============================================================================
