@@ -77,10 +77,11 @@ enum SelectionPasteboardSnapshot {
         var readyAt: TimeInterval?
         defer {
             let end = ProcessInfo.processInfo.systemUptime
+            let launchMs: Double = launchedAt.map { ($0 - began) * 1000 } ?? -1.0
+            let readyMs: Double = readyAt.map { ($0 - (launchedAt ?? began)) * 1000 } ?? -1.0
+            let elapsedMs: Double = launchedAt.map { (end - $0) * 1000 } ?? -1.0
             NSLog("[selection_snapshot] metrics launch_ms=%.1f ready_ms=%.1f after_launch_ms=%.1f bytes=%d",
-                  launchedAt.map { ($0 - began) * 1000 } ?? -1,
-                  readyAt.map { ($0 - (launchedAt ?? began)) * 1000 } ?? -1,
-                  launchedAt.map { (end - $0) * 1000 } ?? -1, responseBytes)
+                  launchMs, readyMs, elapsedMs, responseBytes)
         }
         guard let executable else { onFailure("missing_executable"); return nil }
         let process = Process()

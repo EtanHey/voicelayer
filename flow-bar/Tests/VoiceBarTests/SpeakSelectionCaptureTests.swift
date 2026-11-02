@@ -710,7 +710,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
                 XCTAssertEqual(report.commands, 1)
                 finished.fulfill()
             }
-            wait(for: [finished], timeout: startupDelay + 2)
+            wait(for: [finished], timeout: 7) // Bounded cold startup + snapshot + main-queue completion.
             if usesAX { XCTAssertEqual(board.changeCount, count) }
             XCTAssertEqual(contents(board), original)
         }
