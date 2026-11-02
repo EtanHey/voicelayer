@@ -3669,8 +3669,8 @@ export function updateArchivedTranscript(
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
     }
-    // F1: the dictation's post-capture processing time (DictationReceipt). A re-transcription has no
-    // receipt and keeps the original dictation's value.
+    // The processing time belongs to the transcript now stored, including a
+    // new re-transcription attempt rather than the original capture's receipt.
     if (transcription.processingDurationMs !== undefined) {
       metadata.processing_duration_ms = transcription.processingDurationMs;
     }
@@ -4211,6 +4211,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
     voiceAskRetranscriptionOwner = owner;
     setRecordingState("transcribing");
     broadcast({ type: "state", state: "transcribing" });
+    const processingStartedAtMs = performance.now();
     working = prepareFullVoiceAskWavForSTT(snapshot);
     const backend = await getBackend();
     const result = await backend.transcribe(working.path);
@@ -4227,6 +4228,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
       backend: result.backend,
       language_mode: languageMode,
       transcription_status: "transcribed",
+      processing_duration_ms: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
       transcribed_duration_ms: working.durationMs,
       voicelayer_transcript_chars: text.length,
       user_transcript_chars: text.length,
@@ -4365,6 +4367,7 @@ async function retranscribeRecordingCaptureAdmitted(
     message: "Loading speech model",
   });
 
+  const processingStartedAtMs = performance.now();
   try {
     const backend = await getBackend();
     broadcast({
@@ -4407,6 +4410,7 @@ async function retranscribeRecordingCaptureAdmitted(
       if (text) {
         updateArchivedTranscript(wavPath, text, {
           backend: result.backend,
+          processingDurationMs: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
           languageMode: getLanguageModeFromEnv(),
           transcribedDurationMs,
           polishStatus: finalized.polishStatus,
@@ -4480,6 +4484,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
     message: "Loading speech model",
   });
 
+  const processingStartedAtMs = performance.now();
   try {
     const backend = await getBackend();
     broadcast({
@@ -4525,6 +4530,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
         if (archivedAudioPath) {
           updateArchivedTranscript(archivedAudioPath, text, {
             backend: result.backend,
+            processingDurationMs: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
             languageMode: getLanguageModeFromEnv(),
             transcribedDurationMs,
             polishStatus: finalized.polishStatus,

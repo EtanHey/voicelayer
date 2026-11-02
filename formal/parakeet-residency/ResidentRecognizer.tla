@@ -9,6 +9,7 @@ Init == /\ models = {} /\ owner = "none" /\ stage = "idle"
         /\ pendingLegacy = FALSE /\ request = FALSE /\ capture = FALSE /\ hold = FALSE
         /\ assetsPresent \in {{"W"}, {"W","P"}} /\ attempted = {}
 BeginPicker(t) == /\ owner = "none" /\ ~request /\ ~capture /\ ~hold
+                  /\ (models # {t} \/ desired # t)
                   /\ owner' = "picker" /\ stage' = "stopP" /\ target' = t
                   /\ previous' = IF models = {} THEN desired ELSE CHOOSE e \in models: TRUE
                   /\ UNCHANGED <<models,desired,recovery,pendingLegacy,request,capture,hold>>
@@ -105,4 +106,57 @@ DownloadNext == DownloadBegin \/ DownloadAdvance \/ DownloadAdmit \/ DownloadReq
 DownloadSpec == Init /\ [][DownloadNext]_vars
 DownloadNeverBlocksAdmittedRequest == pendingLegacy /\ capture => ENABLED DownloadRequestStart
 VerifiedDownloadAlwaysPublishable == stage = "runtime" => ENABLED DownloadPublish
+
+\* Delete holds the same transition ownership as selection until cleanup and
+\* unlink complete. BrokenLegacy reproduces the old recognizer-loaded refusal.
+DeleteInit == /\ models = {"P"} /\ owner = "none" /\ stage = "idle"
+              /\ desired = "P" /\ target = "P" /\ previous = "W" /\ recovery = "none"
+              /\ pendingLegacy = FALSE /\ request = FALSE /\ capture = FALSE /\ hold = FALSE
+              /\ assetsPresent = {"P","W"} /\ attempted = {}
+OtherEngine == IF target = "P" THEN "W" ELSE "P"
+DeleteBegin == /\ owner = "none" /\ ~request /\ ~capture /\ ~hold
+               /\ target \in assetsPresent /\ OtherEngine \in assetsPresent
+               /\ (~BrokenLegacy \/ target \notin models)
+               /\ owner' = "delete" /\ stage' = "unload"
+               /\ UNCHANGED <<models,desired,target,previous,recovery,pendingLegacy,
+                              request,capture,hold,assetsPresent,attempted>>
+DeleteStop == /\ owner = "delete" /\ stage = "unload"
+              /\ models' = models \ {target} /\ stage' = "unlink"
+              /\ UNCHANGED <<owner,desired,target,previous,recovery,pendingLegacy,
+                             request,capture,hold,assetsPresent,attempted>>
+DeleteFiles == /\ owner = "delete" /\ stage = "unlink" /\ ~capture /\ ~hold
+               /\ target \notin models
+               /\ assetsPresent' = assetsPresent \ {target} /\ desired' = OtherEngine
+               /\ recovery' = "none" /\ owner' = "none" /\ stage' = "idle"
+               /\ UNCHANGED <<models,target,previous,pendingLegacy,request,capture,hold,attempted>>
+DeleteCaptureWins == /\ owner = "delete" /\ capture
+                     /\ owner' = "none" /\ stage' = "idle"
+                     /\ UNCHANGED <<models,desired,target,previous,recovery,pendingLegacy,
+                                    request,capture,hold,assetsPresent,attempted>>
+DeleteUnknown == /\ owner = "delete" /\ stage = "unload"
+                 /\ hold' = TRUE /\ owner' = "blocked" /\ stage' = "hold"
+                 /\ UNCHANGED <<models,desired,target,previous,recovery,pendingLegacy,
+                                request,capture,assetsPresent,attempted>>
+DeleteNext == DeleteBegin \/ DeleteStop \/ DeleteFiles \/ DeleteCaptureWins \/ DeleteUnknown \/
+              ((RequestStart \/ RequestCompletes \/ CaptureChanges \/ ConfirmedCleanup)
+               /\ UNCHANGED <<assetsPresent,attempted>>)
+DeleteSpec == DeleteInit /\ [][DeleteNext]_vars
+IdleLoadedCanDelete == (owner = "none" /\ ~request /\ ~capture /\ ~hold /\
+                        target \in assetsPresent /\ OtherEngine \in assetsPresent)
+                       => ENABLED DeleteBegin
+DeletedModelNotResident == models \subseteq assetsPresent
+DeleteExcludesRequest == owner = "delete" => ~request
+
+\* QA-04 projection: duplicate selection of the already-ready desired engine.
+\* Old BeginPicker tears it down; fixed admission returns an unchanged status.
+ReadySelect == /\ owner = "none" /\ models = {desired}
+               /\ IF BrokenLegacy THEN
+                    /\ owner' = "picker" /\ stage' = "stopP" /\ target' = desired /\ previous' = desired
+                    /\ UNCHANGED <<models,desired,recovery,pendingLegacy,request,capture,hold,assetsPresent,attempted>>
+                  ELSE UNCHANGED vars
+ReselectNext == ReadySelect \/
+                ((StopP \/ StopW \/ Load) /\ UNCHANGED <<assetsPresent,attempted>>)
+ReselectSpec == DeleteInit /\ [][ReselectNext]_vars
+ReadyDuplicateKeepsLoaded == models = {desired}
+
 =============================================================================

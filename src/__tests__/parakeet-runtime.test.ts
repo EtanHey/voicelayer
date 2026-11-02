@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { join } from "path";
 import { testTmp } from "./setup/test-tmp";
 import { getCacheDir } from "../paths";
-import { migrateLegacyParakeetRuntime, provisionParakeetRuntime, type ParakeetRuntimeDependencies } from "../parakeet-runtime";
+import { migrateLegacyParakeetRuntime, provisionParakeetRuntime, waitForRuntimeSetup, type ParakeetRuntimeDependencies } from "../parakeet-runtime";
 import { parakeetPython, readRecognizerAssets, PARAKEET_FILES } from "../recognizer-assets";
 import { ParakeetServer, parakeetCommand } from "../parakeet-server";
 
@@ -128,6 +128,49 @@ test("missing custom Python refuses without provisioning or removing legacy file
   oldPointer(); process.env.VOICELAYER_PARAKEET_PYTHON = join(root, "absent-custom-python");
   await expect(provisionParakeetRuntime(signal(), { findPython: () => { throw new Error("must not provision"); }, run: async () => { throw new Error("must not spawn"); } })).rejects.toThrow("configured-python-missing");
   expect(existsSync(legacy)).toBe(true); expect(existsSync(cache)).toBe(false);
+});
+
+test("Set up repairs an invalid owned runtime and publishes only the validated replacement", async () => {
+  venv(target); writeFileSync(pointer, JSON.stringify({ version: 1, python: join(target, "bin", "python") }));
+  const old = parakeetPython();
+  await provisionParakeetRuntime(signal(), { findPython: () => "/stub/python3", run: async args => {
+    if (args[0] === old) throw new Error("validation-failed");
+    expect(parakeetPython()).toBe(old);
+    if (args.includes("venv")) venv(args.at(-1)!);
+  } });
+  expect(parakeetPython()).not.toBe(old);
+  expect(existsSync(parakeetPython()!)).toBe(true);
+  expect(existsSync(old!)).toBe(true);
+});
+test("failed repair retains the previous pointer; invalid custom Python is never replaced", async () => {
+  venv(target); writeFileSync(pointer, JSON.stringify({ version: 1, python: join(target, "bin", "python") }));
+  const original = readFileSync(pointer, "utf8");
+  for (const custom of [false, true]) {
+    if (custom) process.env.VOICELAYER_PARAKEET_PYTHON = join(target, "bin", "python");
+    let searches = 0;
+    await expect(provisionParakeetRuntime(signal(), { findPython: () => { searches++; return "/stub/python3"; }, run: async () => { throw new Error("validation-failed"); } })).rejects.toThrow("validation-failed");
+    expect(searches).toBe(custom ? 0 : 1);
+    expect(readFileSync(pointer, "utf8")).toBe(original);
+  }
+});
+test("cancel escalates an uncooperative setup child to SIGKILL and joins its exit", async () => {
+  const controller = new AbortController(), exit = Promise.withResolvers<number>(), signals: string[] = [];
+  const waiting = waitForRuntimeSetup({ exited: exit.promise, kill: signal => {
+    signals.push(String(signal)); if (signal === "SIGKILL") exit.resolve(137);
+  } }, controller.signal, 10);
+  controller.abort(); await expect(waiting).rejects.toThrow();
+  expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+});
+test("cancelling a real setup fixture that ignores SIGTERM joins its SIGKILL exit", async () => {
+  const controller = new AbortController();
+  const proc = Bun.spawn([process.execPath, "-e", 'process.on("SIGTERM",()=>{}); console.log("ready"); setInterval(()=>{},1000);'],
+    { env: process.env, stdout: "pipe", stderr: "ignore" });
+  try {
+    const reader = proc.stdout.getReader(); await reader.read(); reader.releaseLock();
+    const waiting = waitForRuntimeSetup(proc, controller.signal, 20);
+    controller.abort(); await expect(waiting).rejects.toThrow();
+    expect(proc.signalCode).toBe("SIGKILL");
+  } finally { proc.kill("SIGKILL"); await proc.exited; }
 });
 
 test("symlinked legacy runtime is never relocated", () => {

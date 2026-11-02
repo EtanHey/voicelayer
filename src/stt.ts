@@ -44,7 +44,7 @@ import {
   type PauseSpan,
 } from "./stt-pause-map";
 import type { TranscriptSegment } from "./stt-transcript-alignment";
-import { outroGateEnabled, stripHallucinatedOutro } from "./stt-outro-gate";
+import { isCjkHallucinationCandidate, outroGateEnabled, stripHallucinatedOutro } from "./stt-outro-gate";
 import { stripAudioUnsupportedEcho } from "./stt-echo-gate";
 import { stripHallucinatedCaption } from "./stt-caption-gate";
 import type {
@@ -2210,7 +2210,7 @@ export class WhisperCppBackend implements STTBackend {
     }
 
     // AIDEV-NOTE: Language config drives whisper args — supports auto (mixed
-    // Hebrew-English), hebrew, or english modes. Auto omits -l for auto-detect.
+    // Hebrew-English), hebrew, or english modes. Auto passes -l auto explicitly.
     // Initial prompt primes vocabulary for dev terms in the configured language.
     const langMode = getLanguageModeFromEnv();
     const langConfig = getLanguageConfig(langMode);
@@ -2275,9 +2275,16 @@ export class WhisperCppBackend implements STTBackend {
       .join(" ")
       .trim();
 
+    const language = requestedLanguage ?? langConfig.whisperLang;
+    // The CLI has no segment timestamps. Only whole CJK candidates enter the
+    // gate here; its dead-device-flat rule is the sole segmentless removal.
+    const gated = outroGateEnabled(processingEnv()) && isCjkHallucinationCandidate(text, language)
+      ? stripHallucinatedOutro(text, new Uint8Array(await Bun.file(audioPath).arrayBuffer()), { language })
+      : { text, removed: [] };
+
     return {
-      text,
-      backend: this.name,
+      text: gated.text,
+      backend: this.name + (gated.removed.length ? "+outro" : ""),
       durationMs: Date.now() - start,
       attemptEvidence: { status: text.trim() ? "RETURNED" : "EMPTY_RESPONSE", processExitCode: exitCode, inputPath: audioPath, decodeCoverage: "UNKNOWN", tail: "UNKNOWN" },
     };
@@ -2360,6 +2367,7 @@ export class WhisperServerBackend implements STTBackend {
         const outroGate = outroGateEnabled(processingEnv());
         const gated = outroGate
           ? stripHallucinatedOutro(chunkedResult.text, wavData, {
+              language: buildWhisperServerOptions(options)?.language,
               segments: chunkedResult.segments,
               segmentsText: chunkedResult.segmentsText,
             })
@@ -2483,6 +2491,7 @@ export class WhisperServerBackend implements STTBackend {
         : tail.wouldRewrite
           ? { text: cleanedText, removed: [], reason: "segments-stale" as const }
           : stripHallucinatedOutro(cleanedText, wavData, {
+              language: buildWhisperServerOptions(options)?.language,
               segments: echo.segments,
               segmentsText: echo.segmentsText,
             });

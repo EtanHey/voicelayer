@@ -3259,6 +3259,7 @@ describe("input recording durability", () => {
           voicelayer_transcript_chars: 34,
           audio_sha256: "stale-checksum",
           backend: "old-stt",
+          processing_duration_ms: 53700,
           language_mode: "english",
         },
         null,
@@ -3283,6 +3284,9 @@ describe("input recording durability", () => {
     );
     expect(metadata.backend).toBe("fake-stt");
     expect(metadata.language_mode).toBe("auto");
+    expect(metadata.processing_duration_ms).toBeNumber();
+    expect(metadata.processing_duration_ms).toBeGreaterThanOrEqual(0);
+    expect(metadata.processing_duration_ms).not.toBe(53700);
   });
 
   it("retranscribeLastCapture updates the linked archive transcript and broadcasts recording_path", async () => {
@@ -3307,6 +3311,7 @@ describe("input recording durability", () => {
           mode: "ptt",
           transcription_status: "transcribed",
           backend: "old-stt",
+          processing_duration_ms: 53700,
           language_mode: "english",
         },
         null,
@@ -3342,7 +3347,11 @@ describe("input recording durability", () => {
       text: "Retained transcript.",
       recording_path: archivedAudioPath,
     });
-    expect(JSON.parse(readFileSync(metadataPath, "utf8"))).toMatchObject({
+    const updated = JSON.parse(readFileSync(metadataPath, "utf8"));
+    expect(updated.processing_duration_ms).toBeNumber();
+    expect(updated.processing_duration_ms).toBeGreaterThanOrEqual(0);
+    expect(updated.processing_duration_ms).not.toBe(53700);
+    expect(updated).toMatchObject({
       transcription_status: "transcribed",
       backend: "fake-stt",
       voicelayer_transcript_chars: "Retained transcript.".length,
@@ -3804,6 +3813,8 @@ describe("input recording durability", () => {
         audio: makePttWavWithLongQuietTail(),
       });
       const audioPath = join(archive.archiveDir, "audio.wav");
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      writeFileSync(metadataPath, JSON.stringify({ ...archive.metadata, processing_duration_ms: 53700 }));
       const beforeAudio = readFileSync(audioPath);
       const { retranscribeVoiceAskArchive } = await import("../input");
 
@@ -3820,6 +3831,10 @@ describe("input recording durability", () => {
           "utf8",
         ),
       ).toBe(raw.trim());
+      const updated = JSON.parse(readFileSync(metadataPath, "utf8"));
+      expect(updated.processing_duration_ms).toBeNumber();
+      expect(updated.processing_duration_ms).toBeGreaterThanOrEqual(0);
+      expect(updated.processing_duration_ms).not.toBe(53700);
       expect(polishSurfaces).toEqual([]);
       expect(broadcasts.some((event) => event.type === "transcription")).toBe(
         false,
