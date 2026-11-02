@@ -1,7 +1,9 @@
 # R2-01 implementation and proof boundary
 
-Status: implementation in progress, M4 only. No view changes, installation, runtime swap,
-audio emission, microphone acceptance, push, or release claim.
+Status: logic implemented. Source changes are made on M4; final model/runtime and
+multi-file verification runs on M1 through the captain lock under the 11:30Z ruling.
+No view changes, installation, runtime swap, audio emission, microphone acceptance,
+push, or release claim.
 
 ## Ownership
 
@@ -70,6 +72,8 @@ invariants pass. Two-take N6/paste acknowledgement, late settlement, physical re
 after settlement, clone timing, nonzero chunks, quiescence and preparing-with-no-chunk
 also have focused real-logic guards.
 
-Final acceptance must use the revised F-model round-2 contract and Lane I FIXED SHA.
-The original 9884ffa7 model cannot establish the revised M1-M4/D-S4 contract. Installed
-M4 interaction/audio/permission proof belongs to the captain.
+The implementation includes F-model round 2 `2b41acda` and its G1 supervised-budget
+follow-up `42ddf743`, plus approved Lane I FIXED-2 `4dd30fd1`. The original `9884ffa7`
+model cannot establish the revised M1-M4/D-S4 contract. Gate outcomes and immutable
+source hashes belong to the lane receipt and generated check artifacts. Installed
+interaction/audio/permission proof belongs to the captain.
