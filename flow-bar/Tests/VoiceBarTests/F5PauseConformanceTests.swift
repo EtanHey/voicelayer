@@ -2,6 +2,7 @@
 @testable import VoiceBarUI
 import XCTest
 
+@MainActor
 final class F5PauseConformanceTests: XCTestCase {
     struct Row: Decodable {
         let initial: String
@@ -16,7 +17,7 @@ final class F5PauseConformanceTests: XCTestCase {
         let manualBefore: Bool?
     }
 
-    func testN6TakeSetKeepsF5ReadParkedUntilEveryTakeSettles() throws {
+    func testN6TakeSetKeepsF5ReadParkedUntilEveryTakeSettles() async throws {
         for manual in [false, true] {
             let state = VoiceState()
             state.isConnected = true
@@ -54,7 +55,7 @@ final class F5PauseConformanceTests: XCTestCase {
             XCTAssertEqual(state.mode, .transcribing)
             XCTAssertFalse(commands.contains { ["resume", "cancel"].contains($0["cmd"] as? String ?? "") })
             state.handleEvent(["type": "state", "state": "idle", "source": "recording", "recording_jobs": [], "mic_take_id": NSNull()])
-            RunLoop.main.run(until: Date().addingTimeInterval(0.001))
+            await drainMainQueue()
             if manual { XCTAssertTrue(state.isPlaybackPaused) }
             else {
                 XCTAssertFalse(state.isPlaybackPaused)
@@ -72,7 +73,7 @@ final class F5PauseConformanceTests: XCTestCase {
         }
     }
 
-    func testTLCF5CaptureProjectionDrivesRealRouterAndState() throws {
+    func testTLCF5CaptureProjectionDrivesRealRouterAndState() async throws {
         guard let path = ProcessInfo.processInfo.environment["VOICELAYER_F5_CASES"],
               let wire = ProcessInfo.processInfo.environment["VOICELAYER_F5_WIRE"] else {
             throw XCTSkip("Run formal/speech-queue/check.sh for TLC-generated F5 scenarios")
@@ -161,7 +162,7 @@ final class F5PauseConformanceTests: XCTestCase {
             }
             state.handleEvent(["type": "state", "state": "idle", "source": "recording",
                                "recording_jobs": [], "mic_take_id": NSNull()])
-            RunLoop.main.run(until: Date().addingTimeInterval(0.001))
+            await drainMainQueue()
             XCTAssertFalse(commands.contains { $0["cmd"] as? String == "resume" }, "only daemon settles row \(index)")
             let manual = manualBefore || row.manual
             if !row.stopped && !manual {
@@ -185,4 +186,12 @@ final class F5PauseConformanceTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]).write(to: URL(fileURLWithPath: wire))
         print("Replayed \(rows.count) TLC F5 scenarios through real VoiceBarCommandRouter/VoiceState; wrote native commands")
     }
+
+    /// Wait for the already-enqueued restore, independent of timer resolution or host load.
+    private func drainMainQueue() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
 }
