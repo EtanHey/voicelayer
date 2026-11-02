@@ -526,6 +526,7 @@ public struct SettingsView: View {
     @State private var isHistoryLoading = false
     @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
+    @State private var historyChangesDuringLoad = SettingsHistoryArchiveChanges()
     private let historyDetailsInitiallyExpanded: Bool
     private let speechHistoryRoot: URL
     @State private var speechLoading = SettingsSpeechHistoryLoading()
@@ -540,6 +541,7 @@ public struct SettingsView: View {
     @State private var isAskHistoryLoading = false
     @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
+    @State private var askChangesDuringLoad = SettingsHistoryArchiveChanges()
     @State private var hasPrefetchedAskHistory = false
     /// History scopes shown at least once in this Settings session; they stay mounted (lane E).
     @State private var mountedHistoryScopes: Set<SettingsHistoryScope> = []
@@ -1498,7 +1500,8 @@ public struct SettingsView: View {
                 SettingsSpeechHistoryArchive.load(from: root, limit: limit)
             }, apply: { speechEntries = $0 })
         }
-        .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
+            guard !(notification.object is SettingsHistoryArchiveChange) else { return }
             speechReload.archiveChanged()
         }
     }
@@ -1610,8 +1613,14 @@ public struct SettingsView: View {
                     DispatchQueue.main.async { proxy.scrollTo(target, anchor: .center) }
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
-                requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
+                if let change = notification.object as? SettingsHistoryArchiveChange {
+                    if historyChangesDuringLoad.receive(change, duringLoad: isHistoryLoading) {
+                        applyHistoryChange(change)
+                    }
+                } else {
+                    requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+                }
             }
         }
     }
@@ -1757,8 +1766,14 @@ public struct SettingsView: View {
                     requestAskHistoryReload(scrollProxy: proxy, animated: false)
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
-                requestAskHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
+                if let change = notification.object as? SettingsHistoryArchiveChange {
+                    if askChangesDuringLoad.receive(change, duringLoad: isAskHistoryLoading) {
+                        applyAskHistoryChange(change)
+                    }
+                } else {
+                    requestAskHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+                }
             }
         }
     }
@@ -2511,6 +2526,7 @@ public struct SettingsView: View {
             await MainActor.run {
                 guard historyLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyHistoryPage(page)
+                for change in historyChangesDuringLoad.takePending() { applyHistoryChange(change) }
                 isHistoryLoading = false
                 prefetchAskHistoryIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {
@@ -2527,6 +2543,29 @@ public struct SettingsView: View {
         historyHasMore = page.hasMore
     }
 
+    private func applyHistoryChange(_ change: SettingsHistoryArchiveChange) {
+        let current = SettingsHistoryPage(groups: historyDayGroups, hasMore: historyHasMore)
+        let updated = change.applying(to: current, matching: historySearch)
+        guard updated != current else { return }
+        historyDayGroups = updated.groups
+        historyLoadedEntryCount = updated.loadedEntryCount
+        historyLoadedEntryLimit = max(historyLoadedEntryLimit, updated.loadedEntryCount)
+        // Keep the selection unless this row stopped matching the active search.
+        if let selectedHistoryEntryID,
+           !updated.groups.contains(where: { $0.entries.contains(where: { $0.id == selectedHistoryEntryID }) }) {
+            self.selectedHistoryEntryID = updated.groups.first?.entries.first?.id
+        }
+    }
+
+    private func applyAskHistoryChange(_ change: SettingsHistoryArchiveChange) {
+        let current = SettingsAskHistoryPage(groups: askHistoryDayGroups, hasMore: askHistoryHasMore)
+        let updated = change.applying(to: current, matching: askHistorySearch)
+        guard updated != current else { return }
+        askHistoryDayGroups = updated.groups
+        askHistoryLoadedEntryCount = updated.loadedEntryCount
+        askHistoryLoadedEntryLimit = max(askHistoryLoadedEntryLimit, updated.loadedEntryCount)
+    }
+
     /// Cancels both in-flight archive loads and clears their loading flags.
     ///
     /// AIDEV-NOTE: The flag must be cleared with the cancel. A scope reopens without reloading when
@@ -2537,10 +2576,12 @@ public struct SettingsView: View {
         historyRefreshTask = nil
         historyLoadFence.cancel()
         isHistoryLoading = false
+        _ = historyChangesDuringLoad.takePending()
         askHistoryRefreshTask?.cancel()
         askHistoryRefreshTask = nil
         askHistoryLoadFence.cancel()
         isAskHistoryLoading = false
+        _ = askChangesDuringLoad.takePending()
         searchPrewarmTask?.cancel()
         searchPrewarmTask = nil
     }
@@ -2624,6 +2665,7 @@ public struct SettingsView: View {
             await MainActor.run {
                 guard askHistoryLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyAskHistoryPage(page)
+                for change in askChangesDuringLoad.takePending() { applyAskHistoryChange(change) }
                 isAskHistoryLoading = false
                 startSearchPrewarmIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {

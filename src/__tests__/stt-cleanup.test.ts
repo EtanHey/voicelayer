@@ -310,9 +310,8 @@ describe("stt-cleanup", () => {
           [`please call ${variant}`, `Please call ${canonical}`],
           [`please call ${variant}.`, `Please call ${canonical}.`],
           [`please call ${variant}, then wait`, `Please call ${canonical}, then wait`],
-          // A base alias is not authority to replace an unstored possessive.
-          [`${variant}'s message`, `${variant[0].toUpperCase()}${variant.slice(1)}'s message`],
-          [`please check ${variant}’s message`, `Please check ${variant}’s message`],
+          [`${variant}'s message`, `${canonical}'s message`],
+          [`please check ${variant}’s message`, `Please check ${canonical}’s message`],
           [`שלום ${variant} עכשיו`, `שלום ${canonical} עכשיו`],
           [`please call ${variant.toUpperCase()}`, `Please call ${canonical}`],
         ];

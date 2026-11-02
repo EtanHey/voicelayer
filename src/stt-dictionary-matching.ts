@@ -7,7 +7,7 @@ export function dictionaryOccurrencePattern(source: string): RegExp {
   return new RegExp(`(?<![\\p{L}\\p{N}\\p{M}_])${source}(?![\\p{L}\\p{N}\\p{M}_]|[\\p{Pd}]|…|\\.\\.\\.)`, "giu");
 }
 
-/** Only whole stored surfaces, never a substring of another address/word. */
+/** Whole stored surfaces and English possessives, never substrings of another address/word. */
 export function dictionarySurfacePattern(from: string, to = from): RegExp {
   const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (from.includes("@") || to.includes("@")) {
@@ -22,7 +22,22 @@ export function dictionarySurfacePattern(from: string, to = from): RegExp {
     const right = "(?![\\p{L}\\p{N}\\p{M}_%+@\\-]|\\.(?=[" + local + "])|[!#$&'*+/=?^`{|}~](?=[" + local + "]))";
     return new RegExp("(?:" + plainLeft + escaped + right + "|" + quotedLeft + escaped + "(?='(?![" + local + "])))", "giu");
   }
-  return dictionaryOccurrencePattern(escaped);
+  // Extend prose names/terms only. A bare trailing s is another word, and
+  // addresses, paths and explicitly stored contractions keep exact matching.
+  const proseTerm = /^[\p{L}\p{M}\p{N}]+(?:[ '’\-][\p{L}\p{M}\p{N}]+)*$/u;
+  const suffix = proseTerm.test(from) && !/['’]s$/iu.test(from) && !/['’]s$/iu.test(to)
+    ? "(?:['’]s|s['’])?" : "";
+  return dictionaryOccurrencePattern(`${escaped}${suffix}`);
+}
+
+/** Retain a matched English clitic, including its straight/curly apostrophe. */
+export function dictionaryReplacement(match: string, from: string, to: string): string {
+  const suffix = match.slice(from.length);
+  if (/^(?:['’]s|s['’])$/iu.test(suffix)) {
+    const apostrophe = suffix.includes("’") ? "’" : "'";
+    return `${to}${apostrophe}s`;
+  }
+  return to;
 }
 
 /** A stored surface inside a different quoted-local address is not authority

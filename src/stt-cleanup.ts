@@ -1,4 +1,4 @@
-import { dictionarySurfacePattern, isWholeDictionarySurface } from "./stt-dictionary-matching";
+import { dictionarySurfacePattern, dictionaryReplacement, isWholeDictionarySurface } from "./stt-dictionary-matching";
 import { requireIsolatedOverride } from "./test-isolation";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
@@ -822,7 +822,7 @@ function normalizeCanonicalTerms(
     if (!lowerResult.includes(termLower)) continue;
     result = result.replace(pattern, (match: string, offset: number) =>
       isWholeDictionarySurface(result, offset, offset + match.length, term)
-        ? term : match);
+        ? dictionaryReplacement(match, term, term) : match);
 
   }
   return result;
