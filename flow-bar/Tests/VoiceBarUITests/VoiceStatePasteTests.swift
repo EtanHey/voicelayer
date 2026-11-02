@@ -335,18 +335,112 @@ final class VoiceStatePasteTests: XCTestCase {
         }
     }
 
-    func testAutomaticMissStillRetainsEvenWithEditableEligibility() {
-        let state = deliveryState(bundleIdentifier: "com.example.Editor")
-        state.focusedTargetEligibilityProvider = {
-            DictationFocusedTargetEligibility(processIdentifier: 51515, role: "AXTextField",
-                                               isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+    func testAutomaticNativeAXMissTypesOnlyIntoVerifiedEditableTarget() {
+        let text = "ADD שלום 👩‍💻\nsecond line"
+        for bundle in ["com.apple.TextEdit", "com.apple.Notes", "com.apple.mail"] {
+            for reason in ["editable", "file_list", "readonly", "secure", "unknown", "wrong_pid", "focus_changed"] {
+                for hasAXHandler in [true, false] {
+                    let state = deliveryState(bundleIdentifier: bundle)
+                    let context = "\(bundle), \(reason), AX: \(hasAXHandler)"
+                    var focused = reason != "focus_changed" || hasAXHandler
+                    var captures = 0
+                    var axAttempts = 0
+                    var typed: [String] = []
+                    state.focusedTargetEligibilityProvider = {
+                        guard reason != "unknown" else { return nil }
+                        return DictationFocusedTargetEligibility(
+                            processIdentifier: reason == "wrong_pid" ? 62626 : 51515,
+                            role: reason == "file_list" ? "AXOutline" : "AXTextArea",
+                            isEditable: reason != "readonly", isSecure: reason == "secure",
+                            matchesCurrentFocus: { focused }
+                        )
+                    }
+                    state.asyncDictationInsertionHandlerProvider = {
+                        captures += 1
+                        guard hasAXHandler else { return nil }
+                        let isFresh = captures > 1
+                        return { _, _ in
+                            XCTAssertTrue(isFresh, "A frontmost target must use fresh focus: \(context)")
+                            axAttempts += 1
+                            if reason == "focus_changed" { focused = false }
+                            return false // Pre-write decline: no setter and no completion.
+                        }
+                    }
+                    state.guardedTextTypingHandler = { text, pid in
+                        XCTAssertEqual(pid, 51515, context)
+                        typed.append(text)
+                        return .posted
+                    }
+                    state.textTypingHandler = { _ in XCTFail("Use guarded typing: \(context)"); return false }
+                    state.pasteboardWriter = { _ in XCTFail("Keep clipboard: \(context)") }
+                    state.simulatedPasteHandler = { XCTFail("No Cmd+V: \(context)"); return false }
+                    state.record()
+                    state.handleEvent(["type": "transcription", "text": text])
+                    XCTAssertEqual(captures, 2, context)
+                    XCTAssertEqual(axAttempts, hasAXHandler ? 1 : 0, context)
+                    XCTAssertEqual(typed, reason == "editable" ? [text] : [], context)
+                    XCTAssertEqual(state.latestDictationInsertionStatus, reason == "editable" ? .typed : .notInserted, context)
+                    XCTAssertEqual(state.confirmationText, reason == "editable" ? PasteDeliveryFeedback.typed : PasteRecoveryFeedback.notInserted, context)
+                    XCTAssertEqual(state.latestReusableTranscript, text, context)
+                    XCTAssertEqual(state.recentTranscriptionEntries.first?.text, text, context)
+                }
+            }
         }
-        state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
-        state.textTypingHandler = { _ in XCTFail("Auto miss is not a manual request"); return false }
-        state.record()
-        state.handleEvent(["type": "transcription", "text": "retain complete text"])
-        XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
-        XCTAssertEqual(state.latestReusableTranscript, "retain complete text")
+    }
+
+    func testAutomaticNativeAXMissRejectsChangedRecordingPIDAndFrontmostApp() {
+        let text = "retain complete text"
+        for bundle in ["com.apple.TextEdit", "com.example.Other", "unavailable"] {
+            for phase in ["before_activation", "delivery_delay", "ax_decline"] {
+                let state = deliveryState(bundleIdentifier: "com.apple.TextEdit")
+                var front: NSRunningApplication? = FakeRunningApplication(bundleIdentifier: "com.apple.TextEdit", processIdentifier: 51515)
+                let other: NSRunningApplication? = bundle == "unavailable" ? nil
+                    : FakeRunningApplication(bundleIdentifier: bundle, processIdentifier: 62626)
+                var queued: [() -> Void] = []
+                state.frontmostAppProvider = { front }
+                state.pasteScheduler = { _, work in queued.append(work) }
+                state.focusedTargetEligibilityProvider = {
+                    DictationFocusedTargetEligibility(processIdentifier: front?.processIdentifier ?? -1, role: "AXTextArea",
+                                                       isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+                }
+                state.asyncDictationInsertionHandlerProvider = { { _, _ in
+                    if phase == "ax_decline" { front = other }
+                    return false
+                } }
+                state.guardedTextTypingHandler = { _, _ in XCTFail("Changed target must not receive keys"); return .posted }
+                state.textTypingHandler = { _ in XCTFail("No unguarded retry"); return true }
+                state.record()
+                state.handleEvent(["type": "transcription", "text": text])
+                if phase == "before_activation" { front = other }
+                queued.removeFirst()()
+                if phase == "delivery_delay" { front = other }
+                queued.removeFirst()()
+                XCTAssertTrue(queued.isEmpty)
+                XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted, "\(bundle), \(phase)")
+                XCTAssertEqual(state.latestReusableTranscript, text)
+                XCTAssertEqual(state.confirmationText, PasteRecoveryFeedback.notInserted)
+            }
+        }
+    }
+
+    func testAutomaticNativeFallbackDoesNotRetryDeclinedGuardedTyping() {
+        for result in [GuardedTypingResult.focusChanged, .failed] {
+            let state = deliveryState(bundleIdentifier: "com.apple.TextEdit")
+            var attempts = 0
+            state.focusedTargetEligibilityProvider = {
+                DictationFocusedTargetEligibility(processIdentifier: 51515, role: "AXTextArea",
+                                                   isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+            }
+            state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
+            state.guardedTextTypingHandler = { _, _ in attempts += 1; return result }
+            state.textTypingHandler = { _ in XCTFail("Never retry a guarded batch"); return true }
+            state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+            state.record()
+            state.handleEvent(["type": "transcription", "text": "retain complete text"])
+            XCTAssertEqual(attempts, 1)
+            XCTAssertEqual(state.latestDictationInsertionStatus, result == .focusChanged ? .notInserted : .failed)
+            XCTAssertEqual(state.latestReusableTranscript, "retain complete text")
+        }
     }
 
     func testSettingsHistoryPossibleWriteNeverFallsThroughEvenWithEditableEligibility() {
@@ -645,6 +739,10 @@ final class VoiceStatePasteTests: XCTestCase {
         for result: DictationInsertionResult in [.appliedUnverified, .partiallyApplied, .notApplied] {
             let state = deliveryState(bundleIdentifier: "com.example.Editor")
             var attempts = 0
+            state.focusedTargetEligibilityProvider = {
+                DictationFocusedTargetEligibility(processIdentifier: 51515, role: "AXTextArea",
+                                                   isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+            }
             state.asyncDictationInsertionHandlerProvider = {
                 { _, completion in attempts += 1; completion(result); return false }
             }
