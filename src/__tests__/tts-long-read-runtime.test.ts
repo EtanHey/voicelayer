@@ -109,6 +109,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       const exit = deferred<number>(); const item = { exit, killed: false, synthCount: synths.length, argv, signals: [] as string[] }; players.push(item); playerBarrier.push(item);
       if (autoPlay) {
         // The large Qwen fixture must not leave hundreds of durable writes for afterEach.
+        // Other autoPlay cases keep instant exits and continue exercising archive lag.
         if (archiveBeforePlayerExit) void flushSpeechArchives().then(() => exit.resolve(0), exit.reject);
         else exit.resolve(0);
       }

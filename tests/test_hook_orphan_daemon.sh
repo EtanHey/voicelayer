@@ -97,7 +97,7 @@ if "--cross-run" in sys.argv[2:]:
             for name in ("src", "node_modules", "flow-bar", "launchd"):
                 (checkout / name).symlink_to(root / name, target_is_directory=True)
             shutil.copy(root / "bunfig.toml", checkout)
-            for name in ("hook-orphan-daemon.test.ts", "test_hook_orphan_daemon.sh", "hook-term-sender.c", "hook_fixture_registry.py"):
+            for name in ("hook-orphan-daemon.test.ts", "test_hook_orphan_daemon.sh", "check_hook_process_snapshot.py", "hook-term-sender.c", "hook_fixture_registry.py"):
                 shutil.copy(root / "tests" / name, checkout / "tests")
             for name in ("supervise-test-daemon.py", "run_tests.sh", "apply-voicebar-f5-hidutil.sh"):
                 shutil.copy(root / "scripts" / name, checkout / "scripts")

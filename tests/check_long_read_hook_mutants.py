@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Run the real tests against clean code and isolated no-Qwen/no-reap mutants.
 
-Invoke through the captain's heavy.sh on the verification host. --test-ref
+MANUAL verification tool: not invoked by bun test or CI. The hook mutant cases
+are intentionally slow. On the verification host, run from the repository root:
+
+    ~/.local/state/captain-2.2.61/heavy.sh F-flake python3 \
+        tests/check_long_read_hook_mutants.py \
+        --receipt-dir docs.local/F-flake-mutants --runs 5
+
+Use a fresh receipt directory for each invocation. --test-ref
 selects the original test sources for a before/after comparison. No tracked
 product is edited; fixture teardown remains responsible for injected leaks.
 """

@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Exercise the harness's actual process snapshot/assertion with raw ps bytes."""
+"""Exercise the harness's actual process snapshot/assertion with raw ps bytes.
+
+Pins decoding without a crash and leaked-run detection, not a specific decoder
+error strategy. Invoked automatically by hook-orphan-daemon.test.ts.
+"""
 
 import ast
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -24,7 +29,7 @@ def main():
         directory = Path(temp)
         raw = directory / "snapshot"
         ps = directory / "ps"
-        ps.write_text(f"#!{sys.executable}\nfrom pathlib import Path\nimport sys\nsys.stdout.buffer.write(Path({str(raw)!r}).read_bytes())\n")
+        ps.write_text("#!/bin/sh\nexec /bin/cat " + shlex.quote(str(raw)) + "\n")
         ps.chmod(0o700)
         previous = os.environ.get("PATH", "")
         os.environ["PATH"] = str(directory) + os.pathsep + previous

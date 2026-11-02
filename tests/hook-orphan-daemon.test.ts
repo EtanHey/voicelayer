@@ -5,9 +5,23 @@ import { resolve } from "node:path";
 const script = resolve(import.meta.dir, "test_hook_orphan_daemon.sh");
 const hasCompiler = !!Bun.which("cc");
 if (!hasCompiler) console.warn("SKIP HO3 native sender helper: cc toolchain missing");
+// The cited crashes were decoding errors; the old 300 s ceiling was not hit.
 // Five M1 standalone baselines: max 106.93 s; one fixture budget >= 3x that run.
 const ORPHAN_FIXTURE_TIMEOUT_MS = 360_000;
 const NATIVE_PREFLIGHT_TIMEOUT_MS = 15_000;
+const SNAPSHOT_GUARD_TIMEOUT_MS = 5_000;
+
+test("raw ps snapshot tolerates non-UTF8 argv and still detects leaked run paths", () => {
+  const result = spawnSync("python3", [resolve(import.meta.dir, "check_hook_process_snapshot.py")], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+    encoding: "utf8", timeout: SNAPSHOT_GUARD_TIMEOUT_MS,
+  });
+  expect(result.error).toBeUndefined();
+  expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
+    status: 0, output: expect.any(String),
+  });
+  expect(result.stdout.match(/^PASS snapshot:/gm)).toHaveLength(4);
+}, SNAPSHOT_GUARD_TIMEOUT_MS + 1_000);
 
 for (const name of ["cross-untagged", "unscoped-negative"]) {
   for (const phase of ["ongoing", "final"]) {
