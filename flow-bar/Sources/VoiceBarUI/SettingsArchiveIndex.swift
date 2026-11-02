@@ -65,6 +65,8 @@ public actor SettingsArchiveIndex {
         entryPath: String,
         from root: URL = SettingsHistoryArchive.defaultRoot
     ) -> SettingsHistoryArchiveChange? {
+        // A closed Settings window has released this root. Do no filesystem work for its events.
+        guard let state = roots[root.standardizedFileURL.path] else { return nil }
         onDiskRead()
         let url = URL(fileURLWithPath: entryPath)
         var directory = (url.pathExtension.isEmpty ? url : url.deletingLastPathComponent()).resolvingSymlinksInPath()
@@ -74,22 +76,19 @@ public actor SettingsArchiveIndex {
         else { return nil }
         let id = Self.key(forEntryDirectory: directory)
         // Retain the exact published URL identity when an event spells /var differently.
-        let state = roots[root.standardizedFileURL.path]
-        if case let .entry(entry)? = state?.dictations[id] {
+        if case let .entry(entry)? = state.dictations[id] {
             directory = entry.audioPath.deletingLastPathComponent()
-        } else if case let .entry(entry)? = state?.asks[id] {
+        } else if case let .entry(entry)? = state.asks[id] {
             directory = URL(fileURLWithPath: entry.id)
         }
         let dictation = SettingsHistoryArchive.loadEntry(from: directory, dayKey: day.lastPathComponent, fallbackDate: date)
         let ask = dictation == nil
             ? SettingsAskHistoryArchive.loadEntry(from: directory, dayKey: day.lastPathComponent, fallbackDate: date) : nil
-        if let state {
-            state.dictations[id] = dictation.map { .entry($0) } ?? .skipped
-            state.asks[id] = ask.map { .entry($0) } ?? .skipped
-            state.dictationSearchText[id] = dictation.map { [SettingsHistorySearch.fold($0.transcript)] }
-            state.askSearchText[id] = ask.map {
-                [SettingsHistorySearch.fold($0.questionText), SettingsHistorySearch.fold($0.responseTranscript)]
-            }
+        state.dictations[id] = dictation.map { .entry($0) } ?? .skipped
+        state.asks[id] = ask.map { .entry($0) } ?? .skipped
+        state.dictationSearchText[id] = dictation.map { [SettingsHistorySearch.fold($0.transcript)] }
+        state.askSearchText[id] = ask.map {
+            [SettingsHistorySearch.fold($0.questionText), SettingsHistorySearch.fold($0.responseTranscript)]
         }
         changeRevision &+= 1
         return SettingsHistoryArchiveChange(directory: directory, dictation: dictation, ask: ask, revision: changeRevision)

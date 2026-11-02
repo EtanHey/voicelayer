@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
@@ -245,27 +246,34 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         XCTAssertEqual(source.components(separatedBy: "let page = await loader(limit)").count - 1, 2)
     }
 
-    func testTheAppInvalidatesBeforeReloadingAndReleasesTheIndexWhenSettingsCloses() throws {
-        let app = try sourceFile("VoiceBar/VoiceBarApp.swift")
+    @MainActor
+    func testNotificationsCarryFreshRowsAndReleasedSettingsDoesNotRefillTheIndex() async throws {
+        try writeDictation(day: "2026-09-20", id: "a", createdAt: "2026-09-20T08:00:00.000Z", transcript: "before")
+        let index = SettingsArchiveIndex()
+        _ = await index.dictationPage(from: root)
+        let directory = root.appendingPathComponent("2026-09-20/a")
+        try "after".write(to: directory.appendingPathComponent("voicelayer-transcript.txt"), atomically: true, encoding: .utf8)
+        let center = NotificationCenter()
+        var received: [SettingsHistoryArchiveChange?] = []
+        let subscription = center.publisher(for: .voiceBarHistoryArchiveDidChange).sink { notification in
+            XCTAssertTrue(Thread.isMainThread)
+            received.append(notification.object as? SettingsHistoryArchiveChange)
+        }
+        defer { subscription.cancel() }
 
-        XCTAssertTrue(app
-            .contains("historyPage: { limit in await SettingsArchiveIndex.shared.dictationPage(limit: limit) }"))
-        XCTAssertTrue(app.contains("await SettingsArchiveIndex.shared.change(entryPath: path)"))
-        let invalidate = try XCTUnwrap(app.range(of: "await SettingsArchiveIndex.shared.change(entryPath: path)"))
-        let post = try XCTUnwrap(app
-            .range(of: "NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange"))
-        XCTAssertLessThan(invalidate.lowerBound, post.lowerBound, "publish only after the actor has read the changed entry")
-        XCTAssertTrue(app.contains("object: change)"))
-        XCTAssertTrue(app.contains("window.delegate = self"))
-        XCTAssertTrue(app.contains("SettingsWindowLifecycle.settingsWindowWillClose(window)"))
-        XCTAssertTrue(app.contains("SettingsWindowLifecycle.rebuildContentIfNeeded("))
-        XCTAssertTrue(app.contains("initialTab: lastSettingsTab"))
-        let tabCallback = try XCTUnwrap(app.range(of: "onSelectedTabChange: { [weak self] tab in"))
-        XCTAssertTrue(app[tabCallback.upperBound...].prefix(240).contains("self?.lastSettingsTab = tab"),
-                      "the remembered tab survives the added visible-Transcription refresh hook")
-        // A reopen with no tab asked for must not replay the last menu request over the remembered tab.
-        XCTAssertTrue(app.contains("if tab == nil, settingsWindow.contentViewController == nil {\n"
-                + "                settingsTabRequest = nil"))
+        await SettingsHistoryArchiveChangeNotifier.post(
+            entryPath: directory.appendingPathComponent("audio.wav").path, index: index, root: root, center: center
+        )
+        XCTAssertEqual(received.count, 1)
+        XCTAssertEqual(received[0]?.dictation?.transcript, "after", "publish only after the actor reads the row")
+        await index.release()
+        await SettingsHistoryArchiveChangeNotifier.post(
+            entryPath: directory.appendingPathComponent("audio.wav").path, index: index, root: root, center: center
+        )
+        XCTAssertEqual(received.count, 2)
+        XCTAssertNil(received[1], "closed Settings needs no materialized row")
+        let roots = await index.cachedRootCount()
+        XCTAssertEqual(roots, 0)
     }
 
     private func sourceFile(_ relative: String) throws -> String {

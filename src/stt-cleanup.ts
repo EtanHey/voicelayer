@@ -1,4 +1,4 @@
-import { dictionarySurfacePattern, dictionaryReplacement, isWholeDictionarySurface } from "./stt-dictionary-matching";
+import { dictionarySurfacePattern, isWholeDictionarySurface } from "./stt-dictionary-matching";
 import { requireIsolatedOverride } from "./test-isolation";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
@@ -648,6 +648,7 @@ export function cleanupTranscriptionText(
   const aliases = buildRuntimeAliases(env, snapshot);
   const rulesConfig: RulesConfig = {
     aliases,
+    possessiveAliasSources: new Set(Object.keys(snapshot?.aliases ?? {}).map((source) => source.toLowerCase())),
     hebrewLatinAliasSources: BUILTIN_HEBREW_LATIN_ALIAS_SOURCES,
     shouldApplyAlias: shouldApplySTTAlias,
     aggressiveFillerRemoval: isAggressiveFillerRemovalEnabled(env),
@@ -822,7 +823,7 @@ function normalizeCanonicalTerms(
     if (!lowerResult.includes(termLower)) continue;
     result = result.replace(pattern, (match: string, offset: number) =>
       isWholeDictionarySurface(result, offset, offset + match.length, term)
-        ? dictionaryReplacement(match, term, term) : match);
+        ? term : match);
 
   }
   return result;
