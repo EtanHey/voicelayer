@@ -1195,6 +1195,31 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const settle = async () => { for (let i = 0; i < 20; i++) await fixtureCheckpoint(); await flushSpeechArchives(); };
     afterEach(() => resetSelectionReadQueueForTests());
 
+    it("R2-01 refused automatic resume through socket capture releases Option+F5 admission", async () => {
+      const opened = deferred<void>(), take = deferred<string | null>();
+      spies.push(spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+        options?.onCaptureStart?.(); opened.resolve();
+        return finishSyntheticCapture(() => take.promise).finally(() => effectiveStateSpy.mockReturnValue("transcribing"));
+      }));
+      try {
+        expect(await select("A", "Keep the interrupted source text.")).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(0);
+        expect(handleSocketCommand({ cmd: "record", take_id: "refused-real-take" })).toMatchObject({ outcome: "accept" });
+        await opened.promise;
+        take.resolve(null);
+        await settleRecordingJobs(tts.hasF5Capture);
+        expect(isPlaybackPaused()).toBe(false);
+        expect(events.find(e => e.type === "playback_outcome" && e.reason === "resume-refused")).toBeDefined();
+        await awaitCurrentPlayback();
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+        effectiveStateSpy.mockReturnValue("idle");
+        expect(await select("D", "A later Option+F5 works.")).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(1);
+        expect(receipts("D").length).toBeGreaterThan(0);
+      } finally { take.resolve(null); effectiveStateSpy.mockReturnValue("idle"); }
+    });
+
+
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
       const cloneProfile = { name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [],
         reference_clip: "", fallback: "jenny", created: "" };
