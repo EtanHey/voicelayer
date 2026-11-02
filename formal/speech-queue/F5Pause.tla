@@ -1,216 +1,255 @@
 ------------------------------- MODULE F5Pause -------------------------------
-(* One current read, one waiting read and one capture. Fixed projects the lane-F
-   contract; ~Fixed projects the router/player/UI defects, not an executable replay.
-   Fault flips one semantic guard for the config's named property. No audio. *)
-EXTENDS Naturals, Sequences
-CONSTANTS Fixed, PauseBeforeOpen, ResumeOnEveryEnd, SpeechLen, MaxSpeeches, Fault
-(* Diagnostic ghost record names the temporal discharge predicate in TLC 2.19
-   traces: that version prints an anonymous temporal-error headline. *)
-VARIABLES speech, pos, pausedAt, owner, capture, queued, started, pendingPause,
-          f5Saw, stopInCapture, resumes, endOwner, event, held, releaseHadRead,
-          shownQueued, timing, obligations
-vars == <<speech, pos, pausedAt, owner, capture, queued, started, pendingPause,
-          f5Saw, stopInCapture, resumes, endOwner, event, held, releaseHadRead,
-          shownQueued, timing, obligations>>
-
-(* Two audio ticks per word let TLC distinguish an arbitrary millisecond cursor
-   from a word index. Pausing rewinds to the start of the containing word: no tail
-   or word is discarded. SpeechLen is also the end-of-read boundary sentinel. *)
+(* Lane F round 2. One Option+F5 read, two waiting requests, two capture identities.
+   Readiness/audio decoding is abstracted: playing denotes logical read launch.
+   Physical key ownership is independent of capture settlement. No product code. *)
+EXTENDS Naturals, Sequences, FiniteSets, TLC
+CONSTANTS Fixed, PauseBeforeOpen, ResumeOnEveryEnd, SpeechLen, MaxSpeeches,
+          MaxCaptures, CaptureBound, Fault
+VARIABLES s, pressPos, beforeRead, manualHold, f5Saw, transcribingBefore,
+          issuedBefore, obligations
+vars == <<s, pressPos, beforeRead, manualHold, f5Saw, transcribingBefore, issuedBefore, obligations>>
+IDs == 1..MaxCaptures
+Active(caps) == {c \in IDs : caps[c] # "idle"}
+Recording == {c \in IDs : s.caps[c] = "recording"}
+Transcribing == {c \in IDs : s.caps[c] = "transcribing"}
+Settled == Active(s.caps) = {}
+Live == s.speech \in {"preparing", "playing", "paused", "parked_preparing"}
+Parked == s.speech \in {"paused", "parked_preparing"}
 WordAt(p) == p \div 2
 Boundary(p) == 2 * WordAt(p)
-PausePosition(p) == IF Fixed /\ Fault # "WordBoundary" THEN Boundary(p) ELSE p
-ResumePosition == IF Fault = "ResumePosition" THEN 0 ELSE IF Fixed THEN 2 * pausedAt ELSE pos
-Live == speech \in {"preparing", "playing", "paused"}
+ParkWord(p) == CASE Fault = "ParkZero" -> 0
+                   [] Fault = "ParkNextWord" -> IF WordAt(p) < SpeechLen THEN WordAt(p) + 1 ELSE SpeechLen
+                   [] OTHER -> WordAt(p)
+ParkPosition(p) == IF Fault = "WordBoundary" \/ ~Fixed THEN p ELSE 2 * ParkWord(p)
+Read == <<s.speech, s.pos, s.owner>>
+Goal(read) == read.speech \in {"playing", "stopped"} \/ read.owner = "user"
 Outcomes == {"pasted", "empty", "failed", "cancelled", "timeout"}
 EndEvents == {"end_" \o o : o \in Outcomes}
+F5Events == {"f5_pause", "f5_capture", "f5_open_first", "f5_hold_ignored", "f5_tap_stops", "f5_cancel_transcribing"}
 ResumeEvents == {"end_" \o o \o "_auto_resume" : o \in Outcomes}
-F5Edges == {"f5_hold_ignored", "f5_tap_stops", "f5_auto_pause_then_open"}
-(* This is the published snapshot, independent of the true waiting count. The
-   current code tags the preparing job is_current:false (tts.ts emitQueueSnapshot).
-   The slot and the one waiting request share the same lifetime as the F5 pause. *)
 QueueDisplay(q, phase) == q + IF phase = "preparing" /\ (~Fixed \/ Fault = "QueueCount") THEN 1 ELSE 0
-Keep(v) == UNCHANGED v
+Timed(t) == IF t = "none" /\ Fixed /\ Fault # "TimingBlank" THEN "estimate" ELSE t
+Key(g) == IF g = "hold" THEN "hold" ELSE IF g = "double" THEN "locked" ELSE "no"
 
-Init == speech = "none" /\ pos = 0 /\ pausedAt = 0 /\ owner = "none"
-        /\ capture = "idle" /\ queued = 0 /\ started = 0 /\ pendingPause = FALSE
-        /\ f5Saw = "none" /\ stopInCapture = FALSE /\ resumes = 0
-        /\ endOwner = "none" /\ event = "init" /\ held = "no"
-        /\ releaseHadRead = FALSE /\ shownQueued = 0 /\ timing = "none"
-        /\ obligations = [AutoPauseNeverStuck |-> TRUE]
+Initial == [speech |-> "none", pos |-> 0, pausedAt |-> 0, owner |-> "none",
+            caps |-> [c \in IDs |-> "idle"], age |-> [c \in IDs |-> 0], issued |-> 0,
+            queued |-> 0, shownQueued |-> 0, started |-> 0, held |-> "no", keyCap |-> 0,
+            pendingPause |-> FALSE, stopWon |-> FALSE, timing |-> "none",
+            lastOutcome |-> "none", event |-> "init"]
+Init == s = Initial /\ pressPos = 0 /\ beforeRead = <<>> /\ manualHold = FALSE
+        /\ f5Saw = "none" /\ transcribingBefore = {} /\ issuedBefore = 0
+        /\ obligations = [AutoPauseNeverStuck |-> FALSE]
 
+(* Boundary replay: a target daemon has parked word 1 while take A transcribes;
+   the CurrentCancelPostRelease config selects today's cancel/up-edge router. *)
+CancelUpInit == s = [Initial EXCEPT !.speech = "paused", !.pos = 2, !.pausedAt = 1,
+                     !.owner = "f5", !.caps[1] = "transcribing", !.issued = 1,
+                     !.started = 1, !.timing = "real"]
+                /\ pressPos = 3 /\ beforeRead = <<>> /\ manualHold = FALSE
+                /\ f5Saw = "none" /\ transcribingBefore = {} /\ issuedBefore = 0
+                /\ obligations = [AutoPauseNeverStuck |-> FALSE]
+
+(* Current slot and waiting requests are separate. Three requests explore +2 queued. *)
 NewSpeech ==
-  /\ started < MaxSpeeches + (IF Fault = "TypeBound" THEN 1 ELSE 0)
-  /\ IF capture = "idle" /\ ~Live
-       THEN /\ speech' = "preparing" /\ pos' = 0 /\ owner' = "none"
-            /\ timing' = "none" /\ shownQueued' = QueueDisplay(queued, "preparing")
-            /\ event' = "prepare_speech" /\ Keep(<<queued, pausedAt>>)
-       ELSE /\ queued = 0 /\ (capture = "idle" \/ Fixed)
-            /\ queued' = 1 /\ shownQueued' = QueueDisplay(1, speech)
-            /\ event' = "queue_speech" /\ Keep(<<speech, pos, owner, pausedAt, timing>>)
-  /\ started' = started + 1
-  /\ Keep(<<capture, pendingPause, f5Saw, stopInCapture, resumes, endOwner, held, releaseHadRead>>)
-
+  /\ s.started < MaxSpeeches
+  /\ IF Settled /\ ~Live
+       THEN s' = [s EXCEPT !.speech = "preparing", !.pos = 0, !.pausedAt = 0, !.owner = "none",
+                          !.timing = "none", !.shownQueued = QueueDisplay(s.queued, "preparing"),
+                          !.started = @ + 1, !.stopWon = FALSE, !.event = "prepare_speech"]
+       ELSE /\ s.queued < MaxSpeeches - 1 /\ (Settled \/ Fixed)
+            /\ s' = [s EXCEPT !.queued = @ + 1, !.shownQueued = QueueDisplay(s.queued + 1, s.speech),
+                               !.started = @ + 1, !.event = "queue_speech"]
 StartPlayback ==
-  /\ speech = "preparing" /\ capture = "idle"
-  /\ speech' = "playing" /\ shownQueued' = queued /\ event' = "start_playback"
-  /\ timing' = IF timing = "none" /\ Fixed /\ Fault # "TimingBlank" THEN "estimate" ELSE timing
-  /\ Keep(<<pos, pausedAt, owner, capture, queued, started, pendingPause, f5Saw,
-            stopInCapture, resumes, endOwner, held, releaseHadRead>>)
-
+  /\ s.speech = "preparing" \/ (s.speech = "parked_preparing" /\ s.owner = "f5")
+  /\ Settled \/ Fault = "StartDuringCapture"
+  /\ s' = [s EXCEPT !.speech = "playing", !.pos = 0, !.owner = "none", !.shownQueued = s.queued,
+                    !.timing = Timed(s.timing), !.event = "start_playback"]
 TimingArrives ==
-  /\ Live /\ timing # "real" /\ timing' = "real" /\ event' = "timing_arrives"
-  /\ Keep(<<speech, pos, pausedAt, owner, capture, queued, started, pendingPause,
-            f5Saw, stopInCapture, resumes, endOwner, held, releaseHadRead, shownQueued>>)
-
+  /\ s.speech = "playing" /\ s.timing # "real"
+  /\ s' = [s EXCEPT !.timing = "real", !.event = "timing_arrives"]
 Tick ==
-  /\ speech = "playing"
-  /\ IF pos < 2 * SpeechLen
-       THEN pos' = pos + 1 /\ speech' = speech /\ event' = "tick"
-       ELSE pos' = pos /\ speech' = "done" /\ event' = "speech_done"
-  /\ Keep(<<pausedAt, owner, capture, queued, started, pendingPause, f5Saw,
-            stopInCapture, resumes, endOwner, held, releaseHadRead, shownQueued, timing>>)
-
+  /\ s.speech = "playing"
+  /\ IF s.pos < 2 * SpeechLen
+       THEN s' = [s EXCEPT !.pos = @ + 1, !.event = "tick"]
+       ELSE s' = [s EXCEPT !.speech = "done", !.event = "speech_done"]
 Dequeue ==
-  /\ queued = 1 /\ ~Live /\ capture = "idle"
-  /\ speech' = "preparing" /\ pos' = 0 /\ owner' = "none" /\ queued' = 0
-  /\ shownQueued' = QueueDisplay(0, "preparing") /\ timing' = "none" /\ event' = "dequeue"
-  /\ Keep(<<pausedAt, capture, started, pendingPause, f5Saw, stopInCapture,
-            resumes, endOwner, held, releaseHadRead>>)
-
+  /\ s.queued > 0 /\ ~Live /\ Settled
+  /\ s' = [s EXCEPT !.speech = "preparing", !.pos = 0, !.pausedAt = 0, !.owner = "none",
+                    !.queued = @ - 1, !.shownQueued = QueueDisplay(s.queued - 1, "preparing"),
+                    !.timing = "none", !.stopWon = FALSE, !.event = "dequeue"]
 UserPause ==
-  \/ /\ speech = "playing" /\ capture = "idle"
-     /\ speech' = "paused" /\ pausedAt' = WordAt(pos) /\ pos' = PausePosition(pos)
-     /\ owner' = "user" /\ event' = "user_pause"
-     /\ Keep(<<capture, queued, started, pendingPause, f5Saw, stopInCapture,
-               resumes, endOwner, held, releaseHadRead, shownQueued, timing>>)
-  \/ /\ Fixed /\ capture # "idle" /\ speech = "paused" /\ owner = "f5"
-     /\ owner' = "user" /\ event' = "user_pause_converts"
-     /\ Keep(<<speech, pos, pausedAt, capture, queued, started, pendingPause, f5Saw,
-               stopInCapture, resumes, endOwner, held, releaseHadRead, shownQueued, timing>>)
-
+  \/ /\ s.speech \in {"playing", "preparing"} /\ Settled
+     /\ s' = [s EXCEPT !.speech = IF s.speech = "preparing" THEN "parked_preparing" ELSE "paused",
+                       !.pos = IF Fixed THEN Boundary(s.pos) ELSE s.pos, !.pausedAt = WordAt(s.pos),
+                       !.owner = "user", !.event = "user_pause"]
+  \/ /\ Fixed /\ ~Settled /\ Parked /\ s.owner = "f5"
+     /\ s' = [s EXCEPT !.owner = "user", !.event = "user_pause_converts"]
 UserPlay ==
-  /\ speech = "paused" /\ capture = "idle"
-  /\ speech' = "playing" /\ pos' = ResumePosition /\ owner' = "none" /\ event' = "user_play"
-  /\ Keep(<<pausedAt, capture, queued, started, pendingPause, f5Saw, stopInCapture,
-            resumes, endOwner, held, releaseHadRead, shownQueued, timing>>)
-
-(* Speech-scoped Stop differs from F5 release/capture-stop. It clears waiting reads. *)
+  /\ Parked /\ Settled
+  /\ s' = [s EXCEPT !.speech = "playing",
+                    !.pos = IF Fault = "ResumePosition" THEN 0 ELSE IF Fixed THEN 2 * s.pausedAt ELSE s.pos,
+                    !.owner = IF Fault = "KeepOwner" THEN "user" ELSE "none",
+                    !.timing = Timed(s.timing), !.event = "user_play"]
 UserStop ==
-  /\ Live /\ (capture = "idle" \/ Fixed)
-  /\ speech' = "stopped" /\ owner' = "none" /\ queued' = 0 /\ shownQueued' = 0
-  /\ pendingPause' = FALSE /\ stopInCapture' = (capture # "idle")
-  /\ event' = IF capture = "idle" THEN "user_stop" ELSE "stop_in_capture"
-  /\ Keep(<<pos, pausedAt, capture, started, f5Saw, resumes, endOwner, held, releaseHadRead, timing>>)
+  /\ Live /\ (Settled \/ Fixed)
+  /\ s' = [s EXCEPT !.speech = "stopped", !.owner = "none", !.queued = 0, !.shownQueued = 0,
+                    !.pendingPause = FALSE, !.stopWon = ~Settled, !.event = "user_stop"]
 
-StartCapture(spoke, g) ==
-  /\ capture' = "recording" /\ resumes' = 0 /\ stopInCapture' = FALSE
-  /\ f5Saw' = spoke /\ held' = IF g = "hold" THEN "hold" ELSE IF g = "double" THEN "locked" ELSE "no"
+Open(c, g) == [s EXCEPT !.caps[c] = "recording", !.age[c] = 0, !.issued = c,
+                       !.held = Key(g), !.keyCap = IF Key(g) = "no" THEN 0 ELSE c, !.event = "f5_capture"]
+ParkRead(opened) == [opened EXCEPT !.speech = IF s.speech = "preparing" THEN "parked_preparing" ELSE "paused",
+                                  !.pos = ParkPosition(s.pos), !.pausedAt = ParkWord(s.pos),
+                                  !.owner = IF Fault = "InvalidOwner" THEN "invalid" ELSE "f5",
+                                  !.event = "f5_pause"]
+(* Settlement changes a capture identity, never a physical key. Logical launch of
+   a parked preparing read is atomic with the final settlement, with usable timing.
+   No synthesis latency/word-timing accuracy is claimed by this abstraction. *)
+Finish(c, o) == [s EXCEPT !.caps[c] = "idle", !.age[c] = 0, !.lastOutcome = o, !.event = "end_" \o o]
+AfterFinish(ended, o) ==
+  IF (s.owner = "f5" \/ (Fault = "ManualResume" /\ s.owner = "user")
+                       \/ (Fault = "StopResumes" /\ s.stopWon))
+     /\ (Active(ended.caps) = {} \/ Fault = "ResumeEarly")
+     /\ (ResumeOnEveryEnd \/ o = "pasted")
+  THEN [ended EXCEPT !.speech = IF Fault = "DropAtEnd" THEN "stopped" ELSE "playing",
+                    !.pos = IF Fault = "ResumePosition" THEN 0 ELSE 2 * s.pausedAt,
+                    !.owner = "none", !.timing = Timed(s.timing), !.pendingPause = FALSE,
+                    !.event = "end_" \o o \o "_auto_resume"]
+  ELSE ended
 
 F5(g) ==
-  /\ capture = "idle"
-  /\ CASE speech \in {"preparing", "playing"} /\ (~Fixed \/ Fault = "IgnoreF5") ->
-            /\ (IF g = "hold"
-              THEN /\ f5Saw' = speech /\ held' = "hold" /\ event' = "f5_hold_ignored"
-                   /\ Keep(<<speech, owner>>)
-              ELSE /\ f5Saw' = speech /\ held' = IF g = "double" THEN "locked" ELSE "no"
-                   /\ speech' = "stopped" /\ owner' = "none" /\ event' = "f5_tap_stops")
-            /\ Keep(<<pos, pausedAt, capture, pendingPause, stopInCapture, resumes>>)
-       [] speech = "playing" /\ Fixed /\ PauseBeforeOpen ->
-            /\ StartCapture("playing", g) /\ speech' = "paused"
-            /\ pausedAt' = WordAt(pos) /\ pos' = PausePosition(pos) /\ owner' = "f5"
-            /\ event' = "f5_auto_pause_then_open" /\ Keep(pendingPause)
-       [] speech = "playing" /\ Fixed /\ ~PauseBeforeOpen ->
-            /\ StartCapture("playing", g) /\ pendingPause' = TRUE /\ event' = "f5_open_then_pause"
-            /\ Keep(<<speech, pos, pausedAt, owner>>)
-       [] OTHER ->
-            /\ StartCapture(IF speech = "paused" THEN "paused" ELSE "empty", g)
-            /\ event' = "f5_record" /\ Keep(<<speech, pos, pausedAt, owner, pendingPause>>)
-  /\ Keep(<<queued, started, endOwner, releaseHadRead, shownQueued, timing>>)
-
+  /\ s.held = "no" /\ Recording = {}
+  /\ IF Transcribing # {} /\ (~Fixed \/ Fault = "CancelPrevious" \/ Fault = "LegacyRouter")
+       THEN LET c == CHOOSE c \in Transcribing : TRUE
+                cancelled == AfterFinish(Finish(c, "cancelled"), "cancelled")
+            IN s' = [cancelled EXCEPT !.held = Key(g), !.keyCap = IF Key(g) = "no" THEN 0 ELSE c,
+                                     !.event = "f5_cancel_transcribing"]
+       ELSE /\ s.issued < MaxCaptures
+            /\ LET c == s.issued + 1
+                   opened == Open(c, g)
+               IN IF s.speech \in {"playing", "preparing"} /\
+                     (~Fixed \/ Fault = "IgnoreF5" \/ (Fault = "IgnorePreparing" /\ s.speech = "preparing"))
+                  THEN s' = [s EXCEPT !.held = Key(g), !.keyCap = 0,
+                                     !.speech = IF g = "hold" THEN s.speech ELSE "stopped",
+                                     !.owner = "none", !.event = IF g = "hold" THEN "f5_hold_ignored" ELSE "f5_tap_stops"]
+                  ELSE IF s.speech \in {"playing", "preparing"}
+                       THEN s' = IF PauseBeforeOpen THEN ParkRead(opened)
+                                 ELSE [opened EXCEPT !.pendingPause = TRUE, !.event = "f5_open_first"]
+                       ELSE s' = IF Fault = "N6DropsRead" /\ Transcribing # {} /\ Live
+                                 THEN [opened EXCEPT !.speech = "stopped", !.owner = "none"] ELSE opened
 LatePause ==
-  /\ pendingPause /\ speech = "playing"
-  /\ speech' = "paused" /\ pausedAt' = WordAt(pos) /\ pos' = PausePosition(pos)
-  /\ owner' = "f5" /\ pendingPause' = FALSE /\ event' = "late_auto_pause"
-  /\ Keep(<<capture, queued, started, f5Saw, stopInCapture, resumes, endOwner,
-            held, releaseHadRead, shownQueued, timing>>)
-
-(* A physical hold-end is separately reachable even when today's hold-start was
-   ignored. This reproduces R2-01: hold -> ignored -> release -> handleStop. *)
+  /\ s.pendingPause /\ ~Settled /\ s.speech \in {"playing", "preparing"}
+  /\ s' = [s EXCEPT !.speech = IF s.speech = "preparing" THEN "parked_preparing" ELSE "paused",
+                    !.pos = Boundary(pressPos), !.pausedAt = WordAt(pressPos), !.owner = "f5",
+                    !.pendingPause = FALSE, !.event = "late_pause"]
 HoldRelease ==
-  /\ held # "no"
-  /\ (capture = "recording" \/ (capture = "idle" /\ speech \in {"preparing", "playing"} /\ ~Fixed))
-  /\ held' = "no" /\ releaseHadRead' = Live /\ event' = "hold_release"
-  /\ IF (~Fixed /\ capture = "idle") \/ Fault = "ReleaseDrops"
-       THEN /\ speech' = "stopped" /\ owner' = "none" /\ capture' = capture
-       ELSE /\ capture' = IF held = "locked" THEN capture ELSE "transcribing"
-            /\ Keep(<<speech, owner>>)
-  /\ Keep(<<pos, pausedAt, queued, started, pendingPause, f5Saw, stopInCapture,
-            resumes, endOwner, shownQueued, timing>>)
+  /\ s.held # "no"
+  /\ LET released == [s EXCEPT !.held = "no", !.keyCap = 0, !.event = "hold_release"]
+         stoppedCapture == IF s.keyCap \in IDs /\ s.caps[s.keyCap] = "recording" /\ s.held # "locked"
+                           THEN [released EXCEPT !.caps[s.keyCap] = "transcribing", !.age[s.keyCap] = 0]
+                           ELSE released
+         drops == Live /\ (Fault = "ReleaseDrops" \/
+                  ((~Fixed \/ Fault = "PostRelease" \/ Fault = "LegacyRouter") /\ Settled /\ ~Parked))
+     IN s' = IF drops THEN [stoppedCapture EXCEPT !.speech = "stopped", !.owner = "none"] ELSE stoppedCapture
+CaptureStop(c) ==
+  /\ c \in Recording /\ s.held = "no"
+  /\ s' = [s EXCEPT !.caps[c] = "transcribing", !.age[c] = 0, !.event = "capture_stop"]
+EndCapture(c, o) ==
+  /\ c \in Active(s.caps)
+  /\ (s.caps[c] = "transcribing" \/ o \in {"failed", "cancelled", "timeout"})
+  /\ (o # "timeout" \/ s.age[c] = CaptureBound)
+  /\ s' = AfterFinish(Finish(c, o), o)
+StaleEnd(c) ==
+  /\ c <= s.issued /\ s.caps[c] = "idle"
+  /\ s' = IF Settled /\ ((Fault = "DoubleResume" /\ Parked) \/
+                            (Fault = "StaleResumesPaused" /\ s.speech = "paused"))
+          THEN [s EXCEPT !.speech = "playing", !.pos = 2 * s.pausedAt, !.owner = "none",
+                         !.timing = Timed(s.timing), !.event = "stale_capture_end"]
+          ELSE [s EXCEPT !.event = "stale_capture_end"]
+Clock ==
+  /\ \E c \in Active(s.caps): s.age[c] < CaptureBound
+  /\ s' = [s EXCEPT !.age = [c \in IDs |-> IF c \in Active(s.caps) THEN CaptureBound ELSE 0], !.event = "clock"]
+Timeout(c) == EndCapture(c, "timeout")
 
-(* Second tap, VAD silence, or explicit capture stop; never the speech Stop. *)
-CaptureStop ==
-  /\ capture = "recording" /\ capture' = "transcribing" /\ event' = "capture_stop"
-  /\ held' = "no" /\ releaseHadRead' = Live
-  /\ Keep(<<speech, pos, pausedAt, owner, queued, started, pendingPause, f5Saw,
-            stopInCapture, resumes, endOwner, shownQueued, timing>>)
+(* Diagnostic ghosts observe the pre-state, never the mutant's chosen parked word.
+   They retain no unnecessary history outside the event that needs a snapshot. *)
+Observe(action) ==
+  /\ action
+  /\ pressPos' = IF s'.event \in {"prepare_speech", "dequeue"} THEN 0
+                 ELSE IF s'.event = "user_pause" \/
+                         (s'.event \in F5Events /\ s.speech \in {"playing", "preparing"}) THEN s.pos ELSE pressPos
+  /\ beforeRead' = IF s'.event \in ({"hold_release", "stale_capture_end"} \cup EndEvents \cup ResumeEvents)
+                     \/ (s'.event \in F5Events /\ Transcribing # {}) THEN Read ELSE <<>>
+  /\ manualHold' = IF s'.event \in {"user_pause", "user_pause_converts"} THEN TRUE
+                   ELSE IF s'.event \in {"user_play", "user_stop"} THEN FALSE ELSE manualHold
+  /\ f5Saw' = IF s'.event \in F5Events THEN s.speech ELSE "none"
+  /\ transcribingBefore' = IF s'.event \in F5Events THEN Transcribing ELSE {}
+  /\ issuedBefore' = IF s'.event \in F5Events THEN s.issued ELSE 0
+  /\ obligations' = [AutoPauseNeverStuck |-> Goal(s')]
+NormalNext == Observe(NewSpeech \/ StartPlayback \/ TimingArrives \/ Tick \/ Dequeue \/ UserPause \/ UserPlay
+                \/ UserStop \/ LatePause \/ HoldRelease \/ Clock
+                \/ (\E g \in {"hold", "tap", "double"}: F5(g))
+                \/ (\E c \in IDs: CaptureStop(c) \/ StaleEnd(c) \/ (\E o \in Outcomes: EndCapture(c, o))))
+(* OpenFirst reverses the ordering inside one handler. Its wrong open-mic frame
+   remains reachable; the handler's pause continuation then quiesces playback
+   before unrelated actions. Fixed never enters this deliberately broken phase. *)
+Next == IF s.pendingPause THEN Observe(LatePause) ELSE NormalNext
+(* Clock and deadline callbacks progress; a transcription hang is explicitly ended
+   by the per-identity deadline. No fairness on user input or ordinary settlement. *)
+Fair == (IF Fault = "NoFairness" THEN TRUE ELSE WF_vars(Observe(Clock)))
+        /\ \A c \in IDs: WF_vars(Observe(Timeout(c)))
+Spec == Init /\ [][Next]_vars /\ Fair
+SpecCancelUp == CancelUpInit /\ [][Next]_vars /\ Fair
 
-F5Busy ==
-  /\ capture = "transcribing" /\ event' = "f5_busy"
-  /\ Keep(<<speech, pos, pausedAt, owner, capture, queued, started, pendingPause, f5Saw,
-            stopInCapture, resumes, endOwner, held, releaseHadRead, shownQueued, timing>>)
+TypeOK == s.speech \in {"none", "preparing", "playing", "paused", "parked_preparing", "done", "stopped"}
+          /\ s.pos \in 0..(2 * SpeechLen) /\ s.pausedAt \in 0..SpeechLen /\ pressPos \in 0..(2 * SpeechLen)
+          /\ s.owner \in {"none", "user", "f5"} /\ s.caps \in [IDs -> {"idle", "recording", "transcribing"}]
+          /\ s.age \in [IDs -> 0..CaptureBound] /\ s.issued \in 0..MaxCaptures
+          /\ s.queued \in 0..(MaxSpeeches - 1) /\ s.shownQueued \in 0..MaxSpeeches
+          /\ s.started \in 0..MaxSpeeches /\ s.held \in {"no", "hold", "locked"} /\ s.keyCap \in 0..MaxCaptures
+          /\ s.timing \in {"none", "estimate", "real"} /\ manualHold \in BOOLEAN
+          /\ s.stopWon \in BOOLEAN /\ s.pendingPause \in BOOLEAN /\ s.event \in STRING
+NoSpeechDuringOpenMic == ~Settled => s.speech # "playing"
+F5PausesPlayingSpeech == f5Saw = "playing" /\ s.event \in F5Events
+                         => s.speech = "paused" /\ s.owner = "f5" /\ Recording # {}
+F5HoldsPreparingRead == f5Saw = "preparing" /\ s.event \in F5Events
+                       => s.speech = "parked_preparing" /\ s.owner = "f5" /\ Recording # {}
+F5DuringTranscriptionStartsCapture == s.event \in F5Events /\ transcribingBefore # {}
+                                     => transcribingBefore \subseteq Transcribing /\ s.issued = issuedBefore + 1
+                                        /\ s.caps[s.issued] = "recording" /\ Read = beforeRead
+ManualPausePersists == manualHold => Parked /\ s.owner = "user"
+NoF5PauseOutsideCapture == s.owner = "f5" => ~Settled
+ResumeFromPausedPosition ==
+  /\ (s.event \in (ResumeEvents \cup {"user_play"}) => s.speech = "playing" /\ s.pos = Boundary(pressPos))
+  /\ IF s.event \in (EndEvents \cup ResumeEvents) /\ Settled
+        THEN (beforeRead[3] = "f5" => s.speech = "playing" /\ s.owner = "none" /\ s.pos = Boundary(pressPos))
+        ELSE TRUE
+NoDoubleResume == s.event = "stale_capture_end" \/
+                  (s.event \in (EndEvents \cup ResumeEvents) /\ ~Settled) => Read = beforeRead
+StopWins == s.stopWon => s.speech = "stopped"
+OwnerConsistent == (s.owner # "none" => Parked) /\ (s.owner = "user" => manualHold)
+ReleaseNeverDropsRead == s.event = "hold_release" => Read = beforeRead
+PauseAtWordBoundary == Parked => s.pos = Boundary(pressPos) /\ s.pausedAt = WordAt(pressPos)
+QueuedCountExcludesCurrent == s.shownQueued = s.queued
+TimingNeverBlankWhilePlaying == s.speech = "playing" => s.timing \in {"estimate", "real"}
+AutoPauseNeverStuck == (s.owner = "f5") ~> Goal(s)
 
-EndCapture(o) ==
-  /\ \/ capture = "transcribing" /\ o \in {"pasted", "empty", "failed", "cancelled"}
-     \/ capture = "recording" /\ o \in {"cancelled", "timeout", "failed"}
-  /\ capture' = "idle" /\ endOwner' = owner /\ pendingPause' = FALSE /\ held' = "no"
-  /\ IF Fixed /\ (owner = "f5" \/ (Fault = "ManualResume" /\ owner = "user")
-                                   \/ (Fault = "StopResumes" /\ stopInCapture))
-              /\ (ResumeOnEveryEnd \/ o = "pasted")
-       THEN /\ speech' = "playing" /\ pos' = ResumePosition
-            /\ owner' = IF Fault = "KeepOwner" THEN owner ELSE "none"
-            /\ resumes' = resumes + 1 /\ event' = "end_" \o o \o "_auto_resume"
-       ELSE /\ event' = "end_" \o o /\ Keep(<<speech, pos, owner, resumes>>)
-  /\ Keep(<<pausedAt, queued, started, f5Saw, stopInCapture, releaseHadRead, shownQueued, timing>>)
-
-StaleEnd ==
-  /\ capture = "idle" /\ f5Saw # "none" /\ event' = "stale_capture_end"
-  /\ resumes' = IF Fault = "DoubleResume" /\ resumes = 1 THEN resumes + 1 ELSE resumes
-  /\ Keep(<<speech, pos, pausedAt, owner, capture, queued, started, pendingPause, f5Saw,
-            stopInCapture, endOwner, held, releaseHadRead, shownQueued, timing>>)
-
-CaptureAdvance == CaptureStop \/ \E o \in Outcomes: EndCapture(o)
-Observe(action) == action /\ obligations' = [AutoPauseNeverStuck |-> owner' # "f5"]
-Next == Observe(NewSpeech \/ StartPlayback \/ TimingArrives \/ Tick \/ Dequeue \/ UserPause \/ UserPlay
-            \/ UserStop \/ LatePause \/ HoldRelease \/ F5Busy \/ StaleEnd \/ CaptureAdvance
-            \/ \E g \in {"tap", "hold", "double"}: F5(g))
-(* Capture progress/timeout and a pending pause eventually settle; user actions,
-   timing arrival and speech completion are never forced. *)
-Spec == Init /\ [][Next]_vars /\ WF_vars(Observe(CaptureAdvance)) /\ WF_vars(Observe(LatePause))
-
-TypeOK == speech \in {"none", "preparing", "playing", "paused", "done", "stopped"}
-          /\ pos \in 0..(2 * SpeechLen) /\ pausedAt \in 0..SpeechLen
-          /\ owner \in {"none", "user", "f5"} /\ capture \in {"idle", "recording", "transcribing"}
-          /\ queued \in 0..1 /\ started \in 0..MaxSpeeches /\ resumes \in 0..2
-          /\ shownQueued \in 0..2 /\ timing \in {"none", "estimate", "real"}
-          /\ pendingPause \in BOOLEAN /\ held \in {"no", "hold", "locked"} /\ releaseHadRead \in BOOLEAN
-          /\ stopInCapture \in BOOLEAN /\ endOwner \in {"none", "user", "f5"}
-          /\ f5Saw \in {"none", "preparing", "playing", "paused", "empty"} /\ event \in STRING
-          /\ obligations \in [{"AutoPauseNeverStuck"} -> BOOLEAN]
-NoSpeechDuringOpenMic == capture # "idle" => speech # "playing"
-F5PausesPlayingSpeech == f5Saw = "playing" /\ event \in F5Edges
-                         => speech = "paused" /\ owner = "f5" /\ capture = "recording"
-ManualPausePersists == endOwner = "user" /\ event \in (EndEvents \cup ResumeEvents)
-                       => speech = "paused" /\ owner = "user"
-NoF5PauseOutsideCapture == owner = "f5" => capture # "idle"
-(* Checks the actual post-resume cursor, not merely the pre-resume parked state. *)
-ResumeFromPausedPosition == event \in (ResumeEvents \cup {"user_play"}) => pos = 2 * pausedAt
-NoDoubleResume == resumes <= 1
-(* Includes auto-resume events so an erroneous resume cannot evade this check. *)
-StopWins == stopInCapture /\ event \in (EndEvents \cup ResumeEvents) => speech # "playing"
-OwnerConsistent == owner # "none" => speech = "paused"
-ReleaseNeverDropsRead == event \in {"hold_release", "capture_stop"} /\ releaseHadRead => Live
-PauseAtWordBoundary == speech = "paused" => pos = 2 * pausedAt
-QueuedCountExcludesCurrent == shownQueued = queued
-TimingNeverBlankWhilePlaying == speech = "playing" => timing \in {"estimate", "real"}
-AutoPauseNeverStuck == (owner = "f5") ~> (owner # "f5")
+(* TLC -continue stops its invariant list at the first false invariant in each
+   successor. This constraint never filters: PrintT returns TRUE. It evaluates
+   every actual predicate so later failures cannot be mislabeled as survivors. *)
+CrossDiagnostics ==
+  /\ (TypeOK \/ PrintT("CrossKill:TypeOK"))
+  /\ (NoSpeechDuringOpenMic \/ PrintT("CrossKill:NoSpeechDuringOpenMic"))
+  /\ (F5PausesPlayingSpeech \/ PrintT("CrossKill:F5PausesPlayingSpeech"))
+  /\ (ManualPausePersists \/ PrintT("CrossKill:ManualPausePersists"))
+  /\ (NoF5PauseOutsideCapture \/ PrintT("CrossKill:NoF5PauseOutsideCapture"))
+  /\ (ResumeFromPausedPosition \/ PrintT("CrossKill:ResumeFromPausedPosition"))
+  /\ (NoDoubleResume \/ PrintT("CrossKill:NoDoubleResume"))
+  /\ (StopWins \/ PrintT("CrossKill:StopWins"))
+  /\ (OwnerConsistent \/ PrintT("CrossKill:OwnerConsistent"))
+  /\ (ReleaseNeverDropsRead \/ PrintT("CrossKill:ReleaseNeverDropsRead"))
+  /\ (PauseAtWordBoundary \/ PrintT("CrossKill:PauseAtWordBoundary"))
+  /\ (QueuedCountExcludesCurrent \/ PrintT("CrossKill:QueuedCountExcludesCurrent"))
+  /\ (TimingNeverBlankWhilePlaying \/ PrintT("CrossKill:TimingNeverBlankWhilePlaying"))
+  /\ (F5HoldsPreparingRead \/ PrintT("CrossKill:F5HoldsPreparingRead"))
+  /\ (F5DuringTranscriptionStartsCapture \/ PrintT("CrossKill:F5DuringTranscriptionStartsCapture"))
 =============================================================================

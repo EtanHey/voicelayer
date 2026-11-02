@@ -9,7 +9,7 @@ import shutil
 import tempfile
 from admission_source import check_admission
 from f5_conformance import check_f5_runtime
-from f5_checks import EXPECTED as F5_EXPECTED, check_mutant_coverage, check_reachability, valid_result, render_receipt
+from f5_checks import EXPECTED as F5_EXPECTED, check_mutant_coverage, check_reachability, valid_result, render_receipt, cross_kill
 from supervision import Supervisor
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,9 +37,10 @@ def check(runner, f5_only=False, receipt=False):
         configs = [config for config in configs if config.stem in F5_EXPECTED]
     jar = Path.home() / ".cache/tla/tla2tools.jar"
     assert jar.is_file(), f"Missing TLC jar: {jar}"
-    sources = [SPEC / "F5Pause.tla", SPEC / "check.py", SPEC / "f5_checks.py", *configs]
+    sources = [SPEC / "F5Pause.tla", SPEC / "check.py", SPEC / "f5_checks.py", SPEC / "cross_tlc.py", *configs]
     sources += [SPEC / "f5_conformance.py", *[ROOT / path for path in (
         "src/tts.ts", "src/f5-capture.ts", "src/socket-handlers.ts", "src/socket-protocol.ts", "src/selection-read-queue.ts",
+        "src/recording-jobs.ts", "src/recording-take-queue.ts", "src/recording-state.ts", "formal/corpus_support.py",
         "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift", "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
         "flow-bar/Sources/VoiceBarUI/VoiceState.swift", "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift",
         "src/__tests__/tts-long-read-runtime.test.ts", "src/__tests__/tts-pause.test.ts")]]
@@ -48,9 +49,9 @@ def check(runner, f5_only=False, receipt=False):
     print(f"Evidence: {RUN}", flush=True)
     for config in configs:
         name = config.stem
-        cmd = ["nice", "-n", "19", "java", "-Xmx512m", "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC", "-workers", "1", "-fp", "0", "-seed", "1",
+        cmd = ["nice", "-n", "19", "java", "-Xmx512m", "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC", "-workers", "1", "-fp", "0", "-seed", "1", "-lncheck", "final",
                "-metadir", str(RUN / name), "-config", str(config)]
-        if EXPECTED[name] is None or name == "F5PauseStuck":
+        if EXPECTED[name] is None:
             cmd += ["-dump", "dot,actionlabels", str(RUN / f"{name}.dot")]
         module = "F5Pause" if name.startswith("F5Pause") else "QueueAdmission" if name.startswith("QueueAdmission") else "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
         status = runner.run([*cmd, str(SPEC / f"{module}.tla")], RUN / f"{name}.log", 90, cwd=ROOT,
@@ -73,17 +74,20 @@ def check(runner, f5_only=False, receipt=False):
         rows.append(dict(name=name, expected=invariant, actual=actual, generated=int(counts[1]),
                          distinct=int(counts[2]), depth=measured_depth, excerpt=excerpt))
         print(f"{name}: {actual}; {counts[0]}; depth {measured_depth}", flush=True)
+    cross = cross_kill(RUN, runner,
+        ["nice", "-n", "19", "java", "-Xmx512m", "-XX:+UseParallelGC", "-cp", str(jar),
+         "tlc2.TLC", "-workers", "2", "-fp", "0", "-seed", "1"], SPEC)
     check_reachability(RUN)
     assert all(hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest
                for path, digest in hashes.items()), "Sources changed during TLC"
-    (RUN / "results.json").write_text(json.dumps(dict(rows=rows, sourceSHA256=hashes,
+    (RUN / "results.json").write_text(json.dumps(dict(rows=rows, cross=cross, sourceSHA256=hashes,
         tlcJarSHA256=hashlib.sha256(jar.read_bytes()).hexdigest()), indent=2) + "\n")
     if receipt:
         document = SPEC / "F5PAUSE-TLC.md"
         before, separator, rest = document.read_text().partition("<!-- TLC-RESULTS-START -->")
         assert separator and "<!-- TLC-RESULTS-END -->" in rest, "Receipt markers missing"
         after = rest.split("<!-- TLC-RESULTS-END -->", 1)[1]
-        document.write_text(before + separator + "\n" + render_receipt(rows) + "<!-- TLC-RESULTS-END -->" + after)
+        document.write_text(before + separator + "\n" + render_receipt(rows, cross) + "<!-- TLC-RESULTS-END -->" + after)
     if f5_only:
         print("PASS: F5 fixed contract, current failures, and every exact-property mutant (no runtime replay)", flush=True)
         return
