@@ -1,0 +1,131 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 118 and seed -5377248573886870302 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 4784] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file <model-check>/ResidentRecognizer.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module ResidentRecognizer
+Starting... (2026-11-02 09:47:04)
+Computing initial states...
+Finished computing initial states: 2 distinct states generated at 2026-11-02 09:47:04.
+Error: Invariant OneModel is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "idle"
+/\ desired = "W"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = FALSE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "none"
+
+State 2: <Next line 64, col 9 to line 64, col 83 of module ResidentRecognizer>
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "idle"
+/\ desired = "W"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = TRUE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "none"
+
+State 3: <Next line 64, col 9 to line 64, col 83 of module ResidentRecognizer>
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "stopP"
+/\ desired = "W"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = TRUE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "picker"
+
+State 4: <Next line 64, col 9 to line 64, col 83 of module ResidentRecognizer>
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "stopW"
+/\ desired = "W"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = TRUE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "picker"
+
+State 5: <Next line 64, col 9 to line 64, col 83 of module ResidentRecognizer>
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "load"
+/\ desired = "P"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = TRUE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "picker"
+
+State 6: <Next line 64, col 9 to line 64, col 83 of module ResidentRecognizer>
+/\ models = {"P"}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "idle"
+/\ desired = "P"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = TRUE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "none"
+
+State 7: <Next line 64, col 9 to line 64, col 83 of module ResidentRecognizer>
+/\ models = {"W", "P"}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "idle"
+/\ desired = "P"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = FALSE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "none"
+
+404 states generated, 192 distinct states found, 53 states left on queue.
+The depth of the complete state graph search is 7.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 5 and the 95th percentile is 4).
+Finished in 00s at (2026-11-02 09:47:04)

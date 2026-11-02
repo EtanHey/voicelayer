@@ -51,6 +51,7 @@ let backendTranscribeCalls = 0;
 let backendTranscribedDataSize: number | undefined;
 let backendTranscribedFileBytes: number | undefined;
 let backendText = "retained transcript";
+let backendAttemptEvidence: stt.STTResult["attemptEvidence"];
 let finishHangingTranscription: (() => void) | undefined;
 let broadcasts: any[] = [];
 let vadProcessSpy: ReturnType<typeof spyOn> | undefined;
@@ -410,6 +411,7 @@ describe("input recording durability", () => {
     backendTranscribedDataSize = undefined;
     backendTranscribedFileBytes = undefined;
     backendText = "retained transcript";
+    backendAttemptEvidence = undefined;
     finishHangingTranscription = undefined;
     broadcasts = [];
     polishSurfaces = [];
@@ -444,6 +446,7 @@ describe("input recording durability", () => {
             text: backendText,
             backend: "fake-stt",
             durationMs: 1,
+            attemptEvidence: backendAttemptEvidence,
           };
         },
       };
@@ -2000,6 +2003,26 @@ describe("input recording durability", () => {
     expect(metadataUpdates()).toEqual([
       { type: "archive_metadata_updated", recording_path: archive },
     ]);
+  });
+
+  it("History retains a phrase-free CJK gate removal instead of a RETURNED/empty witness", async () => {
+    const archive = await silentVoiceBarArchive();
+    backendText = "";
+    backendAttemptEvidence = { status: "EMPTY_RESPONSE", gateRemoval: { gate: "cjk-outro", removedSpans: 1, rawCharacters: 16 } };
+    const { retranscribeRecordingCapture } = await import("../input");
+    await expect(retranscribeRecordingCapture(archive)).resolves.toBeNull();
+    const metadata = voiceBarArchiveMetadata(archive);
+    expect(metadata.last_stt_gate_removal).toEqual(backendAttemptEvidence.gateRemoval);
+    expect(metadata.not_transcribed_detail).toContain("Whisper CJK closing-phrase filter removed 1 span(s)");
+    expect(metadataUpdates().some(event => event.recording_path === archive)).toBe(true);
+    // Another empty attempt must also explain the gate without erasing saved text.
+    const metadataPath = archive.replace("audio.wav", "metadata.json");
+    writeFileSync(metadataPath, JSON.stringify({ ...metadata, transcription_status: "transcribed" }));
+    const transcriptPath = archive.replace("audio.wav", "voicelayer-transcript.txt");
+    writeFileSync(transcriptPath, "Previously saved real words.");
+    await expect(retranscribeRecordingCapture(archive)).resolves.toBeNull();
+    expect(readFileSync(transcriptPath, "utf8")).toBe("Previously saved real words.");
+    expect(voiceBarArchiveMetadata(archive).not_transcribed_detail).toContain("closing-phrase filter");
   });
 
   it("NOTX1 records empty-transcript when the live decode returns no words", async () => {

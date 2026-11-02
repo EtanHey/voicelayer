@@ -1,0 +1,29 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 83 and seed -8775335849605835750 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 5263] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file <model-check>/ResidentRecognizer.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module ResidentRecognizer
+Starting... (2026-11-02 09:47:06)
+Computing initial states...
+Error: Invariant ProvisionedSelectable is violated by the initial state:
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W", "P"}
+/\ stage = "idle"
+/\ desired = "W"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = FALSE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "none"
+
+Finished in 00s at (2026-11-02 09:47:06)

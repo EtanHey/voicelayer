@@ -24,6 +24,8 @@ export interface STTAttemptEvidence {
   decodeCoverage?: "FULL_INPUT" | "PARTIAL" | "UNKNOWN";
   tail?: "UNKNOWN" | "KNOWN_MISSING" | "VERIFIED_BY_EXTERNAL_EVIDENCE";
   timesValid?: boolean;
+  /** A successful decode was emptied by an acoustic gate, not lost in transport. No transcript words. */
+  gateRemoval?: { gate: "cjk-outro"; removedSpans: number; rawCharacters: number };
 }
 
 export type STTOutcome =

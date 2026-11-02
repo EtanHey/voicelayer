@@ -14,6 +14,14 @@ const pointer = join(state, "parakeet-runtime.json");
 const keys = ["VOICELAYER_STATE_DIR", "XDG_CACHE_HOME", "VOICELAYER_PARAKEET_PYTHON", "VOICELAYER_PARAKEET_MODEL"] as const;
 const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 const signal = () => new AbortController().signal;
+async function within<T>(work: Promise<T>, label: string, ms = 1000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} exceeded ${ms} ms`)), ms);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 function venv(directory: string) {
   mkdirSync(join(directory, "bin"), { recursive: true });
   writeFileSync(join(directory, "bin", "python"), "python-fixture");
@@ -158,20 +166,28 @@ test("cancel escalates an uncooperative setup child to SIGKILL and joins its exi
   const waiting = waitForRuntimeSetup({ exited: exit.promise, kill: signal => {
     signals.push(String(signal)); if (signal === "SIGKILL") exit.resolve(137);
   } }, controller.signal, 10);
-  controller.abort(); await expect(waiting).rejects.toThrow();
+  // Observe settlement with ordinary awaits. Bun's rejects matcher on this
+  // pending promise can block before the abort that causes its rejection.
+  const settled = waiting.then(() => null, error => error);
+  controller.abort();
+  try { expect(await within(settled, "setup cancellation")).toBeInstanceOf(Error); }
+  finally { exit.resolve(137); await within(settled, "fixture cleanup"); }
   expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
-});
+}, 3000);
 test("cancelling a real setup fixture that ignores SIGTERM joins its SIGKILL exit", async () => {
   const controller = new AbortController();
   const proc = Bun.spawn([process.execPath, "-e", 'process.on("SIGTERM",()=>{}); console.log("ready"); setInterval(()=>{},1000);'],
     { env: process.env, stdout: "pipe", stderr: "ignore" });
   try {
-    const reader = proc.stdout.getReader(); await reader.read(); reader.releaseLock();
+    const reader = proc.stdout.getReader();
+    try { expect((await within(reader.read(), "setup fixture readiness")).done).toBe(false); }
+    finally { reader.releaseLock(); }
     const waiting = waitForRuntimeSetup(proc, controller.signal, 20);
-    controller.abort(); await expect(waiting).rejects.toThrow();
+    const settled = waiting.then(() => null, error => error);
+    controller.abort(); expect(await within(settled, "real setup cancellation")).toBeInstanceOf(Error);
     expect(proc.signalCode).toBe("SIGKILL");
-  } finally { proc.kill("SIGKILL"); await proc.exited; }
-});
+  } finally { try { proc.kill("SIGKILL"); } catch {} await within(proc.exited, "real fixture cleanup"); }
+}, 4000);
 
 test("symlinked legacy runtime is never relocated", () => {
   venv(join(root, "custom")); mkdirSync(join(state, "runtimes")); symlinkSync(join(root, "custom"), legacy);

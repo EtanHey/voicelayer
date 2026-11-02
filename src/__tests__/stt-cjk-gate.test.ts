@@ -44,16 +44,14 @@ describe("CJK hallucination candidates retain acoustic safety", () => {
   }
   test("unknown all-CJK output is a candidate only under a fixed non-CJK language", () => {
     const text = "これは別の文章です。";
-    for (const language of ["en", "he", "en-US", "hebrew"]) {
-      expect(stripHallucinatedOutro(text, wav(), { language }).text).toBe("");
-      expect(stripHallucinatedOutro(text, wav(0.5, 30), { language,
+    for (const explicitLanguage of ["en", "he"] as const) {
+      expect(stripHallucinatedOutro(text, wav(), { explicitLanguage }).text).toBe("");
+      expect(stripHallucinatedOutro(text, wav(0.5, 30), { explicitLanguage,
         segments: [{ text, startS: 0.5, endS: 2.8 }], segmentsText: text }).text).toBe(text);
     }
-    for (const language of [undefined, "auto", "ja", "zh", "ko", "yue"]) {
-      expect(stripHallucinatedOutro(text, wav(), { language }).text).toBe(text);
-    }
+    expect(stripHallucinatedOutro(text, wav()).text).toBe(text);
     for (const mixed of ["Ship it. 字幕", "שלום 字幕", "ありがとう…", "ありがとう?", "ありがとう？"]) {
-      expect(stripHallucinatedOutro(mixed, wav(), { language: "en" }).text).toBe(mixed);
+      expect(stripHallucinatedOutro(mixed, wav(), { explicitLanguage: "en" }).text).toBe(mixed);
     }
   });
   test("CJK punctuation splits sentences without allowing fragments or questions", () => {
@@ -62,10 +60,16 @@ describe("CJK hallucination candidates retain acoustic safety", () => {
       expect(findOutroCandidates(`ご視聴ありがとうございました${ending}`)).toEqual([]);
     }
   });
+  test("mismatch never removes a multi-sentence paragraph or more than 20 CJK characters", () => {
+    for (const text of ["これは最初の文章です。これは次の文章です。", "これは最初です.これは次です.", "あ".repeat(21) + "。", "短い未完の語"]) {
+      expect(stripHallucinatedOutro(text, wav(), { explicitLanguage: "en" }).text).toBe(text);
+    }
+    expect(stripHallucinatedOutro("あ".repeat(20) + "。", wav(), { explicitLanguage: "en" }).text).toBe("");
+  });
   test("wrong-language candidate retains stale or missing segment evidence on non-flat audio", () => {
     const text = "これは別の文章です。", audio = wav(0, 30);
-    expect(stripHallucinatedOutro(text, audio, { language: "en" }).text).toBe(text);
-    expect(stripHallucinatedOutro(text, audio, { language: "en", segmentsText: "different",
+    expect(stripHallucinatedOutro(text, audio, { explicitLanguage: "en" }).text).toBe(text);
+    expect(stripHallucinatedOutro(text, audio, { explicitLanguage: "en", segmentsText: "different",
       segments: [{ text, startS: 0.5, endS: 2.8 }] }).text).toBe(text);
   });
   test("server backend passes configured language and gates a silent CJK response before returning it", async () => {
@@ -82,6 +86,10 @@ describe("CJK hallucination candidates retain acoustic safety", () => {
         const result = await backend.transcribe(path);
         expect(requested).toBe(language); expect(result.text).toBe(""); expect(result.backend).toContain("+outro");
       }
+      process.env.QA_VOICE_WHISPER_LANG = "auto";
+      const backend = new WhisperServerBackend({ isServerAvailable: () => true,
+        transcribeViaServer: async (_, options) => { expect(options?.language).toBe("he"); return "これは別の文章です。"; } });
+      expect((await backend.transcribe(path, { language: "en", detectedLanguage: "he" })).text).toBe("これは別の文章です。");
     } finally {
       if (savedLanguage === undefined) delete process.env.QA_VOICE_WHISPER_LANG; else process.env.QA_VOICE_WHISPER_LANG = savedLanguage;
       if (savedGate === undefined) delete process.env.VOICELAYER_STT_OUTRO_GATE; else process.env.VOICELAYER_STT_OUTRO_GATE = savedGate;
@@ -102,12 +110,20 @@ describe("CJK hallucination candidates retain acoustic safety", () => {
       Object.defineProperty(backend, "modelPath", { value: join(root, "model-fixture.bin") });
       for (const [setting, code] of [["english", "en"], ["hebrew", "he"]]) {
         process.env.QA_VOICE_WHISPER_LANG = setting; writeFileSync(path, wav());
-        expect((await backend.transcribe(path)).text).toBe("");
+        const result = await backend.transcribe(path);
+        expect(result.text).toBe("");
+        expect(result.attemptEvidence).toMatchObject({ status: "EMPTY_RESPONSE",
+          gateRemoval: { gate: "cjk-outro", removedSpans: 1, rawCharacters: "これは別の文章です。".length } });
         const args = readFileSync(argsPath, "utf8").trim().split("\n");
         expect(args[args.indexOf("-l") + 1]).toBe(code);
         writeFileSync(path, wav(0, 30));
         expect((await backend.transcribe(path)).text).toBe("これは別の文章です。");
       }
+      process.env.QA_VOICE_WHISPER_LANG = "auto"; writeFileSync(path, wav());
+      const autoResult = await backend.transcribe(path, { language: "en", detectedLanguage: "he" });
+      expect(autoResult.text).toBe("これは別の文章です。");
+      expect(autoResult.attemptEvidence).toMatchObject({ status: "RETURNED" });
+      expect(autoResult.attemptEvidence?.gateRemoval).toBeUndefined();
     } finally {
       keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; });
       rmSync(root, { recursive: true, force: true });

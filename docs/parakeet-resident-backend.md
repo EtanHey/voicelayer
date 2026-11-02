@@ -248,12 +248,16 @@ arrives in the existing `recognizer_status` events. Downloads hold only per-engi
 ownership and never block recording or transcription. Selection, residency and
 delete require idle voice work; delete unloads the engine first and requires
 another installed recognizer.
-Deleting the selected engine saves the other selection first. Only named regular
+Deleting the selected engine saves the other selection first; that remaining
+engine loads on the next dictation unless already resident. Only named regular
 model files are removed; shared-cache links and unrelated files are preserved.
 
 Downloads use the immutable revisions and SHA256 pins in
 `src/recognizer-download-manifest.ts`, stage beside the destination, then rename
 after verification. Failed/cancelled staging never counts as installed. Parakeet
+can be explicitly re-downloaded/Set up even with complete weights present: it
+verifies their pinned bytes read-only and validates/repairs only the runtime.
+The weight bytes, inodes and modification times remain unchanged. Setup
 also installs and validates a VoiceLayer-owned venv from the wheel-only,
 hash-locked `src/parakeet-runtime.lock` (mlx-audio 0.6.3), then atomically records
 its Python path in `parakeet-runtime.json`. The Python override still wins.

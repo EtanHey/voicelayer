@@ -1,0 +1,67 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 56 and seed -115331800567808933 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 5568] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file <model-check>/ResidentRecognizer.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module ResidentRecognizer
+Starting... (2026-11-02 09:47:09)
+Computing initial states...
+Finished computing initial states: 2 distinct states generated at 2026-11-02 09:47:09.
+Error: Invariant DownloadNeverBlocksAdmittedRequest is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "idle"
+/\ desired = "W"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = FALSE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "none"
+
+State 2: <DownloadBegin line 86, col 18 to line 89, col 139 of module ResidentRecognizer>
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "transfer"
+/\ desired = "W"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = TRUE
+/\ capture = FALSE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "download"
+
+State 3: <DownloadAdmit line 93, col 18 to line 95, col 157 of module ResidentRecognizer>
+/\ models = {}
+/\ attempted = {}
+/\ request = FALSE
+/\ recovery = "none"
+/\ assetsPresent = {"W"}
+/\ stage = "transfer"
+/\ desired = "W"
+/\ previous = "W"
+/\ target = "P"
+/\ pendingLegacy = TRUE
+/\ capture = TRUE
+/\ deletedDuringCapture = FALSE
+/\ hold = FALSE
+/\ owner = "download"
+
+6 states generated, 6 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-11-02 09:47:09)

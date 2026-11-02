@@ -42,6 +42,8 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
   try {
     if (deps === defaults && process.env.VOICELAYER_TEST_ISOLATED === "1") throw new Error("download-network-denied-in-tests");
     beginRecognizerDownload(engine); acquired = true; active.set(engine, controller);
+    // Parakeet Set up/re-download may repair its runtime with weights already
+    // present. The existingModels path verifies those pins read-only below.
     if (engine === "whisper" && readRecognizerAssets(engine).assets_present) throw new Error("assets-already-present");
     const phase = readRecognizerStatus().engines[engine].phase;
     if (phase === "loading" || phase === "ready" ||
