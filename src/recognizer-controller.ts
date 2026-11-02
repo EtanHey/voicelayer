@@ -121,6 +121,8 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
 
 /** Symmetric explicit residency; loading never changes the desired recognizer. */
 export async function setRecognizerResidency(engine: Recognizer, action: "load" | "unload", deps: RecognizerTransitionDeps = defaults) {
+  const current = readRecognizerStatus();
+  if (action === "load" && current.desired === engine && current.effective !== null && current.effective !== engine) return selectRecognizer(engine, deps);
   let acquired = false, loading = false, outcome: "accept" | "reject" = "accept", reason: string | undefined;
   try {
     beginRecognizerMaintenance(); acquired = true;

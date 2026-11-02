@@ -8,17 +8,24 @@ import { configureRecognizerBusyProbe, readRecognizerStatus, noteRecognizerEngin
 import { parseCommand } from "../socket-protocol";
 const root = testTmp("downloads"), keys = ["QA_VOICE_WHISPER_MODEL", "VOICELAYER_STATE_DIR", "QA_VOICE_STT_BACKEND", "VOICELAYER_PARAKEET_MODEL", "VOICELAYER_PARAKEET_PYTHON"] as const;
 let saved: (string | undefined)[];
+let prior: ReturnType<typeof readRecognizerStatus>;
 const bytes = Buffer.from("synthetic weights"), file = { name: "fixture.bin", bytes: bytes.length,
   sha256: createHash("sha256").update(bytes).digest("hex"), url: "https://invalid.example/never-fetch" };
 function deps(): DownloadDeps { return { files: () => [file], transfer: async (_, path, signal, progress) => {
   signal.throwIfAborted(); writeFileSync(path, bytes); progress(bytes.length);
 }, runtime: async () => { throw new Error("unexpected-runtime"); }, freeBytes: () => 20 * 1024 ** 3 }; }
 beforeEach(() => {
+  prior = readRecognizerStatus();
   saved = keys.map(k => process.env[k]); mkdirSync(root, { recursive: true });
   process.env.QA_VOICE_WHISPER_MODEL = join(root, "model.bin"); process.env.VOICELAYER_STATE_DIR = join(root, "state"); delete process.env.QA_VOICE_STT_BACKEND;
   configureRecognizerBusyProbe(() => null); noteRecognizerEngine("whisper", { phase: "sleeping", error: null });
 });
-afterEach(() => { keys.forEach((k,i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); configureRecognizerBusyProbe(() => null); rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { keys.forEach((k,i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); configureRecognizerBusyProbe(() => null);
+  for (const engine of ["whisper", "parakeet"] as const) {
+    const { phase, available, error, download } = prior.engines[engine]; noteRecognizerEngine(engine, { phase, available, error, download });
+  }
+  rmSync(root, { recursive: true, force: true });
+});
 test("download and cancel commands require an explicit valid engine", () => {
   for (const cmd of ["download_recognizer", "cancel_recognizer_download"]) {
     expect(parseCommand(JSON.stringify({ cmd, engine: "whisper", id: "x" }))).toEqual({ cmd, engine: "whisper", id: "x" });
@@ -86,4 +93,19 @@ test("runtime-only setup verifies existing weights read-only instead of download
   d.transfer = async () => { throw new Error("must-not-copy-weights"); }; d.runtime = async () => { const python = join(root, "python"); writeFileSync(python, "fixture"); process.env.VOICELAYER_PARAKEET_PYTHON = python; };
   expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
   expect(readdirSync(model).sort()).toEqual(["config.json", "model.safetensors", "tokenizer.model"]);
+});
+
+test("unmocked downloader is denied before any test mutation or network", async () => {
+  const revision = readRecognizerStatus().revision;
+  expect(await downloadRecognizer("whisper")).toMatchObject({ outcome: "reject", reason: "download-network-denied-in-tests" });
+  expect(readRecognizerStatus().revision).toBe(revision);
+});
+test("partial external model tree is refused before runtime publication", async () => {
+  const model = join(root, "parakeet"); mkdirSync(model); writeFileSync(join(model, "config.json"), "partial");
+  process.env.VOICELAYER_PARAKEET_MODEL = model; delete process.env.VOICELAYER_PARAKEET_PYTHON;
+  noteRecognizerEngine("parakeet", { phase: "sleeping", error: null }); const d = deps();
+  d.files = () => ["config.json", "model.safetensors", "tokenizer.model"].map(name => ({ ...file, name }));
+  d.runtime = async () => { throw new Error("must-not-publish-runtime"); };
+  expect(await downloadRecognizer("parakeet", d)).toMatchObject({ outcome: "reject", reason: "assets-exist-delete-first" });
+  expect(readRecognizerStatus().engines.parakeet.assets_present).toBe(false);
 });

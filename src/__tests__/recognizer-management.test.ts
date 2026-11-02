@@ -85,3 +85,12 @@ test("both engines have explicit load and unload, with no preference change", as
   }
   expect(calls).toEqual(["loadW", "unloadW", "loadP", "unloadP"]);
 });
+
+test("Load retries the desired engine after a fallback without a circular select-first refusal", async () => {
+  const { setRecognizerResidency } = await import("../recognizer-controller"), { persistRecognizer } = await import("../recognizer-state");
+  persistRecognizer("parakeet"); noteRecognizerEffective("whisper");
+  const calls: string[] = [], d = { stopP: async () => { calls.push("stopP"); }, stopW: async () => { calls.push("stopW"); },
+    startP: async () => { calls.push("startP"); }, startW: async () => {}, reset() {} };
+  expect((await setRecognizerResidency("parakeet", "load", d)).outcome).toBe("accept");
+  expect(calls).toEqual(["stopP", "stopW", "startP"]); expect(readRecognizerStatus().desired).toBe("parakeet");
+});

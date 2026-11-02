@@ -192,7 +192,7 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
   }
   return undefined;
 }
-const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer"]);
+const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer", "download_recognizer", "set_recognizer_residency"]);
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", ...recognizerMutationCommands]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if (args[0].cmd === "stop" || args[0].cmd === "cancel") {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as downloads from "../recognizer-download";
 import * as management from "../recognizer-management";
 import * as controller from "../recognizer-controller";
 import * as admission from "../update-gate-admission";
@@ -83,6 +84,15 @@ describe("picker mutation participates in update drain", () => {
     expect(await handleSocketCommand({ cmd: "delete_recognizer", engine: "parakeet", id: "delete-drain" }))
       .toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY"), recognizer_status: readRecognizerStatus() });
     expect(remove).not.toHaveBeenCalled();
+  });
+
+  test("closed gate refuses download and residency before provider work", async () => {
+    const transfer = spyOn(downloads, "downloadRecognizer").mockImplementation(async () => { throw Error("must not download"); }); spies.push(transfer);
+    const residency = spyOn(controller, "setRecognizerResidency").mockImplementation(async () => { throw Error("must not load"); }); spies.push(residency);
+    drain();
+    for (const command of [{ cmd: "download_recognizer", engine: "parakeet" }, { cmd: "set_recognizer_residency", engine: "whisper", action: "load" }] as const)
+      expect(await handleSocketCommand(command)).toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY"), recognizer_status: readRecognizerStatus() });
+    expect(transfer).not.toHaveBeenCalled(); expect(residency).not.toHaveBeenCalled();
   });
 
 });

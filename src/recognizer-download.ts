@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync, statfsSync, createReadStream, openSync, writeSync, closeSync, existsSync, rmdirSync, statSync } from "fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, statfsSync, createReadStream, openSync, writeSync, closeSync, existsSync, rmdirSync, statSync, readdirSync } from "fs";
 import { dirname, join, isAbsolute } from "path";
 import { createHash } from "crypto";
 import { recognizerAssetPaths, defaultParakeetModelPath, readRecognizerAssets } from "./recognizer-assets";
@@ -36,22 +36,24 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
   const report = (state: "downloading" | "verifying" | "runtime" | "complete" | "cancelled" | "error", error: string | null = null) =>
     noteRecognizerEngine(engine, { download: { state, received_bytes: received, total_bytes: total, error } });
   try {
+    if (deps === defaults && process.env.VOICELAYER_TEST_ISOLATED === "1") throw new Error("download-network-denied-in-tests");
     beginRecognizerMaintenance(); acquired = true; active = { engine, controller };
     if (readRecognizerAssets(engine).assets_present) throw new Error("assets-already-present");
     if (readRecognizerStatus().engines[engine].phase !== "sleeping") throw new Error("recognizer-loaded");
     const destination = engine === "whisper" ? recognizerAssetPaths(engine)[0]! : process.env.VOICELAYER_PARAKEET_MODEL || defaultParakeetModelPath();
     if (!isAbsolute(destination)) throw new Error("invalid-model-path");
     const parent = dirname(destination); mkdirSync(parent, { recursive: true, mode: 0o700 });
+    const existingModels = engine === "parakeet" && files.every(f => {
+      try { return statSync(join(destination, f.name)).isFile() && statSync(join(destination, f.name)).size === f.bytes; } catch { return false; }
+    });
+    if (engine === "parakeet" && existsSync(destination) && !existingModels && readdirSync(destination).length) throw new Error("assets-exist-delete-first");
     // Reserve model bytes + 3 GiB for the venv/wheels, on both destination filesystems.
     const reserve = engine === "parakeet" ? 3 * 1024 ** 3 : 256 * 1024 ** 2;
-    if (deps.freeBytes(parent) < total + reserve) throw new Error("insufficient-disk-space");
+    if (deps.freeBytes(parent) < (existingModels ? 0 : total) + reserve) throw new Error("insufficient-disk-space");
     if (engine === "parakeet") {
       const { getStateDir } = await import("./paths"); const state = getStateDir(); mkdirSync(state, { recursive: true, mode: 0o700 });
       if (deps.freeBytes(state) < reserve) throw new Error("insufficient-disk-space");
     }
-    const existingModels = engine === "parakeet" && files.every(f => {
-      try { return statSync(join(destination, f.name)).isFile() && statSync(join(destination, f.name)).size === f.bytes; } catch { return false; }
-    });
     tmp = mkdtempSync(join(parent, ".recognizer-download-")); report("downloading");
     for (const file of files) {
       const path = join(existingModels ? destination : tmp, file.name);
@@ -77,8 +79,9 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
     outcome = "reject"; reason = signal.aborted ? "download-cancelled" : error instanceof Error ? error.message : "download-failed";
     if (acquired) report(signal.aborted ? "cancelled" : "error", reason);
   } finally {
-    if (tmp) rmSync(tmp, { recursive: true, force: true });
-    if (acquired) { active = null; finishRecognizerTransition(); }
+    try { if (tmp) rmSync(tmp, { recursive: true, force: true }); }
+    catch { outcome = "reject"; reason = "download-cleanup-failed"; report("error", reason); }
+    finally { if (acquired) { active = null; finishRecognizerTransition(); } }
   }
   return { outcome, ...(reason ? { reason } : {}), recognizer_status: readRecognizerStatus() };
 }
