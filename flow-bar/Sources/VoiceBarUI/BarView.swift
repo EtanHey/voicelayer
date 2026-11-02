@@ -689,6 +689,7 @@ public struct BarView: View {
             if let feedback = notchPresentation.feedback {
                 VoiceBarNotchFeedbackBand(feedback: feedback, onOpenHistory: onOpenHistory)
                     .foregroundStyle(notchPrimaryLabelColor)
+                    .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
             } else if notchPresentation.transientNoteRect != nil, let note = state.selectionFeedbackNote {
                 transientNoteBand(note)
             }
@@ -702,16 +703,9 @@ public struct BarView: View {
     }
 
     private func transientNoteBand(_ note: String) -> some View {
-        Text(note)
-            .font(.system(size: 12, weight: .medium))
+        VoiceBarNotchTransientNoteBand(text: note, width: notchPresentation.geometry.bodyWidth)
             .foregroundStyle(notchPrimaryLabelColor)
             .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
-            .lineLimit(1)
-            .padding(.horizontal, VoiceBarNotchContract.transientNoteHorizontalInset)
-            // Sit just under the top row; the band's lower half is room for the shell's rounded corners.
-            .padding(.bottom, 4)
-            .frame(maxWidth: .infinity)
-            .frame(height: VoiceBarNotchContract.transientNoteBandHeight)
             .allowsHitTesting(false)
             // NOTCH2: in after the shell has started opening, out before it starts closing (the shell waits
             // `contentExitDuration` for this fade, see `VoiceBarNotchShellTransition`).
@@ -972,8 +966,7 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        compactStatusLabel(notchPresentation.feedback?.replacesWingText != true || notchPresentation.feedback?.statusText == nil ? statusText :
-            (state.mode == .error ? "Error" : "Details below"), confirmationText: state.confirmationText)
+        compactStatusLabel(statusText, confirmationText: state.confirmationText)
     }
 
     private func compactStatusLabel(_ text: String, confirmationText: String? = nil) -> some View {

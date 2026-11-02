@@ -248,11 +248,11 @@ public struct VoiceBarNotchPresentation: Equatable {
     /// Adds readable text using the existing lower-note shell; all top-row geometry is preserved.
     public func addingFeedback(_ feedback: VoiceBarNotchFeedback) -> Self {
         let oldHeight = transientNoteWidth == nil ? 0 : VoiceBarNotchContract.transientNoteBandHeight
-        let extent = max(0, (feedback.width - geometry.coreWidth) / 2)
+        let compact = geometry.bodyFlushWithWings
         let grown = VoiceBarNotchGeometry(coreWidth: geometry.coreWidth, topHeight: geometry.topHeight,
             leadingWingWidth: geometry.leadingWingWidth, trailingWingWidth: geometry.trailingWingWidth,
-            bodyLeadingExtent: max(geometry.bodyLeadingExtent, extent),
-            bodyTrailingExtent: max(geometry.bodyTrailingExtent, extent),
+            bodyLeadingExtent: compact.bodyLeadingExtent,
+            bodyTrailingExtent: compact.bodyTrailingExtent,
             lowerSurfaceHeight: geometry.lowerSurfaceHeight - oldHeight + feedback.height)
         return VoiceBarNotchPresentation(visualState: visualState, geometry: grown,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset, virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
