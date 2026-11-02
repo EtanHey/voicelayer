@@ -96,3 +96,10 @@ follow-up `af8f1457` (repository-pinned TLC v1.8.0), plus approved Lane I FIXED-
 model cannot establish the revised M1-M4/D-S4 contract. Gate outcomes and immutable
 source hashes belong to the lane receipt and generated check artifacts. Installed
 interaction/audio/permission proof belongs to the captain.
+
+Every final paired gate runs the complete pause/runtime files and all five changed
+socket/handler caller files (idempotency, socket residency, whisper residency,
+update-gate round1 and error recovery). Capture-start assertions await their event;
+teardown waits for both Lane I jobs and the deferred F5 loan using the original
+2-second bound. The full Bun suite is a separate final check; known SSH-generated
+speech-fixture failures are reported for GUI verification, never silently passed.

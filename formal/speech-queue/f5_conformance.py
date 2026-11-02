@@ -95,8 +95,8 @@ def check_f5_runtime(run, runner):
     env = {**os.environ, "VOICELAYER_F5_CASES": str(cases), "VOICELAYER_F5_WIRE": str(run / "f5-wire.json")}
     commands = [
         (["swift", "test", "--package-path", "flow-bar", "--scratch-path", ".build.noindex/swift", "--filter", "F5PauseConformanceTests|VoiceBarCommandRouterTests.testRealGestureStartsN6AfterALockedTakeBeginsTranscribing|PlaybackPauseTests.testPreparingPauseOwnerIsControllableBeforeAFirstChunkExists"], "f5-swift.log"),
-        (["bun", "test", "src/__tests__/tts-long-read-runtime.test.ts", "-t", "TLC F5"], "f5-daemon.log"),
-        (["bun", "test", "src/__tests__/tts-pause.test.ts", "-t", "R2-01"], "f5-settlement.log"),
+        (["bun", "test", "src/__tests__/tts-long-read-runtime.test.ts"], "f5-daemon.log"),
+        (["bun", "test", "src/__tests__/tts-pause.test.ts"], "f5-settlement.log"),
         (["bun", "test", "src/__tests__/socket-handlers-idempotency.test.ts", "src/__tests__/socket-residency.test.ts", "src/__tests__/whisper-residency.test.ts", "src/__tests__/update-gate-round1.test.ts", "src/__tests__/error-recovery.test.ts"], "f5-socket-idempotency.log"),
     ]
     for command, name in commands:
