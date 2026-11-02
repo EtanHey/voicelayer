@@ -1195,6 +1195,66 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const settle = async () => { for (let i = 0; i < 20; i++) await fixtureCheckpoint(); await flushSpeechArchives(); };
     afterEach(() => resetSelectionReadQueueForTests());
 
+    it("R2-01 D2 two waiting reads survive F5 park and resume and play once in order", async () => {
+      const opened = deferred<void>(), take = deferred<string | null>();
+      const realSpeakText = tts.speakText;
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }),
+        spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+          options?.onCaptureStart?.(); opened.resolve();
+          return finishSyntheticCapture(() => take.promise);
+        }), spyOn(tts, "speakText").mockImplementation((...args) => {
+          const read = realSpeakText(...args); handles.push(read); return read;
+        }));
+      const started = () => events.filter(e => e.type === "state" && e.state === "speaking" &&
+        e.long_read?.preparing !== true).map(e => e.request_id);
+      const selections = ["Alpha current read.", "Bravo waiting read.", "Charlie waiting read."];
+      try {
+        expect(await select("A", selections[0])).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(0);
+        expect(await select("B", selections[1])).toMatchObject({ outcome: "accept", reason: "queued" });
+        expect(await select("C", selections[2])).toMatchObject({ outcome: "accept", reason: "queued" });
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+
+        expect(handleSocketCommand({ cmd: "record", take_id: "queue-borrow", playback_elapsed_ms: 0 }))
+          .toMatchObject({ outcome: "accept" });
+        await opened.promise;
+        expect(isPlaybackPaused()).toBe(true);
+        expect(players[0].killed).toBe(true);
+        expect(players).toHaveLength(1);
+        expect(started()).toEqual(["A"]);
+        expect(lastQueue(), "F5 park must keep both waiting reads")
+          .toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+
+        take.resolve(null);
+        await settleRecordingJobs(tts.hasF5Capture);
+        await playerBarrier.at(1);
+        expect(isPlaybackPaused()).toBe(false);
+        expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
+        expect(started()).toEqual(["A", "A"]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+
+        players[1].exit.resolve(0);
+        await playerBarrier.at(2);
+        expect(started()).toEqual(["A", "A", "B"]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 1, current_request_id: "B" });
+        players[2].exit.resolve(0);
+        await playerBarrier.at(3);
+        expect(started()).toEqual(["A", "A", "B", "C"]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: "C" });
+        players[3].exit.resolve(0);
+        await Promise.all(handles.map(read => read.done));
+        await awaitCurrentPlayback(); await flushSpeechArchives();
+        expect(handles).toHaveLength(3);
+        expect(players).toHaveLength(4);
+        expect(started()).toEqual(["A", "A", "B", "C"]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+        expect(loadHistory().map(entry => entry.text).sort()).toEqual([...selections].sort());
+      } finally {
+        take.resolve(null); await settleRecordingJobs(tts.hasF5Capture);
+        stopPlayback(); await awaitCurrentPlayback();
+      }
+    });
+
     it("R2-01 refused automatic resume through socket capture releases Option+F5 admission", async () => {
       const opened = deferred<void>(), take = deferred<string | null>();
       spies.push(spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
