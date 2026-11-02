@@ -82,7 +82,7 @@ describe("CLICK2 groundwork RED contracts", () => {
     return handle;
   }
   const preparingPausedEvents = () => events.filter(event => event.type === "playback_state" && event.state === "paused" && event.long_read?.preparing === true);
-  const pausedEvents = () => events.filter(event => event.type === "playback_state" && event.state === "paused" && event.long_read?.preparing !== true);
+  const pausedEvents = () => events.filter(event => event.type === "playback_state" && event.state === "paused");
 
   it("a: Pause before first synthesis accepts and parks; release stays silent until Play", async () => {
     await preparing();
@@ -135,19 +135,20 @@ describe("CLICK2 groundwork RED contracts", () => {
     gate.resolve(); await enqueued.promise; await fixtureCheckpoint();
     expect(await handleSocketCommand({ cmd: "pause", id: "p3" })).toMatchObject({ outcome: "noop", reason: "already paused", offset_ms: 0 });
     expect(preparingPausedEvents()).toHaveLength(1);
-    expect(pausedEvents()).toHaveLength(1);
-    expect(pausedEvents()[0]).toMatchObject({ pause_owner: "user", offset_ms: 0, long_read: { id: handle.id } });
+    expect(pausedEvents()).toHaveLength(2);
+    expect(pausedEvents()[1]).toMatchObject({ pause_owner: "user", offset_ms: 0, long_read: { id: handle.id } });
     expect(players.values).toHaveLength(0);
   });
 
   it("Play before readiness un-parks: the first chunk starts normally with no paused edge", async () => {
-    await preparing();
+    const handle = await preparing();
     expect(await handleSocketCommand({ cmd: "pause" })).toMatchObject({ outcome: "accept" });
     expect(await handleSocketCommand({ cmd: "resume" })).toMatchObject({ outcome: "accept", offset_ms: 0 });
     expect(tts.isPlaybackPaused()).toBe(false);
     gate.resolve(); await players.at(0);
     expect(tts.isPlaybackPaused()).toBe(false);
-    expect(pausedEvents()).toHaveLength(0);
+    expect(pausedEvents()).toHaveLength(1);
+    expect(pausedEvents()[0]).toMatchObject({ playback_id: handle.id, long_read: { id: handle.id, preparing: true } });
   });
 
   it("Play before readiness is refused while a capture owns the voice, and the read stays parked", async () => {
@@ -183,7 +184,8 @@ describe("CLICK2 groundwork RED contracts", () => {
     gate.resolve(); await first.done;
     await players.at(0); await fixtureCheckpoint();
     expect(tts.isPlaybackPaused()).toBe(false);
-    expect(pausedEvents()).toHaveLength(0);
+    expect(pausedEvents()).toHaveLength(1);
+    expect(pausedEvents()[0]).toMatchObject({ playback_id: first.id, long_read: { id: first.id, preparing: true } });
     expect(events.filter(event => event.type === "state" && event.state === "speaking").at(-1))
       .toMatchObject({ long_read: expect.objectContaining({ id: second.id }) });
   });
@@ -201,12 +203,13 @@ describe("CLICK2 groundwork RED contracts", () => {
   });
 
   it("Replay of a read paused before its first chunk plays it from zero once it is ready", async () => {
-    await preparing();
+    const handle = await preparing();
     expect(await handleSocketCommand({ cmd: "pause" })).toMatchObject({ outcome: "accept" });
     expect(await handleSocketCommand({ cmd: "replay", id: "replay-preparing" })).toMatchObject({ outcome: "accept" });
     gate.resolve(); await players.at(0); await fixtureCheckpoint();
     expect(tts.isPlaybackPaused()).toBe(false);
-    expect(pausedEvents()).toHaveLength(0);
+    expect(pausedEvents()).toHaveLength(1);
+    expect(pausedEvents()[0]).toMatchObject({ playback_id: handle.id, long_read: { id: handle.id, preparing: true } });
   });
 
   it("Replay while paused is refused during a capture and leaves the park untouched", async () => {
