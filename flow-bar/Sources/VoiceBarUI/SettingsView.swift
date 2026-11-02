@@ -1075,9 +1075,11 @@ public struct SettingsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Divider()
-                    LabeledContent("VoiceBar build", value: SettingsDiagnosticSummary.versionLabel())
-                    SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
-                                       label: "build and diagnostic summary")
+                    // S1: the version lives once, in the sidebar footer. This row only copies the diagnostic summary.
+                    LabeledContent("Diagnostic summary") {
+                        SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
+                                           label: "build and diagnostic summary")
+                    }
                     Divider()
                     Text("Gestures").font(.headline)
                     LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)

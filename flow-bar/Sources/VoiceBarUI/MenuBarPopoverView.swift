@@ -74,21 +74,15 @@ public struct MenuBarPopoverView: View {
                     .accessibilityIdentifier("popover-hotkey")
                     .popoverFrame("hotkey")
             }
-            HStack(spacing: 6) {
-                Image(systemName: footer.privacySymbol)
-                Text(footer.isLocalOnly ? "Transcribed on this Mac" : footer.privacy)
+            if let remoteNotice = footer.remoteNotice {
+                Label(remoteNotice, systemImage: "network")
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .help(footer.isLocalOnly ? "Audio and text never leave this Mac" : footer.privacy)
-                if footer.isLocalOnly {
-                    Image(systemName: "info.circle")
-                        .help("Audio and text never leave this Mac")
-                        .accessibilityLabel("Audio and text never leave this Mac")
-                }
+                    .help(remoteNotice)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .popoverFrame("locality")
             }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .popoverFrame("locality")
             HStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "mic")

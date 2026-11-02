@@ -218,6 +218,21 @@ final class VoiceBarVersionStatusTests: XCTestCase {
         XCTAssertEqual(fetches.value, 2, "refetched once the six hours are up")
     }
 
+    /// CodeRabbit #672: a clock that moved backwards gives a negative age, which is not "fresh".
+    func testNegativeCacheAgeRefetches() async {
+        let fetches = Counter()
+        let clock = Clock()
+        let check = VoiceBarVersionCheck(fetch: {
+            fetches.increment()
+            return Self.cask
+        }, now: { clock.now })
+        _ = await check.latestVersion()
+        XCTAssertEqual(fetches.value, 1)
+        clock.advance(-60)
+        _ = await check.latestVersion()
+        XCTAssertEqual(fetches.value, 2, "a cache entry from the future is refetched")
+    }
+
     func testConcurrentCallersShareOneRequest() async {
         let fetches = Counter()
         let check = VoiceBarVersionCheck(fetch: {

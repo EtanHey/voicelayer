@@ -168,8 +168,11 @@ public actor VoiceBarVersionCheck {
 
     /// The cask's version, or nil when offline, timed out, or unparseable.
     public func latestVersion() async -> String? {
-        if let cached, now().timeIntervalSince(cached.fetchedAt) < Self.cacheLifetime {
-            return cached.version
+        // A negative age means the wall clock went backwards (manual change, NTP step); the entry's age is
+        // unknown, so it is stale rather than fresh for up to six more hours.
+        if let cached {
+            let age = now().timeIntervalSince(cached.fetchedAt)
+            if age >= 0, age < Self.cacheLifetime { return cached.version }
         }
         if let inFlight { return await inFlight.value }
         let fetch = fetch
