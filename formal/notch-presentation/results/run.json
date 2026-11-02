@@ -1,0 +1,24 @@
+{
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "runnerSHA256": "94c5365f361d0423750ce4c04f547f890173ab6804949c00ba1fc2534314e167",
+  "sourceHashes": {
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "d65bce6118fa798402a33fc12827c92f78d3ecdac383da3a1ec8875acc625c02",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "b963e7fca180f8fe99c2f0f36bb5f7c445af9de7731ae50d805340bed0d8b14a",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "c0bee7ad3de050c80641f5404350a8df561f3aa483411bc3ac39398e37f5bb6d",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "e9de5278c55802d0eeb9abc6c652b29657ddfaa7285c6942ebc79836ddc06ab9",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "df4a24033276bb0f0dba45e343bff6c3d1306bd7e201014f500a122b61f72877",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "4d829e2a03855f213795967b34149d53a0c7e455ab9d8632fc2072f3bfa5244c",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "814d35e8600d8aa5a1a038120871782dc1193099c9bbbbc3e32eef33644f5b4f"
+  },
+  "specSHA256": "1ba2b016f6040eb7892bb940b536f447e6328a81baa05a53559c4d1fb2dfaf1f",
+  "cfgSHA256": {
+    "Current": "7109ec7c014dc9044c8ec96b5b85a63d0e408286dcaa9edaee376274c6cfc9f9",
+    "OldWing": "a91c1f132cec126d6e1e4b0311d528936c12f7e97875e6243e4fcd3e0683e472",
+    "OldProcessingNote": "84bca1cb92271ab90ee58799ff74b6f1a10fc130b4c53970681e37506bcf260a",
+    "OldSubstitute": "b6e8e9a40033c590d154a80c0aff10b49ce395e27b69c4bdb2aba0e80b3f391a",
+    "OldBusyHistory": "8db256c29fc41455fed35f4d841d2bb59b497f071342072aca9a97850ca205b6",
+    "OldQuitCause": "028b8d3a9a0a9f99f1f2a71741188153fccc9c7060a7245197d7d29ef9f2dd9d",
+    "Fixed": "042b1adc73d88cac6b4073ebd98335da975d41331d9e33bdc4615928c2515b79"
+  },
+  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+}
