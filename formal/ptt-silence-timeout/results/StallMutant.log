@@ -33,6 +33,6 @@
     "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 10,\n  wall |-> 20,\n  event |-> \"tick\",\n  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
     "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 10,\n  wall |-> 21,\n  event |-> \"tick\",\n  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
     "s = [ phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 10,\n  wall |-> 21,\n  event |-> \"end\",\n  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,\n  saved |-> <<FALSE, FALSE, FALSE, FALSE>>,\n  text |-> <<>> ]",
-    "Finished checking temporal properties in 00s at 2026-11-02 13:32:40"
+    "Finished checking temporal properties in 00s at 2026-11-02 15:37:58"
   ]
 }
