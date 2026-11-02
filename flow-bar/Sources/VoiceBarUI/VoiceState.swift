@@ -609,7 +609,10 @@ public final class VoiceState {
         var document: LongReadDocumentSnapshot
     }
 
+    private enum PlaybackPauseOwner: String { case user, f5 }
+
     private struct ParkedRead {
+        let owner: PlaybackPauseOwner
         let playbackID: String?
         let generation: Int?
         let offsetMs: Int
@@ -1021,6 +1024,7 @@ public final class VoiceState {
     private struct DeferredBarRecording {
         let takeID: String
         let pressToTalk: Bool
+        let playbackElapsedMs: Int?
         var stopOnOpen = false
         var physicalStop = false
     }
@@ -2008,6 +2012,7 @@ public final class VoiceState {
         let shouldExitInterruptedPlayback = mode == .speaking
         let retainsReadQueue = stopRetainsReadQueue && shouldExitInterruptedPlayback && readQueueCount > 0
         var payload: [String: Any] = ["cmd": "stop"]
+        if shouldShowTranscribing { payload["scope"] = "capture" }
         if let takeID = microphoneTakeID ?? activeBarTakeID {
             payload["take_id"] = takeID
             stoppingBarTakeID = takeID
@@ -2336,9 +2341,30 @@ public final class VoiceState {
         }
     }
 
-    /// P16: the pill's pause/play control. Both commands are scoped to the player on screen, so a click that
-    /// races a queue advance can never pause or resume a different read. Pause also sends the teleprompter
-    /// clock so the daemon freezes on the word on screen.
+    public var activeCaptureTakeID: String? { deferredRecordingTakeID ?? microphoneTakeID ?? activeBarTakeID }
+
+    public var isF5SpeechPausedDuringCapture: Bool {
+        isCaptureSettlementPending && parkedRead?.owner == .f5
+    }
+
+    /// Convert the automatic pause without ending any take. The daemon owns the conversion.
+    public func pauseSpeechDuringCapture() {
+        guard isF5SpeechPausedDuringCapture, let parked = parkedRead else { return }
+        var command: [String: Any] = ["cmd": "pause", "id": UUID().uuidString]
+        if let id = parked.playbackID { command["playback_id"] = id }
+        if let generation = parked.generation { command["generation"] = generation }
+        sendCommand?(command)
+    }
+
+    public func stopSpeechDuringCapture() {
+        guard isCaptureSettlementPending, parkedRead != nil else { return }
+        sendCommand?(["cmd": "stop", "scope": "speech", "id": UUID().uuidString])
+        parkedRead = nil
+        departedRead = nil
+        clearReadQueue()
+    }
+
+    /// Playback controls are scoped to the player on screen and use its teleprompter clock.
     public func togglePlaybackPause() {
         guard mode == .speaking, let sendCommand else { return }
         let id = UUID().uuidString
@@ -2397,7 +2423,7 @@ public final class VoiceState {
 
     /// Waits out a dictation's own feedback (Pasted, In History …) before taking the surface back.
     private func restoreParkedReadIfSettled() {
-        guard mode == .idle, let parked = parkedRead, !isCaptureSettlementPending,
+        guard mode == .idle, let parked = parkedRead, parked.owner == .user, !isCaptureSettlementPending,
               confirmationText == nil, !keepsPasteFlowEnvelope
         else { return }
         let read = parked.read
@@ -2432,6 +2458,10 @@ public final class VoiceState {
             return event["state"] as? String == "paused" ? pendingPauseEpoch == playbackEpoch
                 : playbackID != nil && playbackID == parkedRead?.playbackID
         }
+        // Preparing uses the read identity before a player exists; its first parked chunk adopts the player.
+        if event["state"] as? String == "paused", playbackID != currentPlayback.id, let parkedRead,
+           currentPlayback.id == parkedRead.read.longReadID,
+           (event["long_read"] as? [String: Any])?["id"] as? String == parkedRead.read.longReadID { return true }
         guard playbackID == currentPlayback.id else { return false }
         return generation.map { $0 >= currentPlayback.generation } ?? true
     }
@@ -2464,6 +2494,10 @@ public final class VoiceState {
         guard ownsPlaybackEvent(event) else { drop(playbackEventDropReason(event)); return }
         switch state {
         case "paused":
+            if parkedRead?.owner == .user, event["pause_owner"] as? String == "f5" {
+                drop("manual-owner")
+                return
+            }
             // A confirmation that lands mid-capture still parks the read that was on screen.
             let read: ReadSnapshot? = switch mode {
             case .speaking: currentReadSnapshot()
@@ -2474,7 +2508,7 @@ public final class VoiceState {
             let offset = (event["offset_ms"] as? NSNumber)?.doubleValue
             let offsetMs = offset.flatMap { $0.isFinite && $0 >= 0 ? Int($0.rounded()) : nil }
                 ?? parkedRead?.offsetMs ?? (mode == .speaking ? playbackElapsedMilliseconds() : 0)
-            parkedRead = ParkedRead(playbackID: playbackID, generation: generation, offsetMs: offsetMs, read: read)
+            parkedRead = ParkedRead(owner: PlaybackPauseOwner(rawValue: event["pause_owner"] as? String ?? "user") ?? .user, playbackID: playbackID, generation: generation, offsetMs: offsetMs, read: read)
             if let playbackID, let generation { currentPlayback = (playbackID, generation) }
             pendingPauseEpoch = nil
         case "resumed":
@@ -2681,8 +2715,10 @@ public final class VoiceState {
         guard !isHidden else { return }
         guard case nil = deferredBarRecording else { return }
         let queuesBehindDrain = isRecordingDrainPending
-        guard queuesBehindDrain || mode == .idle || mode == .error || isPlaybackPaused || (mode == .transcribing && canRecordDuringProcessing) else { return }
+        guard queuesBehindDrain || mode == .idle || mode == .error || mode == .speaking || isPlaybackPaused || (mode == .transcribing && canRecordDuringProcessing) else { return }
         guard queuesBehindDrain || pendingIntent?.command != .record else { return }
+        let pressedAt = mode == .speaking ? playbackElapsedMilliseconds() : nil
+        if mode == .speaking { pendingPauseEpoch = playbackEpoch }
         clearRetainedTeleprompter()
         let commandUptimeMs = currentRecordingUptimeMs()
         recordCommandUptimeMs = commandUptimeMs
@@ -2739,18 +2775,20 @@ public final class VoiceState {
         activeBarTakeID = takeID
         dictationTakeTargets[takeID] = DictationTakeTarget(app: frontmostAppOnRecordStart, insertion: recordStartInsertionHandler, matchesFocus: dictationTargetIdentityProvider())
         if queuesBehindDrain {
-            deferredBarRecording = .queued(DeferredBarRecording(takeID: takeID, pressToTalk: pressToTalk))
-        } else { sendBarRecordingStart(takeID: takeID, pressToTalk: pressToTalk) }
+            deferredBarRecording = .queued(DeferredBarRecording(takeID: takeID, pressToTalk: pressToTalk, playbackElapsedMs: pressedAt))
+        } else { sendBarRecordingStart(takeID: takeID, pressToTalk: pressToTalk, playbackElapsedMs: pressedAt) }
     }
 
-    private func sendBarRecordingStart(takeID: String, pressToTalk: Bool) {
-        sendIntent(command: .record, payload: [
+    private func sendBarRecordingStart(takeID: String, pressToTalk: Bool, playbackElapsedMs: Int?) {
+        var recordPayload: [String: Any] = [
             "cmd": "record",
             "take_id": takeID,
             "silence_mode": "thoughtful",
             "timeout_seconds": 3600,
             "press_to_talk": pressToTalk,
-        ])
+        ]
+        if let playbackElapsedMs { recordPayload["playback_elapsed_ms"] = playbackElapsedMs }
+        sendIntent(command: .record, payload: recordPayload)
     }
 
     private func startQueuedRecordingIfCaptureReleased() {
@@ -2763,7 +2801,7 @@ public final class VoiceState {
         errorMessage = nil
         mode = .recording
         onModeChange?(.recording)
-        sendBarRecordingStart(takeID: request.takeID, pressToTalk: request.pressToTalk)
+        sendBarRecordingStart(takeID: request.takeID, pressToTalk: request.pressToTalk, playbackElapsedMs: request.playbackElapsedMs)
     }
 
     private func finishDeferredRecordingOpen(_ event: [String: Any]) {
@@ -2829,6 +2867,7 @@ public final class VoiceState {
                         transcriptionTimeoutTask?.cancel()
                     } else {
                         isCaptureSettlementPending = false
+                        if mode == .speaking { return true }
                         if mode != .error { enterIdleState(clearQueue: false) }
                         if parkedRead != nil { scheduleParkedReadRestore() }
                     }
@@ -2955,7 +2994,7 @@ public final class VoiceState {
                 // never ends a paused read: that is playback's Stop, outcome or replacement, not capture's idle.
                 if idleSource == "recording" {
                     isCaptureSettlementPending = false
-                    if isPlaybackPaused { return }
+                    if mode == .speaking { return }
                     if parkedRead != nil { scheduleParkedReadRestore() }
                 }
                 if barInitiatedRecording, mode == .transcribing {

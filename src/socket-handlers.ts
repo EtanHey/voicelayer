@@ -1,4 +1,5 @@
-import { runBarCapture, runHistoryTranscription, canStartBarCapture, cancelRecordingJob,
+import { runBarCaptureWithPausedRead, bufferOpeningCaptureControl } from "./f5-capture";
+import { runHistoryTranscription, canStartBarCapture, cancelRecordingJob,
   acknowledgeDictationDelivery, recordingJobsSnapshot, markBarCaptureDraining, isBarCaptureDraining } from "./recording-jobs";
 import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-download";
 import { deleteRecognizer } from "./recognizer-management";
@@ -43,6 +44,7 @@ import {
   speakText,
   seekPlayback,
   pausePlayback,
+  hasF5Capture,
   resumePlayback,
   isPlaybackPaused,
   isCaptureAdmissionReserved,
@@ -169,8 +171,8 @@ export function resetSelectionReadQueueForTests(): void {
   selectionReads = newSelectionReadQueue();
 }
 
-/** Stop means stop. F5 over a playing read (`suspend`) still stops it, but keeps the queued reads for Next;
- * a stop or cancel aimed at the capture (`keep`) leaves those waiting reads alone (QUEUE1b). */
+/** Explicit speech Stop clears the chain; legacy retain-queue stops leave waiting reads for Next.
+ * F5 borrows the paused read through the capture adapter and never calls this helper. */
 function stopAll(playbackElapsedMs?: number, queue: "clear" | "suspend" | "keep" = "clear", cancelled = false): void {
   if (queue === "suspend") selectionReads.suspend();
   else if (queue === "clear") selectionReads.clear();
@@ -198,8 +200,9 @@ const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", ...recognizerMutationCommands]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if ((args[0].cmd === "stop" || args[0].cmd === "cancel") && !args[0].take_id) {
-    const capture = cancelPendingVoiceAdmissions("capture");
-    const speech = cancelPendingVoiceAdmissions("speech");
+    const speechOnly = args[0].cmd === "stop" && args[0].scope === "speech";
+    const capture = speechOnly ? false : cancelPendingVoiceAdmissions("capture");
+    const speech = args[0].cmd === "stop" && args[0].scope === "capture" ? false : cancelPendingVoiceAdmissions("speech");
     const result = handleSocketCommandAdmitted(...args);
     if ((capture || speech) && result && !(result instanceof Promise) && result.type === "ack" && result.reason === "already idle")
       return buildAck(args[0], "accept", "pending admissions cancelled");
@@ -274,7 +277,8 @@ function handleSocketCommandAdmitted(
         build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
       });
       if (receipt.kind === "failed") return buildAck(command, "reject", `Speech refused: input archive unavailable (${receipt.code})`);
-      if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) {
+      const queuesDuringCapture = hasF5Capture();
+      if (!queuesDuringCapture && (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation())) {
         finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
         return buildAck(command, "reject", "busy");
       }
@@ -291,11 +295,11 @@ function handleSocketCommandAdmitted(
           return buildAck(command, "reject", "No text selected");
         }
         const textHash = normalizedSpeechHash(command.text);
-        if (command.queue === true && command.id) {
+        if ((command.queue === true && command.id) || queuesDuringCapture) {
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.
           queueStartOwnsFailure = true;
           const admission = captureVoiceAdmission();
-          const outcome = selectionReads.submit({ admission, requestId: command.id, text, textHash, profile: command.profile ?? "auto",
+          const outcome = selectionReads.submit({ admission, requestId: command.id ?? randomUUID(), text, textHash, profile: command.profile ?? "auto",
             archiveContext: receipt.context, ...(identity !== undefined ? { selectionIdentity: identity } : {}), ...(structuredDisplay ? { structuredDisplay } : {}) }, true);
           if (outcome === "full") {
             admission.release();
@@ -329,6 +333,11 @@ function handleSocketCommandAdmitted(
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)));
     }
     case "stop":
+      if (command.scope === "speech") {
+        stopAll(command.playback_elapsed_ms, "clear");
+        return buildAck(command, "accept");
+      }
+      if (bufferOpeningCaptureControl(command.take_id, "stop")) return buildAck(command, "accept");
       if (command.take_id) {
         if (recordingJobsSnapshot().mic_take_id !== command.take_id) return buildAck(command, "noop", "take is not recording");
         markBarCaptureDraining(command.take_id);
@@ -354,13 +363,14 @@ function handleSocketCommandAdmitted(
       // P16: a stop/cancel aimed at an active capture (F5 release over a paused read) ends only the
       // capture; the parked read stays parked for Play, and the ack never waits on it (P16b, TLA+
       // CaptureCmdAckWithoutAwait): a parked long read cannot finish, so awaiting it false-rejected at 35 s.
-      if (recordingState !== "idle" && isPlaybackPaused()) return buildAck(command, "accept");
+      if (command.scope === "capture" || hasF5Capture() || (recordingState !== "idle" && isPlaybackPaused())) return buildAck(command, "accept");
       stopAll(command.playback_elapsed_ms, stopQueuePolicy(recordingState, command.retain_read_queue === true));
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
       );
     case "cancel":
+      if (bufferOpeningCaptureControl(command.take_id, "cancel")) return buildAck(command, "accept");
       if (command.discard_read_queue === true) selectionReads.clear();
       if (command.take_id || recordingJobsSnapshot().recording_jobs.length > 0) {
         const cancelled = cancelRecordingJob(command.take_id);
@@ -505,15 +515,18 @@ function handleSocketCommandAdmitted(
           return buildAck(command, "reject", "busy");
         }
       }
-      if (isSpeaking) {
-        // F5 over a playing read stops it as today; queued Option+F5 reads wait for Next.
-        stopAll(undefined, "suspend");
-      }
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";
       const ptt = command.press_to_talk ?? false;
-      const record = () => waitForInput(timeoutMs, silenceMode, ptt, { archiveSource: "voicebar" });
-      runBarCapture(command.take_id ?? randomUUID(), record, { expectsAck: command.take_id !== undefined }).catch((err) => {
+      const record = (onCaptureStart: () => void) => waitForInput(timeoutMs, silenceMode, ptt, { archiveSource: "voicebar", onCaptureStart });
+      let capture: Promise<string | null>;
+      try {
+        capture = runBarCaptureWithPausedRead(command.take_id ?? randomUUID(), record,
+          () => selectionReads.holdForCapture(), () => selectionReads.releaseCapture(), command.playback_elapsed_ms, { expectsAck: command.take_id !== undefined });
+      } catch (error) {
+        return buildAck(command, "reject", error instanceof Error ? error.message : String(error));
+      }
+      capture.catch((err) => {
         console.error(
           `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
         );

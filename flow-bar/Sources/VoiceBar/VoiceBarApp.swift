@@ -1583,9 +1583,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Single/double tap are intentionally not assigned in the immediate PTT model.
         gestureStateMachine.onSingleTap = { [weak self] in
             NSLog("[VoiceBar] Hotkey single tap — checking active recording/transcription")
-            // QUEUE1 D2: the router is unchanged; an F5 stop over a playing read keeps queued reads for Next.
-            guard let self else { return }
-            voiceState.retainingReadQueueOnStop { self.commandRouter.handleHotkeySingleTap() }
+            self?.commandRouter.handleHotkeySingleTap()
         }
 
         gestureStateMachine.onDoubleTap = { [weak self] in
@@ -2229,13 +2227,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
-        voiceState.retainingReadQueueOnStop {
-            if stoppingFromPhysicalPress {
-                commandRouter.handlePhysicalPressStop()
-                return
-            }
-            commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
+        if stoppingFromPhysicalPress {
+            commandRouter.handlePhysicalPressStop()
+            return
         }
+        commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
     }
 
     func handleHotkeyDoubleTap() {
@@ -3354,7 +3350,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastHotkeyActivitySource = source
     }
 
+    /// A finished locked take cannot turn the next F5 down-edge into a stop of the resumed read.
+    private func retireSettledCaptureGesture() {
+        if gestureStateMachine.state == .locked, voiceState.mode != .recording { resetHotkeyTracking() }
+    }
+
     func handleHotkeyKeyDown(from source: HotkeyInputSource) {
+        retireSettledCaptureGesture()
         let now = CFAbsoluteTimeGetCurrent()
         if source == .native, shouldSuppressLaunchStartCommand(rawCommand: "native-hotkey") {
             resetHotkeyTracking()
@@ -3390,6 +3392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func handleHotkeyMouseDown(from source: HotkeyInputSource) {
+        retireSettledCaptureGesture()
         let now = CFAbsoluteTimeGetCurrent()
         guard !shouldIgnoreIncomingHotkeyEvent(from: source, now: now) else {
             NSLog("[VoiceBar] Ignoring duplicate %@ mouseDown", source == .native ? "native" : "legacy socket")

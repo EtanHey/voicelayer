@@ -281,6 +281,41 @@ final class RecordingJobOwnershipTests: XCTestCase {
         }
     }
 
+    func testF5ParkedReadKeepsQueuedPhysicalReleaseBoundToB() throws {
+        for releaseBeforeOpen in [true, false] {
+            let state = makeState()
+            state.frontmostAppProvider = { nil }
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.handleEvent(["type": "state", "state": "speaking", "text": "one two three",
+                "duration_ms": 3000, "playback_id": "read", "generation": 1])
+            let router = VoiceBarCommandRouter(voiceState: state)
+            router.handleHotkeyHoldStart()
+            let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+            state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "read",
+                "generation": 2, "offset_ms": 1000, "chunk_offset_ms": 1000, "pause_owner": "f5"])
+            micOpened(state, id: a, jobs: [(a, "live", "capturing")])
+            router.handleHotkeyHoldEnd(holdDuration: 1)
+            router.handleHotkeyHoldStart()
+            let b = try XCTUnwrap(state.queuedRecordingTakeID)
+            XCTAssertEqual(state.activeCaptureTakeID, b, "The physical key belongs to queued B, not draining A")
+            XCTAssertTrue(state.isF5SpeechPausedDuringCapture)
+            if releaseBeforeOpen { router.handleHotkeyHoldEnd(holdDuration: 1) }
+            snapshot(state, jobs: [(a, "live", "processing")])
+            XCTAssertEqual(commands.last?["take_id"] as? String, b)
+            micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
+            if !releaseBeforeOpen { router.handleHotkeyHoldEnd(holdDuration: 1) }
+            let stops = commands.filter { $0["cmd"] as? String == "stop" }
+            XCTAssertEqual(stops.compactMap { $0["take_id"] as? String }, [a, b])
+            XCTAssertEqual(stops.last?["physical_press"] as? Bool, true)
+            XCTAssertTrue(state.isF5SpeechPausedDuringCapture)
+            XCTAssertFalse(commands.contains { ["resume", "cancel"].contains($0["cmd"] as? String ?? "") })
+            router.handleHotkeyHoldEnd(holdDuration: 1)
+            XCTAssertEqual(commands.filter { $0["cmd"] as? String == "stop" }.count, 2)
+            assertNoDrainRefusal(state)
+        }
+    }
+
     func testEscapeCancelsQueuedBWithoutCancellingOrRestartingA() throws {
         let state = makeState()
         var commands: [[String: Any]] = []

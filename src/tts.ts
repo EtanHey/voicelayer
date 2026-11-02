@@ -926,6 +926,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   priority?: PlaybackPriority;
   /** CLICK2: admit this job already parked at its offset, with no player (Pause landed before it existed). */
   startPaused?: boolean;
+  startPauseOwner?: PlaybackPauseOwner;
   durationMs?: number;
   collapseKey?: string;
   clipMarker?: {
@@ -960,10 +961,15 @@ interface PlaybackJob {
   exited: Promise<PlaybackOutcomeEvent>;
   /** Announce `resumed` when the next player for this job actually starts. */
   resuming?: boolean;
+  pausedWordIndex?: number;
 }
 
 /** One parked utterance: no player, no lease, no TTL; its cursor is frozen until Resume or Stop. */
+export type PlaybackPauseOwner = "user" | "f5";
+let f5CaptureActive = false;
+
 interface ParkedPlayback {
+  owner: PlaybackPauseOwner;
   job: PlaybackJob;
   offsetMs: number;
   controller: AbortController;
@@ -1187,7 +1193,7 @@ class PlaybackQueueManager {
     this.replaceParked();
     if (job.metadata?.startPaused) {
       job.metadata.startPaused = undefined;
-      this.park(job, job.metadata.localOffsetMs ?? 0);
+      this.park(job, job.metadata.localOffsetMs ?? 0, job.metadata.startPauseOwner);
       return handle;
     }
 
@@ -1352,8 +1358,16 @@ class PlaybackQueueManager {
   }
 
   /** Quiesce the owned player (never SIGSTOP) and keep the job, cursor and audio for Resume. */
-  pause(scope: ControlScope, elapsedMs?: number): SeekResult {
+  pause(scope: ControlScope, elapsedMs?: number, owner: PlaybackPauseOwner = "user"): SeekResult {
     const globalOffset = (job: PlaybackJob) => (job.metadata?.longRead?.chunk_start_ms ?? 0) + (job.metadata?.localOffsetMs ?? 0);
+    const preparingScope = f5CaptureActive && this.parked?.owner === "f5" && owner === "user" &&
+      scope.id !== undefined && scope.id === this.parked.job.metadata?.longRead?.id &&
+      this.parked.job.metadata.longRead.chunk_index === 0;
+    if (this.parked && (!this.isStale(this.parked.job, scope) || preparingScope) && owner === "user" && this.parked.owner === "f5") {
+      this.parked.owner = "user";
+      this.broadcastPlaybackState(this.parked.job, "paused");
+      return { outcome: "accept", reason: "manual pause", offset_ms: globalOffset(this.parked.job) };
+    }
     if (this.parked) {
       return this.isStale(this.parked.job, scope) ? { outcome: "reject", reason: "stale" }
         : { outcome: "noop", reason: "already paused", offset_ms: globalOffset(this.parked.job) };
@@ -1367,20 +1381,31 @@ class PlaybackQueueManager {
     const chunkStart = job.metadata.longRead?.chunk_start_ms ?? 0;
     const elapsed = !active ? job.metadata.localOffsetMs ?? 0
       : elapsedMs !== undefined ? elapsedMs - chunkStart : Date.now() - active.startedAt;
-    const offset = Math.min(Math.max(0, Math.round(elapsed)), job.metadata.durationMs ?? Infinity);
+    const cursor = Math.min(Math.max(0, Math.round(elapsed)), job.metadata.durationMs ?? Infinity);
+    // Rewind to the containing word, retaining its tail and every following word.
+    const tokens = displayTokens(job.metadata.text);
+    const timeline = combineHistoryTimings([{ text: job.metadata.text, durationMs: job.metadata.durationMs ?? 0,
+      aligned: job.metadata.alignedWords, words: job.metadata.wordBoundaries }]);
+    const words = timeline?.some(word => (word.duration_ms ?? 0) > 0) ? timeline
+      : tokens.map((token, i) => ({ text: token[0], word_index: i,
+          offset_ms: i * (job.metadata!.durationMs ?? 0) / tokens.length }));
+    const word = words.findLast(boundary => boundary.offset_ms !== null && boundary.offset_ms <= cursor);
+    job.pausedWordIndex = word?.word_index ?? 0;
+    const offset = cursor === job.metadata.durationMs ? cursor : Math.round(word?.offset_ms ?? 0);
     this.cancelSeekPreparation();
     if (active) { this.current = null; this.terminate(active); }
     if (this.preparing?.job === job) { const preparing = this.preparing; this.preparing = null; preparing.cancel(); }
     if (this.restartAfterTermination === job) this.restartAfterTermination = null;
     if (this.replayPreparingJob === job) this.replayPreparingJob = null;
     this.stopProgressTimer();
-    this.park(job, offset);
+    this.park(job, offset, owner);
     return { outcome: "accept", offset_ms: chunkStart + offset };
   }
 
   /** Hold `job` at `offset` with no player: Pause's own park, and a start-paused admission's. */
-  private park(job: PlaybackJob, offset: number): void {
+  private park(job: PlaybackJob, offset: number, owner: PlaybackPauseOwner = "user"): void {
     const metadata = job.metadata!;
+    job.pausedWordIndex ??= 0;
     job.lifecycle.generation++;
     disposeSeekSlice(job.sliceFile);
     job.sliceFile = undefined;
@@ -1388,7 +1413,7 @@ class PlaybackQueueManager {
     job.skipAmplitudeDecode = offset > 0 || job.decodedAmplitude !== undefined;
     metadata.localOffsetMs = offset;
     metadata.playbackOffsetMs = (metadata.longRead?.chunk_start_ms ?? 0) + offset;
-    const parked: ParkedPlayback = { job, offsetMs: offset, controller: new AbortController(),
+    const parked: ParkedPlayback = { owner, job, offsetMs: offset, controller: new AbortController(),
       ready: offset === 0, failed: false, resumeRequested: false };
     this.parked = parked;
     job.onParkedChange?.(true);
@@ -1399,11 +1424,26 @@ class PlaybackQueueManager {
     this.emitQueueSnapshot();
   }
 
+  capturePauseIdentity(): string | undefined {
+    const job = this.parked?.job;
+    return job ? job.metadata?.longRead?.id ?? job.id : undefined;
+  }
+
+  autoResumeCapture(identity?: string): void {
+    if (identity && this.parked?.owner === "f5" && this.capturePauseIdentity() === identity) this.resume({});
+    this.processNext();
+  }
+
+  async quiesceForCapture(): Promise<void> {
+    // A logical pause is not proof that the old player has exited.
+    await Promise.all([...this.terminating.values()].map(active => active.proc.exited));
+  }
+
   resume(scope: ControlScope): SeekResult {
     const parked = this.parked;
     if (!parked) return { outcome: "noop", reason: "not paused" };
     if (this.isStale(parked.job, scope)) return { outcome: "reject", reason: "stale" };
-    if (getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) return { outcome: "reject", reason: "busy" };
+    if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) return { outcome: "reject", reason: "busy" };
     const offset_ms = (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
     if (parked.resumeRequested) return { outcome: "noop", reason: "resuming", offset_ms };
     parked.resumeRequested = true;
@@ -1441,7 +1481,7 @@ class PlaybackQueueManager {
     try {
       // A capture that began while the slice was cut keeps the item parked.
       assertSpeakerClear();
-      if (getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) throw new Error("Resume refused: voice is busy");
+      if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) throw new Error("Resume refused: voice is busy");
     } catch (error) {
       parked.resumeRequested = false;
       broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
@@ -1467,8 +1507,9 @@ class PlaybackQueueManager {
     const duration = job.metadata?.getUtteranceDurationMs?.() ?? job.metadata?.utteranceDurationMs ?? job.metadata?.durationMs;
     broadcast({ type: "playback_state", state, playback_id: job.id, generation: job.lifecycle.generation,
       offset_ms: (job.metadata?.longRead?.chunk_start_ms ?? 0) + local, chunk_offset_ms: local,
+      ...(state === "paused" ? { pause_owner: this.parked?.owner ?? "user" } : {}),
       ...(duration !== undefined ? { duration_ms: duration } : {}),
-      ...(word_index !== undefined ? { word_index } : {}), ...(word_count !== undefined ? { word_count } : {}),
+      ...(word_count !== undefined ? { word_index: job.pausedWordIndex ?? word_index ?? 0, word_count } : {}),
       ...(job.metadata?.longRead ? { long_read: job.metadata.longRead } : {}) });
   }
 
@@ -1486,7 +1527,7 @@ class PlaybackQueueManager {
       job.skipAmplitudeDecode = job.decodedAmplitude !== undefined;
       job.metadata!.localOffsetMs = 0;
       job.metadata!.playbackOffsetMs = job.metadata!.longRead?.chunk_start_ms ?? 0;
-      const restarted: ParkedPlayback = { job, offsetMs: 0, controller: new AbortController(),
+      const restarted: ParkedPlayback = { owner: parked.owner, job, offsetMs: 0, controller: new AbortController(),
         ready: true, failed: false, resumeRequested: true };
       this.parked = restarted;
       return this.releaseParked(restarted);
@@ -1606,7 +1647,7 @@ class PlaybackQueueManager {
   }
 
   private processNext() {
-    if (this.current || this.preparing || this.terminating.size > 0 || this.orphanedWorkCount() > 0) return;
+    if (f5CaptureActive || this.current || this.preparing || this.terminating.size > 0 || this.orphanedWorkCount() > 0) return;
     // Paused freezes promotion for the whole queue; held items keep their ordinary TTL.
     if (this.parked) {
       if (this.depth() === 0) { this.emitQueueSnapshot(); this.resolveIfIdle(); }
@@ -2171,28 +2212,63 @@ export function playbackTelemetrySnapshot(): CommandTelemetrySnapshot {
 setCommandTelemetrySnapshot(playbackTelemetrySnapshot);
 
 /** Idempotent; the scope, when given, must name the current item. `elapsedMs` is the global client clock. */
-export function pausePlayback(scope: { id?: string; generation?: number } = {}, playbackElapsedMs?: number): SeekResult {
-  const result = playbackQueueManager.pause(scope, playbackElapsedMs);
+export function pausePlayback(scope: { id?: string; generation?: number } = {}, playbackElapsedMs?: number, owner: PlaybackPauseOwner = "user"): SeekResult {
+  const result = playbackQueueManager.pause(scope, playbackElapsedMs, owner);
   const read = activeLongRead;
   if (result.outcome !== "noop" || result.reason !== "nothing playing" || !read?.firstAdmission ||
       read.controller.signal.aborted) return result;
   // CLICK2: Pause before the first chunk exists parks the read; that chunk is admitted already parked at zero.
   // No queue job exists yet, so a scope naming one is stale.
-  if (scope.id !== undefined || scope.generation !== undefined) return { outcome: "reject", reason: "stale" };
-  if (isCaptureAdmissionReserved()) return { outcome: "reject", reason: "unsupported" };
-  if (read.firstAdmission.paused) return { outcome: "noop", reason: "already paused", offset_ms: 0 };
+  if ((scope.id !== undefined && scope.id !== read.id) ||
+      (scope.generation !== undefined && scope.generation !== read.generation)) return { outcome: "reject", reason: "stale" };
+  const publish = () => broadcast({ type: "playback_state", state: "paused", playback_id: read.id,
+    generation: read.generation, pause_owner: read.firstAdmission!.owner ?? "user", offset_ms: 0, chunk_offset_ms: 0,
+    word_index: 0, long_read: { id: read.id, chunk_index: 0, chunk_count: read.firstAdmission!.chunkCount,
+      chunk_start_ms: 0, preparing: true } });
+  if (isCaptureAdmissionReserved() && owner !== "f5") return { outcome: "reject", reason: "unsupported" };
+  if (read.firstAdmission.paused) {
+    if (owner === "user" && read.firstAdmission.owner === "f5") {
+      read.firstAdmission.owner = "user";
+      publish();
+      return { outcome: "accept", reason: "manual pause", offset_ms: 0 };
+    }
+    return { outcome: "noop", reason: "already paused", offset_ms: 0 };
+  }
   read.firstAdmission.paused = true;
+  read.firstAdmission.owner = owner;
   read.archive?.move("paused");
+  publish();
   return { outcome: "accept", reason: "parked", offset_ms: 0 };
 }
+
+/** F5 owns only this read until capture settlement. A stale settlement never touches a replacement. */
+export function pauseForF5Capture(playbackElapsedMs?: number): { ready: Promise<void>; settle(): void } {
+  if (f5CaptureActive) throw new Error("busy");
+  const result = pausePlayback({}, playbackElapsedMs, "f5");
+  if (result.outcome === "reject") throw new Error(result.reason);
+  const read = activeLongRead;
+  const identity = playbackQueueManager.capturePauseIdentity() ??
+    (read?.firstAdmission?.paused ? read.id : undefined);
+  f5CaptureActive = true;
+  let settled = false;
+  return { ready: playbackQueueManager.quiesceForCapture(), settle() {
+    if (settled) return;
+    settled = true;
+    f5CaptureActive = false;
+    if (identity && activeLongRead?.id === identity && activeLongRead.firstAdmission?.owner === "f5") resumePlayback();
+    else playbackQueueManager.autoResumeCapture(identity);
+  } };
+}
+export function hasF5Capture(): boolean { return f5CaptureActive; }
 
 /** Idempotent; never resumes a stopped/replaced item and never while a capture owns the voice. */
 export function resumePlayback(scope: { id?: string; generation?: number } = {}): SeekResult {
   const read = playbackQueueManager.isPaused() ? undefined : preparationParkedRead();
   if (!playbackQueueManager.isPaused() && !read) return { outcome: "noop", reason: "not paused" };
   if (!read) return playbackQueueManager.resume(scope);
-  if (getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
-  if (scope.id !== undefined || scope.generation !== undefined) return { outcome: "reject", reason: "stale" };
+  if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
+  if ((scope.id !== undefined && scope.id !== read.id) ||
+      (scope.generation !== undefined && scope.generation !== read.generation)) return { outcome: "reject", reason: "stale" };
   // Play before the first chunk exists: it is admitted normally, from zero.
   read.firstAdmission!.paused = false;
   return { outcome: "accept", offset_ms: 0 };
@@ -2308,7 +2384,7 @@ export interface LongReadHandle {
 }
 type OwnedLongRead = LongReadHandle & { archive?: LiveSpeechArchive; controller: AbortController; seek?: LongReadSeek;
   /** CLICK2: present until the first chunk is admitted; `paused` once Pause parked the preparing read. */
-  firstAdmission?: { paused: boolean };
+  firstAdmission?: { paused: boolean; owner?: PlaybackPauseOwner; chunkCount: number };
   /** QPRE1: the read's request identity, and every chunk synthesized (only playing out from here). */
   requestId?: string; synthesized?: Promise<void> };
 let activeLongRead: OwnedLongRead | undefined;
@@ -2624,7 +2700,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
   let resolveSynthesized!: () => void;
   const synthesized = new Promise<void>((resolve) => { resolveSynthesized = resolve; });
   const handle: OwnedLongRead = { id, get generation() { return generation; }, archive, controller, started, done: Promise.resolve(), playerExited: Promise.resolve(), completion: Promise.resolve({} as { error?: string }),
-    requestId: speechIdentity.request_id, synthesized, firstAdmission: { paused: false } };
+    requestId: speechIdentity.request_id, synthesized, firstAdmission: { paused: false, chunkCount: texts.length } };
   activeLongRead = handle;
   longReads.set(id, handle);
   const signal = controller.signal;
@@ -2702,6 +2778,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
         prosodyRead?.chunkAdmitted(info.chunk_index);
         // CLICK2: a Pause that landed during preparation admits this first chunk parked, before any player.
         const startPaused = handle.firstAdmission?.paused === true;
+        const startPauseOwner = handle.firstAdmission?.owner;
         handle.firstAdmission = undefined;
         let started = false;
         let resolveStarted!: (value: boolean) => void;
@@ -2712,7 +2789,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
         let playback: ReturnType<typeof playAudioNonBlocking>;
         try { playback = playAudioNonBlocking(chunk.audioFile, {
           speechArchive: archive,
-          ...(startPaused ? { startPaused: true } : {}),
+          ...(startPaused ? { startPaused: true, startPauseOwner } : {}),
           text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs,
           longRead: { ...info, ...(displays[info.chunk_index] ? { display: displays[info.chunk_index] } : {}) }, speechIdentity,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",

@@ -290,6 +290,7 @@ export interface PlaybackStateEvent {
   /** Global utterance position (chunk start + chunk-local offset). */
   offset_ms: number;
   chunk_offset_ms: number;
+  pause_owner?: "user" | "f5";
   duration_ms?: number;
   word_index?: number;
   word_count?: number;
@@ -443,6 +444,7 @@ export interface ReadNextCommand extends SocketCommandBase {
 }
 
 export interface StopCommand extends SocketCommandBase {
+  scope?: "capture" | "speech";
   take_id?: string;
   cmd: "stop";
   /** Opt-in for a physical stop press; never interpreted as a capture clock. */
@@ -492,6 +494,7 @@ export interface ToggleCommand extends SocketCommandBase {
 }
 
 export interface RecordCommand extends SocketCommandBase {
+  playback_elapsed_ms?: number;
   take_id?: string;
   cmd: "record";
   /** Recording timeout in seconds (default: 30, max: 3600). */
@@ -872,12 +875,14 @@ export function parseCommand(line: string): SocketCommand | null {
       case "history_playback_ready":
         return id ? { cmd: "history_playback_ready", id } : null;
       case "stop":
+        if (parsed.scope !== undefined && parsed.scope !== "capture" && parsed.scope !== "speech") return null;
         if (parsed.take_id !== undefined && (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256)) return null;
         if (parsed.physical_press !== undefined && typeof parsed.physical_press !== "boolean") return null;
         if (parsed.retain_read_queue !== undefined && typeof parsed.retain_read_queue !== "boolean") return null;
         return withCommandId<StopCommand>(
           {
             cmd: "stop",
+            ...(parsed.scope !== undefined ? { scope: parsed.scope } : {}),
             ...(parsed.take_id !== undefined ? { take_id: parsed.take_id } : {}),
             ...(parsed.physical_press !== undefined ? { physical_press: parsed.physical_press } : {}),
             ...(parsed.retain_read_queue !== undefined ? { retain_read_queue: parsed.retain_read_queue } : {}),
@@ -1147,6 +1152,8 @@ export function parseCommand(line: string): SocketCommand | null {
         ) {
           command.silence_mode = parsed.silence_mode;
         }
+        if (parsed.playback_elapsed_ms !== undefined && playbackElapsedMs === undefined) return null;
+        if (playbackElapsedMs !== undefined) command.playback_elapsed_ms = playbackElapsedMs;
         if (parsed.press_to_talk === true) {
           command.press_to_talk = true;
         }

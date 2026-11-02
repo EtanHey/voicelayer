@@ -1,3 +1,4 @@
+import { fixtureCheckpoint } from "./long-read-fixture-barriers";
 import { finishSyntheticCapture } from "./setup/recording-jobs-fixture";
 import { finishBarCapture, recordingJobsSnapshot } from "../recording-jobs";
 import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
@@ -114,7 +115,9 @@ describe("ack protocol", () => {
   });
 
   afterEach(async () => {
+    await fixtureCheckpoint();
     await settleHistoryJobs();
+    await fixtureCheckpoint();
     stopPlaybackSpy.mockRestore();
     playAudioSpy.mockRestore();
     waitForInputSpy.mockRestore();
@@ -161,7 +164,18 @@ describe("ack protocol", () => {
     });
   });
 
-  it("honors trusted VoiceBar press_to_talk without the MCP gate or a deprecation warning", () => {
+  it("parses speech/capture Stop scopes and the F5 press position without accepting invalid fields", () => {
+    for (const scope of ["speech", "capture"]) {
+      expect(parseCommand(JSON.stringify({ cmd: "stop", scope }))).toEqual({ cmd: "stop", scope });
+    }
+    expect(parseCommand('{"cmd":"stop","scope":"both"}')).toBeNull();
+    expect(parseCommand('{"cmd":"record","playback_elapsed_ms":3500}')).toEqual({ cmd: "record", playback_elapsed_ms: 3500 });
+    for (const position of [-1, "3500", null]) {
+      expect(parseCommand(JSON.stringify({ cmd: "record", playback_elapsed_ms: position }))).toBeNull();
+    }
+  });
+
+  it("honors trusted VoiceBar press_to_talk without the MCP gate or a deprecation warning", async () => {
     const savedAllowPushToEnd = process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -178,13 +192,14 @@ describe("ack protocol", () => {
 
       queueDepthSpy.mockReturnValue(0);
       recordingStateSpy.mockReturnValue("idle");
-      handleSocketCommand(command!);
+      await handleSocketCommand(command!);
+      await fixtureCheckpoint();
 
       expect(waitForInputSpy).toHaveBeenCalledWith(
         30_000,
         "standard",
         true,
-        { archiveSource: "voicebar" },
+        { archiveSource: "voicebar", onCaptureStart: expect.any(Function) },
       );
       expect(errorSpy).not.toHaveBeenCalled();
     } finally {
@@ -197,7 +212,7 @@ describe("ack protocol", () => {
     }
   });
 
-  it("returns accept ack for record under happy path", () => {
+  it("returns accept ack for record under happy path", async () => {
     queueDepthSpy.mockReturnValue(0);
     recordingStateSpy.mockReturnValue("idle");
 
@@ -208,9 +223,10 @@ describe("ack protocol", () => {
       silence_mode: "standard",
     } as unknown as SocketCommand);
 
+    await fixtureCheckpoint();
     expect(waitForInputSpy).toHaveBeenCalled();
     expect(waitForInputSpy).toHaveBeenCalledWith(30000, "standard", false, {
-      archiveSource: "voicebar",
+      archiveSource: "voicebar", onCaptureStart: expect.any(Function),
     });
     expect(response).toEqual({
       type: "ack",

@@ -164,6 +164,33 @@ describe("QUEUE1 selection read queue (TLA3 QUEUE1 gates)", () => {
     expect(g.queue.next("A")).toBe("stale");
   });
 
+  it("R2-01 capture keeps ownership, queues fresh requests and refuses Next until settlement", () => {
+    const h = harness();
+    h.queue.submit(read("A"), true);
+    h.queue.holdForCapture();
+    expect(h.queue.submit(read("B"), false)).toBe("queued");
+    expect(h.queue.next("A")).toBe("stale");
+    expect(h.started).toEqual(["A"]);
+    h.queue.releaseCapture();
+    h.queue.releaseCapture();
+    expect(h.started).toEqual(["A"]);
+    h.queue.settled("A", "completed");
+    expect(h.started).toEqual(["A", "B"]);
+  });
+
+  it("R2-01 new speech after Stop waits for capture and starts once after settlement", () => {
+    const h = harness();
+    h.queue.submit(read("A"), true);
+    h.queue.holdForCapture();
+    h.queue.clear();
+    expect(h.queue.submit(read("B"), true)).toBe("queued");
+    expect(h.started).toEqual(["A"]);
+    h.queue.releaseCapture();
+    h.queue.releaseCapture();
+    expect(h.started).toEqual(["A", "B"]);
+    expect(h.queue.pendingCount).toBe(0);
+  });
+
   it("publishes counts only, never queued text", () => {
     const h = harness();
     h.queue.submit(read("A"), true); h.queue.submit(read("B"), true);
