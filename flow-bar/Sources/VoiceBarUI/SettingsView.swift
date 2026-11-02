@@ -1559,6 +1559,11 @@ public struct SettingsView: View {
                                             }
                                         } header: { historyDayHeader(group.dayTitle()) }
                                     }
+                                    if historyHasMore {
+                                        Button(isHistoryLoading ? "Loading…" : "Load more") { loadOlderHistory() }
+                                            .disabled(isHistoryLoading)
+                                            .padding(.top, 8)
+                                    }
                                 }.padding(12)
                             }.clipped()
                         } detail: {
@@ -1566,10 +1571,7 @@ public struct SettingsView: View {
                                 SettingsHistoryAttemptDetailPane(entry: entry, load: historyDiagnostics,
                                     loadAttempts: historyAttempts, runs: historyRunLog().runs(for: entry.audioPath.path),
                                     omittedCount: historyRunLog().omittedCount) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text("Selected dictation").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                        Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.headline)
-                                    }
+                                    Text("Selected dictation").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 } content: { displayedEntry in
                                     recordingHistoryDetail(displayedEntry)
                                 } actions: { displayedEntry in
@@ -1587,10 +1589,6 @@ public struct SettingsView: View {
                                 ? "\(historyLoadedEntryCount) matches shown"
                                 : "\(historyLoadedEntryCount) saved shown").foregroundStyle(.secondary)
                             Spacer()
-                            if historyHasMore {
-                                Button(isHistoryLoading ? "Loading…" : "Load more") { loadOlderHistory() }
-                                    .disabled(isHistoryLoading)
-                            }
                         }.font(.caption).padding(.horizontal, 18).padding(.vertical, 10)
                     }
 

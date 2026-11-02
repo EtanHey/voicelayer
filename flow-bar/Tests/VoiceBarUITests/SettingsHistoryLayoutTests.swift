@@ -35,12 +35,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
     }
 
     func testTheViewUsesTheLayoutRules() throws {
-        let source = try String(
-            contentsOf: URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-                .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"),
-            encoding: .utf8
-        )
+        let source = try settingsSource()
         XCTAssertTrue(source.contains("SettingsHistoryWorkspace {"))
         XCTAssertFalse(source.contains(".frame(maxHeight: 260)"), "the fixed 260 pt detail cap is gone")
         XCTAssertTrue(source.contains("preferNewest: selectNewestOnNextHistoryPage"))
@@ -52,5 +47,44 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         let tabChange = try XCTUnwrap(source.range(of: ".onChange(of: selectedTab) { _, tab in"))
         let body = source[tabChange.lowerBound...].prefix(600)
         XCTAssertTrue(body.contains("selectNewestOnNextHistoryPage = true"))
+    }
+
+    func testRecordingPaginationFollowsAllDayGroupsInsideTheScrollList() throws {
+        let source = try settingsSource()
+        let scopeStart = try XCTUnwrap(source.range(of: "private var recordingHistoryScope: some View"))
+        let scopeEnd = try XCTUnwrap(source.range(of: "private var selectedHistoryEntry:", range: scopeStart.upperBound..<source.endIndex))
+        let scope = String(source[scopeStart.lowerBound..<scopeEnd.lowerBound])
+        let listStart = try XCTUnwrap(scope.range(of: "ScrollView(.vertical) {"))
+        let listEnd = try XCTUnwrap(scope.range(of: "}.clipped()", range: listStart.upperBound..<scope.endIndex))
+        let list = String(scope[listStart.upperBound..<listEnd.lowerBound])
+        let groupsEnd = try XCTUnwrap(list.range(of: "} header: { historyDayHeader(group.dayTitle()) }"))
+        let pagination = try XCTUnwrap(list.range(of: "if historyHasMore {"))
+        XCTAssertLessThan(groupsEnd.upperBound, pagination.lowerBound, "pagination follows the day groups")
+        XCTAssertEqual(list[groupsEnd.upperBound..<pagination.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines), "}",
+                       "the day-group loop ends before pagination, so the button appears once")
+        let paginationContent = list[pagination.upperBound...]
+        XCTAssertTrue(paginationContent.contains("Button(isHistoryLoading ? \"Loading…\" : \"Load more\") { loadOlderHistory() }"))
+        XCTAssertTrue(paginationContent.contains(".disabled(isHistoryLoading)"))
+        XCTAssertFalse(scope[listEnd.upperBound...].contains("loadOlderHistory()"), "no pagination outside the list")
+        XCTAssertTrue(scope.contains("\\(historyLoadedEntryCount) matches shown"))
+        XCTAssertTrue(scope.contains("\\(historyLoadedEntryCount) saved shown"))
+    }
+
+    func testSelectedDictationHeaderDoesNotRepeatTheRecordingDate() throws {
+        let source = try settingsSource()
+        let heading = try XCTUnwrap(source.range(of: "Text(\"Selected dictation\")"))
+        let content = try XCTUnwrap(source.range(of: "} content: { displayedEntry in", range: heading.upperBound..<source.endIndex))
+        let header = source[heading.lowerBound..<content.lowerBound]
+        XCTAssertFalse(header.contains("createdAt"), "the date belongs in Recording details")
+        XCTAssertEqual(header.components(separatedBy: "Text(").count - 1, 1, "keep only the short heading")
+    }
+
+    private func settingsSource() throws -> String {
+        try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"),
+            encoding: .utf8
+        )
     }
 }
