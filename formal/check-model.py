@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
+from graph_retention import graph_run
 from tlc_support import tlc_jar
 
 parser = argparse.ArgumentParser()
@@ -15,36 +15,35 @@ parser.add_argument("--record", action="store_true", help="Refresh normalized co
 parser.add_argument("--only", help="Debug one config; never produces an acceptance receipt")
 args = parser.parse_args()
 directory = args.directory.resolve()
-manifest = json.loads((directory / "checks.json").read_text())
-assert {file.stem for file in directory.glob("*.cfg")} == set(manifest["checks"]), "Unregistered config"
 root = directory.parents[1]
 cache = root / ".build.noindex" / directory.name
 cache.mkdir(parents=True, exist_ok=True)
-jar = tlc_jar()
-digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-tracked = [directory / f'{manifest["module"]}.tla', directory / "checks.json", Path(__file__),
-           *directory.glob("*.cfg"), *(root / file for file in manifest["sources"])]
-hashes = {str(path.relative_to(root)): digest(path) for path in tracked}
-declared = set()
-all_declared = set()
-for name, check in manifest["checks"].items():
-    text = (directory / f"{name}.cfg").read_text()
-    for line in re.findall(r"^(?:INVARIANTS|PROPERTIES) (.+)$", text, re.M):
-        all_declared.update(line.split())
-        if check["role"] == "positive": declared.update(line.split())
-assert declared == set(manifest["acceptance"]), "Positive properties and mutation manifest drifted"
-assert all_declared <= {row["target"] for row in manifest["checks"].values() if row["target"]}, "A declared property has no exact failing config"
-mutants = {target: [] for target in manifest["acceptance"]}
-for name, check in manifest["checks"].items():
-    if check["role"] == "mutant": mutants[check["target"]].append(name)
-assert all(mutants.values()), "Every invariant/temporal property needs a mutant"
-checks = {name: check for name, check in manifest["checks"].items() if not args.only or name == args.only}
-assert checks and not (args.record and args.only)
-results = {}
-graph_hashes = {}
-(cache / "run.json").unlink(missing_ok=True)
-with tempfile.TemporaryDirectory(prefix="tlc-", dir=cache) as temporary:
-    run = Path(temporary)
+with graph_run(cache, prefix="tlc-", keep_runs=0) as run:
+    manifest = json.loads((directory / "checks.json").read_text())
+    assert {file.stem for file in directory.glob("*.cfg")} == set(manifest["checks"]), "Unregistered config"
+    jar = tlc_jar()
+    digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    tracked = [directory / f'{manifest["module"]}.tla', directory / "checks.json", Path(__file__), Path(__file__).with_name("graph_retention.py"),
+               *directory.glob("*.cfg"), *(root / file for file in manifest["sources"])]
+    hashes = {str(path.relative_to(root)): digest(path) for path in tracked}
+    declared = set()
+    all_declared = set()
+    for name, check in manifest["checks"].items():
+        text = (directory / f"{name}.cfg").read_text()
+        for line in re.findall(r"^(?:INVARIANTS|PROPERTIES) (.+)$", text, re.M):
+            all_declared.update(line.split())
+            if check["role"] == "positive": declared.update(line.split())
+    assert declared == set(manifest["acceptance"]), "Positive properties and mutation manifest drifted"
+    assert all_declared <= {row["target"] for row in manifest["checks"].values() if row["target"]}, "A declared property has no exact failing config"
+    mutants = {target: [] for target in manifest["acceptance"]}
+    for name, check in manifest["checks"].items():
+        if check["role"] == "mutant": mutants[check["target"]].append(name)
+    assert all(mutants.values()), "Every invariant/temporal property needs a mutant"
+    checks = {name: check for name, check in manifest["checks"].items() if not args.only or name == args.only}
+    assert checks and not (args.record and args.only)
+    results = {}
+    graph_hashes = {}
+    (cache / "run.json").unlink(missing_ok=True)
     for name, check in checks.items():
         target, kind = check["target"], check["kind"]
         config = (directory / f"{name}.cfg").read_text()
@@ -88,16 +87,16 @@ with tempfile.TemporaryDirectory(prefix="tlc-", dir=cache) as temporary:
             (cache / f"{name.lower()}-states.json").write_text(json.dumps(list(nodes.values())))
             (cache / f"{name.lower()}-graph.json").write_text(json.dumps(dict(nodes=nodes, edges=edges)))
             graph_hashes[name] = digest(cache / f"{name.lower()}-graph.json")
-assert all(digest(root / path) == sha for path, sha in hashes.items()), "Files changed during checking"
-receipt = dict(complete=not bool(args.only), tlcJarSHA256=digest(jar), hashes=hashes,
-               mutants=mutants, graphHashes=graph_hashes, checks={key: {k: v for k, v in row.items() if k != "trace"} for key, row in results.items()})
-(cache / "run.json").write_text(json.dumps(receipt, indent=2) + "\n")
-if args.record:
-    evidence = directory / "results"
-    evidence.mkdir(exist_ok=True)
-    (evidence / "run.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    for name, row in results.items():
-        (evidence / f"{name}.log").write_text(json.dumps(row, indent=2) + "\n")
-    table = ["| Property | Exact-property failing mutant configs |", "| --- | --- |"]
-    table += [f"| {target} | {', '.join(names)} |" for target, names in sorted(mutants.items())]
-    (evidence / "MUTANTS.md").write_text("\n".join(table) + "\n")
+    assert all(digest(root / path) == sha for path, sha in hashes.items()), "Files changed during checking"
+    receipt = dict(complete=not bool(args.only), tlcJarSHA256=digest(jar), hashes=hashes,
+                   mutants=mutants, graphHashes=graph_hashes, checks={key: {k: v for k, v in row.items() if k != "trace"} for key, row in results.items()})
+    (cache / "run.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    if args.record:
+        evidence = directory / "results"
+        evidence.mkdir(exist_ok=True)
+        (evidence / "run.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        for name, row in results.items():
+            (evidence / f"{name}.log").write_text(json.dumps(row, indent=2) + "\n")
+        table = ["| Property | Exact-property failing mutant configs |", "| --- | --- |"]
+        table += [f"| {target} | {', '.join(names)} |" for target, names in sorted(mutants.items())]
+        (evidence / "MUTANTS.md").write_text("\n".join(table) + "\n")
