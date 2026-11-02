@@ -48,17 +48,20 @@ enum SelectionPasteboardSnapshot {
     }
 
     static func readInHelper(name: String, executable: URL? = Bundle.main.executableURL,
-                             arguments: [String]? = nil, timeout: TimeInterval = 1)
+                             arguments: [String]? = nil, timeout: TimeInterval = 1,
+                             onFailure: (String) -> Void = { reason in
+                                 NSLog("[selection_snapshot] failed reason=%@", reason)
+                             })
         -> SpeakSelectionCapture.Snapshot? {
         precondition(!Thread.isMainThread)
-        guard let executable else { return nil }
+        guard let executable else { onFailure("missing_executable"); return nil }
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments ?? [argument, name]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
+        do { try process.run() } catch { onFailure("launch_failed"); return nil }
         // SIGKILL bounds a stuck provider and targets only this owned child.
         let timeoutJob = DispatchWorkItem {
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
@@ -72,17 +75,25 @@ enum SelectionPasteboardSnapshot {
                 guard data.count <= 12 * 1024 * 1024 else {
                     if process.isRunning { kill(process.processIdentifier, SIGKILL) }
                     process.waitUntilExit()
+                    onFailure("output_limit")
                     return nil
                 }
             }
         } catch {
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
             process.waitUntilExit()
+            onFailure("read_failed")
             return nil
         }
         process.waitUntilExit()
-        guard process.terminationStatus == 0,
-              let items = try? JSONDecoder().decode([[Value]].self, from: data) else { return nil }
+        guard process.terminationStatus == 0 else {
+            onFailure("helper_termination_\(process.terminationReason.rawValue)_\(process.terminationStatus)")
+            return nil
+        }
+        guard let items = try? JSONDecoder().decode([[Value]].self, from: data) else {
+            onFailure("decode_failed")
+            return nil
+        }
         return items.map { $0.map { (NSPasteboard.PasteboardType($0.type), $0.data) } }
     }
 }
