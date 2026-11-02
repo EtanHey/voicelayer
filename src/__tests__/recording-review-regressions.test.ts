@@ -8,18 +8,25 @@ import { setRecordingState } from "../recording-state";
 import { runBarCapture, finishBarCapture, deliverInputTranscription, recordingJobsSnapshot, registerBarRecorderExit,
   acknowledgeDictationDelivery } from "../recording-jobs";
 import { handleSocketCommand } from "../socket-handlers";
+import { fixtureBarrier } from "./long-read-fixture-barriers";
+import { settleRecordingJobs } from "./setup/recording-jobs-fixture";
 const mocks: Array<{ mockRestore(): void }> = [];
-afterEach(() => {
-  mocks.splice(0).reverse().forEach(m => m.mockRestore());
-  expect(recordingJobsSnapshot().recording_jobs).toEqual([]);
-  setRecordingState("idle"); booking.clearStopSignal();
+afterEach(async () => {
+  try {
+    await settleRecordingJobs(tts.hasF5Capture);
+    expect(recordingJobsSnapshot().recording_jobs).toEqual([]);
+    expect(tts.hasF5Capture()).toBe(false);
+  } finally {
+    mocks.splice(0).reverse().forEach(m => m.mockRestore());
+    setRecordingState("idle"); booking.clearStopSignal();
+  }
 });
 test("F1 legacy record clients settle without sending delivery ACK and the next take decodes", async () => {
   const decoded: string[] = [];
   mocks.push(spyOn(socket, "broadcast").mockImplementation(() => {}));
   mocks.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
   mocks.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
-  const entered: Promise<string | null>[] = [];
+  const entered = fixtureBarrier<Promise<string | null>>();
   mocks.push(spyOn(input, "waitForInput").mockImplementation(() => {
     const job = finishBarCapture(Promise.resolve(), "synthetic.wav", async () => {
       decoded.push("take"); await deliverInputTranscription({ type: "transcription", text: "kept words" }); return "kept words";
@@ -27,8 +34,10 @@ test("F1 legacy record clients settle without sending delivery ACK and the next 
   }));
   for (let i = 0; i < 2; i++) {
     expect(await handleSocketCommand({ cmd: "record" })).toMatchObject({ outcome: "accept" });
-    await entered[i];
+    await entered.at(i);
+    await settleRecordingJobs(tts.hasF5Capture);
     expect(recordingJobsSnapshot().recording_jobs).toEqual([]);
+    expect(tts.hasF5Capture()).toBe(false);
   }
   expect(decoded).toHaveLength(2);
 });

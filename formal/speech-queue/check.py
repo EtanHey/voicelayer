@@ -55,7 +55,9 @@ def check(runner, f5_only=False, receipt=False):
         "src/__tests__/tts-long-read-runtime.test.ts", "src/__tests__/tts-pause.test.ts",
         "src/__tests__/socket-handlers-idempotency.test.ts", "src/__tests__/socket-residency.test.ts",
         "src/__tests__/setup/recording-jobs-fixture.ts", "src/__tests__/whisper-residency.test.ts",
-        "src/__tests__/update-gate-round1.test.ts", "src/__tests__/error-recovery.test.ts", "src/__tests__/click2-groundwork.test.ts", "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift",
+        "src/__tests__/update-gate-round1.test.ts", "src/__tests__/error-recovery.test.ts", "src/__tests__/click2-groundwork.test.ts",
+        "src/__tests__/recording-review-regressions.test.ts", "src/__tests__/test-safety-lifecycle.test.ts", "src/__tests__/mcp-handler.test.ts",
+        "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift",
         "formal/speech-queue/F5-IMPLEMENTATION.md")]]
     sources += [SPEC / "check.sh", ROOT / "formal/setup-tlc.py"]
     hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}

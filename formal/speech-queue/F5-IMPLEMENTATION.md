@@ -97,9 +97,11 @@ model cannot establish the revised M1-M4/D-S4 contract. Gate outcomes and immuta
 source hashes belong to the lane receipt and generated check artifacts. Installed
 interaction/audio/permission proof belongs to the captain.
 
-Every final paired gate runs the complete pause/runtime files and all six changed
+Every final paired gate runs the complete pause/runtime files and all changed
 socket/handler caller files (idempotency, socket residency, whisper residency,
-update-gate round1, error recovery and CLICK2 groundwork). CLICK2 asserts exact
+update-gate round1, error recovery, CLICK2 groundwork and recording review regressions),
+plus the approved integration repairs for the private-safety VM and MCP Ask schema.
+CLICK2 asserts exact
 containing-word offsets from explicit timing fixtures and one paused confirmation
 per preparation/admitted-chunk phase; repeated commands add no confirmation.
 Capture-start assertions await their event;
