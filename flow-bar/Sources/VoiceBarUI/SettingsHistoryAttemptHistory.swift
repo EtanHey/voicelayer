@@ -126,7 +126,7 @@ struct SettingsHistoryFact: Equatable {
 
 struct SettingsHistoryDiagnosticsCopy {
     /// Shown only when the archive itself could not establish this recording's outcome.
-    static let incompleteDetails = "Some details for this recording weren't saved."
+    static let incompleteDetails = "Details for this recording are unavailable."
     /// Shown only when the attempt reader says its own log is incomplete.
     static let incompleteAttempts = "Earlier attempts weren't saved for this recording."
     let summary: String
@@ -274,12 +274,15 @@ struct SettingsHistoryDiagnosticsCopy {
             processing: nil, symbol: symbol, isProblem: problem)
     }
 
-    /// Recognition facts in reading order. Engine sits beside Language. Created is not repeated here
-    /// (the detail header carries the date); audio length and total processing live in the footer.
+    /// Recording facts in reading order. The detail heading has no date; Created appears here once.
+    /// Engine sits beside Language; audio length and total processing live in the footer.
     static func facts(snapshot: SettingsHistoryDiagnostics?, entry: SettingsHistoryEntry?,
                       attemptHistory: SettingsHistoryAttemptHistory?, selectedAttemptID: String?,
                       locale: Locale = .current, timeZone: TimeZone = .current) -> [SettingsHistoryFact] {
         var facts: [SettingsHistoryFact] = []
+        if let created = snapshot?.capturedAt ?? entry?.createdAt {
+            facts.append(.init(title: "Created", value: dateTime(created, locale: locale, timeZone: timeZone)))
+        }
         // Stored input_device_name values, never the currently selected microphone.
         if let mic = snapshot?.inputDeviceName ?? entry?.inputDeviceLabel { facts.append(.init(title: "Microphone", value: mic)) }
         if let language = snapshot?.languageSetting { facts.append(.init(title: "Language setting", value: language)) }

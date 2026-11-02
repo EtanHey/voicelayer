@@ -7,7 +7,7 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
     private let utc = TimeZone(secondsFromGMT: 0)!
     private let created = Date(timeIntervalSince1970: 1_793_000_000)
     /// Archive vocabulary Etan ruled off the screen (2026-11-02 QA). It may survive only in the copied Log.
-    private let jargon = ["Archive", "archive", "attempt identity", "unknown", "Earlier attempts", "format",
+    private let jargon = ["Archive", "archive", "attempt identity", "unknown", "Earlier attempts and retry times", "format",
                           "per-recording", "backend", "attributed", "Technical details", "Older details", "technical-id-"]
 
     private func snapshot(_ state: SettingsHistoryDiagnostics.ArchiveState = .transcribed, backend: String? = nil,
@@ -138,9 +138,10 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
     func testEngineSitsBesideLanguageAndDateAndAudioAreNotRepeated() {
         let facts = SettingsHistoryDiagnosticsCopy.facts(snapshot: snapshot(backend: "parakeet-resident", language: "auto", mic: "Desk microphone"),
                                                          entry: entry(), attemptHistory: nil, selectedAttemptID: nil)
-        XCTAssertEqual(facts.map(\.title), ["Microphone", "Language setting", "Engine"])
-        XCTAssertEqual(facts.map(\.value), ["Desk microphone", "auto", "Parakeet"])
-        for duplicate in ["Created", "Audio length", "Processing", "Recording ID"] {
+        XCTAssertEqual(facts.map(\.title), ["Created", "Microphone", "Language setting", "Engine"])
+        XCTAssertEqual(facts.map(\.value).suffix(3), ["Desk microphone", "auto", "Parakeet"])
+        XCTAssertEqual(facts.filter { $0.title == "Created" }.count, 1)
+        for duplicate in ["Audio length", "Processing", "Recording ID"] {
             XCTAssertFalse(facts.map(\.title).contains(duplicate), "\(duplicate) is shown once elsewhere")
         }
         let names: [(String?, String?)] = [("parakeet-resident", "Parakeet"), ("whisper-server+outro", "Whisper"),
@@ -148,7 +149,7 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
         for (raw, name) in names { XCTAssertEqual(SettingsHistoryDiagnosticsCopy.engineName(raw), name, raw ?? "nil") }
         let legacy = SettingsHistoryDiagnosticsCopy.facts(snapshot: snapshot(backend: "whisper-server"), entry: entry(model: "large-v3-turbo"),
                                                           attemptHistory: nil, selectedAttemptID: nil)
-        XCTAssertEqual(legacy.map(\.title), ["Engine", "Model"])
+        XCTAssertEqual(legacy.map(\.title), ["Created", "Engine", "Model"])
     }
     func testAttemptFactsAreAttemptLocalAndLastTranscribedOnlyAfterACompletedRetry() {
         let t0 = created, t1 = created.addingTimeInterval(300)
