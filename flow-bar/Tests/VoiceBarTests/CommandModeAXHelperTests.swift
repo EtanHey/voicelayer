@@ -1,9 +1,61 @@
 import AppKit
+import ApplicationServices
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
 
 final class CommandModeAXHelperTests: XCTestCase {
+    func testNativeWriteGuardsWithAbsentFalseAndTrueEnabled() {
+        let enabledValues: [Bool?] = [nil, false, true]
+        for enabled in enabledValues {
+            for reason in ["eligible", "window_not_in_ancestors", "non_text_role", "secure_target",
+                           "protected_content", "selected_text_not_settable", "selected_range_not_settable"] {
+                let rejection = CommandModeAXHelper.nativeWriteRejectionReason(
+                    role: reason == "non_text_role" ? "AXOutline" : "AXTextArea",
+                    subrole: reason == "secure_target" ? "AXSecureTextField" : nil,
+                    protected: reason == "protected_content", enabled: enabled,
+                    selectedTextSettable: reason != "selected_text_not_settable",
+                    selectedRangeSettable: reason != "selected_range_not_settable",
+                    reachedWindow: reason != "window_not_in_ancestors"
+                )
+                let earlierGuard = ["window_not_in_ancestors", "non_text_role", "secure_target", "protected_content"].contains(reason)
+                let expected: String? = earlierGuard ? reason : enabled == false ? "not_enabled" : reason == "eligible" ? nil : reason
+                XCTAssertEqual(rejection, expected, "\(reason), enabled=\(String(describing: enabled))")
+            }
+        }
+    }
+
+    func testOnlyUnsupportedAndNoValueEnabledReadsAreAbsent() {
+        let fixtures: [(AXError, Bool?, AXEnabledAttributeRead, Bool)] = [
+            (.attributeUnsupported, nil, .absent, true), (.noValue, nil, .absent, true),
+            (.success, true, .value(true), true), (.success, false, .value(false), false),
+            (.success, nil, .failure(.failure), false),
+            (.cannotComplete, nil, .failure(.cannotComplete), false),
+            (.invalidUIElement, nil, .failure(.invalidUIElement), false),
+            (.apiDisabled, nil, .failure(.apiDisabled), false),
+        ]
+        for (status, value, expected, permits) in fixtures {
+            let read = CommandModeAXHelper.decodeEnabledAttribute(status: status, value: value)
+            XCTAssertEqual(read, expected)
+            let eligibility = CommandModeAXHelper.typingEligibility(
+                processIdentifier: 51515, role: "AXTextArea", subrole: nil,
+                enabled: read.value, editable: nil, selectedTextSettable: true, valueSettable: true,
+                protectedContent: false, enabledReadError: read.error, matchesCurrentFocus: { true }
+            )
+            XCTAssertEqual(eligibility.permitsTyping(into: 51515), permits)
+            let nativeReason = CommandModeAXHelper.nativeWriteRejectionReason(
+                role: "AXTextArea", subrole: nil, protected: false, enabled: read.value,
+                selectedTextSettable: true, selectedRangeSettable: true, reachedWindow: true,
+                enabledReadError: read.error
+            )
+            XCTAssertEqual(nativeReason, read.error != nil ? "enabled_read_failed" : permits ? nil : "not_enabled")
+            if let error = read.error {
+                XCTAssertEqual(eligibility.diagnosticDetails["enabledAttribute"], "error")
+                XCTAssertEqual(eligibility.diagnosticDetails["enabledReadStatus"], String(error.rawValue))
+            }
+        }
+    }
+
     func testPrewriteRejectionDeclinesWithoutCompletionOrWrites() {
         for reason in ["ineligible", "missing_snapshot", "invalid_range", "target_changed", "selection_changed"] {
             var reads = 0
@@ -35,7 +87,7 @@ final class CommandModeAXHelperTests: XCTestCase {
             let expected = ["ineligible": "ineligible", "missing_snapshot": "snapshot_unavailable",
                             "invalid_range": "invalid_range", "target_changed": "target_changed",
                             "selection_changed": "selection_changed_before_write"]
-            XCTAssertEqual(declines, [expected[reason]!], reason)
+            XCTAssertEqual(declines, reason == "ineligible" ? [] : [expected[reason]!], reason)
         }
     }
 

@@ -1,6 +1,7 @@
 -------------------------- MODULE NativeAutoPaste --------------------------
 EXTENDS Naturals
-CONSTANTS AllowNativeFallback, AllowAbsentEnabled
+CONSTANTS AllowNativeFallback, AllowAbsentEnabled, AllowExplicitFalse,
+          AllowForeignTarget, AllowDoubleDelivery, DropRetention, BreakType
 VARIABLES phase, front, editable, enabled, sameElement, attempts, recipient, retained,
           eligibleDecline
 vars == <<phase, front, editable, enabled, sameElement, attempts, recipient, retained,
@@ -24,13 +25,16 @@ MoveFocus == /\ phase \in {"ax", "fallback"} /\ sameElement
 \* A possible AX write consumes the operation, even if its result is uncertain.
 \* AXEnabled is optional; independently writable text is disabled only by FALSE.
 NativeEditable == editable /\ enabled # "false"
-PolicyEnabled == enabled = "true" \/ (AllowAbsentEnabled /\ enabled = "absent")
+ImplEnabled == enabled = "true" \/ (AllowAbsentEnabled /\ enabled = "absent")
+               \/ (AllowExplicitFalse /\ enabled = "false")
+ImplTarget == front = "recording" \/ (AllowForeignTarget /\ front = "other")
 
-AXConsumes == /\ phase = "ax" /\ front = "recording" /\ NativeEditable
-              /\ PolicyEnabled /\ sameElement
-              /\ phase' = "done" /\ attempts' = attempts + 1 /\ recipient' = front
-              /\ UNCHANGED <<front, editable, enabled, sameElement, retained,
-                              eligibleDecline>>
+AXConsumes == /\ phase = "ax" /\ ImplTarget /\ editable
+              /\ ImplEnabled /\ sameElement
+              /\ phase' = IF BreakType THEN "invalid" ELSE "done"
+              /\ attempts' = attempts + (IF AllowDoubleDelivery THEN 2 ELSE 1)
+              /\ recipient' = front /\ retained' = (retained /\ ~DropRetention)
+              /\ UNCHANGED <<front, editable, enabled, sameElement, eligibleDecline>>
 
 \* A clean pre-write decline is the only route to keyboard fallback.
 AXDeclines == /\ phase = "ax" /\ phase' = "fallback"
@@ -39,7 +43,7 @@ AXDeclines == /\ phase = "ax" /\ phase' = "fallback"
 
 Fallback ==
   LET eligible == front = "recording" /\ NativeEditable /\ sameElement
-      post == AllowNativeFallback /\ PolicyEnabled /\ eligible
+      post == AllowNativeFallback /\ editable /\ ImplEnabled /\ ImplTarget /\ sameElement
   IN /\ phase = "fallback" /\ phase' = "done"
      /\ eligibleDecline' = eligible
      /\ attempts' = IF post THEN attempts + 1 ELSE attempts
