@@ -5,14 +5,26 @@ import { randomUUID } from "crypto";
 import { getCacheDir, getStateDir, safeWriteFileSync } from "./paths";
 import { parakeetPython } from "./recognizer-assets";
 const validate = "import sys, platform, importlib.metadata as m; assert platform.machine() == 'arm64'; assert sys.platform == 'darwin' and (3,12) <= sys.version_info[:2] < (3,15); assert m.version('mlx-audio') == '0.6.3'; from mlx_audio.stt.utils import load_model";
+/** Cancellation joins the setup child; a Python process may ignore SIGTERM. */
+export async function waitForRuntimeSetup(proc: Pick<ReturnType<typeof Bun.spawn>, "kill" | "exited">, signal: AbortSignal, graceMs = 1000): Promise<void> {
+  let escalation: ReturnType<typeof setTimeout> | undefined;
+  const cancel = () => {
+    try { proc.kill("SIGTERM"); } catch {}
+    escalation = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, graceMs);
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal.aborted) cancel();
+    const code = await proc.exited;
+    signal.throwIfAborted();
+    if (code !== 0) throw new Error("parakeet-runtime-setup-failed");
+  } finally { clearTimeout(escalation); signal.removeEventListener("abort", cancel); }
+}
 async function python(args: string[], signal: AbortSignal): Promise<void> {
   if (process.env.VOICELAYER_TEST_ISOLATED === "1") throw new Error("runtime-network-denied-in-tests");
   signal.throwIfAborted();
   const proc = Bun.spawn(args, { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", HF_HUB_OFFLINE: "1" }, stdout: "ignore", stderr: "ignore" });
-  const cancel = () => { try { proc.kill("SIGTERM"); } catch {} };
-  signal.addEventListener("abort", cancel, { once: true });
-  try { if (signal.aborted) cancel(); if (await proc.exited !== 0) throw new Error("parakeet-runtime-setup-failed"); signal.throwIfAborted(); }
-  finally { signal.removeEventListener("abort", cancel); }
+  await waitForRuntimeSetup(proc, signal);
 }
 function publishPointer(executable: string): void {
   const state = join(getStateDir(), "parakeet-runtime.json"), pending = state + "." + randomUUID();
@@ -64,7 +76,20 @@ export async function provisionParakeetRuntime(signal: AbortSignal, deps?: Parak
   migrateLegacyParakeetRuntime();
   const run = deps?.run ?? python;
   const existing = parakeetPython();
-  if (existing && existsSync(existing)) { await run([existing, "-B", "-c", validate], signal); return; }
+  if (existing && existsSync(existing)) {
+    try { await run([existing, "-B", "-c", validate], signal); return; }
+    catch (error) {
+      signal.throwIfAborted();
+      const directory = dirname(dirname(existing));
+      // Repair only our UUID-named cache venvs. A custom interpreter stays the
+      // caller's responsibility; failed repair retains the previous pointer.
+      if (process.env.VOICELAYER_PARAKEET_PYTHON ||
+          dirname(directory) !== join(getCacheDir(), "runtimes") ||
+          !/^parakeet-0\.6\.3-[0-9a-f-]{36}$/.test(basename(directory)) ||
+          existing !== join(directory, "bin", "python") ||
+          !lstatSync(directory).isDirectory()) throw error;
+    }
+  }
   if (process.env.VOICELAYER_PARAKEET_PYTHON) throw new Error("configured-python-missing");
   const base = deps ? deps.findPython() : ["python3.14", "python3.13", "python3.12", "python3"].map(name => Bun.which(name)).find(Boolean);
   if (!base) throw new Error("python-runtime-missing");

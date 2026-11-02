@@ -1,6 +1,6 @@
 /** File metadata only: status never imports a runtime, opens weights or uses the network. */
 import { statSync, readFileSync } from "fs";
-import { isAbsolute, join } from "path";
+import { isAbsolute, join, resolve } from "path";
 import { homedir } from "os";
 import { getStateDir } from "./paths";
 import type { Recognizer } from "./recognizer-state";
@@ -16,7 +16,7 @@ export function parakeetPython(env: NodeJS.ProcessEnv = process.env): string | n
   } catch { return null; }
 }
 export function whisperAssetPath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.QA_VOICE_WHISPER_MODEL) return env.QA_VOICE_WHISPER_MODEL;
+  if (env.QA_VOICE_WHISPER_MODEL) return resolve(env.QA_VOICE_WHISPER_MODEL);
   const root = join(homedir(), ".cache", "whisper");
   return ["ggml-large-v3-turbo.bin", "ggml-large-v3-turbo-q5_0.bin", "ggml-base.en.bin", "ggml-base.bin"]
     .map(name => join(root, name)).find(path => fileBytes(path) > 0) ?? join(root, "ggml-large-v3-turbo.bin");
