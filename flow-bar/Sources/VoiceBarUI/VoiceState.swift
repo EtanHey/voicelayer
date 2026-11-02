@@ -1488,6 +1488,8 @@ public final class VoiceState {
     private var recognizerAcceptedSnapshot: RecognizerStatusSnapshot?
     private var recognizerRevision = -1
     private var recognizerRefreshID: String?
+    private var recognizerPendingCommand: String?
+    private var recognizerCancelID: String?
     private var recognizerSelectionID: String?
     private var recognizerSelectionTarget: RecognizerPickerEngine?
     public var onRecognizerStatusChange: (() -> Void)?
@@ -1545,11 +1547,26 @@ public final class VoiceState {
         sendCommand(["cmd": "get_recognizer_status", "id": id])
     }
 
+    public func manageRecognizer(_ engine: RecognizerPickerEngine, action: RecognizerManagementAction) {
+        guard isConnected, let sendCommand, recognizerPickerState.canManage(engine, action: action) else { return }
+        let id = UUID().uuidString
+        var command: [String: Any] = ["cmd": action.command, "engine": engine.rawValue, "id": id]
+        if action == .load || action == .unload { command["action"] = action.rawValue }
+        if action == .cancelDownload {
+            recognizerCancelID = id
+        } else {
+            recognizerSelectionID = id; recognizerPendingCommand = action.command; recognizerSelectionTarget = nil
+            recognizerNotice = nil; onRecognizerStatusChange?()
+        }
+        sendCommand(command)
+    }
+
     public func selectRecognizer(_ engine: RecognizerPickerEngine) {
         guard isConnected, let sendCommand,
               recognizerPickerState.canSelect(engine) else { return }
         let id = UUID().uuidString
         recognizerSelectionID = id
+        recognizerPendingCommand = "set_recognizer"
         recognizerSelectionTarget = engine
         recognizerNotice = nil
         onRecognizerStatusChange?()
@@ -1560,7 +1577,13 @@ public final class VoiceState {
         guard isConnected else { return }
         let ack = event["type"] as? String == "ack"
         if ack {
-            guard event["command"] as? String == "set_recognizer",
+            if event["command"] as? String == "cancel_recognizer_download" {
+                guard event["id"] as? String == recognizerCancelID else { return }
+                recognizerCancelID = nil
+                if event["outcome"] as? String == "reject" { recognizerNotice = "No download is running."; onRecognizerStatusChange?() }
+                return
+            }
+            guard event["command"] as? String == recognizerPendingCommand,
                   let id = event["id"] as? String, id == recognizerSelectionID,
                   let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return }
             // Terminal correlation settles intent independently of snapshot authority.
@@ -2776,7 +2799,7 @@ public final class VoiceState {
             handleRecognizerEvent(event)
 
         case "ack":
-            if event["command"] as? String == "set_recognizer" { handleRecognizerEvent(event) }
+            if ["set_recognizer", "set_recognizer_residency", "download_recognizer", "delete_recognizer", "cancel_recognizer_download"].contains(event["command"] as? String ?? "") { handleRecognizerEvent(event) }
             handleAckEvent(event)
 
         case "read_queue":
@@ -3151,6 +3174,7 @@ public final class VoiceState {
         recognizerAcceptedSnapshot = nil
         recognizerRefreshID = nil
         recognizerSelectionID = nil
+        recognizerPendingCommand = nil; recognizerCancelID = nil
         recognizerSelectionTarget = nil
         recognizerNotice = nil
         if connected { refreshRecognizerStatus() }

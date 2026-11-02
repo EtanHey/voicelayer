@@ -1,6 +1,8 @@
+import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-download";
+import { deleteRecognizer } from "./recognizer-management";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
-import { selectRecognizer } from "./recognizer-controller";
+import { setRecognizerResidency, selectRecognizer } from "./recognizer-controller";
 import { readRecognizerStatus, onRecognizerStatusChange, beginRecognizerMaintenance, finishRecognizerTransition } from "./recognizer-state";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
@@ -190,7 +192,8 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
   }
   return undefined;
 }
-const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", "set_recognizer"]);
+const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer", "download_recognizer", "set_recognizer_residency"]);
+const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", ...recognizerMutationCommands]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if (args[0].cmd === "stop" || args[0].cmd === "cancel") {
     const capture = cancelPendingVoiceAdmissions("capture");
@@ -205,8 +208,8 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
   if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
   const refuse = (error: unknown) => {
-    if (args[0].cmd === "set_recognizer" && (error instanceof VoiceAdmissionCancelledError || error instanceof UpdateBusyError)) {
-      return { ...buildAck(args[0], "reject", error.message), recognizer_status: readRecognizerStatus() };
+    if (recognizerMutationCommands.has(args[0].cmd) && (error instanceof VoiceAdmissionCancelledError || error instanceof UpdateBusyError)) {
+      return { ...buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message), recognizer_status: readRecognizerStatus() };
     }
     if (error instanceof VoiceAdmissionCancelledError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "noop", error.message);
     if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message);
@@ -645,6 +648,18 @@ function handleSocketCommandAdmitted(
       // voice is busy, then returns its reason and fresh residency snapshot.
       if (residencyBusy()) return handleResidencyCommand(command);
       return withRecognizerMaintenance(command, () => handleResidencyCommand(command));
+    case "set_recognizer_residency":
+      return setRecognizerResidency(command.engine, command.action).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
+    case "download_recognizer":
+      return downloadRecognizer(command.engine).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
+    case "cancel_recognizer_download": {
+      const cancelled = cancelRecognizerDownload(command.engine);
+      return { ...buildAck(command, cancelled ? "accept" : "reject", cancelled ? undefined : "no-active-download"), recognizer_status: readRecognizerStatus() };
+    }
+    case "delete_recognizer": {
+      const result = deleteRecognizer(command.engine);
+      return { ...buildAck(command, result.outcome, result.reason), recognizer_status: readRecognizerStatus() };
+    }
     case "get_recognizer_status":
       return { type: "recognizer_status", ...(command.id ? { id: command.id } : {}), recognizer_status: readRecognizerStatus() };
     case "set_recognizer":
