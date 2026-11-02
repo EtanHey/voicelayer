@@ -100,7 +100,7 @@ public struct RecognizerPickerView: View {
                 .controlSize(.small).disabled(onManage == nil || !state.canManage(engine, action: residency))
                 .help(residency == .load && state.selected != engine ? "Select this recognizer first" : "\(residency == .load ? "Load into" : "Unload from") memory")
                 .accessibilityIdentifier("recognizer-residency-\(engine.rawValue)")
-            let action: RecognizerManagementAction = state.assetsPresent(for: engine) ? .delete : .download
+            ForEach(state.assetActions(for: engine), id: \.rawValue) { action in
             Button {
                 if action == .delete { deleting = engine } else { onManage?(engine, .download) }
             } label: { Image(systemName: action == .delete ? "trash" : "arrow.down.circle").font(.system(size: 14)) }
@@ -109,6 +109,7 @@ public struct RecognizerPickerView: View {
                 .help(action == .delete ? "Delete model files (unload first)" : "Download model and required runtime")
                 .accessibilityLabel("\(action == .delete ? "Delete" : "Download") \(engine.title)")
                 .accessibilityIdentifier("recognizer-\(action.rawValue)-\(engine.rawValue)")
+            }
         }
     }
 }

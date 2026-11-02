@@ -62,4 +62,16 @@ final class RecognizerManagementTests: XCTestCase {
         XCTAssertEqual(voice.recognizerPickerState.parakeet, .unloaded)
         XCTAssertNil(voice.recognizerSnapshot?.parakeet.available)
     }
+    func testPartialAssetsOfferBothRetryDownloadAndTrashAndWhisperIsSymmetric() {
+        let partial = RecognizerPickerState(selected: .whisper, effective: nil, parakeet: .unloaded, whisper: .unloaded,
+            diskBytes: [.parakeet: 1024])
+        XCTAssertEqual(partial.assetActions(for: .parakeet), [.download, .delete])
+        XCTAssertTrue(partial.canManage(.parakeet, action: .delete))
+        let missingWhisper = RecognizerPickerState(selected: .parakeet, effective: nil, parakeet: .unloaded, whisper: .unloaded,
+            parakeetAssetsPresent: true, whisperAssetsPresent: false)
+        XCTAssertEqual(missingWhisper.assetActions(for: .whisper), [.download])
+        XCTAssertEqual(missingWhisper.statusText(for: .whisper), "Not downloaded")
+        XCTAssertFalse(missingWhisper.canSelect(.whisper))
+    }
+
 }

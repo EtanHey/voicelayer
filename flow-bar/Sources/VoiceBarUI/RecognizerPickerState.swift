@@ -189,6 +189,11 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public func assetsPresent(for engine: RecognizerPickerEngine) -> Bool {
         engine == .parakeet ? parakeetAssetsPresent : whisperAssetsPresent
     }
+    public func assetActions(for engine: RecognizerPickerEngine) -> [RecognizerManagementAction] {
+        var actions: [RecognizerManagementAction] = assetsPresent(for: engine) ? [] : [.download]
+        if assetsPresent(for: engine) || (diskBytes[engine] ?? 0) > 0 { actions.append(.delete) }
+        return actions
+    }
     public func canManage(_ engine: RecognizerPickerEngine, action: RecognizerManagementAction) -> Bool {
         if action == .cancelDownload { return downloads[engine]?.isActive == true }
         guard !isSelectionDisabled, downloads.values.allSatisfy({ !$0.isActive }) else { return false }
@@ -205,6 +210,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
         parakeetNotSetUp ? "Needs a one-time setup" : nil
     }
     public func statusText(for engine: RecognizerPickerEngine) -> String {
+        if engine == .whisper, !assetsPresent(for: engine) { return "Not downloaded" }
         if engine == .parakeet {
             if parakeetNotSetUp { return "Not set up" }
             if parakeet == .loaded, parakeetAvailable != true { return "Unknown" }
