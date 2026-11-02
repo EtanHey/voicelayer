@@ -1,14 +1,14 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 17482] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 26601] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915/formal/ptt-silence-timeout/PttSilenceTimeout.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module PttSilenceTimeout
-Starting... (2026-11-02 09:48:37)
+Starting... (2026-11-02 10:36:46)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 09:48:37.
+Finished computing initial states: 1 distinct state generated at 2026-11-02 10:36:46.
 Error: Invariant RawAccurate is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -16,56 +16,62 @@ s = [ phase |-> "recording",
   speech |-> FALSE,
   silence |-> 0,
   wall |-> 0,
+  event |-> "init",
   pcm |-> <<>>,
   saved |-> <<>>,
   text |-> <<>> ]
 
-State 2: <Frame line 9, col 18 to line 11, col 71 of module PttSilenceTimeout>
+State 2: <Frame line 9, col 18 to line 12, col 95 of module PttSilenceTimeout>
 s = [ phase |-> "recording",
   speech |-> FALSE,
   silence |-> 0,
   wall |-> 0,
+  event |-> "silence",
   pcm |-> <<FALSE>>,
   saved |-> <<>>,
   text |-> <<>> ]
 
-State 3: <Tick line 12, col 9 to line 14, col 52 of module PttSilenceTimeout>
+State 3: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
 s = [ phase |-> "recording",
   speech |-> FALSE,
   silence |-> 1,
   wall |-> 1,
+  event |-> "tick",
   pcm |-> <<FALSE>>,
   saved |-> <<>>,
   text |-> <<>> ]
 
-State 4: <Tick line 12, col 9 to line 14, col 52 of module PttSilenceTimeout>
+State 4: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
 s = [ phase |-> "recording",
   speech |-> FALSE,
   silence |-> 2,
   wall |-> 2,
+  event |-> "tick",
   pcm |-> <<FALSE>>,
   saved |-> <<>>,
   text |-> <<>> ]
 
-State 5: <Timeout line 15, col 12 to line 18, col 86 of module PttSilenceTimeout>
+State 5: <Timeout line 16, col 12 to line 19, col 86 of module PttSilenceTimeout>
 s = [ phase |-> "ended",
   speech |-> FALSE,
   silence |-> 2,
   wall |-> 2,
+  event |-> "end",
   pcm |-> <<FALSE>>,
   saved |-> <<FALSE>>,
   text |-> <<>> ]
 
-State 6: <Transcribe line 19, col 15 to line 22, col 90 of module PttSilenceTimeout>
+State 6: <Transcribe line 20, col 15 to line 23, col 90 of module PttSilenceTimeout>
 s = [ phase |-> "transcribed",
   speech |-> FALSE,
   silence |-> 2,
   wall |-> 2,
+  event |-> "transcribe",
   pcm |-> <<FALSE>>,
   saved |-> <<FALSE>>,
   text |-> <<>> ]
 
-142 states generated, 104 distinct states found, 51 states left on queue.
+189 states generated, 145 distinct states found, 83 states left on queue.
 The depth of the complete state graph search is 6.
-The average outdegree of the complete state graph is 2 (minimum is 0, the maximum 3 and the 95th percentile is 3).
-Finished in 00s at (2026-11-02 09:48:37)
+The average outdegree of the complete state graph is 2 (minimum is 0, the maximum 4 and the 95th percentile is 4).
+Finished in 00s at (2026-11-02 10:36:46)

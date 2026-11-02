@@ -1,3 +1,4 @@
+import AppKit
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
@@ -78,6 +79,10 @@ final class LaneGFormalConformanceTests: XCTestCase {
         }
         print("Replayed \(cases.count) TLC notch projection cases through real VoiceBarPresentation")
     }
+    private final class ConformanceApp: NSRunningApplication, @unchecked Sendable {
+        override var processIdentifier: pid_t { 12001 }
+        override var bundleIdentifier: String? { "synthetic.editor" }
+    }
     private func recordingState() -> VoiceState {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
@@ -119,36 +124,49 @@ final class LaneGFormalConformanceTests: XCTestCase {
         }
     }
     func testTLCFixedCancellationEdges() async throws {
-        guard let path = ProcessInfo.processInfo.environment["VOICEBAR_RECORD_TLC_CASES"] else {
-            throw XCTSkip("Run formal/record-while-processing/conformance.sh for exhaustive edge classes")
-        }
+        let path = ProcessInfo.processInfo.environment["VOICEBAR_RECORD_TLC_CASES"]
+            ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                .appendingPathComponent("../../../formal/record-while-processing/corpus.json").standardized.path
         struct Corpus: Decodable {
-            struct Cancel: Decodable { let origin, target: String; let hasMic: Bool }
+            struct Cancel: Decodable { let origin, target: String; let stages: [String: String] }
             let cancellations: [Cancel]
         }
         let corpus = try JSONDecoder().decode(Corpus.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
-        XCTAssertEqual(corpus.cancellations.count, 5)
+        XCTAssertGreaterThan(corpus.cancellations.count, 5)
         for row in corpus.cancellations {
             let state = recordingState()
             state.processingCancellationTickDuration = .milliseconds(1)
-            snapshot(state, a: "processing", b: row.hasMic ? "capturing" : nil)
+            let phases = ["recording": "capturing", "draining": "draining", "captured": "queued", "processing": "processing", "ack": "delivering"]
+            let jobs: [[String: Any]] = ["A", "B"].compactMap { id in
+                guard let stage = row.stages[id], let phase = phases[stage] else { return nil }
+                return ["take_id": id, "kind": "live", "phase": phase]
+            }
+            let mic = ["A", "B"].first { ["recording", "draining"].contains(row.stages[$0] ?? "") }
+            state.handleEvent(["type": "state", "state": mic == nil ? "transcribing" : "recording",
+                "recording_jobs": jobs, "mic_take_id": mic as Any])
             var commands: [[String: Any]] = []
             state.sendCommand = { commands.append($0) }
-            if row.origin == "Escape" {
-                VoiceBarCommandRouter(voiceState: state).handleEscape()
-            } else if row.target == "A" {
-                state.requestProcessingCancellation(takeID: "A")
+            let processing = ["captured", "processing"].contains(row.stages[row.target] ?? "")
+            let escapeNeedsGuard = row.origin == "Escape" && mic == nil && state.displayedProcessingTakeID != row.target
+            if processing && (row.origin == "click" || escapeNeedsGuard) {
+                if escapeNeedsGuard {
+                    VoiceBarCommandRouter(voiceState: state).handleEscape()
+                    XCTAssertTrue(commands.isEmpty)
+                    XCTAssertEqual(state.processingCancellationGuard?.takeID, row.target)
+                } else { state.requestProcessingCancellation(takeID: row.target) }
                 let deadline = Date().addingTimeInterval(2)
                 while state.processingCancellationGuard?.remainingTicks != 0, Date() < deadline {
                     try await Task.sleep(for: .milliseconds(2))
                 }
-                XCTAssertTrue(state.commitProcessingCancellation(takeID: "A"))
+                XCTAssertTrue(state.commitProcessingCancellation(takeID: row.target))
+            } else if row.origin == "Escape" {
+                VoiceBarCommandRouter(voiceState: state).handleEscape()
             } else {
                 VoiceBarCommandRouter(voiceState: state).handleCancel()
             }
             XCTAssertEqual(commands.count, 1)
             XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
-            XCTAssertEqual(commands.first?["take_id"] as? String, row.target)
+            XCTAssertEqual(commands.first?["take_id"] as? String, row.target, "\(row.origin) \(row.stages)")
         }
     }
     func testTLCScopedCancelGuardAndEscape() async throws {
@@ -209,7 +227,9 @@ final class LaneGFormalConformanceTests: XCTestCase {
     }
     func testTLCImmediatePasteWhileBRecordsPreservesForegroundAndRawWords() throws {
         let state = recordingState()
-        state.minimumTranscribingDisplayDuration = 60
+        let app = ConformanceApp()
+        state.frontmostAppProvider = { app }
+        state.dictationTargetIdentityProvider = { { true } }
         var commands: [[String: Any]] = [], pasted: [String] = []
         state.sendCommand = { commands.append($0) }
         state.pasteHandler = { pasted.append($0); return true }
@@ -238,7 +258,6 @@ final class LaneGFormalConformanceTests: XCTestCase {
                 transcriptionVocabularyLoader: { [] }, transcriptionVocabularyAliasLoader: { [] })
             state.controlLayerEventWriter = { _, _ in }
             state.frontmostAppProvider = { nil }
-            state.minimumTranscribingDisplayDuration = 60
             state.handleEvent(["type": "state", "state": "transcribing"])
             state.handleEvent(["type": "transcription", "text": "Synthetic final A"])
             XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), ["Synthetic final A"])

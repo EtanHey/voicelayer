@@ -133,6 +133,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeyHoldStart() {
+        if voiceState.isRecordingDrainPending { voiceState.rejectRecordingDuringDrain(); return }
         if voiceState.isPlaybackPaused {
             voiceState.record(pressToTalk: true)
             return
@@ -161,6 +162,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeySingleTap() {
+        if voiceState.isRecordingDrainPending { voiceState.rejectRecordingDuringDrain(); return }
         guard !voiceState.isPlaybackPaused else { return }
         switch voiceState.mode {
         case .recording, .speaking:

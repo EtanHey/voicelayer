@@ -169,7 +169,7 @@ describe("recording job runtime (isolated fake recorder, never real mic)", () =>
     expect(bytes.subarray(0, 4).toString()).toBe("RIFF");
     expect(bytes.byteLength).toBe(44);
     expect(JSON.parse(readFileSync(join(archive!, "metadata.json"), "utf8"))).toMatchObject({
-      transcription_status: "captured", not_transcribed_reason: "transcription-failed",
+      transcription_status: "recording-failed", not_transcribed_reason: "recording-failed",
     });
   });
 

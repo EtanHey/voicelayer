@@ -1,0 +1,502 @@
+{
+  "admissions": [
+    {
+      "state": "idle",
+      "outcome": "accept"
+    },
+    {
+      "state": "transcribing",
+      "outcome": "accept"
+    }
+  ],
+  "cancellations": [
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "ack",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "ack",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "ack",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "processing"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "ack"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "cancelled"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "done"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "fresh"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "processing"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "processing"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "draining",
+        "B": "fresh"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "cancelled"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "processing",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "done"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "processing",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "fresh"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "processing",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "recording",
+        "B": "fresh"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "ack",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "ack",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "ack",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "processing"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "ack"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "cancelled"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "done"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "fresh"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "processing"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "processing"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "processing"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "draining",
+        "B": "fresh"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "cancelled"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "processing",
+        "B": "captured"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "done"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "processing",
+        "B": "draining"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "fresh"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "processing",
+        "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "recording",
+        "B": "fresh"
+      }
+    }
+  ]
+}

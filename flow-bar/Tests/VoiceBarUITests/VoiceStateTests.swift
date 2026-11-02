@@ -330,7 +330,6 @@ final class VoiceStateTests: XCTestCase {
 
     func testFinalTranscriptionRetainsUnpolishedHonestyMetadata() {
         let state = VoiceState(recentTranscriptionsLoader: { [] })
-        state.minimumTranscribingDisplayDuration = 0
 
         state.handleEvent([
             "type": "transcription",
@@ -694,7 +693,6 @@ final class VoiceStateTests: XCTestCase {
 
     func testRecoveredLastCapturePastesFinalTranscription() throws {
         let state = VoiceState(recentTranscriptionsLoader: { [] })
-        state.minimumTranscribingDisplayDuration = 0
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
         state.sendCommand = { command in
@@ -728,7 +726,6 @@ final class VoiceStateTests: XCTestCase {
 
     func testRejectedRecoveredLastCaptureDoesNotPasteLaterTranscription() throws {
         let state = VoiceState(recentTranscriptionsLoader: { [] })
-        state.minimumTranscribingDisplayDuration = 0
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
         state.sendCommand = { command in
@@ -858,7 +855,6 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] },
             recentTranscriptionEntriesSaver: { _ in }
         )
-        state.minimumTranscribingDisplayDuration = 0
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
         state.sendCommand = { command in
@@ -969,7 +965,6 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] },
             recentTranscriptionEntriesSaver: { _ in }
         )
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
@@ -1032,7 +1027,6 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesLoader: { seeded },
             recentTranscriptionEntriesSaver: { savedEntries.append($0) }
         )
-        state.minimumTranscribingDisplayDuration = 0
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
         var changedPaths: [String?] = []
@@ -1109,7 +1103,6 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] },
             recentTranscriptionEntriesSaver: { _ in }
         )
-        state.minimumTranscribingDisplayDuration = 0.05
         var sentCommand: [String: Any]?
         state.sendCommand = { command in
             sentCommand = command
@@ -1157,7 +1150,6 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] },
             recentTranscriptionEntriesSaver: { _ in }
         )
-        state.minimumTranscribingDisplayDuration = 0.05
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
         state.sendCommand = { command in
@@ -1265,7 +1257,6 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] },
             recentTranscriptionEntriesSaver: { _ in }
         )
-        state.minimumTranscribingDisplayDuration = 0
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
         state.sendCommand = { command in
@@ -1427,7 +1418,6 @@ final class VoiceStateTests: XCTestCase {
 
     func testRecoveryErrorDoesNotPasteLaterFinalTranscription() {
         let state = VoiceState(recentTranscriptionsLoader: { [] })
-        state.minimumTranscribingDisplayDuration = 0
         var pastedTexts: [String] = []
         state.pasteHandler = { text in
             pastedTexts.append(text)

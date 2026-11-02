@@ -1,0 +1,143 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 26794] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915/formal/ptt-silence-timeout/PttSilenceTimeout.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module PttSilenceTimeout
+Starting... (2026-11-02 10:36:48)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-02 10:36:48.
+Progress(11) at 2026-11-02 10:36:48: 1,984 states generated, 762 distinct states found, 0 states left on queue.
+Checking temporal properties for the complete state space with 762 total distinct states at (2026-11-02 10:36:48)
+Error: Temporal properties were violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 0,
+  wall |-> 0,
+  event |-> "init",
+  pcm |-> <<>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 2: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 1,
+  wall |-> 1,
+  event |-> "tick",
+  pcm |-> <<>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 3: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 2,
+  wall |-> 2,
+  event |-> "tick",
+  pcm |-> <<>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 4: <Frame line 9, col 18 to line 12, col 95 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 2,
+  wall |-> 2,
+  event |-> "silence",
+  pcm |-> <<FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 5: <Frame line 9, col 18 to line 12, col 95 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 2,
+  wall |-> 2,
+  event |-> "silence",
+  pcm |-> <<FALSE, FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 6: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 2,
+  wall |-> 3,
+  event |-> "tick",
+  pcm |-> <<FALSE, FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 7: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 2,
+  wall |-> 4,
+  event |-> "tick",
+  pcm |-> <<FALSE, FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 8: <Frame line 9, col 18 to line 12, col 95 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 2,
+  wall |-> 4,
+  event |-> "silence",
+  pcm |-> <<FALSE, FALSE, FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 9: <Frame line 9, col 18 to line 12, col 95 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 2,
+  wall |-> 4,
+  event |-> "silence",
+  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 10: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 2,
+  wall |-> 4,
+  event |-> "tick",
+  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 11: <Frame line 9, col 18 to line 12, col 95 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> TRUE,
+  silence |-> 0,
+  wall |-> 4,
+  event |-> "speech",
+  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+State 12: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
+s = [ phase |-> "recording",
+  speech |-> FALSE,
+  silence |-> 1,
+  wall |-> 4,
+  event |-> "tick",
+  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,
+  saved |-> <<>>,
+  text |-> <<>> ]
+
+Back to state 10: <Tick line 13, col 9 to line 15, col 52 of module PttSilenceTimeout>
+
+Finished checking temporal properties in 00s at 2026-11-02 10:36:48
+1984 states generated, 762 distinct states found, 0 states left on queue.
+Finished in 00s at (2026-11-02 10:36:48)

@@ -1,0 +1,27 @@
+{
+  "sourceBaseline": "dada8744",
+  "runnerSHA256": "ade762d4662e364b7f88a2defcb975171a8b7e1af2c5f59b62e9cd2246d61314",
+  "sourceHashes": {
+    "src/recording-jobs.ts": "7a9784f029bd4e1fdbb2697e45d34d982f68311d2386808ba39047986b83359b",
+    "src/recording-take-queue.ts": "dd85259a527a024ddbe6abd68d46d70383185446d1d00b4d0305889032494325",
+    "src/socket-handlers.ts": "f10499824c6db9efe1656f2db0707916d1c465dd0573392a6257c80eea68c262",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "3cc8018c7dcaf3cd78f3b7f9dbdbb924ff3c9cb6ca0ad5db3390aaa122101a9c",
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "71f2bcef238f431baa75d4d67134eaf518c2ba1a047911490b39b8f0b71a6102",
+    "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368"
+  },
+  "specSHA256": "4edfc874053e85c6ce10aace0e78fd8ca250f6b088cef41dbe266cc16e11debc",
+  "cfgSHA256": {
+    "Fixed": "b800934b142afe2c3c74cd9d10a4883e3450e88f1f16a75b81592945b5bc7ae6",
+    "EscapeMicMutant": "be587e446292f28c2108b6deeb236cfbe8bba3b477d16aa59ea1ebb4808ef9dd",
+    "EscapeOlderMutant": "d54b33e0109a9c858433f0070d15af3d307f41a2f0d6f241f2b1a192b3708a72",
+    "GuardedEscapeMutant": "6a0cb25127e0a4eef71558e9695d2221f87fd5fa8d170f8d90dd715669863cd8",
+    "StaleGuardMutant": "84574c9cd2c83d546667a7b9fde47667f3b9e0d8bc72b266a9304c11604e1bf5",
+    "RetargetMutant": "76e8c539f8a8987201d90271cf9275b7310cdbffecb0b0a5961fe4451b76620f",
+    "FocusStealMutant": "bdfee04414ac2f85b2c63d6c509a21ce6ee3af6a86117cc0d9ca7d8a59449469",
+    "SilentDrainMutant": "6b49186c0d8abe525996f9487cdff539a85be0600a5c845634a7fb37c589949b",
+    "LegacyAckMutant": "ca30706e74eb219086fdeefb126d987c757d1bfdf3e1f9d7cd64dcdde4970296",
+    "NoAckBoundMutant": "eb1cf6a1ffacfae0768c21854b7a3f778ea9dcd1233297d552b110a6c6b63cd0",
+    "StallMutant": "a515f1449ea1bf6ebbf8ed2739557306fc95748159ae7ea8b9737a6fcb36f331"
+  },
+  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+}

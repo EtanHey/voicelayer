@@ -262,7 +262,7 @@ struct SettingsHistoryRowModel: Equatable {
                     transcribedDurationLabel: hasSpokenLength ? nil : durationLabels.transcribed,
                     spokenDurationLabel: hasSpokenLength ? durationLabels.transcribed : nil,
                     processingLabel: processingLabel(entry.processingDurationMs),
-                    micDisconnectLabel: entry.micDisconnectNote
+                    micDisconnectLabel: [entry.micDisconnectNote, entry.deliveryNote].compactMap { $0 }.joined(separator: " · ").settingsArchiveNilIfEmpty
                         ?? entry.micDisconnectedAtMs.map(MicDisconnectFeedback.historyNote(atMs:))
                 ),
             ]

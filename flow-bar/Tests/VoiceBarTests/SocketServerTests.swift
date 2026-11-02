@@ -1028,7 +1028,6 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         }
 
         let state = VoiceState()
-        state.minimumTranscribingDisplayDuration = 0
         state.barInitiatedTranscriptionTimeout = .seconds(240)
         let server = SocketServer(state: state, socketPath: rawSocketPath)
         var replayIntentCount = 0
@@ -1177,7 +1176,6 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         var veryLongInsertionAttempts = 0
         var veryLongPastePosted = false
         veryLongState.sendCommand = { _ in }
-        veryLongState.minimumTranscribingDisplayDuration = 0
         veryLongState.pasteConfirmationDelay = 0
         veryLongState.frontmostAppProvider = { cmux }
         veryLongState.targetAppActivator = { _ in }
@@ -1229,7 +1227,6 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         var editorInsertionAttempts = 0
         var editorClipboardWrites: [String] = []
         editorState.sendCommand = { _ in }
-        editorState.minimumTranscribingDisplayDuration = 0
         editorState.pasteConfirmationDelay = 0
         editorState.frontmostAppProvider = { editor }
         editorState.targetAppActivator = { _ in }

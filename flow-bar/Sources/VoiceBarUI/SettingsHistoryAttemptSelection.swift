@@ -75,7 +75,7 @@ struct SettingsHistoryAttemptSelection: Equatable {
             createdAt: entry.createdAt, transcript: text, audioPath: entry.audioPath, durationMs: entry.durationMs,
             transcribedDurationMs: entry.transcribedDurationMs, spokenDurationMs: entry.spokenDurationMs,
             processingDurationMs: entry.processingDurationMs, micDisconnectedAtMs: entry.micDisconnectedAtMs,
-            micDisconnectNote: entry.micDisconnectNote, modelLabel: entry.modelLabel,
+            micDisconnectNote: entry.micDisconnectNote, deliveryNote: entry.deliveryNote, modelLabel: entry.modelLabel,
             performanceEffort: entry.performanceEffort, inputDeviceLabel: entry.inputDeviceLabel,
             missingTranscript: nil)
     }

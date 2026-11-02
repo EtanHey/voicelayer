@@ -29,19 +29,25 @@ for label in fixed:
     row = {"state": "transcribing" if worker else "idle", "outcome": "accept"}
     cases[json.dumps(row, sort_keys=True)] = row
 assert {row["state"] for row in cases.values()} == {"idle", "transcribing"}
+runtime = json.loads((root / ".build.noindex/record-while-processing-runtime/fixed-graph.json").read_text())
 cancels = {}
-for source, target in graph["edges"]:
-    before, after = graph["nodes"][source], graph["nodes"][target]
+for source, target in runtime["edges"]:
+    before, after = runtime["nodes"][source], runtime["nodes"][target]
     origin = field(after, "event")
-    if origin not in {"Escape", "click"} or stage(before).get("A") != "transcribing":
+    if origin not in {"Escape", "click"}:
         continue
-    if stage(before).get("B") not in {"fresh", "recording"}:
+    target_take = field(after, "target")
+    before_stages, after_stages = stage(before), stage(after)
+    # DOT includes state-preserving/self edges: a retained event label is not another cancellation.
+    if before_stages[target_take] not in {"recording", "draining", "captured", "processing"} or after_stages[target_take] != "cancelled":
         continue
-    row = {"origin": origin, "target": field(after, "target"),
-           "hasMic": stage(before)["B"] == "recording"}
+    row = {"origin": origin, "target": target_take, "stages": before_stages}
     cancels[json.dumps(row, sort_keys=True)] = row
-assert len(cancels) == 5, cancels
-(cache / "conformance.json").write_text(json.dumps(dict(admissions=list(cases.values()), cancellations=list(cancels.values()))))
+assert any(row["stages"]["B"] == "captured" for row in cancels.values())
+assert any(row["stages"]["B"] == "processing" for row in cancels.values())
+corpus = dict(admissions=list(cases.values()), cancellations=sorted(cancels.values(), key=lambda row: json.dumps(row, sort_keys=True)))
+(cache / "conformance.json").write_text(json.dumps(corpus))
+(root / "formal/record-while-processing/corpus.json").write_text(json.dumps(corpus, indent=2) + "\n")
 predicates = {
     "A pastes while B records": lambda x: stage(x) == {"A": "pasted", "B": "recording"},
     "B cancelled while A still transcribes": lambda x: stage(x) == {"A": "transcribing", "B": "cancelled"},

@@ -1,0 +1,206 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 95212] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915/formal/record-while-processing-runtime/RuntimeOwnership.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module RuntimeOwnership
+Starting... (2026-11-02 10:34:01)
+Implied-temporal checking--satisfiability problem has 2 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-02 10:34:01.
+Progress(21) at 2026-11-02 10:34:01: 32,794 states generated, 9,276 distinct states found, 0 states left on queue.
+Checking 2 branches of temporal properties for the complete state space with 18552 total distinct states at (2026-11-02 10:34:01)
+Error: Temporal properties were violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+s = [ stage |-> [A |-> "fresh", B |-> "fresh"],
+  event |-> "init",
+  target |-> "none",
+  capable |-> [A |-> FALSE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> TRUE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 2: <ChangeFocus line 30, col 16 to line 30, col 91 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "fresh", B |-> "fresh"],
+  event |-> "focus-change",
+  target |-> "none",
+  capable |-> [A |-> FALSE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 3: <Record line 20, col 16 to line 21, col 88 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "recording", B |-> "fresh"],
+  event |-> "record",
+  target |-> "A",
+  capable |-> [A |-> TRUE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 4: <Stop line 22, col 12 to line 22, col 89 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "draining", B |-> "fresh"],
+  event |-> "stop",
+  target |-> "A",
+  capable |-> [A |-> TRUE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 5: <DrainPress line 23, col 15 to line 24, col 90 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "draining", B |-> "fresh"],
+  event |-> "drain-press",
+  target |-> "none",
+  capable |-> [A |-> TRUE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 6: <Archive line 25, col 15 to line 25, col 94 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "captured", B |-> "fresh"],
+  event |-> "archive",
+  target |-> "A",
+  capable |-> [A |-> TRUE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 7: <Decode line 26, col 14 to line 27, col 69 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "processing", B |-> "fresh"],
+  event |-> "decode",
+  target |-> "A",
+  capable |-> [A |-> TRUE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 8: <Record line 20, col 16 to line 21, col 88 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "processing", B |-> "recording"],
+  event |-> "record",
+  target |-> "B",
+  capable |-> [A |-> TRUE, B |-> TRUE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 9: <Escape line 50, col 6 to line 51, col 32 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "processing", B |-> "cancelled"],
+  event |-> "Escape",
+  target |-> "B",
+  capable |-> [A |-> TRUE, B |-> TRUE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "B",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 10: <ChangeTarget line 28, col 20 to line 29, col 77 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "processing", B |-> "cancelled"],
+  event |-> "target-change",
+  target |-> "A",
+  capable |-> [A |-> TRUE, B |-> TRUE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> FALSE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "B",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 11: <Arm line 41, col 11 to line 42, col 63 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "processing", B |-> "cancelled"],
+  event |-> "arm",
+  target |-> "A",
+  capable |-> [A |-> TRUE, B |-> TRUE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> FALSE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "A",
+  cooldown |-> 2,
+  expected |-> "B",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 12: <Tick line 55, col 9 to line 57, col 158 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "processing", B |-> "cancelled"],
+  event |-> "tick",
+  target |-> "none",
+  capable |-> [A |-> TRUE, B |-> TRUE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> FALSE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "A",
+  cooldown |-> 1,
+  expected |-> "B",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 13: <Tick line 55, col 9 to line 57, col 158 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "processing", B |-> "cancelled"],
+  event |-> "tick",
+  target |-> "none",
+  capable |-> [A |-> TRUE, B |-> TRUE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> FALSE, B |-> TRUE],
+  focusSame |-> FALSE,
+  guard |-> "A",
+  cooldown |-> 0,
+  expected |-> "B",
+  escapedGuarded |-> TRUE,
+  notice |-> TRUE ]
+
+State 14: Stuttering
+Finished checking temporal properties in 00s at 2026-11-02 10:34:01
+32794 states generated, 9276 distinct states found, 0 states left on queue.
+Finished in 00s at (2026-11-02 10:34:02)

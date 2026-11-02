@@ -10,10 +10,11 @@ enum SynthesizedKeyEvents {
         expectedPID: pid_t,
         buildEvents: () -> [CGEvent]?,
         frontmostPID: () -> pid_t?,
+        matchesCapturedTarget: () -> Bool = { true },
         postEvent: (CGEvent) -> Void
     ) -> GuardedTypingResult {
         guard let events = buildEvents() else { return .failed }
-        guard frontmostPID() == expectedPID else { return .focusChanged }
+        guard frontmostPID() == expectedPID, matchesCapturedTarget() else { return .focusChanged }
         // Lead accepts the residual final-check/synchronous-post window. Keep the
         // existing global transport and never abort a partially posted batch.
         for event in events { postEvent(event) }

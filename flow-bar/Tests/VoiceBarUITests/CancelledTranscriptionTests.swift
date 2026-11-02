@@ -8,7 +8,6 @@ final class CancelledTranscriptionTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
         )
         state.frontmostAppProvider = { nil }
-        state.minimumTranscribingDisplayDuration = 0
         state.isConnected = true
         state.sendCommand = { _ in }
         state.record(pressToTalk: true)
@@ -42,7 +41,6 @@ final class CancelledTranscriptionTests: XCTestCase {
 
     func testCancelAfterFinalCannotEraseAlreadyDispatchedWords() {
         let state = fixtureState()
-        state.minimumTranscribingDisplayDuration = 60
         var pasted: [String] = []
         state.pasteHandler = { pasted.append($0); return true }
         state.handleEvent(["type": "transcription", "text": "Synthetic final words",

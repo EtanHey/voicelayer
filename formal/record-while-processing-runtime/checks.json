@@ -1,0 +1,26 @@
+{
+  "module": "RuntimeOwnership",
+  "sourceBaseline": "dada8744",
+  "sources": [
+    "src/recording-jobs.ts",
+    "src/recording-take-queue.ts",
+    "src/socket-handlers.ts",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift",
+    "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift"
+  ],
+  "checks": {
+    "Fixed": null,
+    "EscapeMicMutant": "EscapeTargetsNewest",
+    "EscapeOlderMutant": "EscapeTargetsNewest",
+    "GuardedEscapeMutant": "GuardedEscape",
+    "StaleGuardMutant": "temporal:NoStaleGuard",
+    "RetargetMutant": "NoDeliveryOutsideCapturedTarget",
+    "FocusStealMutant": "NoFocusStealDuringCapture",
+    "SilentDrainMutant": "DrainRequestVisible",
+    "LegacyAckMutant": "LegacyNoAckWait",
+    "NoAckBoundMutant": "temporal:DeliveryAckBound",
+    "StallMutant": "temporal:ProcessingSettles",
+    "FailedMicMutant": "MicReleaseOnFailure"
+  }
+}

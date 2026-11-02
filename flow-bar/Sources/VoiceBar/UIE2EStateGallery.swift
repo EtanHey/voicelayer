@@ -134,7 +134,6 @@ final class UIE2EStateGallery {
         voice.pasteboardSnapshotRestorer = { _ in }
         voice.pasteboardChangeCountProvider = { 0 }
         voice.accessibilityTrustChecker = { _ in false }
-        voice.minimumTranscribingDisplayDuration = 0
         voice.pasteConfirmationDelay = 0
         voice.selectionTextCaptureHandler = { done in
             effects.selectionCaptures += 1

@@ -159,6 +159,7 @@ struct SettingsArchiveMetadata: Decodable {
     let micDisconnectedAtMs: Int?
     /// The note VoiceLayer wrote: "Mic disconnected at m:ss" or "Mic produced no signal".
     let micDisconnectNote: String?
+    let deliveryNote: String?
     let inputDeviceName: String?
     /// NOTX1: why the daemon kept this recording without a transcript.
     let notTranscribedReason: String?
@@ -186,6 +187,7 @@ struct SettingsArchiveMetadata: Decodable {
         case processingDurationMs = "processing_duration_ms"
         case micDisconnectedAtMs = "mic_disconnected_at_ms"
         case micDisconnectNote = "mic_disconnect_note"
+        case deliveryNote = "delivery_note"
         case inputDeviceName = "input_device_name"
         case notTranscribedReason = "not_transcribed_reason"
         case notTranscribedDetail = "not_transcribed_detail"

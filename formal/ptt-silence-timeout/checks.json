@@ -10,6 +10,8 @@
     "WallClockMutant": "NoTimeoutDuringSpeech",
     "DropArchiveMutant": "EveryEndedTakeRetained",
     "TrimWordsMutant": "RawAccurate",
-    "StallMutant": "SettlesAfterSilence"
+    "StallMutant": "SettlesAfterSilence",
+    "NoRenewalMutant": "SpeechRenewsDeadline",
+    "NoCapMutant": "CapStops"
   }
 }

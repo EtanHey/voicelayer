@@ -1,0 +1,103 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 94993] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915/formal/record-while-processing-runtime/RuntimeOwnership.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module RuntimeOwnership
+Starting... (2026-11-02 10:33:58)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-02 10:33:58.
+Error: Invariant LegacyNoAckWait is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+s = [ stage |-> [A |-> "fresh", B |-> "fresh"],
+  event |-> "init",
+  target |-> "none",
+  capable |-> [A |-> FALSE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> TRUE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 2: <Record line 20, col 16 to line 21, col 88 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "recording", B |-> "fresh"],
+  event |-> "record",
+  target |-> "A",
+  capable |-> [A |-> FALSE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> TRUE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 3: <Stop line 22, col 12 to line 22, col 89 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "draining", B |-> "fresh"],
+  event |-> "stop",
+  target |-> "A",
+  capable |-> [A |-> FALSE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> TRUE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 4: <Archive line 25, col 15 to line 25, col 94 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "captured", B |-> "fresh"],
+  event |-> "archive",
+  target |-> "A",
+  capable |-> [A |-> FALSE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> TRUE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 5: <Decode line 26, col 14 to line 27, col 69 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "processing", B |-> "fresh"],
+  event |-> "decode",
+  target |-> "A",
+  capable |-> [A |-> FALSE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> TRUE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+State 6: <Complete line 35, col 6 to line 37, col 63 of module RuntimeOwnership>
+s = [ stage |-> [A |-> "ack", B |-> "fresh"],
+  event |-> "deliver",
+  target |-> "A",
+  capable |-> [A |-> FALSE, B |-> FALSE],
+  age |-> [A |-> 0, B |-> 0],
+  matches |-> [A |-> TRUE, B |-> TRUE],
+  focusSame |-> TRUE,
+  guard |-> "none",
+  cooldown |-> 0,
+  expected |-> "none",
+  escapedGuarded |-> TRUE,
+  notice |-> FALSE ]
+
+135 states generated, 97 distinct states found, 57 states left on queue.
+The depth of the complete state graph search is 6.
+The average outdegree of the complete state graph is 3 (minimum is 0, the maximum 5 and the 95th percentile is 5).
+Finished in 00s at (2026-11-02 10:33:58)

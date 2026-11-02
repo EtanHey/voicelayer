@@ -42,7 +42,12 @@ with tempfile.TemporaryDirectory(prefix="tlc-", dir=cache) as temporary:
                                 text=True, timeout=180)
         output = result.stdout
         (logs / f"{name}.log").write_text(output)
-        if expected:
+        if expected and expected.startswith("temporal:"):
+            prop = expected.removeprefix("temporal:")
+            config = (directory / f"{name}.cfg").read_text()
+            assert re.findall(r"PROPERT(?:Y|IES)\s+(\w+)", config) == [prop], config
+            assert result.returncode == 13 and "Temporal properties were violated" in output, output
+        elif expected:
             assert result.returncode == 12, output
             assert re.findall(r"Invariant (\w+) is violated", output) == [expected], output
         else:

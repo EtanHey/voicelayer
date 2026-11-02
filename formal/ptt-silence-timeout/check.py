@@ -28,10 +28,10 @@ with tempfile.TemporaryDirectory(dir=cache) as temp:
             "-config", name + ".cfg", "PttSilenceTimeout.tla"], cwd=directory, env=os.environ,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=180)
         (results / (name + ".log")).write_text(result.stdout)
-        if expected == "SettlesAfterSilence":
+        if expected in {"SettlesAfterSilence", "CapStops"}:
             assert result.returncode == 13 and "Temporal properties were violated" in result.stdout, result.stdout
             # This config declares exactly one temporal property, so the violation is unambiguous.
-            assert (directory / (name + ".cfg")).read_text().count("PROPERTIES SettlesAfterSilence") == 1
+            assert (directory / (name + ".cfg")).read_text().count("PROPERT") == 1 and expected in (directory / (name + ".cfg")).read_text()
         elif expected:
             assert result.returncode == 12, result.stdout
             assert re.findall(r"Invariant (\w+) is violated", result.stdout) == [expected], result.stdout

@@ -494,6 +494,7 @@ final class SocketServer {
         let pid = payload["pid"] as? Int ?? (payload["pid"] as? NSNumber)?.intValue
 
         if acceptsCommands {
+            DispatchQueue.main.async { [weak self] in self?.state.prepareForCommandOwner() }
             for otherFD in clients.keys where otherFD != fd {
                 clients[otherFD]?.acceptsCommands = false
             }

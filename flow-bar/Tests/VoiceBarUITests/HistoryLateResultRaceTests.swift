@@ -27,7 +27,6 @@ final class HistoryLateResultRaceTests: XCTestCase {
             recentTranscriptionEntriesLoader: { entries },
             recentTranscriptionEntriesSaver: { entries = $0 }
         )
-        state.minimumTranscribingDisplayDuration = 0.08
         state.pasteConfirmationDelay = 0
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []

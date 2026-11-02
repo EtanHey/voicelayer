@@ -11,7 +11,7 @@ import { handleSocketCommand } from "../../src/socket-handlers";
 import { runBarCapture, runHistoryTranscription, finishBarCapture, recordingJobCancelled,
   recordingJobsSnapshot } from "../../src/recording-jobs";
 
-const path = process.env.VOICELAYER_RECORD_TLC_CASES;
+const path = process.env.VOICELAYER_RECORD_TLC_CASES ?? new URL("./corpus.json", import.meta.url).pathname;
 const isolated = process.env.VOICELAYER_TEST_ISOLATED === "1";
 function deferred() { return Promise.withResolvers<void>(); }
 async function until(predicate: () => boolean) {
@@ -27,7 +27,8 @@ afterEach(() => {
   setRecordingState("idle");
   booking.clearCancelSignal(); booking.clearStopSignal();
 });
-test.skipIf(!path || !isolated)("TLC fixed socket admission and scoped capture cancel agree with the real handler", async () => {
+test("TLC fixed socket admission and scoped capture cancel agree with the real handler", async () => {
+  expect(isolated).toBe(true);
   const cases = z.object({ admissions: z.array(z.object({ state: z.enum(["idle", "transcribing"]),
     outcome: z.literal("accept") })).min(2) }).parse(JSON.parse(readFileSync(z.string().parse(path), "utf8")));
   const owned = spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true });
@@ -70,7 +71,7 @@ test.skipIf(!path || !isolated)("TLC fixed socket admission and scoped capture c
   } finally { [owned, broadcast, depth].forEach(mock => mock.mockRestore()); }
 });
 
-test.skipIf(!path || !isolated)("stale processing cancellation cannot target a later take and never consumes the global signal", async () => {
+test("stale processing cancellation cannot target a later take and never consumes the global signal", async () => {
   const broadcast = spyOn(socket, "broadcast").mockImplementation(() => {});
   const a = randomUUID(), b = randomUUID(), enteredA = deferred(), finishA = deferred(), enteredB = deferred(), finishB = deferred();
   let bCancelled: boolean | undefined;
