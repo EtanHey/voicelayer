@@ -230,6 +230,11 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public var explanation: String? {
         if let commandNotice { return commandNotice }
         if downloads.values.contains(where: { $0.isActive }) { return nil }
+        for engine in RecognizerPickerEngine.allCases {
+            if let failure = downloads[engine], failure.state == "error", let reason = failure.error {
+                return engine.title + ": " + Self.message(for: reason)
+            }
+        }
         if fallbackReason == "vad-no-speech" { return "No speech detected." }
         if selected == .parakeet, effective == .whisper, fallbackReason == "parakeet-startup-failed" {
             return "Using Whisper: Parakeet failed to load"
@@ -266,6 +271,9 @@ public struct RecognizerPickerState: Equatable, Sendable {
         case "last-installed-recognizer": return "Keep at least one downloaded recognizer."
         case "insufficient-disk-space": return "There isn't enough free disk space for this download."
         case "download-checksum-mismatch": return "The download couldn't be verified. Try downloading again."
+        case "download-http-failed", "download-size-mismatch", "download-failed": return "The download failed. Check your connection and try again."
+        case "download-cleanup-failed": return "Download staging files couldn't be removed. Reconnect and try again."
+        case "assets-validation-failed": return "Setup couldn't validate the model and runtime. Try again."
         case "download-cancelled": return "Download cancelled."
         case "assets-exist-delete-first": return "Delete the incomplete model files before downloading again."
         case "external-model-link": return "These model files are shared links; manage them in their original location."

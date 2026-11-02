@@ -18,3 +18,28 @@ The download icon invokes setup, including the Parakeet runtime. The trash icon
 requires an unloaded engine and another installed recognizer; clicking it shows
 a native confirmation containing the model-file size. UI command tests cover
 correlation and cancel; no real network/runtime/app lifecycle was exercised.
+
+## Source surface sweep
+
+- Entry points: typed socket parsing/acks for status, residency, download, cancel
+  and delete; mutations join update-drain admission, cancellation remains available.
+- Client: VoiceBarApp → SettingsView → ModelsSettingsView → picker → VoiceState.
+  Native offscreen fixture callbacks are inert; the older UIE2E health fixture has
+  no recognizer snapshot/management callbacks and remains disabled.
+- Providers: Whisper and Parakeet; explicit paths, cached weights, owned runtime
+  and Python override. npm inventory includes the hashed runtime lock; app bundling
+  copies runtime source. No actual model/runtime payload transfer was exercised.
+- Contracts: asset metadata is independent of nullable runtime availability;
+  equal-revision reads may refresh file metadata without granting Ready.
+- Reverse states: absent/partial assets, checksum mismatch, cancel/retry, disk
+  refusal, loaded/last-engine refusal, fallback retry and update-drain refusal.
+- Connection modes: existing native socket status/ack correlation and disconnect
+  reset; MCP bridge/server transports have no new tool or capability contract.
+- Docs: provisioning contract updated in docs/parakeet-resident-backend.md.
+
+The first whole Bun run exposed fake-provider prerequisites and cross-file test
+state leakage. Those adverse logs remain in `.build.noindex/issue-656/final-bun.log`.
+The same two failing files passed at the requested main 9e5355bd (43/0); the fixed
+seven-file integration replay passed 90/0. Final whole-suite receipts live in the
+PR descriptions. No capture/F5 mechanics, microphone, resident socket, installed
+VoiceBar or /Applications operation is part of this implementation proof.

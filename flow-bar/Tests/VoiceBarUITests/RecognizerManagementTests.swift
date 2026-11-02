@@ -74,4 +74,14 @@ final class RecognizerManagementTests: XCTestCase {
         XCTAssertFalse(missingWhisper.canSelect(.whisper))
     }
 
+    func testProgressFailureRemainsVisibleWhenItsOriginalAckWasLost() throws {
+        var payload = event()["recognizer_status"] as! [String: Any], engines = payload["engines"] as! [String: Any]
+        var engine = engines["parakeet"] as! [String: Any]
+        engine["download"] = ["state": "error", "received_bytes": 1, "total_bytes": 2, "error": "download-checksum-mismatch"]
+        engines["parakeet"] = engine; payload["engines"] = engines
+        let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
+        XCTAssertTrue(state.explanation?.contains("couldn't be verified") == true)
+        XCTAssertTrue(state.canManage(.parakeet, action: .download))
+    }
+
 }
