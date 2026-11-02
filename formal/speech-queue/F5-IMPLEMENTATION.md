@@ -10,7 +10,11 @@ push, or release claim.
 The daemon owns the pause. `pauseForF5Capture` parks the current read, holds promotion,
 and provides a physical player-exit barrier before microphone admission. Its settlement
 is bound to the read identity and is idempotent. A manual `pause` converts `f5` to `user`;
-settlement never resumes a user pause or a stopped/replaced read.
+settlement never resumes a user pause or a stopped/replaced read. If automatic resume
+is refused (including a foreign persisted busy state), the owned read stops cleanly:
+its park is released, its text/History retained, and VoiceBar shows the existing compact
+"Speech stopped" note. No retry or inaccessible F5-owned park remains. A runtime
+mutant that removes this terminal fallback must fail the refused-resume guard.
 
 `f5-capture.ts` is the only adapter to Lane I. Lane I owns the take IDs, microphone,
 FIFO processing, archival, cancellation and native delivery acknowledgement. The
@@ -40,6 +44,15 @@ not choose a later word.
 The existing daemon socket `pause` command is a real reachable manual control during
 capture and converts the owner. No existing view/keyboard/menu binding for this new
 VoiceState method was added; tests and the native-command replay call the method.
+`stopSpeechDuringCapture()` also has no UI caller yet (2.3 list). Escape during the
+pause cancels the take, not the read.
+
+During any F5 dictation, even with no speech, Option+F5 / `speak_text` queues behind
+the capture rather than rejecting busy. An unscoped `stop` with no `take_id` keeps
+its legacy speech-stop effect unless an F5-owned capture is active; then it targets
+that take through Lane I (including an opening take), leaving narration parked.
+A daemon or VoiceBar restart mid-pause drops the read; it is neither stuck paused
+nor wrongly resumed. Reads/loans are not restored across process lifetimes.
 
 The previously described UI location is `BarView.swift:506-530`, recording leading
 controls, visible only while an F5-owned read is parked during capture. Per the
@@ -73,10 +86,30 @@ R2-03 queue presentation and R2-05 initial timing remain separate implementation
 their Current prepare/start prefixes are included here without claiming those runtime
 invariants pass. Two-take N6/paste acknowledgement, late settlement, physical release
 after settlement, clone timing, nonzero chunks, quiescence and preparing-with-no-chunk
-also have focused real-logic guards.
+also have focused real-logic guards. The native projection waits for the already-queued
+main-thread restore using a FIFO continuation barrier on MainActor, not a timed
+RunLoop pump; the product's asynchronous restore is unchanged. Refused resume and
+restart/drop are runtime boundary guards beyond the model's successful-resume assumption.
 
 The implementation includes F-model round 2 `2b41acda` and its G1 supervised-budget
 follow-up `af8f1457` (repository-pinned TLC v1.8.0), plus approved Lane I FIXED-2 `4dd30fd1`. The original `9884ffa7`
 model cannot establish the revised M1-M4/D-S4 contract. Gate outcomes and immutable
 source hashes belong to the lane receipt and generated check artifacts. Installed
 interaction/audio/permission proof belongs to the captain.
+
+Every final paired gate runs the complete pause/runtime files and all changed
+socket/handler caller files (idempotency, socket residency, whisper residency,
+update-gate round1, error recovery, CLICK2 groundwork and recording review regressions),
+plus the approved integration repairs for the private-safety VM and MCP Ask schema.
+The full paused-Ask suite supplies explicit prompt word timings at its nonzero
+4200ms pause position, preserving every physical-exit, trim-failure and watchdog assertion.
+The lead-authorized shared fix 8093e582 (#673) is consumed unchanged; cross-vendor
+review is pending. Its two installer test files also run in full and are hashed,
+preserving every process-read and reads-under-lock assertion.
+CLICK2 asserts exact
+containing-word offsets from explicit timing fixtures and one paused confirmation
+per preparation/admitted-chunk phase; repeated commands add no confirmation.
+Capture-start assertions await their event;
+teardown waits for both Lane I jobs and the deferred F5 loan using the original
+2-second bound. The full Bun suite is a separate final check; known SSH-generated
+speech-fixture failures are reported for GUI verification, never silently passed.

@@ -337,11 +337,19 @@ function handleSocketCommandAdmitted(
         stopAll(command.playback_elapsed_ms, "clear");
         return buildAck(command, "accept");
       }
-      if (bufferOpeningCaptureControl(command.take_id, "stop")) return buildAck(command, "accept");
+      if (bufferOpeningCaptureControl(command.take_id, "stop", command.physical_press === true)) return buildAck(command, "accept");
       if (command.take_id) {
         if (recordingJobsSnapshot().mic_take_id !== command.take_id) return buildAck(command, "noop", "take is not recording");
         markBarCaptureDraining(command.take_id);
         safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: command.take_id, physical_press: command.physical_press === true }));
+        return buildAck(command, "accept");
+      }
+      if (hasF5Capture()) {
+        const takeID = recordingJobsSnapshot().mic_take_id;
+        if (takeID) {
+          markBarCaptureDraining(takeID);
+          safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: takeID, physical_press: command.physical_press === true }));
+        }
         return buildAck(command, "accept");
       }
       if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
@@ -349,7 +357,7 @@ function handleSocketCommandAdmitted(
         if (command.retain_read_queue !== true) selectionReads.clear();
         return buildAck(command, "noop", "already idle");
       }
-      if (recordingState === "transcribing") {
+      if (recordingState === "transcribing" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
         return buildAck(command, "noop", "already transcribing");
       }
       safeWriteFileSync(
@@ -363,15 +371,15 @@ function handleSocketCommandAdmitted(
       // P16: a stop/cancel aimed at an active capture (F5 release over a paused read) ends only the
       // capture; the parked read stays parked for Play, and the ack never waits on it (P16b, TLA+
       // CaptureCmdAckWithoutAwait): a parked long read cannot finish, so awaiting it false-rejected at 35 s.
-      if (command.scope === "capture" || hasF5Capture() || (recordingState !== "idle" && isPlaybackPaused())) return buildAck(command, "accept");
+      if (command.scope === "capture") return buildAck(command, "accept");
       stopAll(command.playback_elapsed_ms, stopQueuePolicy(recordingState, command.retain_read_queue === true));
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
       );
     case "cancel":
-      if (bufferOpeningCaptureControl(command.take_id, "cancel")) return buildAck(command, "accept");
       if (command.discard_read_queue === true) selectionReads.clear();
+      if (bufferOpeningCaptureControl(command.take_id, "cancel")) return buildAck(command, "accept");
       if (command.take_id || recordingJobsSnapshot().recording_jobs.length > 0) {
         const cancelled = cancelRecordingJob(command.take_id);
         if (!cancelled) return buildAck(command, "noop", "take is not active");

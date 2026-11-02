@@ -42,6 +42,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let synths: { argv: string[]; exit: ReturnType<typeof deferred<number>>; killed: boolean }[];
   let players: { exit: ReturnType<typeof deferred<number>>; killed: boolean; synthCount: number; argv: string[]; signals: string[] }[];
   let events: any[];
+  let holdFirstSynth = false;
   let holdSynth: boolean, autoPlay: boolean, holdPlayerExit: boolean;
   let archiveBeforePlayerExit: boolean;
   let handles: { done: Promise<void> }[];
@@ -52,6 +53,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let failPlayerSpawn = false;
   let synthLatencyMs = 0;
   let modelReplay = false;
+  let effectiveStateSpy: ReturnType<typeof spyOn>;
   type Child = { exit: ReturnType<typeof deferred<number>>; killed: boolean };
   let synthBarrier: ReturnType<typeof fixtureBarrier<typeof synths[number]>>;
   let playerBarrier: ReturnType<typeof fixtureBarrier<typeof players[number]>>;
@@ -64,7 +66,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   beforeEach(() => {
     modelReplay = false;
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
-    holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
+    holdFirstSynth = false; holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
     archiveBeforePlayerExit = false;
     clockMs = 100_000;
@@ -74,7 +76,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     historyBarrier = fixtureBarrier(); decoderBarrier = fixtureBarrier(); histories = []; decoders = [];
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
     spies.push(spyOn(socket, "broadcast").mockImplementation((event) => events.push(structuredClone(event))));
-    spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
+    spies.push(effectiveStateSpy = spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(alignment, "alignCloneAudio").mockResolvedValue({ status: "untimed", identity: {} as any, words: [] }));
     // Only platform probing uses spawnSync; all synth/play/decode/conversion spawns are fakes.
     Bun.spawnSync = ((argv: string[]) => {
@@ -90,7 +92,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const spoken = argv.find(a => a.startsWith("--text="))!.slice(7);
         writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * (modelReplay ? 20000000 : 120000), duration: modelReplay ? 18000000 : 100000})).join("\n"));
         const exit = deferred<number>(); const item = { argv, exit, killed: false }; synths.push(item); synthBarrier.push(item);
-        if (!holdSynth || synths.length === 1) {
+        if (!holdSynth || (synths.length === 1 && !holdFirstSynth)) {
           if (synthLatencyMs > 0) setTimeout(() => exit.resolve(0), synthLatencyMs); else exit.resolve(0);
         }
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
@@ -229,6 +231,37 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(replayed).toBe(rows.length);
     console.log(`Replayed ${replayed} TLC F5 native command scenarios through real daemon, PlaybackQueueManager and Lane I take settlement`);
   }, 120_000);
+
+  for (const phase of ["preparing", "playing"] as const) {
+    it(`R2-01 refused automatic resume releases ${phase} read and retains its History text`, async () => {
+      holdFirstSynth = holdSynth = phase === "preparing";
+      const text = "Keep this whole read in History.";
+      const archive = beginSpeechArchive(text);
+      await archive.settled();
+      const h = speakLongRead(text, { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+      handles.push(h);
+      if (phase === "preparing") await synthBarrier.at(0);
+      else await playerBarrier.at(0);
+      const capture = tts.pauseForF5Capture();
+      await capture.ready;
+      effectiveStateSpy.mockReturnValue("transcribing");
+      try {
+        capture.settle();
+        expect(isPlaybackPaused()).toBe(false);
+        expect(events.find(e => e.type === "playback_outcome" && e.reason === "resume-refused")).toBeDefined();
+      } finally { effectiveStateSpy.mockReturnValue("idle"); capture.settle(); }
+      await h.done;
+      await flushSpeechArchives();
+      expect(readFileSync(join(archive.context.path, "input.txt"), "utf8")).toBe(text);
+      const metadata = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+      expect(metadata.speech.state).toBe(phase === "preparing" ? "cancelled" : "stopped");
+      expect(archive.failures).toEqual([]);
+      holdFirstSynth = holdSynth = false;
+      const later = start("edge", "A later read works.");
+      await playerBarrier.at(phase === "preparing" ? 0 : 1);
+      stopPlayback(); await later.done;
+    });
+  }
 
   for (const control of ["settle", "manual", "stop"] as const) {
     it(`R2-01 F5 holds a read before its first chunk (${control})`, async () => {
@@ -1158,7 +1191,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const timer = spyOn(globalThis, "setTimeout").mockImplementation(((fn: any, ms: number, ...args: any[]) =>
       realTimer(fn, ms === 35000 ? 25 : ms, ...args)) as any);
     try {
-      expect(await handleSocketCommand({ cmd, id: `capture-${cmd}` })).toMatchObject({ command: cmd, outcome: "accept" });
+      expect(await handleSocketCommand({ cmd, id: `capture-${cmd}`, ...(cmd === "stop" ? { scope: "capture" as const } : {}) })).toMatchObject({ command: cmd, outcome: "accept" });
       expect(isPlaybackPaused()).toBe(true);
     } finally { timer.mockRestore(); capture.mockRestore(); }
   });
@@ -1171,6 +1204,31 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const receipts = (id: string) => events.filter(e => e.type === "state" && e.state === "speaking" && e.request_id === id);
     const settle = async () => { for (let i = 0; i < 20; i++) await fixtureCheckpoint(); await flushSpeechArchives(); };
     afterEach(() => resetSelectionReadQueueForTests());
+
+    it("R2-01 refused automatic resume through socket capture releases Option+F5 admission", async () => {
+      const opened = deferred<void>(), take = deferred<string | null>();
+      spies.push(spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+        options?.onCaptureStart?.(); opened.resolve();
+        return finishSyntheticCapture(() => take.promise).finally(() => effectiveStateSpy.mockReturnValue("transcribing"));
+      }));
+      try {
+        expect(await select("A", "Keep the interrupted source text.")).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(0);
+        expect(handleSocketCommand({ cmd: "record", take_id: "refused-real-take" })).toMatchObject({ outcome: "accept" });
+        await opened.promise;
+        take.resolve(null);
+        await settleRecordingJobs(tts.hasF5Capture);
+        expect(isPlaybackPaused()).toBe(false);
+        expect(events.find(e => e.type === "playback_outcome" && e.reason === "resume-refused")).toBeDefined();
+        await awaitCurrentPlayback();
+        effectiveStateSpy.mockReturnValue("idle");
+        expect(await handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "noop", reason: "stale" });
+        expect(await select("D", "A later Option+F5 works.")).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(1);
+        expect(receipts("D").length).toBeGreaterThan(0);
+      } finally { take.resolve(null); effectiveStateSpy.mockReturnValue("idle"); }
+    });
+
 
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
       const cloneProfile = { name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [],

@@ -3232,7 +3232,22 @@ public final class VoiceState {
 
         case "playback_outcome":
             // Stop or replacement settled the parked job: there is nothing left to resume.
-            if let id = event["playback_id"] as? String, id == parkedRead?.playbackID { retireParkedRead() }
+            if let id = event["playback_id"] as? String, let parked = parkedRead,
+               id == parked.playbackID || id == parked.read.longReadID {
+                if event["reason"] as? String == "resume-refused" {
+                    let read = parked.read
+                    let document = read.document.isShowing ? read.document.document : nil
+                    retainedReadbackID = read.readbackID
+                    retainedPlaybackDurationMilliseconds = read.readbackDurationMs ?? read.durationMs
+                    retainedPlaybackPositionMilliseconds = parked.offsetMs
+                    retainedTeleprompterText = document?.text ?? read.text
+                    retainedTeleprompterWordBoundaries = document?.boundaries ?? read.words
+                    retainedDisplayBlocks = document?.displayBlocks ?? read.document.display?.blocks ?? []
+                    if mode == .speaking { enterIdleState(clearQueue: false) }
+                    showSelectionBusyNote(message: "Speech stopped")
+                }
+                retireParkedRead()
+            }
 
         case "transcription_status":
             guard mode == .transcribing else { return }

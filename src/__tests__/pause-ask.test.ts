@@ -13,6 +13,8 @@ import { serializeMcpFrame } from "../mcp-framing";
 import { TEST_TMP, testSocket } from "./setup/test-tmp";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint as flush } from "./long-read-fixture-barriers";
 
+const question = "First question?";
+
 type Player = { exit: ReturnType<typeof deferred<number>>; signals: string[] };
 let players: ReturnType<typeof fixtureBarrier<Player>>;
 let trims: ReturnType<typeof fixtureBarrier<ReturnType<typeof deferred<number>>>>;
@@ -48,8 +50,11 @@ beforeEach(() => {
     spyOn(socket, "broadcast").mockImplementation(() => {}));
   capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
   spies.push(spyOn(tts, "speak").mockImplementation(async (text, options) => {
+    expect(text).toBe(question);
     const handle = tts.playAudioNonBlocking(`${TEST_TMP}/ask.mp3`, {
       text, voice: "fixture", durationMs: 600_000, priority: "critical", onQueued: options?.onPlaybackQueued,
+      wordBoundaries: [{ text: "First", offset_ms: 0, duration_ms: 4200 },
+        { text: "question?", offset_ms: 4200, duration_ms: 595800 }],
     });
     handles.push(handle);
     return { playbackId: handle.id, playbackOutcome: await handle.exited, displayText: text,
@@ -72,7 +77,7 @@ afterEach(async () => {
 });
 
 async function startAsk() {
-  pending = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+  pending = handleVoiceAsk({ message: question, timeout_seconds: 5 });
   const player = await players.at(0);
   return { player, handle: handles[0] };
 }
@@ -257,7 +262,7 @@ it("VoiceBar socket commands pause and resume the admitted Ask identity", async 
 it("Stop during admitted prompt preparation captures without spawning a player", async () => {
   const envelope = deferred<amplitude.PlaybackAmplitudeEnvelope>();
   spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockReturnValue({ result: envelope.promise, cancel() {} });
-  pending = handleVoiceAsk({ message: "Question?" });
+  pending = handleVoiceAsk({ message: question });
   await flush();
   expect(handles).toHaveLength(1);
   expect(players.values).toHaveLength(0);
@@ -273,7 +278,7 @@ for (const preparing of [false, true]) it(`Stop after Resume while ${preparing ?
   let handle: tts.QueuedPlaybackHandle;
   if (preparing) {
     spies.push(spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockReturnValue({ result: envelope.promise, cancel() {} }));
-    pending = handleVoiceAsk({ message: "Question?" });
+    pending = handleVoiceAsk({ message: question });
     await flush();
     handle = handles[0];
     expect(tts.pausePlayback({ id: handle.id }, 0).outcome).toBe("accept");
@@ -315,7 +320,7 @@ it("Stop then Esc before player exit preserves main capture behaviour", async ()
 
 for (const paused of [false, true]) it(`Disconnect during ${paused ? "paused" : "playing"} Ask never captures`, async () => {
   const disconnect = new AbortController();
-  pending = handleVoiceAsk({ message: "Question?" }, { emit() {}, disconnectSignal: disconnect.signal });
+  pending = handleVoiceAsk({ message: question }, { emit() {}, disconnectSignal: disconnect.signal });
   const player = await players.at(0);
   if (paused) expect(tts.pausePlayback({ id: handles[0].id }, 0).outcome).toBe("accept");
   disconnect.abort();
@@ -342,7 +347,7 @@ for (const shutdown of [false, true]) for (const framing of ["mcp", "ndjson"]) i
     socket: { data() {}, close() {}, error() {} },
   });
   try {
-    const request = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "voice_ask", arguments: { message: "Question?" } } };
+    const request = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "voice_ask", arguments: { message: question } } };
     client.write(framing === "mcp" ? serializeMcpFrame(request) : JSON.stringify(request) + "\n");
     const player = await players.at(0);
     expect(disconnectSignal).toBeDefined();
