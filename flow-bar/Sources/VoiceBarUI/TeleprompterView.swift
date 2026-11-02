@@ -673,6 +673,54 @@ public enum TeleprompterPlaybackPolicy {
     }
 }
 
+/// R2-05: the highlighted word, the playback epoch it was reached in and the audio clock when it was reached.
+/// While the clock keeps moving forward in one epoch, a better timeline for the same words (measured timing
+/// replacing an estimate) never moves the highlight back: the word on screen is a floor, and the new timestamps
+/// drive every later step. A new epoch (a new read, a seek, a resume from a park, new text, entering or leaving
+/// read-back) or a clock that went back (a jump inside the epoch) lands exactly where the clock says.
+public struct TeleprompterHighlightCursor: Equatable {
+    public struct Epoch: Equatable {
+        public let playback: Int
+        public let text: String
+        public let isReadback: Bool
+
+        public init(playback: Int, text: String, isReadback: Bool) {
+            self.playback = playback
+            self.text = text
+            self.isReadback = isReadback
+        }
+    }
+
+    public private(set) var wordID: Int
+    public private(set) var epoch: Epoch?
+    /// The audio clock (ms) when `wordID` was reached.
+    public private(set) var reachedAtMilliseconds: Int
+
+    public init(wordID: Int, at clockMilliseconds: Int, epoch: Epoch? = nil) {
+        self.wordID = wordID
+        self.epoch = epoch
+        reachedAtMilliseconds = clockMilliseconds
+    }
+
+    /// Lands on the word the clock names. `keepingWordOnScreen` is set only when one live timeline replaces
+    /// another; it holds the current word as a floor if, and only if, that word was reached in this same epoch
+    /// and the clock has not gone back since.
+    public mutating func land(on clockWordID: Int, at clockMilliseconds: Int, in epoch: Epoch,
+                              keepingWordOnScreen: Bool = false) {
+        let keeps = keepingWordOnScreen && !epoch.isReadback && clockMilliseconds >= reachedAtMilliseconds &&
+            self.epoch == epoch
+        wordID = keeps ? max(clockWordID, wordID) : clockWordID
+        reachedAtMilliseconds = clockMilliseconds
+        self.epoch = epoch
+    }
+
+    /// The playback task reached the next word.
+    public mutating func step(to wordID: Int, at clockMilliseconds: Int) {
+        self.wordID = wordID
+        reachedAtMilliseconds = clockMilliseconds
+    }
+}
+
 public enum TeleprompterSeekPolicy {
     public static func offset(for word: TeleprompterWord, isReadback _: Bool) -> Int? {
         guard !word.hasEstimatedTiming, let offset = word.offsetMs, offset >= 0 else { return nil }
