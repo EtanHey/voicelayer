@@ -61,6 +61,25 @@ test("delete refuses a model symlink into an external cache", () => {
   expect(existsSync(join(root, "python"))).toBe(true);
 });
 
+test("delete refuses a symlinked model DIRECTORY and leaves the shared target untouched", () => {
+  const shared = join(root, "shared-cache"), linked = join(root, "linked-model");
+  mkdirSync(shared, { recursive: true });
+  for (const name of PARAKEET_FILES) writeFileSync(join(shared, name), "shared");
+  symlinkSync(shared, linked);
+  process.env.VOICELAYER_PARAKEET_MODEL = linked;
+  expect(deleteRecognizer("parakeet")).toMatchObject({ outcome: "reject", reason: "external-model-link" });
+  for (const name of PARAKEET_FILES) expect(existsSync(join(shared, name))).toBe(true);
+});
+
+test("delete refuses a symlinked Whisper model directory", () => {
+  const shared = join(root, "shared-whisper"), linked = join(root, "linked-whisper");
+  mkdirSync(shared, { recursive: true }); writeFileSync(join(shared, "ggml.bin"), "shared");
+  symlinkSync(shared, linked);
+  process.env.QA_VOICE_WHISPER_MODEL = join(linked, "ggml.bin");
+  expect(deleteRecognizer("whisper")).toMatchObject({ outcome: "reject", reason: "external-model-link" });
+  expect(existsSync(join(shared, "ggml.bin"))).toBe(true);
+});
+
 test("deleting selected assets invalidates the cached backend before the next request", async () => {
   const stt = await import("../stt"); stt.resetBackendCache();
   const available = spyOn(stt.WhisperServerBackend.prototype, "isAvailable").mockResolvedValue(true);
