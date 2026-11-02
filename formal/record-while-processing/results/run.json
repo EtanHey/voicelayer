@@ -1,0 +1,26 @@
+{
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "runnerSHA256": "94c5365f361d0423750ce4c04f547f890173ab6804949c00ba1fc2534314e167",
+  "sourceHashes": {
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "796417c6cf8b1ff6e98d552bd98da410b2caf72498fa70065fc3351f4181c4a1",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "df4a24033276bb0f0dba45e343bff6c3d1306bd7e201014f500a122b61f72877",
+    "src/input.ts": "93fb052c3aac50743dbb97937e101da8cd3c38dea66214b4ee486e265b3fe473",
+    "src/socket-handlers.ts": "a7c995bf08443d45a7e8b5994c2887881547ae7902d85cc505794b50a458bbbd",
+    "src/recording-state.ts": "579d74ce2d05ff9c21bd7f80f57559461ea666dd23a02f6411bbf3dc7840461e",
+    "src/session-booking.ts": "8354241ad3c54e1b2333630c095178e2da77dce049e8ca3a44ae55c5653b5b62",
+    "src/mcp-server-daemon.ts": "105b601474c8260741f9513a6aee200dc08ab6c8f6bf2c0acf033ab075484b3d"
+  },
+  "specSHA256": "9800c20192d6c9e2866c9565c1fafbb6372acae7eea71dd3365cbbfe2821f8bf",
+  "cfgSHA256": {
+    "Current": "38c741dc150574ca1cb255951687b6a27ad70852db214eb0055e01fc136de9b3",
+    "OldSocketBusy": "b0855a1fdfca6574b0fc3c761f7d42de789b89e7c9810a8b46e6ae5947e72b59",
+    "OldF5CancelsA": "b868c3845eacae9b630e8a8a29df2f5e1e1b36d21f572eb1d851f2b6ffd94035",
+    "OldUnguardedCancel": "9e21c5acb7eb829788b842b937303d8c6b3e08649878d117288c54029de33ebf",
+    "OldDisplayFloor": "12c1e9b0603fb31eb6967fba645a0ca7cb60cf0f90f99bba6e63b4fec76df149",
+    "OldDeferredFinalDrop": "b541043c2733ec99aedf44fcb8f6e46e4e28f0d561e903c07a6c72dff23d57f9",
+    "ConcurrentGlobalCancel": "d4a0c2aacdcd093ecaebba449dfdf9ce418bae61e155a7f3aa92a21ae5c45291",
+    "DropCancelledMutant": "8e15258b373861ac3ba9899da0cf95e9a4d4d7c95e68c6eda087bf78d471e037",
+    "Fixed": "ece28ee0b11ad73a97b9751d186e0c078e2c00b5a33a35f0179f70be435cf3f4"
+  },
+  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+}
