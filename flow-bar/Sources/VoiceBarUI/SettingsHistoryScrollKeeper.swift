@@ -40,7 +40,13 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
         /// starting position (the top) never overwrites where the user really was.
         private(set) var hasRestored = false
         /// Content arrives over a few layout passes; wait for it to be tall enough, for at most ~1 s.
+        /// Giving up leaves the position alone: a late jump would land on whatever the user is reading.
         static let restoreAttempts = 30
+        /// True only while the keeper itself moves the clip view, so its own bounds change and live-scroll
+        /// notifications are never mistaken for the user.
+        private var isApplying = false
+        /// Bumped on cancel or detach; a queued retry from an older generation does nothing.
+        private var restoreGeneration = 0
 
         init(memory: SettingsHistoryScrollMemory, key: SettingsHistoryScrollMemory.Key) {
             self.memory = memory; self.key = key
@@ -64,37 +70,66 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
             scroll.contentView.postsBoundsChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(boundsChanged),
                                                    name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+            NotificationCenter.default.addObserver(self, selector: #selector(userBeganLiveScroll),
+                                                   name: NSScrollView.willStartLiveScrollNotification, object: scroll)
             restore(attempt: 0)
         }
 
         private func detach() {
-            if let clip { NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: clip) }
+            if let clip {
+                NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: clip)
+                NotificationCenter.default.removeObserver(self, name: NSScrollView.willStartLiveScrollNotification,
+                                                          object: clip.superview)
+            }
             clip = nil
             hasRestored = false
+            restoreGeneration &+= 1
         }
 
         private func restore(attempt: Int) {
-            guard let clip, let scroll = clip.superview as? NSScrollView else { return }
+            guard !hasRestored, let clip, let scroll = clip.superview as? NSScrollView else { return }
             guard let target = memory.offset(for: key), target > 0 else { hasRestored = true; return }
             let reachable = (scroll.documentView?.frame.height ?? 0) - clip.bounds.height
-            if reachable >= target - 0.5 || attempt >= Self.restoreAttempts {
+            if attempt >= Self.restoreAttempts {
+                hasRestored = true // Too short for too long: keep where it is, record from here on.
+            } else if reachable >= target - 0.5 {
                 // Bracketed like a user's live scroll: SwiftUI's hosting scroll view then adopts the offset
                 // as its own. A bare clip-view move is undone by the next content update (the re-entry
                 // reload put the list back at the top in the focused test).
                 let center = NotificationCenter.default
+                isApplying = true
                 center.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
-                clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(target, max(0, reachable))))
+                clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: target))
                 scroll.reflectScrolledClipView(clip)
                 center.post(name: NSScrollView.didLiveScrollNotification, object: scroll)
                 center.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+                isApplying = false
                 hasRestored = true
             } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in self?.restore(attempt: attempt + 1) }
+                let generation = restoreGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+                    guard let self, self.restoreGeneration == generation else { return }
+                    self.restore(attempt: attempt + 1)
+                }
             }
         }
 
+        /// The user moved first (wheel, trackpad, scroller drag, Page Up/Down, arrows, Home/End all move
+        /// the clip view): their position wins, and nothing queued may move it afterwards.
+        private func userTookOver() {
+            guard !hasRestored else { return }
+            restoreGeneration &+= 1
+            hasRestored = true
+        }
+
+        @objc private func userBeganLiveScroll() {
+            guard !isApplying else { return }
+            userTookOver()
+        }
+
         @objc private func boundsChanged() {
-            guard hasRestored, let clip else { return }
+            guard !isApplying, let clip else { return }
+            userTookOver()
             memory.record(clip.bounds.origin.y, for: key)
         }
     }

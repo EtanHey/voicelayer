@@ -184,6 +184,46 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         _ = (first.window, second.window)
     }
 
+    /// Round-2 review (ship-blocker): the user scrolls while the keeper is still waiting for content.
+    /// Their position wins; growing content never yanks them back to the remembered offset.
+    func testAUserScrollDuringTheWaitCancelsTheRestore() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(650, for: .list)
+        let view = scrollView(height: 900) // 500 reachable: too short for 650
+        let keeper = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
+        view.scroll.documentView?.addSubview(keeper)
+        XCTAssertFalse(keeper.hasRestored, "waiting for content")
+        userScroll(view.scroll, by: 200)
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 200, accuracy: 0.5, "the user's wheel scroll landed")
+        view.scroll.documentView?.setFrameSize(NSSize(width: 300, height: 2000))
+        RunLoop.main.run(until: Date().addingTimeInterval(1.3))
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 200, accuracy: 0.5, "no jump back to 650")
+        XCTAssertEqual(memory.offset(for: .list), 200, "the user's position is what is remembered now")
+        _ = view.window
+    }
+
+    /// Content never grows tall enough within the wait: the keeper gives up without a late jump.
+    func testTimingOutLeavesThePositionWhereItWas() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(650, for: .list)
+        let view = scrollView(height: 600) // 200 reachable, and it stays that way
+        let keeper = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
+        view.scroll.documentView?.addSubview(keeper)
+        RunLoop.main.run(until: Date().addingTimeInterval(1.6))
+        XCTAssertTrue(keeper.hasRestored, "the wait ended")
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 0, accuracy: 0.5, "no late jump to the clamped offset")
+        _ = view.window
+    }
+
+    /// A real pixel scroll-wheel event handed to the AppKit scroll view (nothing is posted to the system).
+    private func userScroll(_ scroll: NSScrollView, by delta: CGFloat) {
+        guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                               wheel1: Int32(-delta), wheel2: 0, wheel3: 0),
+              let event = NSEvent(cgEvent: cg) else { return XCTFail("no scroll event") }
+        scroll.scrollWheel(with: event)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+
     private func scrollView(height: CGFloat) -> (window: NSWindow, scroll: NSScrollView) {
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 400))
         let document = FlippedView(frame: NSRect(x: 0, y: 0, width: 300, height: height))
