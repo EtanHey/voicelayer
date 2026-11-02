@@ -29,6 +29,11 @@
       "target": null,
       "kind": "pass"
     },
+    "N8Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
     "OldSocketBusy": {
       "role": "historical",
       "target": "N6StartsB",
@@ -234,25 +239,35 @@
       "target": "SilenceTimesOut",
       "kind": "temporal"
     },
-    "MutNoCap": {
+    "MutReintroducedCap": {
       "role": "mutant",
-      "target": "CapAlwaysFires",
-      "kind": "temporal"
-    },
-    "MutNoCapBound": {
-      "role": "mutant",
-      "target": "CaptureWithinCap",
+      "target": "RecurringSpeechNeverTimesOut",
       "kind": "invariant"
     },
-    "MutCapRenewedBySpeech": {
+    "MutEscapeMic": {
       "role": "mutant",
-      "target": "CapAlwaysFires",
+      "target": "EscapeTargetsNewest",
+      "kind": "invariant"
+    },
+    "MutEscapeOlder": {
+      "role": "mutant",
+      "target": "EscapeTargetsNewest",
+      "kind": "invariant"
+    },
+    "MutStaleGuard": {
+      "role": "mutant",
+      "target": "NoStaleGuard",
       "kind": "temporal"
     },
-    "MutCapBlockedBySpeech": {
+    "ConcurrentGlobalCancel": {
       "role": "mutant",
-      "target": "CapAlwaysFires",
-      "kind": "temporal"
+      "target": "N7ScopedCancel",
+      "kind": "invariant"
+    },
+    "DropCancelledMutant": {
+      "role": "mutant",
+      "target": "D3EveryTakeKept",
+      "kind": "invariant"
     },
     "WitnessOverlapPaste": {
       "role": "witness",
@@ -274,41 +289,15 @@
       "target": "NoSpeechSilenceTimeout",
       "kind": "invariant"
     },
-    "MutEscapeMic": {
-      "role": "mutant",
-      "target": "EscapeTargetsNewest",
-      "kind": "invariant"
-    },
-    "MutEscapeOlder": {
-      "role": "mutant",
-      "target": "EscapeTargetsNewest",
-      "kind": "invariant"
-    },
-    "MutStaleGuard": {
-      "role": "mutant",
-      "target": "NoStaleGuard",
-      "kind": "temporal"
-    },
-    "N8Fixed": {
-      "role": "positive",
-      "target": null,
-      "kind": "pass"
-    },
-    "ConcurrentGlobalCancel": {
-      "role": "mutant",
-      "target": "N7ScopedCancel",
-      "kind": "invariant"
-    },
-    "DropCancelledMutant": {
-      "role": "mutant",
-      "target": "D3EveryTakeKept",
+    "WitnessSpeechPastFormerCap": {
+      "role": "witness",
+      "target": "NoSpeakingPastFormerCap",
       "kind": "invariant"
     }
   },
   "acceptance": [
-    "CapAlwaysFires",
-    "CaptureWithinCap",
     "D3EveryTakeKept",
+    "EscapeTargetsNewest",
     "EventuallyIdle",
     "N6Admissible",
     "N6PreservesA",
@@ -323,15 +312,15 @@
     "NoCancelledPaste",
     "NoDuplicatePaste",
     "NoEarlySilenceTimeout",
+    "NoStaleGuard",
     "NoTimeoutWhileTalking",
     "OneDecoder",
     "OneMic",
     "OverlapPastes",
     "ProcessingSettles",
+    "RecurringSpeechNeverTimesOut",
     "SilenceTimesOut",
     "SpeechRenewsDeadline",
-    "TypeOK",
-    "EscapeTargetsNewest",
-    "NoStaleGuard"
+    "TypeOK"
   ]
 }

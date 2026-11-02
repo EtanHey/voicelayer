@@ -17,7 +17,7 @@ final class NotchNoteMorphGeometryTests: XCTestCase {
         return [
             ("recording", .init(mode: .recording)),
             ("recording + hold", .init(mode: .recording, showsRecordingHold: true)),
-            ("transcribing", .init(mode: .transcribing, statusText: "Transcribing…")),
+            // N2: transcribing shows no note at all (NotchStatusFeedbackTests), so it has no note morph.
             ("F5 preview", .init(mode: .idle, hotkeyPhase: .pressing, statusText: "Hold to talk")),
             ("teleprompter", teleprompter),
             ("launcher", .init(mode: .idle, isHovered: true)),

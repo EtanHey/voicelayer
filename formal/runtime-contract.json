@@ -1,5 +1,5 @@
 {
-  "notchPolicy": "current",
+  "notchPolicy": "fixed",
   "pipelinePolicy": "fixed",
   "cancelIdField": "take_id",
   "captureIds": {

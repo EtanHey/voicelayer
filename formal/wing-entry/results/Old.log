@@ -1,0 +1,12 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoClippedControl",
+  "status": "EXPECTED_FAIL",
+  "generated": 2,
+  "distinct": 2,
+  "trace": [
+    "now = 0",
+    "now = 1"
+  ]
+}

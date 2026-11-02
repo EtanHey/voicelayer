@@ -12,7 +12,10 @@
   "sourceSHA256": {
     "formal/record-while-processing/conformance.test.ts": "39ff487a58d5be3716a0accd8875c942cd944d6743210f4ed589e2928482ec91",
     "formal/record-while-processing/runtime-adapter.ts": "13fb1499008a3a54da92fe1e92c2223a4bdf33c98e5a40b281001e6eeab4c9a4",
-    "formal/runtime-contract.json": "6909a5b1fd71691a454f94d59634f70991a1fbf1a739eef0853a3d2323b5871f"
+    "formal/runtime-contract.json": "6909a5b1fd71691a454f94d59634f70991a1fbf1a739eef0853a3d2323b5871f",
+    "formal/record-while-processing/conformance.sh": "c8bc970e73a44c17db80237a6fca49118d515fb7f7852d485a1899645ee1e8bf",
+    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "484ed5d9ee409bfdb78679592f4415eb7714627439f0645aafaddf331c11ac9f",
+    "flow-bar/Tests/VoiceBarTests/LaneIFormalConformanceTests.swift": "579c268cd59417e6f4f8c52bcfa1fd582ce0760996c245e5da925965aec6b151"
   },
   "tests": 5,
   "strictPasses": 5,
@@ -60,7 +63,11 @@
       "formal/record-while-processing/conformance.test.ts"
     ]
   },
-  "nativeTests": 9,
+  "nativeTests": 7,
   "nativeCancellationClasses": 73,
-  "divergencePinScope": "Preserved G pre-implementation Fixed-family pins apply only to a current pipeline policy. The merged fixed implementation requires zero Fixed divergences. Visual baseline pins are independently enforced by the Swift replay."
+  "divergencePinScope": "Preserved G pre-implementation Fixed-family pins apply only to a current pipeline policy. The merged fixed implementation requires zero Fixed divergences. Visual baseline pins are independently enforced by the Swift replay.",
+  "nativeScope": "Recording only: LaneG pipeline method and six LaneI methods; notch excluded.",
+  "recordedLogSHA256": "0d889691a6c3d97b96701af334a91172b609c6a3ceadf0b4e54bd07a42cbf21b",
+  "rawLogSHA256": "94af0f16b328f6b3d0cd0b4ad44b4cef377bc20b56159378aedec1a02b72a935",
+  "D3TimingScope": "Formal design only; replay checks admission/cancel/delivery, not real elapsed silence."
 }

@@ -152,6 +152,16 @@ public struct VoiceBarNotchControlOptics: Equatable {
     }
 }
 
+extension VoiceBarNotchWingContentEntry {
+    static func transition(growth: CGFloat) -> AnyTransition {
+        let wait = delay(forGrowth: growth)
+        return .asymmetric(
+            insertion: wait > 0 ? .opacity.animation(.easeOut(duration: duration).delay(wait)) : .identity,
+            removal: .identity
+        )
+    }
+}
+
 private extension View {
     func notchAdaptiveGlyphEdge(_ color: Color) -> some View {
         shadow(color: color, radius: 0, x: -0.75, y: 0)
@@ -282,6 +292,8 @@ struct VoiceBarPillControlButton: View {
 
 // Native registration stays attached to the control inside the nested glass host.
 // Avoid resetting AppKit's hover delay on unrelated playback/hover redraws.
+// R0856-09/10: every icon-only control in the notch and its dropdowns registers its tooltip this way; SwiftUI
+// `.help` does not show in the non-activating notch panel (NotchIconButtonTooltipTests).
 struct PillControlTooltip: NSViewRepresentable {
     let text: String?
 
@@ -330,6 +342,8 @@ public struct BarView: View {
     @State private var isMorphTeleprompterContentPresented = false
     @State private var isMorphHistoryContentPresented = false
     @State private var isHistoryPresented = false
+    @State private var settledLeadingWingWidth: CGFloat = 0
+    @State private var preparingHandoff = TeleprompterPreparingHandoffGate()
     @State private var historyDismissal: NotchHistoryDismissal?
     @State private var hostWindow = HostWindowBox()
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
@@ -411,6 +425,9 @@ public struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
+        .onChange(of: notchPresentation.geometry.leadingWingWidth, initial: true) { _, width in
+            settledLeadingWingWidth = notchPresentation.visualState == .idle ? 0 : width
+        }
         .onChange(of: notchPresentation.visualState) { _, visualState in
             scheduleMorphTeleprompterContent(for: visualState)
         }
@@ -467,6 +484,7 @@ public struct BarView: View {
             transientNote: state.selectionFeedbackNote
         )
         input.isHistoryPanelOpen = isHistoryPresented
+        input.transientNoteOffersHistory = state.selectionFeedbackNoteOffersHistory
         return VoiceBarPresentation.notchPresentation(from: input)
     }
 
@@ -489,6 +507,13 @@ public struct BarView: View {
 
     private func synchronizeLauncherRetention() {
         presentationModel?.setKeyboardFocused(keepsLauncherMounted)
+    }
+
+    /// R0856-05: how far the leading wing grows in this change. `settledLeadingWingWidth` still holds the previous
+    /// width while the body that inserts the new controls is evaluated; a collapsed notch counts as no growth.
+    private var leadingWingGrowth: CGFloat {
+        guard settledLeadingWingWidth > 0 else { return 0 }
+        return notchPresentation.geometry.leadingWingWidth - settledLeadingWingWidth
     }
 
     @ViewBuilder
@@ -526,8 +551,12 @@ public struct BarView: View {
                     ) {
                         state.setRecordingHold(!state.isRecordingHoldEngaged)
                     }
+                    // It arrives with the wing growing by one slot.
+                    .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
                 }
             }
+            // R0856-05: the recording controls arrive with a wider wing; they show once its glass covers them.
+            .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
         case .compactStatus, .teleprompter:
             if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {
                 ProcessingSpinner()
@@ -670,6 +699,9 @@ public struct BarView: View {
             .opacity(isCompact ? 1 : 0)
             .frame(width: isCompact ? nil : 0)
             .allowsHitTesting(isCompact)
+            // R0856-10: hidden, it must not stay in the keyboard loop either (NotchIconButtonTooltipTests).
+            // `.focusable(true)` on the visible Stop made a click take key focus; disabling keeps its identity.
+            .disabled(!isCompact)
             .accessibilityHidden(!isCompact)
         }
     }
@@ -707,7 +739,8 @@ public struct BarView: View {
     }
 
     private func transientNoteBand(_ note: String) -> some View {
-        VoiceBarNotchTransientNoteBand(text: note, width: notchPresentation.geometry.bodyWidth)
+        VoiceBarNotchTransientNoteBand(text: note, width: VoiceBarNotchContract.noteColumnWidth(
+            for: notchPresentation.geometry, ownBodyHeight: notchPresentation.ownBodyHeight))
             .foregroundStyle(notchPrimaryLabelColor)
             .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
             .allowsHitTesting(false)
@@ -781,18 +814,18 @@ public struct BarView: View {
     }
 
     /// NOTCH2: "Preparing speech…" is a status, not text being read, so it sits on the body's optical centre
-    /// instead of the reading flow's top-leading corner, then crossfades into the text on the first chunk.
+    /// instead of the reading flow's top-leading corner, then hands off to the text on the first chunk.
     @ViewBuilder
     private func notchTeleprompterBody(text: String) -> some View {
         ZStack {
-            if state.isPreparingSpeech {
+            if preparingHandoff.showsStatus(isPreparing: state.isPreparingSpeech) {
                 Text(text)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(notchPalette.secondary.color)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .transition(.opacity)
-            } else {
+                    .transition(TeleprompterPreparingHandoff.transition)
+            } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {
                 TeleprompterView(
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
@@ -809,10 +842,15 @@ public struct BarView: View {
                     ),
                     contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
-                .transition(.opacity)
+                .transition(TeleprompterPreparingHandoff.transition)
             }
         }
-        .animation(.easeOut(duration: 0.2), value: state.isPreparingSpeech)
+        // R2-04: the status and the text hand off in sequence (see `TeleprompterPreparingHandoff`), never crossfade.
+        .animation(.easeOut(duration: TeleprompterPreparingHandoff.exitDuration), value: state.isPreparingSpeech)
+        .animation(.easeOut(duration: TeleprompterPreparingHandoff.enterDuration), value: preparingHandoff.holdsIncoming)
+        .onChange(of: state.isPreparingSpeech, initial: true) { old, isPreparing in
+            preparingHandoff.preparingChanged(to: isPreparing, initial: old == isPreparing)
+        }
     }
 
     private var notchTeleprompterControls: some View {
@@ -970,7 +1008,7 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        compactStatusLabel(notchPresentation.feedback?.wingText ?? statusText,
+        compactStatusLabel(notchPresentation.wingLabel(for: statusText),
                            confirmationText: state.confirmationText)
     }
 
@@ -1047,6 +1085,13 @@ public struct BarView: View {
         notchButton(icon: "gearshape", accessibilityLabel: "Settings") {
             onOpenSettings()
         }
+    }
+
+    /// Tests only: mount with the notch History panel already open.
+    func presentingHistoryForTesting() -> BarView {
+        var copy = self
+        copy._isHistoryPresented = State(initialValue: true)
+        return copy
     }
 
     /// Visual shots only.

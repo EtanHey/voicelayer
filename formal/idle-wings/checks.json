@@ -1,0 +1,30 @@
+{
+  "module": "IdleWings",
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "sources": [
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+    "flow-bar/Sources/VoiceBarUI/FloatingPanel.swift",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Old": {
+      "role": "mutant",
+      "target": "NoVanishWhileFocused",
+      "kind": "invariant"
+    },
+    "MutantNoResume": {
+      "role": "mutant",
+      "target": "StillCollapses",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "NoVanishWhileFocused",
+    "StillCollapses"
+  ]
+}

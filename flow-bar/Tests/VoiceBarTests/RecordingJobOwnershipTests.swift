@@ -188,17 +188,245 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertNil(commands.last?["take_id"])
     }
 
-    func testDrainWindowPressIsRejectedVisibly() throws {
+    private func assertNoDrainRefusal(_ state: VoiceState, file: StaticString = #filePath, line: UInt = #line) {
+        for phrase in ["Press F5 again", "Finishing previous recording"] {
+            XCTAssertFalse((state.confirmationText ?? "").localizedCaseInsensitiveContains(phrase), file: file, line: line)
+        }
+    }
+
+    func testDrainWindowPressQueuesAndStartsExactlyOnceWhenCaptureReleases() throws {
         let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.record(pressToTalk: true)
-        let id = try XCTUnwrap(commands.last?["take_id"] as? String)
-        micOpened(state, id: id, jobs: [(id, "live", "capturing")])
+        let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+        micOpened(state, id: a, jobs: [(a, "live", "capturing")])
         state.stop()
         VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        let b = try XCTUnwrap(state.queuedRecordingTakeID)
+        XCTAssertNotEqual(a, b)
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertNil(state.confirmationText)
+        assertNoDrainRefusal(state)
         XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 1)
-        XCTAssertEqual(state.confirmationText, "Finishing previous recording. Press F5 again when ready.")
+        snapshot(state, jobs: [(a, "live", "draining")], mic: a)
+        XCTAssertEqual(state.queuedRecordingTakeID, b)
+        XCTAssertEqual(state.mode, .recording)
+        assertNoDrainRefusal(state)
+        snapshot(state, jobs: [(a, "live", "queued")])
+        XCTAssertEqual(commands.last?["cmd"] as? String, "record")
+        XCTAssertEqual(commands.last?["take_id"] as? String, b)
+        state.handleEvent(["type": "ack", "command": "record", "outcome": "accept", "id": try XCTUnwrap(commands.last?["id"] as? String)])
+        snapshot(state, jobs: [(a, "live", "processing")])
+        micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
+        XCTAssertEqual(state.microphoneTakeID, b)
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertNil(state.queuedRecordingTakeID)
+        XCTAssertNil(state.confirmationText)
+        assertNoDrainRefusal(state)
+        XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 2)
+        XCTAssertFalse(commands.contains { $0["cmd"] as? String == "cancel" })
+    }
+
+    func testDrainAdmissionDoesNotWaitForAsPendingStartAcknowledgement() throws {
+        let state = makeState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.record(pressToTalk: true)
+        let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+        XCTAssertNotNil(state.pendingIntent)
+        state.stop() // A's stop tail begins before its start ACK reaches the bar.
+        VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        let b = try XCTUnwrap(state.queuedRecordingTakeID)
+        XCTAssertNotEqual(a, b)
+        XCTAssertEqual(state.mode, .recording)
+        snapshot(state, jobs: [(a, "live", "queued")])
+        XCTAssertEqual(commands.last?["cmd"] as? String, "record")
+        XCTAssertEqual(commands.last?["take_id"] as? String, b)
+        micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
+        XCTAssertEqual(state.microphoneTakeID, b)
+        XCTAssertEqual(state.mode, .recording)
+        assertNoDrainRefusal(state)
+    }
+
+    func testQueuedReleaseStopsBOnlyAfterItsMicrophoneOpens() throws {
+        for physical in [false, true] {
+            let state = makeState()
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.record(pressToTalk: true)
+            let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+            micOpened(state, id: a, jobs: [(a, "live", "capturing")])
+            state.stop()
+            let router = VoiceBarCommandRouter(voiceState: state)
+            router.handleHotkeyHoldStart()
+            let b = try XCTUnwrap(state.queuedRecordingTakeID)
+            if physical { router.handlePhysicalPressStop() } else { router.handleHotkeyHoldEnd(holdDuration: 0.2) }
+            XCTAssertEqual(commands.filter { $0["cmd"] as? String == "stop" }.count, 1)
+            snapshot(state, jobs: [(a, "live", "processing")])
+            XCTAssertEqual(commands.last?["cmd"] as? String, "record")
+            // Admission precedes recorder startup and its stop-signal reset. Do not stop yet.
+            snapshot(state, jobs: [(a, "live", "processing"), (b, "live", "capturing")], mic: b)
+            XCTAssertEqual(commands.last?["cmd"] as? String, "record")
+            // A second release in the dispatch/open gap is still B's stop, never A's.
+            state.stop(physicalPress: physical)
+            XCTAssertEqual(commands.last?["cmd"] as? String, "record")
+            micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
+            XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+            XCTAssertEqual(commands.last?["take_id"] as? String, b)
+            XCTAssertEqual(commands.last?["physical_press"] as? Bool, physical ? true : nil)
+            XCTAssertEqual(commands.filter { $0["cmd"] as? String == "stop" }.count, 2)
+            XCTAssertEqual(state.mode, .transcribing)
+            assertNoDrainRefusal(state)
+        }
+    }
+
+    func testF5ParkedReadKeepsQueuedPhysicalReleaseBoundToB() throws {
+        for releaseBeforeOpen in [true, false] {
+            let state = makeState()
+            state.frontmostAppProvider = { nil }
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.handleEvent(["type": "state", "state": "speaking", "text": "one two three",
+                "duration_ms": 3000, "playback_id": "read", "generation": 1])
+            let router = VoiceBarCommandRouter(voiceState: state)
+            router.handleHotkeyHoldStart()
+            let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+            state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "read",
+                "generation": 2, "offset_ms": 1000, "chunk_offset_ms": 1000, "pause_owner": "f5"])
+            micOpened(state, id: a, jobs: [(a, "live", "capturing")])
+            router.handleHotkeyHoldEnd(holdDuration: 1)
+            router.handleHotkeyHoldStart()
+            let b = try XCTUnwrap(state.queuedRecordingTakeID)
+            XCTAssertEqual(state.activeCaptureTakeID, b, "The physical key belongs to queued B, not draining A")
+            XCTAssertTrue(state.isF5SpeechPausedDuringCapture)
+            if releaseBeforeOpen { router.handleHotkeyHoldEnd(holdDuration: 1) }
+            snapshot(state, jobs: [(a, "live", "processing")])
+            XCTAssertEqual(commands.last?["take_id"] as? String, b)
+            micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
+            if !releaseBeforeOpen { router.handleHotkeyHoldEnd(holdDuration: 1) }
+            let stops = commands.filter { $0["cmd"] as? String == "stop" }
+            XCTAssertEqual(stops.compactMap { $0["take_id"] as? String }, [a, b])
+            XCTAssertEqual(stops.last?["physical_press"] as? Bool, true)
+            XCTAssertTrue(state.isF5SpeechPausedDuringCapture)
+            XCTAssertFalse(commands.contains { ["resume", "cancel"].contains($0["cmd"] as? String ?? "") })
+            router.handleHotkeyHoldEnd(holdDuration: 1)
+            XCTAssertEqual(commands.filter { $0["cmd"] as? String == "stop" }.count, 2)
+            assertNoDrainRefusal(state)
+        }
+    }
+
+    func testEscapeCancelsQueuedBWithoutCancellingOrRestartingA() throws {
+        let state = makeState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.record(pressToTalk: true)
+        let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+        micOpened(state, id: a, jobs: [(a, "live", "capturing")])
+        state.stop()
+        let router = VoiceBarCommandRouter(voiceState: state)
+        router.handleHotkeyHoldStart()
+        XCTAssertNotNil(state.queuedRecordingTakeID)
+        router.handleEscape()
+        XCTAssertNil(state.queuedRecordingTakeID)
+        snapshot(state, jobs: [(a, "live", "processing")])
+        XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 1)
+        XCTAssertFalse(commands.contains { $0["cmd"] as? String == "cancel" })
+        XCTAssertEqual(state.processingTakeCount, 1)
+        assertNoDrainRefusal(state)
+    }
+
+    func testQueuedTargetIsCapturedAtF5RatherThanAtDrainCompletion() throws {
+        let state = makeState(), app = FakeApp("com.apple.Terminal", 11001)
+        var commands: [[String: Any]] = [], typed: [String] = []
+        var captures = 0, target = "B"
+        state.frontmostAppProvider = { app }
+        state.sendCommand = { commands.append($0) }
+        state.dictationTargetIdentityProvider = {
+            captures += 1
+            let captured = target
+            return { target == captured }
+        }
+        state.ownedTextTypingHandler = { text, _, matches in
+            guard matches() else { return .focusChanged }; typed.append(text); return .posted
+        }
+        state.pasteScheduler = { _, work in work() }
+        state.record(pressToTalk: true)
+        let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+        micOpened(state, id: a, jobs: [(a, "live", "capturing")])
+        state.stop()
+        VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        let b = try XCTUnwrap(state.queuedRecordingTakeID)
+        XCTAssertEqual(captures, 2)
+        target = "different element"
+        snapshot(state, jobs: [(a, "live", "processing")])
+        micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
+        snapshot(state, jobs: [(b, "live", "processing")])
+        state.handleEvent(["type": "transcription", "take_id": b, "job_kind": "live", "delivery_id": b, "text": "kept words"])
+        XCTAssertEqual(captures, 2)
+        XCTAssertTrue(typed.isEmpty)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
+        XCTAssertEqual(state.latestReusableTranscript, "kept words")
+    }
+
+    func testQueuedIntentWaitsForExitProofAndSurvivesReconnect() throws {
+        let state = makeState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.record(pressToTalk: true)
+        let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+        micOpened(state, id: a, jobs: [(a, "live", "capturing")])
+        state.stop()
+        VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        let b = try XCTUnwrap(state.queuedRecordingTakeID)
+        state.handleEvent(["type": "state", "state": "idle", "mic_take_id": NSNull(),
+            "capture_error": "Recorder exit unconfirmed", "recording_jobs": [["take_id": a, "kind": "live", "phase": "failed"]]])
+        XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 1)
+        XCTAssertEqual(state.queuedRecordingTakeID, b)
+        state.setConnectionStatus(false)
+        state.setConnectionStatus(true)
+        snapshot(state, jobs: [(a, "live", "failed")]) // Exit proven by an unblocked snapshot.
+        XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 2)
+        XCTAssertEqual(commands.last?["take_id"] as? String, b)
+        micOpened(state, id: b, jobs: [(a, "live", "failed"), (b, "live", "capturing")])
+        XCTAssertEqual(state.recordingMode, "ptt", "Mic-open initializes B even when its UI was already recording")
+        XCTAssertEqual(state.microphoneTakeID, b)
+        XCTAssertEqual(state.mode, .recording)
+        assertNoDrainRefusal(state)
+    }
+
+    func testQueuedStartFailureRetiresOpeningIntentAndAllowsRecovery() throws {
+        let state = makeState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        snapshot(state, jobs: [("A", "live", "draining")], mic: "A")
+        VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        snapshot(state, jobs: [("A", "live", "processing")])
+        let failedB = try XCTUnwrap(commands.last?["take_id"] as? String)
+        state.handleEvent(["type": "ack", "command": "record", "outcome": "reject",
+            "id": try XCTUnwrap(commands.last?["id"] as? String), "reason": "mic disabled"])
+        XCTAssertEqual(state.mode, .error)
+        XCTAssertEqual(state.errorMessage, "mic disabled")
+        VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 2)
+        XCTAssertNotEqual(commands.last?["take_id"] as? String, failedB)
+        assertNoDrainRefusal(state)
+    }
+
+    func testSourcesCannotProduceDrainRetryConfirmation() throws {
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../Sources").standardizedFileURL
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+        var checked = 0
+        for case let url as URL in files {
+            guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
+            let source = try String(contentsOf: url, encoding: .utf8)
+            checked += 1
+            for phrase in ["Press F5 again", "Finishing previous recording"] {
+                XCTAssertFalse(source.localizedCaseInsensitiveContains(phrase), "Forbidden refusal in \(url.path)")
+            }
+        }
+        XCTAssertGreaterThan(checked, 10)
     }
 
     func testTerminalAndElectronRequireCapturedWindowAndElementAndStripOneTerminalNewline() throws {
