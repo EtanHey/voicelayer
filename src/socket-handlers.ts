@@ -191,7 +191,8 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
   }
   return undefined;
 }
-const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", "set_recognizer"]);
+const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer"]);
+const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", ...recognizerMutationCommands]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if (args[0].cmd === "stop" || args[0].cmd === "cancel") {
     const capture = cancelPendingVoiceAdmissions("capture");
@@ -206,7 +207,7 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
   if (args[0].cmd === "replay" && isPlaybackPaused()) return handleSocketCommandAdmitted(...args);
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
   const refuse = (error: unknown) => {
-    if (args[0].cmd === "set_recognizer" && (error instanceof VoiceAdmissionCancelledError || error instanceof UpdateBusyError)) {
+    if (recognizerMutationCommands.has(args[0].cmd) && (error instanceof VoiceAdmissionCancelledError || error instanceof UpdateBusyError)) {
       return { ...buildAck(args[0], "reject", error.message), recognizer_status: readRecognizerStatus() };
     }
     if (error instanceof VoiceAdmissionCancelledError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "noop", error.message);

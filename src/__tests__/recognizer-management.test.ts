@@ -5,12 +5,14 @@ import { testTmp } from "./setup/test-tmp";
 import { deleteRecognizer } from "../recognizer-management";
 import { PARAKEET_FILES } from "../recognizer-assets";
 import { configureRecognizerBusyProbe, noteRecognizerEngine, noteRecognizerEffective, confirmRecognizerCleanup,
-  beginRecognizerRequest, finishRecognizerRequest, readRecognizerStatus } from "../recognizer-state";
+  beginRecognizerRequest, finishRecognizerRequest, readRecognizerStatus, recognizerRecovery, setRecognizerRecovery } from "../recognizer-state";
 import { parseCommand } from "../socket-protocol";
 const keys = ["VOICELAYER_STATE_DIR", "VOICELAYER_PARAKEET_MODEL", "VOICELAYER_PARAKEET_PYTHON", "QA_VOICE_WHISPER_MODEL", "QA_VOICE_STT_BACKEND"] as const;
 let saved: (string | undefined)[];
+let prior: ReturnType<typeof readRecognizerStatus>, recovery: ReturnType<typeof recognizerRecovery>;
 const root = testTmp("model-management");
 beforeEach(() => {
+  prior = readRecognizerStatus(); recovery = recognizerRecovery();
   saved = keys.map(k => process.env[k]); mkdirSync(root, { recursive: true });
   process.env.VOICELAYER_STATE_DIR = root; process.env.VOICELAYER_PARAKEET_MODEL = root;
   process.env.VOICELAYER_PARAKEET_PYTHON = join(root, "python"); process.env.QA_VOICE_WHISPER_MODEL = join(root, "whisper.bin"); delete process.env.QA_VOICE_STT_BACKEND;
@@ -19,7 +21,13 @@ beforeEach(() => {
   for (const engine of ["whisper", "parakeet"] as const) { confirmRecognizerCleanup(engine); noteRecognizerEngine(engine, { phase: "sleeping", error: null }); }
   noteRecognizerEffective(null);
 });
-afterEach(() => { keys.forEach((k,i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); configureRecognizerBusyProbe(() => null); rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { keys.forEach((k,i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); configureRecognizerBusyProbe(() => null);
+  for (const engine of ["whisper", "parakeet"] as const) {
+    const { phase, available, error } = prior.engines[engine]; noteRecognizerEngine(engine, { phase, available, error });
+  }
+  setRecognizerRecovery(recovery); noteRecognizerEffective(prior.effective, prior.fallback_reason);
+  rmSync(root, { recursive: true, force: true });
+});
 test("delete command accepts only explicit engine names", () => {
   expect(parseCommand('{"cmd":"delete_recognizer","engine":"parakeet","id":"x"}')).toEqual({ cmd: "delete_recognizer", engine: "parakeet", id: "x" });
   expect(parseCommand('{"cmd":"delete_recognizer","engine":"auto"}')).toBeNull();

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as management from "../recognizer-management";
 import * as controller from "../recognizer-controller";
 import * as admission from "../update-gate-admission";
 import { readRecognizerStatus } from "../recognizer-state";
@@ -76,4 +77,12 @@ describe("picker mutation participates in update drain", () => {
     expect(select).not.toHaveBeenCalled();
     expect(acknowledgeVoiceDrain(lease, proof)).toEqual({ lease, activeOperations: 0, openArchives: 0 });
   });
+  test("closed gate refuses delete before touching model files", async () => {
+    const remove = spyOn(management, "deleteRecognizer").mockImplementation(() => { throw Error("must not delete"); }); spies.push(remove);
+    drain();
+    expect(await handleSocketCommand({ cmd: "delete_recognizer", engine: "parakeet", id: "delete-drain" }))
+      .toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY"), recognizer_status: readRecognizerStatus() });
+    expect(remove).not.toHaveBeenCalled();
+  });
+
 });
