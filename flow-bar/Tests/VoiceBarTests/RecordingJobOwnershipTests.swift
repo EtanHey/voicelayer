@@ -243,6 +243,9 @@ final class RecordingJobOwnershipTests: XCTestCase {
             XCTAssertEqual(commands.filter { $0["cmd"] as? String == "stop" }.count, 1)
             snapshot(state, jobs: [(a, "live", "processing")])
             XCTAssertEqual(commands.last?["cmd"] as? String, "record")
+            // Admission precedes recorder startup and its stop-signal reset. Do not stop yet.
+            snapshot(state, jobs: [(a, "live", "processing"), (b, "live", "capturing")], mic: b)
+            XCTAssertEqual(commands.last?["cmd"] as? String, "record")
             // A second release in the dispatch/open gap is still B's stop, never A's.
             state.stop(physicalPress: physical)
             XCTAssertEqual(commands.last?["cmd"] as? String, "record")

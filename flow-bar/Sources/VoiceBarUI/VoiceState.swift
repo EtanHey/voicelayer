@@ -2764,7 +2764,7 @@ public final class VoiceState {
         guard case let .opening(request) = deferredBarRecording else { return }
         let matchesTake = event["take_id"] as? String == request.takeID ||
             (event["take_id"] == nil && event["bar_owned"] as? Bool == true && activeBarTakeID == request.takeID)
-        let opened = (event["type"] as? String == "state" && event["state"] as? String == "recording" && (microphoneTakeID == request.takeID || event["bar_owned"] as? Bool == true)) ||
+        let opened = (event["type"] as? String == "state" && event["state"] as? String == "recording" && (event["mode"] != nil || (!supportsRecordingJobs && event["bar_owned"] as? Bool == true))) ||
             event["type"] as? String == "audio_level"
         guard matchesTake, opened else { return }
         deferredBarRecording = nil

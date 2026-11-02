@@ -35,3 +35,29 @@ these against the real Swift router/VoiceState by default. Main conformance also
 replays both historical and Fixed socket contexts against the real owned queue.
 Focused fixture tests exercise actual timeout, failure and delivery outcome
 persistence; models alone do not prove filesystem or installed-app behavior.
+
+## Drain-window source refinement (FIXED-SUITE2)
+
+The main model's `N6StartsB` covers the free-mic processing overlap. This module's
+`N6StartsB` extends that contract to the physical drain interval: B is admitted
+as a waiting intent immediately, without opening two recorders. `captureReleased`
+represents an exit proof, not an idle UI projection. A failed capture alone never
+provides that proof. Waiting includes the short dispatch/open interval, with Stop
+remembered until B's authoritative mic-open receipt. Escape/X cancel that B intent.
+
+| Action | Real code |
+| --- | --- |
+| DrainPress / N6StartsB | `VoiceBarCommandRouter.swift:136`, `:165`; `VoiceState.swift:2674` |
+| Archive / ProveExit / StartQueued | `VoiceState.swift:2775`, `:2750`; blocked snapshots return before dispatch |
+| Record dispatch / identity | `VoiceState.swift:2740`; original ID and captured target survive the wait |
+| Stop before mic-open | `VoiceState.swift:1992`, `:2763` |
+| Cancel waiting B / Escape | `VoiceState.swift:2076`; `VoiceBarCommandRouter.swift:91` |
+| Reconnect custody | `VoiceState.swift:3530` |
+
+The generated corpus includes drain admission and waiting cancellation edges.
+The replay creates local waiting intents through the real F5 router; it never
+invents daemon-owned waiting jobs. It advances A to each exported terminal or
+processing phase and checks B's local cancellation or dispatched scoped cancel.
+The existing non-waiting cancellation corpus continues to run in full. Focused
+ownership fixtures check early release, exact-once replay, target custody, failure
+proof, reconnect, and source/behavioral guards against the former refusal text.
