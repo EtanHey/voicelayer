@@ -48,6 +48,31 @@ final class TeleprompterHighlightFloorTests: XCTestCase {
         XCTAssertEqual(cursor.wordID, 4)
     }
 
+    /// Review F2b: measured timing AHEAD of the estimate lands straight on the word the audio is speaking. The floor
+    /// only forbids going back; stepping through words the voice already passed would desync text from speech.
+    func testMeasuredTimingAheadOfTheEstimateLandsOnTheSpokenWordWithoutReplayingPassedWords() {
+        let epoch = TeleprompterHighlightCursor.Epoch(playback: 4, text: Self.text, isReadback: false)
+        let slightlyAhead = [0, 700, 1400, 2100, 2800, 3500]
+        let farAhead = [0, 400, 800, 1200, 1600, 2000]
+        XCTAssertEqual(Self.clockWord(Self.estimated, at: 2200), 2, "the estimate highlights charlie at 2.2 s")
+        XCTAssertEqual(Self.clockWord(slightlyAhead, at: 2200), 3, "the faster measured clock says delta")
+        XCTAssertEqual(Self.clockWord(farAhead, at: 2200), 5, "the much faster measured clock says foxtrot")
+
+        for (name, measured, spoken) in [("slightly ahead", slightlyAhead, 3), ("far ahead", farAhead, 5)] {
+            var cursor = TeleprompterHighlightCursor(wordID: 0, at: 0, epoch: epoch)
+            cursor.land(on: Self.clockWord(Self.estimated, at: 2200), at: 2200, in: epoch)
+            var shown = [cursor.wordID]
+            cursor.land(on: Self.clockWord(measured, at: 2200), at: 2200, in: epoch, keepingWordOnScreen: true)
+            shown.append(cursor.wordID)
+            XCTAssertEqual(shown, [2, spoken], "\(name): one move, from charlie straight to the spoken word")
+            XCTAssertEqual(cursor.reachedAtMilliseconds, 2200, name)
+
+            // The new word is now the floor: a later replacement at the same clock cannot pull it back.
+            cursor.land(on: Self.clockWord(Self.estimated, at: 2300), at: 2300, in: epoch, keepingWordOnScreen: true)
+            XCTAssertEqual(cursor.wordID, spoken, "\(name): the word reached on measured timing is kept")
+        }
+    }
+
     func testEveryNewEpochLandsOnTheClockEvenBehindTheFloor() {
         let epoch = TeleprompterHighlightCursor.Epoch(playback: 4, text: Self.text, isReadback: false)
         let resets: [(String, TeleprompterHighlightCursor.Epoch, Int, Int)] = [
@@ -129,6 +154,17 @@ final class TeleprompterHighlightFloorTests: XCTestCase {
         await expectNext(4500, notAt: [3000], "charlie stays; the task awaits delta's measured 4500, not charlie's 3000")
         model.playback.advance(to: 4500)
         await expectNext(6000, notAt: [4500], "measured timestamps drive the next step (delta, then echo at 6000)")
+
+        // Same epoch, measured timing AHEAD of the estimate: the highlight moves straight to delta (the task
+        // awaits echo at 2800), never re-waits for charlie's 3000 or delta's own 2100.
+        await onEstimatedCharlie()
+        model.boundaries = Self.boundaries([0, 700, 1400, 2100, 2800, 3500], estimate: false)
+        await expectNext(2800, notAt: [3000, 2100], "measured timing ahead of the estimate lands on delta")
+        await onEstimatedCharlie()
+        model.boundaries = Self.boundaries(Self.measured, estimate: false)
+        await expectNext(4500, notAt: [3000], "back on the slower measured timeline, charlie is the floor again")
+        model.playback.advance(to: 4500)
+        await expectNext(6000, notAt: [4500], "and measured timestamps drive the next step")
 
         // A jump back inside the epoch (the clock went back) with re-sent timing lands on the clock, bravo.
         model.playback.elapsed = 1600
