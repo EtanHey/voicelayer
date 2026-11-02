@@ -1,3 +1,4 @@
+import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { speechArchiveWriter } from "../speech-archive-writer";
 import * as speechReceipts from "../speak-archive";
 import { beginSpeechArchive, LiveSpeechArchive, flushSpeechArchives } from "../speech-archive-live";
@@ -109,6 +110,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   afterEach(async () => {
     stopPlayback(); for (const release of releaseAlignments) release(); for (const player of players) player.exit.resolve(143); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
     await flushSpeechArchives();
+    await settleRecordingJobs();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
@@ -229,7 +231,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       return receipt;
     }));
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    spies.push(spyOn(input, "waitForInput").mockResolvedValue("fixture answer"));
+    spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")));
     autoPlay = true;
     const answer = await handleVoiceAsk({ message: "  Durable question?  ", voice: "en-US-JennyNeural", timeout_seconds: 5 });
     expect(answer.isError).not.toBe(true);
@@ -408,7 +410,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it("R2 Ask cannot start capture until its clone alignment child is reaped", async () => {
     const f = cloneFixture();
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
     await playerBarrier.at(0); await f.entered.at(0); players[0].exit.resolve(0);
     await fixtureCheckpoint(); await Bun.sleep(5); expect(capture).not.toHaveBeenCalled();
@@ -422,7 +424,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     }));
     releaseAlignments.push(() => lookup.resolve("fixture-binary"));
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
     await playerBarrier.at(0); await entered.at(0); players[0].exit.resolve(0);
     try {
@@ -433,7 +435,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it("INT1 Ask waits for the spawned child, then captures while adapter cleanup is still held", async () => {
     const f = cloneFixture();
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
     await playerBarrier.at(0); const request = await f.entered.at(0); players[0].exit.resolve(0);
     await fixtureCheckpoint(); expect(request.signal!.aborted).toBe(true); expect(capture).not.toHaveBeenCalled();
@@ -461,7 +463,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     else expect(logs.mock.calls.some(([line]) => /alignment.*unconfirmed/i.test(String(line)))).toBe(true);
     releaseAlignments[1](); players[1].exit.resolve(0); await awaitCurrentPlayback();
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     autoPlay = true;
     const answer = await handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
     expect(answer.isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
@@ -543,7 +545,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const old = start(); await playerBarrier.at(0); await synthBarrier.at(1);
     clockMs += 250;
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
     const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
     const history = await historyBarrier.at(0); await fixtureCheckpoint();
@@ -866,7 +868,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it("voice_ask preempts synthesis before waiting on its prompt and recording", async () => {
     holdSynth = true; const old = start(); await synthBarrier.at(1); await playerBarrier.at(0);
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
     const answer = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
     await old.done;
@@ -1468,7 +1470,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     function startCapture() {
       spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
       const done = deferred<string>();
-      spies.push(spyOn(input, "waitForInput").mockImplementation(() => done.promise));
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(() => done.promise)));
       expect(handleSocketCommand({ cmd: "record", id: "rec", press_to_talk: true } as any)).toMatchObject({ outcome: "accept" });
       const state = spyOn(input, "getRecordingState").mockReturnValue("recording"); spies.push(state);
       return { done, state };
@@ -1546,7 +1548,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       await suspendedBehindA();
       autoPlay = true;
       spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-      spies.push(spyOn(input, "waitForInput").mockResolvedValue("an answer"));
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "an answer")));
       await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
       await settle();
       expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });

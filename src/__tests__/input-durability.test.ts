@@ -663,7 +663,7 @@ describe("input recording durability", () => {
         "push-to-end PCM persistence",
       );
 
-      expect(vadCallCount).toBe(0);
+      expect(vadCallCount).toBeGreaterThan(0);
       expect(recordingSettled).toBe(false);
 
       writeFileSync(STOP_FILE, "stop");
@@ -887,6 +887,43 @@ describe("input recording durability", () => {
     agentTtsEngine: "edge-tts" as const,
     agentTtsVoice: "en-US-JennyNeural",
   };
+
+  it("PTT-TIMEOUT keeps continuous speech beyond the old wall cap, then archives and transcribes every byte after silence", async () => {
+    const { waitForInput, getRecordingState } = await import("../input");
+    const recorder = installFakeRecorder([], true);
+    const clock = installRecordingClock([90_000, 50, 30_000]);
+    const abort = new AbortController();
+    let archivePath: string | undefined;
+    let settled = false;
+    vadProbabilityForCall = () => 0.95;
+    const recording = waitForInput(90_000, "standard", true, {
+      archiveSource: "voicebar", signal: abort.signal,
+      onArchiveCreated: path => { archivePath = path; },
+    }).finally(() => { settled = true; });
+    void recording.catch(() => null);
+    try {
+      await recorder.waitForSpawn();
+      for (let i = 0; i < 5; i++) {
+        for (let n = 0; n < 10; n++) recorder.push(makePcmChunk(1800));
+        await waitUntil(() => vadCallCount === (i + 1) * 10, "PTT speech processed");
+        clock.advance(60_000);
+        expect(getRecordingState()).toBe("recording");
+        expect(settled).toBe(false);
+      }
+      // Five minutes of continued speech exceeded the old 90s cap. The final chunk renews silence again.
+      for (let n = 0; n < 10; n++) recorder.push(makePcmChunk(1800));
+      await waitUntil(() => vadCallCount === 60, "PTT final speech processed");
+      clock.advance(89_999);
+      expect(getRecordingState()).toBe("recording");
+      clock.advance(1);
+      expect(await recording).toBe("Retained transcript.");
+      expectValidRetainedWav(join(archivePath!, "audio.wav"), 60 * VAD_CHUNK_BYTES);
+      expect(backendTranscribeCalls).toBe(1);
+      expect(backendTranscribedDataSize).toBe(60 * VAD_CHUNK_BYTES);
+    } finally {
+      abort.abort(); await recording.catch(() => null); clock.restore();
+    }
+  });
 
   // VA-TIMEOUT: fail-first specification tests. These exercise the real
   // waitForInput/recordToBuffer path with synthetic PCM and an isolated archive.
@@ -1215,7 +1252,7 @@ describe("input recording durability", () => {
       try {
         await recorder.waitForSpawn();
         if (pushToEnd) setRecordingHold(true);
-        else await waitUntil(() => vadCallCount === 1, "dictation speech processed");
+        await waitUntil(() => vadCallCount === 1, "dictation speech processed");
         clock.advance(90_000);
         expect(getRecordingState()).toBe("idle");
         await recording;
@@ -1912,6 +1949,7 @@ describe("input recording durability", () => {
     backendMode = "throw-on-get";
     const { waitForInput, retranscribeRecordingCapture } = await import("../input");
     const failed = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+    void failed.catch(() => null); // Observe early decoder failure while capture fixture cleanup waits.
     await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
     await expect(failed).rejects.toThrow("whisper backend is still warming");
     const [archive] = capturedVoiceBarAudio();
@@ -2526,6 +2564,7 @@ describe("input recording durability", () => {
     const { waitForInput, recordToBuffer } = await import("../input");
 
     const failed = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+    void failed.catch(() => null); // Observe early decoder failure while capture fixture cleanup waits.
     await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
     await expect(failed).rejects.toThrow("whisper backend is still warming");
     const archives = capturedVoiceBarAudio();
