@@ -636,6 +636,22 @@ it("R2-01 a fresh daemon has no loan or parked read after restart", async () => 
   } finally { tts.stopPlayback(); capture.settle(); }
 });
 
+it("R2-01 refused automatic resume after slice preparation releases the read", async () => {
+  const { handle } = await startTenSecondRead();
+  const capture = tts.pauseForF5Capture(4200);
+  await capture.ready;
+  capture.settle(); // Resume waits for the owned trim; a new busy state wins before it completes.
+  setRecordingState("transcribing");
+  try {
+    (await trims.at(0)).exit.resolve(0);
+    await fixtureCheckpoint();
+    expect(tts.isPlaybackPaused()).toBe(false);
+    expect(await handle.exited).toMatchObject({ reason: "resume-refused" });
+    expect(events.filter(e => e.type === "error")).toEqual([]);
+    expect(players.values).toHaveLength(1);
+  } finally { setRecordingState("idle"); capture.settle(); }
+});
+
 it("R2-01 refused automatic resume releases the read instead of stranding its F5 park", async () => {
   const { handle } = await startTenSecondRead();
   const capture = tts.pauseForF5Capture(4200);
