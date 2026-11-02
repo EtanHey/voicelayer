@@ -154,11 +154,14 @@ require exit 12 and the exact invariant name. Cross runs require complete model
 checking (or the identified temporal counterexample), a kill of the target property,
 and no unrecognized property. KeepOwner and NoFairness must be single-property kills.
 
-R2-03 and R2-05 remain **specifications**, not code evidence: the model assigns the
-correct published count and supplies timing at logical launch. Phase 2 needs replay
-against PlaybackQueueManager and VoiceState before any F5/count/timing runtime claim.
-The preserved queue/History/Swift/daemon admission replays do not provide that proof.
-The 8.5-second preparation stall has no model latency budget or improvement claim.
+The model alone specifies R2-03/R2-05: it assigns the correct published count and
+supplies timing at logical launch. The companion `speech_data_conformance.py` now
+projects these obligations onto real PlaybackQueueManager events and compiled
+VoiceState, with exact-property runtime mutants, in the full `check.sh` gate.
+Its generated speech-data logs/results are the evidence for that bounded data-path
+projection; the model and older queue/History/admission replays alone are insufficient.
+The recorded 8.5-second stall has no model latency budget or measured improvement
+claim. Owned fake synthesis proves the startup request bound, not installed latency.
 
 ## Review resolution ledger
 

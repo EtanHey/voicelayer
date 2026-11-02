@@ -50,9 +50,9 @@ final class SpeechDataConformanceTests: XCTestCase {
             for event in try XCTUnwrap(row["events"] as? [[String: Any]]) { state.handleEvent(event) }
             XCTAssertEqual(state.queuedSpeakCount, row["expected"] as? Int, "QueuedCountExcludesCurrent")
         }
-        let timing = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: timingPath))) as? [String: Any])
+        let timing = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: timingPath))) as? [[String: Any]])
         let state = VoiceState()
-        state.handleEvent(timing)
+        for event in timing { state.handleEvent(event) }
         XCTAssertTrue(state.wordBoundaries.contains { $0.offsetMs != nil }, "TimingNeverBlankWhilePlaying")
         XCTAssertTrue(state.teleprompterWordBoundaries.contains { $0.offsetMs != nil })
         print("Speech data replayed \(rows.count) real queue snapshots and first speaking frame")

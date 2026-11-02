@@ -164,6 +164,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(request.length * 10);
     console.log(`F-speech fake first audio: words=${words} request_chars=${request.length} synthesis_ms=${request.length * 10}`);
     expect(request.length, "StartupRequestBound").toBeLessThanOrEqual(100);
+    expect(events.find(event => event.state === "speaking" && !event.long_read?.preparing).initial_timing?.words.length,
+      "TimingNeverBlankWhilePlaying Edge").toBeGreaterThan(0);
     expect(synths[1].exit.promise).toBeDefined();
     expect(players).toHaveLength(1); // Later synthesis is still unresolved.
     stopPlayback(); await h.done;
@@ -175,6 +177,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(plan.segments[0].text.length, "StartupRequestBound").toBeLessThanOrEqual(100);
     expect(plan.chunks.map(chunk => chunk.text).join(" ").split(/\s+/)).toEqual(source.split(/\s+/));
     expect(chunkTextForLongRead(source, engine)[0].length, "StartupRequestBound").toBeLessThanOrEqual(100);
+    const heading = "# " + "a ".repeat(49) + "bb";
+    const headingPlan = planProsody({ readText: heading, projection: projectSpeakableText(heading, [], engine), engine });
+    expect(headingPlan.segments[0].text.length, "StartupRequestBound including emphasis punctuation").toBeLessThanOrEqual(100);
     const longWord = "x".repeat(150);
     expect(chunkTextForLongRead(longWord + " next words.")[0]).toBe(longWord);
   });
@@ -189,7 +194,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const first = events.find(event => event.state === "speaking" && !event.long_read?.preparing);
     expect(first.initial_timing?.aligned_words?.some((word: {offset_ms: number | null}) => word.offset_ms !== null),
       "TimingNeverBlankWhilePlaying").toBe(true);
-    if (process.env.VOICELAYER_SPEECH_TIMING_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_TIMING_WIRE, serializeEvent(first));
+    if (process.env.VOICELAYER_SPEECH_TIMING_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_TIMING_WIRE, JSON.stringify(
+      events.filter(event => event.state === "speaking").map(event => JSON.parse(serializeEvent(event)))));
     stopPlayback(); await h.done;
   });
 
@@ -1328,12 +1334,15 @@ describe("long-read real runtime with owned synth/player fakes", () => {
           kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
           engineSource: "settings", rateSource: "settings",
         }), spyOn(qwen, "loadProfile").mockReturnValue(cloneProfile));
+        const source = `## ${heading}\n- Red apple\n- Green pear\n- Blue sky`;
+        const planned = planProsody({ readText: source, projection: projectSpeakableText(source, [], "clone"),
+          engine: "clone", listNumbers: "inline", concurrency: 1 });
         let running = 0, maximum = 0;
         const pending = deferred<void>();
         const clone = spyOn(qwen, "synthesizeCloned").mockImplementation(async (text, _voice, signal) => {
           maximum = Math.max(maximum, ++running);
           try {
-            if (text === `${heading}.` || text.startsWith("Bravo")) return Buffer.from("clone audio");
+            if (text === planned.segments[0].text || text.startsWith("Bravo")) return Buffer.from("clone audio");
             pending.resolve();
             await new Promise<void>(resolve => {
               if (signal?.aborted) resolve(); else signal?.addEventListener("abort", () => resolve(), { once: true });
@@ -1341,7 +1350,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
             return null;
           } finally { running--; }
         }); spies.push(clone);
-        select("A", `## ${heading}\n- Red apple\n- Green pear\n- Blue sky`);
+        select("A", source);
         await pending.promise;
         if (playing) await playerBarrier.at(0);
         else expect(players).toHaveLength(0);
@@ -1351,7 +1360,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         if (command === "read_next") await playerBarrier.at(playing ? 1 : 0);
         else await settle();
         expect(maximum).toBe(1);
-        expect(clone.mock.calls.map(call => call[0])).toEqual([`${heading}.`, "Red apple.",
+        expect(clone.mock.calls.map(call => call[0])).toEqual([...planned.segments.slice(0, 2).map(segment => segment.text),
           ...(command === "read_next" ? ["Bravo queued read."] : [])]);
         expect(clone.mock.calls[1][2]?.aborted).toBe(true);
         await handleSocketCommand({ cmd: "stop" });

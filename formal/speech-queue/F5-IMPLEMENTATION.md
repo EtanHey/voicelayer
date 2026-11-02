@@ -69,9 +69,12 @@ Synthesis/player/decoder/recorder I/O uses owned fakes; the microphone is never 
 and no audio plays. The end-of-read sentinel completes without spawning another player.
 
 This is a bounded scenario projection, not an exhaustive transition/refinement proof.
-R2-03 queue presentation and R2-05 initial timing remain separate implementation work:
-their Current prepare/start prefixes are included here without claiming those runtime
-invariants pass. Two-take N6/paste acknowledgement, late settlement, physical release
+R2-03/R2-05 have a companion real-data projection in `speech_data_conformance.py`:
+Fixed graph states project onto preparing/playing/parked queue snapshots with zero,
+one or two waiting jobs. Real PlaybackQueueManager events feed compiled VoiceState;
+the first clone speaking frame supplies estimates without awaiting alignment.
+Removing the preparing-owner flag or initial timing must fail the named obligation.
+The separate Claude cursor slice owns monotonic highlighting on timing replacement. Two-take N6/paste acknowledgement, late settlement, physical release
 after settlement, clone timing, nonzero chunks, quiescence and preparing-with-no-chunk
 also have focused real-logic guards.
 

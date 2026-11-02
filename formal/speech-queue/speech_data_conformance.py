@@ -48,7 +48,7 @@ def check_speech_data_runtime(run, runner):
         try:
             source.write_text(fixed.replace(before, after))
             status, output = execute([*bun[:-1], prop], f"speech-data-mutant-{prop}.log")
-            assert status != 0 and prop in output and "(fail)" in output, f"Surviving runtime mutant: {prop}"
+            assert status != 0 and f"error: {prop}" in output and " 1 fail" in output, f"Surviving runtime mutant: {prop}"
             results.append(dict(property=prop, mutation=after or "omit initial_timing", expected="FAIL", actual="FAIL", exit=status))
         finally:
             source.write_text(fixed)
