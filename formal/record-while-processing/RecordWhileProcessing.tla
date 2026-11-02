@@ -3,7 +3,7 @@
 \* Complete is dispatch; RuntimeOwnership verifies bounded ACK settlement without
 \* assuming a client acknowledgement. Cancel uses per-take AbortSignals.
 EXTENDS Naturals, FiniteSets
-CONSTANTS Admission, CancelPolicy, PastePolicy, RetentionPolicy, Ingress, Fault, SilenceLimit, CapLimit, Scenario
+CONSTANTS Admission, CancelPolicy, PastePolicy, RetentionPolicy, Ingress, Fault, SilenceLimit, ObservationLimit, Scenario
 VARIABLE s
 vars == <<s>>
 Takes == {"A", "B"}
@@ -37,19 +37,19 @@ Record(t, origin) ==
      /\ (Fault # "stall-record" \/ Worker = {})
      /\ (Admission # "current" \/ {a \in Takes: s.stage[a] = "captured"} = {})
      /\ Commit([after EXCEPT !.reply = IF blocked THEN "reject" ELSE "accept"], origin, t)
-\* ProductClock: one step = 60 seconds, silence 1, cap 20. No fairness on speech.
+\* D3 11:00Z: ProductClock uses ten silent one-minute steps; speech renews it.
+\* There is no recording-length cap. ObservationLimit bounds only a finite monitor.
 Talk(t, value) == /\ t \in Mic /\ s.talking[t] # value /\ (Fault # "no-speech" \/ ~value)
                   /\ Commit([s EXCEPT !.talking[t] = value, !.spoke = IF value THEN @ \cup {t} ELSE @,
                        !.silence[t] = IF value /\ Fault # "no-renew" THEN 0 ELSE @,
-                       !.elapsed[t] = IF value /\ Fault = "cap-renew" THEN 0 ELSE @], IF value THEN "speech" ELSE "silence", t)
+                       !.elapsed[t] = @], IF value THEN "speech" ELSE "silence", t)
 TimeoutDue(t) == ~s.talking[t] /\ s.silence[t] = SilenceLimit
-CapDue(t) == s.elapsed[t] >= CapLimit
+CapRegressionDue(t) == Fault = "reintroduced-cap" /\ s.elapsed[t] >= ObservationLimit
 Capture(t, reason) == /\ t \in Mic
                      /\ (reason # "timeout" \/ (Fault # "no-timeout" /\
                           (Admission = "current" \/ Fault = "timeout-speaking" \/
                            (~s.talking[t] /\ (TimeoutDue(t) \/ Fault = "early-timeout")))))
-                     /\ (reason # "cap" \/ (Admission # "current" /\ Fault # "no-cap" /\ CapDue(t) /\
-                           (Fault # "cap-blocked-speaking" \/ ~s.talking[t])))
+                     /\ (reason # "cap" \/ CapRegressionDue(t))
                      /\ Commit([s EXCEPT !.stage[t] = "captured", !.talking[t] = FALSE,
                                          !.silence[t] = 0, !.elapsed[t] = 0,
                                          !.saved = IF Fault = "drop-timeout" /\ reason = "timeout" THEN @ ELSE @ \cup {t}], reason, t)
@@ -101,21 +101,17 @@ Escape(t,id) == /\ t \in Active /\ Foreground(t,"Escape")
                 /\ IF CancelPolicy="scoped" /\ ~EscapeGuarded(t)
                     THEN Commit([s EXCEPT !.guard=t, !.cooldown=IF s.guard=t THEN s.cooldown ELSE 2, !.ring=TRUE, !.reply="guard"],"arm",t)
                     ELSE Cancel(t,"Escape",id)
-\* Available deadline handlers are urgent with respect to clock advancement.
-\* A broken/disabled handler lets time advance, so the bounded contracts expose it.
-\* Pipeline checks use a short abstract cap; ProductClock and every timing
-\* mutant run the same operators with the exact 1-minute / 20-minute ratio.
-AdvanceElapsed(t) == IF s.elapsed[t] < CapLimit + 1 THEN s.elapsed[t] + 1 ELSE s.elapsed[t]
-ClockCanAdvance == \A t \in Mic:
-                    (Admission = "current" \/ ~(ENABLED Capture(t, "cap"))) /\
-                    ~(Admission # "current" /\ ENABLED Capture(t, "timeout"))
+\* The silence handler is urgent relative to time advancement. Elapsed is a
+\* saturated observation/fault monitor, never a production stopping condition.
+AdvanceElapsed(t) == IF s.elapsed[t] < ObservationLimit + 1 THEN s.elapsed[t] + 1 ELSE s.elapsed[t]
+ClockCanAdvance == \A t \in Mic: ~(Admission # "current" /\ ENABLED Capture(t, "timeout"))
 Tick == /\ s.cooldown > 0 \/ (\E t \in Takes: s.floor[t] > 0) \/ (Mic # {} /\ ClockCanAdvance)
         /\ Commit([s EXCEPT !.cooldown = IF @ > 0 THEN @ - 1 ELSE 0,
                             !.ring = IF Fault = "ring" THEN @ ELSE s.guard # "none" /\ s.cooldown > 1,
                             !.floor = [t \in Takes |-> IF s.floor[t] > 0 THEN s.floor[t] - 1 ELSE 0],
                             !.silence = [t \in Takes |-> IF t \in Mic /\ ClockCanAdvance /\ ~s.talking[t]
                                           THEN IF s.silence[t] < SilenceLimit + 1 THEN s.silence[t] + 1 ELSE s.silence[t] ELSE s.silence[t]],
-                            !.elapsed = [t \in Takes |-> IF t \in Mic /\ ClockCanAdvance
+                            !.elapsed = [t \in Takes |-> IF t \in Mic /\ ClockCanAdvance /\ (Scenario = "clock" \/ Fault = "reintroduced-cap")
                                           THEN AdvanceElapsed(t) ELSE s.elapsed[t]]], "tick", "none")
 DismissStaleGuard == /\ Fault # "stale-guard" /\ s.guard # "none" /\ s.guard \notin Active
                     /\ Commit([s EXCEPT !.guard = "none", !.cooldown = 0, !.ring = FALSE], "dismiss", s.guard)
@@ -127,10 +123,10 @@ Next == (\E t \in Takes:
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(DismissStaleGuard)
         /\ (\A t \in Takes: (Fault = "unfair-decode" \/ WF_vars(Decode(t))) /\ (Fault = "unfair" \/ WF_vars(Complete(t)))
                             /\ WF_vars(Deliver(t)) /\ WF_vars(ReapCancelled(t))
-                            /\ WF_vars(Capture(t, "timeout")) /\ WF_vars(Capture(t, "cap")))
+                            /\ WF_vars(Capture(t, "timeout")))
 TypeOK == /\ s.stage \in [Takes -> Stages] /\ s.saved \subseteq Takes /\ s.cancelRequested \subseteq Takes
           /\ s.spoke \subseteq Takes /\ s.silence \in [Takes -> 0..(SilenceLimit + 1)]
-          /\ s.elapsed \in [Takes -> 0..(CapLimit + 1)]
+          /\ s.elapsed \in [Takes -> 0..(ObservationLimit + 1)]
           /\ s.talking \in [Takes -> BOOLEAN] /\ s.deliveries \in [Takes -> 0..2] /\ s.floor \in [Takes -> 0..2]
           /\ s.cancelToken \in Takes \cup {"none", "global"}
           /\ s.guard \in Takes \cup {"none"} /\ s.cooldown \in 0..2 /\ s.ring \in BOOLEAN
@@ -171,7 +167,7 @@ NoCancelledPaste == \A t \in s.cancelRequested: s.deliveries[t] = 0
 ProcessingSettles == \A t \in Takes: s.stage[t] \in {"captured", "transcribing", "ready", "cancelling"}
                                       ~> s.stage[t] \in {"pasted", "cancelled", "failed", "superseded"}
 \* Progress starts at capture. Availability clauses forbid serializing decode/result
-\* behind B's bounded recording; weak fairness alone cannot promise that ordering.
+\* behind B's recording; weak fairness alone cannot promise that ordering.
 \* A single temporal formula keeps TLC's diagnostic bound to this property name,
 \* rather than splitting out anonymous safety conjuncts from PROPERTIES.
 OverlapPastes == ~(~((s.stage["A"] \in {"captured", "transcribing"} /\ s.stage["B"] = "recording")
@@ -183,12 +179,14 @@ SpeechRenewsDeadline == \A t \in Mic: ~s.talking[t] =>
                         /\ ENABLED Talk(t, TRUE)
                         /\ ~ENABLED (Talk(t, TRUE) /\ s'.silence[t] # 0)
 NoEarlySilenceTimeout == \A t \in Mic: ~TimeoutDue(t) => ~ENABLED Capture(t, "timeout")
-CaptureWithinCap == \A t \in Mic: s.elapsed[t] <= CapLimit
-CapAlwaysFires == ~(~(\A t \in Takes: (t \in Mic) ~> (t \notin Mic))
-                    \/ <>(\E t \in Mic: CapDue(t) /\ ~ENABLED Capture(t, "cap")))
-SilenceTimesOut == ~(<>(\E t \in Mic: TimeoutDue(t) /\ ~CapDue(t) /\ ~ENABLED Capture(t, "timeout"))
+\* This state/action contract covers continuous speech and recurring speech
+\* whose silent gaps stay below the deadline, including across the former cap.
+RecurringSpeechNeverTimesOut == \A t \in Mic: ~TimeoutDue(t) =>
+  ~ENABLED (Capture(t, "timeout") \/ Capture(t, "cap"))
+SilenceTimesOut == ~(<>(\E t \in Mic: TimeoutDue(t) /\ ~ENABLED Capture(t, "timeout"))
                      \/ ~(\A t \in Takes: (t \in Mic /\ TimeoutDue(t)) ~> (t \notin Mic \/ s.talking[t])))
 NoDecodeDuringRecording == ~(s.event = "decode" /\ s.target = "A" /\ s.stage["B"] = "recording")
+NoSpeakingPastFormerCap == ~("A" \in Mic /\ s.talking["A"] /\ s.elapsed["A"] > ObservationLimit)
 NoSpeechSilenceTimeout == ~(s.event = "timeout" /\ s.target \in s.spoke)
 NoOverlapPaste == ~(s.event = "result" /\ s.target = "A" /\ s.stage["B"] = "recording" /\ s.deliveries["A"] = 1)
 NoScopedCancelDuringDecode == ~(s.event \in {"click", "Escape"} /\ s.target = "B" /\

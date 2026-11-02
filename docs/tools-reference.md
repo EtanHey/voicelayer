@@ -57,12 +57,13 @@ Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, th
 |------|------|----------|---------|-------------|
 | `message` | `string` | Yes | — | Question to speak aloud (must be non-empty) |
 | `voice` | `string` | No | default voice | Profile name or raw edge-tts voice ID for the question |
-| `timeout_seconds` | `number` | No | `30` | Max wait time (clamped to 5-3600) |
+| `timeout_seconds` | `number` | No | `120` or `VOICELAYER_ASK_NO_ANSWER_SECONDS` | No-answer budget after the question finishes (5–3600s); permanently cancelled by first detected speech |
 | `silence_mode` | `string` | No | `thoughtful` | `quick` (0.5s), `standard` (1.5s), or `thoughtful` (2.5s) |
 | `push_to_end` | `boolean` | No | `false` | Manual-stop mode that disables automatic silence detection. Recording will not stop when the user stops speaking; use only on explicit user request. Ignored unless `VOICELAYER_ALLOW_PUSH_TO_END=1`. |
 
 **Returns (success):** The user's transcribed text (plain string)
-**Returns (timeout):** `[converse] No response received within N seconds.`
+**Returns (no answer):** `No answer within 2 minutes; recording kept at <path>; …`
+After no answer, the agent may make ONE follow-up `voice_speak` or `voice_ask`, then continues as if the user is away.
 **Returns (busy):** `[converse] Line is busy — voice session owned by... ` (with `isError: true`)
 
 **Errors:**

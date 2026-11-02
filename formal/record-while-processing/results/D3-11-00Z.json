@@ -1,0 +1,75 @@
+{
+  "status": "PASS_FORMAL_DESIGN_AND_FOCUSED_SOURCE_REPLAY",
+  "base": "1e6377b1f8db6fcedc064629c6b4a3f9f788bc56",
+  "ruling": "2026-11-02 11:00Z: ten minutes continuous silence; speech renews; no recording-length cap",
+  "commands": [
+    {
+      "command": "~/.local/state/captain-2.2.61/heavy.sh G bash formal/record-while-processing/check.sh --record",
+      "exit": 0,
+      "logSHA256": "79acef47b562ec35fc53ec421b7cf60451e6538c53aa79ce3f5f9b41cf901c56"
+    },
+    {
+      "command": "~/.local/state/captain-2.2.61/heavy.sh G bash formal/record-while-processing/conformance.sh",
+      "exit": 0,
+      "bunPassed": 5,
+      "swiftPassed": 7,
+      "unexpectedFailures": 0,
+      "skips": 0,
+      "logSHA256": "94af0f16b328f6b3d0cd0b4ad44b4cef377bc20b56159378aedec1a02b72a935"
+    }
+  ],
+  "models": {
+    "record-while-processing": {
+      "positivePasses": 4,
+      "expectedFailures": 52,
+      "mutantsKilled": 41,
+      "acceptanceProperties": 26,
+      "receiptSHA256": "694e2634fd4c43913fa2685946379e317f914430896f4e687e8490b0b8b105c7"
+    },
+    "record-while-processing-runtime": {
+      "positivePasses": 1,
+      "expectedFailures": 13,
+      "mutantsKilled": 13,
+      "acceptanceProperties": 11,
+      "receiptSHA256": "fb4bb08f9b54084e0e5fea356b999feb10fd6ae1bdcdc128f4f364ce47d17416"
+    },
+    "ptt-silence-timeout": {
+      "positivePasses": 1,
+      "expectedFailures": 7,
+      "mutantsKilled": 7,
+      "acceptanceProperties": 7,
+      "receiptSHA256": "2733435a62a678695c5c98952556c6cea3a68d6e4fcdcf6cd4cfcc66a9e4ee8c"
+    }
+  },
+  "totals": {
+    "positivePasses": 6,
+    "expectedFailures": 72,
+    "mutantsKilled": 61,
+    "acceptanceProperties": 44
+  },
+  "retiredProperties": [
+    "RecordWhileProcessing.CapAlwaysFires",
+    "RecordWhileProcessing.CaptureWithinCap",
+    "PttSilenceTimeout.CapStops"
+  ],
+  "retiredMutants": [
+    "MutNoCap",
+    "MutCapRenewedBySpeech",
+    "MutCapBlockedBySpeech",
+    "MutNoCapBound",
+    "NoCapMutant"
+  ],
+  "preserved": "All other G/I acceptance properties, including every RuntimeOwnership ownership/readability contract. RuntimeOwnership operators, configs and harness unchanged; normalized results refreshed.",
+  "witnesses": {
+    "speechThenSilenceTimeout": "15 states: A speech, silence, ten quiet ticks, captured with A retained",
+    "speechPastFormerCap": "24 states: A still recording and talking at minute 21",
+    "reintroducedCap": "Main mutant fails RecurringSpeechNeverTimesOut at minute 20 while A talks; PTT companion fails the same exact property"
+  },
+  "scope": "No unrelated models or production code changed. No installed/live or microphone/timing acceptance claim. Existing Verification.json and FIX-ROUND receipts are historical; this receipt supersedes their cap policy.",
+  "cleanup": {
+    "swiftCachesRemoved": [
+      ".build.noindex/swift"
+    ],
+    "ownRemainingTestProcesses": []
+  }
+}

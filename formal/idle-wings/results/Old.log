@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoVanishWhileFocused",
+  "status": "EXPECTED_FAIL",
+  "generated": 6,
+  "distinct": 6,
+  "trace": [
+    "/\\ collapsed = FALSE\n/\\ timerArmed = FALSE\n/\\ vanishedWhileFocused = FALSE\n/\\ hovering = TRUE\n/\\ events = 0\n/\\ focused = FALSE",
+    "/\\ collapsed = FALSE\n/\\ timerArmed = FALSE\n/\\ vanishedWhileFocused = FALSE\n/\\ hovering = TRUE\n/\\ events = 1\n/\\ focused = TRUE",
+    "/\\ collapsed = TRUE\n/\\ timerArmed = FALSE\n/\\ vanishedWhileFocused = TRUE\n/\\ hovering = FALSE\n/\\ events = 2\n/\\ focused = TRUE"
+  ]
+}

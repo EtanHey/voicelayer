@@ -16,7 +16,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
     struct Frame: Decodable {
         struct Input: Codable {
             let mode, status, note: String
-            let history, teleprompter, engaged, collapsed, preview, details, updateBusy: Bool
+            let history, teleprompter, engaged, collapsed, preview, details, updateBusy, transientNoteOffersHistory: Bool
             let lines: Int
         }
         struct Expected: Codable { let shell, text, wingText: String; let band, visible, transient, historyInline: Bool }
@@ -61,7 +61,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
             ? first : ([first] + Array(repeating: "Synthetic line", count: lines - 1)).joined(separator: "\n")
     }
     private func note(_ input: Frame.Input) -> String? {
-        let first: String = switch input.note { case "busy": "Busy"; case "quit": "Quit refused"; case "rejection": "Selection not read"; default: "" }
+        let first: String = switch input.note { case "busy": "Work in progress"; case "quit": "Quit refused"; case "rejection": "Selection not read"; default: "" }
         return first.isEmpty ? nil : ([first] + Array(repeating: "Synthetic line", count: input.lines - 1)).joined(separator: "\n")
     }
     private func input(_ row: Frame) throws -> VoiceBarNotchOperationalInput {
@@ -74,6 +74,9 @@ final class LaneGFormalConformanceTests: XCTestCase {
             confirmationText: row.input.status == "none" ? nil : status, hotkeyPhase: row.input.preview ? .pressing : .idle,
             statusText: status, isHovered: row.input.engaged, isCollapsed: row.input.collapsed, transientNote: note(row.input))
         result.isHistoryPanelOpen = row.input.history
+        // Adaptation point (Lane A): the busy-selection note is marked explicitly, as VoiceState does through
+        // `selectionFeedbackNoteOffersHistory`, rather than recognised by its copy.
+        result.transientNoteOffersHistory = row.input.transientNoteOffersHistory
         return result
     }
     private func source(_ path: String) throws -> String { try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) }
@@ -99,7 +102,8 @@ final class LaneGFormalConformanceTests: XCTestCase {
         return result
     }
     private func check(_ errors: [String], family: String, expectedFailure: Bool) {
-        if expectedFailure && !family.hasPrefix("Current") {
+        let pinnedFamilies: Set<String> = ["FixedProjection", "FixedText", "N1", "N2", "N4", "N5", "N3NoticeBand", "Fixed NoteHasCause"]
+        if pinnedFamilies.contains(family) || (expectedFailure && family == "Fixed native graph paths") {
             let bytes = Data(errors.sorted().joined(separator: "\n").utf8)
             let sha = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
             print("LANEG_DIVERGENCE \(family)|\(errors.count)|\(sha)")
@@ -109,6 +113,12 @@ final class LaneGFormalConformanceTests: XCTestCase {
                 XCTAssertEqual(sha, pin.sha256, "Baseline divergence SET drifted: \(family)")
                 XCTAssertEqual(errors.count, pin.count, "Baseline divergence COUNT drifted: \(family)")
             } catch { XCTFail("Baseline divergence ledger: \(error)") }
+        }
+        // Until Lane I lands, native pipeline differences are an exact mandatory baseline
+        // comparison, not a Fixed implementation PASS or an expected-failure wrapper.
+        if family == "Fixed native graph paths" && expectedFailure {
+            XCTAssertFalse(errors.isEmpty, "Pipeline policy must flip when its baseline gaps disappear")
+            return
         }
         let assertion = { XCTAssertTrue(errors.isEmpty, "\(family): \(errors.count) divergences; \(errors.prefix(3))") }
         if expectedFailure { XCTExpectFailure("Baseline gap \(family); set runtime-contract.json policy to fixed when the implementing lane lands", failingBlock: assertion) }
@@ -126,6 +136,8 @@ final class LaneGFormalConformanceTests: XCTestCase {
             XCTAssertEqual(Set(frames.map { $0.input.note }), ["none","busy","quit","rejection"])
             XCTAssertEqual(Set(frames.map { $0.input.lines }), [1,2,3])
             XCTAssertEqual(Set(frames.map { $0.input.details }), [false,true])
+            XCTAssertEqual(Set(frames.map { $0.input.transientNoteOffersHistory }), [false,true])
+            XCTAssertTrue(frames.allSatisfy { $0.input.transientNoteOffersHistory == ($0.input.note == "busy") })
         }
         let routed = try wingModes()
         let renderer = try source("flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift")
@@ -143,7 +155,9 @@ final class LaneGFormalConformanceTests: XCTestCase {
             let base = VoiceBarNotchContract.geometry(for: p.visualState).lowerSurfaceHeight
             let hasBand = p.geometry.lowerSurfaceHeight > base
             let candidateWing = p.feedback?.wingText ?? ""
-            let visibleWing = p.visualState == .compactStatus && routed.contains(row.input.mode) ? (p.feedback?.wingText ?? input.statusText) : ""
+            // Adaptation point (Lane A): BarView labels the compact-status wing through `wingLabel(for:)`, which is
+            // empty while any notice shows (N1), including a plain short note that needs no feedback band.
+            let visibleWing = p.visualState == .compactStatus && routed.contains(row.input.mode) ? p.wingLabel(for: input.statusText) : ""
             let actualText = p.feedback?.statusText.flatMap { $0.isEmpty ? nil : $0 } ?? (visibleWing.isEmpty ? "" : visibleWing)
             let expectedText = row.expected.text == "none" ? "" : copy(row.expected.text, lines: row.input.lines)
             let actualNote = p.feedback?.noteText ?? (p.transientNoteRect != nil ? input.transientNote : nil)
@@ -210,6 +224,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
         check(errors["WingBounds"]!, family: "N1 numeric wing bounds in EVERY mode and BOTH corpora", expectedFailure: false)
         check(errors["N3"]!, family: "N3 real text geometry and untruncated renderer", expectedFailure: false)
         print("Replayed BOTH notch corpora: \(corpus.rows.count) frames; production ledger evaluated independently")
+        print("History affordance replay uses explicit metadata with synthetic busy-note copy")
     }
     private func state() -> VoiceState {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },

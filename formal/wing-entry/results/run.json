@@ -1,0 +1,51 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/wing-entry/WingEntry.tla": "ecd7b05630d4a6d86c50fbb8cd4e5ea1ce39f6fbad5d07f74c4eacb6f11b360f",
+    "formal/wing-entry/checks.json": "861b84b4fb508ef35d38d6535188624092dd1286e75361fc657ee518797ebc2f",
+    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/wing-entry/Old.cfg": "c3b034f6d95bad2d1f8a81383683ca62e6a9639b51d46be67855801b961ca540",
+    "formal/wing-entry/MutantNeverShown.cfg": "56b4efafae276e1e35853f246f6539a78eacdfcea57d106bb9603010c5b60d19",
+    "formal/wing-entry/Fixed.cfg": "3a763fbb97949a53f53a61118671ffa6922d82965ab867722b1c42e918d2937c",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift": "2c8780574261d3b8c5333542e9f816290574363a49e9c0568c351a03211bf47f",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "5efb8e53dd0411242149e2849de5fa7706692fb010add7768e38f691ef05fe2f"
+  },
+  "mutants": {
+    "ControlsAppear": [
+      "MutantNeverShown"
+    ],
+    "NoClippedControl": [
+      "Old"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "f54f6c97880a6f9794bf4969842f2b2a0c4580e7badf94371fe9cc9bc3ad9562"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 41,
+      "distinct": 41
+    },
+    "Old": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoClippedControl",
+      "status": "EXPECTED_FAIL",
+      "generated": 2,
+      "distinct": 2
+    },
+    "MutantNeverShown": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "ControlsAppear",
+      "status": "EXPECTED_FAIL",
+      "generated": 41,
+      "distinct": 41
+    }
+  }
+}

@@ -9,6 +9,161 @@
       "outcome": "accept"
     }
   ],
+  "drainAdmissions": [
+    {
+      "target": "B",
+      "stages": {
+        "A": "draining",
+        "B": "fresh"
+      }
+    }
+  ],
+  "queuedCancellations": [
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "draining",
+        "B": "waiting"
+      },
+      "captureReleased": false
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "failed",
+        "B": "waiting"
+      },
+      "captureReleased": false
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "draining",
+        "B": "waiting"
+      },
+      "captureReleased": false
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "failed",
+        "B": "waiting"
+      },
+      "captureReleased": false
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "ack",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "failed",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "Escape",
+      "target": "B",
+      "stages": {
+        "A": "processing",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "ack",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "cancelled",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "captured",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "done",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "failed",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    },
+    {
+      "origin": "click",
+      "target": "B",
+      "stages": {
+        "A": "processing",
+        "B": "waiting"
+      },
+      "captureReleased": true
+    }
+  ],
   "cancellations": [
     {
       "origin": "Escape",
@@ -168,6 +323,14 @@
       "stages": {
         "A": "done",
         "B": "recording"
+      }
+    },
+    {
+      "origin": "Escape",
+      "target": "A",
+      "stages": {
+        "A": "draining",
+        "B": "cancelled"
       }
     },
     {
@@ -436,6 +599,14 @@
     },
     {
       "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "captured",
+        "B": "waiting"
+      }
+    },
+    {
+      "origin": "click",
       "target": "B",
       "stages": {
         "A": "done",
@@ -464,6 +635,14 @@
       "stages": {
         "A": "done",
         "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "draining",
+        "B": "cancelled"
       }
     },
     {
@@ -584,6 +763,14 @@
       "stages": {
         "A": "processing",
         "B": "recording"
+      }
+    },
+    {
+      "origin": "click",
+      "target": "A",
+      "stages": {
+        "A": "processing",
+        "B": "waiting"
       }
     },
     {

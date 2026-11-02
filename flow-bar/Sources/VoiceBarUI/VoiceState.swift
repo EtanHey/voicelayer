@@ -406,7 +406,7 @@ public final class VoiceState {
     /// Synchronous publication of cancellation eligibility, before any UI/IPC work.
     @ObservationIgnored public var onHotkeyCancellationChange: ((Bool) -> Void)?
     public var shouldHandleHotkeyEscape: Bool {
-        mode == .recording || mode == .transcribing || mode == .speaking
+        deferredRecordingTakeID != nil || mode == .recording || mode == .transcribing || mode == .speaking
     }
     public var mode: VoiceMode = .idle {
         didSet {
@@ -453,7 +453,7 @@ public final class VoiceState {
     /// Ordinary quit protects capture, handoffs and playback, even while disconnected.
     @MainActor public var isQuitBusy: Bool {
         !([.idle, .disconnected, .error].contains(mode) && hotkeyPhase == .idle && pendingIntent == nil && !captureLive && !isRecordingHandoffPending &&
-            !isHistoryRetranscriptionPending && !barInitiatedRecording &&
+            !isHistoryRetranscriptionPending && !barInitiatedRecording && deferredRecordingTakeID == nil &&
             !selectionCaptureInFlight && selectionSubmittedText == nil && readQueueCount == 0 &&
             readQueueCurrentRequestID == nil && speechPending["preview"] == nil && speechControls?.previewActive != true &&
             historyPlayback.playingURL == nil && !historyPlayback.isVoiceBusy)
@@ -461,12 +461,46 @@ public final class VoiceState {
     public private(set) var quitRefusalMessage: String? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalMessage) }
     }
-    public func reportQuitRefusal() {
+    public static let quitRefusalDisplayLimit: Duration = .seconds(6)
+    public static let quitRefusalRecheckInterval: Duration = .milliseconds(250)
+    @ObservationIgnored var quitRefusalSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    @ObservationIgnored private var quitRefusalTask: Task<Void, Never>?
+
+    /// Whether the update gate (not voice work) still refuses the quit; rechecked while the refusal shows.
+    public private(set) var quitRefusalGateBlocked = false {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalGateBlocked) }
+    }
+
+    /// The refusal shows only while its cause does (formal/notch-presentation `NoteHasCause`). The voice part is
+    /// read live from `isQuitBusy`, so the note disappears in the same update that ends the work; the update-gate
+    /// part is rechecked every `quitRefusalRecheckInterval` through `isGateStillBlocked`. After
+    /// `quitRefusalDisplayLimit` at the latest the message is dropped. Presentation only; it never retries or
+    /// forces the quit.
+    public var showsQuitRefusal: Bool {
+        // Every reader is on the main thread (views, the app's panel resolver); isQuitBusy is main-actor state.
+        quitRefusalMessage != nil && (quitRefusalGateBlocked || MainActor.assumeIsolated { isQuitBusy })
+    }
+
+    public func reportQuitRefusal(gateBlocked: Bool = false,
+                                  isGateStillBlocked: @escaping @MainActor () -> Bool = { false }) {
         let message = "Finish voice work or cancel the update, then quit again."
+        quitRefusalGateBlocked = gateBlocked
         quitRefusalMessage = message
         expandFromCollapse()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
-            if self?.quitRefusalMessage == message { self?.quitRefusalMessage = nil }
+        quitRefusalTask?.cancel()
+        let sleep = quitRefusalSleep
+        quitRefusalTask = Task { @MainActor [weak self] in
+            var waited: Duration = .zero
+            while waited < Self.quitRefusalDisplayLimit {
+                try? await sleep(Self.quitRefusalRecheckInterval)
+                guard !Task.isCancelled, let self else { return }
+                waited += Self.quitRefusalRecheckInterval
+                self.quitRefusalGateBlocked = isGateStillBlocked()
+                if !self.showsQuitRefusal { break }
+            }
+            guard let self, !Task.isCancelled, self.quitRefusalMessage == message else { return }
+            self.quitRefusalMessage = nil
+            self.quitRefusalGateBlocked = false
         }
     }
     public var errorMessage: String? {
@@ -987,6 +1021,30 @@ public final class VoiceState {
         let matchesFocus: (() -> Bool)?
     }
     private var dictationTakeTargets: [String: DictationTakeTarget] = [:]
+    private struct DeferredBarRecording {
+        let takeID: String
+        let pressToTalk: Bool
+        let playbackElapsedMs: Int?
+        var stopOnOpen = false
+        var physicalStop = false
+    }
+    private enum DeferredBarRecordingPhase {
+        case queued(DeferredBarRecording)
+        case opening(DeferredBarRecording)
+    }
+    private var deferredBarRecording: DeferredBarRecordingPhase? {
+        didSet { onHotkeyCancellationChange?(shouldHandleHotkeyEscape) }
+    }
+    public var queuedRecordingTakeID: String? {
+        if case let .queued(request) = deferredBarRecording { return request.takeID }
+        return nil
+    }
+    private var deferredRecordingTakeID: String? {
+        switch deferredBarRecording {
+        case let .queued(request), let .opening(request): return request.takeID
+        case nil: return nil
+        }
+    }
     private var activeBarTakeID: String?
     public private(set) var displayedProcessingTakeID: String?
     public private(set) var isRecordingDrainPending = false
@@ -1192,10 +1250,15 @@ public final class VoiceState {
 
     private var selectionRejectionMessage: String?
     public var selectionFeedbackNote: String? {
-        if let quitRefusalMessage { return quitRefusalMessage }
+        if showsQuitRefusal, let quitRefusalMessage { return quitRefusalMessage }
         guard showsSelectionBusyNote else { return nil }
         return selectionRejectionMessage ?? VoiceBarPresentation.selectionBusyNote(
             isRequested: true, mode: mode, hotkeyPhase: hotkeyPhase)
+    }
+
+    /// N5: the shown note is the busy-selection note, which carries Open History inline.
+    public var selectionFeedbackNoteOffersHistory: Bool {
+        !showsQuitRefusal && showsSelectionBusyNote && selectionRejectionMessage == nil
     }
 
     private func clearSelectionBusyNoteIfSessionEnded() {
@@ -1931,6 +1994,17 @@ public final class VoiceState {
     }
 
     public func stop(physicalPress: Bool = false) {
+        if let deferred = deferredBarRecording {
+            switch deferred {
+            case .queued(var request):
+                request.stopOnOpen = true; request.physicalStop = physicalPress
+                deferredBarRecording = .queued(request)
+            case .opening(var request):
+                request.stopOnOpen = true; request.physicalStop = physicalPress
+                deferredBarRecording = .opening(request)
+            }
+            return
+        }
         if selectionCaptureInFlight { selectionCaptureCancelled = true }
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
@@ -2005,6 +2079,24 @@ public final class VoiceState {
     }
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
+        if case let .queued(request) = deferredBarRecording {
+            deferredBarRecording = nil
+            dictationTakeTargets.removeValue(forKey: request.takeID)
+            activeBarTakeID = nil
+            barInitiatedRecording = false
+            barInitiatedTimeout?.cancel()
+            confirmationText = nil
+            mode = microphoneTakeID != nil || processingTakeCount > 0 ? .transcribing : .idle
+            onModeChange?(mode)
+            return // This local B has not been sent. Never cancel A's physical drain.
+        }
+        if case let .opening(request) = deferredBarRecording {
+            deferredBarRecording = nil
+            recordStartAckTimeoutTask?.cancel()
+            if pendingIntent?.command == .record { pendingIntent = nil }
+            sendCommand?(["cmd": "cancel", "take_id": request.takeID, "id": UUID().uuidString])
+            return
+        }
         if supportsRecordingJobs {
             if let takeID = microphoneTakeID ?? activeBarTakeID {
                 sendCommand?(["cmd": "cancel", "take_id": takeID, "id": UUID().uuidString])
@@ -2026,6 +2118,11 @@ public final class VoiceState {
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
         let cancelledTranscription = mode == .transcribing
+        // Legacy cancellation has no owned-job snapshot to retire its local drain.
+        // Owned captures return above and keep their fence until the backend settles.
+        activeBarTakeID = nil
+        stoppingBarTakeID = nil
+        isRecordingDrainPending = false
         barInitiatedRecording = false
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedTimeout?.cancel()
@@ -2244,7 +2341,7 @@ public final class VoiceState {
         }
     }
 
-    public var activeCaptureTakeID: String? { microphoneTakeID ?? activeBarTakeID }
+    public var activeCaptureTakeID: String? { deferredRecordingTakeID ?? microphoneTakeID ?? activeBarTakeID }
 
     public var isF5SpeechPausedDuringCapture: Bool {
         isCaptureSettlementPending && parkedRead?.owner == .f5
@@ -2616,9 +2713,10 @@ public final class VoiceState {
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     public func record(pressToTalk: Bool = false) {
         guard !isHidden else { return }
-        if isRecordingDrainPending { rejectRecordingDuringDrain(); return }
-        guard mode == .idle || mode == .error || mode == .speaking || (mode == .transcribing && canRecordDuringProcessing) else { return }
-        guard pendingIntent?.command != .record else { return }
+        guard case nil = deferredBarRecording else { return }
+        let queuesBehindDrain = isRecordingDrainPending
+        guard queuesBehindDrain || mode == .idle || mode == .error || mode == .speaking || isPlaybackPaused || (mode == .transcribing && canRecordDuringProcessing) else { return }
+        guard queuesBehindDrain || pendingIntent?.command != .record else { return }
         let pressedAt = mode == .speaking ? playbackElapsedMilliseconds() : nil
         if mode == .speaking { pendingPauseEpoch = playbackEpoch }
         clearRetainedTeleprompter()
@@ -2676,6 +2774,12 @@ public final class VoiceState {
         let takeID = UUID().uuidString
         activeBarTakeID = takeID
         dictationTakeTargets[takeID] = DictationTakeTarget(app: frontmostAppOnRecordStart, insertion: recordStartInsertionHandler, matchesFocus: dictationTargetIdentityProvider())
+        if queuesBehindDrain {
+            deferredBarRecording = .queued(DeferredBarRecording(takeID: takeID, pressToTalk: pressToTalk, playbackElapsedMs: pressedAt))
+        } else { sendBarRecordingStart(takeID: takeID, pressToTalk: pressToTalk, playbackElapsedMs: pressedAt) }
+    }
+
+    private func sendBarRecordingStart(takeID: String, pressToTalk: Bool, playbackElapsedMs: Int?) {
         var recordPayload: [String: Any] = [
             "cmd": "record",
             "take_id": takeID,
@@ -2683,8 +2787,32 @@ public final class VoiceState {
             "timeout_seconds": 3600,
             "press_to_talk": pressToTalk,
         ]
-        if let pressedAt { recordPayload["playback_elapsed_ms"] = pressedAt }
+        if let playbackElapsedMs { recordPayload["playback_elapsed_ms"] = playbackElapsedMs }
         sendIntent(command: .record, payload: recordPayload)
+    }
+
+    private func startQueuedRecordingIfCaptureReleased() {
+        guard isConnected, !isRecordingDrainPending, microphoneTakeID == nil,
+              case let .queued(request) = deferredBarRecording else { return }
+        deferredBarRecording = .opening(request)
+        activeBarTakeID = request.takeID
+        barInitiatedRecording = true
+        confirmationText = nil
+        errorMessage = nil
+        mode = .recording
+        onModeChange?(.recording)
+        sendBarRecordingStart(takeID: request.takeID, pressToTalk: request.pressToTalk, playbackElapsedMs: request.playbackElapsedMs)
+    }
+
+    private func finishDeferredRecordingOpen(_ event: [String: Any]) {
+        guard case let .opening(request) = deferredBarRecording else { return }
+        let matchesTake = event["take_id"] as? String == request.takeID ||
+            (event["take_id"] == nil && event["bar_owned"] as? Bool == true && activeBarTakeID == request.takeID)
+        let opened = (event["type"] as? String == "state" && event["state"] as? String == "recording" && (event["mode"] != nil || (!supportsRecordingJobs && event["bar_owned"] as? Bool == true))) ||
+            event["type"] as? String == "audio_level"
+        guard matchesTake, opened else { return }
+        deferredBarRecording = nil
+        if request.stopOnOpen { stop(physicalPress: request.physicalStop) }
     }
 
     /// Snapshots project all owners. A result's take identity never becomes the current capture.
@@ -2713,10 +2841,17 @@ public final class VoiceState {
                 return true
             }
             if let activeBarTakeID, microphoneTakeID != activeBarTakeID,
-               pendingIntent?.command != .record { self.activeBarTakeID = nil }
+               pendingIntent?.command != .record, deferredRecordingTakeID != activeBarTakeID { self.activeBarTakeID = nil }
             let ids = Set(jobs.compactMap { $0["take_id"] as? String })
             dictationTakeTargets = dictationTakeTargets.filter { ids.contains($0.key) || $0.key == activeBarTakeID }
+            startQueuedRecordingIfCaptureReleased()
             if type == "state" {
+                if let deferredID = deferredRecordingTakeID {
+                    if microphoneTakeID == deferredID, event["take_id"] as? String == deferredID,
+                       event["mode"] != nil { return false } // B's actual mic-open still initializes capture metadata.
+                    if mode != .recording { mode = .recording; onModeChange?(.recording) }
+                    return true
+                }
                 // The detailed mic-open event still owns capture_id, levels and device-loss observation.
                 if event["take_id"] as? String == microphoneTakeID, event["mode"] != nil {
                     return false
@@ -2822,6 +2957,7 @@ public final class VoiceState {
         playbackAmplitude: PlaybackAmplitudeEnvelope? = nil
     ) {
         guard let type = event["type"] as? String else { return }
+        defer { finishDeferredRecordingOpen(event) }
         if !historyRunLog.runs.isEmpty, ["ack", "transcription", "error", "state"].contains(type) {
             historyRunLog.observe(event)
         }
@@ -2842,6 +2978,14 @@ public final class VoiceState {
             guard let stateStr = event["state"] as? String else { return }
             switch stateStr {
             case "idle":
+                if !supportsRecordingJobs, queuedRecordingTakeID != nil,
+                   event["source"] as? String == "recording" {
+                    microphoneTakeID = nil
+                    isRecordingDrainPending = false
+                    stoppingBarTakeID = nil
+                    startQueuedRecordingIfCaptureReleased()
+                    return
+                }
                 let idleSource = event["source"] as? String
                 // The daemon never sends a playback idle while a read is parked: one now means it is gone.
                 // (While speaking, the speaking → idle edge retires it once the readback froze its position.)
@@ -3064,7 +3208,7 @@ public final class VoiceState {
                 onModeChange?(.recording)
                 expandFromCollapse()
             case "transcribing":
-                enterTranscribingMode()
+                if deferredRecordingTakeID == nil { enterTranscribingMode() }
             default:
                 break
             }
@@ -3430,14 +3574,10 @@ public final class VoiceState {
         }
     }
 
-    public func rejectRecordingDuringDrain() {
-        showConfirmation("Finishing previous recording. Press F5 again when ready.")
-    }
-
     private func resetRecordingJobConnectionState() {
         supportsRecordingJobs = false
         microphoneTakeID = nil
-        activeBarTakeID = nil
+        activeBarTakeID = deferredRecordingTakeID
         processingJobIDs = []
         displayedProcessingTakeID = nil
         processingTakeCount = 0
@@ -3566,6 +3706,22 @@ public final class VoiceState {
 
     // MARK: - Idle collapse
 
+    /// R0856-12: one of VoiceBar's own windows (Settings, the menu-bar popover) has keyboard focus. The pointer
+    /// necessarily leaves the notch to use it, and that exit used to collapse the idle wings 2.5 s later (seen at
+    /// 08:58:05 on 2026-11-02 as the wings vanishing for 1.5 s while Settings was key). While it has focus the
+    /// wings stay; the ordinary idle countdown resumes when it resigns. It never expands a collapsed notch.
+    public private(set) var isVoiceBarWindowFocused = false
+
+    public func setVoiceBarWindowFocused(_ focused: Bool) {
+        guard focused != isVoiceBarWindowFocused else { return }
+        isVoiceBarWindowFocused = focused
+        if focused {
+            collapseTimer?.cancel()
+        } else if mode == .idle, !isHovering, !isCollapsed {
+            startCollapseTimer()
+        }
+    }
+
     /// Starts the ordinary idle grace period once the product surface exists.
     /// The initial state does not pass through `enterIdleState`, so the app
     /// delegate calls this after installing the panel.
@@ -3583,7 +3739,8 @@ public final class VoiceState {
         }
         collapseTimer = Task { @MainActor in
             try? await Task.sleep(for: .seconds(idleCollapseDelay))
-            if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0 {
+            if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0,
+               !isVoiceBarWindowFocused {
                 withAnimation(.smooth(duration: 0.3)) {
                     isCollapsed = true
                 }
@@ -3625,6 +3782,7 @@ public final class VoiceState {
         collapseTimer?.cancel()
         guard mode == .idle,
               modalInteractionDepth == 0,
+              !isVoiceBarWindowFocused,
               !keepsExpandedInDevState,
               retainedTeleprompterText == nil
         else { return }
@@ -4235,6 +4393,7 @@ public final class VoiceState {
     }
 
     private func failTranscription(message: String = "Transcription failed") {
+        if case .opening = deferredBarRecording { deferredBarRecording = nil }
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -5011,6 +5170,7 @@ public final class VoiceState {
         recordStartLateRecoveryTask?.cancel()
         recordStartLateRecoveryTask = nil
         if clearPasteTarget {
+            if case .opening = deferredBarRecording { deferredBarRecording = nil }
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
         }

@@ -21,7 +21,7 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 |-----------|------|----------|---------|-------------|
 | `message` | string | Yes | — | Question or prompt to speak aloud (non-empty) |
 | `voice` | string | No | default voice | Profile name or raw edge-tts voice ID for the question |
-| `timeout_seconds` | number | No | `30` | Max wait time for response (clamped to 5-3600) |
+| `timeout_seconds` | number | No | `120` or `VOICELAYER_ASK_NO_ANSWER_SECONDS` | No-answer budget after prompt playback (5–3600s); first speech cancels it permanently |
 
 ### Returns
 
@@ -37,7 +37,7 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 
 ```json
 {
-  "content": [{ "type": "text", "text": "[converse] No response received within 30 seconds. The user may have stepped away." }]
+  "content": [{ "type": "text", "text": "No answer within 2 minutes; recording kept at <path>. You may make ONE follow-up voice_speak or voice_ask, then continue as if the user is away; do not keep asking." }]
 }
 ```
 
@@ -78,8 +78,8 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 
 1. **User stop signal** (PRIMARY): `touch /tmp/voicelayer-stop`
 2. **Silero VAD silence detection** (FALLBACK): configurable silence duration after speech is detected
-3. **Pre-speech timeout**: 15s of no speech → returns null early
-4. **Timeout** (SAFETY NET): `timeout_seconds` parameter (default 30s)
+3. **No-answer deadline**: no detected speech for 120s after the question finishes (configurable with `VOICELAYER_ASK_NO_ANSWER_SECONDS` or explicit `timeout_seconds`); HOLD pauses it; locked Ask uses 10 minutes of continuous silence, renewed by speech, with no cap. The recording is kept. First speech permanently cancels this deadline.
+4. **No wall-clock cap**: speech may continue beyond 30 minutes; unlocked Ask uses normal post-speech silence, and locked Ask uses the ten-minute silence rule.
 
 !!! info "Why user-controlled stop is primary"
     Silence detection can misfire — background noise, thinking pauses, or mic sensitivity issues cause premature cutoff. The touch-file approach gives the user explicit control over when they're done speaking.

@@ -174,6 +174,14 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
+/// R0856-12: whether the key window is one of VoiceBar's own windows other than the notch panel itself.
+public enum VoiceBarWindowFocus {
+    public static func holdsIdleWings(keyWindow: NSWindow?, notchPanel: NSWindow?) -> Bool {
+        guard let keyWindow, keyWindow.isVisible else { return false }
+        return keyWindow !== notchPanel
+    }
+}
+
 public final class FloatingPillPanel: NSPanel {
     public var contextMenuProvider: (() -> NSMenu)?
     public var activeHitTestProvider: ((NSPoint) -> Bool)?

@@ -1,7 +1,8 @@
 # Recording during processing — availability, identity and delivery
 
 `Current.cfg` models the source policy starting at
-`e75a4eb662a534665c36240916ab918a00aabf2c`. `Fixed.cfg` refines the implemented merged policy.
+`e75a4eb662a534665c36240916ab918a00aabf2c`. `Fixed.cfg` preserves the merged ownership
+policy and specifies the 11:00Z D3 silence-only design.
 A model PASS does not establish installed or live acceptance.
 
 ```sh
@@ -38,6 +39,9 @@ Every positive invariant and temporal property has a targeted failing mutant;
 
 - N6 requires a qualified new F5/socket start to record B while A processes and
   preserve A. Current's native F5 cancels A; its direct socket route replies busy.
+  The [runtime ownership refinement](../record-while-processing-runtime/README.md)
+  extends `N6StartsB` through capture drain: F5 admits B immediately, then opens
+  its mic after A's exit proof. Rejection and stranded-intent mutants must fail.
 - N7 requires identity-scoped cancel commands. Current uses the actual global,
   identity-free primitive; its possible recipient is nondeterministic among live
   backend consumers. Fixed validates a take ID, rejects stale IDs, and preserves
@@ -53,7 +57,7 @@ Every positive invariant and temporal property has a targeted failing mutant;
 - D3 retains stopped, cancelled, timed-out and failed captures. Archive writes are
   assumed successful; byte durability and disk failures are not proved here.
 - `talking[t]` changes through speech/silence events. Fixed silence timeout is enabled only
-  after the renewed silence deadline, while the hard cap is a separate stop cause. `OldSpeechTimeout` exposes the Current PTT wall-clock timeout; the
+  after ten minutes of continuous silence; speech renews that deadline and there is no recording-length cap. `OldSpeechTimeout` exposes the Current PTT wall-clock timeout; the
   fixed policy's timeout-while-speaking mutant must fail `NoTimeoutWhileTalking`.
 
 `ProcessingSettles` assumes fair decode, result, cancellation-reap and timer work.
@@ -112,45 +116,49 @@ busy, processing click lacks a guard, result delivery waits for a cosmetic floor
 new recording drops a deferred final, and PTT timeout is allowed during speech.
 See normalized traces, [run.json](results/run.json), and [MUTANTS.md](results/MUTANTS.md).
 
-## Capture timing and captured-take overlap
+## D3 ruling — 2026-11-02 11:00Z
 
-`ProductClock.cfg` checks the exact product ratio: one clock step is 60 seconds,
-`SilenceLimit = 1`, `CapLimit = 20` (1,200 seconds). Speech renews the silence
-deadline but never the hard cap. The silence `timeout` and hard `cap` are distinct
-causes: speech forbids the former; the latter must stop even continuous speech.
-Both archive the take. Deadline service availability and fair timeout/cap handlers
-are checked, not just a guard that could hold because timeout is disabled. There
-is no fairness assumption that forces the speaker to become silent.
+Current evidence: [D3 receipt](results/D3-11-00Z.json),
+[full union mutant table](results/UNION-MUTANTS.md), and
+[recording replay log](results/Conformance.log). Earlier FIX-ROUND/Verification
+receipts retain historical evidence; their cap policy is superseded here.
 
-The full two-take graph uses `CapLimit = 3` as a conservative finite concurrency
-abstraction. The single-capture ProductClock graph uses the same operators with
-the literal 1/20 ratio, restricting only admission to A; A/B capture-clock logic
-is symmetric. All dedicated timing mutants also run that literal ratio. This
-keeps exhaustive graph and fairness checking small without silently dropping the
-real product deadlines. Neither clock model proves wall-clock scheduler latency.
+Automatic stopping requires **10 minutes of continuous silence**, at the beginning
+or in the middle of a take. Every speech event renews that deadline. Recurring or
+continuous speech can keep recording indefinitely; elapsed recording time never
+forces a stop. Explicit Stop/Cancel and terminal capture errors remain separate.
 
-`SpeechRenewsDeadline` rejects missed speech registration and failed renewal;
-`NoEarlySilenceTimeout` rejects early firing; `SilenceTimesOut` checks deadline
-service availability and eventual stop under uninterrupted silence;
-`CaptureWithinCap` and `CapAlwaysFires` check the bound and eventual stop. A broken
-timeout cannot hide behind a later cap because the deadline-availability clause
-fails first. The cap-disabled, cap-renewed-by-speech, cap-blocked-during-speech,
-never-timeout, no-renewal and early-timeout mutants all have exact failing configs.
+`ProductClock.cfg` uses one-minute clock steps and `SilenceLimit = 10`. The full
+two-take graph uses a two-step silence abstraction. `ObservationLimit` only bounds
+a saturated monitor used to observe recordings past the former cap and to inject
+the cap regression; it is never a stopping condition in Fixed. Fairness does not
+force speech to stop or force a recording to end.
 
-`N8DecodeAdmissible` and `N8ImmediatePaste` require an enabled capture-to-decode
-transition while B records and preserve B's microphone ownership. `OverlapPastes`
-combines progress from captured A with immediate decode/result availability. A
-plain leads-to formula would still accept Decode delayed until B's bounded cap;
-the availability clauses deliberately close that dodge. Weak fairness alone does
-not promise that a scheduler will finish A before an adversarial immediate stop
-of B, so that stronger ordering is not claimed. Three hold-decode mutants target
-N8DecodeAdmissible, N8ImmediatePaste and OverlapPastes separately.
+`SpeechRenewsDeadline`, `NoTimeoutWhileTalking`, `NoEarlySilenceTimeout` and
+`SilenceTimesOut` retain the renewal, safety and continuous-silence service/progress
+contracts. `RecurringSpeechNeverTimesOut` forbids every automatic stop when the
+silence deadline has not been reached, including between recurring speech events.
+`MutReintroducedCap` adds a 20-minute wall-clock stop and MUST fail that property.
+`WitnessSpeechPastFormerCap` requires an actively speaking recording beyond the
+former cap; `WitnessSpeechSilenceTimeout` requires speech → silence → ten quiet
+ticks → timeout. Both are event/state reachability queries required to fail.
 
-Event-anchored negative queries require decode(A) during B's recording and
-speech(A) → silence(A) → timeout(A), alongside the prior overlap/cancel witnesses.
-Removing Decode fairness must fail `EventuallyIdle` because captured work remains
-unsettled. Default replay still executes both policies; switching runtime policy
-to Fixed makes its comparison strict and removes baseline-pin expectations.
+The superseded `CapAlwaysFires` and `CaptureWithinCap` obligations and their four
+mutants are removed by the explicit ruling. All other G/I properties and configs,
+including newest-target Escape, stale-guard cleanup and the N8 refinement, remain.
+The PTT companion also removes `CapStops`/`NoCapMutant`, adds the no-cap regression
+and silence-progress mutants, and preserves full archive and raw-text equality.
+RuntimeOwnership's acknowledgement, readability, target and focus contracts are
+unchanged.
+
+N8 starts at captured A, not only transcribing A. Enabled decode/result contracts
+and OverlapPastes prevent holding A behind a recording B that may now last
+indefinitely. EventuallyIdle is conditional on captures ending; it never requires
+a live speaker to stop. Every acceptance property has an exact failing mutant.
+
+The source replay covers owned admission/cancel/delivery. The new ten-minute
+clock policy is a design-level formal check here; this focused replay does not
+wait through real microphone/silence intervals or establish installed timing.
 
 ## Merged Lane I ownership refinement and source map
 
@@ -164,10 +172,9 @@ checks stale guards and foreground selection before a command is emitted.
 is an executed strict historical mismatch. No corpus uses an opt-in gate.
 
 `conformance.sh` runs Bun socket replay and Swift LaneG/LaneI replay by default,
-with Swift through heavy.sh. The Swift corpus includes F5, guarded click,
+with the whole replay through heavy.sh (reusing an ancestor slot to avoid nested-lock deadlock). The Swift corpus includes F5, guarded click,
 Escape, all distinct Fixed cancellation contexts, immediate final dispatch,
-and the deferred-final-not-dropped trace. Lane G's notch corpora remain intact
-and run through their existing expected-baseline comparison. These checks do
+and the deferred-final-not-dropped trace. Unrelated notch cases are excluded from this recording-only replay. These checks do
 not exercise a real mic, input synthesis, or the installed application.
 
 ## Source map
@@ -178,7 +185,7 @@ not exercise a real mic, input synthesis, or the installed application.
 | Record socket; capable/legacy ACK policy | `src/socket-handlers.ts:463`, `:516` |
 | Mic/decoder ownership; bounded failed capture | `src/recording-take-queue.ts:84`, `:112`; `src/recording-jobs.ts:63` |
 | Capture exit proof; full archive; decode queue | `src/input.ts:2663`, `:3035`, `:3363` |
-| Speech renewal; 60-second silence; 20-minute cap | `src/input.ts:2571`, `:2595`, `:2680`, `:2809` |
+| Speech renewal implementation before the 11:00Z D3 policy update | `src/input.ts:2571`, `:2595`, `:2680`, `:2809` |
 | Immediate final; no cosmetic floor | `VoiceState.swift:2654`, `:4063`, `:4254` |
 | Scoped cancel / durable take signal | `src/socket-handlers.ts:363`; `src/recording-jobs.ts:115` |
 | Guard/cooldown; newest Escape; stale guard | `VoiceState.swift:1019`, `:2009`, `:2667` |
@@ -189,7 +196,7 @@ not exercise a real mic, input synthesis, or the installed application.
 
 The ownership supplement checks acknowledgement settlement without fair ACK
 arrival, captured-target delivery, focus custody, drain notice and mic release.
-The PTT supplement checks raw sequence retention, speech renewal and hard cap.
+The PTT supplement checks raw sequence retention, speech renewal, ten-minute silence and the absence of a cap.
 All properties in both supplements have their own exact-property failing mutants.
 
 Current failures, all exact-property checks: native F5 cancels A, socket start is
@@ -206,9 +213,9 @@ no other take is recording (including a pending new take). A readable identity
 still requires the captured window and element. Owned delivery never activates
 an app. The ownership supplement now varies readability at Record and checks
 both allowed single-take fallback and forbidden fallback during B. The exact
-property/mutant table is regenerated by the union checker. No G or I property
-or mutant was removed; ProductClock and all FIXED-2 deadline/decode contracts
-are retained alongside the ownership and PTT supplements.
+property/mutant table is regenerated by the union checker. All ownership/readability, retention and decode contracts are retained. Only
+the three superseded cap obligations and their five old mutants are retired by
+the 11:00Z D3 ruling; ProductClock now uses the ten-minute silence deadline.
 
 X selects the newest processing take and arms/commits that take's own guard.
 Escape retains its shown-take bypass; neither path can borrow another guard.

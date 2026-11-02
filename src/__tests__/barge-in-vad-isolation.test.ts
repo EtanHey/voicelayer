@@ -1,3 +1,4 @@
+import { InferenceSession } from "onnxruntime-node";
 import { describe, expect, it, spyOn } from "bun:test";
 import { IsolatedSileroVoiceActivityDetector, VAD_CHUNK_BYTES, processVADChunk, resetVAD } from "../vad";
 import { createBargeInMonitor } from "../soundlayer/barge-in";
@@ -53,6 +54,34 @@ describe("barge-in VAD ownership", () => {
     await resetVAD();
     for (const chunk of chunks.slice(1)) actual.push(await b.processChunk(chunk));
     expect(actual).toEqual(expected);
+  });
+
+  it("a stalled old live inference cannot overwrite the next recording after reset", async () => {
+    const expected = await baseline();
+    await resetVAD();
+    const firstRunFinished = Promise.withResolvers<void>();
+    const releaseOld = Promise.withResolvers<void>();
+    const actualRun = InferenceSession.prototype.run;
+    let first = true;
+    const spy = spyOn(InferenceSession.prototype, "run").mockImplementation(async function (
+      this: InferenceSession, ...args: Parameters<InferenceSession["run"]>
+    ) {
+      const isOld = first; first = false;
+      const result = await actualRun.apply(this, args);
+      if (isOld) { firstRunFinished.resolve(); await releaseOld.promise; }
+      return result;
+    });
+    const old = processVADChunk(pcm(99));
+    try {
+      await firstRunFinished.promise;
+      await resetVAD();
+      const actual = [await processVADChunk(firstChunk)];
+      releaseOld.resolve(); await old;
+      for (const chunk of chunks.slice(1)) actual.push(await processVADChunk(chunk));
+      expect(actual).toEqual(expected);
+    } finally {
+      releaseOld.resolve(); await old; spy.mockRestore(); await resetVAD();
+    }
   });
 
   it("allocates different VAD owners for default monitors and layer.vad", async () => {

@@ -112,7 +112,8 @@ public struct CopyFeedbackButton: View {
         .focused($isFocused)
         .focusEffectDisabled(feedback.hidesFocusRing)
         .onChange(of: isFocused) { _, focused in feedback.focusChanged(to: focused) }
-        .help(isCopied ? "Copied" : label)
+        // Native registration: SwiftUI `.help` does not show in the non-activating notch panel (R0856-09).
+        .background(PillControlTooltip(text: isCopied ? "Copied" : label))
         .accessibilityLabel(isCopied ? "Copied" : label)
     }
 }

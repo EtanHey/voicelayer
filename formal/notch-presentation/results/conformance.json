@@ -1,69 +1,59 @@
 {
   "command": "bash formal/notch-presentation/conformance.sh",
-  "status": "PASS_WITH_PINNED_BASELINE_DIVERGENCES",
+  "status": "PASS_FIXED_NOTCH_STRICT_PIPELINE_BASELINE_PINNED",
   "corpora": [
     "Current",
     "Fixed"
   ],
   "skips": 0,
-  "productionPolicy": "current",
+  "productionPolicy": "fixed",
   "remoteCI": "NOT_RUN",
   "installedOrLiveAcceptance": "NOT_RUN",
   "sourceSHA256": {
-    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "2a0c5e13c01615ef4ac8fb3a0ed9f259595d9541e22efd9f9bfb768a14e06b6d",
-    "formal/runtime-contract.json": "ab6305773cb1884474e665a1c421dfcd78250fe49613625de6aef6b4fcf877d8"
+    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "2c090c01488677a0a87a95e912a1dc0471c6e64dc50edef39ebb82c508d10220",
+    "formal/runtime-contract.json": "d5fde60fe38663b6b603b9c34ff3735112d33232966d48e5e79c568a05b48821"
   },
   "tests": 3,
   "unexpectedFailures": 0,
   "notchFrames": 12330,
   "nativePaths": 8,
-  "expectedFailureGroups": {
-    "Fixed NoteHasCause": 1,
-    "FixedText": 1524,
-    "N1": 3020,
-    "N2": 468,
-    "N4": 462,
-    "N5": 792,
-    "N3NoticeBand": 252,
-    "Fixed native graph paths": 4,
-    "FixedProjection": 2374
-  },
+  "expectedFailureGroups": {},
   "divergencePins": {
     "Fixed NoteHasCause": {
-      "count": 1,
-      "sha256": "1246fc93bca00b90d0fcaf2f7b7b41546f08817ce552c25eabc7dca19181c65a"
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "FixedText": {
-      "count": 1524,
-      "sha256": "11b06d47d2ac80b718bca0fd57b0f153d53094e9a44655ba14d20c86d1bf3152"
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "N1": {
-      "count": 3020,
-      "sha256": "7fa695f3df28e5ebcc65d30fd6ab9f36982b74ed5477e6190e78a802253bb6a7"
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "N2": {
-      "count": 468,
-      "sha256": "51f83fde06ccf606b0a0e9bcc7cfc4c335e500b49e953deb20aa10075612219a"
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "N4": {
-      "count": 462,
-      "sha256": "18cb55537117c4476db870733226c0db616106a286b9b5282ed6193a6733be64"
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "N5": {
-      "count": 792,
-      "sha256": "a8c8b111647ca9e7112a65f0132c124390495798f91261a102c2b5fccab0d6a9"
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "N3NoticeBand": {
-      "count": 252,
-      "sha256": "74476fa2d99eb622649266437c1897b1f74da70af9bd92a15977933097b73d57"
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "Fixed native graph paths": {
       "count": 4,
       "sha256": "8305f180ed6ea9f1087dd38cb15b404e57b65e0861de8fce60009fc7b06f82de"
     },
     "FixedProjection": {
-      "count": 2374,
-      "sha256": "f19c12de6beed6c064c7bd1fd563ce881a6d9804fdc2e29a20e33c7df6cc0e6b"
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   },
   "driftProbe": {
@@ -81,6 +71,21 @@
       ".build.noindex/swift",
       "--filter",
       "LaneGFormalConformanceTests.testBothNotchCorporaAndIndependentProductionLedger"
-    ]
-  }
+    ],
+    "note": "Historical Current-policy probe from FIXED-2; Fixed notch is now strict."
+  },
+  "priorReplayBase": "0fb80413992d7aeb74be8a37f87a24455fa353b9",
+  "productionSource": "f98243d2b2141ff0f0d16c3f145cb76cfcd0ebae",
+  "fixedNotchExpectedFailures": 0,
+  "historicalCurrentExpectedMismatchGroups": {
+    "Current projection": 2436,
+    "Current NoteHasCause": 1
+  },
+  "pinnedNativePipelineBaseline": {
+    "policy": "current",
+    "count": 4,
+    "sha256": "8305f180ed6ea9f1087dd38cb15b404e57b65e0861de8fce60009fc7b06f82de",
+    "expectedFailureWrapper": false
+  },
+  "explicitHistoryMetadataCases": true
 }
