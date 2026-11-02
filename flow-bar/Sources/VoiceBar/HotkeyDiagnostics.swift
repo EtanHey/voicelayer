@@ -1,4 +1,5 @@
 import Foundation
+import HotkeyAtomics
 
 /// Logging seam for the CGEventTap hotkey path.
 ///
@@ -34,7 +35,11 @@ enum HotkeyDiagnostics {
     static var sink: (String) -> Void = { NSLog("%@", $0) }
 
     /// Per-event tracing switch. MUST default to `false` — see the type doc.
-    static var isVerboseEnabled = false
+    private static let verboseStorage = VoiceBarHotkeyAtomicCreate(0)!
+    static var isVerboseEnabled: Bool {
+        get { VoiceBarHotkeyAtomicLoad(verboseStorage) != 0 }
+        set { VoiceBarHotkeyAtomicStore(verboseStorage, newValue ? 1 : 0) }
+    }
 
     /// Read the opt-in switch. Called once when the event tap starts.
     static func loadVerboseSetting(defaults: UserDefaults = VoiceBarDefaults.make()) {
@@ -42,13 +47,14 @@ enum HotkeyDiagnostics {
     }
 
     /// Log a matched-hotkey or tap-lifecycle event. Always emitted.
-    static func log(_ message: @autoclosure () -> String) {
-        sink(message())
+    static func log(_ message: @autoclosure @escaping () -> String) {
+        if Thread.isMainThread { sink(message()) }
+        else { DispatchQueue.main.async { sink(message()) } }
     }
 
     /// Log a per-event trace line. Emitted only when explicitly enabled.
-    static func verbose(_ message: @autoclosure () -> String) {
+    static func verbose(_ message: @autoclosure @escaping () -> String) {
         guard isVerboseEnabled else { return }
-        sink(message())
+        log(message())
     }
 }

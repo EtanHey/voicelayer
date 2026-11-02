@@ -14,6 +14,7 @@
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import HotkeyAtomics
 import VoiceBarUI
 
 private func describeEventType(_ type: CGEventType) -> String {
@@ -69,7 +70,10 @@ final class GestureStateMachine {
         case holdEnd
     }
 
-    private(set) var state: State = .idle
+    let activity = HotkeyActivitySnapshot()
+    private(set) var state: State = .idle {
+        didSet { activity.setGestureActive(state != .idle) }
+    }
     private var keyDownTime: TimeInterval?
     private var holdTimer: DispatchWorkItem?
     private var doubleTapTimer: DispatchWorkItem?
@@ -390,23 +394,22 @@ func dispatchHotkeyAction(
     onKeyUp: @escaping () -> Void = {},
     onCancel: @escaping () -> Void,
     onPasteLastTranscript: @escaping () -> Void = {},
-    onSpeakSelection: @escaping () -> Void = {}
+    onSpeakSelection: @escaping () -> Void = {},
+    onSendEnter: @escaping () -> Void = { postReturnKeyPress() },
+    isCurrent: @escaping () -> Bool = { true }
 ) {
-    switch action {
-    case .keyDown:
-        DispatchQueue.main.async(execute: onKeyDown)
-    case .keyUp:
-        DispatchQueue.main.async(execute: onKeyUp)
-    case .cancel:
-        DispatchQueue.main.async(execute: onCancel)
-    case .sendEnter:
-        postReturnKeyPress()
-    case .pasteLastTranscript:
-        DispatchQueue.main.async(execute: onPasteLastTranscript)
-    case .speakSelection:
-        DispatchQueue.main.async(execute: onSpeakSelection)
-    case .ignore, .consume:
-        break
+    guard action != .ignore, action != .consume else { return }
+    DispatchQueue.main.async {
+        guard isCurrent() else { return }
+        switch action {
+        case .keyDown: onKeyDown()
+        case .keyUp: onKeyUp()
+        case .cancel: onCancel()
+        case .sendEnter: onSendEnter()
+        case .pasteLastTranscript: onPasteLastTranscript()
+        case .speakSelection: onSpeakSelection()
+        case .ignore, .consume: break
+        }
     }
 }
 
@@ -704,10 +707,15 @@ private func postReturnKeyPress() {
 
 // MARK: - Tap Context (passed through userInfo)
 
-/// Holds configuration and gesture reference for the C callback.
+/// Holds immutable configuration, atomic snapshots and tap-thread-only sequence state.
 /// Must be kept alive for the duration of the event tap.
 final class TapContext {
-    let gesture: GestureStateMachine
+    let activity: HotkeyActivitySnapshot
+    private let activeStorage = VoiceBarHotkeyAtomicCreate(1)!
+    var isActive: Bool { VoiceBarHotkeyAtomicLoad(activeStorage) != 0 }
+    func invalidate() { VoiceBarHotkeyAtomicStore(activeStorage, 0) }
+    deinit { VoiceBarHotkeyAtomicDestroy(activeStorage) }
+
     let targetKeycodes: Set<Int64>
     let targetMouseButtons: Set<Int64>
     let enterMouseButtons: Set<Int64>
@@ -719,7 +727,9 @@ final class TapContext {
     let onCancel: () -> Void
     let onPasteLastTranscript: () -> Void
     let onSpeakSelection: () -> Void
-    let shouldHandleEscape: () -> Bool
+    let onSendEnter: () -> Void
+    var recovery = HotkeyTapRecovery()
+    var scheduleRecovery: ((TimeInterval, @escaping () -> Void) -> Void)?
     var debounceState = HotkeyDebounceState()
     var hotkeySequenceState = HotkeySequenceState()
     /// CFMachPort reference for re-enabling the tap after system disables it.
@@ -738,9 +748,11 @@ final class TapContext {
         onCancel: @escaping () -> Void,
         onPasteLastTranscript: @escaping () -> Void,
         onSpeakSelection: @escaping () -> Void = {},
-        shouldHandleEscape: @escaping () -> Bool
+        shouldHandleEscape: @escaping () -> Bool,
+        onSendEnter: @escaping () -> Void = { postReturnKeyPress() }
     ) {
-        self.gesture = gesture
+        activity = gesture.activity
+        activity.setCancellationActive(shouldHandleEscape())
         targetKeycodes = keycodes
         targetMouseButtons = mouseButtons
         self.enterMouseButtons = enterMouseButtons
@@ -752,7 +764,7 @@ final class TapContext {
         self.onCancel = onCancel
         self.onPasteLastTranscript = onPasteLastTranscript
         self.onSpeakSelection = onSpeakSelection
-        self.shouldHandleEscape = shouldHandleEscape
+        self.onSendEnter = onSendEnter
     }
 }
 
@@ -770,28 +782,30 @@ func hotkeyCallback(
         return Unmanaged.passUnretained(event)
     }
     let ctx = Unmanaged<TapContext>.fromOpaque(userInfo).takeUnretainedValue()
-    let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-    let mouseButtonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
-    let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
-
-    // Per-event: the tap sees EVERY keystroke on the machine, so this line is a
-    // keystroke log of whatever the user is typing. It stays behind the verbose
-    // gate and must never be re-enabled by default. See HotkeyDiagnostics.
-    HotkeyDiagnostics.verbose(
-        "[HotkeyManager] Callback entry type=\(describeEventType(type)) keycode=\(keycode) "
-            + "mouseButton=\(mouseButtonNumber) flags=\(describeFlags(event.flags)) "
-            + "autorepeat=\(autorepeat)"
-    )
-
-    // Re-enable tap if system disabled it (e.g., after timeout or secure input)
+    guard ctx.isActive else { return Unmanaged.passUnretained(event) }
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        if let tap = ctx.tap {
-            CGEvent.tapEnable(tap: tap, enable: true)
-            HotkeyDiagnostics.log("[HotkeyManager] Re-enabled event tap after system disable")
+        let recovery = ctx.recovery.disabled(by: type)
+        let reason = type == .tapDisabledByTimeout ? "timeout" : "user input"
+        HotkeyDiagnostics.log("[HotkeyManager] Tap disabled by \(reason); count=\(recovery.count), retry=\(String(describing: recovery.delay))")
+        if let delay = recovery.delay {
+            ctx.scheduleRecovery?(delay) { [weak ctx] in
+                guard let ctx, ctx.isActive, let tap = ctx.tap else { return }
+                CGEvent.tapEnable(tap: tap, enable: true)
+                HotkeyDiagnostics.log("[HotkeyManager] Deliberate tap re-enable after \(reason); count=\(recovery.count)")
+            }
         }
         return Unmanaged.passUnretained(event)
     }
-
+    let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+    let mouseButtonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
+    let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
+    let flags = event.flags
+    // Capture values only: optional trace formatting and the log sink run off the tap.
+    HotkeyDiagnostics.verbose(
+        "[HotkeyManager] Callback entry type=\(describeEventType(type)) keycode=\(keycode) "
+            + "mouseButton=\(mouseButtonNumber) flags=\(describeFlags(flags)) autorepeat=\(autorepeat)"
+    )
+    let activity = ctx.activity.value
     let isMouseHotkeyEvent = type == .otherMouseDown || type == .otherMouseUp
     let action: HotkeyAction = if isMouseHotkeyEvent {
         mouseHotkeyAction(
@@ -808,8 +822,9 @@ func hotkeyCallback(
             autorepeat: autorepeat,
             targetKeycodes: ctx.targetKeycodes,
             useModifierMode: ctx.useModifierMode,
-            gestureIsActive: ctx.gesture.state != .idle,
-            cancellationIsActive: ctx.gesture.state != .idle || ctx.shouldHandleEscape(),
+            currentModifierFlags: flags,
+            gestureIsActive: activity & 1 != 0,
+            cancellationIsActive: activity & 3 != 0,
             sequenceState: &ctx.hotkeySequenceState
         )
     }
@@ -823,7 +838,9 @@ func hotkeyCallback(
         onKeyUp: { isMouseHotkeyEvent ? ctx.onMouseUp() : ctx.onKeyUp() },
         onCancel: ctx.onCancel,
         onPasteLastTranscript: ctx.onPasteLastTranscript,
-        onSpeakSelection: ctx.onSpeakSelection
+        onSpeakSelection: ctx.onSpeakSelection,
+        onSendEnter: ctx.onSendEnter,
+        isCurrent: { ctx.isActive }
     )
 
     if shouldConsumeHotkeyEvent(
@@ -848,7 +865,7 @@ final class HotkeyManager {
     static let defaultUsesModifierMode = false
 
     private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private var tapRunLoop: HotkeyTapRunLoop?
 
     /// Keycodes to listen for.
     /// F18 relay = 79, F5 standard = 96.
@@ -912,6 +929,7 @@ final class HotkeyManager {
 
     /// Start the event tap. Returns false if permission is missing or tap creation fails.
     func start() -> Bool {
+        if eventTap != nil { return true }
         HotkeyDiagnostics.loadVerboseSetting()
         permissionStatus = HotkeyManager.currentPermissionStatus()
         guard permissionStatus.isGranted else {
@@ -969,25 +987,54 @@ final class HotkeyManager {
             permissionStatus.isGranted ? "granted" : "missing"
         )
 
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: hotkeyCallback,
-            userInfo: ctxPtr
-        ) else {
+        let runner = HotkeyTapRunLoop()
+        // Recovery waits for main to become healthy, then performs one bounded,
+        // delayed attempt on the tap thread. Stop invalidates queued attempts.
+        ctx.scheduleRecovery = { [weak runner] delay, work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak runner] in
+                runner?.perform(work)
+            }
+        }
+        var createdTap: CFMachPort?
+        var createdSource: CFRunLoopSource?
+        _ = runner.start(install: { loop in
+            // These event classes include swallowed F5/F18, Escape and mouse
+            // hotkeys. One consuming tap is necessary; no observational taps.
+            // Pointer motion, drag, scroll and other mouse buttons are not requested.
+            guard let tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: mask,
+                callback: hotkeyCallback,
+                userInfo: ctxPtr
+            ) else { return }
+            guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+                CFMachPortInvalidate(tap)
+                return
+            }
+            createdTap = tap
+            createdSource = source
+            ctx.tap = tap
+            CFRunLoopAddSource(loop, source, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }, cleanup: { [ctx] loop in
+            if let tap = createdTap {
+                CGEvent.tapEnable(tap: tap, enable: false)
+                CFMachPortInvalidate(tap)
+            }
+            if let source = createdSource { CFRunLoopRemoveSource(loop, source, .commonModes) }
+            withExtendedLifetime(ctx) {}
+        })
+        guard let tap = createdTap else {
+            ctx.invalidate()
+            runner.stop()
+            tapContext = nil
             NSLog("[HotkeyManager] Failed to create CGEventTap — check permissions")
             return false
         }
-
         eventTap = tap
-        ctx.tap = tap // Store tap reference so callback can re-enable it
-
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)!
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-        runLoopSource = source
+        tapRunLoop = runner
 
         NSLog("[HotkeyManager] Event tap started — keycodes: %@, modifier: %@",
               String(describing: targetKeycodes), useModifierMode ? "yes" : "no")
@@ -996,15 +1043,10 @@ final class HotkeyManager {
 
     /// Stop the event tap and clean up.
     func stop() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-        }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        }
+        tapContext?.invalidate()
+        tapRunLoop?.stop()
+        tapRunLoop = nil
         eventTap = nil
-        runLoopSource = nil
         tapContext = nil
         NSLog("[HotkeyManager] Event tap stopped")
     }
