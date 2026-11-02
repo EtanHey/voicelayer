@@ -13,6 +13,8 @@ export const PROSODY_POLICY = Object.freeze({
 });
 /** Same limit as the long-read chunker (TTS_CHUNK_MAX_CHARS); one owner of request size. */
 export const PROSODY_MAX_CHARS = 400;
+/** First audio must not wait on a body-sized request. Atomic words stay whole. */
+export const STARTUP_CHUNK_MAX_CHARS = 100;
 export const CLONE_CHUNK_POLICY = Object.freeze({ synthMsPerChar: 48, playbackMsPerChar: 65, bodyMaxChars: 200, lookahead: 2 as const });
 export function createCloneChunkBudget(maxChars = PROSODY_MAX_CHARS, playbackSpeed = 1) {
   const playbackStarts: number[] = [];
@@ -20,7 +22,7 @@ export function createCloneChunkBudget(maxChars = PROSODY_MAX_CHARS, playbackSpe
   const synthesisStart = () => Math.max(synthesisEnd, playbackStarts.at(-CLONE_CHUNK_POLICY.lookahead) ?? 0);
   return {
     chars() {
-      return playbackStarts.length === 0 ? maxChars : Math.max(1, Math.min(maxChars, CLONE_CHUNK_POLICY.bodyMaxChars,
+      return playbackStarts.length === 0 ? Math.min(maxChars, STARTUP_CHUNK_MAX_CHARS) : Math.max(1, Math.min(maxChars, CLONE_CHUNK_POLICY.bodyMaxChars,
         Math.floor((playbackEnd - synthesisStart()) / CLONE_CHUNK_POLICY.synthMsPerChar)));
     },
     append(chars: number, pauseMs = 0) {
@@ -37,7 +39,7 @@ export function createCloneChunkBudget(maxChars = PROSODY_MAX_CHARS, playbackSpe
 export const PROSODY_SYNTH_CONCURRENCY = 3;
 /** Request-size ramp, in projected speech characters. Speech plays at ~15 chars/s (MS_PER_CHAR) while an
  * engine renders far faster, so audio already queued ahead (words and planned pauses) covers the synthesis
- * of about RAMP times its length. Nothing ahead: the full limit, like the long-read chunker's first chunk.
+ * of about RAMP times its length. Structured startup is capped separately; plain plans keep their canonical partition.
  * FAST_MIN (~6–8 words) is the smallest request worth splitting off. */
 const RAMP = 8, FAST_MIN = 40, MS_PER_CHAR = 65;
 export function prosodyBudget(charsAhead: number, maxChars = PROSODY_MAX_CHARS): number {
@@ -304,9 +306,16 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   // inside a token or an atomic replacement; an oversized replacement stays one whole request.
   let ahead = 0;
   const cloneBudget = createCloneChunkBudget(maxChars, input.playbackSpeed);
-  const budget = () => clone ? cloneBudget.chars() : prosodyBudget(ahead, maxChars);
+  // Plain plans are not played through the structural scheduler. Preserve their
+  // canonical partition; the ordinary long-read chunker owns their startup cut.
+  const startupLimit = segments.some(segment => segment.kind !== "prose" || segment.pauseMs > PROSODY_POLICY.pauses.sentence)
+    ? STARTUP_CHUNK_MAX_CHARS : maxChars;
+  const budget = () => ahead === 0 ? Math.min(maxChars, startupLimit)
+    : clone ? cloneBudget.chars() : prosodyBudget(ahead, maxChars);
   segments = mergeWordless(segments.flatMap((segment) => {
-    if (segment.text.length <= budget()) {
+    // Emphasis adds a closing period after partitioning; reserve it at startup.
+    const segmentBudget = () => Math.max(1, budget() - (ahead === 0 && segment.emphasis ? 1 : 0));
+    if (segment.text.length <= segmentBudget()) {
       ahead += segment.text.length + 1 + segment.pauseMs / MS_PER_CHAR;
       cloneBudget.append(segment.text.length + (segment.emphasis && !TERMINAL.test(segment.text) ? 1 : 0), segment.pauseMs);
       return [segment];
@@ -330,15 +339,15 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
       pieces.push(current!); current = undefined;
     };
     for (const sentence of sentences) {
-      if (current && speechLength(current.start, sentence.end) <= budget()) { current.end = sentence.end; continue; }
+      if (current && speechLength(current.start, sentence.end) <= segmentBudget()) { current.end = sentence.end; continue; }
       if (current) emit();
-      if (speechLength(sentence.start, sentence.end) <= budget()) { current = { ...sentence }; continue; }
+      if (speechLength(sentence.start, sentence.end) <= segmentBudget()) { current = { ...sentence }; continue; }
       const words = [...readText.slice(sentence.start, sentence.end).matchAll(/\S+/g)]
         .map((w) => sentence.start + w.index).filter((at, i) => i === 0 || clean(at));
       words.forEach((at, i) => {
         const word = trim(at, words[i + 1] ?? sentence.end);
         // Word runs are never longer than the long-read chunker's own word split (read characters).
-        if (current && Math.max(speechLength(current.start, word.end), word.end - current.start) <= budget()) { current.end = word.end; return; }
+        if (current && Math.max(speechLength(current.start, word.end), word.end - current.start) <= segmentBudget()) { current.end = word.end; return; }
         if (current) emit();
         current = word;
       });

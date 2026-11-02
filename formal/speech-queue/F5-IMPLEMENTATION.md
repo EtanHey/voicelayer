@@ -82,9 +82,12 @@ Synthesis/player/decoder/recorder I/O uses owned fakes; the microphone is never 
 and no audio plays. The end-of-read sentinel completes without spawning another player.
 
 This is a bounded scenario projection, not an exhaustive transition/refinement proof.
-R2-03 queue presentation and R2-05 initial timing remain separate implementation work:
-their Current prepare/start prefixes are included here without claiming those runtime
-invariants pass. Two-take N6/paste acknowledgement, late settlement, physical release
+R2-03/R2-05 have a companion real-data projection in `speech_data_conformance.py`:
+Fixed graph states project onto preparing/playing/parked queue snapshots with zero,
+one or two waiting jobs. Real PlaybackQueueManager events feed compiled VoiceState;
+the first clone speaking frame supplies estimates without awaiting alignment.
+Removing the preparing-owner flag or initial timing must fail the named obligation.
+The separate Claude cursor slice owns monotonic highlighting on timing replacement. Two-take N6/paste acknowledgement, late settlement, physical release
 after settlement, clone timing, nonzero chunks, quiescence and preparing-with-no-chunk
 also have focused real-logic guards. The native projection waits for the already-queued
 main-thread restore using a FIFO continuation barrier on MainActor, not a timed
@@ -113,3 +116,16 @@ Capture-start assertions await their event;
 teardown waits for both Lane I jobs and the deferred F5 loan using the original
 2-second bound. The full Bun suite is a separate final check; known SSH-generated
 speech-fixture failures are reported for GUI verification, never silently passed.
+
+
+F-speech R2 extends the queue projection across actual model UserPlay and capture-end
+_auto_resume edges. Both manual and F5-owned Resume replay with old-player exit held
+and released, each at 0/1/2 waiting reads. Every published queue frame must exclude
+the current/resuming read while keeping real waiting reads. Resume retains current
+ownership even below the model while the old player terminates. The resume-order
+mutant restores publication-before-promotion plus a non-current pending resume.
+All speech-data mutants run in disposable source copies under .build.noindex;
+SIGKILL isolation and both Resume-edge projections have focused Python guards.
+An indivisible first token over 100 characters remains atomic by design. The
+pre-existing second-chunk 400-character mid-token fallback is a follow-up; an
+installed acoustic check must still measure the chunk-1 to chunk-2 gap.
