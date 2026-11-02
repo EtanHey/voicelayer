@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import OffscreenTestSupport
 @testable import VoiceBarUI
 import XCTest
 
@@ -35,9 +36,21 @@ final class NotchStatusFeedbackTests: XCTestCase {
         XCTAssertFalse(f.opensHistory)
         let host = NSHostingView(rootView: VoiceBarNotchFeedbackBand(feedback: f, onOpenHistory: {}))
         host.frame = NSRect(x: 0, y: 0, width: f.width, height: f.height)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        VLOrderTestWindow(window)
+        defer { window.contentView = nil; window.close() }
         host.layoutSubtreeIfNeeded()
-        func field(_ view: NSView) -> NSTextField? {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+        func field(_ view: NSView) -> NSView? {
             if let label = view as? NSTextField, label.stringValue == text { return label }
+            // Selectable SwiftUI Text can mount as NSTextView.
+            if let label = view as? NSTextView, label.string == text { return label }
+            // macOS 27 uses AppKitTextInteractionView, exposing the full string
+            // through accessibility while retaining the actual text layout bounds.
+            if view.accessibilityValue() as? String == text { return view }
             return view.subviews.compactMap { field($0) }.first
         }
         let label = try XCTUnwrap(field(host), "Full quit instruction must be mounted")

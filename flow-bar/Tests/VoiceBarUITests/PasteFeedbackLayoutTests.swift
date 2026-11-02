@@ -281,10 +281,13 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         let textSize: CGSize
                         let textRect: CGRect
                         if let feedback = presentation.feedback {
-                            // SwiftUI mounts selectable Text as NSTextView. Measure the actual
-                            // under-notch note and its laid-out glyphs, not a trailing-wing proxy.
-                            func feedbackText(_ view: NSView) -> NSTextView? {
+                            // Selectable SwiftUI Text uses a native interaction view on macOS 27;
+                            // older renderers use NSTextView or NSTextField. Match the complete
+                            // mounted string and measure that node, never a trailing-wing proxy.
+                            func feedbackText(_ view: NSView) -> NSView? {
                                 if let text = view as? NSTextView, text.string == message { return text }
+                                if let text = view as? NSTextField, text.stringValue == message { return text }
+                                if view.accessibilityValue() as? String == message { return view }
                                 return view.subviews.compactMap { feedbackText($0) }.first
                             }
                             let text = try XCTUnwrap(feedbackText(host), "Full feedback text must be mounted")
@@ -292,31 +295,34 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                             textSize = textRect.size
                             availableWidth = feedback.width - 32
                             XCTAssertTrue(host.bounds.contains(textRect), "Full message stays inside its actual rendered frame")
-                            XCTAssertEqual(text.string, message)
-                            XCTAssertTrue(text.isSelectable, "Recovery feedback remains selectable")
-                            XCTAssertFalse(text.isEditable, "Feedback must not become an editor")
+                            XCTAssertTrue(text.visibleRect.insetBy(dx: -0.5, dy: -0.5).contains(text.bounds),
+                                          "Ancestor clipping must not hide the mounted feedback")
                             XCTAssertEqual(feedback.width, geometry.bodyFlushWithWings.bodyWidth,
                                            "Feedback uses the compact under-notch note width")
                             XCTAssertLessThan(feedback.width, canvas.canvasGeometry.totalWidth,
                                               "Feedback must not expand into a full-width band")
-                            let manager = try XCTUnwrap(text.layoutManager)
-                            let container = try XCTUnwrap(text.textContainer)
-                            manager.ensureLayout(for: container)
-                            let glyphs = manager.glyphRange(for: container)
-                            XCTAssertEqual(manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil),
-                                           NSRange(location: 0, length: (message as NSString).length),
-                                           "Every character must be laid out in the mounted text view")
-                            var lineCount = 0
-                            manager.enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, range, _ in
-                                lineCount += 1
-                                XCTAssertEqual(manager.truncatedGlyphRange(inLineFragmentForGlyphAt: range.location).location,
-                                               NSNotFound, "No native line may truncate the feedback")
+                            if let nativeText = text as? NSTextView {
+                                XCTAssertTrue(nativeText.isSelectable, "Recovery feedback remains selectable")
+                                XCTAssertFalse(nativeText.isEditable, "Feedback must not become an editor")
+                                let manager = try XCTUnwrap(nativeText.layoutManager)
+                                let container = try XCTUnwrap(nativeText.textContainer)
+                                manager.ensureLayout(for: container)
+                                let glyphs = manager.glyphRange(for: container)
+                                XCTAssertEqual(manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil),
+                                               NSRange(location: 0, length: (message as NSString).length),
+                                               "Every character must be laid out in the mounted text view")
+                                var lineCount = 0
+                                manager.enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, range, _ in
+                                    lineCount += 1
+                                    XCTAssertEqual(manager.truncatedGlyphRange(inLineFragmentForGlyphAt: range.location).location,
+                                                   NSNotFound, "No native line may truncate the feedback")
+                                }
+                                XCTAssertEqual(lineCount, 2, "Both feedback lines must actually be laid out")
+                                let inkRect = manager.boundingRect(forGlyphRange: glyphs, in: container)
+                                    .offsetBy(dx: nativeText.textContainerOrigin.x, dy: nativeText.textContainerOrigin.y)
+                                XCTAssertTrue(nativeText.visibleRect.insetBy(dx: -0.5, dy: -0.5).contains(inkRect),
+                                              "Ancestor clipping must not hide any laid-out feedback glyphs")
                             }
-                            XCTAssertEqual(lineCount, 2, "Both feedback lines must actually be laid out")
-                            let inkRect = manager.boundingRect(forGlyphRange: glyphs, in: container)
-                                .offsetBy(dx: text.textContainerOrigin.x, dy: text.textContainerOrigin.y)
-                            XCTAssertTrue(text.visibleRect.insetBy(dx: -0.5, dy: -0.5).contains(inkRect),
-                                          "Ancestor clipping must not hide any laid-out feedback glyphs")
                             let topY = host.isFlipped ? textRect.minY - host.bounds.minY : host.bounds.maxY - textRect.maxY
                             XCTAssertGreaterThanOrEqual(topY, geometry.topHeight,
                                                         "Feedback grows below the anchored top row")
