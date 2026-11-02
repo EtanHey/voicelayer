@@ -2587,7 +2587,7 @@ export async function recordToBuffer(
     let noAnswerDeadlineAtMs = 0;
     let noAnswerRemainingMs = timeoutMs;
     let classificationGraceEndsAtMs: number | undefined;
-    const pttSilenceTimeoutMs = voiceAsk || captureState?.archiveSource === "voicebar" ? LOCKED_SILENCE_TIMEOUT_MS : timeoutMs;
+    const pttSilenceTimeoutMs = voiceAskVad || captureState?.archiveSource === "voicebar" ? LOCKED_SILENCE_TIMEOUT_MS : timeoutMs;
     const synchronizeRecordingHold = () => {
       if (pushToEnd || resolved) return false;
       const held = isRecordingHoldEngaged();
@@ -2644,14 +2644,6 @@ export async function recordToBuffer(
         if (!pttSpeechDetectionAvailable) return;
         // A slow inference or queued PCM may contain speech. Classify it before deciding it was silence.
         const remaining = pttSilenceTimeoutMs - (Date.now() - pttLastSpeechAtMs);
-        if (voiceAsk && remaining <= 0 && (pttVadPending || chunkQueue.length > 0)) {
-          classificationGraceEndsAtMs ??= pttLastSpeechAtMs + pttSilenceTimeoutMs + NO_ANSWER_CLASSIFY_GRACE_MS;
-          if (Date.now() >= classificationGraceEndsAtMs) {
-            if (captureState) captureState.noAnswerExpired = "unclassified";
-            finish();
-            return;
-          }
-        }
         if (pttVadPending || chunkQueue.length > 0 || remaining > 0) {
           timer = setTimeout(onTimeout, pttVadPending || chunkQueue.length > 0 ? STOP_POLL_MS : remaining);
           return;

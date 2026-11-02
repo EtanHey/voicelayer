@@ -3,14 +3,14 @@
   "kind": "invariant",
   "target": "NoCutOffMidAnswer",
   "status": "EXPECTED_FAIL",
-  "generated": 15,
-  "distinct": 13,
+  "generated": 129,
+  "distinct": 92,
   "trace": [
-    "/\\ heard = FALSE\n/\\ elapsed = 0\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
-    "/\\ heard = FALSE\n/\\ elapsed = 1\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
-    "/\\ heard = FALSE\n/\\ elapsed = 2\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
-    "/\\ heard = TRUE\n/\\ elapsed = 2\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
-    "/\\ heard = TRUE\n/\\ elapsed = 3\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
-    "/\\ heard = TRUE\n/\\ elapsed = 3\n/\\ kept = TRUE\n/\\ closed = TRUE\n/\\ armed = TRUE\n/\\ cause = \"no-answer\""
+    "/\\ pending = FALSE\n/\\ wall = 0\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = FALSE\n/\\ budget = 0\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = FALSE\n/\\ silence = 0\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 1\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = FALSE\n/\\ budget = 1\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = FALSE\n/\\ silence = 1\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 2\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = FALSE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = FALSE\n/\\ silence = 2\n/\\ cause = \"none\"",
+    "/\\ pending = TRUE\n/\\ wall = 2\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = TRUE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = TRUE\n/\\ silence = 2\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 2\n/\\ heard = TRUE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = TRUE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = TRUE\n/\\ silence = 0\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 2\n/\\ heard = TRUE\n/\\ grace = 0\n/\\ kept = TRUE\n/\\ stalled = FALSE\n/\\ frameSpeech = TRUE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = TRUE\n/\\ spoken = TRUE\n/\\ silence = 0\n/\\ cause = \"no-answer\""
   ]
 }

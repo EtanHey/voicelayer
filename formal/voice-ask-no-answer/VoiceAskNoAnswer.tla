@@ -19,10 +19,10 @@ Tick == /\ ~closed
         /\ UNCHANGED <<held, spoken, heard, pending, frameSpeech, stalled, closed, cause, kept>>
 \* A captured frame can arrive ON the deadline, before its asynchronous classification.
 Capture(speech) == /\ ~closed /\ ~pending
-                   /\ pending' = TRUE /\ frameSpeech' = speech /\ spoken' = spoken \/ speech
+                   /\ pending' = TRUE /\ frameSpeech' = speech /\ spoken' = (spoken \/ speech)
                    /\ UNCHANGED <<wall, budget, silence, grace, held, heard, stalled, closed, cause, kept>>
 Classify == /\ ~closed /\ pending /\ ~stalled
-            /\ pending' = FALSE /\ heard' = heard \/ frameSpeech
+            /\ pending' = FALSE /\ heard' = (heard \/ frameSpeech)
             /\ silence' = IF frameSpeech THEN 0 ELSE silence
             /\ UNCHANGED <<wall, budget, grace, held, spoken, frameSpeech, stalled, closed, cause, kept>>
 VadStall == /\ ~closed /\ pending /\ ~stalled /\ stalled' = TRUE

@@ -10,7 +10,9 @@
     "src/__tests__/voice-ask-no-answer.test.ts",
     "src/voice-away-policy.ts",
     "src/__tests__/voice-away-policy.test.ts",
-    "src/__tests__/converse-resilience.test.ts"
+    "src/__tests__/converse-resilience.test.ts",
+    "src/vad.ts",
+    "src/__tests__/barge-in-vad-isolation.test.ts"
   ],
   "checks": {
     "Fixed": {

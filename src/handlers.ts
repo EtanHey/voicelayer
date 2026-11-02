@@ -658,7 +658,7 @@ export type VoiceAskTurnRequest = {
 
 export async function runVoiceAskTurn(request: VoiceAskTurnRequest): Promise<VoiceAskTurnOutcome> {
   try {
-    return await withAsyncVoiceAdmission(async () => {
+    return await withAsyncVoiceAdmission(async (): Promise<VoiceAskTurnOutcome> => {
       if (!claimVoiceCall(request.context)) {
         finishSpeakReceipt(request.archiveContext, "rejected", "REJECTED");
         return { kind: "away" };

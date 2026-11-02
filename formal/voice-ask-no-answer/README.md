@@ -3,7 +3,7 @@
 Two abstract ticks represent the configurable post-question no-answer deadline;
 one grace tick represents the bounded 2s classification grace. `Capture` may
 arrive at the exact deadline and `Classify` later, or `VadStall` may prevent it
-from ever finishing. Unknown speech closes as retained/unclassified, never away.
+from ever finishing. Before first speech with HOLD off, unknown speech closes as retained/unclassified, never away. After speech/HOLD, pending VAD cannot prove silence, matching Lane I.
 The pending-speech invariant protects actual spoken frames, including at the
 same instant as the deadline. The heard-speech invariant protects classified
 answers. The stall property requires eventual closure despite stuck inference.

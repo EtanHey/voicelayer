@@ -1464,6 +1464,33 @@ describe("input recording durability", () => {
     });
   }
 
+  it("D5 locked Ask does not mistake pending speech for ten-minute silence", async () => {
+    const { waitForInput, getRecordingState } = await import("../input");
+    const { setRecordingHold } = await import("../recording-hold");
+    const recorder = installFakeRecorder([], true);
+    const clock = installRecordingClock([120_000, 600_000, 50]);
+    const abort = new AbortController();
+    const inference = Promise.withResolvers<number>();
+    vadProbabilityForCall = () => 0.95;
+    const recording = waitForInput(120_000, "thoughtful", false, {
+      archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
+    });
+    try {
+      await recorder.waitForSpawn(); setRecordingHold(true); clock.advance(0);
+      for (let n = 0; n < 25; n++) recorder.push(makePcmChunk(1800));
+      await waitUntil(() => vadCallCount === 25, "known held speech");
+      clock.advance(599_000);
+      let started = false;
+      vadProcessSpy!.mockImplementation(() => { started = true; return inference.promise; });
+      recorder.push(makePcmChunk(1800)); await waitUntil(() => started, "held pending speech");
+      clock.advance(1_000); clock.advance(2_000);
+      expect(getRecordingState()).toBe("recording");
+      inference.resolve(0.95); await Bun.sleep(1);
+      writeFileSync(STOP_FILE, "stop"); clock.advance(0);
+      expect(await recording).toBe("Retained transcript.");
+    } finally { inference.resolve(0.95); abort.abort(); await recording.catch(() => null); clock.restore(); }
+  });
+
   it("D5 delayed recorder still gets a minimum real listening window", async () => {
     const { waitForInput, getRecordingState } = await import("../input");
     const clock = installRecordingClock([15_000]);

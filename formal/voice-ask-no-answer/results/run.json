@@ -2,33 +2,54 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/voice-ask-no-answer/VoiceAskNoAnswer.tla": "41cfe8f7716e6682f2a2c2691980c16034c42e54b674fd44e5dd414bc3e0d1cc",
-    "formal/voice-ask-no-answer/checks.json": "d5653599196a193b32fa7a3c7553f233d73f7856cde3b2ee1af7e99bd072f096",
+    "formal/voice-ask-no-answer/VoiceAskNoAnswer.tla": "a450ce0156617af8e30f196160d8d6312df1fda8c5704605f3fd5b2101374c32",
+    "formal/voice-ask-no-answer/checks.json": "1e3caf306b1f8febdf5d40ea4b438cfa38c93f56a32f5da3e0a2ca1c2b34f55e",
     "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
-    "formal/voice-ask-no-answer/NeverCloseMutant.cfg": "fb61046bcf8db0d783a9d38a5e994c15ca32703ab75c564b53c20df81030694b",
-    "formal/voice-ask-no-answer/DropRecordingMutant.cfg": "fd9836f19dcee760b7781b759d504aad45611df96e23ae9963aa4855507211e2",
-    "formal/voice-ask-no-answer/OldDeadlineMutant.cfg": "c5e888c98397fa90fdedc20e6c54ac2f84c13f5dc3a567d355bc1d09e6e5c712",
-    "formal/voice-ask-no-answer/Fixed.cfg": "c45b5a9a110b61bd167d7a77613f2ebe5201ddcb7b9a105752169e9b1c5d5a79",
-    "src/input.ts": "5f2527d6cda931a8c4c0c6742e308e62601212b2c3cad324e155019133932905",
-    "src/handlers.ts": "6cd3fd07642d5c28bc51cfd11c8b160def1d2a482bc812fd7abeaa7ac0571241",
+    "formal/voice-ask-no-answer/NeverCloseMutant.cfg": "40b717b8f79acdb60309bd5b6196c04f6f868048a710fe4d16ff5a0cc4c7f282",
+    "formal/voice-ask-no-answer/NoPendingCheckMutant.cfg": "ba172e1a8dfba567fd20199564aa0f726d98c0e243a286c00fbef897ba361ec4",
+    "formal/voice-ask-no-answer/SpeechCapMutant.cfg": "055bc7608b2da900ecff9b953d11bcb77ce2de87c2dafc905f66b5faa72def4c",
+    "formal/voice-ask-no-answer/UnboundedStallMutant.cfg": "25d581f72d9a4e2af1936e037a435eac26c8989b2cf03cbd223a9d4cddd4bfcd",
+    "formal/voice-ask-no-answer/NoLockedCloseMutant.cfg": "094763c79bf85d9fac4a2d6b477ed3bd063715c3698a787db2f468bd1a78c3a9",
+    "formal/voice-ask-no-answer/DropRecordingMutant.cfg": "2ec763631833484702a975f4e65d02f723cadf1a82c287c127059bf32688c383",
+    "formal/voice-ask-no-answer/OldDeadlineMutant.cfg": "33c6044677cce48a9dd0dd90728661b98da4593822531c19a36dac58d248068c",
+    "formal/voice-ask-no-answer/Fixed.cfg": "553a6c6f7c6fc6aaa0c978853be999289346b873fc8131fb51286ee51a923ca8",
+    "src/input.ts": "e45dee78854a164d6f942ae46549e0ff0b4bf41a85983709b523e909033a06e3",
+    "src/handlers.ts": "dfe70864423ff875b35c5119de2d7a69e26fefb1a3d566b5ef72ecd21f60f912",
     "src/voice-ask-no-answer.ts": "b952a04defe6db2651b242245adcd3bca9503b408f804b62b4c59d083ce35596",
-    "src/voice-turn-result.ts": "df056afd0d45cab239667269218e017ccb2f95c73937ea690cd00eefe7e438e5",
-    "src/__tests__/input-durability.test.ts": "64856d98caf98d39039e955f43cec64685672a8a20b4f64481d2b03bb52b3965",
-    "src/__tests__/voice-ask-no-answer.test.ts": "603c3e596716c54070f34e82ae12bd27165213b702a1cc14a3172699a8dac8d2"
+    "src/voice-turn-result.ts": "e1267f5e1e246712dc1798b635a1b174d2e4327518ec678d9484f5a0d3059a47",
+    "src/__tests__/input-durability.test.ts": "e43727155ceea69d6e46de0e873192866c857558bd199d8ed98df76b9efe309f",
+    "src/__tests__/voice-ask-no-answer.test.ts": "98cef36ef656e2196e82c4139a04656ea592e6f4658490a655b0cd7a48f99367",
+    "src/voice-away-policy.ts": "61aa52de50d006b05e4e9d9769cd28a8261a7bcff4604932cbfd71d3bfd79981",
+    "src/__tests__/voice-away-policy.test.ts": "b6d7ae440036018c5072e0eb23fd801cec457504d12fde775f4790a59a9d54ce",
+    "src/__tests__/converse-resilience.test.ts": "528d79f7113f82609df77160f4ba5ce9f8540bb659dc8e384629b0993f6942d1",
+    "src/vad.ts": "87ab1bcdadb01ad23647b20b71e0529e994c97e7583d0223e42caf8a41dc875b",
+    "src/__tests__/barge-in-vad-isolation.test.ts": "b794ae09794f5b292619871d9f9063c4b8debc2d93ec3d2a79e0c0454d936d0a"
   },
   "mutants": {
     "NoCutOffMidAnswer": [
       "OldDeadlineMutant"
     ],
-    "NoAnswerCloses": [
-      "NeverCloseMutant"
+    "PendingSpeechProtected": [
+      "NoPendingCheckMutant"
     ],
     "RecordingKept": [
       "DropRecordingMutant"
+    ],
+    "NoSpeechCap": [
+      "SpeechCapMutant"
+    ],
+    "NoAnswerCloses": [
+      "NeverCloseMutant"
+    ],
+    "StalledVadCloses": [
+      "UnboundedStallMutant"
+    ],
+    "LockedSilenceCloses": [
+      "NoLockedCloseMutant"
     ]
   },
   "graphHashes": {
-    "Fixed": "e74669e614079ee46d64b3d6b2b8da31d2237e84e401e84173699cb9002fb528"
+    "Fixed": "1ef58ea372a0c7e69152168d2342dc61455075b7a80628a7f234dec111000005"
   },
   "checks": {
     "Fixed": {
@@ -36,32 +57,64 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 15,
-      "distinct": 13
+      "generated": 1169,
+      "distinct": 529
     },
     "OldDeadlineMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "NoCutOffMidAnswer",
       "status": "EXPECTED_FAIL",
-      "generated": 15,
-      "distinct": 13
+      "generated": 129,
+      "distinct": 92
+    },
+    "NoPendingCheckMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PendingSpeechProtected",
+      "status": "EXPECTED_FAIL",
+      "generated": 69,
+      "distinct": 50
+    },
+    "UnboundedStallMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "StalledVadCloses",
+      "status": "EXPECTED_FAIL",
+      "generated": 1157,
+      "distinct": 517
     },
     "NeverCloseMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "NoAnswerCloses",
       "status": "EXPECTED_FAIL",
-      "generated": 14,
-      "distinct": 12
+      "generated": 1150,
+      "distinct": 510
     },
     "DropRecordingMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "RecordingKept",
       "status": "EXPECTED_FAIL",
-      "generated": 7,
-      "distinct": 6
+      "generated": 30,
+      "distinct": 24
+    },
+    "SpeechCapMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSpeechCap",
+      "status": "EXPECTED_FAIL",
+      "generated": 210,
+      "distinct": 144
+    },
+    "NoLockedCloseMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "LockedSilenceCloses",
+      "status": "EXPECTED_FAIL",
+      "generated": 1160,
+      "distinct": 520
     }
   }
 }
