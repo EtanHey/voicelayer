@@ -1,0 +1,24 @@
+{
+  "module": "RecordWhileProcessing",
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "sources": [
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+    "src/input.ts",
+    "src/socket-handlers.ts",
+    "src/recording-state.ts",
+    "src/session-booking.ts",
+    "src/mcp-server-daemon.ts"
+  ],
+  "checks": {
+    "Current": null,
+    "OldSocketBusy": "N6StartsB",
+    "OldF5CancelsA": "N6PreservesA",
+    "OldUnguardedCancel": "N7GuardedClick",
+    "OldDisplayFloor": "N8ImmediatePaste",
+    "OldDeferredFinalDrop": "N8FinalNotSuperseded",
+    "ConcurrentGlobalCancel": "N7ScopedCancel",
+    "DropCancelledMutant": "D3EveryTakeKept",
+    "Fixed": null
+  }
+}

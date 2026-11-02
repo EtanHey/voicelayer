@@ -1,0 +1,21 @@
+{
+  "A pastes while B records": 35,
+  "B cancelled while A still transcribes": 34,
+  "cooldown ring armed for A": 326,
+  "stale A guard after A pasted while B records": 21,
+  "timeout retains a take": 70,
+  "Escape cancels before cooldown completes": 114,
+  "currentStates": 3245,
+  "fixedStates": 1603,
+  "daemonAdmissionCases": 2
+}
+bun test v1.4.4 (38afee6c8)
+
+formal/record-while-processing/conformance.test.ts:
+Replayed 2 TLC admission equivalence classes through real handleSocketCommand
+(pass) TLC current socket admission agrees with the real handler [3.44ms]
+
+ 1 pass
+ 0 fail
+ 8 expect() calls
+Ran 1 test across 1 file. [287.00ms]

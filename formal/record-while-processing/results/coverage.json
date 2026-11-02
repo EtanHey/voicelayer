@@ -1,0 +1,11 @@
+{
+  "A pastes while B records": 35,
+  "B cancelled while A still transcribes": 34,
+  "cooldown ring armed for A": 326,
+  "stale A guard after A pasted while B records": 21,
+  "timeout retains a take": 70,
+  "Escape cancels before cooldown completes": 114,
+  "currentStates": 3245,
+  "fixedStates": 1603,
+  "daemonAdmissionCases": 2
+}
