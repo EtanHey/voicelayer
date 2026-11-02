@@ -634,6 +634,10 @@ public struct BarView: View {
                 }
                 statusLabel
             }
+            // Removing overflowing copy must not recenter the queue badge away
+            // from its existing core-side slot.
+            .frame(maxWidth: state.queueDepth > 0 && notchPresentation.feedback?.replacesWingText == true
+                ? .infinity : nil, alignment: .leading)
         case .disconnected:
             statusLabel
         case .recording:
@@ -966,7 +970,8 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        compactStatusLabel(statusText, confirmationText: state.confirmationText)
+        compactStatusLabel(notchPresentation.feedback?.wingText ?? statusText,
+                           confirmationText: state.confirmationText)
     }
 
     private func compactStatusLabel(_ text: String, confirmationText: String? = nil) -> some View {
