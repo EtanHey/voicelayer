@@ -30,6 +30,8 @@ import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
+import { planProsody } from "../tts/prosody";
+import { projectSpeakableText } from "../speakable-text";
 import { PreparedReadStart } from "../tts/selection-read-preparation";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
@@ -49,6 +51,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let failHistory: boolean;
   let failPlayerSpawn = false;
   let synthLatencyMs = 0;
+  let firstSynthCostPerChar = 0;
   let modelReplay = false;
   let effectiveStateSpy: ReturnType<typeof spyOn>;
   type Child = { exit: ReturnType<typeof deferred<number>>; killed: boolean };
@@ -65,7 +68,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdFirstSynth = false; holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
-    clockMs = 100_000;
+    clockMs = 100_000; firstSynthCostPerChar = 0;
     releaseAlignments = [];
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
     synthBarrier = fixtureBarrier(); playerBarrier = fixtureBarrier();
@@ -88,6 +91,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const spoken = argv.find(a => a.startsWith("--text="))!.slice(7);
         writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * (modelReplay ? 20000000 : 120000), duration: modelReplay ? 18000000 : 100000})).join("\n"));
         const exit = deferred<number>(); const item = { argv, exit, killed: false }; synths.push(item); synthBarrier.push(item);
+        if (synths.length === 1) clockMs += firstSynthCostPerChar * spoken.length;
         if (!holdSynth || (synths.length === 1 && !holdFirstSynth)) {
           if (synthLatencyMs > 0) setTimeout(() => exit.resolve(0), synthLatencyMs); else exit.resolve(0);
         }
@@ -122,6 +126,84 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+  it("F-speech QueuedCountExcludesCurrent real preparing/playing/parked snapshots", async () => {
+    const wire: { expected: number; events: unknown[] }[] = [];
+    const rows = process.env.VOICELAYER_SPEECH_CASES
+      ? z.array(z.object({ phase: z.enum(["preparing", "playing", "parked"]), queued: z.number().int().min(0).max(2) }))
+          .parse(JSON.parse(readFileSync(process.env.VOICELAYER_SPEECH_CASES, "utf8")))
+      : ["preparing", "playing", "parked"].flatMap(phase => [0, 1, 2].map(queued => ({ phase, queued })));
+    for (const row of rows) {
+      const beginning = events.length, playerIndex = players.length, decoderIndex = decoders.length;
+      holdDecoder = true;
+      // Fake media lives in the preload-owned run; no resident file is read.
+      playAudioNonBlocking(TTS_HISTORY_FILE + ".owner.mp3", { text: "Current read", voice: "fixture", durationMs: 4000 });
+      await decoderBarrier.at(decoderIndex);
+      for (let i = 0; i < row.queued; i++) playAudioNonBlocking(TTS_HISTORY_FILE + `.wait-${i}.mp3`,
+        { text: `Waiting ${i}`, voice: "fixture", durationMs: 4000 });
+      if (row.phase !== "preparing") {
+        holdDecoder = false; decoders[decoderIndex].exit.resolve(0); await playerBarrier.at(playerIndex);
+        if (row.phase === "parked") { expect(pausePlayback().outcome).toBe("accept"); await fixtureCheckpoint(); }
+      }
+      const snapshots = events.slice(beginning).filter(event => event.type === "queue");
+      expect(snapshots.flatMap(event => event.items).filter(item => item.text === "Current read" && !item.is_current),
+        "QueuedCountExcludesCurrent every published frame").toHaveLength(0);
+      const queue = snapshots.at(-1);
+      expect(queue.items.filter((item: { is_current: boolean }) => !item.is_current).length,
+        `QueuedCountExcludesCurrent ${row.phase}/${row.queued}`).toBe(row.queued);
+      wire.push({ expected: row.queued, events: [
+        { type: "state", state: "speaking", text: "Current read", duration_ms: 4000 }, ...snapshots] });
+      stopPlayback(); for (const child of decoders) child.exit.resolve(0); await awaitCurrentPlayback();
+    }
+    if (process.env.VOICELAYER_SPEECH_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_WIRE, JSON.stringify(wire));
+    console.log(`QueuedCountExcludesCurrent replayed ${rows.length} real queue scenarios`);
+  });
+
+  it.each([20, 60, 200])("F-speech first audio uses bounded startup synthesis for %i words", async words => {
+    holdSynth = true; firstSynthCostPerChar = 10;
+    const source = "alpha ".repeat(words).trim() + ". Later sentence stays behind the player.";
+    const chunks = chunkTextForLongRead(source);
+    expect(chunks.join(" ")).toBe(source);
+    const h = start("edge", source);
+    await playerBarrier.at(0); await h.started;
+    const request = synths[0].argv.find(arg => arg.startsWith("--text="))!.slice(7);
+    expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(request.length * 10);
+    console.log(`F-speech fake first audio: words=${words} request_chars=${request.length} synthesis_ms=${request.length * 10}`);
+    expect(request.length, "StartupRequestBound").toBeLessThanOrEqual(100);
+    expect(events.find(event => event.state === "speaking" && !event.long_read?.preparing).initial_timing?.words.length,
+      "TimingNeverBlankWhilePlaying Edge").toBeGreaterThan(0);
+    expect(synths[1].exit.promise).toBeDefined();
+    expect(players).toHaveLength(1); // Later synthesis is still unresolved.
+    stopPlayback(); await h.done;
+  });
+
+  it.each(["edge", "clone"] as const)("F-speech %s structured startup preserves words within its budget", engine => {
+    const source = "alpha ".repeat(60).trim() + ".\n\n## Next paragraph\nKeep every word.";
+    const plan = planProsody({ readText: source, projection: projectSpeakableText(source, [], engine), engine });
+    expect(plan.segments[0].text.length, "StartupRequestBound").toBeLessThanOrEqual(100);
+    expect(plan.chunks.map(chunk => chunk.text).join(" ").split(/\s+/)).toEqual(source.split(/\s+/));
+    expect(chunkTextForLongRead(source, engine)[0].length, "StartupRequestBound").toBeLessThanOrEqual(100);
+    const heading = "# " + "a ".repeat(49) + "bb";
+    const headingPlan = planProsody({ readText: heading, projection: projectSpeakableText(heading, [], engine), engine });
+    expect(headingPlan.segments[0].text.length, "StartupRequestBound including emphasis punctuation").toBeLessThanOrEqual(100);
+    const longWord = "x".repeat(150);
+    expect(chunkTextForLongRead(longWord + " next words.")[0]).toBe(longWord);
+  });
+
+  it("F-speech TimingNeverBlankWhilePlaying first clone frame precedes delayed alignment", async () => {
+    const later = deferred<any>();
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("fixture audio")));
+    spies.push(spyOn(alignment, "alignCloneAudio").mockImplementation(() => later.promise));
+    releaseAlignments.push(() => later.resolve({ status: "untimed", identity: {}, words: [] }));
+    const h = start("clone", "One two three four.");
+    await playerBarrier.at(0);
+    const first = events.find(event => event.state === "speaking" && !event.long_read?.preparing);
+    expect(first.initial_timing?.aligned_words?.some((word: {offset_ms: number | null}) => word.offset_ms !== null),
+      "TimingNeverBlankWhilePlaying").toBe(true);
+    if (process.env.VOICELAYER_SPEECH_TIMING_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_TIMING_WIRE, JSON.stringify(
+      events.filter(event => event.state === "speaking").map(event => JSON.parse(serializeEvent(event)))));
+    stopPlayback(); await h.done;
+  });
+
   it.skipIf(!process.env.VOICELAYER_F5_CASES)("TLC F5 native command projection conforms to real daemon/player/take handlers", async () => {
     const schema = z.array(z.object({ initial: z.enum(["playing", "preparing", "paused"]), press: z.number().int(),
       manual: z.boolean(), stopped: z.boolean(), outcome: z.enum(["pasted", "empty", "failed", "cancelled", "timeout"]),
@@ -1373,12 +1455,15 @@ describe("long-read real runtime with owned synth/player fakes", () => {
           kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
           engineSource: "settings", rateSource: "settings",
         }), spyOn(qwen, "loadProfile").mockReturnValue(cloneProfile));
+        const source = `## ${heading}\n- Red apple\n- Green pear\n- Blue sky`;
+        const planned = planProsody({ readText: source, projection: projectSpeakableText(source, [], "clone"),
+          engine: "clone", listNumbers: "inline", concurrency: 1 });
         let running = 0, maximum = 0;
         const pending = deferred<void>();
         const clone = spyOn(qwen, "synthesizeCloned").mockImplementation(async (text, _voice, signal) => {
           maximum = Math.max(maximum, ++running);
           try {
-            if (text === `${heading}.` || text.startsWith("Bravo")) return Buffer.from("clone audio");
+            if (text === planned.segments[0].text || text.startsWith("Bravo")) return Buffer.from("clone audio");
             pending.resolve();
             await new Promise<void>(resolve => {
               if (signal?.aborted) resolve(); else signal?.addEventListener("abort", () => resolve(), { once: true });
@@ -1386,7 +1471,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
             return null;
           } finally { running--; }
         }); spies.push(clone);
-        select("A", `## ${heading}\n- Red apple\n- Green pear\n- Blue sky`);
+        select("A", source);
         await pending.promise;
         if (playing) await playerBarrier.at(0);
         else expect(players).toHaveLength(0);
@@ -1396,7 +1481,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         if (command === "read_next") await playerBarrier.at(playing ? 1 : 0);
         else await settle();
         expect(maximum).toBe(1);
-        expect(clone.mock.calls.map(call => call[0])).toEqual([`${heading}.`, "Red apple.",
+        expect(clone.mock.calls.map(call => call[0])).toEqual([...planned.segments.slice(0, 2).map(segment => segment.text),
           ...(command === "read_next" ? ["Bravo queued read."] : [])]);
         expect(clone.mock.calls[1][2]?.aborted).toBe(true);
         await handleSocketCommand({ cmd: "stop" });

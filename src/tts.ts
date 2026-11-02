@@ -77,10 +77,11 @@ import { longReadDocument, runLongRead, type LongReadSeek, type SeekResult } fro
 import { PreparedReadStart, type PreparedChunk } from "./tts/selection-read-preparation";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
-import { CLONE_CHUNK_POLICY, createCloneChunkBudget, planProsody, type ProsodyPlan } from "./tts/prosody";
+import { STARTUP_CHUNK_MAX_CHARS, CLONE_CHUNK_POLICY, createCloneChunkBudget, planProsody, type ProsodyPlan } from "./tts/prosody";
 import { createProsodyRead, decodeAudioToPCM, encodePCMToMp3, isStructuredPlan, sliceProjection } from "./tts/prosody-read";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { getEffectiveRecordingState } from "./recording-state";
+import { initialPlaybackTiming } from "./tts/playback-timing";
 import { startCloneTiming } from "./tts/clone-timing";
 import { combineHistoryTimings, clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
 import {
@@ -429,7 +430,7 @@ export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "e
     }
     return chunks;
   }
-  if (text.length <= 100 || !text.trim()) return [text];
+  if (text.length <= STARTUP_CHUNK_MAX_CHARS || !text.trim()) return [text];
   const prefix = (remaining: string, budget: number): number => {
     const minimum = 40;
     const cap = TTS_CHUNK_MAX_CHARS;
@@ -452,7 +453,14 @@ export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "e
         .map(match => match.index + match[0].length).find(end => end >= minimum);
       if (boundary !== undefined) return boundary;
     }
-    if (sentence <= cap) return sentence;
+    if (budget !== STARTUP_CHUNK_MAX_CHARS && sentence <= cap) return sentence;
+    if (budget === STARTUP_CHUNK_MAX_CHARS) {
+      const end = [...remaining.slice(0, budget + 1).matchAll(/\s+/gu)]
+        .map(match => match.index).filter(end => end > 0 && !unsafeEnd(end)).at(-1);
+      // One oversized word remains atomic; never invent spaces or repeat fragments.
+      const firstWordEnd = remaining.search(/\s/u);
+      return end ?? (firstWordEnd > 0 ? firstWordEnd : remaining.length);
+    }
     // Pathological unpunctuated prose still has a bounded engine request.
     const words = [...remaining.slice(0, cap + 1).matchAll(/\s+/gu)]
       .map(match => match.index).filter(end => end >= minimum && end <= cap && !unsafeEnd(end));
@@ -460,7 +468,7 @@ export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "e
   };
   const chunks: string[] = [];
   let remaining = text.trim();
-  for (const budget of [100, 200]) {
+  for (const budget of [STARTUP_CHUNK_MAX_CHARS, 200]) {
     if (!remaining) break;
     const end = prefix(remaining, budget);
     chunks.push(remaining.slice(0, end).trimEnd());
@@ -1205,8 +1213,9 @@ class PlaybackQueueManager {
     this.evictExpired();
     this.collapseBurstyLowPriority(job);
     this.insert(job);
-    this.emitQueueSnapshot();
+    // Select the current owner before publishing: the first read is not waiting.
     this.processNext();
+    this.emitQueueSnapshot();
     return handle;
   }
 
@@ -1808,6 +1817,7 @@ class PlaybackQueueManager {
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
         ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),
         playback_amplitude: next.playbackAmplitude,
+        initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),
       });
       if (next.metadata.wordBoundaries?.length) {
         broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
@@ -1957,7 +1967,7 @@ class PlaybackQueueManager {
         text: this.preparing.job.metadata?.text ?? "",
         voice: this.preparing.job.metadata?.voice ?? "",
         priority: this.preparing.job.priority,
-        is_current: false,
+        is_current: true,
         progress: 0,
       });
     }
