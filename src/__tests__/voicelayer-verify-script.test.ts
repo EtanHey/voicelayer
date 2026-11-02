@@ -1,6 +1,6 @@
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { stubInstallerTransport } from "./setup/installer-transport";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   copyFileSync,
   existsSync,
@@ -47,7 +47,9 @@ function run(command: string[], options: { env?: Record<string, string>; cwd?: s
   if (!cwd) throw new Error("run() needs a temp repo: tempRoot is not set");
 
   if (command.includes(scriptPath)) Object.assign(env, stubInstallerTransport(join(tempRoot, "fake-bin"), env.PATH));
-  return Bun.spawnSync(command, {
+  // Keep Git anchored even if an unrelated test's spawn wrapper drops cwd.
+  const anchored = command[0] === "git" ? ["git", "-C", cwd, ...command.slice(1)] : command;
+  return Bun.spawnSync(anchored, {
     cwd,
     stdin: options.input ? new TextEncoder().encode(options.input) : undefined,
     stdout: "pipe",
@@ -119,6 +121,19 @@ afterEach(() => {
 });
 
 describe("the fake-repo helper stays inside its temp repo", () => {
+  test("Git remains in the fixture when a leaked wrapper drops spawn cwd", () => {
+    const original = Bun.spawnSync;
+    const realBefore = original(["git", "-C", repoRoot, "rev-parse", "HEAD"], { env: process.env }).stdout.toString();
+    const wrapper = spyOn(Bun, "spawnSync").mockImplementation(((command: string[]) =>
+      original(command, { env: process.env })) as typeof Bun.spawnSync);
+    try {
+      initFakeRepo();
+      expect(text(run(["git", "rev-parse", "--show-toplevel"]).stdout).trim()).toBe(realpathSync(tempRoot));
+      expect(text(run(["git", "config", "--local", "--get", "user.name"]).stdout).trim()).toBe("Test User");
+      expect(original(["git", "-C", repoRoot, "rev-parse", "HEAD"], { env: process.env }).stdout.toString()).toBe(realBefore);
+    } finally { wrapper.mockRestore(); }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   // A stray `[user] Test User / test@example.com` landed in the REAL repo's
   // .git/config (2026-09-24). A plain `git config` honours GIT_COMMON_DIR and
   // GIT_CONFIG, so a caller that exports either (a git hook, a rebase --exec)
