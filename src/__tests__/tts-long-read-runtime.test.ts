@@ -134,13 +134,13 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       const beginning = events.length, playerIndex = players.length, decoderIndex = decoders.length;
       holdDecoder = true;
       // Fake media lives in the preload-owned run; no resident file is read.
-      const owner = playAudioNonBlocking(TTS_HISTORY_FILE + ".owner.mp3", { text: "Current read", voice: "fixture", durationMs: 4000 });
+      playAudioNonBlocking(TTS_HISTORY_FILE + ".owner.mp3", { text: "Current read", voice: "fixture", durationMs: 4000 });
       await decoderBarrier.at(decoderIndex);
       for (let i = 0; i < row.queued; i++) playAudioNonBlocking(TTS_HISTORY_FILE + `.wait-${i}.mp3`,
         { text: `Waiting ${i}`, voice: "fixture", durationMs: 4000 });
       if (row.phase !== "preparing") {
         holdDecoder = false; decoders[decoderIndex].exit.resolve(0); await playerBarrier.at(playerIndex);
-        if (row.phase === "parked") { expect(pausePlayback().outcome).toBe("accept"); await owner.playerExited; }
+        if (row.phase === "parked") { expect(pausePlayback().outcome).toBe("accept"); await fixtureCheckpoint(); }
       }
       const queue = events.slice(beginning).findLast(event => event.type === "queue");
       expect(queue.items.filter((item: { is_current: boolean }) => !item.is_current).length,
@@ -189,7 +189,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const first = events.find(event => event.state === "speaking" && !event.long_read?.preparing);
     expect(first.initial_timing?.aligned_words?.some((word: {offset_ms: number | null}) => word.offset_ms !== null),
       "TimingNeverBlankWhilePlaying").toBe(true);
-    if (process.env.VOICELAYER_SPEECH_TIMING_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_TIMING_WIRE, JSON.stringify(first));
+    if (process.env.VOICELAYER_SPEECH_TIMING_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_TIMING_WIRE, serializeEvent(first));
     stopPlayback(); await h.done;
   });
 

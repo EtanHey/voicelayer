@@ -2990,6 +2990,10 @@ public final class VoiceState {
                     (event["generation"] as? NSNumber).map { (id, $0.intValue) }
                 }
                 statusText = event["text"] as? String ?? ""
+                // Consume startup timing before announcing speaking to observers.
+                if let timing = event["initial_timing"] as? [String: Any], timing["type"] as? String == "subtitle" {
+                    handleEvent(timing)
+                }
                 canReplay = true
                 hotkeyPhase = .idle
                 onModeChange?(.speaking)

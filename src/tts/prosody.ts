@@ -13,6 +13,8 @@ export const PROSODY_POLICY = Object.freeze({
 });
 /** Same limit as the long-read chunker (TTS_CHUNK_MAX_CHARS); one owner of request size. */
 export const PROSODY_MAX_CHARS = 400;
+/** First audio must not wait on a body-sized request. Atomic words stay whole. */
+export const STARTUP_CHUNK_MAX_CHARS = 100;
 export const CLONE_CHUNK_POLICY = Object.freeze({ synthMsPerChar: 48, playbackMsPerChar: 65, bodyMaxChars: 200, lookahead: 2 as const });
 export function createCloneChunkBudget(maxChars = PROSODY_MAX_CHARS, playbackSpeed = 1) {
   const playbackStarts: number[] = [];
@@ -20,7 +22,7 @@ export function createCloneChunkBudget(maxChars = PROSODY_MAX_CHARS, playbackSpe
   const synthesisStart = () => Math.max(synthesisEnd, playbackStarts.at(-CLONE_CHUNK_POLICY.lookahead) ?? 0);
   return {
     chars() {
-      return playbackStarts.length === 0 ? maxChars : Math.max(1, Math.min(maxChars, CLONE_CHUNK_POLICY.bodyMaxChars,
+      return playbackStarts.length === 0 ? Math.min(maxChars, STARTUP_CHUNK_MAX_CHARS) : Math.max(1, Math.min(maxChars, CLONE_CHUNK_POLICY.bodyMaxChars,
         Math.floor((playbackEnd - synthesisStart()) / CLONE_CHUNK_POLICY.synthMsPerChar)));
     },
     append(chars: number, pauseMs = 0) {
@@ -37,11 +39,11 @@ export function createCloneChunkBudget(maxChars = PROSODY_MAX_CHARS, playbackSpe
 export const PROSODY_SYNTH_CONCURRENCY = 3;
 /** Request-size ramp, in projected speech characters. Speech plays at ~15 chars/s (MS_PER_CHAR) while an
  * engine renders far faster, so audio already queued ahead (words and planned pauses) covers the synthesis
- * of about RAMP times its length. Nothing ahead: the full limit, like the long-read chunker's first chunk.
+ * of about RAMP times its length. Nothing ahead: the bounded startup request.
  * FAST_MIN (~6–8 words) is the smallest request worth splitting off. */
 const RAMP = 8, FAST_MIN = 40, MS_PER_CHAR = 65;
 export function prosodyBudget(charsAhead: number, maxChars = PROSODY_MAX_CHARS): number {
-  return charsAhead === 0 ? maxChars : Math.min(maxChars, Math.max(FAST_MIN, RAMP * charsAhead));
+  return charsAhead === 0 ? Math.min(maxChars, STARTUP_CHUNK_MAX_CHARS) : Math.min(maxChars, Math.max(FAST_MIN, RAMP * charsAhead));
 }
 
 export type ProsodySegmentKind = "heading" | "label" | "prose" | "item" | "aside" | "number";

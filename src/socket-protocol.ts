@@ -82,6 +82,8 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   };
   /** Fixed-window RMS truth for the audio file that just started playing. */
   playback_amplitude?: PlaybackAmplitudeEnvelope;
+  /** Atomic first-player timing; late measured subtitles replace startup estimates. */
+  initial_timing?: SubtitleEvent;
   /** Present when state is "recording" — the recording mode. */
   mode?: "vad" | "ptt";
   /** Present when state is "recording" with VAD — the silence mode. */

@@ -26,6 +26,19 @@ final class SpeechDataConformanceTests: XCTestCase {
         XCTAssertFalse(state.wordBoundaries.contains(where: \.isInterpolated))
     }
 
+    func testStartupTimingUsesChunkDurationAndGlobalOffsetOnce() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Next words", "duration_ms": 9000,
+                           "playback_offset_ms": 4000,
+                           "long_read": ["id": "read", "chunk_index": 1, "chunk_count": 2, "chunk_start_ms": 4000],
+                           "initial_timing": ["type": "subtitle", "words": [], "duration_ms": 1000, "aligned_words": [
+                            ["word_index": 0, "text": "Next", "offset_ms": 0, "duration_ms": 500, "estimated": true],
+                            ["word_index": 1, "text": "words", "offset_ms": 500, "duration_ms": 500, "estimated": true]
+                           ]]])
+        XCTAssertEqual(state.wordBoundaries.map(\.offsetMs), [4000, 4500])
+        XCTAssertEqual(state.playbackWordTimeline.map(\.offsetMs), [4000, 4500])
+    }
+
     func testRealDaemonQueueAndTimingProjection() throws {
         let env = ProcessInfo.processInfo.environment
         guard let queuePath = env["VOICELAYER_SPEECH_WIRE"], let timingPath = env["VOICELAYER_SPEECH_TIMING_WIRE"] else {
