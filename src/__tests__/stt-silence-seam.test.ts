@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { hasWavAudio, prepareSpeechAiff } from "./setup/speech-fixture";
+import { hasWavAudio, prepareSpeechAiff, speechFixtureAvailable } from "./setup/speech-fixture";
 import { nextStartAfterSkippedChunk, WhisperServerBackend } from "../stt";
 import {
   chooseChunkEnd,
@@ -60,16 +60,10 @@ function whichOk(bin: string): boolean {
 
 const hasSay = whichOk("say");
 const hasSox = whichOk("sox");
-const synthFailure = hasSay && hasSox ? buildLongFixture() : null;
-const ready = hasSay && hasSox && synthFailure === null;
-if (synthFailure) console.error(`[silence-seam] SKIPPING — ${synthFailure}`);
-if (!hasSay || !hasSox) {
-  console.error(
-    `[silence-seam] SKIPPING — missing: ${[hasSay ? null : "say", hasSox ? null : "sox"]
-      .filter(Boolean)
-      .join(", ")}. The pure merge tests in stt.test.ts still run.`,
-  );
-}
+const synthFailure = !hasSay || !hasSox
+  ? `missing: ${[hasSay ? null : "say", hasSox ? null : "sox"].filter(Boolean).join(", ")}. The pure merge tests in stt.test.ts still run.`
+  : buildLongFixture();
+const ready = speechFixtureAvailable("silence-seam", synthFailure);
 const seamTest = ready ? test : test.skip;
 
 const SMART_CHUNK_ENV = "VOICELAYER_STT_SMART_CHUNKS";

@@ -1,6 +1,16 @@
 import { readFileSync, rmSync } from "node:fs";
 import { parseWavAudioInfo } from "../../stt-pause-map";
 
+/** Candidate runs require speech coverage instead of accepting dependency skips. */
+export function speechFixtureAvailable(scope: string, failure: string | null): boolean {
+  if (failure === null) return true;
+  if (process.env.VOICELAYER_TEST_REQUIRE_SPEECH === "1") {
+    throw new Error(`[${scope}] ${failure}`);
+  }
+  console.error(`[${scope}] SKIPPING — ${failure}`);
+  return false;
+}
+
 /** A successful `say` can leave a 4096-byte AIFF header with no sound frames. */
 export function hasAiffAudio(path: string): boolean {
   try {

@@ -94,6 +94,7 @@ bash flow-bar/build-app.sh  # Build VoiceBar
 ```
 
 M1 full suites must run from a GUI-session process, not SSH: under the test preload's macOS sandbox, SSH-launched `say -o` can exit 0 with a header-only AIFF; synthesized-speech cases validate audio, retry once, and skip loudly when unavailable.
+Set `VOICELAYER_TEST_REQUIRE_SPEECH=1` for candidate full-suite runs: unavailable synthesized-speech fixtures or missing fixture tools fail with the same reason instead of skipping, enforcing zero speech-fixture skips.
 
 The suite is safe on a live host **only with the preload**. `bunfig.toml` loads
 `src/__tests__/setup/preload.ts` before any test module, which redirects every
