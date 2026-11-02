@@ -6,9 +6,10 @@ record-while-processing/check.sh runs all three modules and prints the complete
 [union table](../record-while-processing/results/UNION-MUTANTS.md).
 
 The runtime model distinguishes recorder drain, queued capture, decode, delivery
-acknowledgement, terminal failure and target identity. Escape selects the mic
+acknowledgement, terminal failure and target identity. Escape selects a pending foreground capture, then the mic
 owner, otherwise the newest processing take. An undisplayed newest take requires
-its own guard/cooldown. A stale guard eventually clears. An F5 during drain admits B immediately into a waiting capture intent. Its take ID,
+its own guard/cooldown. A stale guard eventually clears. An F5 during drain admits
+B immediately into a waiting capture intent. Its take ID,
 target and early Stop/Cancel belong to B; A retains the physical microphone until
 release is proven. Archive releases the microphone and StartQueued opens B once.
 N6StartsB requires both drain admission and the enabled start after proven release;
@@ -47,12 +48,12 @@ remembered until B's authoritative mic-open receipt. Escape/X cancel that B inte
 
 | Action | Real code |
 | --- | --- |
-| DrainPress / N6StartsB | `VoiceBarCommandRouter.swift:136`, `:165`; `VoiceState.swift:2674` |
-| Archive / ProveExit / StartQueued | `VoiceState.swift:2775`, `:2750`; blocked snapshots return before dispatch |
-| Record dispatch / identity | `VoiceState.swift:2740`; original ID and captured target survive the wait |
-| Stop before mic-open | `VoiceState.swift:1992`, `:2763` |
+| DrainPress / N6StartsB | `VoiceBarCommandRouter.swift:136`, `:165`; `VoiceState.swift:2680` |
+| Archive / ProveExit / StartQueued | `VoiceState.swift:2781`, `:2756`; blocked snapshots return before dispatch |
+| Record dispatch / identity | `VoiceState.swift:2746`; original ID and captured target survive the wait |
+| Stop before mic-open | `VoiceState.swift:1992`, `:2769` |
 | Cancel waiting B / Escape | `VoiceState.swift:2076`; `VoiceBarCommandRouter.swift:91` |
-| Reconnect custody | `VoiceState.swift:3530` |
+| Reconnect custody | `VoiceState.swift:3538` |
 
 The generated corpus includes drain admission and waiting cancellation edges.
 The replay creates local waiting intents through the real F5 router; it never

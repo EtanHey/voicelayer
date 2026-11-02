@@ -74,9 +74,9 @@ final class LaneIFormalConformanceTests: XCTestCase {
             XCTAssertNil(state.confirmationText)
             if let origin = row.origin {
                 if row.stages["A"] != "draining" {
-                    let phases = ["captured": "queued", "processing": "processing", "ack": "delivering", "done": "completed", "failed": "failed", "cancelled": "cancelled"]
-                    var event: [String: Any] = ["type": "state", "state": "transcribing", "mic_take_id": NSNull(),
-                        "recording_jobs": [["take_id": "A", "kind": "live", "phase": try XCTUnwrap(phases[row.stages["A"] ?? ""])]]]
+                    let phases = ["captured": "queued", "processing": "processing", "ack": "delivering", "failed": "failed"]
+                    let jobs = phases[row.stages["A"] ?? ""].map { [["take_id": "A", "kind": "live", "phase": $0]] } ?? []
+                    var event: [String: Any] = ["type": "state", "state": "transcribing", "mic_take_id": NSNull(), "recording_jobs": jobs]
                     if row.captureReleased == false { event["capture_error"] = "Recorder exit unconfirmed" }
                     state.handleEvent(event)
                 }
@@ -86,6 +86,7 @@ final class LaneIFormalConformanceTests: XCTestCase {
                 if dispatched {
                     XCTAssertEqual(commands.map { $0["cmd"] as? String }, ["record", "cancel"])
                     XCTAssertEqual(commands.last?["take_id"] as? String, b)
+                    XCTAssertNil(state.pendingIntent, "Cancellation retires B's startup receipt")
                 } else { XCTAssertTrue(commands.isEmpty, "Queued B cancellation cannot signal A") }
                 XCTAssertFalse(commands.contains { $0["cmd"] as? String == "cancel" && $0["take_id"] as? String == "A" })
             }
@@ -127,6 +128,13 @@ final class LaneIFormalConformanceTests: XCTestCase {
                 return ["take_id": id, "kind": "live", "phase": phase]
             }
             let mic = ["A", "B"].first { ["recording", "draining"].contains(row.stages[$0] ?? "") }
+            if row.stages["B"] == "waiting" {
+                XCTAssertEqual(row.target, "A", "B's own local cancellation has a dedicated replay")
+                state.handleEvent(["type": "state", "state": "recording", "mic_take_id": "A",
+                    "recording_jobs": [["take_id": "A", "kind": "live", "phase": "draining"]]])
+                VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+                XCTAssertNotNil(state.queuedRecordingTakeID)
+            }
             state.handleEvent(["type": "state", "state": mic == nil ? "transcribing" : "recording",
                 "recording_jobs": jobs, "mic_take_id": mic as Any])
             var commands: [[String: Any]] = []

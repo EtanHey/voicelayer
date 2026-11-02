@@ -2682,7 +2682,7 @@ public final class VoiceState {
         guard case nil = deferredBarRecording else { return }
         let queuesBehindDrain = isRecordingDrainPending
         guard queuesBehindDrain || mode == .idle || mode == .error || isPlaybackPaused || (mode == .transcribing && canRecordDuringProcessing) else { return }
-        guard pendingIntent?.command != .record else { return }
+        guard queuesBehindDrain || pendingIntent?.command != .record else { return }
         clearRetainedTeleprompter()
         let commandUptimeMs = currentRecordingUptimeMs()
         recordCommandUptimeMs = commandUptimeMs
@@ -2808,7 +2808,9 @@ public final class VoiceState {
             dictationTakeTargets = dictationTakeTargets.filter { ids.contains($0.key) || $0.key == activeBarTakeID }
             startQueuedRecordingIfCaptureReleased()
             if type == "state" {
-                if deferredRecordingTakeID != nil {
+                if let deferredID = deferredRecordingTakeID {
+                    if microphoneTakeID == deferredID, event["take_id"] as? String == deferredID,
+                       event["mode"] != nil { return false } // B's actual mic-open still initializes capture metadata.
                     if mode != .recording { mode = .recording; onModeChange?(.recording) }
                     return true
                 }
@@ -5129,6 +5131,7 @@ public final class VoiceState {
         recordStartLateRecoveryTask?.cancel()
         recordStartLateRecoveryTask = nil
         if clearPasteTarget {
+            if case .opening = deferredBarRecording { deferredBarRecording = nil }
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
         }

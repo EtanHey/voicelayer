@@ -216,6 +216,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
         snapshot(state, jobs: [(a, "live", "queued")])
         XCTAssertEqual(commands.last?["cmd"] as? String, "record")
         XCTAssertEqual(commands.last?["take_id"] as? String, b)
+        state.handleEvent(["type": "ack", "command": "record", "outcome": "accept", "id": try XCTUnwrap(commands.last?["id"] as? String)])
         snapshot(state, jobs: [(a, "live", "processing")])
         micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
         XCTAssertEqual(state.microphoneTakeID, b)
@@ -225,6 +226,27 @@ final class RecordingJobOwnershipTests: XCTestCase {
         assertNoDrainRefusal(state)
         XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 2)
         XCTAssertFalse(commands.contains { $0["cmd"] as? String == "cancel" })
+    }
+
+    func testDrainAdmissionDoesNotWaitForAsPendingStartAcknowledgement() throws {
+        let state = makeState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.record(pressToTalk: true)
+        let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+        XCTAssertNotNil(state.pendingIntent)
+        state.stop() // A's stop tail begins before its start ACK reaches the bar.
+        VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        let b = try XCTUnwrap(state.queuedRecordingTakeID)
+        XCTAssertNotEqual(a, b)
+        XCTAssertEqual(state.mode, .recording)
+        snapshot(state, jobs: [(a, "live", "queued")])
+        XCTAssertEqual(commands.last?["cmd"] as? String, "record")
+        XCTAssertEqual(commands.last?["take_id"] as? String, b)
+        micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
+        XCTAssertEqual(state.microphoneTakeID, b)
+        XCTAssertEqual(state.mode, .recording)
+        assertNoDrainRefusal(state)
     }
 
     func testQueuedReleaseStopsBOnlyAfterItsMicrophoneOpens() throws {
@@ -332,8 +354,27 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 2)
         XCTAssertEqual(commands.last?["take_id"] as? String, b)
         micOpened(state, id: b, jobs: [(a, "live", "failed"), (b, "live", "capturing")])
+        XCTAssertEqual(state.recordingMode, "ptt", "Mic-open initializes B even when its UI was already recording")
         XCTAssertEqual(state.microphoneTakeID, b)
         XCTAssertEqual(state.mode, .recording)
+        assertNoDrainRefusal(state)
+    }
+
+    func testQueuedStartFailureRetiresOpeningIntentAndAllowsRecovery() throws {
+        let state = makeState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        snapshot(state, jobs: [("A", "live", "draining")], mic: "A")
+        VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        snapshot(state, jobs: [("A", "live", "processing")])
+        let failedB = try XCTUnwrap(commands.last?["take_id"] as? String)
+        state.handleEvent(["type": "ack", "command": "record", "outcome": "reject",
+            "id": try XCTUnwrap(commands.last?["id"] as? String), "reason": "mic disabled"])
+        XCTAssertEqual(state.mode, .error)
+        XCTAssertEqual(state.errorMessage, "mic disabled")
+        VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+        XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 2)
+        XCTAssertNotEqual(commands.last?["take_id"] as? String, failedB)
         assertNoDrainRefusal(state)
     }
 

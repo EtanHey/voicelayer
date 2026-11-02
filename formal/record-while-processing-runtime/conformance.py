@@ -32,7 +32,7 @@ for source, target in runtime["edges"]:
         queued_cancels[json.dumps(row, sort_keys=True)] = row
     # Waiting is a local UI intent, including the atomic dispatch/open gap. Replay it separately
     # with the real F5 sequence, rather than seeding a fictional daemon-owned waiting job.
-    if "waiting" in before_stages.values():
+    if before_stages.get(target_take) == "waiting":
         continue
     # DOT includes state-preserving/self edges: a retained event label is not another cancellation.
     if before_stages[target_take] not in {"recording", "draining", "captured", "processing"} or after_stages[target_take] != "cancelled":
