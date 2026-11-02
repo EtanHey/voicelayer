@@ -53,7 +53,9 @@ Use the same TLC command above with `-config OldReadyReselect.cfg` or
 
 Run `bash formal/parakeet-residency/check.sh` from the repository root. It checks
 all seven fixed configurations, then every named mutant in `mutants.json` with
-its committed `mutants/*.cfg`. Copies of the models are mutated only in a private
+its committed `mutants/*.cfg`. Each run prints its jar version and SHA-256 and
+writes fresh logs/summary under `.build.noindex/tlc-lane-d/run-*/`; the committed
+`results-round2/` logs and table below remain historical receipts. Copies of the models are mutated only in a private
 `.build.noindex/tlc-lane-d/` temporary directory, which is removed after the run.
 Every Java process has an external 30-second deadline and is killed/reaped on
 failure. Logs redact temporary checkout paths; counts and counterexamples stay.
