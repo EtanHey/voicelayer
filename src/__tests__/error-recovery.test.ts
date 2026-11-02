@@ -244,19 +244,20 @@ describe("H5: Socket record command checks session booking", () => {
   });
 
   afterEach(async () => {
-    await settleRecordingJobs(hasF5Capture);
-    restoreFakeRecorder();
-    broadcastSpy.mockRestore();
-    // Clean up lock file
-    try {
-      if (existsSync(LOCK_FILE)) unlinkSync(LOCK_FILE);
-    } catch {}
-    // AIDEV-NOTE: R-014 — `handleSocketCommand({cmd:"record"})` flips the
-    // cross-process recording state. Leaving it at "recording" made every later
-    // test file in the run fail its speaker-output gate; before isolation this
-    // leaked into ~/.local/state/voicelayer and told the LIVE stack Etan was
-    // recording. Reset it here rather than relying on the next file to notice.
-    recordingState.setRecordingState("idle");
+    try { await settleRecordingJobs(hasF5Capture); } finally {
+      restoreFakeRecorder();
+      broadcastSpy.mockRestore();
+      // Clean up lock file
+      try {
+        if (existsSync(LOCK_FILE)) unlinkSync(LOCK_FILE);
+      } catch {}
+      // AIDEV-NOTE: R-014 — `handleSocketCommand({cmd:"record"})` flips the
+      // cross-process recording state. Leaving it at "recording" made every later
+      // test file in the run fail its speaker-output gate; before isolation this
+      // leaked into ~/.local/state/voicelayer and told the LIVE stack Etan was
+      // recording. Reset it here rather than relying on the next file to notice.
+      recordingState.setRecordingState("idle");
+    }
   });
 
   it("rejects record when voice session is booked by another process", () => {

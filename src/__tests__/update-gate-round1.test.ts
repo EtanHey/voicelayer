@@ -28,10 +28,11 @@ beforeEach(() => {
   mocks.push(spyOn(console, "error").mockImplementation(() => {}));
 });
 afterEach(async () => {
-  await settleRecordingJobs(tts.hasF5Capture);
-  mocks.splice(0).reverse().forEach(m => m.mockRestore());
-  for (const [file, data] of flags) { if (data) fs.writeFileSync(file, data); else if (fs.existsSync(file)) fs.unlinkSync(file); }
-  process.env.VOICELAYER_UPDATE_GATE_PATH = original;
+  try { await settleRecordingJobs(tts.hasF5Capture); } finally {
+    mocks.splice(0).reverse().forEach(m => m.mockRestore());
+    for (const [file, data] of flags) { if (data) fs.writeFileSync(file, data); else if (fs.existsSync(file)) fs.unlinkSync(file); }
+    process.env.VOICELAYER_UPDATE_GATE_PATH = original;
+  }
 });
 function capture() {
   mocks.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }), spyOn(socket, "broadcast").mockImplementation(() => {}), spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
