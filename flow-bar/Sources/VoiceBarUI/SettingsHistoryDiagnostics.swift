@@ -10,6 +10,8 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
     public let summary: String
     public let savedResult: String
     public let capturedAt: Date?
+    /// Modification time of the safely opened saved transcript; not an attempt's execution time.
+    public let transcriptWrittenAt: Date?
     public let backend: String?
     public let model: String?
     public let detail: String?
@@ -20,12 +22,14 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
     public let inputDeviceName: String?
     public init(archiveState: ArchiveState, savedTextState: SavedTextState, selection: String,
                 summary: String, savedResult: String, capturedAt: Date?, backend: String?, model: String?,
-                detail: String?, warnings: [String], languageSetting: String? = nil, inputDeviceName: String? = nil) {
+                detail: String?, warnings: [String], languageSetting: String? = nil, inputDeviceName: String? = nil,
+                transcriptWrittenAt: Date? = nil) {
         self.archiveState = archiveState; self.savedTextState = savedTextState; self.selection = selection
         self.summary = summary; self.savedResult = savedResult; self.capturedAt = capturedAt
         self.backend = backend; self.model = model; self.detail = detail; self.warnings = warnings
         self.languageSetting = Self.retainedLabel(languageSetting)
         self.inputDeviceName = Self.retainedLabel(inputDeviceName)
+        self.transcriptWrittenAt = transcriptWrittenAt
     }
     private static func retainedLabel(_ value: String?) -> String? {
         guard let value else { return nil }
@@ -62,8 +66,9 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
         let entryFD = openat(dayFD, relative[1], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard entryFD >= 0 else { return unavailable("Archive entry is unavailable or unsafe.") }
         defer { close(entryFD) }
-        // Only presence/size is needed. No transcript words or audio samples are read for diagnostics.
-        let transcriptSize = fileSize("voicelayer-transcript.txt", in: entryFD)
+        // Size and write time come from the same safe descriptor. No transcript words or audio samples are read.
+        let transcript = fileInfo("voicelayer-transcript.txt", in: entryFD)
+        let transcriptSize = transcript?.size
         let savedTextState: SavedTextState = transcriptSize.map { $0 > 0 ? .present : .empty } ?? .unavailable
         let saved = transcriptSize.map { $0 > 0 ? "Saved transcript present; attempt identity unknown" : "Saved transcript is empty" }
             ?? "Saved transcript unavailable"
@@ -71,10 +76,12 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
         do { data = try readMetadata(in: entryFD) }
         catch { return Self(archiveState: .unavailable, savedTextState: savedTextState, selection: selection, summary: "Metadata unavailable", savedResult: saved,
             capturedAt: nil, backend: nil, model: nil, detail: nil,
-            warnings: ["Metadata missing, unreadable, unsafe, or larger than 64 KiB. Earlier attempts were not recorded here."]) }
+            warnings: ["Metadata missing, unreadable, unsafe, or larger than 64 KiB. Earlier attempts were not recorded here."],
+            transcriptWrittenAt: transcript?.writtenAt) }
         guard let metadata = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return Self(archiveState: .unavailable, savedTextState: savedTextState, selection: selection, summary: "Metadata could not be read", savedResult: saved,
-                capturedAt: nil, backend: nil, model: nil, detail: nil, warnings: ["Malformed metadata. Attempt history unavailable."])
+                capturedAt: nil, backend: nil, model: nil, detail: nil, warnings: ["Malformed metadata. Attempt history unavailable."],
+                transcriptWrittenAt: transcript?.writtenAt)
         }
         let reason = metadata["not_transcribed_reason"] as? String
         let status = metadata["transcription_status"] as? String
@@ -99,7 +106,7 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
             model: (provenance?["whisper_model_path"] as? String).map { SettingsHistoryDiagnosticPrivacy.text(URL(fileURLWithPath: $0).lastPathComponent) },
             detail: (metadata["not_transcribed_detail"] as? String).map(SettingsHistoryDiagnosticPrivacy.text), warnings: warnings,
             languageSetting: (provenance?["language_mode"] as? String) ?? (metadata["language_mode"] as? String),
-            inputDeviceName: metadata["input_device_name"] as? String)
+            inputDeviceName: metadata["input_device_name"] as? String, transcriptWrittenAt: transcript?.writtenAt)
     }
 
     private static func parseDate(_ value: String) -> Date? {
@@ -108,13 +115,15 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
         return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 
-    private static func fileSize(_ name: String, in directory: Int32) -> Int64? {
+    private static func fileInfo(_ name: String, in directory: Int32) -> (size: Int64, writtenAt: Date)? {
         let fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
         var info = stat()
-        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
-        return info.st_size
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size >= 0 else { return nil }
+        let writtenAt = Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec)
+            + Double(info.st_mtimespec.tv_nsec) / 1_000_000_000)
+        return (info.st_size, writtenAt)
     }
 
     private static func readMetadata(in directory: Int32) throws -> Data {

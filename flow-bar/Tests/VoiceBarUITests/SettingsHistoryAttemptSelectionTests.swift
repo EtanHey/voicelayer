@@ -131,9 +131,13 @@ final class SettingsHistoryAttemptSelectionTests: XCTestCase {
         let symbols: [(SettingsHistoryAttemptRecord.Status, String)] = [(.completed,"checkmark"),(.failed,"xmark"),(.cancelled,"slash.circle"),(.transcribing,"clock")]
         for (status, symbol) in symbols { XCTAssertEqual(SettingsHistoryAttemptRecord(id: "row", status: status).statusSymbol, symbol) }
         let copy = SettingsHistoryDiagnosticsCopy(snapshot: nil, runs: [], omittedCount: 0, attemptHistory: history(), recordingID: entry().recordingID)
-        XCTAssertTrue(copy.technicalDetails.contains("Recording ID: \(entry().recordingID)"))
+        XCTAssertTrue(copy.logCopyText.contains("Recording ID: \(entry().recordingID)"))
         XCTAssertEqual(copy.summary, "")
-        XCTAssertEqual(copy.visibleSentences, [SettingsHistoryDiagnosticsCopy.olderDetails])
+        XCTAssertEqual(copy.visibleSentences, [], "a complete log missing optional execution fields is not incomplete history")
+        XCTAssertEqual(copy.logLines.map(\.attemptID), ["original", "retry-1", "retry-2"], "one Log row per actual attempt, in order")
+        XCTAssertEqual(copy.logLines.map(\.title), ["Original", "Retry 1", "Retry 2"])
+        XCTAssertEqual(copy.logLines[1].outcome, "Model unavailable")
+        XCTAssertTrue(copy.logLines[1].isProblem)
         XCTAssertFalse(copy.defaultExpanded, "successful recordings remain collapsed even with multiple attempts")
         XCTAssertFalse(SettingsHistoryDiagnosticsCopy(snapshot: nil, runs: [], omittedCount: 0, attemptHistory: nil).defaultExpanded)
     }

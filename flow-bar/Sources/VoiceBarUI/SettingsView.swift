@@ -1539,7 +1539,7 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         Text("No transcript history yet")
                             .font(.headline)
-                        Text("Saved recordings, including failed or cancelled ones, will appear here. Select one to see Errors & runs.")
+                        Text("Saved recordings, including failed or cancelled ones, will appear here. Select one to see its details.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1559,6 +1559,13 @@ public struct SettingsView: View {
                                             }
                                         } header: { historyDayHeader(group.dayTitle()) }
                                     }
+                                    if historyHasMore {
+                                        Button(isHistoryLoading ? "Loading…" : "Load more") { loadOlderHistory() }
+                                            .disabled(isHistoryLoading)
+                                            .controlSize(.small)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.top, 8)
+                                    }
                                 }.padding(12)
                             }.clipped()
                         } detail: {
@@ -1566,10 +1573,7 @@ public struct SettingsView: View {
                                 SettingsHistoryAttemptDetailPane(entry: entry, load: historyDiagnostics,
                                     loadAttempts: historyAttempts, runs: historyRunLog().runs(for: entry.audioPath.path),
                                     omittedCount: historyRunLog().omittedCount) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text("Selected dictation").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                        Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.headline)
-                                    }
+                                    Text("Selected dictation").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 } content: { displayedEntry in
                                     recordingHistoryDetail(displayedEntry)
                                 } actions: { displayedEntry in
@@ -1587,10 +1591,6 @@ public struct SettingsView: View {
                                 ? "\(historyLoadedEntryCount) matches shown"
                                 : "\(historyLoadedEntryCount) saved shown").foregroundStyle(.secondary)
                             Spacer()
-                            if historyHasMore {
-                                Button(isHistoryLoading ? "Loading…" : "Load more") { loadOlderHistory() }
-                                    .disabled(isHistoryLoading)
-                            }
                         }.font(.caption).padding(.horizontal, 18).padding(.vertical, 10)
                     }
 
