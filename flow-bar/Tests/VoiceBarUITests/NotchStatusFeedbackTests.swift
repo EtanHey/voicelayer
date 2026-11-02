@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
@@ -32,6 +33,18 @@ final class NotchStatusFeedbackTests: XCTestCase {
         XCTAssertEqual(f.width, p.geometry.topWidth)
         XCTAssertGreaterThan(f.statusHeight, VoiceBarNotchContract.transientNoteBandHeight)
         XCTAssertFalse(f.opensHistory)
+        let host = NSHostingView(rootView: VoiceBarNotchFeedbackBand(feedback: f, onOpenHistory: {}))
+        host.frame = NSRect(x: 0, y: 0, width: f.width, height: f.height)
+        host.layoutSubtreeIfNeeded()
+        func field(_ view: NSView) -> NSTextField? {
+            if let label = view as? NSTextField, label.stringValue == text { return label }
+            return view.subviews.compactMap { field($0) }.first
+        }
+        let label = try XCTUnwrap(field(host), "Full quit instruction must be mounted")
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
+        XCTAssertEqual(Int((label.bounds.height / lineHeight).rounded()), 2, "Rendered lines, independent of OCR")
+        XCTAssertTrue(host.bounds.contains(label.convert(label.bounds, to: host)))
     }
     func testFitTextKeepsOriginalWingAndNoExtraBand() {
         for text in ["Typed", "Copied", "F5 to talk", "Not pasted\nIn History"] {

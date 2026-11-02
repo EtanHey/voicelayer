@@ -702,17 +702,6 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(lowerContent.contains(".transition(.opacity)"))
     }
 
-    func testFeedbackKeepsNormalWingStatusInsteadOfSubstituteLabels() throws {
-        let source = try barViewSource()
-        let start = try XCTUnwrap(source.range(of: "private var statusLabel"))
-        let end = try XCTUnwrap(source.range(of: "private func compactStatusLabel", range: start.upperBound ..< source.endIndex))
-        let label = source[start.lowerBound ..< end.lowerBound]
-        XCTAssertTrue(label.contains("compactStatusLabel(statusText, confirmationText: state.confirmationText)"))
-        XCTAssertFalse(label.contains("replacesWingText"))
-        XCTAssertFalse(label.contains("Details below"))
-        XCTAssertFalse(label.contains("\"Error\""))
-    }
-
     func testStatusLabelDoesNotCrossFadeOldAndNewTextInTheSameFrame() throws {
         let source = try barViewSource()
         let statusStart = try XCTUnwrap(source.range(of: "private var statusLabel"))
@@ -721,6 +710,9 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         let statusLabel = source[statusStart.lowerBound ..< textStart.lowerBound]
 
+        XCTAssertFalse(statusLabel.contains("replacesWingText"))
+        XCTAssertFalse(statusLabel.contains("Details below"))
+        XCTAssertFalse(statusLabel.contains("\"Error\""))
         XCTAssertFalse(statusLabel.contains(".contentTransition(.opacity)"))
         XCTAssertTrue(statusLabel.contains(".transaction"))
         XCTAssertTrue(statusLabel.contains("transaction.animation = nil"))

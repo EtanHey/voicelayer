@@ -19,10 +19,10 @@ is involved. The installed VoiceBar and `/Applications` were untouched.
 
 | Case | Before | After |
 | --- | --- | --- |
-| Transcribing | ![](before-transcribing.png) | ![](after-transcribing.png) |
-| Busy recording. Selection not read | ![](before-busy-recording.png) | ![](after-busy-recording.png) |
-| Quit refusal | ![](before-quit-refusal.png) | ![](after-quit-refusal.png) |
-| Long error | ![](before-long-error.png) | ![](after-long-error.png) |
+| Transcribing | ![Before: transcribing](before-transcribing.png) | ![After: transcribing](after-transcribing.png) |
+| Busy recording. Selection not read | ![Before: busy recording](before-busy-recording.png) | ![After: busy recording](after-busy-recording.png) |
+| Quit refusal | ![Before: quit refusal](before-quit-refusal.png) | ![After: quit refusal](after-quit-refusal.png) |
+| Long error | ![Before: long error](before-long-error.png) | ![After: long error](after-long-error.png) |
 
 GIF: none: no animation or interaction changed.
 
@@ -31,10 +31,10 @@ GIF: none: no animation or interaction changed.
 | Run | Tests | Skipped | Failures |
 | --- | ---: | ---: | ---: |
 | Immutable main d500e4ee, all VoiceBarUITests | 1758 | 65 | 0 |
-| Branch, all VoiceBarUITests | 1761 | 65 | 0 |
-| Branch, focused feedback/layout/hit-gate suites | 70 | 1 | 0 |
+| Branch, all VoiceBarUITests | 1760 | 65 | 0 |
+| Branch, focused feedback/layout/hit-gate suites | 69 | 1 | 0 |
 
-No new failure names. The focused run includes all 14 NotchStatusFeedbackTests.
+No new failure names. The 14 NotchStatusFeedbackTests include a rendered, OCR-independent two-line quit-refusal check.
 Full command: `swift test --package-path <revision>/flow-bar --scratch-path <isolated-build> --filter VoiceBarUITests`.
 Focused filter: `NotchStatusFeedbackTests|NotchTransientNoteLayoutTests|BarViewClickabilityTests|NotchNoteMorphGeometryTests|VoiceBarPanelHitGateTests`.
 The glass-readability probe skips when offscreen text contrast is unavailable.
