@@ -16,22 +16,22 @@ final class RecognizerBindingTests: XCTestCase {
     static func event(_ revision: Int = 1, desired: String = "whisper", effective: String? = "whisper",
                       phase: String = "ready", parakeet: String = "sleeping", whisper: String = "ready",
                       fallback: String? = nil, allowed: Bool = true, refusal: String? = nil,
-                      parakeetAvailable: Bool? = true) -> [String: Any] {
+                      parakeetAvailable: Bool? = true, assetsPresent: Bool = true) -> [String: Any] {
         ["type": "recognizer_status", "recognizer_status": [
             "revision": revision, "desired": desired, "effective": effective as Any? ?? NSNull(), "phase": phase,
-            "engines": ["parakeet": ["phase": parakeet, "available": parakeetAvailable as Any? ?? NSNull(), "error": NSNull()],
-                        "whisper": ["phase": whisper, "available": true, "error": NSNull()]],
+            "engines": ["parakeet": ["phase": parakeet, "assets_present": assetsPresent, "available": parakeetAvailable as Any? ?? NSNull(), "error": NSNull()],
+                        "whisper": ["phase": whisper, "assets_present": true, "available": true, "error": NSNull()]],
             "fallback_reason": fallback as Any? ?? NSNull(), "switch_allowed": allowed,
             "switch_refusal_reason": refusal as Any? ?? NSNull(), "idle_unload_seconds": 600, "source": "settings"]]
     }
     func testStrictParserPreservesNullAvailabilitySourceAndIdlePolicy() throws {
-        let s = try XCTUnwrap(RecognizerStatusSnapshot(payload: Self.event(parakeetAvailable: nil)["recognizer_status"] as! [String: Any]))
+        let s = try XCTUnwrap(RecognizerStatusSnapshot(payload: Self.event(parakeetAvailable: nil, assetsPresent: false)["recognizer_status"] as! [String: Any]))
         XCTAssertNil(s.parakeet.available); XCTAssertEqual(s.whisper.available, true)
         XCTAssertEqual(s.idleUnloadSeconds, 600); XCTAssertEqual(s.source, "settings")
         XCTAssertEqual(s.desired, .whisper); XCTAssertEqual(s.effective, .whisper)
     }
     func testUnprovisionedParakeetShowsExactSetupCopyAndKeepsWhisperSelectable() throws {
-        let payload = Self.event(desired: "parakeet", effective: nil, phase: "sleeping", parakeetAvailable: nil)["recognizer_status"] as! [String: Any]
+        let payload = Self.event(desired: "parakeet", effective: nil, phase: "sleeping", parakeetAvailable: nil, assetsPresent: false)["recognizer_status"] as! [String: Any]
         let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
         XCTAssertTrue(state.parakeetNotSetUp)
         XCTAssertEqual(state.statusText(for: .parakeet), "Not set up")
@@ -44,14 +44,14 @@ final class RecognizerBindingTests: XCTestCase {
         XCTAssertTrue(sent.isEmpty, "There is no setup action or provider load disguised as setup")
         XCTAssertTrue(state.select(.whisper, send: { sent.append($0) }))
         XCTAssertEqual(sent, [.whisper])
-        let defaultPayload = Self.event(parakeetAvailable: nil)["recognizer_status"] as! [String: Any]
+        let defaultPayload = Self.event(parakeetAvailable: nil, assetsPresent: false)["recognizer_status"] as! [String: Any]
         XCTAssertEqual(RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: defaultPayload))).statusText(for: .parakeet), "Not set up")
     }
     func testFailedLoadAndRuntimeErrorAreNotRelabeledAsUnprovisioned() throws {
         for available in [nil, false] as [Bool?] {
             var payload = Self.event(desired: "parakeet", effective: "whisper", parakeet: "error", fallback: "parakeet-startup-failed", parakeetAvailable: available)["recognizer_status"] as! [String: Any]
             var engines = payload["engines"] as! [String: Any]
-            engines["parakeet"] = ["phase": "error", "available": available as Any? ?? NSNull(), "error": "parakeet-startup-failed"]
+            engines["parakeet"] = ["phase": "error", "assets_present": true, "available": available as Any? ?? NSNull(), "error": "parakeet-startup-failed"]
             payload["engines"] = engines
             let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
             XCTAssertFalse(state.parakeetNotSetUp)
@@ -71,12 +71,19 @@ final class RecognizerBindingTests: XCTestCase {
             XCTAssertEqual(state.statusText(for: .parakeet), title)
             XCTAssertTrue(state.canSelect(.parakeet))
         }
-        let unverifiedReady = Self.event(parakeet: "ready", parakeetAvailable: nil)["recognizer_status"] as! [String: Any]
+        let unverifiedReady = Self.event(parakeet: "ready", parakeetAvailable: nil, assetsPresent: true)["recognizer_status"] as! [String: Any]
         let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: unverifiedReady)))
         XCTAssertEqual(state.statusText(for: .parakeet), "Unknown")
         XCTAssertFalse(state.parakeetNotSetUp)
     }
 
+    func testProvisionedNeverLoadedParakeetIsSelectable() throws {
+        let payload = Self.event(parakeetAvailable: nil, assetsPresent: true)["recognizer_status"] as! [String: Any]
+        let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
+        XCTAssertTrue(state.canSelect(.parakeet))
+        XCTAssertFalse(state.parakeetNotSetUp)
+        XCTAssertEqual(state.statusText(for: .parakeet), "Sleeping (loads when you dictate)")
+    }
     func testInvalidAndUnknownPayloadsFailClosed() {
         let base = Self.event()["recognizer_status"] as! [String: Any]
         let invalid: [(String, Any)] = [("revision", true), ("revision", -1), ("revision", 1.5),
@@ -242,7 +249,7 @@ final class RecognizerBindingTests: XCTestCase {
         v.setConnectionStatus(true)
         var e = Self.event(2, desired: "parakeet", effective: "parakeet", parakeet: "ready", whisper: "sleeping")
         var p = e["recognizer_status"] as! [String: Any]; var engines = p["engines"] as! [String: Any]
-        engines["parakeet"] = ["phase": "ready", "available": true, "error": NSNull()]; p["engines"] = engines; e["recognizer_status"] = p
+        engines["parakeet"] = ["phase": "ready", "assets_present": true, "available": true, "error": NSNull()]; p["engines"] = engines; e["recognizer_status"] = p
         v.handleEvent(e); commands.removeAll(); v.selectRecognizer(.whisper)
         XCTAssertEqual(commands.count, 1); XCTAssertEqual(commands[0]["recognizer"] as? String, "whisper")
         RunLoop.main.run(until: Date().addingTimeInterval(0.05)); XCTAssertEqual(commands.count, 1)

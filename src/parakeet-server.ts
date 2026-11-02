@@ -2,6 +2,7 @@
  * No launchd owner, shared port, process adoption or startup-time model loading.
  */
 import { existsSync } from "fs";
+import { defaultParakeetModelPath, parakeetPython } from "./recognizer-assets";
 import { isAbsolute, join } from "path";
 import { homedir } from "os";
 import type { Subprocess } from "bun";
@@ -60,11 +61,9 @@ interface Child {
 
 /** Same multilingual v3 checkpoint as the measured SPEED lane. No download. */
 export const DEFAULT_PARAKEET_CHECKPOINT = "mlx-community/parakeet-tdt-0.6b-v3";
-export function defaultParakeetModelPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "voicelayer", "models", "parakeet-tdt-0.6b-v3");
-}
+export { defaultParakeetModelPath } from "./recognizer-assets";
 export function parakeetCommand(env: NodeJS.ProcessEnv = process.env): string[] | null {
-  const python = env.VOICELAYER_PARAKEET_PYTHON;
+  const python = parakeetPython(env);
   const model = env.VOICELAYER_PARAKEET_MODEL || defaultParakeetModelPath(env);
   if (!python || !model || !isAbsolute(python) || !isAbsolute(model) || !existsSync(python) ||
       !["config.json", "model.safetensors", "tokenizer.model"].every(name => existsSync(join(model, name)))) return null;

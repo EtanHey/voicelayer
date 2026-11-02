@@ -2,12 +2,13 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync } from "fs";
 import { dirname, join } from "path";
 import { getStateDir, safeWriteFileSync } from "./paths";
+import { readRecognizerAssets } from "./recognizer-assets";
 import { modelIdleSeconds } from "./model-residency";
 export type Recognizer = "parakeet" | "whisper";
 export type RecognizerPhase = "loading" | "ready" | "sleeping" | "error";
 export interface RecognizerStatus {
   revision: number; desired: Recognizer; effective: Recognizer | null; phase: RecognizerPhase;
-  engines: Record<Recognizer, { phase: RecognizerPhase; available: boolean | null; error: string | null }>;
+  engines: Record<Recognizer, { assets_present: boolean; disk_bytes: number; phase: RecognizerPhase; available: boolean | null; error: string | null }>;
   fallback_reason: string | null; switch_allowed: boolean; switch_refusal_reason: string | null;
   idle_unload_seconds: number; source: "settings" | "env" | "default";
 }
@@ -58,7 +59,7 @@ export function setRecognizerRecoveryWhisper(value: { attempt: unknown } | null)
 }
 export function markRecognizerCleanupUnconfirmed(engine: Recognizer): void { cleanupBarriers.add(engine); publish(); }
 export function confirmRecognizerCleanup(engine: Recognizer): void { if (cleanupBarriers.delete(engine)) publish(); }
-const engines: RecognizerStatus["engines"] = {
+const engines: Record<Recognizer, Omit<RecognizerStatus["engines"][Recognizer], "assets_present" | "disk_bytes">> = {
   parakeet: { phase: "sleeping", available: null, error: null },
   whisper: { phase: "sleeping", available: null, error: null },
 };
@@ -76,7 +77,7 @@ export function recognizerSwitchRefusal(): string | null {
 export function readRecognizerStatus(): RecognizerStatus {
   const preference = recognizerPreference(), reason = recognizerSwitchRefusal();
   return { revision, desired: preference.recognizer, effective, phase,
-    engines: { parakeet: { ...engines.parakeet }, whisper: { ...engines.whisper } },
+    engines: { parakeet: { ...engines.parakeet, ...readRecognizerAssets("parakeet") }, whisper: { ...engines.whisper, ...readRecognizerAssets("whisper") } },
     fallback_reason: fallbackReason, switch_allowed: reason === null, switch_refusal_reason: reason,
     idle_unload_seconds: modelIdleSeconds(), source: preference.source };
 }

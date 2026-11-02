@@ -68,7 +68,7 @@ public struct RecognizerPickerView: View {
                     .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(engine == .parakeet && state.parakeetNotSetUp)
+                    .disabled(!state.assetsPresent(for: engine))
                     .focused($focusedEngine, equals: engine)
                     .accessibilityAddTraits(state.selected == engine ? [.isSelected] : [])
                     .accessibilityLabel(engine.title + (engine == .parakeet && !state.parakeetNotSetUp ? ", Recommended. Fewer dropped and invented words" : ""))

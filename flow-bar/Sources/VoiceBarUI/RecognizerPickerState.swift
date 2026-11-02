@@ -39,14 +39,16 @@ public struct RecognizerStatusSnapshot: Equatable, Sendable {
     public struct Engine: Equatable, Sendable {
         public let phase: RecognizerPickerResidency
         public let available: Bool?
+        public fileprivate(set) var assetsPresent: Bool
+        public fileprivate(set) var diskBytes: Int
         public let error: String?
     }
     public let revision: Int
     public let desired: RecognizerPickerEngine
     public let effective: RecognizerPickerEngine?
     public let phase: RecognizerPickerResidency
-    public let parakeet: Engine
-    public let whisper: Engine
+    public private(set) var parakeet: Engine
+    public private(set) var whisper: Engine
     public let fallbackReason: String?
     public private(set) var switchAllowed: Bool
     public private(set) var switchRefusalReason: String?
@@ -77,7 +79,7 @@ public struct RecognizerStatusSnapshot: Equatable, Sendable {
                   let phase = RecognizerPickerResidency(phase: phaseText),
                   d["available"] is NSNull || boolean(d["available"]) != nil,
                   nullableString("error", in: d) else { return nil }
-            return Engine(phase: phase, available: boolean(d["available"]), error: d["error"] as? String)
+            return Engine(phase: phase, available: boolean(d["available"]), assetsPresent: boolean(d["assets_present"]) ?? false, diskBytes: integer(d["disk_bytes"]) ?? 0, error: d["error"] as? String)
         }
         guard let revision = integer(payload["revision"]),
               let desiredText = payload["desired"] as? String, let desired = RecognizerPickerEngine(rawValue: desiredText),
@@ -104,6 +106,10 @@ public struct RecognizerStatusSnapshot: Equatable, Sendable {
     /// Preserve all accepted engine/preference/provenance fields at equal revisions.
     func updatingSwitchPermission(from currentRead: Self) -> Self {
         var updated = self
+        updated.parakeet.assetsPresent = currentRead.parakeet.assetsPresent
+        updated.parakeet.diskBytes = currentRead.parakeet.diskBytes
+        updated.whisper.assetsPresent = currentRead.whisper.assetsPresent
+        updated.whisper.diskBytes = currentRead.whisper.diskBytes
         updated.switchAllowed = currentRead.switchAllowed
         updated.switchRefusalReason = currentRead.switchRefusalReason
         return updated
@@ -121,13 +127,17 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public let commandNotice: String?
     public let parakeetAvailable: Bool?
     public let parakeetError: String?
+    public let parakeetAssetsPresent: Bool
+    public let whisperAssetsPresent: Bool
 
     public init(selected: RecognizerPickerEngine?, effective: RecognizerPickerEngine?,
                 parakeet: RecognizerPickerResidency, whisper: RecognizerPickerResidency,
                 disabledReason: String? = nil, fallbackReason: String? = nil, notice: String? = nil,
-                parakeetAvailable: Bool? = nil, parakeetError: String? = nil) {
+                parakeetAvailable: Bool? = nil, parakeetError: String? = nil,
+                parakeetAssetsPresent: Bool = false, whisperAssetsPresent: Bool = true) {
         self.selected = selected; self.effective = effective; self.parakeet = parakeet; self.whisper = whisper
         self.disabledReason = disabledReason; self.fallbackReason = fallbackReason; self.commandNotice = notice
+        self.parakeetAssetsPresent = parakeetAssetsPresent; self.whisperAssetsPresent = whisperAssetsPresent
         self.parakeetAvailable = parakeetAvailable; self.parakeetError = parakeetError
     }
     public init(snapshot: RecognizerStatusSnapshot, pending: Bool = false, notice: String? = nil, busyReason: String? = nil) {
@@ -135,18 +145,18 @@ public struct RecognizerPickerState: Equatable, Sendable {
                   parakeet: snapshot.parakeet.phase, whisper: snapshot.whisper.phase,
                   disabledReason: busyReason ?? (pending ? "Waiting for VoiceLayer…" : (!snapshot.switchAllowed
                     ? Self.message(for: snapshot.switchRefusalReason) : nil)),
-                  fallbackReason: snapshot.fallbackReason, notice: notice, parakeetAvailable: snapshot.parakeet.available, parakeetError: snapshot.parakeet.error)
+                  fallbackReason: snapshot.fallbackReason, notice: notice, parakeetAvailable: snapshot.parakeet.available, parakeetError: snapshot.parakeet.error,
+                  parakeetAssetsPresent: snapshot.parakeet.assetsPresent, whisperAssetsPresent: snapshot.whisper.assetsPresent)
     }
     public static let unavailable = RecognizerPickerState(selected: nil, effective: nil,
         parakeet: .unknown, whisper: .unknown, disabledReason: "Recognizer status unavailable")
     public func residency(for engine: RecognizerPickerEngine) -> RecognizerPickerResidency {
         engine == .parakeet ? parakeet : whisper
     }
-    /// Existing C fields distinguish the pristine sleeping/unverified state from
-    /// an actual failed load. This projection never probes runtime or model files.
-    public var parakeetNotSetUp: Bool {
-        parakeetAvailable == nil && parakeet == .unloaded && parakeetError == nil
-            && fallbackReason != "parakeet-startup-failed"
+    /// Provisioning is independent of whether the engine has ever loaded.
+    public var parakeetNotSetUp: Bool { !parakeetAssetsPresent }
+    public func assetsPresent(for engine: RecognizerPickerEngine) -> Bool {
+        engine == .parakeet ? parakeetAssetsPresent : whisperAssetsPresent
     }
     public var parakeetSetupReason: String? {
         parakeetNotSetUp ? "Needs a one-time setup" : nil
@@ -210,7 +220,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
         return selected
     }
     public func canSelect(_ engine: RecognizerPickerEngine) -> Bool {
-        !isSelectionDisabled && (engine != .parakeet || !parakeetNotSetUp)
+        !isSelectionDisabled && assetsPresent(for: engine)
             && (engine != selected || retryEngine == engine)
     }
     @discardableResult public func select(_ engine: RecognizerPickerEngine,
