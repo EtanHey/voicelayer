@@ -97,9 +97,12 @@ model cannot establish the revised M1-M4/D-S4 contract. Gate outcomes and immuta
 source hashes belong to the lane receipt and generated check artifacts. Installed
 interaction/audio/permission proof belongs to the captain.
 
-Every final paired gate runs the complete pause/runtime files and all five changed
+Every final paired gate runs the complete pause/runtime files and all six changed
 socket/handler caller files (idempotency, socket residency, whisper residency,
-update-gate round1 and error recovery). Capture-start assertions await their event;
+update-gate round1, error recovery and CLICK2 groundwork). CLICK2 asserts exact
+containing-word offsets from explicit timing fixtures and one paused confirmation
+per preparation/admitted-chunk phase; repeated commands add no confirmation.
+Capture-start assertions await their event;
 teardown waits for both Lane I jobs and the deferred F5 loan using the original
 2-second bound. The full Bun suite is a separate final check; known SSH-generated
 speech-fixture failures are reported for GUI verification, never silently passed.
