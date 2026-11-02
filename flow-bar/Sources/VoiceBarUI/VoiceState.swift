@@ -2061,6 +2061,11 @@ public final class VoiceState {
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
         let cancelledTranscription = mode == .transcribing
+        // Legacy cancellation has no owned-job snapshot to retire its local drain.
+        // Owned captures return above and keep their fence until the backend settles.
+        activeBarTakeID = nil
+        stoppingBarTakeID = nil
+        isRecordingDrainPending = false
         barInitiatedRecording = false
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedTimeout?.cancel()

@@ -54,10 +54,12 @@ export function recordingJobCancellationState(id: string): boolean | undefined {
 export function recordingJobCancelled(): boolean | undefined { return ownership.getStore()?.signal.aborted; }
 
 export function registerBarRecorderExit(proof: Promise<void>): void {
+  // Direct/legacy capture also supplies a rejecting proof. Observe it without
+  // replacing it: admission and the owned queue still require proven exit.
+  void proof.catch(() => {});
   const take = ownership.getStore();
   if (take?.kind !== "live") return;
   exitProofs.set(take, proof);
-  void proof.catch(() => {});
 }
 
 export async function runBarCapture(id: string, work: () => Promise<string | null>,
