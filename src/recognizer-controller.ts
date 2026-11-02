@@ -38,6 +38,14 @@ const defaults: RecognizerTransitionDeps = {
   },
   startP: () => parakeetServer.start(), startW: () => ensureServer(), reset: resetBackendCache,
 };
+/** Caller holds recognizer maintenance/transition ownership until cleanup completes. */
+export async function stopRecognizer(engine: Recognizer, deps: RecognizerTransitionDeps = defaults): Promise<void> {
+  try {
+    await (engine === "parakeet" ? deps.stopP() : deps.stopW());
+    confirmRecognizerCleanup(engine);
+    noteRecognizerEngine(engine, { phase: "sleeping", error: null });
+  } catch { markRecognizerCleanupUnconfirmed(engine); throw new Error("cleanup-unconfirmed"); }
+}
 const activeSelections = new Set<Promise<unknown>>();
 export async function joinRecognizerSelections(): Promise<void> { await Promise.allSettled([...activeSelections]); }
 export function selectRecognizer(value: Recognizer, deps: RecognizerTransitionDeps = defaults): ReturnType<typeof selectRecognizerOwned> {
@@ -53,13 +61,7 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
   catch (error) { return { outcome: "reject", reason: error instanceof Error ? error.message : "voice-busy", recognizer_status: readRecognizerStatus() }; }
   let outcome: "accept" | "reject" = "accept", reason: string | undefined;
   let preferenceChanged = false;
-  const stop = async (engine: Recognizer) => {
-    try {
-      await (engine === "parakeet" ? deps.stopP() : deps.stopW());
-      confirmRecognizerCleanup(engine);
-      noteRecognizerEngine(engine, { phase: "sleeping" });
-    } catch { markRecognizerCleanupUnconfirmed(engine); throw new Error("cleanup-unconfirmed"); }
-  };
+  const stop = (engine: Recognizer) => stopRecognizer(engine, deps);
   const start = (engine: Recognizer) => {
     assertRecognizerOwnerOpen();
     assertRecognizerNotDownloading(engine);
@@ -139,9 +141,7 @@ export async function setRecognizerResidency(engine: Recognizer, action: "load" 
       await (engine === "parakeet" ? deps.startP() : deps.startW());
       assertRecognizerOwnerOpen(); noteRecognizerEngine(engine, { phase: "ready", available: true, error: null }); noteRecognizerEffective(engine);
     } else {
-      try { await (engine === "parakeet" ? deps.stopP() : deps.stopW()); }
-      catch { markRecognizerCleanupUnconfirmed(engine); throw new Error("cleanup-unconfirmed"); }
-      confirmRecognizerCleanup(engine); noteRecognizerEngine(engine, { phase: "sleeping", error: null });
+      await stopRecognizer(engine, deps);
     }
   } catch (error) {
     outcome = "reject"; reason = error instanceof Error ? error.message : "residency-failed";

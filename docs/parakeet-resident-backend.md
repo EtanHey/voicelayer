@@ -241,8 +241,10 @@ no model load or network. `available` remains runtime evidence, independently.
 Socket commands: `download_recognizer {engine}`, `cancel_recognizer_download
 {engine}`, `delete_recognizer {engine}`, and `set_recognizer_residency
 {engine,action:"load"|"unload"}`. Engines are `whisper` and `parakeet`. Progress
-arrives in the existing `recognizer_status` events. Voice work excludes mutations;
-delete additionally requires an unloaded engine and another installed recognizer.
+arrives in the existing `recognizer_status` events. Downloads hold only per-engine
+ownership and never block recording or transcription. Selection, residency and
+delete require idle voice work; delete unloads the engine first and requires
+another installed recognizer.
 Deleting the selected engine saves the other selection first. Only named regular
 model files are removed; shared-cache links and unrelated files are preserved.
 

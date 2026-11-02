@@ -657,8 +657,7 @@ function handleSocketCommandAdmitted(
       return { ...buildAck(command, cancelled ? "accept" : "reject", cancelled ? undefined : "no-active-download"), recognizer_status: readRecognizerStatus() };
     }
     case "delete_recognizer": {
-      const result = deleteRecognizer(command.engine);
-      return { ...buildAck(command, result.outcome, result.reason), recognizer_status: readRecognizerStatus() };
+      return deleteRecognizer(command.engine).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
     }
     case "get_recognizer_status":
       return { type: "recognizer_status", ...(command.id ? { id: command.id } : {}), recognizer_status: readRecognizerStatus() };
