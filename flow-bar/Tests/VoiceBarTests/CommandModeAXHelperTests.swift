@@ -1,14 +1,67 @@
 import AppKit
+import ApplicationServices
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
 
 final class CommandModeAXHelperTests: XCTestCase {
+    func testNativeWriteGuardsWithAbsentFalseAndTrueEnabled() {
+        let enabledValues: [Bool?] = [nil, false, true]
+        for enabled in enabledValues {
+            for reason in ["eligible", "window_not_in_ancestors", "non_text_role", "secure_target",
+                           "protected_content", "selected_text_not_settable", "selected_range_not_settable"] {
+                let rejection = CommandModeAXHelper.nativeWriteRejectionReason(
+                    role: reason == "non_text_role" ? "AXOutline" : "AXTextArea",
+                    subrole: reason == "secure_target" ? "AXSecureTextField" : nil,
+                    protected: reason == "protected_content", enabled: enabled,
+                    selectedTextSettable: reason != "selected_text_not_settable",
+                    selectedRangeSettable: reason != "selected_range_not_settable",
+                    reachedWindow: reason != "window_not_in_ancestors"
+                )
+                let earlierGuard = ["window_not_in_ancestors", "non_text_role", "secure_target", "protected_content"].contains(reason)
+                let expected: String? = earlierGuard ? reason : enabled == false ? "not_enabled" : reason == "eligible" ? nil : reason
+                XCTAssertEqual(rejection, expected, "\(reason), enabled=\(String(describing: enabled))")
+            }
+        }
+    }
+
+    func testOnlyUnsupportedAndNoValueEnabledReadsAreAbsent() {
+        let fixtures: [(AXError, Bool?, AXEnabledAttributeRead, Bool)] = [
+            (.attributeUnsupported, nil, .absent, true), (.noValue, nil, .absent, true),
+            (.success, true, .value(true), true), (.success, false, .value(false), false),
+            (.success, nil, .failure(.failure), false),
+            (.cannotComplete, nil, .failure(.cannotComplete), false),
+            (.invalidUIElement, nil, .failure(.invalidUIElement), false),
+            (.apiDisabled, nil, .failure(.apiDisabled), false),
+        ]
+        for (status, value, expected, permits) in fixtures {
+            let read = CommandModeAXHelper.decodeEnabledAttribute(status: status, value: value)
+            XCTAssertEqual(read, expected)
+            let eligibility = CommandModeAXHelper.typingEligibility(
+                processIdentifier: 51515, role: "AXTextArea", subrole: nil,
+                enabled: read.value, editable: nil, selectedTextSettable: true, valueSettable: true,
+                protectedContent: false, enabledReadError: read.error, matchesCurrentFocus: { true }
+            )
+            XCTAssertEqual(eligibility.permitsTyping(into: 51515), permits)
+            let nativeReason = CommandModeAXHelper.nativeWriteRejectionReason(
+                role: "AXTextArea", subrole: nil, protected: false, enabled: read.value,
+                selectedTextSettable: true, selectedRangeSettable: true, reachedWindow: true,
+                enabledReadError: read.error
+            )
+            XCTAssertEqual(nativeReason, read.error != nil ? "enabled_read_failed" : permits ? nil : "not_enabled")
+            if let error = read.error {
+                XCTAssertEqual(eligibility.diagnosticDetails["enabledAttribute"], "error")
+                XCTAssertEqual(eligibility.diagnosticDetails["enabledReadStatus"], String(error.rawValue))
+            }
+        }
+    }
+
     func testPrewriteRejectionDeclinesWithoutCompletionOrWrites() {
         for reason in ["ineligible", "missing_snapshot", "invalid_range", "target_changed", "selection_changed"] {
             var reads = 0
             var completions = 0
             var writes = 0
+            var declines: [String] = []
             let started = CommandModeAXHelper.beginSelectionLocalInsertion(
                 "ADD שלום 👩‍💻\nsecond line",
                 readSnapshot: {
@@ -25,27 +78,88 @@ final class CommandModeAXHelperTests: XCTestCase {
                 writeSelection: { _ in writes += 1; return true },
                 writeCaret: { _ in writes += 1; return true },
                 observeSettled: { _ in XCTFail("No observation without a write: \(reason)") },
+                onDecline: { declines.append($0) },
                 completion: { _ in completions += 1 }
             )
             XCTAssertFalse(started, "No setter was invoked: \(reason)")
             XCTAssertEqual(completions, 0, "Declined start has no completion: \(reason)")
             XCTAssertEqual(writes, 0, reason)
+            let expected = ["ineligible": "ineligible", "missing_snapshot": "snapshot_unavailable",
+                            "invalid_range": "invalid_range", "target_changed": "target_changed",
+                            "selection_changed": "selection_changed_before_write"]
+            XCTAssertEqual(declines, reason == "ineligible" ? [] : [expected[reason]!], reason)
         }
     }
 
-    func testNativeEligibilityRequiresEnabledEditableTextAndRejectsSecureOrChangedIdentity() {
-        for reason in ["editable", "explicit_editable", "disabled", "unknown_enabled", "readonly", "file_list", "secure", "protected", "identity_changed"] {
+    func testNativeEligibilityRejectsExplicitlyDisabledReadonlySecureOrChangedIdentity() {
+        for reason in ["editable", "explicit_editable", "disabled", "absent_enabled", "readonly", "file_list", "secure", "protected", "identity_changed"] {
             let eligibility = CommandModeAXHelper.typingEligibility(
                 processIdentifier: 51515, role: reason == "file_list" ? "AXOutline" : "AXTextField",
                 subrole: reason == "secure" ? "AXSecureTextField" : nil,
-                enabled: reason == "unknown_enabled" ? nil : reason != "disabled",
+                enabled: reason == "absent_enabled" ? nil : reason != "disabled",
                 editable: reason == "readonly" ? false : reason == "explicit_editable" ? true : nil,
                 selectedTextSettable: false, valueSettable: reason != "explicit_editable",
                 protectedContent: reason == "protected", matchesCurrentFocus: { reason != "identity_changed" }
             )
             XCTAssertEqual(eligibility.permitsTyping(into: 51515),
-                           ["editable", "explicit_editable"].contains(reason), reason)
+                           ["editable", "explicit_editable", "absent_enabled"].contains(reason), reason)
             XCTAssertFalse(eligibility.permitsTyping(into: 62626), reason)
+        }
+    }
+
+    func testTextEditAbsentEnabledAndEditableMetadataAllowsOnlySafeAutomaticFallback() {
+        let fixtures: [(String, Bool?, String?)] = [
+            ("textedit", nil, nil), ("disabled", false, nil), ("secure", nil, "AXSecureTextField"),
+        ]
+        for (name, enabled, subrole) in fixtures {
+            let state = VoiceState(
+                recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+            )
+            let editor = FakeRunningApplication(bundleIdentifier: "com.apple.TextEdit", processIdentifier: 51515)
+            let text = "ADD שלום 👩‍💻\nsecond line"
+            let eligibility = CommandModeAXHelper.typingEligibility(
+                processIdentifier: 51515, role: "AXTextArea", subrole: subrole,
+                enabled: enabled, editable: nil, selectedTextSettable: true, valueSettable: true,
+                protectedContent: false, matchesCurrentFocus: { true }
+            )
+            var typed: [String] = []
+            state.sendCommand = { _ in }
+            state.minimumTranscribingDisplayDuration = 0
+            state.frontmostAppProvider = { editor }
+            state.targetAppActivator = { _ in }
+            state.pasteScheduler = { _, work in work() }
+            state.focusedTargetEligibilityProvider = { eligibility }
+            state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
+            state.guardedTextTypingHandler = { text, pid in
+                XCTAssertEqual(pid, 51515, name)
+                typed.append(text)
+                return .posted
+            }
+            state.textTypingHandler = { _ in XCTFail("Use guarded typing: \(name)"); return false }
+            state.pasteboardWriter = { _ in XCTFail("Keep clipboard: \(name)") }
+            state.simulatedPasteHandler = { XCTFail("No Cmd+V: \(name)"); return false }
+
+            XCTAssertEqual(eligibility.permitsTyping(into: 51515), name == "textedit", name)
+            state.record()
+            state.handleEvent(["type": "transcription", "text": text])
+            XCTAssertEqual(typed, name == "textedit" ? [text] : [], name)
+            XCTAssertEqual(state.latestDictationInsertionStatus, name == "textedit" ? .typed : .notInserted, name)
+            XCTAssertEqual(state.latestReusableTranscript, text, name)
+        }
+    }
+
+    func testTypingDiagnosticsPreserveShortCircuitFocusChecks() {
+        for reason in ["focused_pid_mismatch", "non_text_role", "not_editable", "secure_target", "focus_revalidation_failed", "eligible"] {
+            var focusReads = 0
+            let eligibility = DictationFocusedTargetEligibility(
+                processIdentifier: reason == "focused_pid_mismatch" ? 62626 : 51515,
+                role: reason == "non_text_role" ? "AXOutline" : "AXTextArea",
+                isEditable: reason != "not_editable", isSecure: reason == "secure_target",
+                matchesCurrentFocus: { focusReads += 1; return reason != "focus_revalidation_failed" }
+            )
+            XCTAssertEqual(eligibility.typingRejectionReason(into: 51515), reason == "eligible" ? nil : reason)
+            XCTAssertEqual(focusReads, ["focus_revalidation_failed", "eligible"].contains(reason) ? 1 : 0, reason)
         }
     }
 
@@ -80,6 +194,84 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertEqual(typed, [text])
         XCTAssertEqual(completions, 0)
         XCTAssertEqual(state.confirmationText, PasteDeliveryFeedback.typed)
+    }
+
+    /// D1's event sequence does not establish which native focus guard declined.
+    /// A captured handler alone must never authorize delivery after a fresh AX miss.
+    func testTextEditCapturedTargetAndFreshDeclineRetainTextWithoutDelivery() {
+        for reason in ["wrong_process", "readonly", "focus_changed"] {
+            let state = VoiceState(
+                recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+            )
+            let editor = FakeRunningApplication(bundleIdentifier: "com.apple.TextEdit", processIdentifier: 51515)
+            let text = "ADD שלום 👩‍💻\nsecond line"
+            var captures = 0
+            var freshAttempts = 0
+            var events: [(String, [String: String])] = []
+            state.sendCommand = { _ in }
+            state.minimumTranscribingDisplayDuration = 0
+            state.frontmostAppProvider = { editor }
+            state.targetAppActivator = { _ in }
+            state.pasteScheduler = { _, work in work() }
+            state.focusedTargetEligibilityProvider = {
+                CommandModeAXHelper.typingEligibility(
+                    processIdentifier: reason == "wrong_process" ? 62626 : 51515,
+                    role: "AXTextArea", subrole: nil, enabled: true,
+                    editable: reason != "readonly", selectedTextSettable: false,
+                    valueSettable: false, protectedContent: false,
+                    matchesCurrentFocus: { reason != "focus_changed" }
+                )
+            }
+            state.asyncDictationInsertionHandlerProvider = {
+                captures += 1
+                if captures == 1 {
+                    return { _, _ in
+                        XCTFail("A retained record-start element is not current-focus proof: \(reason)")
+                        return false
+                    }
+                }
+                return { text, completion in
+                    freshAttempts += 1
+                    return CommandModeAXHelper.beginSelectionLocalInsertion(
+                        text,
+                        readSnapshot: { CommandModeSelectionSnapshot(value: "seed", selectedRange: NSRange(location: 4, length: 0)) },
+                        isEligible: { reason != "readonly" },
+                        isCurrentTarget: { reason == "readonly" },
+                        writeSelection: { _ in XCTFail("No selection write: \(reason)"); return false },
+                        writeCaret: { _ in XCTFail("No caret write: \(reason)"); return false },
+                        observeSettled: { _ in XCTFail("No asynchronous observation without a write") },
+                        completion: completion
+                    )
+                }
+            }
+            state.guardedTextTypingHandler = { _, _ in XCTFail("No keys without current eligible focus"); return .failed }
+            state.textTypingHandler = { _ in XCTFail("No unguarded fallback"); return false }
+            state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+            state.simulatedPasteHandler = { XCTFail("No Cmd+V"); return false }
+            state.diagnosticLogger = { events.append(($0, $1)) }
+
+            state.record()
+            state.handleEvent(["type": "transcription", "text": text])
+
+            XCTAssertEqual(captures, 2, reason)
+            XCTAssertEqual(freshAttempts, 1, reason)
+            XCTAssertEqual(events.first { $0.0 == "paste_begin" }?.1["hasCapturedInsertion"], "true", reason)
+            XCTAssertEqual(events.first { $0.0 == "paste_before_activate" }?.1["hasCapturedInsertion"], "false", reason)
+            XCTAssertEqual(events.first { $0.0 == "paste_before_activate" }?.1["freshFocusPreferred"], "true", reason)
+            XCTAssertEqual(events.first { $0.0 == "paste_ax_insert_miss" }?.1["attemptedFreshInsertion"], "true", reason)
+            XCTAssertEqual(events.filter { $0.0 == "paste_confirmation" }.map { $0.1["outcome"] }, ["notInserted"], reason)
+            let rejection = events.first { $0.0 == "paste_typing_eligibility" }?.1
+            let expectedReason = reason == "wrong_process" ? "focused_pid_mismatch"
+                : reason == "readonly" ? "not_editable" : "focus_revalidation_failed"
+            XCTAssertEqual(rejection?["reason"], expectedReason, reason)
+            XCTAssertEqual(rejection?["focusedPID"], reason == "wrong_process" ? "62626" : "51515", reason)
+            XCTAssertEqual(rejection?["editableAttribute"], String(reason != "readonly"), reason)
+            XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted, reason)
+            XCTAssertEqual(state.latestReusableTranscript, text, reason)
+            XCTAssertEqual(state.recentTranscriptionEntries.first?.text, text, reason)
+            XCTAssertEqual(state.confirmationText, PasteRecoveryFeedback.notInserted, reason)
+        }
     }
 
     private func localInsertion(

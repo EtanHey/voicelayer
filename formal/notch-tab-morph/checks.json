@@ -1,0 +1,34 @@
+{
+  "module": "TabMorph",
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "sources": [
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchView.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Old": {
+      "role": "mutant",
+      "target": "NoSlabSweep",
+      "kind": "invariant"
+    },
+    "Async": {
+      "role": "mutant",
+      "target": "SettlesOnPresented",
+      "kind": "invariant"
+    },
+    "Unguarded": {
+      "role": "mutant",
+      "target": "NoSlabSweep",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "NoSlabSweep",
+    "SettlesOnPresented"
+  ]
+}

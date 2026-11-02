@@ -14,9 +14,10 @@ public struct SettingsHistoryDiagnosticsPanel: View {
     public let selectedAttemptID: String?
     public let shownAttemptID: String?
     private let onSelectAttempt: ((String) -> Void)?
+    private let onExpandedChange: ((Bool) -> Void)?
     @State private var disclosure: SettingsHistoryDiagnosticsDisclosure
 
-    public init(snapshot: SettingsHistoryDiagnostics?, runs: [SettingsHistoryRunLog.Run], omittedCount: Int = 0, initialDetailsExpanded: Bool = false, initiallyExpanded: Bool? = nil, attemptHistory: SettingsHistoryAttemptHistory? = nil, selectedAttemptID: String? = nil, shownAttemptID: String? = nil, onSelectAttempt: ((String) -> Void)? = nil, recordingID: String? = nil, recordingEntry: SettingsHistoryEntry? = nil) {
+    public init(snapshot: SettingsHistoryDiagnostics?, runs: [SettingsHistoryRunLog.Run], omittedCount: Int = 0, initialDetailsExpanded: Bool = false, initiallyExpanded: Bool? = nil, onExpandedChange: ((Bool) -> Void)? = nil, attemptHistory: SettingsHistoryAttemptHistory? = nil, selectedAttemptID: String? = nil, shownAttemptID: String? = nil, onSelectAttempt: ((String) -> Void)? = nil, recordingID: String? = nil, recordingEntry: SettingsHistoryEntry? = nil) {
         self.snapshot = snapshot
         self.runs = runs
         self.omittedCount = omittedCount
@@ -27,6 +28,7 @@ public struct SettingsHistoryDiagnosticsPanel: View {
         self.selectedAttemptID = selectedAttemptID
         self.shownAttemptID = shownAttemptID
         self.onSelectAttempt = onSelectAttempt
+        self.onExpandedChange = onExpandedChange
         let copy = SettingsHistoryDiagnosticsCopy(snapshot: snapshot, runs: runs, omittedCount: omittedCount, attemptHistory: attemptHistory,
                                                  recordingID: recordingID, recordingEntry: recordingEntry)
         var initial = SettingsHistoryDiagnosticsDisclosure(selection: snapshot?.selection ?? attemptHistory?.recordingPath, defaultExpanded: copy.defaultExpanded)
@@ -57,8 +59,16 @@ public struct SettingsHistoryDiagnosticsPanel: View {
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
         .accessibilityIdentifier("history-recording-details")
         .onChange(of: expansionOverride) { _, value in if let value { disclosure.expanded = value } }
-        .onChange(of: snapshot?.selection ?? attemptHistory?.recordingPath) { _, key in disclosure.select(key, defaultExpanded: copy.defaultExpanded) }
-        .onChange(of: copy.defaultExpanded) { _, value in disclosure.select(snapshot?.selection ?? attemptHistory?.recordingPath, defaultExpanded: value) }
+        .onChange(of: disclosure.expanded) { _, value in onExpandedChange?(value) }
+        // A remembered open/closed choice (QA-06) outlives the archive read landing; only defaults move.
+        .onChange(of: snapshot?.selection ?? attemptHistory?.recordingPath) { _, key in
+            disclosure.select(key, defaultExpanded: copy.defaultExpanded)
+            if let kept = expansionOverride { disclosure.expanded = kept }
+        }
+        .onChange(of: copy.defaultExpanded) { _, value in
+            disclosure.select(snapshot?.selection ?? attemptHistory?.recordingPath, defaultExpanded: value)
+            if let kept = expansionOverride { disclosure.expanded = kept }
+        }
     }
 
     /// The Recording ID lives in the header, beside (never inside) the disclosure button, so copying it

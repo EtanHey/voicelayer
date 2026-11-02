@@ -1,0 +1,52 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/idle-wings/IdleWings.tla": "7280f14fa8a488dcb50ff10c90bf03498469da230f75558374343b8b9dd6ce49",
+    "formal/idle-wings/checks.json": "5c4badd5302d8da46f1ab1930ed8b06bd818aa35aaa7fecc01a60723b98bcc2d",
+    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/idle-wings/Old.cfg": "8a29643e67030a73aa7c571a78561b6223a7ab48c926f6fa9a57aeb547a86fae",
+    "formal/idle-wings/MutantNoResume.cfg": "b16f546b1729de2adea5b5fbdaa60eb44ae298a6a94e60a85bc5325668b26ddf",
+    "formal/idle-wings/Fixed.cfg": "3b502f7dd707b735a8838b2e942ecb303227c20edbf12c11063070aeae375996",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "8fc70ea52d9d62ed00a2eb2230754c4fd70b5b18ea686ff7406656e591dc2830",
+    "flow-bar/Sources/VoiceBarUI/FloatingPanel.swift": "3da7181529b823bd7b96c01c7052ff7e68e8b0af69665d492fe0ddced4a0fe3d",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "a33e317806fc894e9bad96397b62f0e69532e5602a2eb311b06a75735e1d855a"
+  },
+  "mutants": {
+    "NoVanishWhileFocused": [
+      "Old"
+    ],
+    "StillCollapses": [
+      "MutantNoResume"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "96c6eacbc861b9631729f0490d8b4937a016e7a57954a42f23ad747092cfe29f"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 33,
+      "distinct": 18
+    },
+    "Old": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoVanishWhileFocused",
+      "status": "EXPECTED_FAIL",
+      "generated": 6,
+      "distinct": 6
+    },
+    "MutantNoResume": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "StillCollapses",
+      "status": "EXPECTED_FAIL",
+      "generated": 31,
+      "distinct": 18
+    }
+  }
+}

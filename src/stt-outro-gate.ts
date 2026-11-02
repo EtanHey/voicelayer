@@ -39,6 +39,7 @@
  */
 
 import { parseWavAudioInfo, WAVE_FORMAT_PCM } from "./stt-pause-map";
+import { isDeadDeviceChunk } from "./mic-disconnect";
 import type { TranscriptSegment } from "./stt-transcript-alignment";
 
 /**
@@ -148,7 +149,20 @@ const MAX_REMOVALS = 4;
  * 18:35): `2026-09-06T15-16-33-682Z-ff770b47` ends `תודה.` he never said, and
  * `2026-09-06T15-20-11-471Z-a6aa28aa` carries `תודה רבה.` at an internal pause.
  */
+/** Exact captions observed on non-speech; sources: docs/stt-cjk-hallucinations.md. */
+export const CJK_HALLUCINATION_PHRASES = [
+  "ご視聴ありがとうございました",
+  "ご視聴ありがとうございます",
+  "チャンネル登録をお願いします",
+  "请不吝点赞 订阅 转发 打赏支持明镜与点点栏目",
+  "谢谢观看",
+  "感谢观看",
+  "字幕由Amara.org社区提供",
+  "시청해주셔서 감사합니다",
+] as const;
+const CJK_OUTRO_KEYS = new Set(CJK_HALLUCINATION_PHRASES.map(normalizeOutroKey));
 const KNOWN_OUTRO_PHRASES = new Set([
+  ...CJK_OUTRO_KEYS,
   // English
   "thank you",
   "thank you very much",
@@ -264,6 +278,8 @@ export interface OutroGateDecision {
 }
 
 export interface OutroGateOptions {
+  /** Only the user's explicit setting. Auto/detected languages cannot enable mismatch gating. */
+  explicitLanguage?: ExplicitOutroLanguage;
   segments?: TranscriptSegment[];
   /**
    * False when the segments provably came from a different decode than
@@ -308,6 +324,24 @@ export function normalizeOutroKey(text: string): string {
     .trim();
 }
 
+export type ExplicitOutroLanguage = "en" | "he";
+
+/** A mismatch nominates one complete, closer-sized sentence; audio still decides. */
+export function isCjkLanguageMismatch(text: string, explicitLanguage?: ExplicitOutroLanguage): boolean {
+  if (explicitLanguage !== "en" && explicitLanguage !== "he") return false;
+  if (splitSentences(text).length !== 1 || /[?!？！…]|\.{2,}/u.test(text) ||
+      !/(?:^|[^.…])[.。]$/u.test(text.trim())) return false;
+  // ASCII stops without intervening whitespace still delimit CJK sentences.
+  if ((text.match(/[.。]/gu)?.length ?? 0) !== 1) return false;
+  const letters = text.match(/\p{L}/gu);
+  return !!letters?.length && letters.length <= 20 && letters.every(letter =>
+    /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}]/u.test(letter));
+}
+
+export function isCjkHallucinationCandidate(text: string, explicitLanguage?: ExplicitOutroLanguage): boolean {
+  return CJK_OUTRO_KEYS.has(normalizeOutroKey(text)) || isCjkLanguageMismatch(text, explicitLanguage);
+}
+
 function isKnownOutroKey(key: string): boolean {
   if (!key) return false;
   // The lexicon is an exact whole-string match, so its own entries bound their
@@ -338,7 +372,7 @@ export function splitSentences(text: string): SentenceSpan[] {
   // because one corpus row glues its invented token straight onto one —
   // `…give you the post from earlier: Okay.` — and without them that whole
   // line reads as a single sentence and the `Okay.` is never even considered.
-  const terminal = /(?:…|\.{2,}|[.!?:;])+/gu;
+  const terminal = /(?:…|\.{2,}|[.!?:;。！？])+/gu;
   let cursor = 0;
 
   for (const match of text.matchAll(terminal)) {
@@ -346,7 +380,7 @@ export function splitSentences(text: string): SentenceSpan[] {
     const next = text[markEnd];
     // A mark only closes a sentence when whitespace or end-of-string follows,
     // so "8.45am" and "rev.com" stay in one piece.
-    if (next !== undefined && !/\s/u.test(next)) continue;
+    if (next !== undefined && !/\s/u.test(next) && !/[。！？]$/u.test(match[0])) continue;
     const raw = text.slice(cursor, markEnd);
     const leading = raw.length - raw.replace(/^\s+/u, "").length;
     const sentence = raw.trim();
@@ -374,9 +408,20 @@ export function splitSentences(text: string): SentenceSpan[] {
 }
 
 /** Every sentence in `text` the lexicon would consider, in order. */
-export function findOutroCandidates(text: string): OutroCandidate[] {
+export function findOutroCandidates(text: string, explicitLanguage?: ExplicitOutroLanguage): OutroCandidate[] {
   const sentences = splitSentences(text);
   const candidates: OutroCandidate[] = [];
+
+  // CJK captions commonly have no punctuation. A fixed-language mismatch is
+  // likewise only a whole-result candidate, never a substring deletion rule.
+  const wholeKey = normalizeOutroKey(text);
+  const mismatch = isCjkLanguageMismatch(text, explicitLanguage);
+  if ((CJK_OUTRO_KEYS.has(wholeKey) || mismatch) &&
+      !/[?!？！…]|\.{2,}/u.test(text) && sentences.length === 1) {
+    const phrase = text.trim(), startIndex = text.indexOf(phrase);
+    return [{ phrase, key: wholeKey, startIndex,
+      endIndex: startIndex + phrase.length, isTail: true }];
+  }
 
   for (const [index, sentence] of sentences.entries()) {
     // A single full stop, and nothing else.
@@ -392,8 +437,8 @@ export function findOutroCandidates(text: string): OutroCandidate[] {
     // because `normalizeOutroKey` strips punctuation before the lexicon sees
     // the words. Mixed terminal punctuation is a spoken-question artefact, and
     // the doc promises a single full stop, so require it literally.
-    if (/[?!]/u.test(sentence.text)) continue;
-    if (!/(?:^|[^.…])\.$/u.test(sentence.text)) continue;
+    if (/[?!？！]/u.test(sentence.text)) continue;
+    if (!/(?:^|[^.…])[.。]$/u.test(sentence.text)) continue;
 
     const key = normalizeOutroKey(sentence.text);
     if (!isKnownOutroKey(key)) continue;
@@ -790,7 +835,7 @@ export function stripHallucinatedOutro(
   wavData: Uint8Array,
   options: OutroGateOptions = {},
 ): OutroGateDecision {
-  const candidates = findOutroCandidates(text);
+  const candidates = findOutroCandidates(text, options.explicitLanguage);
   if (candidates.length === 0) {
     return { text, removed: [], reason: "no-candidate" };
   }
@@ -809,9 +854,16 @@ export function stripHallucinatedOutro(
   // sustained-run test misses it, and a spread means words.
   const flat =
     windows.speechLevelDbfs - windows.floorDbfs < SPEECH_OVER_FLOOR_DB;
-  if (flat && isSilentThroughout(windows)) {
+  const cjkWhole = isCjkHallucinationCandidate(text, options.explicitLanguage);
+  const info = cjkWhole ? parseWavAudioInfo(wavData) : null;
+  // A flat noise floor can also be steady quiet speech. The expanded CJK
+  // whole-result rule needs dead-device-flat samples for this segmentless
+  // shortcut; otherwise the ordinary near-speech-level guard must run below.
+  const segmentlessCjkSafe = !cjkWhole || !!info && isDeadDeviceChunk(
+    wavData.subarray(info.dataOffset, info.dataOffset + info.dataSize));
+  if (flat && segmentlessCjkSafe && isSilentThroughout(windows)) {
     const only = candidates[0];
-    if (candidates.length === 1 && only && splitSentences(text).length === 1) {
+    if (candidates.length === 1 && only && only.phrase === text.trim()) {
       return {
         text: "",
         removed: [

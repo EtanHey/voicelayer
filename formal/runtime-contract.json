@@ -1,5 +1,5 @@
 {
-  "notchPolicy": "current",
+  "notchPolicy": "fixed",
   "pipelinePolicy": "current",
   "cancelIdField": "capture_id",
   "captureIds": {"A": 101, "B": 102, "stale": 999},

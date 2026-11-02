@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoOverlap",
+  "status": "EXPECTED_FAIL",
+  "generated": 6,
+  "distinct": 6,
+  "trace": [
+    "/\\ now = 0\n/\\ views = <<[initial |-> TRUE, inserted |-> 0, removed |-> 85]>>",
+    "/\\ now = 0\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 85] >>",
+    "/\\ now = 1\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 85] >>"
+  ]
+}

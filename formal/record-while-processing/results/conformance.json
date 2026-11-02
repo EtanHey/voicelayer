@@ -12,7 +12,7 @@
   "sourceSHA256": {
     "formal/record-while-processing/conformance.test.ts": "de09c97d28213f1f2214594c70a2b105550d2724477b585a53d924b97ff0fddd",
     "formal/record-while-processing/runtime-adapter.ts": "d0701d298af8e77fb725077980e2e77e018183cd5dfe8125778e570e19b9f164",
-    "formal/runtime-contract.json": "ab6305773cb1884474e665a1c421dfcd78250fe49613625de6aef6b4fcf877d8"
+    "formal/runtime-contract.json": "d5fde60fe38663b6b603b9c34ff3735112d33232966d48e5e79c568a05b48821"
   },
   "tests": 5,
   "strictPasses": 5,
@@ -59,5 +59,6 @@
       "test",
       "formal/record-while-processing/conformance.test.ts"
     ]
-  }
+  },
+  "productionSource": "f98243d2b2141ff0f0d16c3f145cb76cfcd0ebae"
 }

@@ -85,7 +85,7 @@ final class VoiceBarPresentationTests: XCTestCase {
     func testBusySelectionRendersInsideTheGrownNotchWithoutMovingTheTopRow() throws {
         for light in [false, true] {
             for (mode, phase, name) in [(VoiceMode.recording, HotkeyPhase.idle, "recording"),
-                                        (.transcribing, .idle, "transcribing"),
+                                        // N2: transcribing hides the note (NotchStatusFeedbackTests).
                                         (.idle, .pressing, "preview-pressing"),
                                         (.idle, .holding, "preview-holding"),
                                         (.idle, .awaitingSecondTap, "preview-second-tap")] {
@@ -113,8 +113,10 @@ final class VoiceBarPresentationTests: XCTestCase {
                 XCTAssertEqual(grown.topHeight, top.topHeight, "no top-row jump: \(name)")
                 XCTAssertEqual(grown.leadingWingWidth, top.leadingWingWidth, "no top-row jump: \(name)")
                 XCTAssertEqual(grown.trailingWingWidth, top.trailingWingWidth, "no top-row jump: \(name)")
-                XCTAssertEqual(grown.lowerSurfaceHeight,
-                               top.lowerSurfaceHeight + VoiceBarNotchContract.transientNoteBandHeight)
+                // The resting body is unchanged; the note (with any status already shown) adds its own height.
+                XCTAssertEqual(grown.lowerSurfaceHeight - busy.presentation.feedbackHeight,
+                               top.lowerSurfaceHeight - before.presentation.feedbackHeight, "no body jump: \(name)")
+                XCTAssertGreaterThan(busy.presentation.feedbackHeight, before.presentation.feedbackHeight, name)
                 XCTAssertEqual(state.mode, mode)
                 XCTAssertEqual(state.hotkeyPhase, phase)
             }
@@ -502,12 +504,11 @@ final class VoiceBarPresentationTests: XCTestCase {
     }
 
     func testCollapsedIdleOverridesEveryTransientEnvelopeUntilActivityReturns() {
+        // A confirmation is a notice, not an envelope: formal/notch-presentation Fixed gives it a shell even
+        // after the idle collapse (NotchStatusFeedbackTests.testConfirmationsAreNoticesInTheTabNotTheWing).
+        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: .init(
+            mode: .idle, confirmationText: "Pasted", isCollapsed: true)).visualState, .compactStatus)
         let inputs = [
-            VoiceBarNotchOperationalInput(
-                mode: .idle,
-                confirmationText: "Pasted",
-                isCollapsed: true
-            ),
             VoiceBarNotchOperationalInput(
                 mode: .idle,
                 queueDepth: 1,

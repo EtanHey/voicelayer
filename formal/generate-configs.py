@@ -45,7 +45,10 @@ generate("notch-presentation", "NotchPresentation", dict(Variant="fixed", Fault=
           ("MutProcessingNote","N2NoProcessingBand","processing-note",{}),("MutTruncate","N3GrowsDown","truncate",{}),("MutOutsideBand","N3GrowsDown","outside-band",{}),
           ("MutErrorSubstitute","N4NoSubstitute","error-substitute",{}),("MutDetailsSubstitute","N4NoSubstitute","details-substitute",{}),
           ("MutBusyHistory","N5InlineHistory","busy-history",{}),("MutErrorHistory","N5InlineHistory","error-history",{}),
-          ("MutStaleNote","NoteHasCause","stale-note",{}),("MutNeverExpire","NoteNeverStuck","never-expire",{})])
+          ("MutStaleNote","NoteHasCause","stale-note",{}),("MutNeverExpire","NoteNeverStuck","never-expire",{}),
+          ("MutantNoShell","VisibleHasShell","no-collapsed-shell",{}),
+          ("MutantType","TypeOK","timer-range",{}),
+          ("MutantStuck","NoteNeverStuck","timer-reset",{})])
 
 ri = ["TypeOK","OneMic","OneDecoder","NoDuplicatePaste","NoCancelledPaste","N7CooldownRing","D3EveryTakeKept",
       "N6Admissible","N6StartsB","N6PreservesA","N7ScopedCancel","N7GuardedClick","N7Identity","N8ImmediatePaste","N8FinalNotSuperseded","NoTimeoutWhileTalking","N8DecodeAdmissible","SpeechRenewsDeadline","NoEarlySilenceTimeout","CaptureWithinCap"]

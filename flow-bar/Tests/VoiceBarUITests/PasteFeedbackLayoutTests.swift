@@ -297,8 +297,9 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                             XCTAssertTrue(host.bounds.contains(textRect), "Full message stays inside its actual rendered frame")
                             XCTAssertTrue(text.visibleRect.insetBy(dx: -0.5, dy: -0.5).contains(text.bounds),
                                           "Ancestor clipping must not hide the mounted feedback")
-                            XCTAssertEqual(feedback.width, geometry.bodyFlushWithWings.bodyWidth,
-                                           "Feedback uses the compact under-notch note width")
+                            XCTAssertEqual(feedback.width, VoiceBarNotchContract.noteColumnWidth(
+                                               for: geometry, ownBodyHeight: 0),
+                                           "N1: feedback uses the compact under-notch note width")
                             XCTAssertLessThan(feedback.width, canvas.canvasGeometry.totalWidth,
                                               "Feedback must not expand into a full-width band")
                             if let nativeText = text as? NSTextView {

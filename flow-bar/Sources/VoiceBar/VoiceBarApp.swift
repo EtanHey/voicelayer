@@ -175,6 +175,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var panelPointerMovementHandler: ((NSPoint) -> Void)?
+    private var windowFocusObservers: [NSObjectProtocol] = []
+
+    private func synchronizeVoiceBarWindowFocus() {
+        voiceState.setVoiceBarWindowFocused(
+            VoiceBarWindowFocus.holdsIdleWings(keyWindow: NSApp.keyWindow, notchPanel: panel)
+        )
+    }
     /// NOTCH2: the hit providers' animation-aware view of the panel layout (see `VoiceBarPanelHitGate`).
     private var panelHitGate: VoiceBarPanelHitGate?
     private var panelHitGateSettleGeneration: UInt = 0
@@ -662,13 +669,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         configurePanelStateObservation()
         voiceState.onHistoryArchiveChange = { path in
-            // Drop that entry from the History index first, so the reload the notification triggers can't serve a
-            // stale transcript (a re-transcription rewrites an old entry in place).
+            // Materialize the changed row on the archive actor. Known-path events patch History in place;
+            // they must not cancel paging or replace every row while the user is selecting text.
             Task {
-                if let path { await SettingsArchiveIndex.shared.invalidate(entryPath: path) }
-                await MainActor.run {
-                    NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
-                }
+                await SettingsHistoryArchiveChangeNotifier.post(entryPath: path)
             }
         }
         voiceState.onPolishStatusChange = { [weak self] in
@@ -809,6 +813,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.savePanelPosition()
         }
 
+        // R0856-12: the idle wings stay while VoiceBar's own Settings or popover window has focus.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                     NSWindow.willCloseNotification, NSApplication.didResignActiveNotification] {
+            windowFocusObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                // Resign and close fire before AppKit settles the next key window; read it after.
+                DispatchQueue.main.async { self?.synchronizeVoiceBarWindowFocus() }
+            })
+        }
+
         // Track mouse across screens — move pill to whichever monitor the cursor is on
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             self?.handleMouseMoved()
@@ -848,6 +863,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NotificationCenter.default.removeObserver(observer)
         }
         settingsSceneObservers.removeAll()
+        windowFocusObservers.forEach(NotificationCenter.default.removeObserver)
+        windowFocusObservers.removeAll()
         hotkeyListener.stop()
         audioLevelMonitor.shutdown()
         releaseLevelAdmission?()
@@ -1269,7 +1286,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             gatePermitsQuit: !ownsServer || gate.permitsTermination(controlledLease: controlledUpdateLease)
         )
         guard reply == .terminateNow else {
-            voiceState.reportQuitRefusal()
+            // The note clears once the same policy would let this quit through (the work stopped).
+            let lease = controlledUpdateLease
+            let refusalOwnsServer = ownsServer
+            let refusalGate = gate
+            // Voice work is read live by VoiceState; only the update gate's part is rechecked here.
+            voiceState.reportQuitRefusal(
+                gateBlocked: refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease),
+                isGateStillBlocked: { refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease) }
+            )
             NSLog("[VoiceBar] Quit refused: voice/update safety evidence unavailable")
             return reply
         }
@@ -2047,7 +2072,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isCollapsed: state?.isCollapsed ?? false,
                 coreWidth: coreWidth,
                 visibleCoreOcclusionInset: visibleCoreOcclusionInset,
-                transientNote: state?.selectionFeedbackNote
+                transientNote: state?.selectionFeedbackNote,
+                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory
             )
         )
     }

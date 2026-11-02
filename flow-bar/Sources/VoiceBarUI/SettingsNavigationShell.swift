@@ -147,21 +147,27 @@ public enum SettingsDictionarySource: Hashable, Sendable {
     }
 }
 
-/// A single secondary status line; full release provenance and update copy stay available on hover.
+/// S1 (Etan, 2026-11-02): one quiet line, "VoiceBar 2.2.61 · Up to date". The only place the version appears;
+/// full release provenance and update copy stay available on hover.
 struct SettingsVersionFooter: View {
     let installed: VoiceBarInstalledVersion
     let status: VoiceBarVersionStatus?
 
+    static func line(installed: VoiceBarInstalledVersion, status: VoiceBarVersionStatus?) -> String {
+        let version = "VoiceBar \(installed.version ?? "Unknown")"
+        guard let status else { return version }
+        return "\(version) · \(status.sidebarMessage)"
+    }
+
     var body: some View {
         HStack(spacing: 4) {
-            Text(installed.version.map { "v\($0)" } ?? "Unknown")
+            Text("VoiceBar \(installed.version ?? "Unknown")")
                 .monospacedDigit()
                 .fixedSize()
             if let status {
                 Text("·")
-                Image(systemName: status.symbolName)
-                    .foregroundStyle(tint(status))
                 Text(status.sidebarMessage)
+                    .foregroundStyle(tint(status))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -174,11 +180,11 @@ struct SettingsVersionFooter: View {
         .accessibilityValue(status?.message ?? "")
     }
 
+    /// Quiet unless there is something to do: only an available update takes the accent colour.
     private func tint(_ status: VoiceBarVersionStatus) -> Color {
         switch status {
-        case .latest, .ahead: .green
         case .available: .accentColor
-        case .checking, .couldNotCheck: .secondary
+        case .checking, .latest, .ahead, .couldNotCheck: .secondary
         }
     }
 }
