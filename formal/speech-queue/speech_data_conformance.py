@@ -32,15 +32,17 @@ def check_speech_data_runtime(run, runner):
     bun = ["bun", "test", "src/__tests__/tts-long-read-runtime.test.ts", "-t", "F-speech"]
     status, output = execute(bun, "speech-data-daemon.log")
     assert status == 0 and "QueuedCountExcludesCurrent replayed 9" in output and " 0 fail" in output
+    frames = sum(sum(event["type"] == "queue" for event in row["events"])
+                 for row in json.loads((run / "speech-data-wire.json").read_text()))
     status, output = execute(["swift", "test", "--package-path", "flow-bar", "--scratch-path", ".build.noindex/swift",
                               "--filter", "SpeechDataConformanceTests"], "speech-data-swift.log")
-    assert status == 0 and "Speech data replayed 9 real queue snapshots and first speaking frame" in output
+    assert status == 0 and "Speech data replayed 9 real queue scenarios and first speaking frame" in output and f"; {frames} queue frames" in output
     source = root / "src/tts.ts"
     fixed = source.read_text()
     mutants = [
         ("QueuedCountExcludesCurrent", 'priority: this.preparing.job.priority,\n        is_current: true,',
          'priority: this.preparing.job.priority,\n        is_current: false,'),
-        ("TimingNeverBlankWhilePlaying", '        initial_timing: initialPlaybackTiming(next.metadata.text, durationMs, next.metadata.wordBoundaries, next.metadata.alignedWords),\n', ''),
+        ("TimingNeverBlankWhilePlaying", '        initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),\n', ''),
     ]
     results = []
     for prop, before, after in mutants:
@@ -53,5 +55,5 @@ def check_speech_data_runtime(run, runner):
         finally:
             source.write_text(fixed)
     (run / "speech-data-results.json").write_text(json.dumps(dict(projected_cases=len(cases),
-        native_queue_frames=len(cases), native_first_speaking_frames=1, mutants=results), indent=2) + "\n")
-    print(f"PASS: speech data {len(cases)} real queue frames + first speaking frame; both runtime mutants killed", flush=True)
+        native_queue_frames=frames, native_first_speaking_frames=1, mutants=results), indent=2) + "\n")
+    print(f"PASS: speech data {len(cases)} scenarios / {frames} real queue frames + first speaking frame; both runtime mutants killed", flush=True)

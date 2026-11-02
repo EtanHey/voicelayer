@@ -3135,7 +3135,19 @@ public final class VoiceState {
                 }
                 statusText = event["text"] as? String ?? ""
                 // Consume startup timing before announcing speaking to observers.
-                if let timing = event["initial_timing"] as? [String: Any], timing["type"] as? String == "subtitle" {
+                if var timing = event["initial_timing"] as? [String: Any], timing["type"] as? String == "subtitle" {
+                    if let number = timing["estimated_duration_ms"] as? NSNumber, number.doubleValue.isFinite,
+                       let duration = Int(exactly: number.doubleValue.rounded()), duration > 0 {
+                        let tokens = TeleprompterContentModel.displayTokens(statusText)
+                        let span = max(duration, tokens.count)
+                        timing["aligned_words"] = tokens.enumerated().map { index, text -> [String: Any] in
+                            let start = Int(Double(index) / Double(tokens.count) * Double(span))
+                            let end = Int(Double(index + 1) / Double(tokens.count) * Double(span))
+                            return ["word_index": index, "text": text, "offset_ms": start,
+                                    "duration_ms": end - start, "estimated": true]
+                        }
+                        timing["duration_ms"] = span
+                    }
                     handleEvent(timing)
                 }
                 canReplay = true

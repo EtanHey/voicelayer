@@ -210,7 +210,7 @@ export interface AlignedWordBoundary {
   /** Chunk-local playback milliseconds, already adjusted for the player rate. */
   offset_ms: number | null;
   duration_ms: number | null;
-  /** WORDTIME1 history only: interpolated or an Edge seek anchor (may be zero-length), not measured. */
+  /** Startup/interpolated timing or an Edge seek anchor (may be zero-length), not measured. */
   estimated?: true;
 }
 
@@ -218,7 +218,10 @@ export interface AlignedWordBoundary {
  * New events leave words empty so old apps safely render the chunk untimed.
  * New apps prefer aligned_words, matching exact display text and word_index.
  * The caller owns request/chunk/audio/rate freshness before publishing. */
-export type SubtitleEvent = { type: "subtitle" } & (
+export type SubtitleEvent = { type: "subtitle";
+  /** Compact startup estimate when full timing rows would crowd the state frame. */
+  estimated_duration_ms?: number;
+} & (
   | { words: WordBoundary[]; aligned_words?: never }
   | { words: []; aligned_words: AlignedWordBoundary[]; /** Chunk-local audio length: interpolation never passes it. */ duration_ms?: number }
 );

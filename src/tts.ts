@@ -1213,8 +1213,9 @@ class PlaybackQueueManager {
     this.evictExpired();
     this.collapseBurstyLowPriority(job);
     this.insert(job);
-    this.emitQueueSnapshot();
+    // Select the current owner before publishing: the first read is not waiting.
     this.processNext();
+    this.emitQueueSnapshot();
     return handle;
   }
 
@@ -1810,7 +1811,7 @@ class PlaybackQueueManager {
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
         ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),
         playback_amplitude: next.playbackAmplitude,
-        initial_timing: initialPlaybackTiming(next.metadata.text, durationMs, next.metadata.wordBoundaries, next.metadata.alignedWords),
+        initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),
       });
       if (next.metadata.wordBoundaries?.length) {
         broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });

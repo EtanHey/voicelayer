@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { serializeEvent, VOICEBAR_SOCKET_EVENT_MAX_BYTES } from "../socket-protocol";
 import { initialPlaybackTiming } from "../tts/playback-timing";
 
 describe("first-player timing data", () => {
@@ -11,6 +12,16 @@ describe("first-player timing data", () => {
     expect(event.aligned_words.every(word => word.estimated && word.offset_ms !== null && (word.duration_ms ?? 0) > 0)).toBe(true);
     const end = event.aligned_words.at(-1)!;
     expect(end.offset_ms! + end.duration_ms!).toBe(3000);
+  });
+  it("large timing tables cannot erase the first speaking frame", () => {
+    const text = "a ".repeat(200).trim();
+    for (const words of [[], text.split(" ").map((text, i) => ({ text, offset_ms: i * 50, duration_ms: 50 }))]) {
+      const initial_timing = initialPlaybackTiming(text, 10000, words);
+      expect(initial_timing.estimated_duration_ms).toBe(10000);
+      const wire = serializeEvent({ type: "state", state: "speaking", text, duration_ms: 10000, initial_timing });
+      expect(Buffer.byteLength(wire)).toBeLessThanOrEqual(VOICEBAR_SOCKET_EVENT_MAX_BYTES);
+      expect(JSON.parse(wire)).toMatchObject({ text, initial_timing });
+    }
   });
   it("real retained alignment and Edge boundaries take priority over estimates", () => {
     const aligned = [{ word_index: 0, text: "One", offset_ms: 120, duration_ms: 800 }];

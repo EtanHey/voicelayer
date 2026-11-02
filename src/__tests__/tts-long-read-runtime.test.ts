@@ -142,15 +142,18 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         holdDecoder = false; decoders[decoderIndex].exit.resolve(0); await playerBarrier.at(playerIndex);
         if (row.phase === "parked") { expect(pausePlayback().outcome).toBe("accept"); await fixtureCheckpoint(); }
       }
-      const queue = events.slice(beginning).findLast(event => event.type === "queue");
+      const snapshots = events.slice(beginning).filter(event => event.type === "queue");
+      expect(snapshots.flatMap(event => event.items).filter(item => item.text === "Current read" && !item.is_current),
+        "QueuedCountExcludesCurrent every published frame").toHaveLength(0);
+      const queue = snapshots.at(-1);
       expect(queue.items.filter((item: { is_current: boolean }) => !item.is_current).length,
         `QueuedCountExcludesCurrent ${row.phase}/${row.queued}`).toBe(row.queued);
       wire.push({ expected: row.queued, events: [
-        { type: "state", state: "speaking", text: "Current read", duration_ms: 4000 }, queue] });
+        { type: "state", state: "speaking", text: "Current read", duration_ms: 4000 }, ...snapshots] });
       stopPlayback(); for (const child of decoders) child.exit.resolve(0); await awaitCurrentPlayback();
     }
     if (process.env.VOICELAYER_SPEECH_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_WIRE, JSON.stringify(wire));
-    console.log(`QueuedCountExcludesCurrent replayed ${rows.length} real queue snapshots`);
+    console.log(`QueuedCountExcludesCurrent replayed ${rows.length} real queue scenarios`);
   });
 
   it.each([20, 60, 200])("F-speech first audio uses bounded startup synthesis for %i words", async words => {

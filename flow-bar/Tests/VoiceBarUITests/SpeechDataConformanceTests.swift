@@ -31,10 +31,7 @@ final class SpeechDataConformanceTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "speaking", "text": "Next words", "duration_ms": 9000,
                            "playback_offset_ms": 4000,
                            "long_read": ["id": "read", "chunk_index": 1, "chunk_count": 2, "chunk_start_ms": 4000],
-                           "initial_timing": ["type": "subtitle", "words": [], "duration_ms": 1000, "aligned_words": [
-                            ["word_index": 0, "text": "Next", "offset_ms": 0, "duration_ms": 500, "estimated": true],
-                            ["word_index": 1, "text": "words", "offset_ms": 500, "duration_ms": 500, "estimated": true]
-                           ]]])
+                           "initial_timing": ["type": "subtitle", "words": [], "estimated_duration_ms": 1000]])
         XCTAssertEqual(state.wordBoundaries.map(\.offsetMs), [4000, 4500])
         XCTAssertEqual(state.playbackWordTimeline.map(\.offsetMs), [4000, 4500])
     }
@@ -45,9 +42,18 @@ final class SpeechDataConformanceTests: XCTestCase {
             throw XCTSkip("Run formal/speech-queue/check.sh for real daemon speech-data events")
         }
         let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: queuePath))) as? [[String: Any]])
+        var frames = 0
         for row in rows {
             let state = VoiceState()
-            for event in try XCTUnwrap(row["events"] as? [[String: Any]]) { state.handleEvent(event) }
+            for event in try XCTUnwrap(row["events"] as? [[String: Any]]) {
+                state.handleEvent(event)
+                if event["type"] as? String == "queue" {
+                    frames += 1
+                    let items = try XCTUnwrap(event["items"] as? [[String: Any]])
+                    let waiting = items.filter { ($0["text"] as? String)?.hasPrefix("Waiting ") == true }.count
+                    XCTAssertEqual(state.queuedSpeakCount, waiting, "QueuedCountExcludesCurrent every published frame")
+                }
+            }
             XCTAssertEqual(state.queuedSpeakCount, row["expected"] as? Int, "QueuedCountExcludesCurrent")
         }
         let timing = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: timingPath))) as? [[String: Any]])
@@ -55,6 +61,6 @@ final class SpeechDataConformanceTests: XCTestCase {
         for event in timing { state.handleEvent(event) }
         XCTAssertTrue(state.wordBoundaries.contains { $0.offsetMs != nil }, "TimingNeverBlankWhilePlaying")
         XCTAssertTrue(state.teleprompterWordBoundaries.contains { $0.offsetMs != nil })
-        print("Speech data replayed \(rows.count) real queue snapshots and first speaking frame")
+        print("Speech data replayed \(rows.count) real queue scenarios and first speaking frame; \(frames) queue frames")
     }
 }

@@ -71,8 +71,9 @@ it("SPEECH-PACING retains every character of an overlong first token", async () 
   const { chunkTextForLongRead } = await import("../tts");
   const text = "x".repeat(450) + " final words.";
   const chunks = chunkTextForLongRead(text);
-  expect(chunks[0].length).toBeLessThanOrEqual(400);
-  expect(chunks.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
+  expect(chunks[0], "WholeStartupWord").toBe("x".repeat(450));
+  expect(chunks.slice(1).every(chunk => chunk.length <= 400)).toBe(true);
+  expect(chunks.join(" ").match(/\S+/gu)).toEqual(text.match(/\S+/gu));
 });
 
 it("SPEECH-PACING retains tokens across repeated whitespace and paragraphs", async () => {
@@ -105,14 +106,15 @@ describe("SPEECH-PACING natural startup and ramp", () => {
     });
   }
   for (const [opening, expected] of [
-    ["This first sentence contains enough words to exceed the old startup budget and continues naturally until its final punctuation.", null],
+    ["This first sentence contains enough words to exceed the old startup budget and continues naturally until its final punctuation.", "This first sentence contains enough words to exceed the old startup budget and continues naturally"],
     ["This first clause contains enough words to reach a natural pause; the following clause continues well beyond the old startup budget and ends here.", "This first clause contains enough words to reach a natural pause;"],
     ["This first clause contains enough words to reach a natural pause, and the following clause continues well beyond the old startup budget and ends here.", "This first clause contains enough words to reach a natural pause,"],
   ]) {
     it(`uses a sentence or clause boundary: ${opening}`, async () => {
       const { chunkTextForLongRead } = await import("../tts");
       const chunks = chunkTextForLongRead(opening! + tail);
-      expect(chunks[0]).toBe(expected ?? opening!);
+      expect(chunks[0], "StartupRequestBound").toBe(expected ?? opening!);
+      expect(chunks[0].length).toBeLessThanOrEqual(100);
       expect(chunks.join(" ").match(/\S+/gu)).toEqual((opening! + tail).match(/\S+/gu));
     });
   }
