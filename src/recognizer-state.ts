@@ -6,9 +6,10 @@ import { readRecognizerAssets } from "./recognizer-assets";
 import { modelIdleSeconds } from "./model-residency";
 export type Recognizer = "parakeet" | "whisper";
 export type RecognizerPhase = "loading" | "ready" | "sleeping" | "error";
+export interface RecognizerDownloadStatus { state: "idle" | "downloading" | "verifying" | "runtime" | "complete" | "cancelled" | "error"; received_bytes: number; total_bytes: number; error: string | null }
 export interface RecognizerStatus {
   revision: number; desired: Recognizer; effective: Recognizer | null; phase: RecognizerPhase;
-  engines: Record<Recognizer, { assets_present: boolean; disk_bytes: number; phase: RecognizerPhase; available: boolean | null; error: string | null }>;
+  engines: Record<Recognizer, { assets_present: boolean; disk_bytes: number; download: RecognizerDownloadStatus; phase: RecognizerPhase; available: boolean | null; error: string | null }>;
   fallback_reason: string | null; switch_allowed: boolean; switch_refusal_reason: string | null;
   idle_unload_seconds: number; source: "settings" | "env" | "default";
 }
@@ -60,8 +61,8 @@ export function setRecognizerRecoveryWhisper(value: { attempt: unknown } | null)
 export function markRecognizerCleanupUnconfirmed(engine: Recognizer): void { cleanupBarriers.add(engine); publish(); }
 export function confirmRecognizerCleanup(engine: Recognizer): void { if (cleanupBarriers.delete(engine)) publish(); }
 const engines: Record<Recognizer, Omit<RecognizerStatus["engines"][Recognizer], "assets_present" | "disk_bytes">> = {
-  parakeet: { phase: "sleeping", available: null, error: null },
-  whisper: { phase: "sleeping", available: null, error: null },
+  parakeet: { phase: "sleeping", available: null, error: null, download: { state: "idle", received_bytes: 0, total_bytes: 0, error: null } },
+  whisper: { phase: "sleeping", available: null, error: null, download: { state: "idle", received_bytes: 0, total_bytes: 0, error: null } },
 };
 let busyProbe: () => string | null = () => null;
 const listeners = new Set<(status: RecognizerStatus) => void>();

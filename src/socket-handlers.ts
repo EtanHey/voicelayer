@@ -1,7 +1,8 @@
+import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-download";
 import { deleteRecognizer } from "./recognizer-management";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
-import { selectRecognizer } from "./recognizer-controller";
+import { setRecognizerResidency, selectRecognizer } from "./recognizer-controller";
 import { readRecognizerStatus, onRecognizerStatusChange, beginRecognizerMaintenance, finishRecognizerTransition } from "./recognizer-state";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
@@ -647,6 +648,14 @@ function handleSocketCommandAdmitted(
       // voice is busy, then returns its reason and fresh residency snapshot.
       if (residencyBusy()) return handleResidencyCommand(command);
       return withRecognizerMaintenance(command, () => handleResidencyCommand(command));
+    case "set_recognizer_residency":
+      return setRecognizerResidency(command.engine, command.action).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
+    case "download_recognizer":
+      return downloadRecognizer(command.engine).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
+    case "cancel_recognizer_download": {
+      const cancelled = cancelRecognizerDownload(command.engine);
+      return { ...buildAck(command, cancelled ? "accept" : "reject", cancelled ? undefined : "no-active-download"), recognizer_status: readRecognizerStatus() };
+    }
     case "delete_recognizer": {
       const result = deleteRecognizer(command.engine);
       return { ...buildAck(command, result.outcome, result.reason), recognizer_status: readRecognizerStatus() };

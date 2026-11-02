@@ -5,7 +5,7 @@ does not change the default backend or install another daemon/LaunchAgent.
 
 ## Configuration
 
-Configure the **VoiceBar-owned MCP daemon's environment** before launching it:
+Use Settings › Transcription to download assets and the owned runtime. For manual provisioning, these **VoiceBar-owned MCP daemon environment** overrides remain supported:
 
 ```sh
 QA_VOICE_STT_BACKEND=parakeet
@@ -14,7 +14,7 @@ VOICELAYER_PARAKEET_PYTHON=/absolute/path/to/venv/bin/python
 VOICELAYER_PARAKEET_MODEL=/absolute/path/to/parakeet-tdt-0.6b-v3
 ```
 
-Python must already provide the MLX runtime and `mlx_audio`. The integration was
+A manual Python override must provide the MLX runtime and `mlx_audio`. The integration was
 tested with the SPEED lane's local Parakeet TDT 0.6b v3, mlx-audio 0.6.3, MLX 0.32.4
 and Python 3.12. Model configuration, weights and tokenizer must already exist
 locally; this backend never downloads assets. Whisper CLI and a local Whisper
@@ -231,3 +231,27 @@ returning. It never restores an engine after owner close; durable desired choice
 An unexpected owned Whisper child exit publishes `whisper-unexpected-exit` immediately for that
 exact generation. Intentional unload and a late old exit cannot invalidate a replacement.
 Status reads remain free of provider work. These contracts do not establish native/model qualification.
+
+## Explicit asset management (#656)
+
+`recognizer_status.engines[engine]` reports `assets_present`, `disk_bytes` (model
+files only), and `download` state/progress. Reading it uses local metadata, with
+no model load or network. `available` remains runtime evidence, independently.
+
+Socket commands: `download_recognizer {engine}`, `cancel_recognizer_download
+{engine}`, `delete_recognizer {engine}`, and `set_recognizer_residency
+{engine,action:"load"|"unload"}`. Engines are `whisper` and `parakeet`. Progress
+arrives in the existing `recognizer_status` events. Voice work excludes mutations;
+delete additionally requires an unloaded engine and another installed recognizer.
+Deleting the selected engine saves the other selection first. Only named regular
+model files are removed; shared-cache links and unrelated files are preserved.
+
+Downloads use the immutable revisions and SHA256 pins in
+`src/recognizer-download-manifest.ts`, stage beside the destination, then rename
+after verification. Failed/cancelled staging never counts as installed. Parakeet
+also installs and validates a VoiceLayer-owned venv from the wheel-only,
+hash-locked `src/parakeet-runtime.lock` (mlx-audio 0.6.3), then atomically records
+its Python path in `parakeet-runtime.json`. The Python override still wins.
+The venv is cached separately and retained when deleting model weights.
+Compatible arm64 macOS Python 3.12–3.14 must be installed. Real provisioning and
+file-only inference require separate qualification; synthetic tests do neither.

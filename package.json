@@ -12,6 +12,7 @@
     "build-info.json",
     "src/**/*.ts",
     "src/**/*.py",
+    "src/**/*.lock",
     "!src/__tests__/**",
     "flow-bar/Package.swift",
     "flow-bar/build-app.sh",

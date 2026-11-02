@@ -70,3 +70,18 @@ test("deleting selected assets invalidates the cached backend before the next re
     expect((await stt.getBackend()).name).toBe("parakeet-resident");
   } finally { available.mockRestore(); stt.resetBackendCache(); }
 });
+
+test("both engines have explicit load and unload, with no preference change", async () => {
+  const { setRecognizerResidency } = await import("../recognizer-controller");
+  const { persistRecognizer } = await import("../recognizer-state"); const calls: string[] = [];
+  const d = { startP: async () => { calls.push("loadP"); }, startW: async () => { calls.push("loadW"); },
+    stopP: async () => { calls.push("unloadP"); }, stopW: async () => { calls.push("unloadW"); }, reset() {} };
+  for (const engine of ["whisper", "parakeet"] as const) {
+    persistRecognizer(engine); noteRecognizerEffective(null);
+    expect((await setRecognizerResidency(engine, "load", d)).outcome).toBe("accept");
+    expect((await setRecognizerResidency(engine, "unload", d)).outcome).toBe("accept");
+    expect(readRecognizerStatus().desired).toBe(engine);
+    expect(readRecognizerStatus().engines[engine].phase).toBe("sleeping");
+  }
+  expect(calls).toEqual(["loadW", "unloadW", "loadP", "unloadP"]);
+});

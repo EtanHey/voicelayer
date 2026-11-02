@@ -335,6 +335,9 @@ export type AckCommand =
   | "set_processing_setting"
   | "set_recognizer"
   | "delete_recognizer"
+  | "download_recognizer"
+  | "set_recognizer_residency"
+  | "cancel_recognizer_download"
   | "set_tts_setting"
   | "preview_tts_profile";
 
@@ -555,6 +558,8 @@ export interface SetWhisperResidencyCommand extends SocketCommandBase {
 }
 
 export interface SetRecognizerCommand extends SocketCommandBase { cmd: "set_recognizer"; recognizer: import("./recognizer-state").Recognizer; }
+export interface SetRecognizerResidencyCommand extends SocketCommandBase { cmd: "set_recognizer_residency"; engine: import("./recognizer-state").Recognizer; action: "load" | "unload"; }
+export interface DownloadRecognizerCommand extends SocketCommandBase { cmd: "download_recognizer" | "cancel_recognizer_download"; engine: import("./recognizer-state").Recognizer; }
 export interface DeleteRecognizerCommand extends SocketCommandBase { cmd: "delete_recognizer"; engine: import("./recognizer-state").Recognizer; }
 export interface GetRecognizerStatusCommand extends SocketCommandBase { cmd: "get_recognizer_status"; }
 
@@ -609,6 +614,8 @@ export type SocketCommand =
   | SetWhisperResidencyCommand
   | SetRecognizerCommand
   | DeleteRecognizerCommand
+  | DownloadRecognizerCommand
+  | SetRecognizerResidencyCommand
   | GetRecognizerStatusCommand;
 
 export interface HealthResponse {
@@ -1036,6 +1043,15 @@ export function parseCommand(line: string): SocketCommand | null {
       case "set_recognizer": {
         if (parsed.recognizer !== "parakeet" && parsed.recognizer !== "whisper") return null;
         return withCommandId<SetRecognizerCommand>({ cmd: "set_recognizer", recognizer: parsed.recognizer }, id);
+      }
+      case "set_recognizer_residency": {
+        if (parsed.engine !== "parakeet" && parsed.engine !== "whisper" || parsed.action !== "load" && parsed.action !== "unload") return null;
+        return withCommandId<SetRecognizerResidencyCommand>({ cmd: "set_recognizer_residency", engine: parsed.engine, action: parsed.action }, id);
+      }
+      case "download_recognizer":
+      case "cancel_recognizer_download": {
+        if (parsed.engine !== "parakeet" && parsed.engine !== "whisper") return null;
+        return withCommandId<DownloadRecognizerCommand>({ cmd: parsed.cmd, engine: parsed.engine }, id);
       }
       case "delete_recognizer": {
         if (parsed.engine !== "parakeet" && parsed.engine !== "whisper") return null;
