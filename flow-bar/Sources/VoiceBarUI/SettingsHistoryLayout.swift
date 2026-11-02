@@ -62,13 +62,46 @@ enum SettingsHistoryLayout {
     }
 }
 
+/// QA-06 (Etan, 2026-11-02: "the state is not kept between just traveling within the app"): what the
+/// Dictations list keeps while Settings is open. SettingsView owns it, so it outlives the History tab;
+/// leaving History and coming back restores the same row, scrolls it back into view and keeps its
+/// Recording details open or closed. Only a fresh Settings window starts again from the newest row.
+struct SettingsHistoryRecordingMemory: Equatable {
+    private(set) var selectedID: String?
+    private var hasPage: Bool
+    private var detailsEntryID: String?
+    private var detailsExpandedValue: Bool?
+
+    init(initialPage ids: [String]? = nil) {
+        hasPage = ids != nil
+        selectedID = ids?.first
+    }
+
+    mutating func select(_ id: String) { selectedID = id }
+
+    /// The first page selects the newest row. Every later page (a refresh, a search, Load more, coming back
+    /// to History) keeps the remembered row while it is still loaded, and falls back to the newest otherwise.
+    mutating func applyPage(_ ids: [String]) {
+        selectedID = SettingsHistoryLayout.selection(current: selectedID, entries: ids, preferNewest: !hasPage)
+        hasPage = true
+    }
+
+    /// The row to bring back into view when the list is rebuilt on returning to History.
+    var scrollTarget: String? { selectedID }
+
+    /// The open/closed state the user left this recording's details in; nil means use the default.
+    func detailsExpanded(for id: String) -> Bool? { detailsEntryID == id ? detailsExpandedValue : nil }
+
+    mutating func rememberDetailsExpanded(_ expanded: Bool, for id: String) {
+        detailsEntryID = id; detailsExpandedValue = expanded
+    }
+}
+
 /// Visible words of the Dictations list and detail pane, kept as values so tests read what the user
 /// reads instead of grepping view source.
 enum SettingsHistoryRecordingCopy {
     static let emptyTitle = "No transcript history yet"
     static let emptyHint = "Saved recordings, including failed or cancelled ones, will appear here. Select one to see its details."
-    /// The detail heading carries no date; Created appears once, inside Recording details.
-    static let detailHeading = "Selected dictation"
     static let noSelection = "Select a dictation to read its transcript."
     static func loadMoreTitle(isLoading: Bool) -> String { isLoading ? "Loading…" : "Load more" }
 }

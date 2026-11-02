@@ -520,7 +520,9 @@ public struct SettingsView: View {
     @State private var historyLoadedEntryCount: Int
     @State private var historyLoadedEntryLimit: Int
     @State private var historyHasMore: Bool
-    @State private var selectedHistoryEntryID: String?
+    /// QA-06: selection, scroll target and details state for Dictations, kept across tab changes.
+    @State private var historyMemory: SettingsHistoryRecordingMemory
+    private var selectedHistoryEntryID: String? { historyMemory.selectedID }
     @State private var isHistoryLoading = false
     @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
@@ -541,8 +543,6 @@ public struct SettingsView: View {
     @State private var hasPrefetchedAskHistory = false
     /// History scopes shown at least once in this Settings session; they stay mounted (lane E).
     @State private var mountedHistoryScopes: Set<SettingsHistoryScope> = []
-    /// Set when History is (re)entered, so the next Dictations page selects the newest row (UI pass #9).
-    @State private var selectNewestOnNextHistoryPage = true
     @State private var searchPrewarmTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
@@ -819,7 +819,8 @@ public struct SettingsView: View {
         let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
         _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
         _historyLoadedEntryCount = State(initialValue: initialHistoryPage?.loadedEntryCount ?? 0)
-        _selectedHistoryEntryID = State(initialValue: initialHistoryPage?.groups.first?.entries.first?.id)
+        _historyMemory = State(initialValue: SettingsHistoryRecordingMemory(
+            initialPage: initialHistoryPage.map { $0.groups.flatMap(\.entries).map(\.id) }))
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
@@ -885,7 +886,7 @@ public struct SettingsView: View {
             if tab == .history {
                 switch selectedHistoryScope {
                 case .recording:
-                    selectNewestOnNextHistoryPage = true
+                    // QA-06: the reload keeps the remembered row; it no longer jumps to the newest.
                     if !isHistoryLoading {
                         requestHistoryReload()
                     }
@@ -1553,9 +1554,9 @@ public struct SettingsView: View {
                                     ForEach(historyDayGroups) { group in
                                         Section {
                                             ForEach(group.entries) { entry in
-                                                Button { selectedHistoryEntryID = entry.id } label: {
+                                                Button { historyMemory.select(entry.id) } label: {
                                                     recordingHistoryListRow(entry)
-                                                }.buttonStyle(.plain)
+                                                }.buttonStyle(.plain).id(entry.id)
                                             }
                                         } header: { historyDayHeader(group.dayTitle()) }
                                     }
@@ -1572,8 +1573,10 @@ public struct SettingsView: View {
                             if let entry = selectedHistoryEntry {
                                 SettingsHistoryAttemptDetailPane(entry: entry, load: historyDiagnostics,
                                     loadAttempts: historyAttempts, runs: historyRunLog().runs(for: entry.audioPath.path),
-                                    omittedCount: historyRunLog().omittedCount) {
-                                    Text(SettingsHistoryRecordingCopy.detailHeading).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                    omittedCount: historyRunLog().omittedCount,
+                                    detailsExpanded: historyMemory.detailsExpanded(for: entry.id),
+                                    onDetailsExpandedChange: { historyMemory.rememberDetailsExpanded($0, for: entry.id) }) {
+                                        EmptyView() // QA-16: the list highlight already says which row is shown.
                                 } content: { displayedEntry in
                                     recordingHistoryDetail(displayedEntry)
                                 } actions: { displayedEntry in
@@ -1600,6 +1603,9 @@ public struct SettingsView: View {
                 // A preloaded page is unfiltered, so an active query must still search (#165 Macroscope).
                 if historyDayGroups.isEmpty || SettingsHistorySearch(historySearch).isActive, !isHistoryLoading {
                     requestHistoryReload(scrollProxy: proxy, animated: false)
+                } else if let target = historyMemory.scrollTarget {
+                    // QA-06: the list is rebuilt on returning to History; bring the remembered row back.
+                    DispatchQueue.main.async { proxy.scrollTo(target, anchor: .center) }
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
@@ -2132,7 +2138,7 @@ public struct SettingsView: View {
                 historyActionLabel("Copy", systemImage: "doc.on.doc", isEnabled: !disabled)
             }
             .disabled(disabled)
-            .help(reason ?? "Copy")
+            .help(reason ?? "Copy transcript") // QA-03: says which copy this is.
             .accessibilityHint(reason ?? "")
             .accessibilityLabel("Copy transcript")
 
@@ -2505,12 +2511,7 @@ public struct SettingsView: View {
 
     private func applyHistoryPage(_ page: SettingsHistoryPage) {
         historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
-        selectedHistoryEntryID = SettingsHistoryLayout.selection(
-            current: selectedHistoryEntryID,
-            entries: historyDayGroups.flatMap(\.entries).map(\.id),
-            preferNewest: selectNewestOnNextHistoryPage
-        )
-        selectNewestOnNextHistoryPage = false
+        historyMemory.applyPage(historyDayGroups.flatMap(\.entries).map(\.id))
         historyLoadedEntryCount = page.loadedEntryCount
         historyHasMore = page.hasMore
     }
