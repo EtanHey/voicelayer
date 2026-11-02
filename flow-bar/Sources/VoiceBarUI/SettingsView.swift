@@ -522,6 +522,8 @@ public struct SettingsView: View {
     @State private var historyHasMore: Bool
     /// QA-06: selection, scroll target and details state for Dictations, kept across tab changes.
     @State private var historyMemory: SettingsHistoryRecordingMemory
+    /// QA-06: where the Dictations list and detail pane were scrolled; not observed, so scrolling is free.
+    @State private var historyScroll = SettingsHistoryScrollMemory()
     private var selectedHistoryEntryID: String? { historyMemory.selectedID }
     @State private var isHistoryLoading = false
     @State private var historyLoadFence = SettingsHistoryLoadFence()
@@ -1561,7 +1563,7 @@ public struct SettingsView: View {
                                             ForEach(group.entries) { entry in
                                                 Button { historyMemory.select(entry.id) } label: {
                                                     recordingHistoryListRow(entry)
-                                                }.buttonStyle(.plain).id(entry.id)
+                                                }.buttonStyle(.plain)
                                             }
                                         } header: { historyDayHeader(group.dayTitle()) }
                                     }
@@ -1573,6 +1575,7 @@ public struct SettingsView: View {
                                             .padding(.top, 8)
                                     }
                                 }.padding(12)
+                                .background(SettingsHistoryScrollKeeper(memory: historyScroll, key: .list))
                             }.clipped()
                         } detail: {
                             if let entry = selectedHistoryEntry {
@@ -1580,6 +1583,7 @@ public struct SettingsView: View {
                                     loadAttempts: historyAttempts, runs: historyRunLog().runs(for: entry.audioPath.path),
                                     omittedCount: historyRunLog().omittedCount,
                                     detailsExpanded: historyMemory.detailsExpanded(for: entry.id),
+                                    scrollMemory: historyScroll,
                                     onDetailsExpandedChange: { historyMemory.rememberDetailsExpanded($0, for: entry.id) }) {
                                         EmptyView() // QA-16: the list highlight already says which row is shown.
                                 } content: { displayedEntry in
@@ -1608,10 +1612,7 @@ public struct SettingsView: View {
                 // A preloaded page is unfiltered, so an active query must still search (#165 Macroscope).
                 if historyDayGroups.isEmpty || SettingsHistorySearch(historySearch).isActive, !isHistoryLoading {
                     requestHistoryReload(scrollProxy: proxy, animated: false)
-                } else if let target = historyMemory.scrollTarget {
-                    // QA-06: the list is rebuilt on returning to History; bring the remembered row back.
-                    DispatchQueue.main.async { proxy.scrollTo(target, anchor: .center) }
-                }
+                } // Otherwise the list's SettingsHistoryScrollKeeper puts back where it was left (QA-06).
             }
             .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
                 if let change = notification.object as? SettingsHistoryArchiveChange {
