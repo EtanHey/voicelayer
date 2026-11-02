@@ -439,6 +439,7 @@ public struct SettingsView: View {
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
     public let recognizerStatus: () -> RecognizerPickerState
+    public let onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)?
     public let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
     public let speechControls: () -> SpeechControlsState?
     public let speechConnected: () -> Bool
@@ -591,6 +592,7 @@ public struct SettingsView: View {
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
         recognizerStatus: @escaping () -> RecognizerPickerState = { .unavailable },
         onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil,
+        onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)? = nil,
         speechControls: @escaping () -> SpeechControlsState? = { nil },
         speechConnected: @escaping () -> Bool = { false },
         speechBusyReason: @escaping () -> String? = { nil },
@@ -709,6 +711,7 @@ public struct SettingsView: View {
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
         self.recognizerStatus = recognizerStatus
+        self.onManageRecognizer = onManageRecognizer
         self.onSelectRecognizer = onSelectRecognizer
         self.speechControls = speechControls
         self.speechConnected = speechConnected
@@ -1294,7 +1297,7 @@ public struct SettingsView: View {
                 processingNotice: processingNotice(),
                 onToggleProcessing: onToggleProcessing,
                 recognizerState: recognizerStatus(),
-                onSelectRecognizer: onSelectRecognizer
+                onSelectRecognizer: onSelectRecognizer, onManageRecognizer: onManageRecognizer
             )
             VStack(alignment: .leading, spacing: 4) {
                 if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {

@@ -3118,6 +3118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             recognizerStatus: { [weak self] in self?.voiceState.recognizerPickerState ?? .unavailable },
             onSelectRecognizer: { [weak self] in self?.voiceState.selectRecognizer($0) },
+            onManageRecognizer: { [weak self] in self?.voiceState.manageRecognizer($0, action: $1) },
             speechControls: { [weak self] in self?.voiceState.speechControls },
             speechConnected: { [weak self] in self?.voiceState.isConnected ?? false },
             speechBusyReason: { [weak self] in self?.voiceState.speechBusyReason },
