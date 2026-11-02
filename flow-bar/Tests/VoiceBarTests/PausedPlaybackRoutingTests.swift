@@ -72,55 +72,92 @@ final class PausedPlaybackRoutingTests: XCTestCase {
         wait(for: [drained], timeout: 5)
     }
 
-    func testPausedReadRoutesLikeIdleForTapToggleAndStart() {
+    func testPausedReadTapToggleStartAndPrimaryRecordAndRestoreTheUserPark() {
         for entry in ["tap", "toggle", "start", "primary"] {
             let (state, sent) = pausedState()
             let router = VoiceBarCommandRouter(voiceState: state)
             switch entry {
             case "tap":
                 router.handleHotkeySingleTap()
-                XCTAssertTrue(sent().isEmpty, "a stray tap never stops the parked read")
                 router.handleHotkeyHoldEnd(holdDuration: 0.4)
-                XCTAssertTrue(sent().isEmpty, "a hold end with no capture never stops it either")
-                XCTAssertTrue(state.isPlaybackPaused)
-                continue
             case "toggle": router.handle(controlCommand: .toggle)
             case "start": router.handle(controlCommand: .startRecording)
             default: router.handlePrimaryTap()
             }
             XCTAssertEqual(sent().map { $0["cmd"] as? String }, ["record"], entry)
             XCTAssertEqual(state.mode, .recording, entry)
+            XCTAssertEqual(sent().first?["playback_elapsed_ms"] as? Int, 1500, entry)
+
+            router.handleStop()
+            XCTAssertEqual(sent().last?["scope"] as? String, "capture", entry)
+            state.mode = .idle
+            drainMainQueue()
+            XCTAssertFalse(state.isPlaybackPaused, "local idle is not capture settlement: \(entry)")
+            state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+            drainMainQueue()
+            XCTAssertTrue(state.isPlaybackPaused, "the original user-owned park survives capture: \(entry)")
+            state.togglePlaybackPause()
+            XCTAssertEqual(sent().last?["cmd"] as? String, "resume", entry)
+            XCTAssertEqual(sent().last?["playback_id"] as? String, "playback-9", entry)
         }
     }
 
-    func testSpeakingThatIsNotPausedStillStopsOnF5() {
-        let state = VoiceState()
-        state.isConnected = true
-        var sent: [String] = []
-        state.sendCommand = { sent.append($0["cmd"] as? String ?? "") }
-        state.handleEvent(["type": "state", "state": "speaking", "text": "Live read", "playback_id": "p", "generation": 1])
-        let router = VoiceBarCommandRouter(voiceState: state)
-        router.handleHotkeyHoldStart()
-        XCTAssertTrue(sent.isEmpty)
-        router.handleHotkeyHoldEnd(holdDuration: 0.5)
-        XCTAssertEqual(sent, ["stop"])
-    }
-
-    /// QUEUE1 D2: the unchanged router, inside AppDelegate's F5 scope, stops a playing read but keeps the queue.
-    func testF5TapOverAPlayingQueuedReadSendsStopThatRetainsTheQueue() {
+    func testPlayingReadF5HoldRecordsAndReleaseStopsOnlyItsCapture() {
         let state = VoiceState(
             recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
         )
+        state.frontmostAppProvider = { nil }
+        state.isConnected = true
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Live read", "playback_id": "p", "generation": 1])
+        let router = VoiceBarCommandRouter(voiceState: state)
+        router.handleHotkeyHoldStart()
+        XCTAssertEqual(sent.map { $0["cmd"] as? String }, ["record"])
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(sent.first?["press_to_talk"] as? Bool, true)
+        XCTAssertNotNil(sent.first?["take_id"] as? String)
+        router.handleHotkeyHoldEnd(holdDuration: 0.5)
+        XCTAssertEqual(sent.map { $0["cmd"] as? String }, ["record", "stop"])
+        XCTAssertEqual(sent.last?["scope"] as? String, "capture")
+        XCTAssertEqual(sent.last?["take_id"] as? String, sent.first?["take_id"] as? String)
+        XCTAssertNil(sent.last?["playback_elapsed_ms"], "key-up must not stop the borrowed read")
+        XCTAssertEqual(state.mode, .transcribing)
+    }
+
+    private func playingQueuedState() -> (VoiceState, () -> [[String: Any]]) {
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+        )
+        state.frontmostAppProvider = { nil }
         state.isConnected = true
         var sent: [[String: Any]] = []
         state.sendCommand = { sent.append($0) }
         state.handleEvent(["type": "state", "state": "speaking", "text": "Queued read", "request_id": "r-A"])
         state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
+        return (state, { sent })
+    }
+
+    /// R2-01 changes F5 to recording over a daemon-owned park; QUEUE1 D2 still keeps both waiting reads.
+    func testF5TapOverPlayingQueuedReadRecordsWithoutNarrationStopAndKeepsTheQueue() {
+        let (state, sent) = playingQueuedState()
         let router = VoiceBarCommandRouter(voiceState: state, resetHotkeyState: {})
         state.retainingReadQueueOnStop { router.handleHotkeySingleTap() }
-        XCTAssertEqual(sent.map { $0["cmd"] as? String }, ["stop"])
-        XCTAssertEqual(sent.last?["retain_read_queue"] as? Bool, true)
+        XCTAssertEqual(sent().map { $0["cmd"] as? String }, ["record"])
+        XCTAssertFalse(sent().contains { $0["cmd"] as? String == "stop" })
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(state.readQueueCount, 2)
+    }
+
+    /// The unchanged Stop-only retention contract is distinct from the new F5 record intent.
+    func testExplicitRetainedStopStillCarriesTheFlagAndKeepsBothWaitingReads() {
+        let (state, sent) = playingQueuedState()
+        let router = VoiceBarCommandRouter(voiceState: state)
+        state.retainingReadQueueOnStop { router.handleStop() }
+        XCTAssertEqual(sent().map { $0["cmd"] as? String }, ["stop"])
+        XCTAssertEqual(sent().last?["retain_read_queue"] as? Bool, true)
         XCTAssertEqual(state.readQueueCount, 2)
     }
 }
