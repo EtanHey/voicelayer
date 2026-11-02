@@ -8,7 +8,7 @@ import { mkdirSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { getStateDir, safeWriteFileSync } from "./paths";
-import { beginRecognizerTransition, beginRecognizerMaintenance, finishRecognizerTransition, configureRecognizerBusyProbe, noteRecognizerEffective,
+import { assertRecognizerNotDownloading, beginRecognizerTransition, beginRecognizerMaintenance, finishRecognizerTransition, configureRecognizerBusyProbe, noteRecognizerEffective,
   noteRecognizerEngine, persistRecognizer, readRecognizerStatus, recheckRecognizerBusy, setRecognizerRecovery,
   confirmRecognizerCleanup, markRecognizerCleanupUnconfirmed, assertRecognizerOwnerOpen, recognizerOwnerClosed, type Recognizer, type RecognizerStatus } from "./recognizer-state";
 configureRecognizerBusyProbe(() => getRecordingState() === "recording" ? "capture-active" : residencyBusy() ? "voice-busy" : whisperLifecycleGate.isInUse || whisperLifecycleGate.isUnloading ? "transition-active" : null);
@@ -48,7 +48,7 @@ export function selectRecognizer(value: Recognizer, deps: RecognizerTransitionDe
 async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransitionDeps = defaults): Promise<{ outcome: "accept" | "reject"; reason?: string; recognizer_status: RecognizerStatus }> {
   if (value !== "parakeet" && value !== "whisper") return { outcome: "reject", reason: "invalid-recognizer", recognizer_status: readRecognizerStatus() };
   const previous = readRecognizerStatus();
-  try { beginRecognizerTransition(); }
+  try { assertRecognizerNotDownloading(value); beginRecognizerTransition(); }
   catch (error) { return { outcome: "reject", reason: error instanceof Error ? error.message : "voice-busy", recognizer_status: readRecognizerStatus() }; }
   let outcome: "accept" | "reject" = "accept", reason: string | undefined;
   let preferenceChanged = false;
@@ -61,6 +61,7 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
   };
   const start = (engine: Recognizer) => {
     assertRecognizerOwnerOpen();
+    assertRecognizerNotDownloading(engine);
     return engine === "parakeet" ? deps.startP() : deps.startW();
   };
   try {
@@ -125,6 +126,7 @@ export async function setRecognizerResidency(engine: Recognizer, action: "load" 
   if (action === "load" && current.desired === engine && current.effective !== null && current.effective !== engine) return selectRecognizer(engine, deps);
   let acquired = false, loading = false, outcome: "accept" | "reject" = "accept", reason: string | undefined;
   try {
+    assertRecognizerNotDownloading(engine);
     beginRecognizerMaintenance(); acquired = true;
     const status = readRecognizerStatus();
     if (action === "load") {

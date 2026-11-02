@@ -1,0 +1,218 @@
+$ bun test src/__tests__/recognizer-download.test.ts src/__tests__/recognizer-management.test.ts src/__tests__/recognizer-picker.test.ts src/__tests__/parakeet-server.test.ts src/__tests__/whisper-server.test.ts src/__tests__/whisper-lifecycle-gate.test.ts src/__tests__/recognizer-lifecycle-repairs.test.ts
+bun test v1.4.4 (38afee6c8)
+{"scenario":"shutdown-picker-p","target":"parakeet","startP":1,"startW":0,"shutdownPendingBeforeCleanup":true}
+{"scenario":"shutdown-picker-w","target":"whisper","startP":0,"startW":1,"shutdownPendingBeforeCleanup":true}
+{"scenario":"shutdown-picker-p-unknown","target":"parakeet","startP":1,"startW":0,"shutdownPendingBeforeCleanup":true}
+
+src/__tests__/recognizer-picker.test.ts:
+(pass) published commands parse exactly, not arbitrary engine/field aliases [2.67ms]
+(pass) status reads never invoke a model or change readiness [1.38ms]
+(pass) actual selection command echoes identity and refuses the active request before provider code [3.26ms]
+(pass) one switch confirms old cleanup, persists desired, loads one target and acks current readiness [1.51ms]
+(pass) busy capture-active refuses before any effects or preference write [0.23ms]
+(pass) busy voice-busy refuses before any effects or preference write [0.22ms]
+(pass) active request and transition refuse a switch without gap stealing [1.37ms]
+(pass) environment override refuses persist and model changes [0.22ms]
+(pass) cleanup UNKNOWN neither changes preference nor starts a new model [0.30ms]
+(pass) failed P loading preserves desired P while real W recovery is separately effective [1.29ms]
+(pass) both failed loads are error, never Ready or a changed desired choice [1.13ms]
+[voicelayer] Parakeet language advisory: unsupported-language-advisory; keeping the selected recognizer
+(pass) failed W selection restores previous P and the actual backend reuses it with provenance [6.54ms]
+(pass) post-startup cleanup failure retains a dedicated barrier and stable reason [0.98ms]
+(pass) legacy maintenance admitted first excludes picker before any cleanup/load [0.29ms]
+[voicelayer] Residency request held-legacy load started
+[voicelayer] Residency request held-legacy load reject reason=server is not owned by this daemon elapsed_ms=0
+(pass) actual pending legacy load excludes the picker before a launch record exists [0.58ms]
+(pass) capture arriving during old cleanup wins before persistence or successor load [0.22ms]
+(pass) getBackend reuses the resident recovery provider instead of allocating P or a W CLI [1.76ms]
+(pass) unprovisioned engine is refused before cleanup, preference or load [0.23ms]
+
+src/__tests__/recognizer-lifecycle-repairs.test.ts:
+(pass) recognizer lifecycle: capture-maintenance [70.53ms]
+(pass) recognizer lifecycle: capture-cancel [67.25ms]
+(pass) recognizer lifecycle: capture-cleanup [62.70ms]
+(pass) recognizer lifecycle: picker-refusal [62.36ms]
+(pass) recognizer lifecycle: shutdown-picker-p [62.35ms]
+(pass) recognizer lifecycle: shutdown-picker-w [67.44ms]
+(pass) recognizer lifecycle: shutdown-picker-p-unknown [68.55ms]
+(pass) recognizer lifecycle: shutdown-direct-w [1067.27ms]
+(pass) recognizer lifecycle: shutdown-adopted [64.58ms]
+(pass) recognizer lifecycle: shutdown-legacy-w [1065.38ms]
+(pass) recognizer lifecycle: unexpected-exit [73.06ms]
+(pass) recognizer lifecycle: intentional-exit [66.96ms]
+(pass) recognizer lifecycle: late-old-exit [68.30ms]
+(pass) recognizer lifecycle: resident-cli-fallback [67.06ms]
+(pass) recognizer lifecycle: cli-only-sleeping [66.05ms]
+(pass) recognizer lifecycle: wispr-failure-unselected [64.37ms]
+(pass) recognizer lifecycle: wispr-failure-resident [64.09ms]
+(pass) recognizer lifecycle: whisper-failure-status [75.94ms]
+
+src/__tests__/recognizer-download.test.ts:
+(pass) download and cancel commands require an explicit valid engine [0.59ms]
+(pass) verified download publishes atomically without loading [10.41ms]
+(pass) checksum mismatch never becomes present [1.24ms]
+(pass) cancel joins transfer cleanup and permits a later retry [2.41ms]
+(pass) disk refusal happens before any transfer [0.54ms]
+(pass) download starts and publishes during recording or transcription [5.49ms]
+(pass) Parakeet runtime failure publishes no model tree; retry records owned Python without an override [25.69ms]
+(pass) runtime-only setup verifies existing weights read-only instead of downloading copies [4.59ms]
+(pass) unmocked downloader is denied before any test mutation or network [0.41ms]
+(pass) partial external model tree is refused before runtime publication [0.77ms]
+(pass) admitted request completes while Parakeet transfer is pending [5.54ms]
+(pass) admitted request completes while Parakeet runtime is pending [8.61ms]
+(pass) publication retains verified files when dictation becomes busy during transfer [1.80ms]
+(pass) publication succeeds while an admitted request remains active [2.33ms]
+
+src/__tests__/whisper-lifecycle-gate.test.ts:
+(pass) whisper lifecycle gate > rejects unload during a launch or inference reservation [0.25ms]
+(pass) whisper lifecycle gate > rejects external busy state before running unload [0.04ms]
+(pass) whisper lifecycle gate > new use waits for accepted unload and then resumes [0.06ms]
+(pass) whisper lifecycle gate > capture arriving during unload yields its result and releases waiting inference [0.06ms]
+
+src/__tests__/whisper-server.test.ts:
+(pass) whisper-server > isServerAvailable > returns a boolean [5.29ms]
+(pass) whisper-server > isServerAvailable > checks for both binary and model [2.73ms]
+(pass) whisper-server > isServerHealthy > returns false when no server is running [1.20ms]
+(pass) whisper-server > isServerHealthy > keeps an unavailable probe distinct from not loaded [0.19ms]
+(pass) whisper-server > isServerHealthy > keeps a malformed successful health body unavailable [4.38ms]
+(pass) whisper-server > acceleration planning > falls back Core ML requests to Metal when the binary has no Core ML runtime support [0.20ms]
+(pass) whisper-server > acceleration planning > does not treat negative Core ML option names as runtime support [0.02ms]
+(pass) whisper-server > acceleration planning > uses exact Core ML runtime option tokens when available [0.02ms]
+(pass) whisper-server > acceleration planning > does not append the .mlpackage path to boolean Core ML flags [0.01ms]
+(pass) whisper-server > acceleration planning > falls back Core ML requests when the .mlpackage path is missing [0.02ms]
+(pass) whisper-server > acceleration planning > uses CPU mode only when explicitly requested [0.01ms]
+(pass) whisper-server > acceleration planning > builds launch args with the selected acceleration plan [0.16ms]
+(pass) whisper-server > acceleration planning > maps performance effort to whisper beam/search args [0.02ms]
+(pass) whisper-server > acceleration planning > uses the requested performance effort in launch args [0.03ms]
+(pass) whisper-server > acceleration planning > bounds whisper-server help probing and falls back to no help text on failure [0.04ms]
+[voicelayer] Stopping whisper-server (PID 424242)
+[voicelayer] whisper-server (PID 424242) ignored SIGTERM; sending SIGKILL
+(pass) whisper-server > stopServerAndWait (effort reload, #142 round 2) > escalates to SIGKILL when the old server ignores SIGTERM [1000.84ms]
+[voicelayer] Stopping whisper-server (PID 424242)
+[voicelayer] whisper-server (PID 424242) ignored SIGTERM; sending SIGKILL
+(pass) whisper-server > stopServerAndWait (effort reload, #142 round 2) > fails loudly instead of letting a relaunch adopt a server that will not stop [2002.90ms]
+[voicelayer] Starting whisper-server on port 18991 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] Port 18991 is served by another process, not our whisper-server child (PID 31337); not adopting it.
+(pass) whisper-server > ensureServer lifecycle > does not publish a launch record when our child lost the port race [105.67ms]
+(pass) whisper-server > ensureServer lifecycle > refuses to launch a bench port while the live VoiceBar stack is resident [46.59ms]
+[voicelayer] Healthy whisper-server on port 8911 (PID 31337) has no live ownership record; adopting it rather than killing a server this process did not launch.
+(pass) whisper-server > ensureServer lifecycle > still launches a bench port when the operator opts in explicitly [0.38ms]
+[voicelayer] Starting whisper-server on port 18992 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] Port 18992 is served by another process, not our whisper-server child (PID 31338); not adopting it.
+(pass) whisper-server > ensureServer lifecycle > does not publish a launch record when another PID owns the healthy port [89.13ms]
+[voicelayer] Starting whisper-server on port 18993 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 31339, port 18993)
+(pass) whisper-server > ensureServer lifecycle > publishes the launch record when our own child owns the healthy port [80.42ms]
+[voicelayer] Starting whisper-server on port 18881 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 12345, port 18881)
+(pass) whisper-server > ensureServer lifecycle > coalesces concurrent launches for the same port [116.01ms]
+[voicelayer] Starting whisper-server on port 18884 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 12346, port 18884)
+(pass) whisper-server > ensureServer lifecycle > skips help probing when Core ML is not requested [114.89ms]
+[voicelayer] Reclaiming whisper-server port 18886 from stale PID(s): 99881
+[voicelayer] Starting whisper-server on port 18886 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 12348, port 18886)
+(pass) whisper-server > ensureServer lifecycle > reclaims a wedged whisper-server that fails the health page before launching its own sidecar [74.43ms]
+[voicelayer] Healthy whisper-server on port 18887 has no live ownership record; adopting it rather than killing a server this process did not launch.
+(pass) whisper-server > ensureServer lifecycle > adopts an unidentified healthy occupant instead of refusing the port [0.25ms]
+[voicelayer] Starting whisper-server on port 18882 with model /tmp/ggml-large-v3-turbo.bin (acceleration: coreml)
+[voicelayer] whisper-server Core ML startup failed; retrying with Metal fallback.
+[voicelayer] Starting whisper-server on port 18882 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 2, port 18882)
+(pass) whisper-server > ensureServer lifecycle > retries with Metal when Core ML startup fails [122.11ms]
+[voicelayer] Starting whisper-server on port 18885 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+(pass) whisper-server > ensureServer lifecycle > reports the active startup timeout in launch failures [79.06ms]
+[voicelayer] Starting whisper-server on port 18883 with model /tmp/ggml-large-v3-turbo.bin (acceleration: coreml)
+[voicelayer] whisper-server Core ML startup failed; retrying with Metal fallback.
+[voicelayer] Starting whisper-server on port 18883 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 2, port 18883)
+(pass) whisper-server > ensureServer lifecycle > waits for a failed Core ML process to exit before Metal retry [124.87ms]
+[voicelayer] Adopting whisper-server on port 56377 (PID 22930, launched by PID 22930) — not ours to restart.
+(pass) whisper-server > ownership guard > adopts a healthy server another process launched instead of killing it [2.21ms]
+[voicelayer] Adopting whisper-server on port 56379 (PID 22930, launched by PID 22930) — not ours to restart.
+(pass) whisper-server > ownership guard > preserves adopted model provenance without inventing missing effort [1.28ms]
+[voicelayer] Healthy whisper-server on port 56381 (PID 777001) has no live ownership record; adopting it rather than killing a server this process did not launch.
+(pass) whisper-server > ownership guard > adopts a healthy server with no ownership record rather than killing it [1.06ms]
+[voicelayer] Healthy whisper-server on port 56383 (PID 777004) has no live ownership record; adopting it rather than killing a server this process did not launch.
+(pass) whisper-server > ownership guard > adopts a server whose ownership record names a dead pid [1.51ms]
+[voicelayer] Adopting whisper-server on port 56385 (PID 22930, launched by PID 22930) — not ours to restart.
+[voicelayer] Adopted whisper-server on port 56385 was launched with different settings than this process would use (model /tmp/ggml-base.en.bin, effort fast); using it as-is.
+(pass) whisper-server > ownership guard > records a flag mismatch on the adopted server instead of killing it [1.12ms]
+[voicelayer] Adopting whisper-server on port 56387 (PID 22930, launched by PID 22930) — not ours to restart.
+[voicelayer] Detaching from adopted whisper-server (PID 22930) — this process did not launch it.
+(pass) whisper-server > ownership guard > does not stop an adopted server on shutdown [1.16ms]
+[voicelayer] Starting whisper-server on port 18890 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 55501, port 18890)
+[voicelayer] Stopping whisper-server (PID 55501)
+(pass) whisper-server > ownership guard > records ownership when this process launches the server [72.68ms]
+(pass) whisper-server > ownership guard > resolves the listening pid of a port it can see [43.74ms]
+(pass) whisper-server > transcribeViaServer > scales a full-WAV timeout from audio duration and recent host RTF [0.74ms]
+(pass) whisper-server > transcribeViaServer > asks for plain json, and no segments, when nothing opts in [1.21ms]
+(pass) whisper-server > transcribeViaServer > asks for verbose_json and reports segments when opted in [0.19ms]
+(pass) whisper-server > transcribeViaServer > reports no segments when the server omits them [0.07ms]
+(pass) whisper-server > transcribeViaServer > sends language and prompt fields to whisper-server inference [0.21ms]
+(pass) whisper-server > transcribeViaServer > normalizes timestamped-mode segment newlines from whisper-server JSON [0.32ms]
+(pass) whisper-server > transcribeViaServer > throws when whisper-server returns a JSON error payload with HTTP 200 [0.10ms]
+[voicelayer] Starting whisper-server on port 5555 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 124, port 5555)
+(pass) whisper-server > transcribeViaServer > retries once after an inference transport failure [119.10ms]
+(pass) whisper-server > transcribeViaServer > does not retire a healthy server when an advisory inference times out [11.31ms]
+[voicelayer] Starting whisper-server on port 5555 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 124, port 5555)
+(pass) whisper-server > transcribeViaServer > restarts and retries after a primary inference timeout [129.44ms]
+(pass) whisper-server > transcribeViaServer > does not retry a timed-out adopted server that is still healthy [11.30ms]
+(pass) whisper-server > transcribeViaServer > does not retry a timed-out adopted server reached through the default port [11.43ms]
+[voicelayer] Healthy whisper-server on port 6666 has no live ownership record; adopting it rather than killing a server this process did not launch.
+(pass) whisper-server > transcribeViaServer > still retries a timeout on an explicit port that is not the adopted server [66.71ms]
+(pass) whisper-server > transcribeViaServer > caps an advisory witness below the overall voice_ask return budget [17.44ms]
+[voicelayer] Starting whisper-server on port 5555 with model /tmp/ggml-large-v3-turbo.bin (acceleration: metal)
+[voicelayer] whisper-server ready (PID 124, port 5555)
+(pass) whisper-server > transcribeViaServer > waits for an unhealthy managed process to exit before retrying inference [123.58ms]
+
+src/__tests__/parakeet-server.test.ts:
+(pass) private resident Parakeet lifecycle (protocol-only child) > not configured never downloads or pretends available [0.14ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > health alone does not launch/load a model [0.21ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > persistent child serves empty then success without restarting serve [19.41ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > concurrent requests preserve command identities [96.25ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > crash destroys owned service; a later request can start cleanly [29.11ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > partial destroys owned service; a later request can start cleanly [28.94ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > wrong-id destroys owned service; a later request can start cleanly [28.43ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > bad-frames destroys owned service; a later request can start cleanly [29.05ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > provider-error destroys owned service; a later request can start cleanly [29.32ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > timeout stops before a new request starts [59.92ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > invalid-utf8 retains protocol evidence and stops before replacement [30.38ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > partial-timeout retains protocol evidence and stops before replacement [81.19ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > unsolicited duplicate never remains a reusable service [49.54ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > cleanup timeout preserves the primary provider bytes and keeps the owned barrier [507.35ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > worker partial envelopes retain returned words without qualifying native success [16.17ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > failed startup health and cleanup preserve the actual health receipt [486.76ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > owned restart and unload are usable without permanent shutdown [44.91ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > shutdown rejects later operations and is idempotent [14.43ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > idle timer unloads model after use [123.92ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > idle timer cannot unload an active request [96.01ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > health checks do not reset the inference idle timer [138.92ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > an unrelated CLI cannot start a second configured resident [0.17ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > failed spawn never publishes an owned child or ready state [0.57ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > idle unexpected exit publishes error without a status probe; intentional stop does not [109.32ms]
+(pass) private resident Parakeet lifecycle (protocol-only child) > busy capture delays unload until it releases [235.34ms]
+
+src/__tests__/recognizer-management.test.ts:
+(pass) delete command accepts only explicit engine names [1.06ms]
+(pass) loaded model cannot be deleted [0.69ms]
+(pass) last installed model cannot be deleted [0.74ms]
+(pass) delete changes selected engine first and preserves unrelated files and runtime [1.03ms]
+(pass) delete refuses capture-active [0.59ms]
+(pass) delete refuses voice-busy [0.57ms]
+(pass) active transcription refuses delete [0.62ms]
+(pass) delete refuses a model symlink into an external cache [0.72ms]
+[voicelayer] STT backend: whisper-server (resident)
+(pass) deleting selected assets invalidates the cached backend before the next request [1.06ms]
+(pass) both engines have explicit load and unload, with no preference change [2.18ms]
+(pass) Load retries the desired engine after a fallback without a circular select-first refusal [1.64ms]
+
+ 142 pass
+ 0 fail
+ 383 expect() calls
+Ran 142 tests across 7 files. [11.32s]
+
+EXIT_STATUS=0

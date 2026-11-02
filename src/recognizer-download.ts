@@ -4,8 +4,8 @@ import { createHash } from "crypto";
 import { recognizerAssetPaths, defaultParakeetModelPath, readRecognizerAssets } from "./recognizer-assets";
 import { RECOGNIZER_DOWNLOADS, type RecognizerDownloadFile } from "./recognizer-download-manifest";
 import { provisionParakeetRuntime } from "./parakeet-runtime";
-import { beginRecognizerMaintenance, finishRecognizerTransition, noteRecognizerEngine, readRecognizerStatus,
-  recognizerOwnerSignal, recheckRecognizerBusy, type Recognizer } from "./recognizer-state";
+import { beginRecognizerDownload, finishRecognizerDownload, noteRecognizerEngine, readRecognizerStatus,
+  recognizerOwnerSignal, type Recognizer } from "./recognizer-state";
 export interface DownloadDeps {
   files(engine: Recognizer): RecognizerDownloadFile[];
   transfer(file: RecognizerDownloadFile, path: string, signal: AbortSignal, progress: (bytes: number) => void): Promise<void>;
@@ -25,9 +25,10 @@ async function transfer(file: RecognizerDownloadFile, path: string, signal: Abor
 }
 const defaults: DownloadDeps = { files: engine => RECOGNIZER_DOWNLOADS[engine], transfer, runtime: provisionParakeetRuntime,
   freeBytes: path => { const s = statfsSync(path); return s.bavail * s.bsize; } };
-let active: { engine: Recognizer; controller: AbortController } | null = null;
+const active = new Map<Recognizer, AbortController>();
 export function cancelRecognizerDownload(engine: Recognizer): boolean {
-  if (active?.engine !== engine) return false; active.controller.abort(); return true;
+  const controller = active.get(engine);
+  if (!controller) return false; controller.abort(); return true;
 }
 export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps = defaults) {
   let acquired = false, tmp: string | undefined, outcome: "accept" | "reject" = "accept", reason: string | undefined;
@@ -37,7 +38,7 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
     noteRecognizerEngine(engine, { download: { state, received_bytes: received, total_bytes: total, error } });
   try {
     if (deps === defaults && process.env.VOICELAYER_TEST_ISOLATED === "1") throw new Error("download-network-denied-in-tests");
-    beginRecognizerMaintenance(); acquired = true; active = { engine, controller };
+    beginRecognizerDownload(engine); acquired = true; active.set(engine, controller);
     if (readRecognizerAssets(engine).assets_present) throw new Error("assets-already-present");
     if (readRecognizerStatus().engines[engine].phase !== "sleeping") throw new Error("recognizer-loaded");
     const destination = engine === "whisper" ? recognizerAssetPaths(engine)[0]! : process.env.VOICELAYER_PARAKEET_MODEL || defaultParakeetModelPath();
@@ -63,7 +64,9 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
       if (size !== file.bytes || hash.digest("hex") !== file.sha256) throw new Error("download-checksum-mismatch");
     }
     if (engine === "parakeet") { report("runtime"); await deps.runtime(signal); }
-    signal.throwIfAborted(); recheckRecognizerBusy();
+    signal.throwIfAborted();
+    // Publication is synchronous and protected by per-engine ownership. Busy
+    // dictation must never discard verified files or wait for this download.
     if (engine === "whisper") {
       if (existsSync(destination)) throw new Error("assets-exist-delete-first");
       renameSync(join(tmp, files[0]!.name), destination);
@@ -81,7 +84,9 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
   } finally {
     try { if (tmp) rmSync(tmp, { recursive: true, force: true }); }
     catch { outcome = "reject"; reason = "download-cleanup-failed"; report("error", reason); }
-    finally { if (acquired) { active = null; finishRecognizerTransition(); } }
+    finally {
+      if (acquired) { active.delete(engine); finishRecognizerDownload(engine); }
+    }
   }
   return { outcome, ...(reason ? { reason } : {}), recognizer_status: readRecognizerStatus() };
 }
