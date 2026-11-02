@@ -2,9 +2,18 @@
 
 Status: Q1 source candidate, **HOLD until Etan rules (PHX batch)**. No install, microphone, speaker, live socket or private archive access. Installed-app acceptance remains pending.
 
-## F5 pause over Option+F5 speech (lane F5-PAUSE, phase 1)
+## F5 pause over Option+F5 speech (lane F, final model round 2)
 
-`F5Pause.tla` models the F5 auto-pause contract. `F5PauseCurrent` must violate `F5PausesPlayingSpeech` (today a hold is ignored and a tap stops the speech); `F5PauseFixed` passes every safety invariant plus `AutoPauseNeverStuck`; `F5PauseOpenFirst`, `F5PauseResumeOnPaste` and `F5PauseStuck` are the sensitivity controls. Model only, no code replay yet. Real TLC output and the phase-2 code points: [F5PAUSE-TLC.md](F5PAUSE-TLC.md).
+`F5Pause.tla` models the Option+F5 read contract with an independent physical key,
+word-at-press anchor, explicit parked preparation, two capture identities for N6,
+and two waiting reads. F5 during transcription opens a new capture; the read waits
+for every capture to settle. Current configs separately expose the old ignore/stop,
+cancel-on-transcription, late key-up and count/timing behaviour. Every checked
+property has an exact-name mutant, plus an all-property cross-kill matrix. Stuck
+now removes only clock fairness; it is independent of the resume-on-paste safety
+mutant. Model specifications are not F5 runtime conformance. The current contract,
+measured TLC receipt, review resolutions and implementation handoff are in
+[F5PAUSE-TLC.md](F5PAUSE-TLC.md).
 
 ## Q1 admission gate (supersedes the historical T1 admission projection below)
 
