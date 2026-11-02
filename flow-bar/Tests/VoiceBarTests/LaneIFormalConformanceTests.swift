@@ -48,6 +48,67 @@ final class LaneIFormalConformanceTests: XCTestCase {
             }
         }
     }
+    func testTLCDrainAdmissionAndQueuedCancellationThroughNativeRouter() throws {
+        let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../formal/record-while-processing-runtime/corpus.json").standardized
+        struct Corpus: Decodable {
+            struct Edge: Decodable { let target: String; let stages: [String: String]; let origin: String?; let captureReleased: Bool? }
+            let drainAdmissions, queuedCancellations: [Edge]
+        }
+        let corpus = try JSONDecoder().decode(Corpus.self, from: Data(contentsOf: path))
+        XCTAssertFalse(corpus.drainAdmissions.isEmpty)
+        XCTAssertFalse(corpus.queuedCancellations.isEmpty)
+        for row in corpus.drainAdmissions + corpus.queuedCancellations {
+            XCTAssertEqual(row.target, "B")
+            let state = recordingState()
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            // The local waiting intent is created by F5, never invented in a daemon snapshot.
+            state.handleEvent(["type": "state", "state": "recording", "mic_take_id": "A",
+                "recording_jobs": [["take_id": "A", "kind": "live", "phase": "draining"]]])
+            let router = VoiceBarCommandRouter(voiceState: state)
+            router.handleHotkeyHoldStart()
+            let b = try XCTUnwrap(state.queuedRecordingTakeID)
+            XCTAssertTrue(commands.isEmpty)
+            XCTAssertEqual(state.mode, .recording)
+            XCTAssertNil(state.confirmationText)
+            if let origin = row.origin {
+                if row.stages["A"] != "draining" {
+                    let phases = ["captured": "queued", "processing": "processing", "ack": "delivering", "failed": "failed"]
+                    let jobs = phases[row.stages["A"] ?? ""].map { [["take_id": "A", "kind": "live", "phase": $0]] } ?? []
+                    var event: [String: Any] = ["type": "state", "state": "transcribing", "mic_take_id": NSNull(), "recording_jobs": jobs]
+                    if row.captureReleased == false { event["capture_error"] = "Recorder exit unconfirmed" }
+                    state.handleEvent(event)
+                }
+                let dispatched = commands.contains { $0["cmd"] as? String == "record" }
+                if origin == "Escape" { router.handleEscape() } else { router.handleCancel() }
+                XCTAssertNil(state.queuedRecordingTakeID)
+                if dispatched {
+                    XCTAssertEqual(commands.map { $0["cmd"] as? String }, ["record", "cancel"])
+                    XCTAssertEqual(commands.last?["take_id"] as? String, b)
+                    XCTAssertNil(state.pendingIntent, "Cancellation retires B's startup receipt")
+                } else { XCTAssertTrue(commands.isEmpty, "Queued B cancellation cannot signal A") }
+                XCTAssertFalse(commands.contains { $0["cmd"] as? String == "cancel" && $0["take_id"] as? String == "A" })
+            }
+            state.handleEvent(["type": "state", "state": "transcribing", "mic_take_id": NSNull(),
+                "recording_jobs": [["take_id": "A", "kind": "live", "phase": "queued"]]])
+            if row.origin != nil {
+                XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count,
+                    row.captureReleased == true && row.stages["A"] != "draining" ? 1 : 0)
+            } else {
+                XCTAssertEqual(commands.count, 1)
+                XCTAssertEqual(commands.first?["cmd"] as? String, "record")
+                XCTAssertEqual(commands.first?["take_id"] as? String, b)
+                state.handleEvent(["type": "state", "state": "recording", "mode": "ptt", "bar_owned": true,
+                    "take_id": b, "mic_take_id": b, "recording_jobs": [
+                        ["take_id": "A", "kind": "live", "phase": "processing"],
+                        ["take_id": b, "kind": "live", "phase": "capturing"]]])
+                XCTAssertEqual(state.microphoneTakeID, b)
+                XCTAssertEqual(state.mode, .recording)
+            }
+            XCTAssertNil(state.confirmationText)
+        }
+    }
     func testTLCFixedCancellationEdges() async throws {
         let path = ProcessInfo.processInfo.environment["VOICEBAR_RECORD_TLC_CASES"]
             ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -67,6 +128,13 @@ final class LaneIFormalConformanceTests: XCTestCase {
                 return ["take_id": id, "kind": "live", "phase": phase]
             }
             let mic = ["A", "B"].first { ["recording", "draining"].contains(row.stages[$0] ?? "") }
+            if row.stages["B"] == "waiting" {
+                XCTAssertEqual(row.target, "A", "B's own local cancellation has a dedicated replay")
+                state.handleEvent(["type": "state", "state": "recording", "mic_take_id": "A",
+                    "recording_jobs": [["take_id": "A", "kind": "live", "phase": "draining"]]])
+                VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
+                XCTAssertNotNil(state.queuedRecordingTakeID)
+            }
             state.handleEvent(["type": "state", "state": mic == nil ? "transcribing" : "recording",
                 "recording_jobs": jobs, "mic_take_id": mic as Any])
             var commands: [[String: Any]] = []

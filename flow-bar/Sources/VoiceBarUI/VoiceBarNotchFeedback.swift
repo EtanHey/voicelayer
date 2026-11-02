@@ -6,16 +6,24 @@ import SwiftUI
 public struct VoiceBarNotchFeedback: Equatable {
     public let statusText: String?
     public let noteText: String?
-    public let opensHistory: Bool
+    /// N5: the status row (an error diagnostic) carries the inline History action.
+    public let statusOpensHistory: Bool
+    /// N5: the note row (a busy-selection note) carries the inline History action.
+    public let noteOpensHistory: Bool
+    public var opensHistory: Bool { statusOpensHistory || noteOpensHistory }
     public let replacesWingText: Bool
     public let wingText: String
     public let width: CGFloat
     public let statusHeight: CGFloat
     public let noteHeight: CGFloat
     public var height: CGFloat { statusHeight + noteHeight }
-    public static let maximumTextHeight: CGFloat = 72
-    public static let historyButtonWidth: CGFloat = 96
-    public static let historyButtonSpacing: CGFloat = 8
+    /// N3: text grows downward to this many points (about five lines) before the note scrolls; never "…".
+    public static let maximumTextHeight: CGFloat = 80
+    /// N5: the History action is a compact glyph button on the message's own row. A labelled bordered button
+    /// (96 pt) left a ~49 pt text column at notch width; the glyph keeps the words readable beside it.
+    public static let historyButtonWidth: CGFloat = 22
+    public static let historyButtonSpacing: CGFloat = 6
+    public static let historyActionTitle = "Open History"
 
     public static func messageWidth(_ width: CGFloat, opensHistory: Bool) -> CGFloat {
         max(1, width - 2 * VoiceBarNotchContract.transientNoteHorizontalInset -
@@ -32,8 +40,21 @@ public struct VoiceBarNotchFeedback: Equatable {
         return ceil(max(16, rect.height))
     }
 
+    static func bandHeight(_ text: String, width: CGFloat, opensHistory: Bool) -> CGFloat {
+        max(VoiceBarNotchContract.transientNoteBandHeight,
+            min(maximumTextHeight, textHeight(text, width: messageWidth(width, opensHistory: opensHistory))) + 10)
+    }
+
+    /// The notch's notice policy (formal/notch-presentation, Fixed):
+    /// - N2: nothing is shown under the notch while transcribing; the spinner and blue carry it.
+    /// - N1: a visible notice (an error diagnostic, an idle confirmation, a note) is always the compact tab under
+    ///   the notch and never also a wing label.
+    /// - N4: an empty diagnostic is hidden; no "Error" or "Details below" copy is invented.
+    /// - N5: an error diagnostic and a busy-selection note each carry Open History inline.
+    /// Operational labels (F5 hints, recording command/clip names) stay in the wing unless they overflow it.
     public static func resolve(input: VoiceBarNotchOperationalInput,
                                presentation: VoiceBarNotchPresentation) -> Self? {
+        guard input.mode != .transcribing else { return nil }
         let text = input.statusText.trimmingCharacters(in: .whitespacesAndNewlines)
         let insets = WaveformLayout.coreGap + WaveformLayout.outerInset +
             VoiceBarNotchContract.compactStatusTrailingSafetyInset
@@ -46,42 +67,35 @@ public struct VoiceBarNotchFeedback: Equatable {
         ]).width
         let allowedLines = input.mode == .idle && TwoLineStatusFeedback.contains(input.confirmationText) ? 2 : 1
         let overflow = text.components(separatedBy: "\n").count > allowedLines || measured > available
+        let confirmation = input.confirmationText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let isNotice = input.mode == .error || (input.mode == .idle && !confirmation.isEmpty)
         // Recording/teleprompter controls carry the primary state; expose their named status only when
-        // it is long or explicitly a command/clip label. Processing already has a spinner and waveform.
-        let eligible = input.mode != .transcribing && (presentation.visualState == .compactStatus || input.mode == .error ||
+        // it is long or explicitly a command/clip label.
+        let eligible = presentation.visualState == .compactStatus || isNotice ||
             (input.mode == .recording && (input.commandModeState != nil || input.activeClipMarker != nil)) ||
-            (presentation.visualState == .history &&
-                (input.confirmationText != nil || input.commandModeState != nil || input.activeClipMarker != nil)))
-        let status = !text.isEmpty && eligible && (overflow || input.mode == .error)
-            ? text : nil
+            (presentation.visualState == .history && (input.commandModeState != nil || input.activeClipMarker != nil))
+        let status = !text.isEmpty && eligible && (overflow || isNotice) ? text : nil
         let note = input.transientNote.flatMap { $0.isEmpty ? nil : $0 }
+        let noteOpensHistory = note.map { input.transientNoteOffersHistory ?? VoiceBarPresentation.isSelectionBusyNote($0) } == true
+        // N1: every note is the compact tab under the notch, never a band across the wings.
+        let width = VoiceBarNotchContract.noteColumnWidth(
+            for: presentation.geometry, ownBodyHeight: presentation.ownBodyHeight
+        )
         let noteNeedsWrap = note.map {
-            Self.textHeight($0, width: presentation.geometry.bodyWidth - 32) > 17
+            Self.textHeight($0, width: Self.messageWidth(width, opensHistory: false)) > 17
         } == true
-        // Preserve the established single-line note geometry and renderer when it already fits.
-        guard status != nil || noteNeedsWrap else { return nil }
-        // Reuse the compact note shell's fitted width; additional text grows down, never out to the canvas.
-        let width = presentation.geometry.bodyFlushWithWings.bodyWidth
-        let failure = input.mode == .error && status != nil
-        // Keep the complete sentence in the note. A cancellation has a concise
-        // semantic label; other overflowing copy needs no duplicate wing label.
-        let shortText = text.lowercased().contains("cancel") ? "Cancelled" : ""
-        let shortWidth = (shortText as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium)
-        ]).width
-        let wingText = overflow ? (shortWidth <= available ? shortText : "") : text
+        // A short plain note keeps the established single-line renderer.
+        guard status != nil || noteNeedsWrap || noteOpensHistory else { return nil }
+        let statusOpensHistory = input.mode == .error && status != nil
         return Self(
-            statusText: status, noteText: note, opensHistory: failure, replacesWingText: overflow,
-            wingText: wingText, width: width,
-            statusHeight: status.map {
-                max(VoiceBarNotchContract.transientNoteBandHeight,
-                    min(maximumTextHeight, Self.textHeight($0,
-                        width: Self.messageWidth(width, opensHistory: failure))) + 10)
-            } ?? 0,
-            noteHeight: note.map {
-                max(VoiceBarNotchContract.transientNoteBandHeight,
-                    min(maximumTextHeight, Self.textHeight($0, width: width - 32)) + 10)
-            } ?? 0
+            statusText: status, noteText: note,
+            statusOpensHistory: statusOpensHistory, noteOpensHistory: noteOpensHistory,
+            replacesWingText: true,
+            // N1: while a notice shows, the wing carries no label; the full copy lives in the tab.
+            wingText: "",
+            width: width,
+            statusHeight: status.map { bandHeight($0, width: width, opensHistory: statusOpensHistory) } ?? 0,
+            noteHeight: note.map { bandHeight($0, width: width, opensHistory: noteOpensHistory) } ?? 0
         )
     }
 }
@@ -98,11 +112,12 @@ public struct VoiceBarNotchFeedbackBand: View {
     public var body: some View {
         VStack(spacing: 0) {
             if let note = feedback.noteText {
-                VoiceBarNotchTransientNoteBand(text: note, width: feedback.width, height: feedback.noteHeight)
+                VoiceBarNotchTransientNoteBand(text: note, width: feedback.width, height: feedback.noteHeight,
+                    onOpenHistory: feedback.noteOpensHistory ? onOpenHistory : nil)
             }
             if let status = feedback.statusText {
                 VoiceBarNotchTransientNoteBand(text: status, width: feedback.width, height: feedback.statusHeight,
-                    onOpenHistory: feedback.opensHistory ? onOpenHistory : nil)
+                    onOpenHistory: feedback.statusOpensHistory ? onOpenHistory : nil)
             }
         }
         .frame(maxWidth: .infinity)
@@ -131,19 +146,16 @@ public struct VoiceBarNotchTransientNoteBand: View {
     }
 
     public var body: some View {
-        HStack(spacing: VoiceBarNotchFeedback.historyButtonSpacing) {
+        // N5: the action shares the message's row, trailing it; the note never grows a second row for it.
+        HStack(alignment: .center, spacing: VoiceBarNotchFeedback.historyButtonSpacing) {
             message(viewport: height - 10)
                 .frame(width: VoiceBarNotchFeedback.messageWidth(width, opensHistory: onOpenHistory != nil))
             if let onOpenHistory {
-                Button("Open History", action: onOpenHistory)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .frame(width: VoiceBarNotchFeedback.historyButtonWidth)
-                    .accessibilityHint("Opens the History settings window. Select a recording there to retry transcription.")
+                VoiceBarNotchHistoryActionButton(action: onOpenHistory)
             }
         }
         .font(.system(size: 12, weight: .medium))
-        .padding(.horizontal, VoiceBarNotchContract.transientNoteHorizontalInset)
+        .frame(width: width - 2 * VoiceBarNotchContract.transientNoteHorizontalInset)
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity)
         .frame(height: height)
@@ -163,12 +175,48 @@ public struct VoiceBarNotchTransientNoteBand: View {
         }
     }
     private var label: some View {
+        // N3: wrap and grow down; never a line limit, never "…".
         Text(text).lineLimit(nil).fixedSize(horizontal: false, vertical: true)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(onOpenHistory == nil ? .center : .leading)
+            .frame(maxWidth: .infinity, alignment: onOpenHistory == nil ? .center : .leading)
             .textSelection(.enabled)
             .id(text)
             .transition(.identity)
+    }
+}
+
+/// The compact inline History action: a glyph the size of the wing controls, named for VoiceOver and on hover.
+struct VoiceBarNotchHistoryActionButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: VoiceBarNotchFeedback.historyButtonWidth,
+                       height: VoiceBarNotchFeedback.historyButtonWidth)
+                .contentShape(Circle())
+        }
+        .buttonStyle(VoiceBarNotchHistoryActionStyle())
+        .frame(width: VoiceBarNotchFeedback.historyButtonWidth)
+        .background(PillControlTooltip(text: VoiceBarNotchFeedback.historyActionTitle))
+        .accessibilityLabel(VoiceBarNotchFeedback.historyActionTitle)
+        .accessibilityHint("Opens the History settings window. Select a recording there to retry transcription.")
+        .accessibilityIdentifier("VoiceBarNotchFeedback.openHistory")
+    }
+}
+
+private struct VoiceBarNotchHistoryActionStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Circle().fill(.white.opacity(isHovered ? 0.22 : 0.14)))
+            // Press feedback without moving the row: scale in place, quick ease-out both ways.
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 

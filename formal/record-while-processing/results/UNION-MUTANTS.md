@@ -1,4 +1,4 @@
-UNION: 63/63 mutants killed; all G and I properties retained. No property dropped.
+UNION: 64/64 mutants killed; all ownership/readability/retention properties retained. D3 retires only CapAlwaysFires, CaptureWithinCap and CapStops; renewable 10-minute silence replaces capped recording.
 
 | Model | Property | Mutant | Result |
 | --- | --- | --- | --- |
@@ -37,10 +37,7 @@ UNION: 63/63 mutants killed; all G and I properties retained. No property droppe
 | record-while-processing | SpeechRenewsDeadline | MutSpeechDisabled | exact-property FAIL |
 | record-while-processing | NoEarlySilenceTimeout | MutEarlyTimeout | exact-property FAIL |
 | record-while-processing | SilenceTimesOut | MutTimeoutNeverFires | exact-property FAIL |
-| record-while-processing | CapAlwaysFires | MutNoCap | exact-property FAIL |
-| record-while-processing | CaptureWithinCap | MutNoCapBound | exact-property FAIL |
-| record-while-processing | CapAlwaysFires | MutCapRenewedBySpeech | exact-property FAIL |
-| record-while-processing | CapAlwaysFires | MutCapBlockedBySpeech | exact-property FAIL |
+| record-while-processing | RecurringSpeechNeverTimesOut | MutReintroducedCap | exact-property FAIL |
 | record-while-processing | EscapeTargetsNewest | MutEscapeMic | exact-property FAIL |
 | record-while-processing | EscapeTargetsNewest | MutEscapeOlder | exact-property FAIL |
 | record-while-processing | NoStaleGuard | MutStaleGuard | exact-property FAIL |
@@ -59,9 +56,13 @@ UNION: 63/63 mutants killed; all G and I properties retained. No property droppe
 | record-while-processing-runtime | MicReleaseOnFailure | FailedMicMutant | exact-property FAIL |
 | record-while-processing-runtime | NoDeliveryOutsideCapturedTarget | UnreadableOverlapMutant | exact-property FAIL |
 | record-while-processing-runtime | UnreadableIdentitySingleTakeDelivers | UnreadableRefusalMutant | exact-property FAIL |
+| record-while-processing-runtime | N6StartsB | RejectDrainMutant | exact-property FAIL |
+| record-while-processing-runtime | N6StartsB | StallQueuedAdmissionMutant | exact-property FAIL |
+| record-while-processing-runtime | QueuedCaptureStarts | StallQueuedProgressMutant | exact-property FAIL |
 | ptt-silence-timeout | NoTimeoutDuringSpeech | WallClockMutant | exact-property FAIL |
 | ptt-silence-timeout | EveryEndedTakeRetained | DropArchiveMutant | exact-property FAIL |
 | ptt-silence-timeout | RawAccurate | TrimWordsMutant | exact-property FAIL |
 | ptt-silence-timeout | SettlesAfterSilence | StallMutant | exact-property FAIL |
 | ptt-silence-timeout | SpeechRenewsDeadline | NoRenewalMutant | exact-property FAIL |
-| ptt-silence-timeout | CapStops | NoCapMutant | exact-property FAIL |
+| ptt-silence-timeout | RecurringSpeechNeverTimesOut | ReintroducedCapMutant | exact-property FAIL |
+| ptt-silence-timeout | SilenceTimesOut | NoTimeoutMutant | exact-property FAIL |

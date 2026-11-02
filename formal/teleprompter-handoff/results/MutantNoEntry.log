@@ -1,0 +1,27 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NewestShows",
+  "status": "EXPECTED_FAIL",
+  "generated": 3093,
+  "distinct": 3093,
+  "trace": [
+    "/\\ now = 0\n/\\ views = <<[initial |-> TRUE, inserted |-> 0, removed |-> 87]>>",
+    "/\\ now = 0\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 1\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 2\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 3\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 4\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 5\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 6\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 7\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 8\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 9\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 10\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 11\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 12\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 13\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 14\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 15\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>"
+  ]
+}

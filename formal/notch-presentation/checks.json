@@ -115,6 +115,21 @@
       "role": "mutant",
       "target": "NoteNeverStuck",
       "kind": "temporal"
+    },
+    "MutantNoShell": {
+      "role": "mutant",
+      "target": "VisibleHasShell",
+      "kind": "invariant"
+    },
+    "MutantType": {
+      "role": "mutant",
+      "target": "TypeOK",
+      "kind": "invariant"
+    },
+    "MutantStuck": {
+      "role": "mutant",
+      "target": "NoteNeverStuck",
+      "kind": "temporal"
     }
   },
   "acceptance": [

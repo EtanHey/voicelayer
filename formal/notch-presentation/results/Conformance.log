@@ -1,0 +1,8 @@
+Swift focused conformance: 3 tests, 0 unexpected failures.
+Current and Fixed notch: 12,330 frames; two cause-ending cases.
+Fixed notch: 8 pinned families, zero divergences, zero expected failures.
+Historical Current notch: two required historical mismatch groups.
+History affordance: explicit metadata with synthetic busy-note copy.
+Current/Fixed pipeline native paths: 8; Current strict, Fixed baseline count 4 pinned by mandatory assertions.
+Production source: f98243d2b2141ff0f0d16c3f145cb76cfcd0ebae.
+See conformance.json for complete source hashes and divergence pins.

@@ -343,6 +343,8 @@ describe("SoundLayer MCP compatibility regression", () => {
       onCaptureEnd: expect.any(Function),
       onCaptureStart: expect.any(Function),
       onNoSpeech: expect.any(Function),
+      onNoAnswer: expect.any(Function),
+      onSpeechStart: expect.any(Function),
       onPhaseChange: expect.any(Function),
       signal: expect.any(AbortSignal),
       voiceAskArtifacts: {
@@ -372,7 +374,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     });
 
     expect(waitForInputSpy).toHaveBeenCalledWith(
-      30_000,
+      120_000,
       "thoughtful",
       false,
       expect.any(Object),
@@ -642,7 +644,7 @@ describe("SoundLayer MCP compatibility regression", () => {
       });
 
       expect(waitForInputSpy).toHaveBeenCalledWith(
-        30_000,
+        120_000,
         "thoughtful",
         false,
         expect.any(Object),
@@ -676,7 +678,7 @@ describe("SoundLayer MCP compatibility regression", () => {
       });
 
       expect(waitForInputSpy).toHaveBeenCalledWith(
-        30_000,
+        120_000,
         "thoughtful",
         false,
         expect.any(Object),

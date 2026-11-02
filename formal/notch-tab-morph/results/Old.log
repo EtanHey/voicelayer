@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoSlabSweep",
+  "status": "EXPECTED_FAIL",
+  "generated": 15,
+  "distinct": 13,
+  "trace": [
+    "/\\ pending = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]\n/\\ changes = 0\n/\\ presented = \"Rest\"\n/\\ todo = {}\n/\\ lastSpring = <<\"Rest\", \"Rest\">>\n/\\ rendered = \"Rest\"\n/\\ pendVal = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]\n/\\ seenPresented = \"Rest\"\n/\\ seenPending = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]",
+    "/\\ pending = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]\n/\\ changes = 1\n/\\ presented = \"Tab\"\n/\\ todo = {}\n/\\ lastSpring = <<\"Rest\", \"Rest\">>\n/\\ rendered = \"Rest\"\n/\\ pendVal = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]\n/\\ seenPresented = \"Rest\"\n/\\ seenPending = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]",
+    "/\\ pending = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]\n/\\ changes = 1\n/\\ presented = \"Tab\"\n/\\ todo = {\"geo\"}\n/\\ lastSpring = <<\"Rest\", \"Rest\">>\n/\\ rendered = \"Rest\"\n/\\ pendVal = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]\n/\\ seenPresented = \"Tab\"\n/\\ seenPending = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]",
+    "/\\ pending = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]\n/\\ changes = 1\n/\\ presented = \"Tab\"\n/\\ todo = {}\n/\\ lastSpring = <<\"Rest\", \"Tab\">>\n/\\ rendered = \"Tab\"\n/\\ pendVal = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]\n/\\ seenPresented = \"Tab\"\n/\\ seenPending = [presented |-> \"none\", start |-> \"none\", target |-> \"none\"]"
+  ]
+}

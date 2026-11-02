@@ -16,6 +16,7 @@ for policy, graph in all_graphs.items():
     counts[policy] = len(graph['nodes'])
     for node in graph['nodes'].values():
         inputs = {key: value for key, value in node['s'].items() if key not in {'raised', 'timer'}}
+        inputs['transientNoteOffersHistory'] = inputs['note'] == 'busy'
         row = dict(policy=policy, input=inputs, expected={key: node['shown'][key] for key in ['shell','text','wingText','band','visible','transient','historyInline']})
         rows[json.dumps(row, sort_keys=True)] = row
     for source, target in graph['edges']:

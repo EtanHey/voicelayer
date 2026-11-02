@@ -70,7 +70,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
 
     /// P16: a parked read is silent, so it routes like idle: F5 records and the read stays parked.
     private var canStartRecording: Bool {
-        voiceState.mode == .idle || voiceState.mode == .error || voiceState.isPlaybackPaused ||
+        (voiceState.isRecordingDrainPending && voiceState.queuedRecordingTakeID == nil) || voiceState.mode == .idle || voiceState.mode == .error || voiceState.isPlaybackPaused ||
             (voiceState.mode == .transcribing && voiceState.canRecordDuringProcessing)
     }
 
@@ -92,6 +92,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     /// Playback uses stop so the teleprompter remains visible until the daemon
     /// confirms playback idle; recording uses cancel to discard the capture.
     func handleEscape() {
+        if voiceState.queuedRecordingTakeID != nil { handleCancel(); return }
         switch voiceState.mode {
         case .speaking:
             handleStop()
@@ -139,7 +140,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
         physicalKeyDown = true
         hotkeyLocked = false
         defer { physicalCaptureTakeID = voiceState.activeCaptureTakeID }
-        if voiceState.isRecordingDrainPending { voiceState.rejectRecordingDuringDrain(); return }
+        if voiceState.isRecordingDrainPending, voiceState.queuedRecordingTakeID == nil { voiceState.record(pressToTalk: true); return }
         if voiceState.isPlaybackPaused {
             voiceState.record(pressToTalk: true)
             return
@@ -176,8 +177,8 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeySingleTap() {
-        if voiceState.isRecordingDrainPending { voiceState.rejectRecordingDuringDrain(); return }
         hotkeyLocked = false
+        if voiceState.isRecordingDrainPending, voiceState.queuedRecordingTakeID == nil { voiceState.record(pressToTalk: true); return }
         if voiceState.isPlaybackPaused { voiceState.record(pressToTalk: true); return }
         switch voiceState.mode {
         case .recording:

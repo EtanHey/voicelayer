@@ -17,7 +17,7 @@ for model in models:
         assert result["target"] == check["target"]
         total += 1
         lines.append(f"| {model} | {check['target']} | {name} | exact-property FAIL |")
-summary = f"UNION: {total}/{total} mutants killed; all G and I properties retained. No property dropped."
+summary = f"UNION: {total}/{total} mutants killed; all ownership/readability/retention properties retained. D3 retires only CapAlwaysFires, CaptureWithinCap and CapStops; renewable 10-minute silence replaces capped recording."
 print(summary)
 print("\n".join(lines))
 if "--record" in sys.argv:

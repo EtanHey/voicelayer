@@ -5,7 +5,10 @@
  * input specifications. Separated from handler logic for maintainability.
  */
 
+import { voiceAskNoAnswerSeconds } from "./voice-ask-no-answer";
 import { STOP_FILE } from "./paths";
+
+const NO_ANSWER_RULE = "After an Ask gets no answer, you may make ONE follow-up voice_speak or voice_ask, then continue as if the user is away; do not keep asking.\n";
 
 const SPOKEN_STYLE =
   `Spoken style: Announce the speaker (asker for questions) first or when agents change. Skip introductions in acknowledgements and replies after an answer: "OK, I'm on it." or "OK, I'm looking it up." ` +
@@ -22,7 +25,7 @@ export function getToolDefinitions() {
       name: "voice_speak",
       description:
         "Speak an announcement/status aloud or log a note silently. NON-BLOCKING — returns instantly.\n" +
-        SPOKEN_STYLE +
+        SPOKEN_STYLE + NO_ANSWER_RULE +
         "Spoken modes have a HARD LIMIT: 1,200 characters — longer messages are refused, not truncated. " +
         "Use them only for announcements or status updates that do not require the user to understand or respond. " +
         "voice_speak never waits for the user to absorb it — it has no acknowledgement gate, " +
@@ -103,7 +106,7 @@ export function getToolDefinitions() {
       name: "voice_ask",
       description:
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
-        SPOKEN_STYLE +
+        SPOKEN_STYLE + NO_ANSWER_RULE +
         "Waits for the user's voice response. BLOCKING: " +
         "the question is spoken before the microphone opens, and the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +
@@ -112,7 +115,8 @@ export function getToolDefinitions() {
         "If content the user must understand or respond to is longer, split it into two or more sequential voice_ask calls. " +
         "Each ask is a checkpoint: the user confirms they absorbed one part before the next is spoken. " +
         "voice_speak is only for announcements or status updates that do not need a response.\n" +
-        "Auto-waits for any playing voice_speak audio to finish before speaking.\n\n" +
+        "Auto-waits for any playing voice_speak audio to finish before speaking. " +
+        "No detected speech for 120s by default closes the Ask and keeps the recording; first speech cancels this deadline.\n\n" +
         "Two recording modes:\n" +
         "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
         "- Push-to-end (push_to_end=true; gated): DISABLES automatic silence detection. " +
@@ -149,8 +153,8 @@ export function getToolDefinitions() {
           timeout_seconds: {
             type: "number",
             description:
-              "No-speech budget in seconds, starting when capture opens. In VAD mode, first speech cancels it; recording ends on silence or stop, with a 30-minute ceiling after first speech (also while locked). Lock suspends the no-speech budget. Prior playback and prompt synthesis/playback have separate bounds. Clamped to 5-3600. Default: 30.",
-            default: 30,
+              "No-answer budget after the question finishes (default VOICELAYER_ASK_NO_ANSWER_SECONDS or 120; 5-3600s). First speech cancels it. Unlocked VAD Ask ends on normal post-speech silence (silence_mode, 2.5s default). HOLD pauses the no-answer budget; locked Ask stops after 10 minutes of continuous silence, renewed by speech, with NO cap. Every take is archived.",
+            default: voiceAskNoAnswerSeconds(),
             minimum: 5,
             maximum: 3600,
           },

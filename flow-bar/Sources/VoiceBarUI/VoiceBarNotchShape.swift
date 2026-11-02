@@ -403,6 +403,9 @@ public struct VoiceBarNotchContinuousShape: Shape {
         layout: VoiceBarNotchShapeLayout, wingWidth: CGFloat, step rawStep: CGFloat
     ) -> [SideSegment] {
         let body = layout.bodyRect
+        if rawStep < 0, wingWidth > 0 {
+            return stepInSegments(layout: layout, inset: min(-rawStep, wingWidth))
+        }
         let step = max(0, rawStep)
         let bodyCorner = min(compactOuterCornerRadius, body.width / 2)
         // The concave join under the wing (the teleprompter's 5 pt shoulder). A step-out corner larger than
@@ -451,6 +454,25 @@ public struct VoiceBarNotchContinuousShape: Shape {
             (CGPoint(x: join, y: body.minY), CGPoint(x: 0, y: body.minY)),
             (CGPoint(x: ledge, y: body.minY), nil),
             lowerCorner(from: atBodyTop),
+        ]
+    }
+
+    /// N1: a body narrower than its wing (the note tab under the notch). The wing keeps its own rounded outer
+    /// corner, its lower edge runs in to the tab, a concave join turns down the tab's side, and the tab rounds
+    /// its own bottom corner. `inset` is how far the tab's side sits inside the wing's outer side.
+    private func stepInSegments(layout: VoiceBarNotchShapeLayout, inset: CGFloat) -> [SideSegment] {
+        let body = layout.bodyRect
+        let top = layout.geometry.topHeight
+        let join = max(0, min(layout.inverseJoinRadius, inset / 2, body.height / 2))
+        let wingCorner = max(0, min(compactOuterCornerRadius, top, inset - join))
+        let lower = max(0, min(compactOuterCornerRadius, body.width / 2, body.height - join))
+        return [
+            (CGPoint(x: 0, y: top - wingCorner), nil),
+            (CGPoint(x: -wingCorner, y: top), CGPoint(x: 0, y: top)),
+            (CGPoint(x: -(inset - join), y: top), nil),
+            (CGPoint(x: -inset, y: top + join), CGPoint(x: -inset, y: top)),
+            (CGPoint(x: -inset, y: body.maxY - lower), nil),
+            (CGPoint(x: -inset - lower, y: body.maxY), CGPoint(x: -inset, y: body.maxY)),
         ]
     }
 }
