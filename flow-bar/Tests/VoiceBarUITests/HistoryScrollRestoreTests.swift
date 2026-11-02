@@ -173,13 +173,16 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
 
         // Returning: a new scroll view whose content is still short, then grows (a lazy list laying out).
         let second = scrollView(height: 300)
-        let rebuilt = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
+        let clock = ManualRetryClock()
+        let rebuilt = makeKeeper(memory, clock)
         second.scroll.documentView?.addSubview(rebuilt)
         XCTAssertFalse(rebuilt.hasRestored, "waits for content tall enough to hold the position")
         XCTAssertEqual(memory.offset(for: .list), 650)
+        clock.step(); clock.step() // two retries pass while the content is still short
+        XCTAssertFalse(rebuilt.hasRestored)
         second.scroll.documentView?.setFrameSize(NSSize(width: 300, height: 2000))
-        let deadline = Date().addingTimeInterval(2)
-        while !rebuilt.hasRestored, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        clock.step()
+        XCTAssertTrue(rebuilt.hasRestored, "the next retry finds the content tall enough")
         XCTAssertEqual(second.scroll.contentView.bounds.origin.y, 650, accuracy: 0.5)
         _ = (first.window, second.window)
     }
@@ -190,13 +193,15 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let memory = SettingsHistoryScrollMemory()
         memory.record(650, for: .list)
         let view = scrollView(height: 900) // 500 reachable: too short for 650
-        let keeper = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
         XCTAssertFalse(keeper.hasRestored, "waiting for content")
         userScroll(view.scroll, by: 200)
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 200, accuracy: 0.5, "the user's wheel scroll landed")
         view.scroll.documentView?.setFrameSize(NSSize(width: 300, height: 2000))
-        RunLoop.main.run(until: Date().addingTimeInterval(1.3))
+        clock.drain() // every queued retry runs against the now-tall content
+        XCTAssertEqual(clock.pending, 0)
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 200, accuracy: 0.5, "no jump back to 650")
         XCTAssertEqual(memory.offset(for: .list), 200, "the user's position is what is remembered now")
         _ = view.window
@@ -208,7 +213,8 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let memory = SettingsHistoryScrollMemory()
         memory.record(650, for: .list)
         let view = scrollView(height: 900) // 500 reachable: too short for 650
-        let keeper = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
         XCTAssertFalse(keeper.hasRestored, "waiting for content")
         // A layout pass resizes the visible area. AppKit posts no bounds notification for a frame-driven
@@ -224,23 +230,53 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 0, accuracy: 0.5)
         XCTAssertEqual(memory.offset(for: .list), 650, "a size-only change never overwrites the remembered offset")
         view.scroll.documentView?.setFrameSize(NSSize(width: 300, height: 2000))
-        let deadline = Date().addingTimeInterval(1.2)
-        while !keeper.hasRestored, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        clock.drain()
+        XCTAssertTrue(keeper.hasRestored)
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 650, accuracy: 0.5, "the restore still lands")
         _ = view.window
     }
 
     /// Content never grows tall enough within the wait: the keeper gives up without a late jump.
+    /// The wait is counted in retries on a manual clock and ends on the keeper's own give-up signal, so a
+    /// loaded machine cannot starve it (it failed once at 1.64 s in a full M1 run on a wall-clock sleep).
     func testTimingOutLeavesThePositionWhereItWas() {
         let memory = SettingsHistoryScrollMemory()
         memory.record(650, for: .list)
         let view = scrollView(height: 600) // 200 reachable, and it stays that way
-        let keeper = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
+        let gaveUp = expectation(description: "the keeper gave up")
+        keeper.onGaveUp = { gaveUp.fulfill() }
         view.scroll.documentView?.addSubview(keeper)
-        RunLoop.main.run(until: Date().addingTimeInterval(1.6))
+        XCTAssertFalse(keeper.hasRestored, "waiting for content")
+        let retries = clock.drain()
+        wait(for: [gaveUp], timeout: 1)
+        XCTAssertEqual(retries, SettingsHistoryScrollKeeper.KeeperView.restoreAttempts, "it waits its full budget, then stops")
+        XCTAssertEqual(clock.pending, 0, "nothing is left queued to jump later")
         XCTAssertTrue(keeper.hasRestored, "the wait ended")
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 0, accuracy: 0.5, "no late jump to the clamped offset")
+        XCTAssertEqual(memory.offset(for: .list), 650, "giving up does not overwrite the remembered offset")
         _ = view.window
+    }
+
+    private func makeKeeper(_ memory: SettingsHistoryScrollMemory, _ clock: ManualRetryClock) -> SettingsHistoryScrollKeeper.KeeperView {
+        let keeper = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
+        keeper.scheduleRetry = { work in clock.schedule(work) }
+        return keeper
+    }
+
+    /// Restore retries run only when the test steps them: no wall-clock time is involved.
+    @MainActor private final class ManualRetryClock {
+        private var queue: [@MainActor () -> Void] = []
+        var pending: Int { queue.count }
+        func schedule(_ work: @escaping @MainActor () -> Void) { queue.append(work) }
+        func step() { if !queue.isEmpty { queue.removeFirst()() } }
+        /// Runs queued retries, and any they queue, until none are left; returns how many ran.
+        @discardableResult func drain(limit: Int = 1000) -> Int {
+            var ran = 0
+            while !queue.isEmpty, ran < limit { queue.removeFirst()(); ran += 1 }
+            return ran
+        }
     }
 
     /// A real pixel scroll-wheel event handed to the AppKit scroll view (nothing is posted to the system).

@@ -47,6 +47,13 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
         private var isApplying = false
         /// Bumped on cancel or detach; a queued retry from an older generation does nothing.
         private var restoreGeneration = 0
+        /// Queues the next restore attempt. Production waits 30 ms on the main queue; tests inject a manual
+        /// clock so the give-up is counted in attempts, never raced against wall-clock time under load.
+        var scheduleRetry: (@escaping @MainActor () -> Void) -> Void = { work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { MainActor.assumeIsolated { work() } }
+        }
+        /// Called once when the wait ends without content tall enough (the keeper gave up).
+        var onGaveUp: (() -> Void)?
         /// The last clip origin seen. A bounds notification with the same origin is a size-only layout
         /// change (window or split pane resizing), never the user scrolling.
         private var lastOriginY: CGFloat?
@@ -96,6 +103,7 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
             let reachable = (scroll.documentView?.frame.height ?? 0) - clip.bounds.height
             if attempt >= Self.restoreAttempts {
                 hasRestored = true // Too short for too long: keep where it is, record from here on.
+                onGaveUp?()
             } else if reachable >= target - 0.5 {
                 // Bracketed like a user's live scroll: SwiftUI's hosting scroll view then adopts the offset
                 // as its own. A bare clip-view move is undone by the next content update (the re-entry
@@ -112,7 +120,7 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
                 hasRestored = true
             } else {
                 let generation = restoreGeneration
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+                scheduleRetry { [weak self] in
                     guard let self, self.restoreGeneration == generation else { return }
                     self.restore(attempt: attempt + 1)
                 }
