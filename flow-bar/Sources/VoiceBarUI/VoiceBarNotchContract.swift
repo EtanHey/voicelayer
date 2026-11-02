@@ -46,8 +46,12 @@ public struct VoiceBarNotchGeometry: Equatable, Sendable {
         bodyLeadingExtent + coreWidth + bodyTrailingExtent
     }
 
+    /// With a lower body, each side reaches as far as its wider part: the wing or the body. Centring the body in
+    /// `max(topWidth, bodyWidth)` was only right while the body was at least as wide as the wings on BOTH sides;
+    /// a narrower body (N1's note tab under asymmetric wings) shifted the core and the far wing overhung the frame.
     public var totalWidth: CGFloat {
-        max(topWidth, bodyWidth)
+        guard lowerSurfaceHeight > 0 else { return max(topWidth, bodyWidth) }
+        return max(leadingWingWidth, bodyLeadingExtent) + coreWidth + max(trailingWingWidth, bodyTrailingExtent)
     }
 
     public var totalHeight: CGFloat {
@@ -55,15 +59,26 @@ public struct VoiceBarNotchGeometry: Equatable, Sendable {
     }
 
     public var bodyOriginX: CGFloat {
-        (totalWidth - bodyWidth) / 2
+        if lowerSurfaceHeight > 0 {
+            coreOriginX - bodyLeadingExtent
+        } else {
+            (totalWidth - bodyWidth) / 2
+        }
     }
 
     public var coreOriginX: CGFloat {
         if lowerSurfaceHeight > 0 {
-            bodyOriginX + bodyLeadingExtent
+            max(leadingWingWidth, bodyLeadingExtent)
         } else {
             leadingWingWidth
         }
+    }
+
+    /// N1: a bodiless shell draws no body, so its body extents are invisible. Two geometries draw the same shell
+    /// when they differ only there.
+    public func drawsIdentically(to other: VoiceBarNotchGeometry) -> Bool {
+        guard lowerSurfaceHeight == 0, other.lowerSurfaceHeight == 0 else { return self == other }
+        return bodyFlushWithWings == other.bodyFlushWithWings
     }
 
     public var coreMidX: CGFloat {
@@ -245,15 +260,27 @@ public struct VoiceBarNotchPresentation: Equatable {
         feedback?.height ?? (transientNoteWidth == nil ? 0 : VoiceBarNotchContract.transientNoteBandHeight)
     }
 
+    /// N1: the compact-status wing's label. While any notice shows under the notch the wing carries none; it
+    /// neither repeats, abbreviates nor substitutes for the notice.
+    public func wingLabel(for statusText: String) -> String {
+        if let feedback { return feedback.wingText }
+        return transientNoteRect == nil ? statusText : ""
+    }
+
+    /// The lower surface this shell has without any note (the teleprompter's or History's body), or 0.
+    var ownBodyHeight: CGFloat {
+        geometry.lowerSurfaceHeight - feedbackHeight
+    }
+
     /// Adds readable text using the existing lower-note shell; all top-row geometry is preserved.
     public func addingFeedback(_ feedback: VoiceBarNotchFeedback) -> Self {
-        let oldHeight = transientNoteWidth == nil ? 0 : VoiceBarNotchContract.transientNoteBandHeight
-        let compact = geometry.bodyFlushWithWings
+        let ownBody = ownBodyHeight
+        let note = VoiceBarNotchContract.noteBodyExtents(for: geometry, ownBodyHeight: ownBody)
         let grown = VoiceBarNotchGeometry(coreWidth: geometry.coreWidth, topHeight: geometry.topHeight,
             leadingWingWidth: geometry.leadingWingWidth, trailingWingWidth: geometry.trailingWingWidth,
-            bodyLeadingExtent: compact.bodyLeadingExtent,
-            bodyTrailingExtent: compact.bodyTrailingExtent,
-            lowerSurfaceHeight: geometry.lowerSurfaceHeight - oldHeight + feedback.height)
+            bodyLeadingExtent: note.leading,
+            bodyTrailingExtent: note.trailing,
+            lowerSurfaceHeight: ownBody + feedback.height)
         return VoiceBarNotchPresentation(visualState: visualState, geometry: grown,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset, virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles, accessibilityLabel: accessibilityLabel,
@@ -608,16 +635,42 @@ public enum VoiceBarNotchContract {
         to geometry: VoiceBarNotchGeometry,
         noteWidth _: CGFloat
     ) -> VoiceBarNotchGeometry {
-        let hasBody = geometry.lowerSurfaceHeight > 0
+        let note = noteBodyExtents(for: geometry, ownBodyHeight: geometry.lowerSurfaceHeight)
         return VoiceBarNotchGeometry(
             coreWidth: geometry.coreWidth,
             topHeight: geometry.topHeight,
             leadingWingWidth: geometry.leadingWingWidth,
             trailingWingWidth: geometry.trailingWingWidth,
-            bodyLeadingExtent: hasBody ? geometry.bodyLeadingExtent : geometry.leadingWingWidth,
-            bodyTrailingExtent: hasBody ? geometry.bodyTrailingExtent : geometry.trailingWingWidth,
+            bodyLeadingExtent: note.leading,
+            bodyTrailingExtent: note.trailing,
             lowerSurfaceHeight: geometry.lowerSurfaceHeight + transientNoteBandHeight
         )
+    }
+
+    /// N1 (Etan, 2026-11-02): "No full-width wing slab under the notch for ANY state. A note stays compact,
+    /// tucked under the notch." A note hangs from the hardware notch as a tab no wider than the notch (or this
+    /// minimum on a narrow virtual notch); it never spans the wings and never steps out past one.
+    public static let noteMinimumWidth: CGFloat = coreWidth
+
+    /// The body extents a note-bearing shell draws. A teleprompter or History body keeps its own extents and
+    /// hosts the note at its top; otherwise the note is a tab under the core, never wider than either wing allows.
+    static func noteBodyExtents(
+        for geometry: VoiceBarNotchGeometry,
+        ownBodyHeight: CGFloat
+    ) -> (leading: CGFloat, trailing: CGFloat) {
+        if ownBodyHeight > 0 {
+            return (geometry.bodyLeadingExtent, geometry.bodyTrailingExtent)
+        }
+        let spare = max(0, noteMinimumWidth - geometry.coreWidth) / 2
+        return (min(spare, geometry.leadingWingWidth), min(spare, geometry.trailingWingWidth))
+    }
+
+    /// The width the note's text column is laid out in: the tab's own width, or, inside a wider teleprompter or
+    /// History body, the same under-notch column centred in that body.
+    public static func noteColumnWidth(for geometry: VoiceBarNotchGeometry, ownBodyHeight: CGFloat) -> CGFloat {
+        let extents = noteBodyExtents(for: geometry, ownBodyHeight: 0)
+        let tab = geometry.coreWidth + extents.leading + extents.trailing
+        return ownBodyHeight > 0 ? min(geometry.bodyWidth, max(tab, noteMinimumWidth)) : tab
     }
 
     /// The History body is centred on the core and as wide as it was with two equal wings (332 pt at a 185 pt

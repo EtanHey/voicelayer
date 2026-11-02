@@ -1269,7 +1269,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             gatePermitsQuit: !ownsServer || gate.permitsTermination(controlledLease: controlledUpdateLease)
         )
         guard reply == .terminateNow else {
-            voiceState.reportQuitRefusal()
+            // The note clears once the same policy would let this quit through (the work stopped).
+            let lease = controlledUpdateLease
+            let refusalOwnsServer = ownsServer
+            let refusalGate = gate
+            voiceState.reportQuitRefusal(isStillBlocked: { [weak self] in
+                guard let self else { return false }
+                return terminationPolicy.reply(
+                    enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance,
+                    voiceBusy: voiceState.isQuitBusy && refusalOwnsServer,
+                    gatePermitsQuit: !refusalOwnsServer || refusalGate.permitsTermination(controlledLease: lease)
+                ) != .terminateNow
+            })
             NSLog("[VoiceBar] Quit refused: voice/update safety evidence unavailable")
             return reply
         }

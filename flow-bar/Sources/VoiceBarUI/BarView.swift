@@ -707,7 +707,8 @@ public struct BarView: View {
     }
 
     private func transientNoteBand(_ note: String) -> some View {
-        VoiceBarNotchTransientNoteBand(text: note, width: notchPresentation.geometry.bodyWidth)
+        VoiceBarNotchTransientNoteBand(text: note, width: VoiceBarNotchContract.noteColumnWidth(
+            for: notchPresentation.geometry, ownBodyHeight: notchPresentation.ownBodyHeight))
             .foregroundStyle(notchPrimaryLabelColor)
             .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
             .allowsHitTesting(false)
@@ -781,7 +782,7 @@ public struct BarView: View {
     }
 
     /// NOTCH2: "Preparing speech…" is a status, not text being read, so it sits on the body's optical centre
-    /// instead of the reading flow's top-leading corner, then crossfades into the text on the first chunk.
+    /// instead of the reading flow's top-leading corner, then hands off to the text on the first chunk.
     @ViewBuilder
     private func notchTeleprompterBody(text: String) -> some View {
         ZStack {
@@ -791,7 +792,7 @@ public struct BarView: View {
                     .foregroundStyle(notchPalette.secondary.color)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .transition(.opacity)
+                    .transition(TeleprompterPreparingHandoff.transition)
             } else {
                 TeleprompterView(
                     text: text,
@@ -809,10 +810,11 @@ public struct BarView: View {
                     ),
                     contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
-                .transition(.opacity)
+                .transition(TeleprompterPreparingHandoff.transition)
             }
         }
-        .animation(.easeOut(duration: 0.2), value: state.isPreparingSpeech)
+        // R2-04: the status and the text hand off in sequence (see `TeleprompterPreparingHandoff`), never crossfade.
+        .animation(.easeOut(duration: TeleprompterPreparingHandoff.exitDuration), value: state.isPreparingSpeech)
     }
 
     private var notchTeleprompterControls: some View {
@@ -970,7 +972,7 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        compactStatusLabel(notchPresentation.feedback?.wingText ?? statusText,
+        compactStatusLabel(notchPresentation.wingLabel(for: statusText),
                            confirmationText: state.confirmationText)
     }
 

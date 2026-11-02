@@ -202,9 +202,22 @@ public enum VoiceBarPresentation {
         }
     }
 
+    /// N5: the notes `selectionBusyNote` produces, which carry Open History inline.
+    public static func isSelectionBusyNote(_ text: String) -> Bool {
+        let notes: [String?] = [
+            selectionBusyNote(isRequested: true, mode: .recording, hotkeyPhase: .idle),
+            selectionBusyNote(isRequested: true, mode: .transcribing, hotkeyPhase: .idle),
+            selectionBusyNote(isRequested: true, mode: .idle, hotkeyPhase: .pressing),
+        ]
+        return notes.contains(text)
+    }
+
     public static func notchPresentation(
         from input: VoiceBarNotchOperationalInput
     ) -> VoiceBarNotchPresentation {
+        var input = input
+        // N2: nothing is shown under the notch while transcribing, a note included.
+        if input.mode == .transcribing { input.transientNote = nil }
         let isRecording = input.mode == .recording
         let hasWaitingReadQueue = input.mode == .idle && input.readQueueLeadingSlotCount > 1
         let isCollapsedIdle = input.mode == .idle && input.isCollapsed &&
@@ -216,7 +229,10 @@ public enum VoiceBarPresentation {
         case .idle:
             let confirmation = input.confirmationText?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            hasCompactStatus = !isCollapsedIdle && (!confirmation.isEmpty || hasWaitingReadQueue ||
+            // N1: a confirmation is a notice, so it shows (as the tab) even from a collapsed notch; with a note
+            // as well, the note's launcher shell already surfaces both.
+            let collapsedNotice = isCollapsedIdle && !confirmation.isEmpty && (input.transientNote ?? "").isEmpty
+            hasCompactStatus = collapsedNotice || !isCollapsedIdle && (!confirmation.isEmpty || hasWaitingReadQueue ||
                 input.commandModeState != nil ||
                 input.activeClipMarker != nil ||
                 input.queueDepth > 0 ||
@@ -583,7 +599,8 @@ public enum VoiceBarPresentation {
 
     public static func errorStatusText(_ errorMessage: String?) -> String {
         let trimmed = errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !trimmed.isEmpty else { return "Error" }
+        // N4: an empty diagnostic is hidden; the notch never invents "Error" copy for it.
+        guard !trimmed.isEmpty else { return "" }
         if trimmed.lowercased() == "busy" {
             return "Busy"
         }

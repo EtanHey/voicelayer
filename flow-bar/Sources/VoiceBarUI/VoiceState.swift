@@ -446,12 +446,30 @@ public final class VoiceState {
     public private(set) var quitRefusalMessage: String? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalMessage) }
     }
-    public func reportQuitRefusal() {
+    public static let quitRefusalDisplayLimit: Duration = .seconds(6)
+    public static let quitRefusalRecheckInterval: Duration = .milliseconds(250)
+    @ObservationIgnored var quitRefusalSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    @ObservationIgnored private var quitRefusalTask: Task<Void, Never>?
+
+    /// The refusal stays only while its cause does (formal/notch-presentation `NoteHasCause`): it clears as soon
+    /// as `isStillBlocked` reports the voice/update work that refused the quit has stopped, and after
+    /// `quitRefusalDisplayLimit` at the latest. Presentation only; it never retries or forces the quit.
+    public func reportQuitRefusal(isStillBlocked: @escaping @MainActor () -> Bool = { true }) {
         let message = "Finish voice work or cancel the update, then quit again."
         quitRefusalMessage = message
         expandFromCollapse()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
-            if self?.quitRefusalMessage == message { self?.quitRefusalMessage = nil }
+        quitRefusalTask?.cancel()
+        let sleep = quitRefusalSleep
+        quitRefusalTask = Task { @MainActor [weak self] in
+            var waited: Duration = .zero
+            while waited < Self.quitRefusalDisplayLimit {
+                try? await sleep(Self.quitRefusalRecheckInterval)
+                guard !Task.isCancelled else { return }
+                waited += Self.quitRefusalRecheckInterval
+                if !isStillBlocked() { break }
+            }
+            guard let self, !Task.isCancelled, self.quitRefusalMessage == message else { return }
+            self.quitRefusalMessage = nil
         }
     }
     public var errorMessage: String? {

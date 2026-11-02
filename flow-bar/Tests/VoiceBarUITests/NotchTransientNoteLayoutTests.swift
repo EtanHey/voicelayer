@@ -33,7 +33,7 @@ final class NotchTransientNoteLayoutTests: XCTestCase {
         return [
             ("recording", .init(mode: .recording)),
             ("recording + hold", .init(mode: .recording, showsRecordingHold: true)),
-            ("transcribing", .init(mode: .transcribing, statusText: "Transcribing…")),
+            // N2: transcribing shows no note at all (NotchStatusFeedbackTests).
             ("F5 preview", .init(mode: .idle, hotkeyPhase: .pressing, statusText: "Hold to talk")),
             ("speaking, teleprompter hidden",
              .init(mode: .speaking, hasTeleprompterText: true, isTeleprompterDismissed: true, statusText: "Speaking…")),
@@ -78,16 +78,20 @@ final class NotchTransientNoteLayoutTests: XCTestCase {
                     CGRect(origin: .zero, size: surface.totalSize).contains(noteRect),
                     "\(label): note outside the notch surface"
                 )
-                // Notes inherit the existing shell width; long text grows down instead of making wings.
+                // N1: a note is a tab under the notch (or sits in an existing teleprompter/History body);
+                // long text grows down instead of making wings.
                 let shell = plain.visualState == .idle
                     ? VoiceBarNotchContract.geometry(for: .hoverLauncher, coreWidth: input.coreWidth)
                     : plain.geometry
-                XCTAssertEqual(geometry.bodyLeadingExtent, shell.bodyFlushWithWings.bodyLeadingExtent, label)
-                XCTAssertEqual(geometry.bodyTrailingExtent, shell.bodyFlushWithWings.bodyTrailingExtent, label)
+                let tab = VoiceBarNotchContract.noteBodyExtents(for: shell, ownBodyHeight: shell.lowerSurfaceHeight)
+                XCTAssertEqual(geometry.bodyLeadingExtent, tab.leading, label)
+                XCTAssertEqual(geometry.bodyTrailingExtent, tab.trailing, label)
+                XCTAssertLessThanOrEqual(geometry.bodyLeadingExtent, max(geometry.leadingWingWidth, shell.bodyLeadingExtent), label)
                 XCTAssertLessThanOrEqual(noteRect.width, shell.totalWidth, label)
                 if let feedback = presentation.feedback {
                     XCTAssertEqual(feedback.noteText, note)
-                    XCTAssertEqual(feedback.width, shell.bodyFlushWithWings.bodyWidth)
+                    XCTAssertEqual(feedback.width, VoiceBarNotchContract.noteColumnWidth(
+                        for: shell, ownBodyHeight: shell.lowerSurfaceHeight))
                 }
                 // The fixed morph canvas (and so the panel) holds the grown notch.
                 let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
@@ -109,7 +113,8 @@ final class NotchTransientNoteLayoutTests: XCTestCase {
             hasCompactStatus: false,
             recordingLeadingWingWidth: resolved.geometry.leadingWingWidth,
             recordingTrailingWingWidth: resolved.geometry.trailingWingWidth,
-            transientNoteWidth: resolved.transientNoteWidth
+            transientNoteWidth: resolved.transientNoteWidth,
+            feedback: resolved.feedback
         )
         XCTAssertEqual(model.presentation, resolved)
         model.updateOperationalEnvelope(

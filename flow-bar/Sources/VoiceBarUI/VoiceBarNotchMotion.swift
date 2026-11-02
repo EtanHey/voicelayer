@@ -51,6 +51,52 @@ public struct VoiceBarNotchShellTransition: Equatable, Sendable {
             revealProgress: visualState == .idle ? 0 : 1
         )
     }
+
+    /// N1: where the shell's spring actually starts and ends. A bodiless shell's body extents are invisible, so
+    /// they are rewritten to the note tab's before a tab opens and kept at the tab's while it closes. The tab then
+    /// drops straight down from under the notch and rises back into it; interpolating the extents instead swept a
+    /// wing-wide slab inward across the first and last frames. Any other morph (History, the teleprompter) starts
+    /// from the extents flush with the wings, as before.
+    public static func morphEndpoints(
+        from current: VoiceBarNotchGeometry,
+        to next: VoiceBarNotchGeometry
+    ) -> (start: VoiceBarNotchGeometry, end: VoiceBarNotchGeometry) {
+        var start = current
+        // Only a visible bodiless shell (one with wings) is rewritten. From idle the wings grow with the tab, and
+        // that morph keeps the reveal mask on its single synchronous spring.
+        if current.lowerSurfaceHeight == 0, next.lowerSurfaceHeight > 0,
+           current.leadingWingWidth + current.trailingWingWidth > 0 {
+            let flush = current.bodyFlushWithWings
+            start = current.withBodyExtents(
+                leading: next.bodyLeadingExtent < next.leadingWingWidth
+                    ? next.bodyLeadingExtent : flush.bodyLeadingExtent,
+                trailing: next.bodyTrailingExtent < next.trailingWingWidth
+                    ? next.bodyTrailingExtent : flush.bodyTrailingExtent
+            )
+        }
+        var end = next
+        if next.lowerSurfaceHeight == 0, current.lowerSurfaceHeight > 0 {
+            let flush = next.bodyFlushWithWings
+            end = next.withBodyExtents(
+                leading: current.bodyLeadingExtent < current.leadingWingWidth
+                    ? min(current.bodyLeadingExtent, next.leadingWingWidth) : flush.bodyLeadingExtent,
+                trailing: current.bodyTrailingExtent < current.trailingWingWidth
+                    ? min(current.bodyTrailingExtent, next.trailingWingWidth) : flush.bodyTrailingExtent
+            )
+        }
+        return (start, end)
+    }
+}
+
+extension VoiceBarNotchGeometry {
+    func withBodyExtents(leading: CGFloat, trailing: CGFloat) -> VoiceBarNotchGeometry {
+        VoiceBarNotchGeometry(
+            coreWidth: coreWidth, topHeight: topHeight,
+            leadingWingWidth: leadingWingWidth, trailingWingWidth: trailingWingWidth,
+            bodyLeadingExtent: leading, bodyTrailingExtent: trailing,
+            lowerSurfaceHeight: lowerSurfaceHeight
+        )
+    }
 }
 
 public struct VoiceBarNotchMotionStep: Equatable, Sendable {
