@@ -14,7 +14,7 @@ import { handleSocketCommand } from "../socket-handlers";
 import { parseCommand } from "../socket-protocol";
 import { TEST_TMP } from "./setup/test-tmp";
 import { beginSpeechArchive } from "../speech-archive-live";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
@@ -623,6 +623,36 @@ for (const phase of ["opening", "capturing"] as const) {
     } finally { result.resolve(null); await settleRecordingJobs(); wait.mockRestore(); clearStopSignal(); }
   });
 }
+
+it("R2-01 unscoped Stop picks the first opening capture, never a later rejected take", async () => {
+  clearStopSignal();
+  const { player } = await startTenSecondRead();
+  holdPlayerExit = true;
+  const opened = deferred<void>(), result = deferred<string | null>();
+  const wait = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+    options?.onCaptureStart?.(); opened.resolve();
+    return finishSyntheticCapture(() => result.promise);
+  });
+  try {
+    expect(handleSocketCommand({ cmd: "record", take_id: "first-opening", playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept" });
+    expect(handleSocketCommand({ cmd: "record", take_id: "later-opening" })).toMatchObject({ outcome: "accept" });
+    expect(handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+    player.exit.resolve(143); holdPlayerExit = false;
+    await opened.promise;
+    expect(existsSync(STOP_FILE)).toBe(true);
+    expect(JSON.parse(readFileSync(STOP_FILE, "utf8"))).toMatchObject({ take_id: "first-opening", physical_press: false });
+    expect(tts.isPlaybackPaused()).toBe(true);
+    (await trims.at(0)).exit.resolve(0);
+    result.resolve(null);
+    await settleRecordingJobs(tts.hasF5Capture);
+    await players.at(1);
+    expect(wait).toHaveBeenCalledTimes(1);
+    expect(players.values).toHaveLength(2);
+  } finally {
+    player.exit.resolve(143); holdPlayerExit = false; result.resolve(null);
+    await settleRecordingJobs(tts.hasF5Capture); wait.mockRestore(); clearStopSignal();
+  }
+});
 
 it("R2-01 a fresh daemon has no loan or parked read after restart", async () => {
   await startTenSecondRead();

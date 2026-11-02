@@ -7,7 +7,7 @@ import { pauseForF5Capture } from "./tts";
 const opening = new Map<string, { control?: "stop" | "cancel"; physicalPress?: boolean }>();
 /** Preserve a physical up-edge that arrives while the old speech player is still exiting. */
 export function bufferOpeningCaptureControl(id: string | undefined, control: "stop" | "cancel", physicalPress = false): boolean {
-  id ??= [...opening.keys()].at(-1);
+  id ??= opening.keys().next().value;
   if (!id) return false;
   const pending = opening.get(id);
   if (!pending) return false;
