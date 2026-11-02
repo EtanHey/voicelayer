@@ -6,7 +6,7 @@ final class PasteboardIsolationTests: XCTestCase {
     // including reads: saving/restoring it still races the user's clipboard owner.
     private static func generalPasteboardReferences(in source: String) -> [Int] {
         let patterns = [
-            #"NSPasteboard\s*\.\s*general\b"#,
+            #"NSPasteboard(?:\s*\.\s*Name)?\s*\.\s*general\b"#,
             #"NSPasteboard\s*\(\s*name\s*:\s*\.general\b"#,
             #"NSPasteboard(?:\.Name)?\s*=\s*\.general\b"#,
             #"pasteboard\s*:\s*\.general\b"#,
@@ -29,6 +29,7 @@ final class PasteboardIsolationTests: XCTestCase {
             "let board = \(type) . general",
             "let board = \(type)\n .general",
             "let board = \(type)(name: .general)",
+            "let board = \(type)(name: \(type).Name.general)",
             "let board: \(type) = .general",
             "let name: \(type).Name = .general",
             "let state = VoiceState(pasteboard: " + ".general)",
