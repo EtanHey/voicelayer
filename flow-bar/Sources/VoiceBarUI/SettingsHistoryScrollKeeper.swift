@@ -47,6 +47,9 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
         private var isApplying = false
         /// Bumped on cancel or detach; a queued retry from an older generation does nothing.
         private var restoreGeneration = 0
+        /// The last clip origin seen. A bounds notification with the same origin is a size-only layout
+        /// change (window or split pane resizing), never the user scrolling.
+        private var lastOriginY: CGFloat?
 
         init(memory: SettingsHistoryScrollMemory, key: SettingsHistoryScrollMemory.Key) {
             self.memory = memory; self.key = key
@@ -67,6 +70,7 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
             guard window != nil, let scroll = enclosingScrollView, clip !== scroll.contentView else { return }
             detach()
             clip = scroll.contentView
+            lastOriginY = scroll.contentView.bounds.origin.y
             scroll.contentView.postsBoundsChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(boundsChanged),
                                                    name: NSView.boundsDidChangeNotification, object: scroll.contentView)
@@ -104,6 +108,7 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
                 center.post(name: NSScrollView.didLiveScrollNotification, object: scroll)
                 center.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
                 isApplying = false
+                lastOriginY = clip.bounds.origin.y
                 hasRestored = true
             } else {
                 let generation = restoreGeneration
@@ -129,6 +134,9 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
 
         @objc private func boundsChanged() {
             guard !isApplying, let clip else { return }
+            let originY = clip.bounds.origin.y
+            guard originY != lastOriginY else { return } // size-only: not the user
+            lastOriginY = originY
             userTookOver()
             memory.record(clip.bounds.origin.y, for: key)
         }

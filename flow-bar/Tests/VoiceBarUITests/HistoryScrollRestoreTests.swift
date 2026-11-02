@@ -202,6 +202,34 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         _ = view.window
     }
 
+    /// FIXED-3: the window or split pane laying out during the wait changes only the clip view's size.
+    /// That is not the user; the restore still lands and the remembered offset survives.
+    func testASizeOnlyLayoutDuringTheWaitDoesNotCancelTheRestore() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(650, for: .list)
+        let view = scrollView(height: 900) // 500 reachable: too short for 650
+        let keeper = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
+        view.scroll.documentView?.addSubview(keeper)
+        XCTAssertFalse(keeper.hasRestored, "waiting for content")
+        // A layout pass resizes the visible area. AppKit posts no bounds notification for a frame-driven
+        // resize, so the clip's bounds size is changed directly: that posts boundsDidChange with the origin
+        // unchanged, which is the size-only notification at issue.
+        var posted = 0
+        let token = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification,
+                                                           object: view.scroll.contentView, queue: nil) { _ in posted += 1 }
+        view.scroll.contentView.setBoundsSize(NSSize(width: 300, height: 360))
+        NotificationCenter.default.removeObserver(token)
+        XCTAssertGreaterThan(posted, 0, "a size-only bounds change really reached the keeper")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 0, accuracy: 0.5)
+        XCTAssertEqual(memory.offset(for: .list), 650, "a size-only change never overwrites the remembered offset")
+        view.scroll.documentView?.setFrameSize(NSSize(width: 300, height: 2000))
+        let deadline = Date().addingTimeInterval(1.2)
+        while !keeper.hasRestored, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 650, accuracy: 0.5, "the restore still lands")
+        _ = view.window
+    }
+
     /// Content never grows tall enough within the wait: the keeper gives up without a late jump.
     func testTimingOutLeavesThePositionWhereItWas() {
         let memory = SettingsHistoryScrollMemory()
