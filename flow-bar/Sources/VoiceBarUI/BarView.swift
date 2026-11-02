@@ -152,6 +152,16 @@ public struct VoiceBarNotchControlOptics: Equatable {
     }
 }
 
+extension VoiceBarNotchWingContentEntry {
+    static func transition(growth: CGFloat) -> AnyTransition {
+        let wait = delay(forGrowth: growth)
+        return .asymmetric(
+            insertion: wait > 0 ? .opacity.animation(.easeOut(duration: duration).delay(wait)) : .identity,
+            removal: .identity
+        )
+    }
+}
+
 private extension View {
     func notchAdaptiveGlyphEdge(_ color: Color) -> some View {
         shadow(color: color, radius: 0, x: -0.75, y: 0)
@@ -332,6 +342,7 @@ public struct BarView: View {
     @State private var isMorphTeleprompterContentPresented = false
     @State private var isMorphHistoryContentPresented = false
     @State private var isHistoryPresented = false
+    @State private var settledLeadingWingWidth: CGFloat = 0
     @State private var historyDismissal: NotchHistoryDismissal?
     @State private var hostWindow = HostWindowBox()
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
@@ -413,6 +424,9 @@ public struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
+        .onChange(of: notchPresentation.geometry.leadingWingWidth, initial: true) { _, width in
+            settledLeadingWingWidth = notchPresentation.visualState == .idle ? 0 : width
+        }
         .onChange(of: notchPresentation.visualState) { _, visualState in
             scheduleMorphTeleprompterContent(for: visualState)
         }
@@ -493,6 +507,13 @@ public struct BarView: View {
         presentationModel?.setKeyboardFocused(keepsLauncherMounted)
     }
 
+    /// R0856-05: how far the leading wing grows in this change. `settledLeadingWingWidth` still holds the previous
+    /// width while the body that inserts the new controls is evaluated; a collapsed notch counts as no growth.
+    private var leadingWingGrowth: CGFloat {
+        guard settledLeadingWingWidth > 0 else { return 0 }
+        return notchPresentation.geometry.leadingWingWidth - settledLeadingWingWidth
+    }
+
     @ViewBuilder
     private var notchLeadingContent: some View {
         switch notchPresentation.visualState {
@@ -528,8 +549,12 @@ public struct BarView: View {
                     ) {
                         state.setRecordingHold(!state.isRecordingHoldEngaged)
                     }
+                    // It arrives with the wing growing by one slot.
+                    .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
                 }
             }
+            // R0856-05: the recording controls arrive with a wider wing; they show once its glass covers them.
+            .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
         case .compactStatus, .teleprompter:
             if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {
                 ProcessingSpinner()
@@ -673,7 +698,8 @@ public struct BarView: View {
             .frame(width: isCompact ? nil : 0)
             .allowsHitTesting(isCompact)
             // R0856-10: hidden, it must not stay in the keyboard loop either (NotchIconButtonTooltipTests).
-            .focusable(isCompact)
+            // `.focusable(true)` on the visible Stop made a click take key focus; disabling keeps its identity.
+            .disabled(!isCompact)
             .accessibilityHidden(!isCompact)
         }
     }

@@ -3,7 +3,7 @@
   "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
   "sourceHashes": {
     "flow-bar/Sources/VoiceBarUI/TeleprompterPreparingHandoff.swift": "1a84edae12a4e7f4d7e8ff4c67bada89c1740ed3a20442e74c45f919e3076d3e",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "1ea6c9ea1289509c01ff137ae6f43108e2e9b429b6587c411b66e56ce4a53d67"
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "fbfce7f8586e794e88c850060ff491a1358094d2574762551a2b87f232356ec0"
   },
   "specSHA256": "c65f2ebb8d8a0c357fb905e67e6d7310e94005c152262edbcda2c0af8d96778a",
   "cfgSHA256": {

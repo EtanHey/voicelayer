@@ -44,8 +44,12 @@ public struct VoiceBarNotchShellTransition: Equatable, Sendable {
         to next: VoiceBarNotchGeometry,
         visualState: VoiceBarNotchVisualState
     ) -> VoiceBarNotchShellTransition {
-        VoiceBarNotchShellTransition(
-            delay: next.lowerSurfaceHeight < current.lowerSurfaceHeight
+        // R0856-05: a top-row wing that must grow never waits. Waiting held the old, narrower wing in place
+        // while its new controls (Stop and Cancel after History) were already drawn, clipped by its edge.
+        let wingGrows = next.leadingWingWidth > current.leadingWingWidth + 0.5
+            || next.trailingWingWidth > current.trailingWingWidth + 0.5
+        return VoiceBarNotchShellTransition(
+            delay: next.lowerSurfaceHeight < current.lowerSurfaceHeight && !wingGrows
                 ? VoiceBarNotchContract.motion.contentExitDuration
                 : 0,
             revealProgress: visualState == .idle ? 0 : 1
@@ -96,6 +100,40 @@ extension VoiceBarNotchGeometry {
             bodyLeadingExtent: leading, bodyTrailingExtent: trailing,
             lowerSurfaceHeight: lowerSurfaceHeight
         )
+    }
+}
+
+/// R0856-05: controls that arrive with a growing wing appear once the wing's glass covers them, instead of being
+/// drawn clipped against the edge it is still growing past. Controls already in the wing are untouched.
+public enum VoiceBarNotchWingContentEntry {
+    public static let duration: TimeInterval = 0.12
+    /// How far inside the growing glass edge a control's outer edge must be before it shows: clear of the
+    /// wing's 15 pt rounded outer corner at the control's lower edge (NotchRecordingFromHistoryTests).
+    static let coverMargin: CGFloat = 6
+
+    /// The wait before controls arriving with a wing that grows by `growth` points show: the time the shell's
+    /// spring takes to bring the glass past their outer edge. Zero when the wing does not grow, or grows out of
+    /// a collapsed notch, whose core-anchored reveal is the opening itself.
+    public static func delay(forGrowth growth: CGFloat) -> TimeInterval {
+        guard growth > 0.5 else { return 0 }
+        let needed = Double(max(0, min(1,
+            1 - (VoiceBarNotchContract.material.compactContentInset - coverMargin) / growth)))
+        let motion = VoiceBarNotchContract.motion
+        var x = 0.0, v = 0.0, t = 0.0
+        let dt = 0.0005
+        while x < needed, t < 0.5 {
+            let a = (-motion.stiffness * (x - 1) - motion.damping * v) / motion.mass
+            v += a * dt
+            x += v * dt
+            t += dt
+        }
+        // Round up to whole 120 Hz frames.
+        return (t * 120).rounded(.up) / 120
+    }
+
+    /// Whether an entering control is drawn at all `elapsed` seconds after the change.
+    public static func isVisible(elapsed: TimeInterval, growth: CGFloat) -> Bool {
+        elapsed > delay(forGrowth: growth)
     }
 }
 

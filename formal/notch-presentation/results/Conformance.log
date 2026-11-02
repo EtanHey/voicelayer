@@ -1,35 +1,27 @@
-Notch: 22016 TLC states -> 1376 distinct real-resolver cases; /Users/etanheyman/.t3/worktrees/voicelayer/t3-3dfef06b/.build.noindex/notch-presentation/conformance.json
-[heavy.sh] G start 2026-11-02T07:09:19Z load { 14.31 16.66 18.79 }
+Notch (Fixed): 20864 TLC states -> 1376 distinct real-resolver cases; /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/.build.noindex/notch-presentation/conformance.json
+[heavy.sh] laneA start 2026-11-02T08:20:26Z load { 9.96 10.65 12.03 }
 Building for debugging...
-[Using on-disk description]
+[Pre-planning 1 / 301]
+[Planning deferred tasks]
 [1 / 5]
-[2 / 7] VoiceBarTests-product
-[4 / 9] VoiceBarTests-product
-[10 / 12] VoiceBarTests-product
-[12 / 15] VoiceBarUITests-product
-Build complete! (2.34 sec)
-Test Suite 'Selected tests' started at 2026-11-02 09:09:24.118.
-Test Suite 'VoiceBarUITests.xctest' started at 2026-11-02 09:09:24.119.
-Test Suite 'VoiceBarUITests.xctest' passed at 2026-11-02 09:09:24.119.
+[5 / 9] VoiceBarUITests-product
+Build complete! (0.85 sec)
+Test Suite 'Selected tests' started at 2026-11-02 10:20:28.868.
+Test Suite 'VoiceBarUITests.xctest' started at 2026-11-02 10:20:28.869.
+Test Suite 'NotchPresentationConformanceTests' started at 2026-11-02 10:20:28.869.
+Test Case '-[VoiceBarUITests.NotchPresentationConformanceTests testTLCFixedNotchProjection]' started.
+Test Case '-[VoiceBarUITests.NotchPresentationConformanceTests testTLCFixedNotchProjection]' passed (0.173 seconds).
+Test Suite 'NotchPresentationConformanceTests' passed at 2026-11-02 10:20:29.043.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.173 (0.174) seconds
+Test Suite 'VoiceBarUITests.xctest' passed at 2026-11-02 10:20:29.043.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.173 (0.174) seconds
+Test Suite 'Selected tests' passed at 2026-11-02 10:20:29.043.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.173 (0.174) seconds
+Replayed 1376 Fixed TLC notch projection cases (672 notices) through the real VoiceBarPresentation
+Test Suite 'Selected tests' started at 2026-11-02 10:20:29.116.
+Test Suite 'VoiceBarTests.xctest' started at 2026-11-02 10:20:29.117.
+Test Suite 'VoiceBarTests.xctest' passed at 2026-11-02 10:20:29.117.
 	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
-Test Suite 'Selected tests' passed at 2026-11-02 09:09:24.119.
+Test Suite 'Selected tests' passed at 2026-11-02 10:20:29.117.
 	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
-Test Suite 'Selected tests' started at 2026-11-02 09:09:24.177.
-Test Suite 'VoiceBarTests.xctest' started at 2026-11-02 09:09:24.177.
-Test Suite 'LaneGFormalConformanceTests' started at 2026-11-02 09:09:24.177.
-Test Case '-[VoiceBarTests.LaneGFormalConformanceTests testTLCDeferredFinalSupersededByNewRecording]' started.
-Test Case '-[VoiceBarTests.LaneGFormalConformanceTests testTLCDeferredFinalSupersededByNewRecording]' passed (0.216 seconds).
-Test Case '-[VoiceBarTests.LaneGFormalConformanceTests testTLCNativeAdmissionCounterexample]' started.
-Test Case '-[VoiceBarTests.LaneGFormalConformanceTests testTLCNativeAdmissionCounterexample]' passed (0.001 seconds).
-Test Case '-[VoiceBarTests.LaneGFormalConformanceTests testTLCNotchProjection]' started.
-Test Case '-[VoiceBarTests.LaneGFormalConformanceTests testTLCNotchProjection]' passed (0.153 seconds).
-Test Suite 'LaneGFormalConformanceTests' passed at 2026-11-02 09:09:24.548.
-	 Executed 3 tests, with 0 failures (0 unexpected) in 0.370 (0.371) seconds
-Test Suite 'VoiceBarTests.xctest' passed at 2026-11-02 09:09:24.548.
-	 Executed 3 tests, with 0 failures (0 unexpected) in 0.370 (0.371) seconds
-Test Suite 'Selected tests' passed at 2026-11-02 09:09:24.548.
-	 Executed 3 tests, with 0 failures (0 unexpected) in 0.370 (0.372) seconds
-Confirmed TLC deferred-final loss on a new recording event; control retains A
-Confirmed TLC native F5 cancellation, direct-record gate, click and Escape counterexamples
-Replayed 1376 TLC notch projection cases through real VoiceBarPresentation
-[heavy.sh] G end rc=0 2026-11-02T07:09:24Z
+[heavy.sh] laneA end rc=0 2026-11-02T08:20:29Z

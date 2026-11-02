@@ -1,0 +1,13 @@
+{
+  "module": "WingEntry",
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "sources": [
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift"
+  ],
+  "checks": {
+    "Old": "NoClippedControl",
+    "Fixed": null,
+    "MutantNeverShown": "Temporal:ControlsAppear"
+  }
+}

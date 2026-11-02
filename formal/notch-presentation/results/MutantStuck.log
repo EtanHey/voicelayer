@@ -1,5 +1,5 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 26368] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 11509] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/formal/notch-presentation/NotchPresentation.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
@@ -8,7 +8,7 @@ Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
 Semantic processing of module NotchPresentation
-Starting... (2026-11-02 09:33:34)
+Starting... (2026-11-02 10:19:15)
 Implied-temporal checking--satisfiability problem has 1 branches.
 Computing initial states...
 Computed 2 initial states...
@@ -16,9 +16,9 @@ Computed 4 initial states...
 Computed 8 initial states...
 Computed 16 initial states...
 Computed 32 initial states...
-Finished computing initial states: 64 distinct states generated at 2026-11-02 09:33:34.
-Progress(7) at 2026-11-02 09:33:34: 91,104 states generated, 10,048 distinct states found, 0 states left on queue.
-Checking temporal properties for the complete state space with 10048 total distinct states at (2026-11-02 09:33:34)
+Finished computing initial states: 64 distinct states generated at 2026-11-02 10:19:15.
+Progress(7) at 2026-11-02 10:19:16: 91,104 states generated, 10,048 distinct states found, 0 states left on queue.
+Checking temporal properties for the complete state space with 10048 total distinct states at (2026-11-02 10:19:16)
 Error: Temporal properties were violated.
 
 Error: The following behavior constitutes a counter-example:
@@ -157,6 +157,6 @@ State 6: <SetMode line 55, col 15 to line 56, col 66 of module NotchPresentation
 
 Back to state 5: <SetMode line 55, col 15 to line 56, col 66 of module NotchPresentation>
 
-Finished checking temporal properties in 00s at 2026-11-02 09:33:35
+Finished checking temporal properties in 00s at 2026-11-02 10:19:16
 91104 states generated, 10048 distinct states found, 0 states left on queue.
-Finished in 00s at (2026-11-02 09:33:35)
+Finished in 00s at (2026-11-02 10:19:16)

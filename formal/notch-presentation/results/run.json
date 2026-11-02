@@ -2,13 +2,13 @@
   "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
   "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
   "sourceHashes": {
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "947e5c4fc4897ad1448acbdf7acf84372b86af78a6dca0809fe467e060241db6",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "1ea6c9ea1289509c01ff137ae6f43108e2e9b429b6587c411b66e56ce4a53d67",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "d851c55bab2776b3d190e1c068c2896a3730e0a0b1bacf18d9bad2728f3d1737",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "fbfce7f8586e794e88c850060ff491a1358094d2574762551a2b87f232356ec0",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "12bd11aec9193828417541124436cda99a597fb5c8fdfff83aa2742a77cb2c69",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "97b00b08dad1b2480c1ccd42f4daaa43fce1ae20e8e167ef520d24c4a27894d7",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "4d05c69a95897dde7fe81f9e30fc5fce5472206a62287d4e2402d3e0a96708e7",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "d65bce6118fa798402a33fc12827c92f78d3ecdac383da3a1ec8875acc625c02",
     "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "4f56c63c22047c36215dced81eeb7c00a0e3614ef7dea5ce08665ed8d21963ed",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "3012d93f48abbccc1651d89f1035e43a16f4b3d0c5c77c35d02410b853226a2b",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "39d4489796796e8f80deeaddeaed57300390433372d528c58160ccb91b6ab99a",
     "flow-bar/Tests/VoiceBarUITests/NotchPresentationConformanceTests.swift": "e9ce1261fbf018a3d61ff92e0a7562d64317198496fc8a66f84c39d691a4e356"
   },
   "specSHA256": "5660ebf32721f8ec855ff2478df87f5c621fff1744a44cf283bcfc8f8d68bd3b",

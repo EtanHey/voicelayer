@@ -1,12 +1,12 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 32679] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 13560] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/formal/notch-tab-morph/TabMorph.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Semantic processing of module Naturals
 Semantic processing of module TabMorph
-Starting... (2026-11-02 09:34:23)
+Starting... (2026-11-02 10:19:18)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 09:34:23.
+Finished computing initial states: 1 distinct state generated at 2026-11-02 10:19:18.
 Error: Invariant SettlesOnPresented is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -56,4 +56,4 @@ State 4: <OnGeometry line 66, col 3 to line 83, col 74 of module TabMorph>
 15 states generated, 13 distinct states found, 6 states left on queue.
 The depth of the complete state graph search is 4.
 The average outdegree of the complete state graph is 2 (minimum is 2, the maximum 3 and the 95th percentile is 3).
-Finished in 00s at (2026-11-02 09:34:23)
+Finished in 00s at (2026-11-02 10:19:18)

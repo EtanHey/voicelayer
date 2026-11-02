@@ -1,5 +1,5 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 23747] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 4621] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/formal/notch-presentation/NotchPresentation.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
@@ -8,7 +8,7 @@ Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
 Semantic processing of module NotchPresentation
-Starting... (2026-11-02 09:33:16)
+Starting... (2026-11-02 10:18:57)
 Implied-temporal checking--satisfiability problem has 1 branches.
 Computing initial states...
 Computed 2 initial states...
@@ -16,7 +16,7 @@ Computed 4 initial states...
 Computed 8 initial states...
 Computed 16 initial states...
 Computed 32 initial states...
-Finished computing initial states: 64 distinct states generated at 2026-11-02 09:33:17.
+Finished computing initial states: 64 distinct states generated at 2026-11-02 10:18:57.
 Error: Invariant N2NoProcessingBand is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -88,4 +88,4 @@ State 3: <ShowNote line 59, col 16 to line 63, col 59 of module NotchPresentatio
 814 states generated, 724 distinct states found, 657 states left on queue.
 The depth of the complete state graph search is 3.
 The average outdegree of the complete state graph is 10 (minimum is 3, the maximum 11 and the 95th percentile is 11).
-Finished in 00s at (2026-11-02 09:33:17)
+Finished in 00s at (2026-11-02 10:18:57)
