@@ -97,6 +97,11 @@ describe("TEST3 review: setup and private specimen safety", () => {
 
   const suites = ["stt-outro-gate.test.ts", "stt-chunk-segments.test.ts",
     "rules-engine-number-audio.test.ts", "rules-engine-prose-guard.test.ts"];
+  // Registration strips imports; this VM reports native fixture tools missing.
+  const unavailableSpeechFixture = (_scope: string, failure: string | null): boolean => {
+    expect(failure).toContain("missing: say, ffmpeg");
+    return false;
+  };
   for (const file of suites) {
     for (const override of [false, true]) {
       test(`${file} never probes without opt-in (overrides=${override}, all files exist)`, () => {
@@ -116,6 +121,7 @@ describe("TEST3 review: setup and private specimen safety", () => {
             join, TEST_TMP: "/sandbox/test-tmp", process: { env },
             homedir: () => { throw new Error("home resolved before opt-in"); },
             privateCorpusPaths: () => privateCorpusPaths(file, env),
+            speechFixtureAvailable: unavailableSpeechFixture,
             existsSync: (path: string) => { probes.push(path); return true; },
             readFileSync: () => { throw new Error("unexpected specimen read"); },
             describe: describeSuite, test: noop, it: noop,
@@ -150,6 +156,7 @@ describe("TEST3 review: setup and private specimen safety", () => {
         register(file, {
           join, TEST_TMP: "/sandbox/test-tmp", process: { env },
           privateCorpusPaths: () => privateCorpusPaths(file, env),
+          speechFixtureAvailable: unavailableSpeechFixture,
           existsSync: (path: string) => { probes.push(path); return true; },
           readFileSync: () => { throw new Error("registration must never read private data"); },
           describe: describeSuite, test: runnable, it: runnable,
