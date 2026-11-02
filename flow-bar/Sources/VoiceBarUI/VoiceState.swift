@@ -202,24 +202,34 @@ public struct DictationFocusedTargetEligibility {
     public let role: String?
     public let isEditable: Bool
     public let isSecure: Bool
+    public let diagnosticDetails: [String: String]
     /// Revalidates the captured element's identity and eligibility before typing.
     public let matchesCurrentFocus: () -> Bool
 
     public init(
         processIdentifier: pid_t, role: String?, isEditable: Bool, isSecure: Bool,
-        matchesCurrentFocus: @escaping () -> Bool
+        matchesCurrentFocus: @escaping () -> Bool,
+        diagnosticDetails: [String: String] = [:]
     ) {
         self.processIdentifier = processIdentifier
         self.role = role
         self.isEditable = isEditable
         self.isSecure = isSecure
         self.matchesCurrentFocus = matchesCurrentFocus
+        self.diagnosticDetails = diagnosticDetails
     }
 
     public func permitsTyping(into processIdentifier: pid_t) -> Bool {
-        self.processIdentifier == processIdentifier
-            && ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "")
-            && isEditable && !isSecure && matchesCurrentFocus()
+        typingRejectionReason(into: processIdentifier) == nil
+    }
+
+    public func typingRejectionReason(into processIdentifier: pid_t) -> String? {
+        guard self.processIdentifier == processIdentifier else { return "focused_pid_mismatch" }
+        guard ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "") else { return "non_text_role" }
+        guard isEditable else { return "not_editable" }
+        guard !isSecure else { return "secure_target" }
+        guard matchesCurrentFocus() else { return "focus_revalidation_failed" }
+        return nil
     }
 }
 
@@ -4136,6 +4146,10 @@ public final class VoiceState {
                     "plan": String(describing: plan),
                     "targetApp": pasteTargetBundleID,
                     "hasCapturedInsertion": boolString(capturedInsertionHandler != nil),
+                    "recordStartPID": recordStartTargetApp.map { String($0.processIdentifier) } ?? "nil",
+                    "targetPID": String(pasteTarget.processIdentifier),
+                    "targetMatchesRecordStart": boolString(targetMatchesRecordStart),
+                    "freshFocusPreferred": boolString(plan == .autoPaste && currentPasteTarget != nil),
                 ])
                 targetAppActivator(pasteTarget)
                 lastPasteTargetApp = pasteTarget
@@ -4252,8 +4266,27 @@ public final class VoiceState {
                         }
                     }
                     if requiresFocusedTypingTarget {
-                        guard frontmostAppProvider()?.processIdentifier == pasteTarget.processIdentifier,
-                              typingEligibility?.permitsTyping(into: pasteTarget.processIdentifier) == true else {
+                        let frontPID = frontmostAppProvider()?.processIdentifier
+                        let rejectionReason: String?
+                        if frontPID != pasteTarget.processIdentifier {
+                            rejectionReason = "frontmost_pid_changed"
+                        } else if let typingEligibility {
+                            rejectionReason = typingEligibility.typingRejectionReason(into: pasteTarget.processIdentifier)
+                        } else {
+                            rejectionReason = "eligibility_unavailable"
+                        }
+                        var details = typingEligibility?.diagnosticDetails ?? [:]
+                        details["plan"] = String(describing: plan)
+                        details["targetApp"] = pasteTargetBundleID
+                        details["targetPID"] = String(pasteTarget.processIdentifier)
+                        details["frontmostPID"] = frontPID.map { String($0) } ?? "nil"
+                        details["focusedPID"] = typingEligibility.map { String($0.processIdentifier) } ?? "nil"
+                        details["role"] = typingEligibility?.role ?? "nil"
+                        details["editable"] = typingEligibility.map { String($0.isEditable) } ?? "nil"
+                        details["secure"] = typingEligibility.map { String($0.isSecure) } ?? "nil"
+                        details["reason"] = rejectionReason ?? "eligible"
+                        logDiagnostic("paste_typing_eligibility", details: details)
+                        guard rejectionReason == nil else {
                             finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
                             return
                         }
