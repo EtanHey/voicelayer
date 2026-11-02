@@ -35,4 +35,8 @@ check MutantWrongApp.cfg 12 NoWrongApp
 check MutantDouble.cfg 12 NoDoubleDelivery
 check MutantRetention.cfg 12 Retention
 check MutantEligible.cfg 12 EligibleDelivery
+check MutantAXElement.cfg 12 NoChangedElementDelivery
+check MutantFallbackElement.cfg 12 NoChangedElementDelivery
+check MutantAXWritable.cfg 12 NoUnwritableDelivery
+check MutantFallbackWritable.cfg 12 NoUnwritableDelivery
 printf 'logs: %s\n' "$run"

@@ -22,11 +22,21 @@ policy, including an explicit-false mutant knob. Separating those predicates
 prevents a refusal from making the delivery property vacuously pass.
 
 `NoWrongApp`, `NoDoubleDelivery`, `Retention`, and `NoDisabledDelivery` are safety
-invariants. `EligibleDelivery` additionally requires a dispatch after an editable,
+invariants. `NoChangedElementDelivery` and `NoUnwritableDelivery` additionally
+require dispatch-time evidence that the target is the captured element/window
+and a writable text target. The ghost values `dispatchedSameElement` and
+`dispatchedEditable` record the raw evidence when AX or typing dispatches, not
+whether an implementation policy knob approved it. `sameElement` abstracts both
+element and window identity; `editable` includes the existing text-role,
+secure-subrole and protected-content requirements. `EligibleDelivery` additionally
+requires a dispatch after an editable,
 unchanged-focus pre-write AX decline. Current.cfg models the pre-D1 policy:
 normal native fallback is enabled, but absent AXEnabled refuses both routes.
 Fixed.cfg changes only `AllowAbsentEnabled` to TRUE. The implementation actions
-use `editable /\ ImplEnabled` rather than the specification's `NativeEditable`.
+use independent implementation guards rather than the specification's
+`NativeEditable`. With mutation knobs off they require writable text, matching
+element/window identity and `ImplEnabled`. Four targeted configs remove the
+identity or writable-text guard independently from AX and fallback delivery.
 Consequently, flipping `AllowExplicitFalse` can actually dispatch into a disabled
 target, and `NoDisabledDelivery` must detect that defect.
 
@@ -58,7 +68,7 @@ Mutation results on TLC 2.19 (2026-11-02):
 
 | Config | Mutation | Required property | TLC exit |
 |---|---|---|---|
-| Fixed.cfg | Production policy | All six invariants | 0 |
+| Fixed.cfg | Production policy | All eight invariants | 0 |
 | Current.cfg | Reject absent enabled | EligibleDelivery | 12 |
 | Mutant.cfg | Accept explicit false | NoDisabledDelivery | 12 |
 | MutantType.cfg | Invalid completion phase | TypeOK | 12 |
@@ -66,10 +76,14 @@ Mutation results on TLC 2.19 (2026-11-02):
 | MutantDouble.cfg | Dispatch twice | NoDoubleDelivery | 12 |
 | MutantRetention.cfg | Drop retained transcript | Retention | 12 |
 | MutantEligible.cfg | Reject absent enabled | EligibleDelivery | 12 |
+| MutantAXElement.cfg | AX ignores element/window change | NoChangedElementDelivery | 12 |
+| MutantFallbackElement.cfg | Typing ignores element/window change | NoChangedElementDelivery | 12 |
+| MutantAXWritable.cfg | AX ignores writable-text evidence | NoUnwritableDelivery | 12 |
+| MutantFallbackWritable.cfg | Typing ignores writable-text evidence | NoUnwritableDelivery | 12 |
 
 Mutation knobs are test-only faults in the model. Every fixed/old/mutant config
 sets them explicitly. There are no temporal properties in this bounded model;
-all six declared invariants have a mutant that fails that exact invariant.
+all eight declared invariants have a mutant that fails that exact invariant.
 
 Run individual cases from this directory (TLC 2.19 accepts these options):
 
