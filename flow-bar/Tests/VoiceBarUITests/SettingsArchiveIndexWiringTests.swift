@@ -250,11 +250,12 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
 
         XCTAssertTrue(app
             .contains("historyPage: { limit in await SettingsArchiveIndex.shared.dictationPage(limit: limit) }"))
-        XCTAssertTrue(app.contains("await SettingsArchiveIndex.shared.invalidate(entryPath: path)"))
-        let invalidate = try XCTUnwrap(app.range(of: "await SettingsArchiveIndex.shared.invalidate(entryPath: path)"))
+        XCTAssertTrue(app.contains("await SettingsArchiveIndex.shared.change(entryPath: path)"))
+        let invalidate = try XCTUnwrap(app.range(of: "await SettingsArchiveIndex.shared.change(entryPath: path)"))
         let post = try XCTUnwrap(app
             .range(of: "NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange"))
-        XCTAssertLessThan(invalidate.lowerBound, post.lowerBound, "the reload must not read the stale entry")
+        XCTAssertLessThan(invalidate.lowerBound, post.lowerBound, "publish only after the actor has read the changed entry")
+        XCTAssertTrue(app.contains("object: change)"))
         XCTAssertTrue(app.contains("window.delegate = self"))
         XCTAssertTrue(app.contains("SettingsWindowLifecycle.settingsWindowWillClose(window)"))
         XCTAssertTrue(app.contains("SettingsWindowLifecycle.rebuildContentIfNeeded("))
