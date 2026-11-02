@@ -1,0 +1,103 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 32719] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/formal/notch-tab-morph/TabMorph.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module TabMorph
+Starting... (2026-11-02 09:34:23)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-02 09:34:23.
+Error: Invariant NoSlabSweep is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ changes = 0
+/\ presented = "Rest"
+/\ todo = {}
+/\ lastSpring = <<"Rest", "Rest">>
+/\ rendered = "Rest"
+/\ pendVal = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ seenPresented = "Rest"
+/\ seenPending = [presented |-> "none", start |-> "none", target |-> "none"]
+
+State 2: <Present line 51, col 12 to line 54, col 100 of module TabMorph>
+/\ pending = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ changes = 1
+/\ presented = "Tab"
+/\ todo = {}
+/\ lastSpring = <<"Rest", "Rest">>
+/\ rendered = "Rest"
+/\ pendVal = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ seenPresented = "Rest"
+/\ seenPending = [presented |-> "none", start |-> "none", target |-> "none"]
+
+State 3: <BeginUpdate line 58, col 3 to line 63, col 68 of module TabMorph>
+/\ pending = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ changes = 1
+/\ presented = "Tab"
+/\ todo = {"geo"}
+/\ lastSpring = <<"Rest", "Rest">>
+/\ rendered = "Rest"
+/\ pendVal = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ seenPresented = "Tab"
+/\ seenPending = [presented |-> "none", start |-> "none", target |-> "none"]
+
+State 4: <OnGeometry line 66, col 3 to line 83, col 74 of module TabMorph>
+/\ pending = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+/\ changes = 1
+/\ presented = "Tab"
+/\ todo = {}
+/\ lastSpring = <<"Rest", "Rest">>
+/\ rendered = "RestTab"
+/\ pendVal = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ seenPresented = "Tab"
+/\ seenPending = [presented |-> "none", start |-> "none", target |-> "none"]
+
+State 5: <Present line 51, col 12 to line 54, col 100 of module TabMorph>
+/\ pending = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+/\ changes = 2
+/\ presented = "Rest"
+/\ todo = {}
+/\ lastSpring = <<"Rest", "Rest">>
+/\ rendered = "RestTab"
+/\ pendVal = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ seenPresented = "Tab"
+/\ seenPending = [presented |-> "none", start |-> "none", target |-> "none"]
+
+State 6: <BeginUpdate line 58, col 3 to line 63, col 68 of module TabMorph>
+/\ pending = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+/\ changes = 2
+/\ presented = "Rest"
+/\ todo = {"geo", "pend"}
+/\ lastSpring = <<"Rest", "Rest">>
+/\ rendered = "RestTab"
+/\ pendVal = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+/\ seenPresented = "Rest"
+/\ seenPending = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+
+State 7: <OnGeometry line 66, col 3 to line 83, col 74 of module TabMorph>
+/\ pending = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ changes = 2
+/\ presented = "Rest"
+/\ todo = {"pend"}
+/\ lastSpring = <<"RestTab", "Rest">>
+/\ rendered = "Rest"
+/\ pendVal = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+/\ seenPresented = "Rest"
+/\ seenPending = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+
+State 8: <OnPending line 86, col 3 to line 92, col 83 of module TabMorph>
+/\ pending = [presented |-> "none", start |-> "none", target |-> "none"]
+/\ changes = 2
+/\ presented = "Rest"
+/\ todo = {}
+/\ lastSpring = <<"Rest", "Tab">>
+/\ rendered = "Tab"
+/\ pendVal = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+/\ seenPresented = "Rest"
+/\ seenPending = [presented |-> "Tab", start |-> "RestTab", target |-> "Tab"]
+
+101 states generated, 72 distinct states found, 19 states left on queue.
+The depth of the complete state graph search is 8.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 3 and the 95th percentile is 3).
+Finished in 00s at (2026-11-02 09:34:23)

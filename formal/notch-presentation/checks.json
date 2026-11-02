@@ -1,0 +1,26 @@
+{
+  "module": "NotchPresentation",
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "sources": [
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+    "flow-bar/Tests/VoiceBarUITests/NotchPresentationConformanceTests.swift"
+  ],
+  "checks": {
+    "Current": null,
+    "OldWing": "N1CompactNote",
+    "OldProcessingNote": "N2NoProcessingBand",
+    "OldSubstitute": "N4NoSubstitute",
+    "OldBusyHistory": "N5InlineHistory",
+    "OldQuitCause": "NoteHasCause",
+    "Fixed": null,
+    "MutantNoShell": "VisibleHasShell",
+    "MutantStuck": "Temporal:NoteNeverStuck",
+    "MutantType": "TypeOK"
+  }
+}

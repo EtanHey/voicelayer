@@ -1,0 +1,14 @@
+{
+  "module": "TabMorph",
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "sources": [
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchView.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift"
+  ],
+  "checks": {
+    "Old": "NoSlabSweep",
+    "Async": "SettlesOnPresented",
+    "Unguarded": "NoSlabSweep",
+    "Fixed": null
+  }
+}

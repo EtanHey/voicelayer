@@ -1,0 +1,16 @@
+{
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
+  "sourceHashes": {
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchView.swift": "e184a614849a5a5fbe406bb65884011987b2194ee7eae53ae058e62f276327e3",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift": "d3397d1faa3cefbc5356f717d7eb1cbcb80511d5fbab42cd9d2484b549627dfc"
+  },
+  "specSHA256": "200dcf994b43da2200b04ec9be9247fd59dee1c99ff1fa250aeb770e45d4bf55",
+  "cfgSHA256": {
+    "Old": "972da50e2bfe6a206a51e695f3d44c0cb2946c18964f3415874ccb4600d2245c",
+    "Async": "b83479e690b789c084ad82d5b7acc73f116fbad503f65f1c533fc2b8b1a79bef",
+    "Unguarded": "d285ba25726f33ed3a2cc1ccc0dae894154d1df90a573026f9fc8bb9d5810a54",
+    "Fixed": "a7bb66b005791a7384236d6bb412a264b1e5d3d6d8daebf4e87c3d22419ac5e0"
+  },
+  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+}

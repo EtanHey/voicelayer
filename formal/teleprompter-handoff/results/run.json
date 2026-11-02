@@ -1,0 +1,15 @@
+{
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
+  "sourceHashes": {
+    "flow-bar/Sources/VoiceBarUI/TeleprompterPreparingHandoff.swift": "1a84edae12a4e7f4d7e8ff4c67bada89c1740ed3a20442e74c45f919e3076d3e",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "1ea6c9ea1289509c01ff137ae6f43108e2e9b429b6587c411b66e56ce4a53d67"
+  },
+  "specSHA256": "c65f2ebb8d8a0c357fb905e67e6d7310e94005c152262edbcda2c0af8d96778a",
+  "cfgSHA256": {
+    "Old": "d6d265cf78483baf7bc43055be67c4dc0eb77e46bbc5d6a42dcd8228c61c2033",
+    "Fixed": "f1ee953518951f06402c9e8cbb31727864f77ff7d5af5604ef8acbc7ac7f2bf4",
+    "MutantNoEntry": "9df2ea5a33db3fcea4baad3db1ac729e7665ae95e5b2e13be7540efa1d24ea7c"
+  },
+  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+}

@@ -1,0 +1,28 @@
+{
+  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
+  "sourceHashes": {
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "947e5c4fc4897ad1448acbdf7acf84372b86af78a6dca0809fe467e060241db6",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "1ea6c9ea1289509c01ff137ae6f43108e2e9b429b6587c411b66e56ce4a53d67",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "12bd11aec9193828417541124436cda99a597fb5c8fdfff83aa2742a77cb2c69",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "97b00b08dad1b2480c1ccd42f4daaa43fce1ae20e8e167ef520d24c4a27894d7",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "d65bce6118fa798402a33fc12827c92f78d3ecdac383da3a1ec8875acc625c02",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "4f56c63c22047c36215dced81eeb7c00a0e3614ef7dea5ce08665ed8d21963ed",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "3012d93f48abbccc1651d89f1035e43a16f4b3d0c5c77c35d02410b853226a2b",
+    "flow-bar/Tests/VoiceBarUITests/NotchPresentationConformanceTests.swift": "e9ce1261fbf018a3d61ff92e0a7562d64317198496fc8a66f84c39d691a4e356"
+  },
+  "specSHA256": "5660ebf32721f8ec855ff2478df87f5c621fff1744a44cf283bcfc8f8d68bd3b",
+  "cfgSHA256": {
+    "Current": "7109ec7c014dc9044c8ec96b5b85a63d0e408286dcaa9edaee376274c6cfc9f9",
+    "OldWing": "a91c1f132cec126d6e1e4b0311d528936c12f7e97875e6243e4fcd3e0683e472",
+    "OldProcessingNote": "84bca1cb92271ab90ee58799ff74b6f1a10fc130b4c53970681e37506bcf260a",
+    "OldSubstitute": "b6e8e9a40033c590d154a80c0aff10b49ce395e27b69c4bdb2aba0e80b3f391a",
+    "OldBusyHistory": "8db256c29fc41455fed35f4d841d2bb59b497f071342072aca9a97850ca205b6",
+    "OldQuitCause": "028b8d3a9a0a9f99f1f2a71741188153fccc9c7060a7245197d7d29ef9f2dd9d",
+    "Fixed": "042b1adc73d88cac6b4073ebd98335da975d41331d9e33bdc4615928c2515b79",
+    "MutantNoShell": "6b4d1c5f94a242d42495e3ab4847260d2d902bb6a78b2f283f1989043f2736cb",
+    "MutantStuck": "b0dc4d9b889cc730a21ad1749dc6f03e427558152867f7b37462050f8d1270ca",
+    "MutantType": "26bf7a1da4c339702ddb191448eff8df31c0718b193fdbc73e21000f45127209"
+  },
+  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+}
