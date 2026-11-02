@@ -925,6 +925,33 @@ describe("input recording durability", () => {
     }
   });
 
+  it("PTT-TIMEOUT cannot classify pending or failed speech evidence as silence", async () => {
+    const { recordToBuffer, getRecordingState } = await import("../input");
+    const firstVad = Promise.withResolvers<number>();
+    vadProcessSpy!.mockImplementation(() => firstVad.promise);
+    const recorder = installFakeRecorder([makePcmChunk(1800)], true);
+    const clock = installRecordingClock([90_000, 50]);
+    const abort = new AbortController();
+    const recording = recordToBuffer(90_000, "standard", true, undefined, abort.signal);
+    void recording.catch(() => null);
+    try {
+      await recorder.waitForSpawn();
+      await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === VAD_CHUNK_BYTES, "pending speech evidence");
+      clock.advance(90_000);
+      expect(getRecordingState()).toBe("recording");
+      // A detector failure supplies no silence evidence. PTT remains available for explicit Stop.
+      firstVad.reject(new Error("Synthetic VAD unavailable"));
+      await Bun.sleep(5);
+      clock.advance(90_000);
+      expect(getRecordingState()).toBe("recording");
+      writeFileSync(STOP_FILE, "stop"); clock.advance(1); clock.advance(250);
+      expect((await recording)?.byteLength).toBe(VAD_CHUNK_BYTES);
+      expectValidRetainedWav(retainedPath, VAD_CHUNK_BYTES);
+    } finally {
+      firstVad.resolve(0.95); abort.abort(); await recording.catch(() => null); clock.restore();
+    }
+  });
+
   // VA-TIMEOUT: fail-first specification tests. These exercise the real
   // waitForInput/recordToBuffer path with synthetic PCM and an isolated archive.
   for (const silenceMode of ["quick", "standard", "thoughtful"] as const) {

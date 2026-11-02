@@ -1,5 +1,5 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 45414] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 26181] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915/formal/record-while-processing/RecordWhileProcessing.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
@@ -8,10 +8,10 @@ Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
 Semantic processing of module RecordWhileProcessing
-Starting... (2026-11-02 09:21:29)
+Starting... (2026-11-02 09:40:59)
 Implied-temporal checking--satisfiability problem has 2 branches.
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 09:21:29.
+Finished computing initial states: 1 distinct state generated at 2026-11-02 09:40:59.
 Error: Invariant N8ImmediatePaste is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -26,7 +26,7 @@ s = [ stage |-> [A |-> "fresh", B |-> "fresh"],
   cooldown |-> 0,
   ring |-> FALSE ]
 
-State 2: <Record line 27, col 6 to line 29, col 42 of module RecordWhileProcessing>
+State 2: <Record line 33, col 6 to line 35, col 42 of module RecordWhileProcessing>
 s = [ stage |-> [A |-> "recording", B |-> "fresh"],
   event |-> "F5",
   target |-> "A",
@@ -38,7 +38,7 @@ s = [ stage |-> [A |-> "recording", B |-> "fresh"],
   cooldown |-> 0,
   ring |-> FALSE ]
 
-State 3: <Capture line 30, col 23 to line 31, col 103 of module RecordWhileProcessing>
+State 3: <Capture line 36, col 23 to line 37, col 103 of module RecordWhileProcessing>
 s = [ stage |-> [A |-> "captured", B |-> "fresh"],
   event |-> "stop",
   target |-> "A",
@@ -50,7 +50,7 @@ s = [ stage |-> [A |-> "captured", B |-> "fresh"],
   cooldown |-> 0,
   ring |-> FALSE ]
 
-State 4: <Decode line 32, col 14 to line 33, col 95 of module RecordWhileProcessing>
+State 4: <Decode line 38, col 14 to line 39, col 95 of module RecordWhileProcessing>
 s = [ stage |-> [A |-> "transcribing", B |-> "fresh"],
   event |-> "decode",
   target |-> "A",
@@ -62,7 +62,7 @@ s = [ stage |-> [A |-> "transcribing", B |-> "fresh"],
   cooldown |-> 0,
   ring |-> FALSE ]
 
-State 5: <Complete line 38, col 6 to line 39, col 91 of module RecordWhileProcessing>
+State 5: <Complete line 44, col 6 to line 45, col 91 of module RecordWhileProcessing>
 s = [ stage |-> [A |-> "ready", B |-> "fresh"],
   event |-> "result",
   target |-> "A",
@@ -77,4 +77,4 @@ s = [ stage |-> [A |-> "ready", B |-> "fresh"],
 46 states generated, 20 distinct states found, 5 states left on queue.
 The depth of the complete state graph search is 5.
 The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 4 and the 95th percentile is 4).
-Finished in 00s at (2026-11-02 09:21:29)
+Finished in 00s at (2026-11-02 09:40:59)

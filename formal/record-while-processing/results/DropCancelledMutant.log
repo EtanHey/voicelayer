@@ -1,5 +1,5 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 46277] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 26729] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915/formal/record-while-processing/RecordWhileProcessing.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
@@ -8,10 +8,10 @@ Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
 Semantic processing of module RecordWhileProcessing
-Starting... (2026-11-02 09:21:31)
+Starting... (2026-11-02 09:41:01)
 Implied-temporal checking--satisfiability problem has 2 branches.
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 09:21:31.
+Finished computing initial states: 1 distinct state generated at 2026-11-02 09:41:01.
 Error: Invariant D3EveryTakeKept is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -26,7 +26,7 @@ s = [ stage |-> [A |-> "fresh", B |-> "fresh"],
   cooldown |-> 0,
   ring |-> FALSE ]
 
-State 2: <Record line 27, col 6 to line 29, col 42 of module RecordWhileProcessing>
+State 2: <Record line 33, col 6 to line 35, col 42 of module RecordWhileProcessing>
 s = [ stage |-> [A |-> "recording", B |-> "fresh"],
   event |-> "F5",
   target |-> "A",
@@ -38,7 +38,7 @@ s = [ stage |-> [A |-> "recording", B |-> "fresh"],
   cooldown |-> 0,
   ring |-> FALSE ]
 
-State 3: <Cancel line 59, col 6 to line 64, col 42 of module RecordWhileProcessing>
+State 3: <Cancel line 65, col 6 to line 70, col 42 of module RecordWhileProcessing>
 s = [ stage |-> [A |-> "cancelled", B |-> "fresh"],
   event |-> "click",
   target |-> "A",
@@ -53,4 +53,4 @@ s = [ stage |-> [A |-> "cancelled", B |-> "fresh"],
 12 states generated, 8 distinct states found, 5 states left on queue.
 The depth of the complete state graph search is 3.
 The average outdegree of the complete state graph is 4 (minimum is 4, the maximum 4 and the 95th percentile is 4).
-Finished in 00s at (2026-11-02 09:21:31)
+Finished in 00s at (2026-11-02 09:41:01)

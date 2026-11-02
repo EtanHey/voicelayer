@@ -1,6 +1,6 @@
 {
   "module": "RecordWhileProcessing",
-  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "sourceBaseline": "01ca5dec",
   "sources": [
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
@@ -8,7 +8,12 @@
     "src/socket-handlers.ts",
     "src/recording-state.ts",
     "src/session-booking.ts",
-    "src/mcp-server-daemon.ts"
+    "src/mcp-server-daemon.ts",
+    "src/recording-jobs.ts",
+    "src/recording-take-queue.ts",
+    "src/socket-protocol.ts",
+    "flow-bar/Sources/VoiceBar/SocketServer.swift",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift"
   ],
   "checks": {
     "Current": null,

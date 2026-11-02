@@ -1,16 +1,21 @@
 {
-  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
+  "sourceBaseline": "01ca5dec",
   "runnerSHA256": "94c5365f361d0423750ce4c04f547f890173ab6804949c00ba1fc2534314e167",
   "sourceHashes": {
-    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "796417c6cf8b1ff6e98d552bd98da410b2caf72498fa70065fc3351f4181c4a1",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "34fb2ea99c75b4d56a7ff214adf290fa329abf2dc4fbe411a407890c1e4505eb",
-    "src/input.ts": "c93e6b1bec2e0440ec7ce0f61bbb0e87a8f866f2fd3bbe0b064f45cc5e1254f2",
-    "src/socket-handlers.ts": "f16f7849a82858860dca2f550e73a6eff318ea9074e6abb8025bc67f084c75b3",
-    "src/recording-state.ts": "579d74ce2d05ff9c21bd7f80f57559461ea666dd23a02f6411bbf3dc7840461e",
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "4d967b471cecdac6f5b40ef6db8ed3050a2830f91a50bd191659d8fd05040d79",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "30d4bb0e0f1ad9f55f3763692569e356d276229ed997241448c7c9a36a875edc",
+    "src/input.ts": "281a2f1c4b1d640c8fc2a8402d05040e8338b887f942dd0e7beef4349c469e0d",
+    "src/socket-handlers.ts": "d6b7c25e56f5aa936fbcb7e51c8b77ec99cb03c77f9b70ce8e99b5c0b766a8a2",
+    "src/recording-state.ts": "db2b9617e38ed6da0fea264ead439f3a4ba88619252b84ac76bbb420274b90da",
     "src/session-booking.ts": "8354241ad3c54e1b2333630c095178e2da77dce049e8ca3a44ae55c5653b5b62",
-    "src/mcp-server-daemon.ts": "105b601474c8260741f9513a6aee200dc08ab6c8f6bf2c0acf033ab075484b3d"
+    "src/mcp-server-daemon.ts": "105b601474c8260741f9513a6aee200dc08ab6c8f6bf2c0acf033ab075484b3d",
+    "src/recording-jobs.ts": "468b4928fe8eae5c9b63818e469d8b4a8025bd23a7503213a0be5ce354945d8b",
+    "src/recording-take-queue.ts": "0c58534b9fb451f762d3acfd9bdd530564566f56eaf12d485c50c846e888df32",
+    "src/socket-protocol.ts": "7f803ee4db3cc28d30df022f62343c314a32fafc679c4090c2bb03b7bd59e2ad",
+    "flow-bar/Sources/VoiceBar/SocketServer.swift": "6fac45617438d45730f561a2cf609f18afa1c41eea5c972f2e59b121bd430a77",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "9b7e6d3c96156db40e3f419a96d6ead03601bab89777a3c3b2c30e4609be4ab7"
   },
-  "specSHA256": "9800c20192d6c9e2866c9565c1fafbb6372acae7eea71dd3365cbbfe2821f8bf",
+  "specSHA256": "3c87b3a4d6070ddc6cd52fa7b563bcad1b73aea4bdc470562980a92a1c3971c6",
   "cfgSHA256": {
     "Current": "38c741dc150574ca1cb255951687b6a27ad70852db214eb0055e01fc136de9b3",
     "OldSocketBusy": "b0855a1fdfca6574b0fc3c761f7d42de789b89e7c9810a8b46e6ae5947e72b59",

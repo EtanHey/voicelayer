@@ -1,4 +1,10 @@
 ----------------------- MODULE RecordWhileProcessing -----------------------
+\* Lane I runtime abstraction (no operator changes in this lane):
+\* capturing/draining -> recording; archived queued -> captured; decoder job -> transcribing.
+\* Complete is final dispatch, not an AX receipt. The concrete queue may retain its
+\* slot until delivery ACK; that is an abstract stutter after Complete. Liveness
+\* additionally assumes eventual decoder and delivery-ACK settlement.
+\* Per-take AbortSignals implement Cancel; only a mic owner receives the stop file.
 EXTENDS Naturals, FiniteSets
 CONSTANTS Admission, CancelPolicy, PastePolicy, RetentionPolicy, Ingress
 VARIABLE s
