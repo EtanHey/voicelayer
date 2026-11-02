@@ -1076,9 +1076,11 @@ public struct SettingsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Divider()
-                    LabeledContent("VoiceBar build", value: SettingsDiagnosticSummary.versionLabel())
-                    SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
-                                       label: "build and diagnostic summary")
+                    // S1: the version lives once, in the sidebar footer. This row only copies the diagnostic summary.
+                    LabeledContent("Diagnostic summary") {
+                        SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
+                                           label: "build and diagnostic summary")
+                    }
                     Divider()
                     Text("Gestures").font(.headline)
                     LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
@@ -2325,6 +2327,15 @@ public struct SettingsView: View {
             TextField("Search terms and variants", text: $dictionarySearch)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .search)
+            // QA-27: the same clear (X) the History search has. It follows the raw field, not the trimmed query:
+            // a lone space is not a search, but it is still text the X should clear.
+            if dictionarySearch != "" {
+                SettingsIconButton(spec: .clearSearch, layoutInset: 5) {
+                    dictionarySearch = ""
+                    focusedEditorField = .search
+                }
+                .foregroundStyle(.secondary)
+            }
         }
         .dictionaryFieldContainer()
         .contentShape(Rectangle())

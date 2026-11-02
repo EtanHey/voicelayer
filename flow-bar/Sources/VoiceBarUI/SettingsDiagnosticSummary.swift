@@ -56,9 +56,14 @@ enum SettingsDiagnosticSummary {
     }
 
     static func versionLabel(bundle: Bundle = .main) -> String {
-        let version = value(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
-        let build = value(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
-        return "\(version) (build \(build))"
+        versionLabel(version: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                     build: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+    }
+
+    /// QA-30: "2.2.60 (build 2.2.60)" says one number twice; equal values show once.
+    static func versionLabel(version: String?, build: String?) -> String {
+        let version = value(version), build = value(build)
+        return build == version ? version : "\(version) (build \(build))"
     }
 
     static func build(bundle: Bundle = .main, models: ModelsSettingsState) -> String {

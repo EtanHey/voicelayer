@@ -1506,6 +1506,10 @@ public final class VoiceState {
     private var recognizerRefreshID: String?
     private var recognizerPendingCommand: String?
     private var recognizerCancelID: String?
+    /// S4: a download is correlated on its own, so it never holds the selection lock that disables the picker.
+    private var recognizerDownloadID: String?
+    /// The correlated read whose response may re-base the revision after a daemon restart (answered once).
+    private var recognizerRebasableReadID: String?
     private var recognizerSelectionID: String?
     private var recognizerSelectionTarget: RecognizerPickerEngine?
     public var onRecognizerStatusChange: (() -> Void)?
@@ -1560,16 +1564,23 @@ public final class VoiceState {
         lastRecognizerStatusRead = now
         let id = UUID().uuidString
         recognizerRefreshID = id
+        recognizerRebasableReadID = id
         sendCommand(["cmd": "get_recognizer_status", "id": id])
     }
 
     public func manageRecognizer(_ engine: RecognizerPickerEngine, action: RecognizerManagementAction) {
         guard isConnected, let sendCommand, recognizerPickerState.canManage(engine, action: action) else { return }
+        // Load on the row that isn't selected means "use this one": the daemon loads it and unloads the other.
+        if action == .load, recognizerPickerState.selected != engine { selectRecognizer(engine); return }
+        if action == .download, recognizerDownloadID != nil { return }
         let id = UUID().uuidString
         var command: [String: Any] = ["cmd": action.command, "engine": engine.rawValue, "id": id]
         if action == .load || action == .unload { command["action"] = action.rawValue }
         if action == .cancelDownload {
             recognizerCancelID = id
+        } else if action == .download {
+            recognizerDownloadID = id
+            recognizerNotice = nil; onRecognizerStatusChange?()
         } else {
             recognizerSelectionID = id; recognizerPendingCommand = action.command; recognizerSelectionTarget = nil
             recognizerNotice = nil; onRecognizerStatusChange?()
@@ -1599,14 +1610,31 @@ public final class VoiceState {
                 if event["outcome"] as? String == "reject" { recognizerNotice = "No download is running."; onRecognizerStatusChange?() }
                 return
             }
-            guard event["command"] as? String == recognizerPendingCommand,
-                  let id = event["id"] as? String, id == recognizerSelectionID,
-                  let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return }
-            // Terminal correlation settles intent independently of snapshot authority.
-            recognizerSelectionID = nil
-            recognizerSelectionTarget = nil
+            if event["command"] as? String == "download_recognizer" {
+                guard let id = event["id"] as? String, id == recognizerDownloadID,
+                      let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return }
+                recognizerDownloadID = nil
+            } else {
+                guard event["command"] as? String == recognizerPendingCommand,
+                      let id = event["id"] as? String, id == recognizerSelectionID,
+                      let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return }
+                // Terminal correlation settles intent independently of snapshot authority.
+                recognizerSelectionID = nil
+                recognizerSelectionTarget = nil
+            }
         } else if let id = event["id"] as? String {
             guard id == recognizerRefreshID else { return }
+            // The daemon's revision counter is per process. On one ordered socket, the first answer to the newest
+            // read is at least as new as anything that daemon sent before it, so a LOWER revision there means the
+            // daemon restarted under a live connection. Re-base instead of freezing the picker on the old daemon's
+            // last snapshot (which kept a "Using Whisper because Parakeet couldn't…" line after Parakeet worked).
+            if id == recognizerRebasableReadID, let payload = event["recognizer_status"] as? [String: Any],
+               let revision = payload["revision"] as? Int, revision < recognizerRevision,
+               RecognizerStatusSnapshot(payload: payload) != nil {
+                recognizerRevision = -1
+                recognizerAcceptedSnapshot = nil
+            }
+            recognizerRebasableReadID = nil
         } else if event["id"] != nil { return }
         // A stale malformed response must not erase a newer authoritative Ready state.
         if let payload = event["recognizer_status"] as? [String: Any],
@@ -3191,6 +3219,7 @@ public final class VoiceState {
         recognizerRefreshID = nil
         recognizerSelectionID = nil
         recognizerPendingCommand = nil; recognizerCancelID = nil
+        recognizerDownloadID = nil; recognizerRebasableReadID = nil
         recognizerSelectionTarget = nil
         recognizerNotice = nil
         if connected { refreshRecognizerStatus() }
