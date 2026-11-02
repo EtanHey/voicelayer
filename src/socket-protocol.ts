@@ -31,7 +31,18 @@ export type VoiceLayerState =
   | "recording"
   | "transcribing";
 
-export interface StateEvent {
+export interface RecordingJobIdentity {
+  take_id?: string;
+  job_kind?: "live" | "history";
+}
+export interface RecordingJobsSnapshot {
+  recording_jobs?: { take_id: string; kind: "live" | "history"; phase: "capturing" | "draining" | "queued" | "processing" | "delivering" | "failed" }[];
+  capture_error?: string | null;
+  processing_count?: number;
+  mic_take_id?: string | null;
+}
+
+export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot {
   type: "state";
   state: VoiceLayerState;
   /** Present when state is "speaking" — the text being spoken. */
@@ -104,7 +115,8 @@ export interface SpeechEvent {
   detected: boolean;
 }
 
-export interface TranscriptionEvent {
+export interface TranscriptionEvent extends RecordingJobIdentity {
+  delivery_id?: string;
   type: "transcription";
   text: string;
   /** true = partial/streaming result, false = final result. */
@@ -377,7 +389,8 @@ export interface ReadQueueEvent {
   current_request_id: string | null;
 }
 
-export type SocketEvent =
+export type SocketEvent = RecordingJobIdentity & (
+  | { type: "dictation_delivery_status"; delivery_id: string; outcome: "unverified"; recording_path?: string }
   | UpdateGateDrainEvent
   | HistoryPlaybackGateEvent
   | ReadQueueEvent
@@ -400,7 +413,7 @@ export type SocketEvent =
   | ClipMarkerEvent
   | AckEvent
   | ModelStatusEvent
-  | RecognizerStatusEvent;
+  | RecognizerStatusEvent);
 
 // --- Commands: Voice Bar → VoiceLayer ---
 
@@ -430,6 +443,7 @@ export interface ReadNextCommand extends SocketCommandBase {
 }
 
 export interface StopCommand extends SocketCommandBase {
+  take_id?: string;
   cmd: "stop";
   /** Opt-in for a physical stop press; never interpreted as a capture clock. */
   physical_press?: boolean;
@@ -450,6 +464,7 @@ export interface InputDeviceLostCommand extends SocketCommandBase {
 }
 
 export interface CancelCommand extends SocketCommandBase {
+  take_id?: string;
   cmd: "cancel";
   /** VoiceBar's teleprompter clock at the cancel edge. */
   playback_elapsed_ms?: number;
@@ -477,6 +492,7 @@ export interface ToggleCommand extends SocketCommandBase {
 }
 
 export interface RecordCommand extends SocketCommandBase {
+  take_id?: string;
   cmd: "record";
   /** Recording timeout in seconds (default: 30, max: 3600). */
   timeout_seconds?: number;
@@ -590,6 +606,7 @@ export type SocketCommand =
   | SpeakTextCommand
   | ReadNextCommand
   | { cmd: "history_playback_ready"; id: string }
+  | { cmd: "dictation_delivered"; id?: string; take_id: string; delivery_id: string; outcome?: "unverified" | "not_inserted" }
   | StopCommand
   | CancelCommand
   | ReplayCommand
@@ -618,7 +635,7 @@ export type SocketCommand =
   | SetRecognizerResidencyCommand
   | GetRecognizerStatusCommand;
 
-export interface HealthResponse {
+export interface HealthResponse extends RecordingJobsSnapshot {
   type: "health";
   uptime_seconds: number;
   queue_depth: number;
@@ -846,14 +863,22 @@ export function parseCommand(line: string): SocketCommand | null {
         // Next is always scoped to the read it was shown for; an unscoped Next is not a command.
         if (typeof parsed.request_id !== "string" || !parsed.request_id || parsed.request_id.length > 256) return null;
         return withCommandId<ReadNextCommand>({ cmd: "read_next", request_id: parsed.request_id }, id);
+      case "dictation_delivered":
+        if (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256 ||
+            typeof parsed.delivery_id !== "string" || !parsed.delivery_id || parsed.delivery_id.length > 256) return null;
+        if (parsed.outcome !== undefined && parsed.outcome !== "unverified" && parsed.outcome !== "not_inserted") return null;
+        return { cmd: "dictation_delivered", take_id: parsed.take_id, delivery_id: parsed.delivery_id,
+          ...(parsed.outcome !== undefined ? { outcome: parsed.outcome } : {}) };
       case "history_playback_ready":
         return id ? { cmd: "history_playback_ready", id } : null;
       case "stop":
+        if (parsed.take_id !== undefined && (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256)) return null;
         if (parsed.physical_press !== undefined && typeof parsed.physical_press !== "boolean") return null;
         if (parsed.retain_read_queue !== undefined && typeof parsed.retain_read_queue !== "boolean") return null;
         return withCommandId<StopCommand>(
           {
             cmd: "stop",
+            ...(parsed.take_id !== undefined ? { take_id: parsed.take_id } : {}),
             ...(parsed.physical_press !== undefined ? { physical_press: parsed.physical_press } : {}),
             ...(parsed.retain_read_queue !== undefined ? { retain_read_queue: parsed.retain_read_queue } : {}),
             ...(playbackElapsedMs !== undefined
@@ -863,10 +888,12 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
       case "cancel":
+        if (parsed.take_id !== undefined && (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256)) return null;
         if (parsed.discard_read_queue !== undefined && typeof parsed.discard_read_queue !== "boolean") return null;
         return withCommandId<CancelCommand>(
           {
             cmd: "cancel",
+            ...(parsed.take_id !== undefined ? { take_id: parsed.take_id } : {}),
             ...(parsed.discard_read_queue !== undefined ? { discard_read_queue: parsed.discard_read_queue } : {}),
             ...(playbackElapsedMs !== undefined
               ? { playback_elapsed_ms: playbackElapsedMs }
@@ -1099,9 +1126,11 @@ export function parseCommand(line: string): SocketCommand | null {
         );
       }
       case "record": {
+        if (parsed.take_id !== undefined && (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256)) return null;
         const command: RecordCommand = withCommandId(
           {
             cmd: "record",
+            ...(parsed.take_id !== undefined ? { take_id: parsed.take_id } : {}),
           },
           id,
         );

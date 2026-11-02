@@ -1,4 +1,7 @@
 ----------------------- MODULE RecordWhileProcessing -----------------------
+\* Runtime projection: capture/drain -> recording, archived queue -> captured.
+\* Complete is dispatch; RuntimeOwnership verifies bounded ACK settlement without
+\* assuming a client acknowledgement. Cancel uses per-take AbortSignals.
 EXTENDS Naturals, FiniteSets
 CONSTANTS Admission, CancelPolicy, PastePolicy, RetentionPolicy, Ingress, Fault, SilenceLimit, CapLimit, Scenario
 VARIABLE s
@@ -9,11 +12,15 @@ Stages == {"fresh", "recording", "captured", "transcribing", "ready", "cancellin
 Mic == {t \in Takes : s.stage[t] = "recording"}
 Worker == {t \in Takes : s.stage[t] \in {"transcribing", "cancelling"}}
 Ready == {t \in Takes : s.stage[t] = "ready"}
-Active == Mic \cup Worker \cup Ready
+Active == Mic \cup Worker \cup Ready \cup {t \in Takes: s.stage[t]="captured"}
 Unsettled == Active \cup {t \in Takes : s.stage[t] = "captured"}
-Processing(t) == s.stage[t] \in {"transcribing", "ready"}
+Processing(t) == s.stage[t] \in {"captured", "transcribing", "ready"}
 GuardReady(t) == s.guard = t /\ s.cooldown = 0
-Foreground(t, origin) == origin # "Escape" \/ (IF Mic # {} THEN t \in Mic ELSE IF Worker # {} THEN t \in Worker ELSE t \in Ready)
+Newest(P) == IF "B" \in P THEN "B" ELSE IF "A" \in P THEN "A" ELSE "none"
+Foreground(t, origin) == origin # "Escape" \/
+  (IF Mic # {} THEN (t \in Mic \/ Fault="escape-mic") ELSE (t=Newest(Active) \/ Fault="escape-older"))
+Shown == IF Worker # {} THEN CHOOSE t \in Worker: TRUE ELSE Newest(Active)
+EscapeGuarded(t) == t \in Mic \/ t=Shown \/ GuardReady(t)
 Commit(x, e, t) == s' = [x EXCEPT !.event = e, !.target = t, !.cancelToken = IF e \in {"click", "Escape"} THEN x.cancelToken ELSE "none"]
 Init == s = [stage |-> [t \in Takes |-> "fresh"], saved |-> {}, cancelRequested |-> {},
              talking |-> [t \in Takes |-> FALSE], spoke |-> {},
@@ -26,7 +33,7 @@ Record(t, origin) ==
       cancels == (blocked /\ origin = "F5" /\ s.stage[owner] # "cancelling") \/ (Fault = "record-cancels" /\ Worker # {})
       after == IF cancels THEN [s EXCEPT !.stage[owner] = "cancelling", !.cancelRequested = @ \cup {owner}]
                ELSE IF blocked \/ (Fault = "reject-record" /\ Worker # {}) THEN s ELSE [s EXCEPT !.stage[t] = "recording"]
-  IN /\ s.stage[t] = "fresh" /\ (Scenario # "clock" \/ t = "A") /\ (Mic = {} \/ Fault = "two-mics")
+  IN /\ s.stage[t] = "fresh" /\ (Admission # "fixed" \/ t="A" \/ s.stage["A"] # "fresh") /\ (Scenario # "clock" \/ t = "A") /\ (Mic = {} \/ Fault = "two-mics")
      /\ (Fault # "stall-record" \/ Worker = {})
      /\ (Admission # "current" \/ {a \in Takes: s.stage[a] = "captured"} = {})
      /\ Commit([after EXCEPT !.reply = IF blocked THEN "reject" ELSE "accept"], origin, t)
@@ -68,7 +75,7 @@ ReapCancelled(t) == /\ s.stage[t] = "cancelling" /\ Commit([s EXCEPT !.stage[t] 
 ApplyCancel(t, origin, id, victim) ==
   LET identityOK == CancelPolicy # "scoped" \/ Fault = "ignore-id" \/ id = t
       clear == s.guard = victim
-      x == IF ~identityOK THEN [s EXCEPT !.reply = "reject", !.cancelToken = "none"] ELSE
+      x == IF ~identityOK THEN [s EXCEPT !.reply = "noop", !.cancelToken = "none"] ELSE
            [s EXCEPT !.stage[victim] = IF @ \in {"transcribing", "cancelling"} THEN "cancelling" ELSE "cancelled",
                      !.cancelRequested = @ \cup {t},
                      !.cancelToken = IF Fault = "unscoped-signal" THEN "global" ELSE IF CancelPolicy # "scoped" THEN IF Mic = {} /\ Worker = {} THEN "none" ELSE "global" ELSE id,
@@ -79,6 +86,7 @@ ApplyCancel(t, origin, id, victim) ==
   IN /\ t \in Active /\ victim \in Active /\ Foreground(t, origin)
      /\ (CancelPolicy # "scoped" \/ victim = t \/ Fault = "wrong-victim")
      /\ (CancelPolicy = "scoped" \/ IF Mic \cup Worker = {} THEN victim = t ELSE victim \in Mic \cup Worker)
+     /\ (origin # "Escape" \/ CancelPolicy # "scoped" \/ EscapeGuarded(t))
      /\ (origin # "click" \/ ~Processing(t) \/ CancelPolicy # "scoped" \/ GuardReady(t) \/ Fault = "unguarded")
      /\ (Fault # "stall-cancel" \/ ~(t = "B" /\ "A" \in Worker))
      /\ Commit([x EXCEPT !.requestId = id], origin, t)
@@ -89,6 +97,10 @@ Click(t) ==
      THEN Commit([s EXCEPT !.guard = t, !.cooldown = IF s.guard = t THEN s.cooldown ELSE 2,
                           !.ring = TRUE, !.reply = "guard"], "arm", t)
      ELSE Cancel(t, "click", t)
+Escape(t,id) == /\ t \in Active /\ Foreground(t,"Escape")
+                /\ IF CancelPolicy="scoped" /\ ~EscapeGuarded(t)
+                    THEN Commit([s EXCEPT !.guard=t, !.cooldown=IF s.guard=t THEN s.cooldown ELSE 2, !.ring=TRUE, !.reply="guard"],"arm",t)
+                    ELSE Cancel(t,"Escape",id)
 \* Available deadline handlers are urgent with respect to clock advancement.
 \* A broken/disabled handler lets time advance, so the bounded contracts expose it.
 \* Pipeline checks use a short abstract cap; ProductClock and every timing
@@ -105,14 +117,14 @@ Tick == /\ s.cooldown > 0 \/ (\E t \in Takes: s.floor[t] > 0) \/ (Mic # {} /\ Cl
                                           THEN IF s.silence[t] < SilenceLimit + 1 THEN s.silence[t] + 1 ELSE s.silence[t] ELSE s.silence[t]],
                             !.elapsed = [t \in Takes |-> IF t \in Mic /\ ClockCanAdvance
                                           THEN AdvanceElapsed(t) ELSE s.elapsed[t]]], "tick", "none")
-DismissStaleGuard == /\ s.guard # "none" /\ s.guard \notin Active
+DismissStaleGuard == /\ Fault # "stale-guard" /\ s.guard # "none" /\ s.guard \notin Active
                     /\ Commit([s EXCEPT !.guard = "none", !.cooldown = 0, !.ring = FALSE], "dismiss", s.guard)
 Next == (\E t \in Takes:
           (\E origin \in (IF Ingress = "socket" THEN {"socket"} ELSE Origins): Record(t, origin))
           \/ (\E reason \in {"stop", "timeout", "cap"}: Capture(t, reason)) \/ (\E v \in BOOLEAN: Talk(t, v))
           \/ Decode(t) \/ Complete(t) \/ Deliver(t) \/ DropDeferred(t) \/ Fail(t) \/ ReapCancelled(t) \/ Click(t)
-          \/ (\E id \in Takes \cup {"stale"}: Cancel(t, "Escape", id))) \/ Tick \/ DismissStaleGuard
-Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
+          \/ (\E id \in (IF CancelPolicy = "scoped" THEN {t, "stale"} ELSE Takes \cup {"stale"}): Escape(t, id))) \/ Tick \/ DismissStaleGuard
+Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(DismissStaleGuard)
         /\ (\A t \in Takes: (Fault = "unfair-decode" \/ WF_vars(Decode(t))) /\ (Fault = "unfair" \/ WF_vars(Complete(t)))
                             /\ WF_vars(Deliver(t)) /\ WF_vars(ReapCancelled(t))
                             /\ WF_vars(Capture(t, "timeout")) /\ WF_vars(Capture(t, "cap")))
@@ -133,7 +145,8 @@ N6PreservesA == \A t \in Takes, origin \in Origins: RequiredRecord(t) =>
              /\ ~ENABLED (Record(t, origin) /\ (s'.cancelRequested # s.cancelRequested \/
                            (\E a \in Worker: s'.stage[a] # s.stage[a])))
 EligibleCancel(t, origin) == t \in Active /\ Foreground(t, origin) /\
-                            (origin # "click" \/ ~Processing(t) \/ GuardReady(t))
+                            (origin # "click" \/ ~Processing(t) \/ GuardReady(t)) /\
+                            (origin # "Escape" \/ CancelPolicy # "scoped" \/ EscapeGuarded(t))
 N7ScopedCancel == \A t \in Takes, origin \in {"click", "Escape"}: EligibleCancel(t, origin) =>
                   /\ ENABLED Cancel(t, origin, t)
                   /\ ~ENABLED (Cancel(t, origin, t) /\
@@ -180,4 +193,7 @@ NoSpeechSilenceTimeout == ~(s.event = "timeout" /\ s.target \in s.spoke)
 NoOverlapPaste == ~(s.event = "result" /\ s.target = "A" /\ s.stage["B"] = "recording" /\ s.deliveries["A"] = 1)
 NoScopedCancelDuringDecode == ~(s.event \in {"click", "Escape"} /\ s.target = "B" /\
                                 s.stage["A"] = "transcribing" /\ "B" \in s.cancelRequested)
+EscapeTargetsNewest == \A t \in Takes: t \in Active /\ t # (IF Mic # {} THEN CHOOSE m \in Mic: TRUE ELSE Newest(Active)) =>
+  ~ENABLED Escape(t,t)
+NoStaleGuard == (s.guard # "none" /\ s.guard \notin Active) ~> s.guard="none"
 =============================================================================

@@ -78,7 +78,9 @@ import {
   VAD_CHUNK_SAMPLES,
   type SilenceMode,
 } from "./vad";
-import { broadcast } from "./socket-client";
+import { broadcastInputEvent as broadcast, setInputRecordingState as setRecordingState,
+  finishBarCapture, ownsRecordingJob, ownsHistoryJob, ownsBarCapture, mayUpdateRetainedCapture,
+  recordingJobCancelled, deliverInputTranscription, registerBarRecorderExit } from "./recording-jobs";
 import {
   calculateRMS,
   detectNativeInputFormat,
@@ -124,7 +126,6 @@ import type { MicCapture, MicCaptureOptions } from "./soundlayer";
 import {
   getEffectiveRecordingState,
   isRecordingConflictError,
-  setRecordingState,
 } from "./recording-state";
 import { appendControlLayerEvent } from "./control-layer-journal";
 import {
@@ -297,6 +298,7 @@ function archiveDiagnosticReason(error: unknown): string {
 }
 
 export function linkRetainedCaptureToArchive(archiveAudioPath: string): void {
+  if (!mayUpdateRetainedCapture()) return;
   const trimmedPath = archiveAudioPath.trim();
   if (!trimmedPath || !existsSync(retainedRecordingFilePath())) return;
 
@@ -435,6 +437,7 @@ export function retainLastCaptureForRecovery(
   wavData: Uint8Array,
   polishSurface: STTPolishSurface | null,
 ): void {
+  if (!mayUpdateRetainedCapture()) return;
   atomicWriteFile(retainedRecordingFilePath(), wavData);
   clearRetainedRecordingMetadata();
   persistRetainedPolishSurface(polishSurface, wavData);
@@ -673,6 +676,7 @@ export interface NoSpeechGateResult {
 }
 
 export interface RecordingCaptureState {
+  recorderExited?: Promise<void>;
   physicalPressStop?: boolean;
   vadSpeechDetected?: boolean;
   onCaptureStart?: () => void;
@@ -707,6 +711,8 @@ export function reportInputDeviceLost(reason: DeviceLossReason, captureId: numbe
 }
 
 export function consumeCancelSignalForRecording(): boolean {
+  const owned = recordingJobCancelled();
+  if (owned !== undefined) return owned;
   if (!hasCancelSignal()) return false;
   clearCancelSignal();
   return true;
@@ -732,7 +738,7 @@ export interface VoiceBarUntranscribedRecordingArchiveInput extends Omit<
   VoiceBarRecordingArchiveInput,
   "transcript"
 > {
-  reason: "cancelled" | "captured";
+  reason: "cancelled" | "captured" | "recording-failed";
 }
 
 export interface WaitForInputOptions {
@@ -873,7 +879,7 @@ interface VoiceBarRecordingMetadata {
   backend: string;
   language_mode: string;
   voicelayer_transcript_chars: number;
-  transcription_status: "transcribed" | "cancelled" | "captured";
+  transcription_status: "transcribed" | "cancelled" | "captured" | "recording-failed";
   audio_sha256: string;
   app_version: string | null;
   provenance: RecordingProvenance;
@@ -2296,7 +2302,7 @@ export async function recordToBuffer(
   }
 
   const currentRecordingState = getEffectiveRecordingState();
-  if (currentRecordingState !== "idle") {
+  if (currentRecordingState !== "idle" && !ownsBarCapture()) {
     throw new Error(
       `Recording already in progress (state: ${currentRecordingState})`,
     );
@@ -2349,14 +2355,18 @@ export async function recordToBuffer(
     );
   }
 
-  // Reset VAD state for fresh recording (skip in push-to-end mode — no VAD needed)
-  if (!pushToEnd) {
-    try {
-      await resetVAD();
-    } catch (err) {
+  // PTT uses speech evidence only to renew its silence deadline, never to trim audio or end on VAD silence.
+  let pttSpeechDetectionAvailable = true;
+  try {
+    await resetVAD();
+  } catch (err) {
+    if (!pushToEnd) {
       setRecordingState("idle");
       throw err;
     }
+    // Missing speech evidence cannot authorize a mid-sentence timeout. Explicit Stop/Cancel still work.
+    pttSpeechDetectionAvailable = false;
+    console.error("[voicelayer] PTT speech detection unavailable; silence timeout disabled");
   }
   if (signal?.aborted) setRecordingState("idle");
   throwIfWaitForInputAborted(signal);
@@ -2375,6 +2385,7 @@ export async function recordToBuffer(
     const chunkQueue: Uint8Array[] = [];
     let resolved = false;
     let recorder: RecorderProcess | null = null;
+    let processingSettled: Promise<void> = Promise.resolve();
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
     let abortHandler: (() => void) | undefined;
     let pushToEndStopRequestedAtMs: number | null = null;
@@ -2465,6 +2476,13 @@ export async function recordToBuffer(
         signal.removeEventListener("abort", abortHandler);
       }
 
+      if (captureState) {
+        captureState.recorderExited = (recorder?.exited ?? Promise.resolve()).then(async () => { await processingSettled; });
+        // Observe rejection now without converting the original exit proof to success.
+        // The queue still receives that rejected promise and keeps admission closed.
+        void captureState.recorderExited.catch(() => {});
+        registerBarRecorderExit(captureState.recorderExited);
+      }
       if (recorder) {
         void terminateRecorderProcess(recorder).catch((err) => {
           console.error(
@@ -2544,10 +2562,13 @@ export async function recordToBuffer(
 
     // HOLD already suppresses VAD silence close. The wall-clock deadline must
     // obey the same lock, including when the recorder produces no PCM chunks.
-    // PTT's timeout and stop-tail behavior are deliberately unchanged.
+    // PTT has a silence deadline, renewed by detected speech; Stop still keeps its full tail.
+    let pttLastSpeechAtMs = Date.now();
+    let pttVadPending = false;
     let recordingHeld = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let speechSafetyTimer: ReturnType<typeof setTimeout> | undefined;
+    const pttSilenceTimeoutMs = captureState?.archiveSource === "voicebar" ? 60_000 : timeoutMs;
     const synchronizeRecordingHold = () => {
       if (pushToEnd || resolved) return false;
       const held = isRecordingHoldEngaged();
@@ -2568,10 +2589,19 @@ export async function recordToBuffer(
       const previouslyHeld = recordingHeld;
       if (resolved || synchronizeRecordingHold() || previouslyHeld ||
           (voiceAskVad && hasSpeech)) return;
+      if (pushToEnd) {
+        if (!pttSpeechDetectionAvailable) return;
+        // A slow inference or queued PCM may contain speech. Classify it before deciding it was silence.
+        const remaining = pttSilenceTimeoutMs - (Date.now() - pttLastSpeechAtMs);
+        if (pttVadPending || chunkQueue.length > 0 || remaining > 0) {
+          timer = setTimeout(onTimeout, pttVadPending || chunkQueue.length > 0 ? STOP_POLL_MS : remaining);
+          return;
+        }
+      }
       finish();
     };
-    // Preserve dictation/PTT timing; MCP VAD starts only after the recorder opens.
-    if (!voiceAskVad) timer = setTimeout(onTimeout, timeoutMs);
+    // PTT and MCP VAD start their silence budget only once the microphone opens.
+    if (!voiceAskVad && !pushToEnd) timer = setTimeout(onTimeout, timeoutMs);
     if (signal) {
       abortHandler = () => finish(waitForInputAbortError(signal));
       if (signal.aborted) {
@@ -2627,6 +2657,12 @@ export async function recordToBuffer(
         { stdout: "pipe", stderr: "pipe" },
       );
       recorder = spawnedRecorder;
+      if (captureState) {
+        captureState.recorderExited = spawnedRecorder.exited.then(() => {});
+        void captureState.recorderExited.catch(() => {});
+        registerBarRecorderExit(captureState.recorderExited);
+      }
+      registerBarRecorderExit(spawnedRecorder.exited.then(() => {}));
       // Capture settlement and bounded kill attempts are not physical exit evidence.
       holdVoiceAdmission(spawnedRecorder.exited);
 
@@ -2635,7 +2671,13 @@ export async function recordToBuffer(
         return;
       }
 
-      if (voiceAskVad) timer = setTimeout(onTimeout, timeoutMs);
+      if (voiceAskVad || (pushToEnd && pttSpeechDetectionAvailable)) {
+        pttLastSpeechAtMs = Date.now();
+        timer = setTimeout(onTimeout, pushToEnd ? pttSilenceTimeoutMs : timeoutMs);
+      }
+      if (pushToEnd) speechSafetyTimer = setTimeout(() => {
+        if (!resolved) finish(); // ETAN-ASKS D3: keep and transcribe the complete take at the 20-minute ceiling.
+      }, 20 * 60_000);
       invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
       if (resolved) return;
 
@@ -2761,6 +2803,17 @@ export async function recordToBuffer(
           }
 
           if (pushToEnd) {
+            if (pttSpeechDetectionAvailable) {
+              pttVadPending = true;
+              try {
+                if (isSpeech(await processVADChunk(chunk))) pttLastSpeechAtMs = Date.now();
+              } catch {
+                pttSpeechDetectionAvailable = false;
+                clearTimeout(timer);
+                console.error("[voicelayer] PTT speech detection failed; silence timeout disabled");
+              } finally { pttVadPending = false; }
+              if (resolved) continue;
+            }
             chunkedSession?.pushChunk(chunk, true);
             if (hasStopSignal()) {
               beginPushToEndStopDrain();
@@ -2774,7 +2827,7 @@ export async function recordToBuffer(
             const speechProb = await processVADChunk(chunk);
             // A continuation resuming after a capture with loss evidence finished must not touch the
             // session (rebuilt from the final PCM) or decide anything.
-            if (resolved && (micLossReason || deviceReport)) continue;
+            if (resolved) continue;
             const speechDetected = isSpeech(speechProb);
             chunkedSession?.pushChunk(chunk, speechDetected);
 
@@ -2847,14 +2900,14 @@ export async function recordToBuffer(
       };
 
       // Run reader and processor concurrently
-      Promise.all([
+      processingSettled = Promise.all([
         pipeReader().catch((err) =>
           finish(err instanceof Error ? err : new Error(String(err))),
         ),
         chunkProcessor().catch((err) =>
           finish(err instanceof Error ? err : new Error(String(err))),
         ),
-      ]);
+      ]).then(() => {});
     } catch (err) {
       finish(err instanceof Error ? err : new Error(String(err)));
     }
@@ -2882,7 +2935,7 @@ export async function waitForInput(
   return withCaptureVoiceAdmission(async () => {
   throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
-  if (currentRecordingState !== "idle") {
+  if (currentRecordingState !== "idle" && !ownsBarCapture()) {
     throw new Error(
       `Recording already in progress (state: ${currentRecordingState})`,
     );
@@ -2954,6 +3007,7 @@ export async function waitForInput(
           }
         }
         invokeArchiveCreatedObserver(archivePath, options.onArchiveCreated);
+        if (ownsBarCapture()) await finishBarCapture(captureState.recorderExited ?? Promise.resolve(), archivePath, async () => {});
       } catch (archiveErr) {
         const detail =
           archiveErr instanceof Error ? archiveErr.message : String(archiveErr);
@@ -2975,6 +3029,15 @@ export async function waitForInput(
       push_to_end: pushToEnd,
       archive_source: options.archiveSource ?? null,
     });
+    if (ownsBarCapture() && !(err instanceof RecordingFailureWithCapturedPcm)) {
+      const failedArchive = archiveVoiceBarUntranscribedRecording({
+        audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
+        durationMs: 0, backend: "not-transcribed", reason: "recording-failed",
+      });
+      markArchivedRecordingNotTranscribed(join(failedArchive, "audio.wav"), "recording-failed");
+      invokeArchiveCreatedObserver(failedArchive, options.onArchiveCreated);
+      await finishBarCapture(captureState.recorderExited ?? Promise.resolve(), failedArchive, async () => {});
+    }
     if (options.signal?.aborted) throw err;
     // H4 fix: broadcast error + idle so Voice Bar doesn't get stuck
     broadcast({
@@ -3028,7 +3091,12 @@ export async function waitForInput(
     throwIfWaitForInputAborted(options.signal);
     clearCancelSignal();
     broadcast({ type: "state", state: "idle", source: "recording" });
-    return null;
+    const emptyArchive = ownsBarCapture() ? archiveVoiceBarUntranscribedRecording({
+      audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
+      durationMs: 0, backend: "not-transcribed", reason: recordingJobCancelled() ? "cancelled" : "captured",
+    }) : null;
+    if (emptyArchive) invokeArchiveCreatedObserver(emptyArchive, options.onArchiveCreated);
+    return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), emptyArchive, async () => null);
   }
 
   const postCaptureProcessingStartedAtMs =
@@ -3094,6 +3162,7 @@ export async function waitForInput(
       });
       console.error(`[voicelayer] voicebar archive failed: ${archiveDiagnosticReason(err)}`);
       broadcast({ type: "error", message, recoverable: true });
+      if (ownsRecordingJob()) throw err;
     }
   }
   if (options.archiveSource === "voice_ask") {
@@ -3176,7 +3245,7 @@ export async function waitForInput(
       retained_recording: true,
     });
     broadcast({ type: "state", state: "idle" });
-    return null;
+    return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
   }
 
   if (sttTrim.trimmed) {
@@ -3254,10 +3323,10 @@ export async function waitForInput(
         show_during_bar_recording: true,
         capture_failure: captureFailure.type,
       });
-      return null;
+      return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
     }
     broadcast({ type: "state", state: "idle", source: "recording" });
-    return null;
+    return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
   }
 
   if (pushToEnd) {
@@ -3281,7 +3350,7 @@ export async function waitForInput(
         }
         invokeCaptureObserver("no_speech", options.onNoSpeech);
         broadcast({ type: "state", state: "idle", source: "recording" });
-        return null;
+        return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
       }
     } catch (err) {
       if (options.signal?.aborted) throw err;
@@ -3291,6 +3360,7 @@ export async function waitForInput(
     }
   }
 
+  return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => {
   throwIfWaitForInputAborted(options.signal);
   // Broadcast transcribing state to Voice Bar
   invokeCaptureObserver(
@@ -3458,7 +3528,7 @@ export async function waitForInput(
 
     throwIfWaitForInputAborted(options.signal);
     const gateArchive = voiceBarArchivePath ?? voiceAskArchivePath;
-    const gateDetail = text ? undefined : recordArchivedGateRemoval(gateArchive ? join(gateArchive, "audio.wav") : null, gateRemoval);
+    if (!text) recordArchivedGateRemoval(gateArchive ? join(gateArchive, "audio.wav") : null, gateRemoval);
     let archivedRecordingPath: string | null = null;
     if (text) {
       try {
@@ -3514,14 +3584,14 @@ export async function waitForInput(
       markArchivedRecordingNotTranscribed(
         join(voiceBarArchivePath, "audio.wav"),
         "empty-transcript",
-        { detail: gateDetail },
+        {},
       );
     }
 
     throwIfWaitForInputAborted(options.signal);
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {
-      broadcast({
+      await deliverInputTranscription({
         type: "transcription",
         text,
         ...transcriptionPolishMetadata(finalized),
@@ -3537,6 +3607,14 @@ export async function waitForInput(
         dictationReceipt
           ? { dictation_receipt: dictationReceipt }
           : {}),
+      }, outcome => {
+        if (archivedRecordingPath) {
+          updateArchivedRecordingMetadata(join(archivedRecordingPath, "audio.wav"), metadata => {
+            metadata.delivery_status = outcome;
+            metadata.delivery_note = outcome === "not_inserted" ? "Not pasted: target changed" : "Paste unverified. Text kept in History.";
+          });
+          broadcast({ type: "archive_metadata_updated", recording_path: join(archivedRecordingPath, "audio.wav") });
+        }
       });
     }
     setRecordingState("idle");
@@ -3586,6 +3664,7 @@ export async function waitForInput(
       if (existsSync(wavPath)) unlinkSync(wavPath);
     } catch {}
   }
+  });
   });
 }
 
@@ -3789,6 +3868,7 @@ export type ArchivedNotTranscribedReason =
   | "no-speech"
   | "vad-no-speech"
   | "empty-transcript"
+  | "recording-failed"
   | "transcription-failed";
 
 /** Phrase-free gate facts survive even when History keeps an older saved transcript. */
@@ -3801,8 +3881,6 @@ function recordArchivedGateRemoval(audioPath: string | null, removal: STTAttempt
       // A failed retry cannot relabel the saved transcript as not transcribed.
       delete metadata.not_transcribed_reason;
       delete metadata.not_transcribed_detail;
-    } else {
-      metadata.not_transcribed_detail = detail;
     }
   });
   broadcast({ type: "archive_metadata_updated", recording_path: audioPath });
@@ -4216,13 +4294,13 @@ async function retranscribeVoiceAskArchiveAdmitted(
     if (voiceAskRetranscriptionOwner) {
       throw new Error("voice_ask archive retranscription is already in progress");
     }
-    operationReservation = reserveArchiveRetranscription();
-    if (!operationReservation) {
+    operationReservation = ownsHistoryJob() ? null : reserveArchiveRetranscription();
+    if (!ownsHistoryJob() && !operationReservation) {
       throw new Error(
         "voice_ask archive retranscription refused because another voice operation is in progress",
       );
     }
-    if (getEffectiveRecordingState() !== "idle") {
+    if (getEffectiveRecordingState() !== "idle" && !ownsHistoryJob()) {
       throw new Error(
         `voice_ask archive retranscription requires idle voice state (current: ${getEffectiveRecordingState()})`,
       );
@@ -4256,6 +4334,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
         `voice_ask archive ${archiveId} produced an empty retranscription`,
       );
     }
+    if (recordingJobCancelled()) throw new Error("History retranscription cancelled; audio saved");
     revalidateVoiceAskArchiveSnapshot(snapshot);
     const languageMode = getLanguageModeFromEnv();
     const metadata: Record<string, unknown> = {
@@ -4293,7 +4372,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
       });
     }
     if (options.delivery === "history") {
-      broadcast({
+      await deliverInputTranscription({
         type: "transcription",
         text,
         recording_path: snapshot.audioPath,
@@ -4445,8 +4524,9 @@ async function retranscribeRecordingCaptureAdmitted(
         );
       }
       console.error(`[voicelayer] Archived retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
-      const gateDetail = text ? undefined : recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
+      if (!text) recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
 
+      if (recordingJobCancelled()) return null;
       if (text) {
         updateArchivedTranscript(wavPath, text, {
           backend: result.backend,
@@ -4456,7 +4536,7 @@ async function retranscribeRecordingCaptureAdmitted(
           polishStatus: finalized.polishStatus,
         });
         recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
-        broadcast({
+        await deliverInputTranscription({
           type: "transcription",
           text,
           recording_path: eventAudioPath,
@@ -4467,8 +4547,7 @@ async function retranscribeRecordingCaptureAdmitted(
       } else {
         // A silent capture re-decoded to nothing: the original reason says more.
         markArchivedRecordingNotTranscribed(wavPath, "empty-transcript", {
-          keepExisting: !gateDetail,
-          detail: gateDetail,
+          keepExisting: true,
           eventPath: eventAudioPath,
         });
       }
@@ -4569,6 +4648,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
       console.error(`[voicelayer] Retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
       if (!text) recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
 
+      if (recordingJobCancelled()) return null;
       if (text) {
         if (archivedAudioPath) {
           updateArchivedTranscript(archivedAudioPath, text, {
@@ -4580,7 +4660,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
           });
           recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
         }
-        broadcast({
+        await deliverInputTranscription({
           type: "transcription",
           text,
           ...(archivedAudioPath ? {

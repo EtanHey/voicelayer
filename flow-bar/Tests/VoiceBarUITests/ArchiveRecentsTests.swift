@@ -12,7 +12,6 @@ final class ArchiveRecentsTests: XCTestCase {
             recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { entries }, recentTranscriptionEntriesSaver: { _ in }
         )
-        state.minimumTranscribingDisplayDuration = 0
         state.frontmostAppProvider = { nil }
         state.pasteHandler = { _ in XCTFail("History must never paste")
             return false
@@ -121,7 +120,6 @@ final class ArchiveRecentsTests: XCTestCase {
                 [RecentTranscriptionEntry(text: "Existing words", recordingPath: self.oldPath, createdAt: self.oldDate)]
             }, recentTranscriptionEntriesSaver: { saved = $0 }
         )
-        state.minimumTranscribingDisplayDuration = 0
         retranscribe(state, path: newPath, text: "Recovered words", date: newDate)
         XCTAssertEqual(savedTexts, ["Recovered words", "Existing words"])
         XCTAssertEqual(saved.first?.recordingPath, newPath)

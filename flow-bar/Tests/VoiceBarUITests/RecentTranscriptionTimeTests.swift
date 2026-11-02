@@ -57,7 +57,6 @@ final class RecentTranscriptionTimeTests: XCTestCase {
             },
             recentTranscriptionEntriesSaver: { saved = $0 }
         )
-        state.minimumTranscribingDisplayDuration = 0
 
         state.handleEvent(["type": "transcription", "text": "A fresh dictation", "partial": false,
                            "recording_path": "/tmp/fresh/audio.wav"])

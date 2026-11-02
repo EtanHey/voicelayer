@@ -1,0 +1,53 @@
+{
+  "module": "PttSilenceTimeout",
+  "sourceBaseline": "01ca5dec",
+  "sources": [
+    "src/input.ts",
+    "src/__tests__/input-durability.test.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "WallClockMutant": {
+      "role": "mutant",
+      "target": "NoTimeoutDuringSpeech",
+      "kind": "invariant"
+    },
+    "DropArchiveMutant": {
+      "role": "mutant",
+      "target": "EveryEndedTakeRetained",
+      "kind": "invariant"
+    },
+    "TrimWordsMutant": {
+      "role": "mutant",
+      "target": "RawAccurate",
+      "kind": "invariant"
+    },
+    "StallMutant": {
+      "role": "mutant",
+      "target": "SettlesAfterSilence",
+      "kind": "temporal"
+    },
+    "NoRenewalMutant": {
+      "role": "mutant",
+      "target": "SpeechRenewsDeadline",
+      "kind": "invariant"
+    },
+    "NoCapMutant": {
+      "role": "mutant",
+      "target": "CapStops",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "CapStops",
+    "EveryEndedTakeRetained",
+    "NoTimeoutDuringSpeech",
+    "RawAccurate",
+    "SettlesAfterSilence",
+    "SpeechRenewsDeadline"
+  ]
+}

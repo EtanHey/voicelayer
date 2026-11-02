@@ -259,7 +259,6 @@ final class LaneGFormalConformanceTests: XCTestCase {
             let state = state(); var commands: [[String: Any]] = []
             state.sendCommand = { commands.append($0) }
             if row.kind == "delivery" {
-                state.minimumTranscribingDisplayDuration = 0.01
                 for step in try XCTUnwrap(row.trace) {
                     let id = contract.captureIds[step.target] ?? 0
                     switch step.event {
@@ -272,12 +271,14 @@ final class LaneGFormalConformanceTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(100))
                 if Set(state.recentTranscriptionEntries.map(\.text)) != Set(try XCTUnwrap(row.delivered).map { "Synthetic final \($0)" }) { errors[row.policy]!.append("delivery graph") }
             } else {
-                state.handleEvent(["type": "state", "state": "transcribing", contract.cancelIdField: try XCTUnwrap(contract.captureIds["A"])])
+                let a = String(try XCTUnwrap(contract.captureIds["A"]))
+                state.handleEvent(["type": "state", "state": "transcribing", "mic_take_id": NSNull(),
+                    "recording_jobs": [["take_id": a, "kind": "live", "phase": "processing"]]])
                 let router = VoiceBarCommandRouter(voiceState: state)
                 switch row.kind { case "F5": router.handleHotkeyHoldStart(); case "click": router.handleCancel(); case "Escape": router.handleEscape(); default: XCTFail("Unknown graph action") }
                 let expected = try XCTUnwrap(row.command)
                 if commands.compactMap({ $0["cmd"] as? String }) != (expected == "none" ? [] : [expected]) { errors[row.policy]!.append(row.kind) }
-                if row.policy == "Fixed", expected == "cancel", commands.last?[contract.cancelIdField] as? Int != contract.captureIds[try XCTUnwrap(row.take)] { errors[row.policy]!.append("\(row.kind) missing take id") }
+                if row.policy == "Fixed", expected == "cancel", commands.last?[contract.cancelIdField] as? String != String(try XCTUnwrap(contract.captureIds[try XCTUnwrap(row.take)])) { errors[row.policy]!.append("\(row.kind) missing take id") }
             }
         }
         for policy in ["Current", "Fixed"] { check(errors[policy]!, family: "\(policy) native graph paths", expectedFailure: policy.lowercased() != contract.pipelinePolicy) }

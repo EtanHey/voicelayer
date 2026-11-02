@@ -67,7 +67,8 @@ class VoiceBarCommandRouter: BarCommandRouting {
 
     /// P16: a parked read is silent, so it routes like idle: F5 records and the read stays parked.
     private var canStartRecording: Bool {
-        voiceState.mode == .idle || voiceState.mode == .error || voiceState.isPlaybackPaused
+        voiceState.mode == .idle || voiceState.mode == .error || voiceState.isPlaybackPaused ||
+            (voiceState.mode == .transcribing && voiceState.canRecordDuringProcessing)
     }
 
     func handlePrimaryTap() {
@@ -92,7 +93,8 @@ class VoiceBarCommandRouter: BarCommandRouting {
         case .speaking:
             handleStop()
         case .recording, .transcribing:
-            handleCancel()
+            resetHotkeyState()
+            voiceState.cancel(bypassingProcessingGuard: true)
         default:
             return
         }
@@ -131,6 +133,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeyHoldStart() {
+        if voiceState.isRecordingDrainPending { voiceState.rejectRecordingDuringDrain(); return }
         if voiceState.isPlaybackPaused {
             voiceState.record(pressToTalk: true)
             return
@@ -139,14 +142,14 @@ class VoiceBarCommandRouter: BarCommandRouting {
         case .idle, .error:
             voiceState.record(pressToTalk: true)
         case .transcribing:
-            handleCancel()
+            if voiceState.canRecordDuringProcessing { voiceState.record(pressToTalk: true) }
         default:
             return
         }
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
-        guard holdDuration > 0, !voiceState.isPlaybackPaused else { return }
+        guard holdDuration > 0, !voiceState.isPlaybackPaused, voiceState.mode == .recording || voiceState.mode == .speaking else { return }
         handleStop()
     }
 
@@ -159,12 +162,13 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeySingleTap() {
+        if voiceState.isRecordingDrainPending { voiceState.rejectRecordingDuringDrain(); return }
         guard !voiceState.isPlaybackPaused else { return }
         switch voiceState.mode {
         case .recording, .speaking:
             handleStop()
         case .transcribing:
-            handleCancel()
+            if voiceState.canRecordDuringProcessing { voiceState.record(pressToTalk: true) }
         default:
             return
         }
@@ -175,8 +179,6 @@ class VoiceBarCommandRouter: BarCommandRouting {
             voiceState.record(pressToTalk: true)
         } else if voiceState.mode == .recording {
             handleStop()
-        } else if voiceState.mode == .transcribing {
-            handleCancel()
         }
     }
 

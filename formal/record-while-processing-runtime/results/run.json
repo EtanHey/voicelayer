@@ -1,0 +1,183 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/record-while-processing-runtime/RuntimeOwnership.tla": "311c61362501bd916e555687609066745b93b02ef4921d33c9a40bbe3abcf67f",
+    "formal/record-while-processing-runtime/checks.json": "b2434321c6f4587d0f94155a381bb06d89e2d4a584a816f97e81d02673604f98",
+    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/record-while-processing-runtime/StaleGuardMutant.cfg": "83cb5ecb92084d6c675e3a6a53647422420e949aa14f65d409250ded8544868a",
+    "formal/record-while-processing-runtime/FailedMicMutant.cfg": "071be25abf6e031596d8ad10798a35116d026827d5c2f9c283efe7a41bb026a1",
+    "formal/record-while-processing-runtime/StallMutant.cfg": "7569660d9a9006269fb24a86da17c8e213f9c5f314512950dd83bad8bfa663fe",
+    "formal/record-while-processing-runtime/LegacyAckMutant.cfg": "ec73537127109bd08ad030f11efbd3ea8ffa948896990dd93c4ff919b14e54cc",
+    "formal/record-while-processing-runtime/NoAckBoundMutant.cfg": "de7ade11b3886bf94f0ae65b4969102cec4200477df215494832055b8578c267",
+    "formal/record-while-processing-runtime/UnreadableOverlapMutant.cfg": "c92870d4db8a167ac3acbec8d896fc4f64dfc56424d7b1539696fa3e60945e75",
+    "formal/record-while-processing-runtime/GuardedEscapeMutant.cfg": "7a1047296b35abf79ec9ab3daf61b48c3207972225634e36669ea4c058957a12",
+    "formal/record-while-processing-runtime/EscapeMicMutant.cfg": "5cf02cd847dfac1b51a4068b05db2a538b47946662c3117976ed8c9a060ebe62",
+    "formal/record-while-processing-runtime/UnreadableRefusalMutant.cfg": "98eaff9927fbcf96d5654cf5a81bc8f6e403292a8cf529b3970cc2e436330d2a",
+    "formal/record-while-processing-runtime/SilentDrainMutant.cfg": "80fb4acba1e7048ed9dbe3a1798d83cb85c19f537309e3559ec254d3646973b2",
+    "formal/record-while-processing-runtime/EscapeOlderMutant.cfg": "526b827ac8372f81c3c82cefb9814ba3bd84e32a3cf39f032922d54dd0cdaa33",
+    "formal/record-while-processing-runtime/RetargetMutant.cfg": "4c4afdc331422c24f1f8986487c6993ea136d3c31bcd85722db965870224fa98",
+    "formal/record-while-processing-runtime/FocusStealMutant.cfg": "bdba630660a9dc9b238919771e70634506ff8393cd878c2a814241eb2ca1a8fd",
+    "formal/record-while-processing-runtime/Fixed.cfg": "fe6a7e14d318119b6aff74057bb7dc48d1c1ae83bf9c2eeb2815e1e6bfaf2c6b",
+    "src/recording-jobs.ts": "f26e7a12c193f773744e3dd38f6e7590925ad0ed900d2c0667be8e991a7dd989",
+    "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
+    "src/socket-handlers.ts": "b82c1c831dd4986adff5685c3a0df318c585e848ec92980116a50f3c9f15a5a1",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "f296f4d72cb7a54527734c4bf4ecf17adb47e135bdd05c7b3c7493d3aec3a779",
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "71f2bcef238f431baa75d4d67134eaf518c2ba1a047911490b39b8f0b71a6102",
+    "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368"
+  },
+  "mutants": {
+    "DeliveryAckBound": [
+      "NoAckBoundMutant"
+    ],
+    "DrainRequestVisible": [
+      "SilentDrainMutant"
+    ],
+    "EscapeTargetsNewest": [
+      "EscapeMicMutant",
+      "EscapeOlderMutant"
+    ],
+    "GuardedEscape": [
+      "GuardedEscapeMutant"
+    ],
+    "LegacyNoAckWait": [
+      "LegacyAckMutant"
+    ],
+    "MicReleaseOnFailure": [
+      "FailedMicMutant"
+    ],
+    "NoDeliveryOutsideCapturedTarget": [
+      "RetargetMutant",
+      "UnreadableOverlapMutant"
+    ],
+    "NoFocusStealDuringCapture": [
+      "FocusStealMutant"
+    ],
+    "NoStaleGuard": [
+      "StaleGuardMutant"
+    ],
+    "ProcessingSettles": [
+      "StallMutant"
+    ],
+    "UnreadableIdentitySingleTakeDelivers": [
+      "UnreadableRefusalMutant"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "05adb00eb88d2f8b0988dfab2782ba352bfc534f4240581333a78b8d7121101f"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 346190,
+      "distinct": 101390
+    },
+    "EscapeMicMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "EscapeTargetsNewest",
+      "status": "EXPECTED_FAIL",
+      "generated": 679,
+      "distinct": 464
+    },
+    "EscapeOlderMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "EscapeTargetsNewest",
+      "status": "EXPECTED_FAIL",
+      "generated": 14690,
+      "distinct": 6412
+    },
+    "GuardedEscapeMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "GuardedEscape",
+      "status": "EXPECTED_FAIL",
+      "generated": 14686,
+      "distinct": 6413
+    },
+    "StaleGuardMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "NoStaleGuard",
+      "status": "EXPECTED_FAIL",
+      "generated": 137951,
+      "distinct": 45508
+    },
+    "RetargetMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDeliveryOutsideCapturedTarget",
+      "status": "EXPECTED_FAIL",
+      "generated": 3131,
+      "distinct": 1980
+    },
+    "FocusStealMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoFocusStealDuringCapture",
+      "status": "EXPECTED_FAIL",
+      "generated": 8348,
+      "distinct": 4547
+    },
+    "SilentDrainMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DrainRequestVisible",
+      "status": "EXPECTED_FAIL",
+      "generated": 35,
+      "distinct": 32
+    },
+    "LegacyAckMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "LegacyNoAckWait",
+      "status": "EXPECTED_FAIL",
+      "generated": 579,
+      "distinct": 447
+    },
+    "NoAckBoundMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "DeliveryAckBound",
+      "status": "EXPECTED_FAIL",
+      "generated": 149582,
+      "distinct": 46781
+    },
+    "StallMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "ProcessingSettles",
+      "status": "EXPECTED_FAIL",
+      "generated": 109102,
+      "distinct": 30222
+    },
+    "FailedMicMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MicReleaseOnFailure",
+      "status": "EXPECTED_FAIL",
+      "generated": 8,
+      "distinct": 8
+    },
+    "UnreadableOverlapMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDeliveryOutsideCapturedTarget",
+      "status": "EXPECTED_FAIL",
+      "generated": 1758,
+      "distinct": 1209
+    },
+    "UnreadableRefusalMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "UnreadableIdentitySingleTakeDelivers",
+      "status": "EXPECTED_FAIL",
+      "generated": 147,
+      "distinct": 119
+    }
+  }
+}

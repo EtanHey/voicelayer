@@ -1,3 +1,4 @@
+import { finishSyntheticCapture } from "./setup/recording-jobs-fixture";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { writeFileSync, unlinkSync } from "fs";
 import { LOCK_FILE } from "../paths";
@@ -155,7 +156,7 @@ describe("explicit whisper-server unload", () => {
       postUnloadListeners: () => listeners,
     });
     const recording = spyOn(input, "getRecordingState").mockReturnValue("idle");
-    const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => null));
     try {
       const unload = unloadOwnedServer(() => false);
       expect(handleSocketCommand({ cmd: "record", id: "f5-unload-race" }))

@@ -1,0 +1,15 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoTimeoutDuringSpeech",
+  "status": "EXPECTED_FAIL",
+  "generated": 104,
+  "distinct": 89,
+  "trace": [
+    "s = [ wall |-> 0,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ wall |-> 1,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ wall |-> 1,\n  phase |-> \"recording\",\n  speech |-> TRUE,\n  silence |-> 0,\n  event |-> \"speech\",\n  pcm |-> <<TRUE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ wall |-> 2,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<TRUE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ wall |-> 2,\n  phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 1,\n  event |-> \"end\",\n  pcm |-> <<TRUE>>,\n  saved |-> <<TRUE>>,\n  text |-> <<>> ]"
+  ]
+}

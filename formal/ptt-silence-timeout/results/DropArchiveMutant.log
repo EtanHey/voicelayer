@@ -1,0 +1,15 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "EveryEndedTakeRetained",
+  "status": "EXPECTED_FAIL",
+  "generated": 69,
+  "distinct": 61,
+  "trace": [
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"silence\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 2,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 2,\n  event |-> \"end\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
+  ]
+}

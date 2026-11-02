@@ -49,7 +49,7 @@ for (const policy of ["Current", "Fixed"] as const) {
           if (row.token !== "none" && row.token !== "global" && actual.stop && !actual.stop.includes(String(contract.captureIds[row.token])))
             errors.push(`${tag}: unscoped stop signal`);
         }
-      } finally { runtime.close(); }
+      } finally { await runtime.close(); }
       console.info(`${policy}/${command}: replayed ${cases.length} TLC graph contexts; ${errors.length} divergences`);
       if (policy.toLowerCase() === contract.pipelinePolicy) expect(errors).toEqual([]);
       else if (policy === "Fixed") {

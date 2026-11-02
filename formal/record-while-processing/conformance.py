@@ -21,7 +21,9 @@ for policy, graph in graphs(directory).items():
         event, take = after['event'], after['target']
         mic = [t for t in ['A', 'B'] if before['stage'][t] == 'recording']
         worker = [t for t in ['A', 'B'] if before['stage'][t] in ['transcribing', 'cancelling']]
-        if event in ['socket', 'click', 'Escape'] and take in ['A', 'B']:
+        action_context = (event == 'socket' and before['stage'].get(take) == 'fresh') or (
+            event in ['click', 'Escape'] and before['stage'].get(take) in ['recording','captured','transcribing','cancelling','ready'])
+        if action_context and event in ['socket', 'click', 'Escape'] and take in ['A', 'B']:
             phase = 'recording' if mic else 'transcribing' if worker else 'idle'
             row = dict(policy=policy, command='record' if event == 'socket' else 'cancel', origin=event,
                        phase=phase, before=before['stage'], target=take, requestId=after['requestId'],

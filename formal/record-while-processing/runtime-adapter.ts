@@ -12,6 +12,8 @@ import * as tts from "../../src/tts";
 import { STOP_FILE } from "../../src/paths";
 import { setRecordingState } from "../../src/recording-state";
 import { handleSocketCommand } from "../../src/socket-handlers";
+import { runBarCapture, runHistoryTranscription, finishBarCapture, cancelRecordingJob, recordingJobCancellationState, recordingJobsSnapshot } from "../../src/recording-jobs";
+import { randomUUID } from "node:crypto";
 import type { SocketCommand } from "../../src/socket-protocol";
 
 export const wireCase = z.object({ policy: z.enum(["Current", "Fixed"]), command: z.enum(["record", "cancel"]),
@@ -29,7 +31,7 @@ export function fixture() {
   writeFileSync(gate, JSON.stringify({ version: 1, kind: "OPEN", generation: 0, released: null }));
   mkdirSync(gate + ".admissions");
   const signal = spyOn(booking, "setCancelSignal").mockImplementation(() => {});
-  const mocks = [signal, spyOn(input, "waitForInput").mockResolvedValue(null),
+  const mocks = [signal, spyOn(input, "waitForInput").mockImplementation(() => finishBarCapture(Promise.resolve(), "fixture.wav", async () => null)),
     spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }),
     spyOn(socket, "broadcast").mockImplementation(() => {}), spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0),
     spyOn(tts, "stopPlayback").mockImplementation(() => {}), spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined),
@@ -37,12 +39,49 @@ export function fixture() {
   return {
     async dispatch(row: WireCase, contract: z.infer<typeof contractSchema>) {
       booking.clearStopSignal(); booking.clearCancelSignal(); signal.mockClear();
-      // Replace this seeding operation with Lane I's real owned-take fixture, using row.before and captureIds.
-      setRecordingState(row.phase);
-      const command: SocketCommand = row.command === "record" ? { cmd: "record", press_to_talk: true, timeout_seconds: 3600 } :
-        { cmd: "cancel", [contract.cancelIdField]: contract.captureIds[row.requestId] ?? 999 };
-      const reply = await handleSocketCommand(command);
-      return { reply, signals: JSON.parse(JSON.stringify(signal.mock.calls)), stop: existsSync(STOP_FILE) ? readFileSync(STOP_FILE, "utf8") : "" };
+      const tasks: Promise<unknown>[] = [], release: Array<() => void> = [];
+      const ids = Object.fromEntries(["A","B"].map(t => [t, String(contract.captureIds[t]) + "-" + randomUUID()]));
+      const seedWorker = async (take: string, history = false) => {
+        const entered = Promise.withResolvers<void>(), done = Promise.withResolvers<void>(); release.push(done.resolve);
+        const work = async () => { entered.resolve(); await done.promise; return null; };
+        tasks.push(history ? runHistoryTranscription(take, work) : runBarCapture(take, () => finishBarCapture(Promise.resolve(), "fixture.wav", work)));
+        await entered.promise;
+      };
+      const settle = async () => {
+        release.forEach(done => done()); await Promise.allSettled(tasks);
+        const deadline = performance.now()+2000;
+        while (recordingJobsSnapshot().recording_jobs.length) {
+          if (performance.now()>deadline) throw Error("TLC owned fixture did not settle");
+          await Bun.sleep(1);
+        }
+      };
+      try {
+        const worker = ["A","B"].find(t => ["transcribing","cancelling","ready"].includes(row.before[t] ?? ""));
+        if (worker) await seedWorker(ids[worker]!);
+        const captured = ["A","B"].filter(t => row.before[t] === "captured");
+        if (captured.length && !worker) await seedWorker("fixture-" + randomUUID(), true);
+        for (const t of captured) {
+          const done = Promise.withResolvers<void>(); release.push(done.resolve);
+          tasks.push(runBarCapture(ids[t]!, () => finishBarCapture(Promise.resolve(), "fixture.wav", async () => { await done.promise; return null; })));
+          while (recordingJobsSnapshot().mic_take_id) await Bun.sleep(1);
+        }
+        for (const t of ["A","B"].filter(t => row.before[t] === "recording")) {
+          const done = Promise.withResolvers<void>(); release.push(done.resolve);
+          tasks.push(runBarCapture(ids[t]!, async () => { await done.promise; return finishBarCapture(Promise.resolve(), "fixture.wav", async () => null); }));
+        }
+        for (const t of ["A","B"]) if (row.before[t] === "cancelling") cancelRecordingJob(ids[t]);
+        const before = Object.fromEntries(["A","B"].map(t => [t, recordingJobCancellationState(ids[t]!) === true]));
+        const command: SocketCommand = row.command === "record"
+          ? { cmd: "record", take_id: ids[row.target], press_to_talk: true, timeout_seconds: 3600 }
+          : { cmd: "cancel", take_id: ids[row.requestId] ?? "stale" };
+        const reply = await handleSocketCommand(command);
+        const accepted = reply && "outcome" in reply && reply.outcome === "accept";
+        const signals = row.command === "cancel" ? ["A","B"].filter(t =>
+          recordingJobCancellationState(ids[t]!) === true && (!before[t] || (accepted && ids[t] === command.take_id)))
+          .map(t => [contract.captureIds[t]]) : [];
+        return { reply, signals, stop: existsSync(STOP_FILE) ? readFileSync(STOP_FILE, "utf8") : "" };
+      } finally { await settle(); }
+
     },
     close() {
       setRecordingState("idle"); booking.clearStopSignal(); booking.clearCancelSignal();

@@ -125,6 +125,7 @@ describe("socket health command", () => {
   it("returns daemon health snapshot with model status", async () => {
     const response = await handleSocketCommand({ cmd: "health" });
     expect(response).toEqual({
+      recording_jobs: [], processing_count: 0, mic_take_id: null,
       type: "health",
       uptime_seconds: 42,
       queue_depth: 3,

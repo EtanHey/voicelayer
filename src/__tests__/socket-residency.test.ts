@@ -1,3 +1,4 @@
+import { finishSyntheticCapture } from "./setup/recording-jobs-fixture";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { handleSocketCommand } from "../socket-handlers";
 import * as input from "../input";
@@ -507,7 +508,7 @@ describe("socket residency command", () => {
 
   test("F5 capture preempts unload maintenance and keeps the daemon booking", () => {
     spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => null));
     spies.push(capture);
     expect(booking.bookVoiceSession().success).toBe(true);
     const release = booking.reserveVoiceMaintenance(() => false);

@@ -30,6 +30,7 @@ public struct SettingsHistoryMissingTranscript: Equatable, Sendable {
             return "Not transcribed: too quiet to transcribe"
         case "empty-transcript":
             return "Transcribed, but no words were recognized"
+        case "recording-failed": return "Recording failed; no audio was captured"
         case "transcription-failed":
             guard let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty else {
                 return "Transcription failed"
@@ -61,6 +62,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     public let micDisconnectedAtMs: Int?
     /// MICDROP2: the archived note; wins over a label rebuilt from `micDisconnectedAtMs`.
     public let micDisconnectNote: String?
+    public let deliveryNote: String?
     public let modelLabel: String?
     public let performanceEffort: VoiceBarPerformanceEffort?
     public let inputDeviceLabel: String?
@@ -79,6 +81,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         processingDurationMs: Int? = nil,
         micDisconnectedAtMs: Int? = nil,
         micDisconnectNote: String? = nil,
+        deliveryNote: String? = nil,
         modelLabel: String? = nil,
         performanceEffort: VoiceBarPerformanceEffort? = nil,
         inputDeviceLabel: String? = nil,
@@ -96,6 +99,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.processingDurationMs = processingDurationMs
         self.micDisconnectedAtMs = micDisconnectedAtMs
         self.micDisconnectNote = micDisconnectNote
+        self.deliveryNote = deliveryNote
         self.modelLabel = modelLabel
         self.performanceEffort = performanceEffort
         self.inputDeviceLabel = inputDeviceLabel
@@ -273,6 +277,7 @@ public enum SettingsHistoryArchive {
             micDisconnectedAtMs: metadata?.micDisconnectedAtMs,
             micDisconnectNote: metadata?.micDisconnectNote?
                 .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty,
+            deliveryNote: metadata?.deliveryNote,
             modelLabel: VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath),
             performanceEffort: metadata?.provenance?.performanceEffort.flatMap(VoiceBarPerformanceEffort.init),
             inputDeviceLabel: metadata?.inputDeviceName?

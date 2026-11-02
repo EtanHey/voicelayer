@@ -148,7 +148,6 @@ final class VoiceStatePasteTests: XCTestCase {
             target = FakeRunningApplication(bundleIdentifier: bundle, processIdentifier: 51515)
             front = target
             state.sendCommand = { _ in }
-            state.minimumTranscribingDisplayDuration = 0
             state.pasteConfirmationDelay = 0.25
             state.frontmostAppProvider = { [unowned self] in front }
             state.targetAppActivator = { [unowned self] in activated.append($0.processIdentifier) }
@@ -230,7 +229,6 @@ final class VoiceStatePasteTests: XCTestCase {
         let state = VoiceState()
         let editor = FakeRunningApplication(bundleIdentifier: bundleIdentifier, processIdentifier: 51515)
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.frontmostAppProvider = { editor }
         state.targetAppActivator = { _ in }
@@ -1182,7 +1180,6 @@ final class VoiceStatePasteTests: XCTestCase {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1222,7 +1219,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
         state.recordStartLateRecoveryWindow = .milliseconds(20)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1268,7 +1264,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
         state.recordStartLateRecoveryWindow = .seconds(10)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1315,7 +1310,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
         state.recordStartLateRecoveryWindow = .seconds(10)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1358,7 +1352,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
         state.recordStartLateRecoveryWindow = .seconds(10)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1454,7 +1447,6 @@ final class VoiceStatePasteTests: XCTestCase {
     func testUnmarkedRecordingFailsClosedAndDoesNotAutoPaste() {
         let state = VoiceState()
         state.setConnectionStatus(true)
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.sendCommand = { _ in }
         var pastedTexts: [String] = []
@@ -1493,7 +1485,6 @@ final class VoiceStatePasteTests: XCTestCase {
         // must make this test fail even while the superseded-shadow term remains.
         let state = VoiceState()
         state.setConnectionStatus(true)
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.sendCommand = { _ in }
         var pastedTexts: [String] = []
@@ -1684,7 +1675,6 @@ final class VoiceStatePasteTests: XCTestCase {
     func testRejectedRecordAckClearsRemoteOwnershipBeforeNextPttPaste() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         var recordCommand: [String: Any]?
         state.sendCommand = { command in
@@ -1813,7 +1803,6 @@ final class VoiceStatePasteTests: XCTestCase {
     ) -> VoiceState {
         let state = VoiceState()
         state.setConnectionStatus(true)
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.sendCommand = { _ in }
         state.handleEvent([
@@ -1866,10 +1855,9 @@ final class VoiceStatePasteTests: XCTestCase {
         )
     }
 
-    func testFastFinalTranscriptionKeepsBlueStateUntilPendingRecordingIdleCanApply() async {
+    func testFastFinalTranscriptionDispatchesBeforeDisplayFloor() async {
         let state = VoiceState()
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0.12
         state.pasteConfirmationDelay = 0
 
         var pastedTexts: [String] = []
@@ -1893,8 +1881,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "source": "recording",
         ])
 
-        XCTAssertEqual(state.mode, .transcribing)
-        XCTAssertEqual(pastedTexts, [])
+        XCTAssertEqual(pastedTexts, ["fast final transcript"])
 
         do {
             let settled = await settle { !pastedTexts.isEmpty && state.mode == .idle }
@@ -1910,7 +1897,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.sendCommand = { _ in }
         state.recordingIdleFinalTranscriptGrace = .milliseconds(20)
         state.pasteConfirmationDelay = 0
-        state.minimumTranscribingDisplayDuration = 0
 
         var pastedTexts: [String] = []
         state.pasteHandler = { text in

@@ -1,0 +1,99 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/ptt-silence-timeout/PttSilenceTimeout.tla": "2c8f646a93a8d822f7068a85000014a593f6702a11a80668f49b0ea3ad494f22",
+    "formal/ptt-silence-timeout/checks.json": "35f005351abca736425fcb3f16dfa6b7479103ddd34ecfe204c594522f0b1b03",
+    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/ptt-silence-timeout/NoCapMutant.cfg": "c6e180f4505c9989d50023ffe5c64dede36b8c64063d41f6b1ffa59539b67d46",
+    "formal/ptt-silence-timeout/StallMutant.cfg": "b4efb53c3296eb89a6a359b31e1ec4a09c2840c2740b34768ba95755cb7f1439",
+    "formal/ptt-silence-timeout/WallClockMutant.cfg": "5d024379304538d9cc4770250f91e59dc33d3ee16101f9e215a19c39d60942cb",
+    "formal/ptt-silence-timeout/DropArchiveMutant.cfg": "14b8648e4ab7e2580aded9137d23679ca95a4a55092e1f3f8492ef46dd144943",
+    "formal/ptt-silence-timeout/TrimWordsMutant.cfg": "9b357bb658c9c4d3bd3ed7da91d23c87387de6d0857887a7c734a133924536f1",
+    "formal/ptt-silence-timeout/NoRenewalMutant.cfg": "8086bcbf5f618d61bab9ba9946a7009d172548f64f5d7deff4a5b8b8846c05fd",
+    "formal/ptt-silence-timeout/Fixed.cfg": "c030f2dfd7e5d090c1cf151a75240e1efe613cfd0ade1e2a77cf5db34035613b",
+    "src/input.ts": "526a8b2fd27c88b275f97810161c3fc8c12c159123280c4ef890d2d7b671f87a",
+    "src/__tests__/input-durability.test.ts": "d03ec5211314c98c42b63ecd8d59e3ddd01bd6531262ef064501913e414d1891"
+  },
+  "mutants": {
+    "CapStops": [
+      "NoCapMutant"
+    ],
+    "EveryEndedTakeRetained": [
+      "DropArchiveMutant"
+    ],
+    "NoTimeoutDuringSpeech": [
+      "WallClockMutant"
+    ],
+    "RawAccurate": [
+      "TrimWordsMutant"
+    ],
+    "SettlesAfterSilence": [
+      "StallMutant"
+    ],
+    "SpeechRenewsDeadline": [
+      "NoRenewalMutant"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "ea833d5ce4255a255347bf2565adf51cb55d23d2fb76c8e6b0b95080680709f0"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 20810,
+      "distinct": 8318
+    },
+    "WallClockMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoTimeoutDuringSpeech",
+      "status": "EXPECTED_FAIL",
+      "generated": 104,
+      "distinct": 89
+    },
+    "DropArchiveMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "EveryEndedTakeRetained",
+      "status": "EXPECTED_FAIL",
+      "generated": 69,
+      "distinct": 61
+    },
+    "TrimWordsMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "RawAccurate",
+      "status": "EXPECTED_FAIL",
+      "generated": 189,
+      "distinct": 145
+    },
+    "StallMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "SettlesAfterSilence",
+      "status": "EXPECTED_FAIL",
+      "generated": 19531,
+      "distinct": 7039
+    },
+    "NoRenewalMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "SpeechRenewsDeadline",
+      "status": "EXPECTED_FAIL",
+      "generated": 12,
+      "distinct": 12
+    },
+    "NoCapMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "CapStops",
+      "status": "EXPECTED_FAIL",
+      "generated": 20596,
+      "distinct": 8178
+    }
+  }
+}

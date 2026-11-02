@@ -1,40 +1,40 @@
 {
   "command": "bash formal/record-while-processing/conformance.sh",
-  "status": "PASS_WITH_PINNED_BASELINE_DIVERGENCES",
+  "status": "PASS_FIXED_WITH_HISTORICAL_CURRENT_DIVERGENCES",
   "corpora": [
     "Current",
     "Fixed"
   ],
   "skips": 0,
-  "productionPolicy": "current",
+  "productionPolicy": "fixed",
   "remoteCI": "NOT_RUN",
   "installedOrLiveAcceptance": "NOT_RUN",
   "sourceSHA256": {
-    "formal/record-while-processing/conformance.test.ts": "de09c97d28213f1f2214594c70a2b105550d2724477b585a53d924b97ff0fddd",
-    "formal/record-while-processing/runtime-adapter.ts": "d0701d298af8e77fb725077980e2e77e018183cd5dfe8125778e570e19b9f164",
-    "formal/runtime-contract.json": "d5fde60fe38663b6b603b9c34ff3735112d33232966d48e5e79c568a05b48821"
+    "formal/record-while-processing/conformance.test.ts": "39ff487a58d5be3716a0accd8875c942cd944d6743210f4ed589e2928482ec91",
+    "formal/record-while-processing/runtime-adapter.ts": "13fb1499008a3a54da92fe1e92c2223a4bdf33c98e5a40b281001e6eeab4c9a4",
+    "formal/runtime-contract.json": "6909a5b1fd71691a454f94d59634f70991a1fbf1a739eef0853a3d2323b5871f"
   },
   "tests": 5,
   "strictPasses": 5,
   "expectedFailureTests": 0,
   "unexpectedFailures": 0,
-  "wireContexts": 410,
+  "wireContexts": 391,
   "contexts": {
     "Current/record": {
       "cases": 26,
-      "divergences": 0
+      "divergences": 10
     },
     "Current/cancel": {
-      "cases": 206,
-      "divergences": 0
+      "cases": 245,
+      "divergences": 324
     },
     "Fixed/record": {
-      "cases": 38,
-      "divergences": 12
+      "cases": 13,
+      "divergences": 0
     },
     "Fixed/cancel": {
-      "cases": 140,
-      "divergences": 280
+      "cases": 107,
+      "divergences": 0
     }
   },
   "divergencePins": {
@@ -60,5 +60,7 @@
       "formal/record-while-processing/conformance.test.ts"
     ]
   },
-  "productionSource": "f98243d2b2141ff0f0d16c3f145cb76cfcd0ebae"
+  "nativeTests": 9,
+  "nativeCancellationClasses": 73,
+  "divergencePinScope": "Preserved G pre-implementation Fixed-family pins apply only to a current pipeline policy. The merged fixed implementation requires zero Fixed divergences. Visual baseline pins are independently enforced by the Swift replay."
 }

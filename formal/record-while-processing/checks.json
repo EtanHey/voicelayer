@@ -8,7 +8,10 @@
     "src/socket-handlers.ts",
     "src/recording-state.ts",
     "src/session-booking.ts",
-    "src/mcp-server-daemon.ts"
+    "src/mcp-server-daemon.ts",
+    "src/recording-jobs.ts",
+    "src/recording-take-queue.ts",
+    "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift"
   ],
   "checks": {
     "Current": {
@@ -270,6 +273,36 @@
       "role": "witness",
       "target": "NoSpeechSilenceTimeout",
       "kind": "invariant"
+    },
+    "MutEscapeMic": {
+      "role": "mutant",
+      "target": "EscapeTargetsNewest",
+      "kind": "invariant"
+    },
+    "MutEscapeOlder": {
+      "role": "mutant",
+      "target": "EscapeTargetsNewest",
+      "kind": "invariant"
+    },
+    "MutStaleGuard": {
+      "role": "mutant",
+      "target": "NoStaleGuard",
+      "kind": "temporal"
+    },
+    "N8Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "ConcurrentGlobalCancel": {
+      "role": "mutant",
+      "target": "N7ScopedCancel",
+      "kind": "invariant"
+    },
+    "DropCancelledMutant": {
+      "role": "mutant",
+      "target": "D3EveryTakeKept",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -297,6 +330,8 @@
     "ProcessingSettles",
     "SilenceTimesOut",
     "SpeechRenewsDeadline",
-    "TypeOK"
+    "TypeOK",
+    "EscapeTargetsNewest",
+    "NoStaleGuard"
   ]
 }
