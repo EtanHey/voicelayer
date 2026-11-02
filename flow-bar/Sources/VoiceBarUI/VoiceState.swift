@@ -2085,7 +2085,13 @@ public final class VoiceState {
             onModeChange?(mode)
             return // This local B has not been sent. Never cancel A's physical drain.
         }
-        deferredBarRecording = nil
+        if case let .opening(request) = deferredBarRecording {
+            deferredBarRecording = nil
+            recordStartAckTimeoutTask?.cancel()
+            if pendingIntent?.command == .record { pendingIntent = nil }
+            sendCommand?(["cmd": "cancel", "take_id": request.takeID, "id": UUID().uuidString])
+            return
+        }
         if supportsRecordingJobs {
             if let takeID = microphoneTakeID ?? activeBarTakeID {
                 sendCommand?(["cmd": "cancel", "take_id": takeID, "id": UUID().uuidString])

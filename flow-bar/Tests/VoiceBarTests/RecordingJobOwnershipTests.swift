@@ -342,7 +342,8 @@ final class RecordingJobOwnershipTests: XCTestCase {
             .appendingPathComponent("../../Sources").standardizedFileURL
         let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
         var checked = 0
-        for case let url as URL in files where url.pathExtension == "swift" {
+        for case let url as URL in files {
+            guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
             let source = try String(contentsOf: url, encoding: .utf8)
             checked += 1
             for phrase in ["Press F5 again", "Finishing previous recording"] {
