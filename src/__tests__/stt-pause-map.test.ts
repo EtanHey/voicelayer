@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { hasWavAudio, prepareSpeechAiff } from "./setup/speech-fixture";
+import { hasWavAudio, prepareSpeechAiff, speechFixtureAvailable } from "./setup/speech-fixture";
 import {
   GOLDEN_FIXTURE_PATH,
   loadSmartChunkGolden,
@@ -599,20 +599,10 @@ const SYNTH_WAV_REVERSED = join(FIXTURE_DIR, "speech-silence-speech-reversed.wav
 const SYNTH_GAP_SECONDS = 1.2;
 const hasSay = whichOk("say");
 const hasSox = whichOk("sox");
-const synthFailure = hasSay && hasSox ? buildSynthFixture() : null;
-const synthReady = hasSay && hasSox && synthFailure === null;
-if (synthFailure) console.error(`[pause-map] SKIPPING synthetic-WAV VAD tests — ${synthFailure}`);
-
-if (!hasSay || !hasSox) {
-  console.error(
-    `[pause-map] SKIPPING synthetic-WAV VAD test — missing: ${[
-      hasSay ? null : "say",
-      hasSox ? null : "sox",
-    ]
-      .filter(Boolean)
-      .join(", ")}. The pure span/boundary tests above still run.`,
-  );
-}
+const synthFailure = !hasSay || !hasSox
+  ? `missing: ${[hasSay ? null : "say", hasSox ? null : "sox"].filter(Boolean).join(", ")}. The pure span/boundary tests above still run.`
+  : buildSynthFixture();
+const synthReady = speechFixtureAvailable("pause-map synthetic-WAV VAD tests", synthFailure);
 
 function buildSynthFixture(): string | null {
   if (hasWavAudio(SYNTH_WAV) && hasWavAudio(SYNTH_WAV_REVERSED)) return null;

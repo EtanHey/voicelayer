@@ -77,3 +77,44 @@ describe("speech fixture audio validation", () => {
     expect(hasWavAudio(path)).toBe(true);
   }));
 });
+
+describe("required speech coverage in a real test process", () => {
+  for (const control of [
+    { name: "required empty fixture fails", required: "1", frames: 0, outcome: "failure" },
+    { name: "optional empty fixture skips loudly", required: undefined, frames: 0, outcome: "skip" },
+    { name: "required good fixture executes assertions", required: "1", frames: 4096, outcome: "pass" },
+  ]) {
+    test(control.name, () => fixture(path => {
+      const testPath = `${path}.test.ts`;
+      writeFileSync(testPath, `
+        import { test, expect } from "bun:test";
+        import { writeFileSync } from "node:fs";
+        import { hasAiffAudio, prepareSpeechAiff, speechFixtureAvailable } from ${JSON.stringify(join(import.meta.dir, "setup/speech-fixture.ts"))};
+        const path = ${JSON.stringify(path)};
+        const failure = prepareSpeechAiff(path, "probe", output => {
+          writeFileSync(output, Buffer.from(${JSON.stringify([...aiff(control.frames)])}));
+          return null;
+        });
+        const ready = speechFixtureAvailable("speech policy control", failure);
+        (ready ? test : test.skip)("speech assertions execute", () => {
+          expect(hasAiffAudio(path)).toBe(true);
+        });
+      `);
+      const child = Bun.spawnSync([process.execPath, "test", testPath], {
+        env: { ...process.env, VOICELAYER_TEST_REQUIRE_SPEECH: control.required },
+        timeout: 10_000,
+      });
+      const output = child.stdout.toString() + child.stderr.toString();
+      expect(child.exitCode === 0).toBe(control.outcome !== "failure");
+      if (control.outcome === "pass") {
+        expect(output).toContain("1 pass");
+        expect(output).not.toContain("SKIPPING");
+      } else {
+        expect(output).toContain("speech synthesis unavailable in this process/session after one retry");
+        expect(output).toContain("no usable COMM/SSND audio payload");
+        expect(output).toContain(control.outcome === "skip" ? "1 skip" : "1 fail");
+        expect(output.includes("SKIPPING")).toBe(control.outcome === "skip");
+      }
+    }), 15_000);
+  }
+});

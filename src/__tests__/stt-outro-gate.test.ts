@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { hasWavAudio, prepareSpeechAiff } from "./setup/speech-fixture";
+import { hasWavAudio, prepareSpeechAiff, speechFixtureAvailable } from "./setup/speech-fixture";
 import {
   findCandidateSpan,
   findOutroCandidates,
@@ -871,19 +871,10 @@ describe("outroGateEnabled", () => {
 
 const hasSay = whichOk("say");
 const hasFfmpeg = whichOk("ffmpeg");
-const synthFailure = hasSay && hasFfmpeg ? buildSayFixture() : null;
-const sayReady = hasSay && hasFfmpeg && synthFailure === null;
-if (synthFailure) console.error(`[outro-gate] SKIPPING the spoken-tail cases — ${synthFailure}`);
-if (!hasSay || !hasFfmpeg) {
-  console.error(
-    `[outro-gate] SKIPPING the spoken-tail cases — missing: ${[
-      hasSay ? null : "say",
-      hasFfmpeg ? null : "ffmpeg",
-    ]
-      .filter(Boolean)
-      .join(", ")}. The synthetic and pure-text cases still run.`,
-  );
-}
+const synthFailure = !hasSay || !hasFfmpeg
+  ? `missing: ${[hasSay ? null : "say", hasFfmpeg ? null : "ffmpeg"].filter(Boolean).join(", ")}. The synthetic and pure-text cases still run.`
+  : buildSayFixture();
+const sayReady = speechFixtureAvailable("outro-gate spoken-tail cases", synthFailure);
 const sayTest = sayReady ? test : test.skip;
 
 function buildSayFixture(): string | null {
