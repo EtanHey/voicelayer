@@ -1,4 +1,5 @@
 import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
+import { deferredFixture as deferred } from "./long-read-fixture-barriers";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import * as fs from "fs";
 import { join } from "path";
@@ -27,7 +28,7 @@ beforeEach(() => {
   mocks.push(spyOn(console, "error").mockImplementation(() => {}));
 });
 afterEach(async () => {
-  await settleRecordingJobs();
+  await settleRecordingJobs(tts.hasF5Capture);
   mocks.splice(0).reverse().forEach(m => m.mockRestore());
   for (const [file, data] of flags) { if (data) fs.writeFileSync(file, data); else if (fs.existsSync(file)) fs.unlinkSync(file); }
   process.env.VOICELAYER_UPDATE_GATE_PATH = original;
@@ -45,10 +46,11 @@ test("MF1 second async admission bypasses a known stale lock in under 50ms", asy
   expect(ms).toBeLessThan(50); expect(fs.existsSync(path + ".lock")).toBe(true);
 });
 test("MF1 first record reaches waitForInput within 50ms under a held lock", async () => {
-  const wait = capture(); let elapsed = Infinity; const start = performance.now();
-  wait.mockImplementation(async () => { elapsed = performance.now() - start; return finishSyntheticCapture(async () => "words"); });
+  const wait = capture(), started = deferred<void>(); let elapsed = Infinity; const start = performance.now();
+  wait.mockImplementation(async () => { elapsed = performance.now() - start; started.resolve(); return finishSyntheticCapture(async () => "words"); });
   fs.mkdirSync(path + ".lock");
   expect(await handleSocketCommand({ cmd: "record", press_to_talk: true, timeout_seconds: 3600 })).toMatchObject({ outcome: "accept" });
+  await started.promise;
   console.info(`MF1 first-capture=${elapsed.toFixed(3)}ms`); expect(elapsed).toBeLessThanOrEqual(50);
   expect(wait).toHaveBeenCalledTimes(1);
 });

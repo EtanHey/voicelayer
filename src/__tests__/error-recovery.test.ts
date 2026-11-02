@@ -8,6 +8,8 @@
  * Bun.spawnSync to simulate sox-not-found without depending on system PATH.
  */
 
+import { settleRecordingJobs } from "./setup/recording-jobs-fixture";
+import { hasF5Capture } from "../tts";
 import { it, expect, spyOn, beforeEach, afterEach, mock } from "bun:test";
 import { TEST_TMP } from "./setup/test-tmp";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
@@ -241,7 +243,8 @@ describe("H5: Socket record command checks session booking", () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await settleRecordingJobs(hasF5Capture);
     restoreFakeRecorder();
     broadcastSpy.mockRestore();
     // Clean up lock file
@@ -283,7 +286,7 @@ describe("H5: Socket record command checks session booking", () => {
     expect(recordingBroadcast).toBeUndefined();
   });
 
-  it("allows record when session is booked by our own process", () => {
+  it("allows record when session is booked by our own process", async () => {
     // Book session by OUR process (should be allowed)
     const ourLock = {
       pid: process.pid,
@@ -294,8 +297,10 @@ describe("H5: Socket record command checks session booking", () => {
 
     // Block sox so recording doesn't actually start
     blockSox = true;
-    handleSocketCommand({ cmd: "record" });
-    blockSox = false;
+    try {
+      expect(handleSocketCommand({ cmd: "record" })).toMatchObject({ outcome: "accept" });
+      await settleRecordingJobs(hasF5Capture);
+    } finally { blockSox = false; }
 
     const calls = broadcastSpy.mock.calls.map((c: any) => c[0]);
 
