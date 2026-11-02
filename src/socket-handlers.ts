@@ -208,7 +208,7 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
   if (!updateGatedCommands.has(args[0].cmd)) return handleSocketCommandAdmitted(...args);
   const refuse = (error: unknown) => {
     if (recognizerMutationCommands.has(args[0].cmd) && (error instanceof VoiceAdmissionCancelledError || error instanceof UpdateBusyError)) {
-      return { ...buildAck(args[0], "reject", error.message), recognizer_status: readRecognizerStatus() };
+      return { ...buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message), recognizer_status: readRecognizerStatus() };
     }
     if (error instanceof VoiceAdmissionCancelledError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "noop", error.message);
     if (error instanceof UpdateBusyError) return buildAck(args[0] as SocketCommand & { cmd: AckCommand }, "reject", error.message);
