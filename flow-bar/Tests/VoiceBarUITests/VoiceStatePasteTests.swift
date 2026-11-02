@@ -3117,6 +3117,7 @@ final class VoiceStatePasteTests: XCTestCase {
         let board = NSPasteboard.withUniqueName()
         let otherBoard = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally(); otherBoard.releaseGlobally() }
+        otherBoard.clearContents()
         otherBoard.setString("other owner", forType: .string)
         let otherCount = otherBoard.changeCount
         let state = VoiceState(pasteboard: board)
