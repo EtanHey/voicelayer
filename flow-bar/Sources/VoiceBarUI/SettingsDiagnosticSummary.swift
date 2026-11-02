@@ -18,8 +18,11 @@ enum SettingsCopyPayload {
 }
 
 /// Shared with the Speech lane: copying never runs a command or changes a setting.
+/// QA-20 (Etan, 2026-11-02: "We don't need a copy word. The copy icon is very known"): icon only;
+/// the tooltip and VoiceOver say what is copied.
 @MainActor
 struct SettingsCopyButton: View {
+    static func tooltip(_ label: String) -> String { "Copy \(label)" }
     let text: String?
     let label: String
     var onCopy: ((String) -> Bool)? = nil
@@ -29,11 +32,13 @@ struct SettingsCopyButton: View {
         if let payload = SettingsCopyPayload.nonempty(text) {
             Button {
                 copied = onCopy?(payload) ?? SettingsCopyPayload.write(payload)
+                if copied { AccessibilityNotification.Announcement("Copied \(label)").post() }
             } label: {
                 Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
-            .help("Copy \(label)")
+            .help(copied ? "Copied" : Self.tooltip(label))
             .accessibilityLabel(copied ? "Copied \(label)" : "Copy \(label)")
             .onChange(of: text) { _, _ in copied = false }
             .task(id: copied) {

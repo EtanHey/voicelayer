@@ -27,6 +27,9 @@ struct SettingsHistoryAttemptDetailPane<Header: View, Content: View, Actions: Vi
     let loadAttempts: SettingsHistoryAttemptLogReader
     let runs: [SettingsHistoryRunLog.Run]
     let omittedCount: Int
+    /// QA-06: the open/closed state the user left these details in, kept by the parent across tab changes.
+    var detailsExpanded: Bool? = nil
+    var onDetailsExpandedChange: ((Bool) -> Void)? = nil
     @ViewBuilder var header: () -> Header
     @ViewBuilder var content: (SettingsHistoryEntry) -> Content
     @ViewBuilder var actions: (SettingsHistoryEntry) -> Actions
@@ -42,10 +45,12 @@ struct SettingsHistoryAttemptDetailPane<Header: View, Content: View, Actions: Vi
 
     init(entry: SettingsHistoryEntry, load: @escaping @Sendable (URL) async -> SettingsHistoryDiagnostics,
          loadAttempts: @escaping SettingsHistoryAttemptLogReader, runs: [SettingsHistoryRunLog.Run], omittedCount: Int,
+         detailsExpanded: Bool? = nil, onDetailsExpandedChange: ((Bool) -> Void)? = nil,
          @ViewBuilder header: @escaping () -> Header, @ViewBuilder content: @escaping (SettingsHistoryEntry) -> Content,
          @ViewBuilder actions: @escaping (SettingsHistoryEntry) -> Actions) {
         self.entry = entry; self.load = load; self.loadAttempts = loadAttempts
         self.runs = runs; self.omittedCount = omittedCount
+        self.detailsExpanded = detailsExpanded; self.onDetailsExpandedChange = onDetailsExpandedChange
         self.header = header; self.content = content; self.actions = actions
         _ownedController = State(initialValue: SettingsHistoryAttemptSelectionController(entry: entry))
     }
@@ -53,15 +58,17 @@ struct SettingsHistoryAttemptDetailPane<Header: View, Content: View, Actions: Vi
     var body: some View {
         let displayed = controller.value.displayedEntry(entry)
         VStack(alignment: .leading, spacing: 0) {
-            header().padding(.horizontal, 16).padding(.vertical, 10)
-            Divider()
+            if Header.self != EmptyView.self { // An empty header leaves no blank band or extra divider.
+                header().padding(.horizontal, 16).padding(.vertical, 10)
+                Divider()
+            }
             ScrollView(.vertical) {
               VStack(alignment: .leading, spacing: 14) {
                 if let message = controller.value.emptyMessage {
                     Text(message).font(.body).fixedSize(horizontal: false, vertical: true)
                 } else { content(displayed) }
                 SettingsHistoryDiagnosticsPanel(snapshot: snapshot, runs: runs, omittedCount: omittedCount,
-                    initiallyExpanded: controller.detailsExpanded, attemptHistory: controller.value.history, selectedAttemptID: controller.value.selectedAttemptID,
+                    initiallyExpanded: detailsExpanded ?? controller.detailsExpanded, onExpandedChange: onDetailsExpandedChange, attemptHistory: controller.value.history, selectedAttemptID: controller.value.selectedAttemptID,
                     shownAttemptID: controller.value.shownAttemptID, onSelectAttempt: { controller.value.select($0) }, recordingID: entry.recordingID, recordingEntry: entry)
               }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
             }.frame(minHeight: 0, maxHeight: .infinity).clipped()
