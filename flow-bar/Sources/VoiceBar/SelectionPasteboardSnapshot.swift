@@ -6,6 +6,7 @@ import Darwin
 enum SelectionPasteboardSnapshot {
     static let argument = "--selection-pasteboard-snapshot"
     private static let maximumBytes = 8 * 1024 * 1024
+    private static let readyMarker = Data([0x1E])
 
     enum ReadFailure: UInt8 {
         case itemsUnavailable = 1, tooManyItems, tooManyTypes, representationUnavailable
@@ -19,6 +20,8 @@ enum SelectionPasteboardSnapshot {
 
     static func runIfRequested(arguments: [String] = CommandLine.arguments) -> Bool {
         guard arguments.count == 3, arguments[1] == argument else { return false }
+        do { try FileHandle.standardOutput.write(contentsOf: readyMarker) }
+        catch { exit(EXIT_FAILURE) }
         var failure = ReadFailure.encodingFailed
         guard let snapshot = readOnMain(name: arguments[2], onFailure: { failure = $0 }),
               let data = try? JSONEncoder().encode(snapshot.map { values in
@@ -70,10 +73,12 @@ enum SelectionPasteboardSnapshot {
         let began = ProcessInfo.processInfo.systemUptime
         var launchedAt: TimeInterval?
         var responseBytes = 0
+        var readyAt: TimeInterval?
         defer {
             let end = ProcessInfo.processInfo.systemUptime
-            NSLog("[selection_snapshot] metrics launch_ms=%.1f after_launch_ms=%.1f bytes=%d",
+            NSLog("[selection_snapshot] metrics launch_ms=%.1f ready_ms=%.1f after_launch_ms=%.1f bytes=%d",
                   launchedAt.map { ($0 - began) * 1000 } ?? -1,
+                  readyAt.map { ($0 - (launchedAt ?? began)) * 1000 } ?? -1,
                   launchedAt.map { (end - $0) * 1000 } ?? -1, responseBytes)
         }
         guard let executable else { onFailure("missing_executable"); return nil }
@@ -93,6 +98,9 @@ enum SelectionPasteboardSnapshot {
         defer { timeoutJob.cancel() }
         var data = Data()
         do {
+            let first = try pipe.fileHandleForReading.read(upToCount: 1) ?? Data()
+            if first == readyMarker { readyAt = ProcessInfo.processInfo.systemUptime }
+            else { data.append(first) } // Accept the original unframed helper protocol too.
             while let chunk = try pipe.fileHandleForReading.read(upToCount: 64 * 1024), !chunk.isEmpty {
                 data.append(chunk)
                 responseBytes = data.count
@@ -111,6 +119,8 @@ enum SelectionPasteboardSnapshot {
         }
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
+            let complete = (try? JSONDecoder().decode([[Value]].self, from: data)) != nil
+            NSLog("[selection_snapshot] failure_payload_complete=%@", complete ? "true" : "false")
             if data.count == 1, let byte = data.first, let failure = ReadFailure(rawValue: byte) {
                 onFailure("snapshot_\(failure)")
             }
