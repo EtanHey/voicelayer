@@ -278,8 +278,8 @@ export interface OutroGateDecision {
 }
 
 export interface OutroGateOptions {
-  /** The language requested from Whisper, not its guessed output language. */
-  language?: string;
+  /** Only the user's explicit setting. Auto/detected languages cannot enable mismatch gating. */
+  explicitLanguage?: ExplicitOutroLanguage;
   segments?: TranscriptSegment[];
   /**
    * False when the segments provably came from a different decode than
@@ -324,17 +324,22 @@ export function normalizeOutroKey(text: string): string {
     .trim();
 }
 
-/** Script mismatch only nominates the WHOLE result; audio still decides. */
-export function isCjkLanguageMismatch(text: string, language?: string): boolean {
-  const code = language?.trim().toLowerCase().split(/[-_]/u)[0];
-  if (!code || code === "auto" || ["ja", "zh", "ko", "yue"].includes(code)) return false;
+export type ExplicitOutroLanguage = "en" | "he";
+
+/** A mismatch nominates one complete, closer-sized sentence; audio still decides. */
+export function isCjkLanguageMismatch(text: string, explicitLanguage?: ExplicitOutroLanguage): boolean {
+  if (explicitLanguage !== "en" && explicitLanguage !== "he") return false;
+  if (splitSentences(text).length !== 1 || /[?!？！…]|\.{2,}/u.test(text) ||
+      !/(?:^|[^.…])[.。]$/u.test(text.trim())) return false;
+  // ASCII stops without intervening whitespace still delimit CJK sentences.
+  if ((text.match(/[.。]/gu)?.length ?? 0) !== 1) return false;
   const letters = text.match(/\p{L}/gu);
-  return !!letters?.length && letters.every(letter =>
+  return !!letters?.length && letters.length <= 20 && letters.every(letter =>
     /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}]/u.test(letter));
 }
 
-export function isCjkHallucinationCandidate(text: string, language?: string): boolean {
-  return CJK_OUTRO_KEYS.has(normalizeOutroKey(text)) || isCjkLanguageMismatch(text, language);
+export function isCjkHallucinationCandidate(text: string, explicitLanguage?: ExplicitOutroLanguage): boolean {
+  return CJK_OUTRO_KEYS.has(normalizeOutroKey(text)) || isCjkLanguageMismatch(text, explicitLanguage);
 }
 
 function isKnownOutroKey(key: string): boolean {
@@ -403,16 +408,16 @@ export function splitSentences(text: string): SentenceSpan[] {
 }
 
 /** Every sentence in `text` the lexicon would consider, in order. */
-export function findOutroCandidates(text: string, language?: string): OutroCandidate[] {
+export function findOutroCandidates(text: string, explicitLanguage?: ExplicitOutroLanguage): OutroCandidate[] {
   const sentences = splitSentences(text);
   const candidates: OutroCandidate[] = [];
 
   // CJK captions commonly have no punctuation. A fixed-language mismatch is
   // likewise only a whole-result candidate, never a substring deletion rule.
   const wholeKey = normalizeOutroKey(text);
-  const mismatch = isCjkLanguageMismatch(text, language);
+  const mismatch = isCjkLanguageMismatch(text, explicitLanguage);
   if ((CJK_OUTRO_KEYS.has(wholeKey) || mismatch) &&
-      !/[?!？！…]|\.{2,}/u.test(text) && (mismatch || sentences.length === 1)) {
+      !/[?!？！…]|\.{2,}/u.test(text) && sentences.length === 1) {
     const phrase = text.trim(), startIndex = text.indexOf(phrase);
     return [{ phrase, key: wholeKey, startIndex,
       endIndex: startIndex + phrase.length, isTail: true }];
@@ -830,7 +835,7 @@ export function stripHallucinatedOutro(
   wavData: Uint8Array,
   options: OutroGateOptions = {},
 ): OutroGateDecision {
-  const candidates = findOutroCandidates(text, options.language);
+  const candidates = findOutroCandidates(text, options.explicitLanguage);
   if (candidates.length === 0) {
     return { text, removed: [], reason: "no-candidate" };
   }
@@ -849,7 +854,7 @@ export function stripHallucinatedOutro(
   // sustained-run test misses it, and a spread means words.
   const flat =
     windows.speechLevelDbfs - windows.floorDbfs < SPEECH_OVER_FLOOR_DB;
-  const cjkWhole = isCjkHallucinationCandidate(text, options.language);
+  const cjkWhole = isCjkHallucinationCandidate(text, options.explicitLanguage);
   const info = cjkWhole ? parseWavAudioInfo(wavData) : null;
   // A flat noise floor can also be steady quiet speech. The expanded CJK
   // whole-result rule needs dead-device-flat samples for this segmentless

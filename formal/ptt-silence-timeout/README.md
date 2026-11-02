@@ -1,37 +1,33 @@
-# PTT silence deadline (Lane I)
+# Locked PTT silence deadline and cap
 
-`bash formal/ptt-silence-timeout/check.sh` checks the fixed design and every
-per-property mutant. Any unexpected pass, wrong invariant, missing config or
-changed source during checking fails the runner. One worker, 512 MB heap,
-fixed seed/fingerprint, no depth/state constraint. Receipts are in `results/`.
+`bash formal/ptt-silence-timeout/check.sh` uses the shared pinned TLC runner.
+Fixed passes all six properties; every mutant must fail its exact named property.
+See [MUTANTS.md](results/MUTANTS.md). No state or depth constraint truncates Fixed.
 
-This model is deliberately separate from Lane G's concurrent-lifecycle model.
-The real PTT path in `src/input.ts` now runs speech detection to renew its
-silence deadline. It starts the budget after mic opening and defers timeout
-while PCM classification is outstanding. Detection failure disables this
-silence timeout; explicit stop/cancel and retention remain available. VAD does
-not select PTT audio, change the physical-stop drain, or trim any words.
+A Tick represents 30 seconds. Detected speech renews the two-tick (60-second)
+continuous-silence deadline. The forty-tick (20-minute) hard cap applies during
+speech too. Both stops archive and transcribe the complete captured sequence.
+`Frame(TRUE)` maps to `processVADChunk`/`isSpeech` updating `pttLastSpeechAtMs`;
+`Timeout` maps to the silence timer or hard-cap timer calling `finish`.
+The finite PCM alphabet models sequence equality; it does not model STT accuracy.
 
-`Frame(TRUE)` maps to the PTT `processVADChunk`/`isSpeech` branch updating
-`pttLastSpeechAtMs`; `speech` is a fresh observed-speech interval and each
-`Tick` ages that observation and its silence budget (continued speech supplies
-new frames and renews it); `Timeout` maps to
-`onTimeout`'s silence-budget check and `finish`. `saved` represents the complete
-archived sequence and `Transcribe` the complete decoder input/output contract.
-Actual speech recognition accuracy is outside this model. The fixture in
-`input-durability.test.ts` feeds synthetic PCM through the real capture/archive/
-STT path, advances five virtual minutes beyond the former 90s cap, and checks
-all captured PCM bytes reach both the archive and decoder after silence.
-No real microphone, audio emission, installed app, or live recognition proof.
+The real capture fixtures in `input-durability.test.ts` use synthetic PCM,
+the isolated recorder stub and a simulated clock. They cover speech past 60
+seconds, silence for 60 seconds, and the 20-minute cap, checking all PCM reaches
+the archive and decoder. Pending classification defers silence expiration;
+failed classification leaves explicit Stop/Cancel and the hard cap available.
+VAD does not select or trim PTT audio. This is the changeable ETAN-ASKS.md D3
+decision recorded in CLAUDE.details.md. No installed/live or real-mic proof.
 
-| Property | Mutant | Required result |
-| --- | --- | --- |
-| `NoTimeoutDuringSpeech` | `WallClockMutant` uses total wall time | invariant FAIL, TLC 12 |
-| `EveryEndedTakeRetained` | `DropArchiveMutant` loses the archive | invariant FAIL, TLC 12 |
-| `RawAccurate` | `TrimWordsMutant` omits the final captured symbol | invariant FAIL, TLC 12 |
-| `SettlesAfterSilence` | `StallMutant` never transcribes an ended capture | temporal FAIL, TLC 13 |
+| Property | Mutant |
+| --- | --- |
+| NoTimeoutDuringSpeech | WallClockMutant |
+| EveryEndedTakeRetained | DropArchiveMutant |
+| RawAccurate | TrimWordsMutant |
+| SettlesAfterSilence | StallMutant |
+| SpeechRenewsDeadline | NoRenewalMutant |
+| CapStops | NoCapMutant |
 
-`Fixed` checks all four. `SettlesAfterSilence` concerns an already ended
-silence-timeout capture reaching transcription with fair backend settlement;
-continuous speech may remain recording forever. This bounded model does not
-prove filesystem durability on disk failure, VAD accuracy, or backend liveness.
+Temporal checks assume fair clock, timeout and decoder settlement. They do not
+assume a delivery acknowledgement. Filesystem failure and VAD/decoder accuracy
+are outside this model; focused runtime tests cover archive failure handling.

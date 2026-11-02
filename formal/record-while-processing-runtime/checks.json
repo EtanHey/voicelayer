@@ -10,17 +10,77 @@
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift"
   ],
   "checks": {
-    "Fixed": null,
-    "EscapeMicMutant": "EscapeTargetsNewest",
-    "EscapeOlderMutant": "EscapeTargetsNewest",
-    "GuardedEscapeMutant": "GuardedEscape",
-    "StaleGuardMutant": "temporal:NoStaleGuard",
-    "RetargetMutant": "NoDeliveryOutsideCapturedTarget",
-    "FocusStealMutant": "NoFocusStealDuringCapture",
-    "SilentDrainMutant": "DrainRequestVisible",
-    "LegacyAckMutant": "LegacyNoAckWait",
-    "NoAckBoundMutant": "temporal:DeliveryAckBound",
-    "StallMutant": "temporal:ProcessingSettles",
-    "FailedMicMutant": "MicReleaseOnFailure"
-  }
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "EscapeMicMutant": {
+      "role": "mutant",
+      "target": "EscapeTargetsNewest",
+      "kind": "invariant"
+    },
+    "EscapeOlderMutant": {
+      "role": "mutant",
+      "target": "EscapeTargetsNewest",
+      "kind": "invariant"
+    },
+    "GuardedEscapeMutant": {
+      "role": "mutant",
+      "target": "GuardedEscape",
+      "kind": "invariant"
+    },
+    "StaleGuardMutant": {
+      "role": "mutant",
+      "target": "NoStaleGuard",
+      "kind": "temporal"
+    },
+    "RetargetMutant": {
+      "role": "mutant",
+      "target": "NoDeliveryOutsideCapturedTarget",
+      "kind": "invariant"
+    },
+    "FocusStealMutant": {
+      "role": "mutant",
+      "target": "NoFocusStealDuringCapture",
+      "kind": "invariant"
+    },
+    "SilentDrainMutant": {
+      "role": "mutant",
+      "target": "DrainRequestVisible",
+      "kind": "invariant"
+    },
+    "LegacyAckMutant": {
+      "role": "mutant",
+      "target": "LegacyNoAckWait",
+      "kind": "invariant"
+    },
+    "NoAckBoundMutant": {
+      "role": "mutant",
+      "target": "DeliveryAckBound",
+      "kind": "temporal"
+    },
+    "StallMutant": {
+      "role": "mutant",
+      "target": "ProcessingSettles",
+      "kind": "temporal"
+    },
+    "FailedMicMutant": {
+      "role": "mutant",
+      "target": "MicReleaseOnFailure",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "DeliveryAckBound",
+    "DrainRequestVisible",
+    "EscapeTargetsNewest",
+    "GuardedEscape",
+    "LegacyNoAckWait",
+    "MicReleaseOnFailure",
+    "NoDeliveryOutsideCapturedTarget",
+    "NoFocusStealDuringCapture",
+    "NoStaleGuard",
+    "ProcessingSettles"
+  ]
 }

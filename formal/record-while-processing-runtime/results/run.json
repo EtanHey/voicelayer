@@ -1,27 +1,161 @@
 {
-  "sourceBaseline": "dada8744",
-  "runnerSHA256": "ade762d4662e364b7f88a2defcb975171a8b7e1af2c5f59b62e9cd2246d61314",
-  "sourceHashes": {
-    "src/recording-jobs.ts": "7a9784f029bd4e1fdbb2697e45d34d982f68311d2386808ba39047986b83359b",
-    "src/recording-take-queue.ts": "dd85259a527a024ddbe6abd68d46d70383185446d1d00b4d0305889032494325",
-    "src/socket-handlers.ts": "f10499824c6db9efe1656f2db0707916d1c465dd0573392a6257c80eea68c262",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "3cc8018c7dcaf3cd78f3b7f9dbdbb924ff3c9cb6ca0ad5db3390aaa122101a9c",
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/record-while-processing-runtime/RuntimeOwnership.tla": "5fd832b8936652da13202afb84330b1de9a7fbf4b2e14337f37b66bd1153caee",
+    "formal/record-while-processing-runtime/checks.json": "4bd5b408bd9c008a9e08ae2f2c97fa6752cf2f3a725b6f8f07d68c7388f56f7f",
+    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/record-while-processing-runtime/StaleGuardMutant.cfg": "83cb5ecb92084d6c675e3a6a53647422420e949aa14f65d409250ded8544868a",
+    "formal/record-while-processing-runtime/FailedMicMutant.cfg": "071be25abf6e031596d8ad10798a35116d026827d5c2f9c283efe7a41bb026a1",
+    "formal/record-while-processing-runtime/StallMutant.cfg": "7569660d9a9006269fb24a86da17c8e213f9c5f314512950dd83bad8bfa663fe",
+    "formal/record-while-processing-runtime/LegacyAckMutant.cfg": "ec73537127109bd08ad030f11efbd3ea8ffa948896990dd93c4ff919b14e54cc",
+    "formal/record-while-processing-runtime/NoAckBoundMutant.cfg": "de7ade11b3886bf94f0ae65b4969102cec4200477df215494832055b8578c267",
+    "formal/record-while-processing-runtime/GuardedEscapeMutant.cfg": "7a1047296b35abf79ec9ab3daf61b48c3207972225634e36669ea4c058957a12",
+    "formal/record-while-processing-runtime/EscapeMicMutant.cfg": "5cf02cd847dfac1b51a4068b05db2a538b47946662c3117976ed8c9a060ebe62",
+    "formal/record-while-processing-runtime/SilentDrainMutant.cfg": "80fb4acba1e7048ed9dbe3a1798d83cb85c19f537309e3559ec254d3646973b2",
+    "formal/record-while-processing-runtime/EscapeOlderMutant.cfg": "526b827ac8372f81c3c82cefb9814ba3bd84e32a3cf39f032922d54dd0cdaa33",
+    "formal/record-while-processing-runtime/RetargetMutant.cfg": "4c4afdc331422c24f1f8986487c6993ea136d3c31bcd85722db965870224fa98",
+    "formal/record-while-processing-runtime/FocusStealMutant.cfg": "bdba630660a9dc9b238919771e70634506ff8393cd878c2a814241eb2ca1a8fd",
+    "formal/record-while-processing-runtime/Fixed.cfg": "26bc25eb05c63d3d37b25457c52d1295909f49d68f74ab646ca2bba763efcd5e",
+    "src/recording-jobs.ts": "f26e7a12c193f773744e3dd38f6e7590925ad0ed900d2c0667be8e991a7dd989",
+    "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
+    "src/socket-handlers.ts": "b82c1c831dd4986adff5685c3a0df318c585e848ec92980116a50f3c9f15a5a1",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "41a9b82d7a4737b8623592b1f9524a455288d98e96eb1928038fc8c73fdec8f5",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "71f2bcef238f431baa75d4d67134eaf518c2ba1a047911490b39b8f0b71a6102",
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368"
   },
-  "specSHA256": "4edfc874053e85c6ce10aace0e78fd8ca250f6b088cef41dbe266cc16e11debc",
-  "cfgSHA256": {
-    "Fixed": "b800934b142afe2c3c74cd9d10a4883e3450e88f1f16a75b81592945b5bc7ae6",
-    "EscapeMicMutant": "be587e446292f28c2108b6deeb236cfbe8bba3b477d16aa59ea1ebb4808ef9dd",
-    "EscapeOlderMutant": "d54b33e0109a9c858433f0070d15af3d307f41a2f0d6f241f2b1a192b3708a72",
-    "GuardedEscapeMutant": "6a0cb25127e0a4eef71558e9695d2221f87fd5fa8d170f8d90dd715669863cd8",
-    "StaleGuardMutant": "84574c9cd2c83d546667a7b9fde47667f3b9e0d8bc72b266a9304c11604e1bf5",
-    "RetargetMutant": "76e8c539f8a8987201d90271cf9275b7310cdbffecb0b0a5961fe4451b76620f",
-    "FocusStealMutant": "bdfee04414ac2f85b2c63d6c509a21ce6ee3af6a86117cc0d9ca7d8a59449469",
-    "SilentDrainMutant": "6b49186c0d8abe525996f9487cdff539a85be0600a5c845634a7fb37c589949b",
-    "LegacyAckMutant": "ca30706e74eb219086fdeefb126d987c757d1bfdf3e1f9d7cd64dcdde4970296",
-    "NoAckBoundMutant": "eb1cf6a1ffacfae0768c21854b7a3f778ea9dcd1233297d552b110a6c6b63cd0",
-    "StallMutant": "a515f1449ea1bf6ebbf8ed2739557306fc95748159ae7ea8b9737a6fcb36f331"
+  "mutants": {
+    "DeliveryAckBound": [
+      "NoAckBoundMutant"
+    ],
+    "DrainRequestVisible": [
+      "SilentDrainMutant"
+    ],
+    "EscapeTargetsNewest": [
+      "EscapeMicMutant",
+      "EscapeOlderMutant"
+    ],
+    "GuardedEscape": [
+      "GuardedEscapeMutant"
+    ],
+    "LegacyNoAckWait": [
+      "LegacyAckMutant"
+    ],
+    "MicReleaseOnFailure": [
+      "FailedMicMutant"
+    ],
+    "NoDeliveryOutsideCapturedTarget": [
+      "RetargetMutant"
+    ],
+    "NoFocusStealDuringCapture": [
+      "FocusStealMutant"
+    ],
+    "NoStaleGuard": [
+      "StaleGuardMutant"
+    ],
+    "ProcessingSettles": [
+      "StallMutant"
+    ]
   },
-  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+  "graphHashes": {
+    "Fixed": "df0ea04bd21b9f8723c2cb36cf2427eb3b0e5efccf636720462df114c5a36688"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 120618,
+      "distinct": 35914
+    },
+    "EscapeMicMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "EscapeTargetsNewest",
+      "status": "EXPECTED_FAIL",
+      "generated": 236,
+      "distinct": 155
+    },
+    "EscapeOlderMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "EscapeTargetsNewest",
+      "status": "EXPECTED_FAIL",
+      "generated": 4434,
+      "distinct": 1965
+    },
+    "GuardedEscapeMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "GuardedEscape",
+      "status": "EXPECTED_FAIL",
+      "generated": 4433,
+      "distinct": 1967
+    },
+    "StaleGuardMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "NoStaleGuard",
+      "status": "EXPECTED_FAIL",
+      "generated": 88362,
+      "distinct": 28476
+    },
+    "RetargetMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDeliveryOutsideCapturedTarget",
+      "status": "EXPECTED_FAIL",
+      "generated": 525,
+      "distinct": 358
+    },
+    "FocusStealMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoFocusStealDuringCapture",
+      "status": "EXPECTED_FAIL",
+      "generated": 1400,
+      "distinct": 874
+    },
+    "SilentDrainMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DrainRequestVisible",
+      "status": "EXPECTED_FAIL",
+      "generated": 21,
+      "distinct": 18
+    },
+    "LegacyAckMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "LegacyNoAckWait",
+      "status": "EXPECTED_FAIL",
+      "generated": 191,
+      "distinct": 141
+    },
+    "NoAckBoundMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "DeliveryAckBound",
+      "status": "EXPECTED_FAIL",
+      "generated": 99264,
+      "distinct": 28152
+    },
+    "StallMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "ProcessingSettles",
+      "status": "EXPECTED_FAIL",
+      "generated": 38668,
+      "distinct": 10952
+    },
+    "FailedMicMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MicReleaseOnFailure",
+      "status": "EXPECTED_FAIL",
+      "generated": 6,
+      "distinct": 6
+    }
+  }
 }

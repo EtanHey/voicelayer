@@ -1,103 +1,16 @@
-TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 94631] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
-Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915/formal/record-while-processing-runtime/RuntimeOwnership.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
-Semantic processing of module Naturals
-Semantic processing of module Sequences
-Semantic processing of module FiniteSets
-Semantic processing of module RuntimeOwnership
-Starting... (2026-11-02 10:33:52)
-Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 10:33:52.
-Error: Invariant EscapeTargetsNewest is violated.
-Error: The behavior up to this point is:
-State 1: <Initial predicate>
-s = [ stage |-> [A |-> "fresh", B |-> "fresh"],
-  event |-> "init",
-  target |-> "none",
-  capable |-> [A |-> FALSE, B |-> FALSE],
-  age |-> [A |-> 0, B |-> 0],
-  matches |-> [A |-> TRUE, B |-> TRUE],
-  focusSame |-> TRUE,
-  guard |-> "none",
-  cooldown |-> 0,
-  expected |-> "none",
-  escapedGuarded |-> TRUE,
-  notice |-> FALSE ]
-
-State 2: <Record line 20, col 16 to line 21, col 88 of module RuntimeOwnership>
-s = [ stage |-> [A |-> "recording", B |-> "fresh"],
-  event |-> "record",
-  target |-> "A",
-  capable |-> [A |-> FALSE, B |-> FALSE],
-  age |-> [A |-> 0, B |-> 0],
-  matches |-> [A |-> TRUE, B |-> TRUE],
-  focusSame |-> TRUE,
-  guard |-> "none",
-  cooldown |-> 0,
-  expected |-> "none",
-  escapedGuarded |-> TRUE,
-  notice |-> FALSE ]
-
-State 3: <Stop line 22, col 12 to line 22, col 89 of module RuntimeOwnership>
-s = [ stage |-> [A |-> "draining", B |-> "fresh"],
-  event |-> "stop",
-  target |-> "A",
-  capable |-> [A |-> FALSE, B |-> FALSE],
-  age |-> [A |-> 0, B |-> 0],
-  matches |-> [A |-> TRUE, B |-> TRUE],
-  focusSame |-> TRUE,
-  guard |-> "none",
-  cooldown |-> 0,
-  expected |-> "none",
-  escapedGuarded |-> TRUE,
-  notice |-> FALSE ]
-
-State 4: <Archive line 25, col 15 to line 25, col 94 of module RuntimeOwnership>
-s = [ stage |-> [A |-> "captured", B |-> "fresh"],
-  event |-> "archive",
-  target |-> "A",
-  capable |-> [A |-> FALSE, B |-> FALSE],
-  age |-> [A |-> 0, B |-> 0],
-  matches |-> [A |-> TRUE, B |-> TRUE],
-  focusSame |-> TRUE,
-  guard |-> "none",
-  cooldown |-> 0,
-  expected |-> "none",
-  escapedGuarded |-> TRUE,
-  notice |-> FALSE ]
-
-State 5: <Record line 20, col 16 to line 21, col 88 of module RuntimeOwnership>
-s = [ stage |-> [A |-> "captured", B |-> "recording"],
-  event |-> "record",
-  target |-> "B",
-  capable |-> [A |-> FALSE, B |-> FALSE],
-  age |-> [A |-> 0, B |-> 0],
-  matches |-> [A |-> TRUE, B |-> TRUE],
-  focusSame |-> TRUE,
-  guard |-> "none",
-  cooldown |-> 0,
-  expected |-> "none",
-  escapedGuarded |-> TRUE,
-  notice |-> FALSE ]
-
-State 6: <Escape line 50, col 6 to line 51, col 32 of module RuntimeOwnership>
-s = [ stage |-> [A |-> "cancelled", B |-> "recording"],
-  event |-> "Escape",
-  target |-> "A",
-  capable |-> [A |-> FALSE, B |-> FALSE],
-  age |-> [A |-> 0, B |-> 0],
-  matches |-> [A |-> TRUE, B |-> TRUE],
-  focusSame |-> TRUE,
-  guard |-> "none",
-  cooldown |-> 0,
-  expected |-> "B",
-  escapedGuarded |-> TRUE,
-  notice |-> FALSE ]
-
-176 states generated, 111 distinct states found, 69 states left on queue.
-The depth of the complete state graph search is 6.
-The average outdegree of the complete state graph is 3 (minimum is 0, the maximum 6 and the 95th percentile is 6).
-Finished in 00s at (2026-11-02 10:33:52)
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "EscapeTargetsNewest",
+  "status": "EXPECTED_FAIL",
+  "generated": 236,
+  "distinct": 155,
+  "trace": [
+    "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  event |-> \"init\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> TRUE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE ]",
+    "s = [ stage |-> [A |-> \"recording\", B |-> \"fresh\"],\n  event |-> \"record\",\n  target |-> \"A\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> TRUE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE ]",
+    "s = [ stage |-> [A |-> \"draining\", B |-> \"fresh\"],\n  event |-> \"stop\",\n  target |-> \"A\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> TRUE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE ]",
+    "s = [ stage |-> [A |-> \"captured\", B |-> \"fresh\"],\n  event |-> \"archive\",\n  target |-> \"A\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> TRUE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE ]",
+    "s = [ stage |-> [A |-> \"captured\", B |-> \"recording\"],\n  event |-> \"record\",\n  target |-> \"B\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> TRUE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE ]",
+    "s = [ stage |-> [A |-> \"cancelled\", B |-> \"recording\"],\n  event |-> \"Escape\",\n  target |-> \"A\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> TRUE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"B\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE ]"
+  ]
+}

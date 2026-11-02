@@ -47,6 +47,10 @@ export function mayUpdateRetainedCapture(): boolean {
   const take = ownership.getStore();
   return !take || take === newestCapture;
 }
+/** Read-only cancellation observation for health/conformance; decisions remain in the owned handler. */
+export function recordingJobCancellationState(id: string): boolean | undefined {
+  return queue.jobs.find(entry => entry.take.id === id)?.take.signal.aborted;
+}
 export function recordingJobCancelled(): boolean | undefined { return ownership.getStore()?.signal.aborted; }
 
 export function registerBarRecorderExit(proof: Promise<void>): void {

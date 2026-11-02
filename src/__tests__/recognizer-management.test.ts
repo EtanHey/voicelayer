@@ -95,6 +95,7 @@ test("last installed model cannot be deleted", async () => {
 test("delete changes selected engine first and preserves unrelated files and runtime", async () => {
   expect((await deleteRecognizer("whisper", async () => {})).outcome).toBe("accept");
   expect(readRecognizerStatus().desired).toBe("parakeet");
+  expect(readRecognizerStatus().engines.parakeet.phase).toBe("sleeping"); // Loads on next dictation.
   expect(readRecognizerStatus().engines.whisper.assets_present).toBe(false);
   expect(existsSync(join(root, "python"))).toBe(true);
   expect(existsSync(join(root, "model.safetensors"))).toBe(true);

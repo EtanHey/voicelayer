@@ -1,0 +1,30 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 121 and seed 2885310393727727447 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 2597] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file <model-check>/RuntimeSetup.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module RuntimeSetup
+Starting... (2026-11-02 10:18:49)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-02 10:18:49.
+Progress(2) at 2026-11-02 10:18:49: 2 states generated, 2 distinct states found, 0 states left on queue.
+Checking temporal properties for the complete state space with 2 total distinct states at (2026-11-02 10:18:49)
+Error: Temporal properties were violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ cancelled = FALSE
+/\ child = "running"
+/\ phase = "setup"
+
+State 2: <Cancel line 7, col 11 to line 8, col 79 of module RuntimeSetup>
+/\ cancelled = TRUE
+/\ child = "ignores-term"
+/\ phase = "joining"
+
+State 3: Stuttering
+Finished checking temporal properties in 00s at 2026-11-02 10:18:49
+2 states generated, 2 distinct states found, 0 states left on queue.
+Finished in 00s at (2026-11-02 10:18:49)

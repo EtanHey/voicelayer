@@ -1,4 +1,31 @@
 # Recognizer residency admission model
+
+## TLC tool pin and repeatable checks
+
+The verified M4 reference jar at `~/.cache/tla/tla2tools.jar` is:
+
+- TLC **2.19 of 08 August 2024** (the committed receipt banner reports revision `5a47802`).
+- SHA-256: `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+
+Recorded from the M4 Max cache on 2026-11-02. Recheck the complete hash when
+replacing the cached jar; a version string alone does not identify its bytes.
+
+Run `bash formal/parakeet-residency/check.sh` from the repository root. The
+runner first tests its output validator, then checks every fixed configuration
+and required mutant. TLC 2.19's unnamed temporal-failure summary and newer
+nightlies' named temporal failures are accepted; a named failure must match the
+expected property, and temporal configs must name exactly that one property.
+
+Each run prints its actual TLC version, SHA-256, source path and output folder.
+It freezes the jar bytes used by every child in a unique
+`.build.noindex/tlc-lane-d/run-*/` directory, alongside `jar.json`, logs and
+`SUMMARY.md`. Other jars, including the M1 nightly, can be checked without
+silently attributing their results to this reference pin. Model scratch state
+is removed after checking. Committed `results-round2/` files remain unchanged
+as the historical receipt; rerunning the checker never rewrites them.
+
+## Residency abstraction
+
 The finite TLA+ abstraction checks one-model admission through picker cleanup/startup, symmetric previous-engine restoration, and legacy W load. Fixed:416 distinct states,1014 generated,depth24,OneModel/UnknownBlocks hold. OldLegacyRace and OldRecoveryRace each produce OneModel counterexamples (raw TLC logs/traces in the lab report).
 
 Source joins: LegacyStart -> beginRecognizerMaintenance/withRecognizerMaintenance; BeginPicker -> beginRecognizerTransition; StopP/StopW -> selectRecognizer positive cleanup and busy rechecks; RecoverPrevious/RequestStart -> recognizerRecovery plus getBackend actual restored-provider reuse; UnknownCleanup/ConfirmedCleanup -> dedicated cleanup barrier/positive confirmation.

@@ -662,13 +662,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         configurePanelStateObservation()
         voiceState.onHistoryArchiveChange = { path in
-            // Drop that entry from the History index first, so the reload the notification triggers can't serve a
-            // stale transcript (a re-transcription rewrites an old entry in place).
+            // Materialize the changed row on the archive actor. Known-path events patch History in place;
+            // they must not cancel paging or replace every row while the user is selecting text.
             Task {
-                if let path { await SettingsArchiveIndex.shared.invalidate(entryPath: path) }
-                await MainActor.run {
-                    NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
-                }
+                await SettingsHistoryArchiveChangeNotifier.post(entryPath: path)
             }
         }
         voiceState.onPolishStatusChange = { [weak self] in

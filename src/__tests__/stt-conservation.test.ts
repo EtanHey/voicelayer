@@ -93,7 +93,7 @@ describe("raw transcription conservation", () => {
     expect(result.removed).toHaveLength(0);
   });
   const disabledStages = new Set(["punctuation", "numbers", "fillers", "capitalization", "techVocab", "codeTokens", "caseFormatting", "enumerators"]);
-  for (const text of ["src/prq.ts", "https://example.invalid/prq", "prq@example.invalid", "prq.value", "prq::run", "`prq`", "```ts\nprq\n```", "`prq", "Golan's", "x_prq", "prq…"]) {
+  for (const text of ["src/prq.ts", "https://example.invalid/prq", "prq@example.invalid", "prq.value", "prq::run", "`prq`", "```ts\nprq\n```", "`prq", "Golan’d", "x_prq", "prq…"]) {
     test(`dictionary abstains on literal ${text}`, () => {
       expect(applyRules(text, { aliases: { prq: "PR queue", Golan: "Golems" }, disabledStages })).toBe(text);
     });

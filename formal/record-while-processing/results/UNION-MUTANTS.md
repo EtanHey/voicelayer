@@ -1,0 +1,53 @@
+UNION: 49/49 mutants killed; all G and I properties retained. No property dropped.
+
+| Model | Property | Mutant | Result |
+| --- | --- | --- | --- |
+| record-while-processing | TypeOK | MutType | exact-property FAIL |
+| record-while-processing | OneMic | MutTwoMics | exact-property FAIL |
+| record-while-processing | OneDecoder | MutTwoDecoders | exact-property FAIL |
+| record-while-processing | NoDuplicatePaste | MutDuplicatePaste | exact-property FAIL |
+| record-while-processing | NoCancelledPaste | MutPasteAfterCancel | exact-property FAIL |
+| record-while-processing | N7CooldownRing | MutRing | exact-property FAIL |
+| record-while-processing | D3EveryTakeKept | MutDropTimeout | exact-property FAIL |
+| record-while-processing | N6Admissible | MutStallRecord | exact-property FAIL |
+| record-while-processing | N6StartsB | MutRejectRecord | exact-property FAIL |
+| record-while-processing | N6StartsB | MutDisableRecordStart | exact-property FAIL |
+| record-while-processing | N6PreservesA | MutRecordCancels | exact-property FAIL |
+| record-while-processing | N6PreservesA | MutDisableRecordPreserve | exact-property FAIL |
+| record-while-processing | N7ScopedCancel | MutWrongVictim | exact-property FAIL |
+| record-while-processing | N7ScopedCancel | MutUnscopedSignal | exact-property FAIL |
+| record-while-processing | N7ScopedCancel | MutDisableCancelB | exact-property FAIL |
+| record-while-processing | N7GuardedClick | MutUnguardedClick | exact-property FAIL |
+| record-while-processing | N7GuardedClick | MutDisableCancelBGuard | exact-property FAIL |
+| record-while-processing | N7GuardedClick | MutDisableClick | exact-property FAIL |
+| record-while-processing | N7Identity | MutIgnoreIdentity | exact-property FAIL |
+| record-while-processing | N8ImmediatePaste | MutHoldResult | exact-property FAIL |
+| record-while-processing | N8ImmediatePaste | MutResultStopsB | exact-property FAIL |
+| record-while-processing | N8ImmediatePaste | MutDelayedPaste | exact-property FAIL |
+| record-while-processing | N8FinalNotSuperseded | MutSupersede | exact-property FAIL |
+| record-while-processing | NoTimeoutWhileTalking | MutSpeechTimeout | exact-property FAIL |
+| record-while-processing | ProcessingSettles | MutUnfairProcessing | exact-property FAIL |
+| record-while-processing | OverlapPastes | MutNoOverlapProgress | exact-property FAIL |
+| record-while-processing | EventuallyIdle | MutNoIdle | exact-property FAIL |
+| record-while-processing | EscapeTargetsNewest | MutEscapeMic | exact-property FAIL |
+| record-while-processing | EscapeTargetsNewest | MutEscapeOlder | exact-property FAIL |
+| record-while-processing | NoStaleGuard | MutStaleGuard | exact-property FAIL |
+| record-while-processing | N7ScopedCancel | ConcurrentGlobalCancel | exact-property FAIL |
+| record-while-processing | D3EveryTakeKept | DropCancelledMutant | exact-property FAIL |
+| record-while-processing-runtime | EscapeTargetsNewest | EscapeMicMutant | exact-property FAIL |
+| record-while-processing-runtime | EscapeTargetsNewest | EscapeOlderMutant | exact-property FAIL |
+| record-while-processing-runtime | GuardedEscape | GuardedEscapeMutant | exact-property FAIL |
+| record-while-processing-runtime | NoStaleGuard | StaleGuardMutant | exact-property FAIL |
+| record-while-processing-runtime | NoDeliveryOutsideCapturedTarget | RetargetMutant | exact-property FAIL |
+| record-while-processing-runtime | NoFocusStealDuringCapture | FocusStealMutant | exact-property FAIL |
+| record-while-processing-runtime | DrainRequestVisible | SilentDrainMutant | exact-property FAIL |
+| record-while-processing-runtime | LegacyNoAckWait | LegacyAckMutant | exact-property FAIL |
+| record-while-processing-runtime | DeliveryAckBound | NoAckBoundMutant | exact-property FAIL |
+| record-while-processing-runtime | ProcessingSettles | StallMutant | exact-property FAIL |
+| record-while-processing-runtime | MicReleaseOnFailure | FailedMicMutant | exact-property FAIL |
+| ptt-silence-timeout | NoTimeoutDuringSpeech | WallClockMutant | exact-property FAIL |
+| ptt-silence-timeout | EveryEndedTakeRetained | DropArchiveMutant | exact-property FAIL |
+| ptt-silence-timeout | RawAccurate | TrimWordsMutant | exact-property FAIL |
+| ptt-silence-timeout | SettlesAfterSilence | StallMutant | exact-property FAIL |
+| ptt-silence-timeout | SpeechRenewsDeadline | NoRenewalMutant | exact-property FAIL |
+| ptt-silence-timeout | CapStops | NoCapMutant | exact-property FAIL |

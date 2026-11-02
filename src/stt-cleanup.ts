@@ -648,6 +648,7 @@ export function cleanupTranscriptionText(
   const aliases = buildRuntimeAliases(env, snapshot);
   const rulesConfig: RulesConfig = {
     aliases,
+    possessiveAliasSources: new Set(Object.keys(snapshot?.aliases ?? {}).map((source) => source.toLowerCase())),
     hebrewLatinAliasSources: BUILTIN_HEBREW_LATIN_ALIAS_SOURCES,
     shouldApplyAlias: shouldApplySTTAlias,
     aggressiveFillerRemoval: isAggressiveFillerRemovalEnabled(env),

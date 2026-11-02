@@ -89,7 +89,7 @@ import {
   resamplePCM16,
 } from "./audio-utils";
 import { cleanupTranscriptionText } from "./stt-cleanup";
-import type { TextToSpeechEngine } from "./soundlayer";
+import type { STTAttemptEvidence, TextToSpeechEngine } from "./soundlayer";
 import { restoreSentencePunctuation } from "./stt-punctuation";
 import {
   correctTranscriptionText,
@@ -3411,6 +3411,12 @@ export async function waitForInput(
     let finalized: FinalizedTranscriptionResult;
     let sttBackendLabel = backend.name;
     const chunkBackendLabels = new Set<string>();
+    let gateRemoval: STTAttemptEvidence["gateRemoval"];
+    const noteGateRemoval = (evidence: STTAttemptEvidence | undefined) => {
+      if (evidence?.gateRemoval) gateRemoval = { gate: "cjk-outro",
+        removedSpans: (gateRemoval?.removedSpans ?? 0) + evidence.gateRemoval.removedSpans,
+        rawCharacters: (gateRemoval?.rawCharacters ?? 0) + evidence.gateRemoval.rawCharacters };
+    };
 
     if (useChunkedTranscription) {
       chunkedSession.finalize();
@@ -3429,6 +3435,7 @@ export async function waitForInput(
               promptOverride: prompt,
             });
             chunkBackendLabels.add(result.backend);
+            noteGateRemoval(result.attemptEvidence);
             throwIfWaitForInputAborted(options.signal);
             return result.text;
           } finally {
@@ -3451,6 +3458,7 @@ export async function waitForInput(
     } else {
       const result = await backend.transcribe(wavPath);
       sttBackendLabel = result.backend;
+      noteGateRemoval(result.attemptEvidence);
       throwIfWaitForInputAborted(options.signal);
       // Built BEFORE the finalize call, and abortable: the pause map is a
       // whole-file VAD pass, and a cancelled voice_ask must settle now rather
@@ -3519,6 +3527,8 @@ export async function waitForInput(
     }
 
     throwIfWaitForInputAborted(options.signal);
+    const gateArchive = voiceBarArchivePath ?? voiceAskArchivePath;
+    if (!text) recordArchivedGateRemoval(gateArchive ? join(gateArchive, "audio.wav") : null, gateRemoval);
     let archivedRecordingPath: string | null = null;
     if (text) {
       try {
@@ -3568,11 +3578,13 @@ export async function waitForInput(
       }
       if (archivedRecordingPath) {
         linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
+        recordArchivedGateRemoval(join(archivedRecordingPath, "audio.wav"), gateRemoval);
       }
     } else if (voiceBarArchivePath) {
       markArchivedRecordingNotTranscribed(
         join(voiceBarArchivePath, "audio.wav"),
         "empty-transcript",
+        {},
       );
     }
 
@@ -3745,6 +3757,7 @@ export function updateArchivedTranscript(
     metadata.transcription_status = "transcribed";
     delete metadata.not_transcribed_reason;
     delete metadata.not_transcribed_detail;
+    delete metadata.last_stt_gate_removal;
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
     }
@@ -3857,6 +3870,22 @@ export type ArchivedNotTranscribedReason =
   | "empty-transcript"
   | "recording-failed"
   | "transcription-failed";
+
+/** Phrase-free gate facts survive even when History keeps an older saved transcript. */
+function recordArchivedGateRemoval(audioPath: string | null, removal: STTAttemptEvidence["gateRemoval"]): string | undefined {
+  if (!audioPath || !removal) return undefined;
+  const detail = `Whisper CJK closing-phrase filter removed ${removal.removedSpans} span(s) from ${removal.rawCharacters} decoded characters.`;
+  updateArchivedRecordingMetadata(audioPath, metadata => {
+    metadata.last_stt_gate_removal = removal;
+    if (metadata.transcription_status === "transcribed") {
+      // A failed retry cannot relabel the saved transcript as not transcribed.
+      delete metadata.not_transcribed_reason;
+      delete metadata.not_transcribed_detail;
+    }
+  });
+  broadcast({ type: "archive_metadata_updated", recording_path: audioPath });
+  return detail;
+}
 
 /** At or below this the device delivered digital silence (a ±1 LSB floor reads ≈ -90 dBFS). */
 const SILENT_INPUT_DBFS = -85;
@@ -4297,6 +4326,10 @@ async function retranscribeVoiceAskArchiveAdmitted(
     const result = await backend.transcribe(working.path);
     const text = result.text.trim();
     if (!text) {
+      if (result.attemptEvidence?.gateRemoval) {
+        revalidateVoiceAskArchiveSnapshot(snapshot);
+        recordArchivedGateRemoval(snapshot.audioPath, result.attemptEvidence.gateRemoval);
+      }
       throw new Error(
         `voice_ask archive ${archiveId} produced an empty retranscription`,
       );
@@ -4325,7 +4358,11 @@ async function retranscribeVoiceAskArchiveAdmitted(
         },
       );
     }
+    delete metadata.last_stt_gate_removal;
+    delete metadata.not_transcribed_reason;
+    delete metadata.not_transcribed_detail;
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
+    recordArchivedGateRemoval(snapshot.audioPath, result.attemptEvidence?.gateRemoval);
     // MCP's return-only retry must evict the original Ask's cached History row
     // after the pair is durable, without delivering a dictation/paste event.
     if (options.delivery === "return-only") {
@@ -4487,6 +4524,7 @@ async function retranscribeRecordingCaptureAdmitted(
         );
       }
       console.error(`[voicelayer] Archived retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
+      if (!text) recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
 
       if (recordingJobCancelled()) return null;
       if (text) {
@@ -4497,6 +4535,7 @@ async function retranscribeRecordingCaptureAdmitted(
           transcribedDurationMs,
           polishStatus: finalized.polishStatus,
         });
+        recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
         await deliverInputTranscription({
           type: "transcription",
           text,
@@ -4607,6 +4646,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
         );
       }
       console.error(`[voicelayer] Retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
+      if (!text) recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
 
       if (recordingJobCancelled()) return null;
       if (text) {
@@ -4618,6 +4658,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
             transcribedDurationMs,
             polishStatus: finalized.polishStatus,
           });
+          recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
         }
         await deliverInputTranscription({
           type: "transcription",

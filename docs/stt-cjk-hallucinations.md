@@ -1,15 +1,19 @@
 # CJK hallucination candidates
 
 These exact phrases nominate text for the existing acoustic gates. They are
-never text-only deletion rules. Spoken audio, uncertain alignment, and the
-outro gate's question/fragment guards still preserve the transcript. A whole
-all-CJK result under an explicit non-CJK language is also only a candidate;
-`auto`, `ja`, `zh`, `ko`, and `yue` do not enable that language-mismatch rule.
-Whisper inference already receives the current language in its HTTP `language`
-field, including after Settings changes; no fixed startup language is needed.
-The CLI uses `-l` and applies the same whole-CJK gate on its finished output.
-Without segment timestamps, new CJK candidates are removable only when the
-entire recording is dead-device-flat PCM; steady low-gain audio stays intact.
+never text-only deletion rules. The only non-lexicon candidate is one complete
+all-CJK sentence, at most 20 CJK characters, under the user's explicit English
+or Hebrew setting. Multiple sentences and longer results stay intact. Questions,
+fragments, speech-level energy, uncertain alignment and clearance failures keep
+the words. Without timestamps, removal additionally needs dead-device-flat PCM.
+
+`ExplicitOutroLanguage` is only `en | he`. The gate's setting resolver accepts no
+transcription options: `detectedLanguage` and per-decode hints cannot activate
+it for `auto`. Decode language is independently sent by HTTP `language` or CLI
+`-l`. The CLI returns `EMPTY_RESPONSE`, never `RETURNED`, when gating empties its
+text, with a phrase-free `gateRemoval` fact (gate, span count, raw character
+count). Archives retain this fact and a closing-phrase filter explanation in
+History's existing diagnostic detail without storing removed words there.
 
 Sources checked 2026-11-02:
 
@@ -26,6 +30,5 @@ Sources checked 2026-11-02:
 
 The requested standalone `字幕` is deliberately absent from the exact-phrase
 lexicon: the sources verified caption-credit phrases containing it, but did not
-establish that exact standalone output. Under `en`/`he` it is still covered by
-the acoustically checked whole-result language-mismatch rule. It remains intact
-in auto/CJK language mode unless a separately verified exact phrase matches.
+establish that exact standalone output. The bare fragment stays intact; `字幕。` can be a bounded mismatch candidate
+under explicit `en`/`he`. Auto retains it unless a verified exact phrase matches.
