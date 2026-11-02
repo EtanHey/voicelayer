@@ -5,9 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sys
-import tempfile
 import time
 from admission_source import check_admission
 from f5_conformance import check_f5_runtime
@@ -18,14 +16,18 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = ROOT / "formal/speech-queue"
 sys.path.insert(0, str(ROOT / "formal"))
 from tlc_support import tlc_jar
+from graph_retention import graph_run
 
 
 def check(runner, f5_only=False, receipt=False):
-    OUT = ROOT / ".build.noindex/formal-speech-queue"
-    OUT.mkdir(parents=True, exist_ok=True)
-    RUN = Path(tempfile.mkdtemp(prefix=f"run-{os.getpid()}-", dir=OUT))
-    for old in sorted(OUT.glob("run-*"), key=lambda path: path.stat().st_mtime, reverse=True)[3:]:
-        shutil.rmtree(old)
+    with graph_run(ROOT / ".build.noindex/formal-speech-queue", prefix=f"run-{os.getpid()}-") as run:
+        check_run(runner, run, f5_only, receipt)
+
+
+def check_run(runner, RUN, f5_only=False, receipt=False):
+    # Focused mode still reads Fixed for reachability; the other graphs feed full replay.
+    graphs = {"F5PauseFixed"} if f5_only else {
+        "Current", "History", "QueueAdmissionFixed", "F5PauseFixed", "F5PauseFixedTranscribing"}
     EXPECTED = {"StaleClear": "StaleCannotAdvance", "Current": None, "StaleNext": "StaleCannotAdvance", "StopLeaves": "StopClearsQueues",
                 "History": None, "MutableTerminal": "FirstAcceptedTerminalImmutable",
                 "AdmissionCurrent": None, "AdmissionFinding": "NonemptySelectionDoesNotStop", "AdmissionProposed": None,
@@ -61,7 +63,8 @@ def check(runner, f5_only=False, receipt=False):
         "src/__tests__/update-gate-installer-participant.test.ts", "src/__tests__/update-gate-installer-short-holder.test.ts",
         "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift",
         "formal/speech-queue/F5-IMPLEMENTATION.md")]]
-    sources += [SPEC / "check.sh", ROOT / "formal/setup-tlc.py"]
+    sources += [SPEC / "check.sh", ROOT / "formal/setup-tlc.py",
+                ROOT / "formal/graph_retention.py", SPEC / "test_graph_retention.py"]
     hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
     rows = []
     timings = {}
@@ -75,7 +78,7 @@ def check(runner, f5_only=False, receipt=False):
         name = config.stem
         cmd = ["nice", "-n", "19", "java", "-Xmx512m", "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC", "-noGenerateSpecTE", "-workers", "1", "-fp", "0", "-seed", "1", "-lncheck", "final",
                "-metadir", str(RUN / name), "-config", str(config)]
-        if EXPECTED[name] is None:
+        if name in graphs:
             cmd += ["-dump", "dot,actionlabels", str(RUN / f"{name}.dot")]
         module = "F5Pause" if name.startswith("F5Pause") else "QueueAdmission" if name.startswith("QueueAdmission") else "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
         status = runner.run([*cmd, str(SPEC / f"{module}.tla")], RUN / f"{name}.log", 90, cwd=ROOT,
