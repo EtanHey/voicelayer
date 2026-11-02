@@ -8,7 +8,7 @@ export function dictionaryOccurrencePattern(source: string): RegExp {
 }
 
 /** Whole stored surfaces and English possessives, never substrings of another address/word. */
-export function dictionarySurfacePattern(from: string, to = from): RegExp {
+export function dictionarySurfacePattern(from: string, to = from, options: { clitics?: boolean } = {}): RegExp {
   const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (from.includes("@") || to.includes("@")) {
     // RFC local-part punctuation can continue an address before this surface.
@@ -25,18 +25,15 @@ export function dictionarySurfacePattern(from: string, to = from): RegExp {
   // Extend prose names/terms only. A bare trailing s is another word, and
   // addresses, paths and explicitly stored contractions keep exact matching.
   const proseTerm = /^[\p{L}\p{M}\p{N}]+(?:[ '’\-][\p{L}\p{M}\p{N}]+)*$/u;
-  const suffix = proseTerm.test(from) && !/['’]s$/iu.test(from) && !/['’]s$/iu.test(to)
-    ? "(?:['’]s|s['’])?" : "";
+  const suffix = options.clitics && proseTerm.test(from) && !/['’]s$/iu.test(from) && !/['’]s$/iu.test(to)
+    ? "(?:['’]s)?" : "";
   return dictionaryOccurrencePattern(`${escaped}${suffix}`);
 }
 
 /** Retain a matched English clitic, including its straight/curly apostrophe. */
 export function dictionaryReplacement(match: string, from: string, to: string): string {
   const suffix = match.slice(from.length);
-  if (/^(?:['’]s|s['’])$/iu.test(suffix)) {
-    const apostrophe = suffix.includes("’") ? "’" : "'";
-    return `${to}${apostrophe}s`;
-  }
+  if (/^['’]s$/iu.test(suffix)) return to + suffix;
   return to;
 }
 

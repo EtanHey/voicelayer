@@ -38,6 +38,10 @@
 - Speech: Short/Long voice profiles, long-text threshold, clone status, preview, and locked-control explanations.
 - Sidebar status footer: a static accessible button opening General for permissions and setup.
 - History: Recording | Ask, with per-row Play / Copy / Paste / Re-transcribe / Finder.
+- History refresh: known Dictation/Ask archive events update that row while Settings has an open archive index;
+  after Settings closes, these events do no archive disk reads. Speech intentionally does not reload on these
+  events: the old incidental "refresh Speech on the next dictation" behavior is removed. Speech still loads on
+  mount, Load older, and unknown/pathless archive notifications. No dedicated Speech archive watcher was added.
 
 ## VoiceBar right-click menu (Etan's approved spec §3)
 Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 min ago · first words") · Paste Last Transcript · Copy Last Transcript · — · Microphone › (the priority default as subtitle; inside, a read-only "Default: <mic>" row and "Change…") · — · Quit VoiceBar. There is no Transcription Tools, Anchor or Morph Prototype menu; a saved anchor or morph prototype resolves to the default.

@@ -1615,9 +1615,7 @@ public struct SettingsView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
                 if let change = notification.object as? SettingsHistoryArchiveChange {
-                    if historyChangesDuringLoad.receive(change, duringLoad: isHistoryLoading) {
-                        applyHistoryChange(change)
-                    }
+                    historyChangesDuringLoad.receive(change, duringLoad: isHistoryLoading, apply: applyHistoryChange)
                 } else {
                     requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
                 }
@@ -1768,9 +1766,7 @@ public struct SettingsView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
                 if let change = notification.object as? SettingsHistoryArchiveChange {
-                    if askChangesDuringLoad.receive(change, duringLoad: isAskHistoryLoading) {
-                        applyAskHistoryChange(change)
-                    }
+                    askChangesDuringLoad.receive(change, duringLoad: isAskHistoryLoading, apply: applyAskHistoryChange)
                 } else {
                     requestAskHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
                 }
@@ -2525,8 +2521,7 @@ public struct SettingsView: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard historyLoadFence.accepts(generation), !Task.isCancelled else { return }
-                applyHistoryPage(page)
-                for change in historyChangesDuringLoad.takePending() { applyHistoryChange(change) }
+                historyChangesDuringLoad.publish(page, applyPage: applyHistoryPage, applyChange: applyHistoryChange)
                 isHistoryLoading = false
                 prefetchAskHistoryIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {
@@ -2661,8 +2656,7 @@ public struct SettingsView: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard askHistoryLoadFence.accepts(generation), !Task.isCancelled else { return }
-                applyAskHistoryPage(page)
-                for change in askChangesDuringLoad.takePending() { applyAskHistoryChange(change) }
+                askChangesDuringLoad.publish(page, applyPage: applyAskHistoryPage, applyChange: applyAskHistoryChange)
                 isAskHistoryLoading = false
                 startSearchPrewarmIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {

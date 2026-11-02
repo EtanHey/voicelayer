@@ -89,17 +89,65 @@ final class SettingsHistoryIncrementalTests: XCTestCase {
         XCTAssertNil(outside)
     }
 
-    func testKnownPathEventsDoNotCancelPagingAndReplayAfterItsSnapshot() throws {
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"), encoding: .utf8)
-        for (loading, changes, apply, page) in [
-            ("isHistoryLoading", "historyChangesDuringLoad", "applyHistoryChange", "applyHistoryPage"),
-            ("isAskHistoryLoading", "askChangesDuringLoad", "applyAskHistoryChange", "applyAskHistoryPage"),
-        ] {
-            XCTAssertTrue(source.contains("if \(changes).receive(change, duringLoad: \(loading)) {\n                        \(apply)(change)"))
-            XCTAssertTrue(source.contains("\(page)(page)\n                for change in \(changes).takePending() { \(apply)(change) }"))
+    @MainActor
+    func testKnownPathEventsKeepPagingAndReplayAfterBothScopeSnapshots() async throws {
+        let path = try write("a", text: "before")
+        let askPath = try write("q", text: "answer before", ask: true)
+        let index = SettingsArchiveIndex()
+        let snapshot = await index.dictationPage(from: root)
+        let askSnapshot = await index.askPage(from: root)
+        try "after".write(to: path.deletingLastPathComponent().appendingPathComponent("voicelayer-transcript.txt"), atomically: true, encoding: .utf8)
+        try "answer after".write(to: askPath.deletingLastPathComponent().appendingPathComponent("voicelayer-transcript.txt"), atomically: true, encoding: .utf8)
+        let loaded = await index.change(entryPath: path.path, from: root)
+        let askLoaded = await index.change(entryPath: askPath.path, from: root)
+        let change = try XCTUnwrap(loaded)
+        let askChange = try XCTUnwrap(askLoaded)
+        var displayed = snapshot
+        var displayedAsk = askSnapshot
+        var events: [String] = []
+        var changes = SettingsHistoryArchiveChanges()
+        var askChanges = SettingsHistoryArchiveChanges()
+        let inFlight = Task { (snapshot, askSnapshot, Task.isCancelled) }
+        let apply: (SettingsHistoryArchiveChange) -> Void = {
+            events.append("dictation-row")
+            displayed = $0.applying(to: displayed)
         }
+        let applyAsk: (SettingsHistoryArchiveChange) -> Void = {
+            events.append("ask-row")
+            displayedAsk = $0.applying(to: displayedAsk)
+        }
+        changes.receive(change, duringLoad: true, apply: apply)
+        askChanges.receive(askChange, duringLoad: true, apply: applyAsk)
+        XCTAssertEqual(displayed.groups.first?.entries.first?.transcript, "after")
+        XCTAssertEqual(displayedAsk.groups.first?.entries.first?.responseTranscript, "answer after")
+        let (page, askPage, cancelled) = await inFlight.value
+        XCTAssertFalse(cancelled, "receiving a row event leaves the existing paging task running")
+        changes.publish(page, applyPage: { events.append("dictation-page"); displayed = $0 }, applyChange: apply)
+        askChanges.publish(askPage, applyPage: { events.append("ask-page"); displayedAsk = $0 }, applyChange: applyAsk)
+        XCTAssertEqual(events, ["dictation-row", "ask-row", "dictation-page", "dictation-row", "ask-page", "ask-row"])
+        XCTAssertEqual(displayed.groups.first?.entries.first?.transcript, "after")
+        XCTAssertEqual(displayedAsk.groups.first?.entries.first?.responseTranscript, "answer after")
+        XCTAssertTrue(changes.takePending().isEmpty)
+        XCTAssertTrue(askChanges.takePending().isEmpty)
+    }
+
+    func testClosedSettingsEventsPerformNoDiskReadsBeforeOrAfterRelease() async throws {
+        let path = try write("a", text: "words")
+        let probe = DiskReadProbe()
+        let index = SettingsArchiveIndex(onDiskRead: { probe.record() })
+        let unopened = await index.change(entryPath: path.path, from: root)
+        XCTAssertNil(unopened)
+        XCTAssertTrue(probe.observations.isEmpty)
+        _ = await index.dictationPage(from: root)
+        let reads = probe.observations.count
+        await index.release()
+        for _ in 0 ..< 3 {
+            let closed = await index.change(entryPath: path.path, from: root)
+            XCTAssertNil(closed)
+        }
+        XCTAssertEqual(probe.observations.count, reads, "no path resolution, metadata or transcript reads with Settings closed")
+        let roots = await index.cachedRootCount()
+        XCTAssertEqual(roots, 0)
     }
 
     func testOutOfOrderEventsCannotOverwriteTheLatestRowOrPendingReplay() async throws {

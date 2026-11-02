@@ -665,15 +665,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Materialize the changed row on the archive actor. Known-path events patch History in place;
             // they must not cancel paging or replace every row while the user is selecting text.
             Task {
-                let change: SettingsHistoryArchiveChange?
-                if let path {
-                    change = await SettingsArchiveIndex.shared.change(entryPath: path)
-                } else {
-                    change = nil
-                }
-                await MainActor.run {
-                    NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: change)
-                }
+                await SettingsHistoryArchiveChangeNotifier.post(entryPath: path)
             }
         }
         voiceState.onPolishStatusChange = { [weak self] in

@@ -114,6 +114,23 @@ public struct SettingsHistoryArchiveChanges {
 
     public init() {}
 
+    @MainActor
+    public mutating func receive(
+        _ change: SettingsHistoryArchiveChange, duringLoad: Bool,
+        apply: (SettingsHistoryArchiveChange) -> Void
+    ) {
+        if receive(change, duringLoad: duringLoad) { apply(change) }
+    }
+
+    /// Publish the page first, then replay events received while that snapshot was in flight.
+    @MainActor
+    public mutating func publish<Page>(
+        _ page: Page, applyPage: (Page) -> Void, applyChange: (SettingsHistoryArchiveChange) -> Void
+    ) {
+        applyPage(page)
+        for change in takePending() { applyChange(change) }
+    }
+
     public mutating func receive(_ change: SettingsHistoryArchiveChange, duringLoad: Bool) -> Bool {
         let key = change.directory.deletingLastPathComponent().lastPathComponent + "/" + change.directory.lastPathComponent
         guard change.revision >= latest[key, default: 0] else { return false }
@@ -125,5 +142,22 @@ public struct SettingsHistoryArchiveChanges {
     public mutating func takePending() -> [SettingsHistoryArchiveChange] {
         defer { pending.removeAll() }
         return Array(pending.values)
+    }
+}
+
+/// Shared app/test boundary: the notification is posted on main only after the archive actor finishes.
+public enum SettingsHistoryArchiveChangeNotifier {
+    @MainActor
+    public static func post(
+        entryPath: String?, index: SettingsArchiveIndex = .shared,
+        root: URL = SettingsHistoryArchive.defaultRoot, center: NotificationCenter = .default
+    ) async {
+        let change: SettingsHistoryArchiveChange?
+        if let entryPath {
+            change = await index.change(entryPath: entryPath, from: root)
+        } else {
+            change = nil
+        }
+        center.post(name: .voiceBarHistoryArchiveDidChange, object: change)
     }
 }
