@@ -1,27 +1,27 @@
 Notch (Fixed): 20864 TLC states -> 1376 distinct real-resolver cases; /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/.build.noindex/notch-presentation/conformance.json
-[heavy.sh] laneA start 2026-11-02T08:20:26Z load { 9.96 10.65 12.03 }
+[heavy.sh] laneA start 2026-11-02T08:46:19Z load { 9.20 10.28 10.60 }
 Building for debugging...
-[Pre-planning 1 / 301]
+[Constructing description]
 [Planning deferred tasks]
-[1 / 5]
+[2 / 6]
 [5 / 9] VoiceBarUITests-product
-Build complete! (0.85 sec)
-Test Suite 'Selected tests' started at 2026-11-02 10:20:28.868.
-Test Suite 'VoiceBarUITests.xctest' started at 2026-11-02 10:20:28.869.
-Test Suite 'NotchPresentationConformanceTests' started at 2026-11-02 10:20:28.869.
+Build complete! (1.11 sec)
+Test Suite 'Selected tests' started at 2026-11-02 10:46:21.562.
+Test Suite 'VoiceBarUITests.xctest' started at 2026-11-02 10:46:21.563.
+Test Suite 'NotchPresentationConformanceTests' started at 2026-11-02 10:46:21.563.
 Test Case '-[VoiceBarUITests.NotchPresentationConformanceTests testTLCFixedNotchProjection]' started.
-Test Case '-[VoiceBarUITests.NotchPresentationConformanceTests testTLCFixedNotchProjection]' passed (0.173 seconds).
-Test Suite 'NotchPresentationConformanceTests' passed at 2026-11-02 10:20:29.043.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.173 (0.174) seconds
-Test Suite 'VoiceBarUITests.xctest' passed at 2026-11-02 10:20:29.043.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.173 (0.174) seconds
-Test Suite 'Selected tests' passed at 2026-11-02 10:20:29.043.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.173 (0.174) seconds
+Test Case '-[VoiceBarUITests.NotchPresentationConformanceTests testTLCFixedNotchProjection]' passed (0.179 seconds).
+Test Suite 'NotchPresentationConformanceTests' passed at 2026-11-02 10:46:21.742.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.179 (0.179) seconds
+Test Suite 'VoiceBarUITests.xctest' passed at 2026-11-02 10:46:21.742.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.179 (0.179) seconds
+Test Suite 'Selected tests' passed at 2026-11-02 10:46:21.742.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.179 (0.180) seconds
 Replayed 1376 Fixed TLC notch projection cases (672 notices) through the real VoiceBarPresentation
-Test Suite 'Selected tests' started at 2026-11-02 10:20:29.116.
-Test Suite 'VoiceBarTests.xctest' started at 2026-11-02 10:20:29.117.
-Test Suite 'VoiceBarTests.xctest' passed at 2026-11-02 10:20:29.117.
+Test Suite 'Selected tests' started at 2026-11-02 10:46:21.866.
+Test Suite 'VoiceBarTests.xctest' started at 2026-11-02 10:46:21.867.
+Test Suite 'VoiceBarTests.xctest' passed at 2026-11-02 10:46:21.867.
 	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
-Test Suite 'Selected tests' passed at 2026-11-02 10:20:29.117.
+Test Suite 'Selected tests' passed at 2026-11-02 10:46:21.867.
 	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
-[heavy.sh] laneA end rc=0 2026-11-02T08:20:29Z
+[heavy.sh] laneA end rc=0 2026-11-02T08:46:22Z

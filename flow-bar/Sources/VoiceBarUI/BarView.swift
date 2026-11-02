@@ -343,6 +343,7 @@ public struct BarView: View {
     @State private var isMorphHistoryContentPresented = false
     @State private var isHistoryPresented = false
     @State private var settledLeadingWingWidth: CGFloat = 0
+    @State private var preparingHandoff = TeleprompterPreparingHandoffGate()
     @State private var historyDismissal: NotchHistoryDismissal?
     @State private var hostWindow = HostWindowBox()
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
@@ -816,14 +817,14 @@ public struct BarView: View {
     @ViewBuilder
     private func notchTeleprompterBody(text: String) -> some View {
         ZStack {
-            if state.isPreparingSpeech {
+            if preparingHandoff.showsStatus(isPreparing: state.isPreparingSpeech) {
                 Text(text)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(notchPalette.secondary.color)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     .transition(TeleprompterPreparingHandoff.transition)
-            } else {
+            } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {
                 TeleprompterView(
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
@@ -845,6 +846,10 @@ public struct BarView: View {
         }
         // R2-04: the status and the text hand off in sequence (see `TeleprompterPreparingHandoff`), never crossfade.
         .animation(.easeOut(duration: TeleprompterPreparingHandoff.exitDuration), value: state.isPreparingSpeech)
+        .animation(.easeOut(duration: TeleprompterPreparingHandoff.enterDuration), value: preparingHandoff.holdsIncoming)
+        .onChange(of: state.isPreparingSpeech, initial: true) { old, isPreparing in
+            preparingHandoff.preparingChanged(to: isPreparing, initial: old == isPreparing)
+        }
     }
 
     private var notchTeleprompterControls: some View {

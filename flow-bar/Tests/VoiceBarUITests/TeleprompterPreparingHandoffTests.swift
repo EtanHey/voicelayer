@@ -3,7 +3,8 @@ import XCTest
 
 /// R2-04 (QA 2026-11-02 recording 2, frame 183 @ 18.2 s): a faded "Preparing speech…" was drawn over the
 /// teleprompter's second line as playback started. The status and the text now hand off in sequence; the
-/// order-of-events proof is formal/notch-motion/PreparingHandoff.tla (Old FAIL NoOverlap, Fixed PASS).
+/// order-of-events proof is formal/teleprompter-handoff (Old FAIL NoOverlap, Fixed PASS). These are supplemental to
+/// the mounted, frame-sampled TeleprompterPreparingHandoffRenderTests.
 final class TeleprompterPreparingHandoffTests: XCTestCase {
     private typealias Handoff = TeleprompterPreparingHandoff
 
@@ -44,5 +45,9 @@ final class TeleprompterPreparingHandoffTests: XCTestCase {
         let body = source[start.upperBound ..< end.lowerBound]
         XCTAssertEqual(body.components(separatedBy: ".transition(TeleprompterPreparingHandoff.transition)").count - 1, 2)
         XCTAssertFalse(body.contains(".transition(.opacity)"))
+        // The insertion transitions alone did not hold the arriving side back (review round 2); the gate does,
+        // in both directions. Rendered proof: TeleprompterPreparingHandoffRenderTests.
+        XCTAssertTrue(body.contains("preparingHandoff.showsStatus(isPreparing: state.isPreparingSpeech)"))
+        XCTAssertTrue(body.contains("preparingHandoff.showsText(isPreparing: state.isPreparingSpeech)"))
     }
 }

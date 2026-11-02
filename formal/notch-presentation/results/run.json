@@ -3,7 +3,7 @@
   "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
   "sourceHashes": {
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "d851c55bab2776b3d190e1c068c2896a3730e0a0b1bacf18d9bad2728f3d1737",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "fbfce7f8586e794e88c850060ff491a1358094d2574762551a2b87f232356ec0",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "a0f384eed2a2c9a22d62b4fbdfd07552eca6b0faa4d0c4fb2455519229e225b8",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "12bd11aec9193828417541124436cda99a597fb5c8fdfff83aa2742a77cb2c69",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "4d05c69a95897dde7fe81f9e30fc5fce5472206a62287d4e2402d3e0a96708e7",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "d65bce6118fa798402a33fc12827c92f78d3ecdac383da3a1ec8875acc625c02",
