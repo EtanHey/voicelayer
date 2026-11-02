@@ -199,7 +199,7 @@ struct VoiceBarNotchHistoryActionButton: View {
         }
         .buttonStyle(VoiceBarNotchHistoryActionStyle())
         .frame(width: VoiceBarNotchFeedback.historyButtonWidth)
-        .help(VoiceBarNotchFeedback.historyActionTitle)
+        .background(PillControlTooltip(text: VoiceBarNotchFeedback.historyActionTitle))
         .accessibilityLabel(VoiceBarNotchFeedback.historyActionTitle)
         .accessibilityHint("Opens the History settings window. Select a recording there to retry transcription.")
         .accessibilityIdentifier("VoiceBarNotchFeedback.openHistory")

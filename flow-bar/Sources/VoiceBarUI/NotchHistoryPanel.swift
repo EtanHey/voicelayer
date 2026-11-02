@@ -135,7 +135,9 @@ struct NotchHistoryPanel: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help(action.label)
+                    // R0856-09: the notch panel is non-activating; SwiftUI `.help` never showed here (no tooltip
+                    // on Paste over 10 s of hover). The wing buttons' native registration does (fc126263).
+                    .background(PillControlTooltip(text: action.label))
                     .accessibilityLabel(action.label)
                 }
             }

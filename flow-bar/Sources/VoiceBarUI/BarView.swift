@@ -282,6 +282,8 @@ struct VoiceBarPillControlButton: View {
 
 // Native registration stays attached to the control inside the nested glass host.
 // Avoid resetting AppKit's hover delay on unrelated playback/hover redraws.
+// R0856-09/10: every icon-only control in the notch and its dropdowns registers its tooltip this way; SwiftUI
+// `.help` does not show in the non-activating notch panel (NotchIconButtonTooltipTests).
 struct PillControlTooltip: NSViewRepresentable {
     let text: String?
 
@@ -670,6 +672,8 @@ public struct BarView: View {
             .opacity(isCompact ? 1 : 0)
             .frame(width: isCompact ? nil : 0)
             .allowsHitTesting(isCompact)
+            // R0856-10: hidden, it must not stay in the keyboard loop either (NotchIconButtonTooltipTests).
+            .focusable(isCompact)
             .accessibilityHidden(!isCompact)
         }
     }
@@ -1049,6 +1053,13 @@ public struct BarView: View {
         notchButton(icon: "gearshape", accessibilityLabel: "Settings") {
             onOpenSettings()
         }
+    }
+
+    /// Tests only: mount with the notch History panel already open.
+    func presentingHistoryForTesting() -> BarView {
+        var copy = self
+        copy._isHistoryPresented = State(initialValue: true)
+        return copy
     }
 
     /// Visual shots only.

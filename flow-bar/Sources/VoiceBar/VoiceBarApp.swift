@@ -175,6 +175,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var panelPointerMovementHandler: ((NSPoint) -> Void)?
+    private var windowFocusObservers: [NSObjectProtocol] = []
+
+    private func synchronizeVoiceBarWindowFocus() {
+        voiceState.setVoiceBarWindowFocused(
+            VoiceBarWindowFocus.holdsIdleWings(keyWindow: NSApp.keyWindow, notchPanel: panel)
+        )
+    }
     /// NOTCH2: the hit providers' animation-aware view of the panel layout (see `VoiceBarPanelHitGate`).
     private var panelHitGate: VoiceBarPanelHitGate?
     private var panelHitGateSettleGeneration: UInt = 0
@@ -809,6 +816,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.savePanelPosition()
         }
 
+        // R0856-12: the idle wings stay while VoiceBar's own Settings or popover window has focus.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                     NSWindow.willCloseNotification, NSApplication.didResignActiveNotification] {
+            windowFocusObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                // Resign and close fire before AppKit settles the next key window; read it after.
+                DispatchQueue.main.async { self?.synchronizeVoiceBarWindowFocus() }
+            })
+        }
+
         // Track mouse across screens — move pill to whichever monitor the cursor is on
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             self?.handleMouseMoved()
@@ -848,6 +866,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NotificationCenter.default.removeObserver(observer)
         }
         settingsSceneObservers.removeAll()
+        windowFocusObservers.forEach(NotificationCenter.default.removeObserver)
+        windowFocusObservers.removeAll()
         hotkeyListener.stop()
         audioLevelMonitor.shutdown()
         releaseLevelAdmission?()

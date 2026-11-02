@@ -3302,6 +3302,22 @@ public final class VoiceState {
 
     // MARK: - Idle collapse
 
+    /// R0856-12: one of VoiceBar's own windows (Settings, the menu-bar popover) has keyboard focus. The pointer
+    /// necessarily leaves the notch to use it, and that exit used to collapse the idle wings 2.5 s later (seen at
+    /// 08:58:05 on 2026-11-02 as the wings vanishing for 1.5 s while Settings was key). While it has focus the
+    /// wings stay; the ordinary idle countdown resumes when it resigns. It never expands a collapsed notch.
+    public private(set) var isVoiceBarWindowFocused = false
+
+    public func setVoiceBarWindowFocused(_ focused: Bool) {
+        guard focused != isVoiceBarWindowFocused else { return }
+        isVoiceBarWindowFocused = focused
+        if focused {
+            collapseTimer?.cancel()
+        } else if mode == .idle, !isHovering, !isCollapsed {
+            startCollapseTimer()
+        }
+    }
+
     /// Starts the ordinary idle grace period once the product surface exists.
     /// The initial state does not pass through `enterIdleState`, so the app
     /// delegate calls this after installing the panel.
@@ -3319,7 +3335,8 @@ public final class VoiceState {
         }
         collapseTimer = Task { @MainActor in
             try? await Task.sleep(for: .seconds(idleCollapseDelay))
-            if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0 {
+            if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0,
+               !isVoiceBarWindowFocused {
                 withAnimation(.smooth(duration: 0.3)) {
                     isCollapsed = true
                 }
@@ -3361,6 +3378,7 @@ public final class VoiceState {
         collapseTimer?.cancel()
         guard mode == .idle,
               modalInteractionDepth == 0,
+              !isVoiceBarWindowFocused,
               !keepsExpandedInDevState,
               retainedTeleprompterText == nil
         else { return }
