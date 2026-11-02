@@ -3458,7 +3458,7 @@ export async function waitForInput(
 
     throwIfWaitForInputAborted(options.signal);
     const gateArchive = voiceBarArchivePath ?? voiceAskArchivePath;
-    const gateDetail = recordArchivedGateRemoval(gateArchive ? join(gateArchive, "audio.wav") : null, gateRemoval);
+    const gateDetail = text ? undefined : recordArchivedGateRemoval(gateArchive ? join(gateArchive, "audio.wav") : null, gateRemoval);
     let archivedRecordingPath: string | null = null;
     if (text) {
       try {
@@ -3677,6 +3677,7 @@ export function updateArchivedTranscript(
     metadata.transcription_status = "transcribed";
     delete metadata.not_transcribed_reason;
     delete metadata.not_transcribed_detail;
+    delete metadata.last_stt_gate_removal;
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
     }
@@ -3795,7 +3796,13 @@ function recordArchivedGateRemoval(audioPath: string | null, removal: STTAttempt
   const detail = `Whisper CJK closing-phrase filter removed ${removal.removedSpans} span(s) from ${removal.rawCharacters} decoded characters.`;
   updateArchivedRecordingMetadata(audioPath, metadata => {
     metadata.last_stt_gate_removal = removal;
-    metadata.not_transcribed_detail = detail;
+    if (metadata.transcription_status === "transcribed") {
+      // A failed retry cannot relabel the saved transcript as not transcribed.
+      delete metadata.not_transcribed_reason;
+      delete metadata.not_transcribed_detail;
+    } else {
+      metadata.not_transcribed_detail = detail;
+    }
   });
   broadcast({ type: "archive_metadata_updated", recording_path: audioPath });
   return detail;
@@ -4271,6 +4278,9 @@ async function retranscribeVoiceAskArchiveAdmitted(
         },
       );
     }
+    delete metadata.last_stt_gate_removal;
+    delete metadata.not_transcribed_reason;
+    delete metadata.not_transcribed_detail;
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
     // MCP's return-only retry must evict the original Ask's cached History row
     // after the pair is durable, without delivering a dictation/paste event.
@@ -4433,7 +4443,7 @@ async function retranscribeRecordingCaptureAdmitted(
         );
       }
       console.error(`[voicelayer] Archived retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
-      const gateDetail = recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
+      const gateDetail = text ? undefined : recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
 
       if (text) {
         updateArchivedTranscript(wavPath, text, {
@@ -4554,7 +4564,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
         );
       }
       console.error(`[voicelayer] Retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
-      recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
+      if (!text) recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
 
       if (text) {
         if (archivedAudioPath) {
