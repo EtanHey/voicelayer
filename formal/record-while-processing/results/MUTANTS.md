@@ -1,7 +1,5 @@
 | Property | Exact-property failing mutant configs |
 | --- | --- |
-| CapAlwaysFires | MutNoCap, MutCapRenewedBySpeech, MutCapBlockedBySpeech |
-| CaptureWithinCap | MutNoCapBound |
 | D3EveryTakeKept | MutDropTimeout, DropCancelledMutant |
 | EscapeTargetsNewest | MutEscapeMic, MutEscapeOlder |
 | EventuallyIdle | MutNoIdle, MutNoDecodeFairness |
@@ -24,6 +22,7 @@
 | OneMic | MutTwoMics |
 | OverlapPastes | MutNoOverlapProgress, MutHeldDecodeOverlap |
 | ProcessingSettles | MutUnfairProcessing |
+| RecurringSpeechNeverTimesOut | MutReintroducedCap |
 | SilenceTimesOut | MutTimeoutNeverFires |
 | SpeechRenewsDeadline | MutSpeechNoRenew, MutSpeechDisabled |
 | TypeOK | MutType |
