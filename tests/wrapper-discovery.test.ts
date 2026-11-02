@@ -110,7 +110,7 @@ test("real cross-run wrapper excludes archived tests through its shared src tree
   const root = fixture();
   try {
     for (const path of ["tests/test_hook_orphan_daemon.sh", "tests/hook_fixture_registry.py",
-      "tests/hook-term-sender.c", "scripts/supervise-test-daemon.py", "scripts/run_tests.sh",
+      "tests/check_hook_process_snapshot.py", "tests/hook-term-sender.c", "scripts/supervise-test-daemon.py", "scripts/run_tests.sh",
       "scripts/apply-voicebar-f5-hidutil.sh"]) copy(root, path);
     for (const path of ["node_modules", "flow-bar", "launchd"]) mkdirSync(join(root, path));
     put(root, "tests/hook-orphan-daemon.test.ts", intended);
