@@ -225,25 +225,49 @@ bun install --frozen-lockfile without changing bun.lock. From that M1 worktree:
 
 ```bash
 set -euo pipefail
-export PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
-~/.local/state/captain-2.2.61/heavy.sh F-model /opt/homebrew/bin/gtimeout -s TERM -k 10 3320 bash formal/speech-queue/check.sh --receipt
+export PATH="$HOME/.bun/bin:/opt/homebrew/opt/openjdk/bin:/opt/homebrew/bin:$PATH"
+~/.local/state/captain-2.2.61/heavy.sh F-model /opt/homebrew/bin/gtimeout -s TERM -k 10 3440 bash formal/speech-queue/check.sh --receipt
 ```
 
-The jar is ~/.cache/tla/tla2tools.jar and must exist. TLC uses ParallelGC, 512 MB,
-one worker for isolated checks and two TLC workers in the same cross-check process,
+check.sh installs the formal/tlc.lock.json pin through formal/setup-tlc.py; check.py
+resolves and verifies the same checksum before use, prints the release, actual TLC
+banner and SHA-256, and records them in results.json. The versioned cache is
+~/.cache/tla/v1.8.0/tla2tools.jar; the bare shared jar is never edited or used.
+The lock/setup/support files are unchanged copies from 23f39dba, the existing repo pin.
+TLC uses ParallelGC, 512 MB for isolated runs and 3072 MB for full cross-runs
+(the pinned jar exhausted 512 MB on ManualResume, before completing its graph),
+and the shared pinned harness's -noGenerateSpecTE flag (only auxiliary trace-exploration
+files are suppressed; TLC's counterexample states remain in the logs),
+one worker for isolated checks and four TLC workers in the same cross-check process,
 fp 0, seed 1 and per-run .build.noindex metadata. The single captain heavy lock
 covers both; the per-TLC 90-second bound is unchanged. The original gate retains
 880 seconds excluding the cross-kill matrix, which has its own 2400-second supervisor:
 24 unchanged 90-second per-case limits plus 240 seconds of overhead on the slower M1.
-The outer 3320-second bound covers both budgets and shutdown; timings.json records
+The outer 3440-second bound covers both budgets, pinned-jar setup and shutdown; timings.json records
 isolated TLC, cross-kill, and reachability/runtime replay stages. --f5-only includes
 the F5 isolated checks and matrix, but excludes the legacy/runtime admission replays.
 --receipt regenerates the following tables from the actual logs; source/config and
 jar SHA-256 hashes are retained with results.json. Test preload stays enabled.
 
+| Toolchain | Version | SHA-256 |
+|---|---|---|
+| Active repository pin on M1/M4 | v1.8.0 | 011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd |
+| Prior bare M4 cache (R2 tables below) | TLC2 2.19, 08 August 2024, rev 5a47802 | 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88 |
+| Prior bare M1 cache (failed migration launch) | TLC2 2026.10.28.014557, rev 56d37a9 | fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e |
+
+Both temporal error formats are recognized. The singular form must name exactly
+AutoPauseNeverStuck. The legacy plural form requires that exact named discharge
+record in an actual lasso, with an F5-owned antecedent and no later discharge.
+The gate runs positive controls for both formats and both lasso shapes, plus
+negative controls for wrong names (including a wrong header with a correct
+record), anonymous failures, missing/invalid loops, discharged goals and missing
+F5 antecedents. Cross-run logging preserves temporal states for both formats.
+
 ## Measured TLC results and cross-kill matrix
 
-All numbers below are generated. Temporal depth uses TLC's completed Progress(N)
+These are the generated R2/M4 numbers from the prior jar above. A new --receipt
+run replaces them; G1's M1 receipt is retained with its results.json and timings.json.
+Temporal depth uses TLC's completed Progress(N)
 line if its final depth sentence is absent, labelled accordingly.
 
 <!-- TLC-RESULTS-START -->
@@ -740,7 +764,7 @@ The depth of the complete state graph search is 4.
 ```
 <!-- TLC-RESULTS-END -->
 
-## Conformance receipt
+## R2 conformance receipt (prior M4 jar)
 
 The same-source gate passed 52 expected-result checks (7 PASS, 45 named expected
 FAIL), and the 24-by-16 cross-kill matrix completed. Fixed's full graph and the

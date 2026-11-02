@@ -70,19 +70,26 @@ def check_mutant_coverage(directory):
         assert changes[0] in {"Fault", "PauseBeforeOpen", "ResumeOnEveryEnd"}, name
 
 
-def temporal_killed(output):
-    if "Temporal properties were violated" not in output:
+def temporal_failure(output):
+    return bool(re.search(r"^Error: Temporal (?:properties were violated|property \w+ was violated)\.", output, re.M))
+
+
+def temporal_killed(output, expected="AutoPauseNeverStuck"):
+    named = re.findall(r"^Error: Temporal property (\w+) was violated\.", output, re.M)
+    if not temporal_failure(output) or (named and set(named) != {expected}):
         return False
     trace = re.findall(r"State (\d+):([^\n]*)\n(.*?)(?=\nState \d+:|\nBack to state |\nStuttering|\nFinished checking|\Z)", output, re.S)
     states = [(index, body) for index, header, body in trace if "Stuttering" not in header]
-    loop = re.search(r"Back to state (\d+):", output)
-    if loop:
+    loop = re.search(r"^(?:State \d+: )?Back to state (\d+):", output, re.M)
+    if loop and any(index == loop[1] for index, _ in states):
         cycle = [body for index, body in states if int(index) >= int(loop[1])]
-    elif "Stuttering" in output:
-        cycle = [states[-1][1]] if states else []
+    elif states and re.search(rf"^State {int(states[-1][0]) + 1}: Stuttering\s*$", output, re.M):
+        cycle = [states[-1][1]]
     else:
         return False
-    false_goal = lambda body: "AutoPauseNeverStuck |-> FALSE" in body
+    # Legacy plural errors must still identify the property in the model's named
+    # discharge record. A bare anonymous failure never supplies this evidence.
+    false_goal = lambda body: bool(re.search(rf"\bobligations\s*=\s*\[\s*{re.escape(expected)}\s*\|->\s*FALSE\s*\]", body))
     # The stronger leads-to property can also be violated after an incorrect owner
     # clear. Check an actual f5 antecedent with no subsequent discharge, not a label.
     return bool(cycle) and all(map(false_goal, cycle)) and any(
@@ -94,11 +101,34 @@ def valid_result(status, output, expected, config):
     violations = re.findall(r"Invariant (\w+) is violated", output)
     if expected in TEMPORAL:
         return (status == 13 and not violations and declared_properties(config) == [expected]
-                and temporal_killed(output))
+                and temporal_killed(output, expected))
     if expected:
         return status == 12 and violations == [expected]
-    return (status == 0 and not violations and "Temporal properties were violated" not in output
+    return (status == 0 and not violations and not temporal_failure(output)
             and "Model checking completed. No error has been found." in output)
+
+
+def check_temporal_controls():
+    expected = "AutoPauseNeverStuck"
+    config = f"PROPERTIES {expected}\n"
+    plural = ('Error: Temporal properties were violated.\nState 1: <Initial predicate>\n'
+              '/\\ s = [owner |-> "f5"]\n/\\ obligations = [AutoPauseNeverStuck |-> FALSE]\n'
+              '\nState 2: Stuttering\n')
+    named = plural.replace("Temporal properties were violated", f"Temporal property {expected} was violated")
+    for output in (plural, named):
+        assert valid_result(13, output, expected, config), "Rejects a genuine named liveness failure"
+        assert valid_result(13, output.replace("State 2: Stuttering", "Back to state 1: <Next>"), expected, config)
+        for bad in (output.replace(expected, "WrongProperty"),
+                    output.replace(f"{expected} |->", f"Wrong{expected} |->"),
+                    output.replace(f"{expected} |-> FALSE", f"{expected} |-> TRUE"),
+                    output.replace('owner |-> "f5"', 'owner |-> "none"'),
+                    output.replace("State 2: Stuttering", ""),
+                    output.replace("State 2: Stuttering", "Back to state 99: <Next>")):
+            assert not valid_result(13, bad, expected, config), "Accepted an invalid temporal verdict"
+    assert not valid_result(13, named.replace(f"property {expected}", "property WrongProperty"), expected, config)
+    anonymous = plural.replace(f"{expected} |-> FALSE", "unidentified |-> FALSE")
+    assert not valid_result(13, anonymous, expected, config), "Accepted an anonymous liveness failure"
+    print("PASS: temporal verdict controls: both formats, named property and real lasso; wrong/anonymous rejected", flush=True)
 
 
 def check_reachability(run):
@@ -147,7 +177,7 @@ def cross_kill(run, runner, command, directory):
         output = log.read_text()
         killed = set(re.findall(r"Invariant (\w+) is violated", output))
         killed |= set(re.findall(r"CrossKill:(\w+)", output))
-        if "Temporal properties were violated" in output:
+        if temporal_failure(output):
             assert temporal_killed(output), f"Unidentified temporal cross-kill: {name}"
             killed.add("AutoPauseNeverStuck")
         assert status in {0, 13} and target in killed and killed <= set(properties), f"Cross-kill failed: {name}\n{output}"
