@@ -2,6 +2,9 @@ import Foundation
 import VoiceBarUI
 
 class VoiceBarCommandRouter: BarCommandRouting {
+    private var physicalKeyDown = false
+    private var physicalCaptureTakeID: String?
+    private var hotkeyLocked = false
     private let voiceState: VoiceState
     private let resetHotkeyState: () -> Void
     private let showVoiceBar: () -> Void
@@ -113,7 +116,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handlePhysicalPressStop() {
-        guard voiceState.mode == .recording else { handleStop(); return }
+        guard voiceState.mode == .recording else { return }
         resetHotkeyState()
         voiceState.stop(physicalPress: true)
     }
@@ -133,12 +136,15 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeyHoldStart() {
+        physicalKeyDown = true
+        hotkeyLocked = false
+        defer { physicalCaptureTakeID = voiceState.activeCaptureTakeID }
         if voiceState.isPlaybackPaused {
             voiceState.record(pressToTalk: true)
             return
         }
         switch voiceState.mode {
-        case .idle, .error:
+        case .idle, .error, .speaking:
             voiceState.record(pressToTalk: true)
         case .transcribing:
             if voiceState.canRecordDuringProcessing { voiceState.record(pressToTalk: true) }
@@ -148,11 +154,19 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
-        guard holdDuration > 0, !voiceState.isPlaybackPaused, voiceState.mode == .recording || voiceState.mode == .speaking else { return }
-        handleStop()
+        let wasDown = physicalKeyDown
+        let captureID = physicalCaptureTakeID
+        physicalKeyDown = false
+        physicalCaptureTakeID = nil
+        guard wasDown, holdDuration > 0, voiceState.mode == .recording, !hotkeyLocked,
+              captureID == voiceState.activeCaptureTakeID else { return }
+        handlePhysicalPressStop()
     }
 
     func handleHotkeyDoubleTap() {
+        physicalKeyDown = true
+        hotkeyLocked = true
+        if voiceState.mode == .speaking { voiceState.record(pressToTalk: true) }
         // The first tap already sent the record intent. Double-tap only locks
         // the gesture state so releasing F5 does not stop the active recording.
         // For an active VAD ask, also suspend the daemon's automatic stops.
@@ -161,10 +175,13 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeySingleTap() {
-        guard !voiceState.isPlaybackPaused else { return }
+        hotkeyLocked = false
+        if voiceState.isPlaybackPaused { voiceState.record(pressToTalk: true); return }
         switch voiceState.mode {
-        case .recording, .speaking:
+        case .recording:
             handleStop()
+        case .speaking:
+            voiceState.record(pressToTalk: true)
         case .transcribing:
             if voiceState.canRecordDuringProcessing { voiceState.record(pressToTalk: true) }
         default:

@@ -1,3 +1,7 @@
+import { STOP_FILE } from "../paths";
+import { clearStopSignal } from "../session-booking";
+import { finishBarCapture, recordingJobsSnapshot, deliverInputTranscription, acknowledgeDictationDelivery } from "../recording-jobs";
+import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { afterEach, beforeEach, describe, expect, it, setSystemTime, spyOn } from "bun:test";
 import * as tts from "../tts";
 import * as amplitude from "../playback-amplitude";
@@ -23,9 +27,11 @@ let events: any[];
 let timers: number[];
 let restore: (() => void)[];
 let extractSpy: any;
+let holdPlayerExit = false;
 
 beforeEach(() => {
   at(0);
+  holdPlayerExit = false;
   players = fixtureBarrier(); trims = fixtureBarrier(); events = []; timers = []; restore = [];
   const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
     const exit = deferred<number>();
@@ -36,7 +42,7 @@ beforeEach(() => {
     const player: Player = { argv, signals: [], exit };
     players.push(player);
     return { pid: 9000 + players.values.length, exited: exit.promise,
-      kill: (signal = "SIGTERM") => { player.signals.push(String(signal)); if (signal !== "SIGSTOP") exit.resolve(143); } };
+      kill: (signal = "SIGTERM") => { player.signals.push(String(signal)); if (signal !== "SIGSTOP" && !holdPlayerExit) exit.resolve(143); } };
   }) as any);
   const extract = extractSpy = spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockReturnValue(
     { result: Promise.resolve({ source: "unavailable", sample_interval_ms: 50, samples: [] }), cancel: () => {} } as any);
@@ -96,14 +102,14 @@ describe("P10 queue pause/resume", () => {
     expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech).toMatchObject({ state: "completed", played_ms: 1000 });
   });
 
-  it("pause-resume-keeps-4200ms-cursor: frozen clock, offset and envelope; one resume within 150 ms", async () => {
+  it("pause-resume-rewinds-to-containing-word: frozen clock, offset and envelope; one resume within 150 ms", async () => {
     const { handle, player, paused, trim } = await pauseAt4200();
-    expect(paused).toMatchObject({ outcome: "accept", offset_ms: 4200 });
+    expect(paused).toMatchObject({ outcome: "accept", offset_ms: 4000 });
     expect(player.signals).not.toContain("SIGSTOP");
     expect(player.signals).toEqual(["SIGTERM"]);
-    expect(trim.argv[trim.argv.indexOf("-ss") + 1]).toBe("4.2");
+    expect(trim.argv[trim.argv.indexOf("-ss") + 1]).toBe("4");
     const pausedEvent = events.filter(e => e.type === "playback_state").at(-1);
-    expect(pausedEvent).toMatchObject({ state: "paused", playback_id: handle.id, offset_ms: 4200, chunk_offset_ms: 4200, word_index: 4, word_count: 10, duration_ms: 10_000 });
+    expect(pausedEvent).toMatchObject({ state: "paused", playback_id: handle.id, offset_ms: 4000, chunk_offset_ms: 4000, word_index: 4, word_count: 10, duration_ms: 10_000 });
     expect(tts.isPlaybackPaused()).toBe(true);
 
     const frozen = events.length;
@@ -113,20 +119,20 @@ describe("P10 queue pause/resume", () => {
     expect(players.values).toHaveLength(1);
     const later = events.slice(frozen);
     expect(later.filter(e => e.type === "state" || e.type === "playback_outcome")).toEqual([]);
-    for (const q of later.filter(e => e.type === "queue")) expect(q.items[0]).toMatchObject({ is_current: true, progress: 0.42 });
+    for (const q of later.filter(e => e.type === "queue")) expect(q.items[0]).toMatchObject({ is_current: true, progress: 0.4 });
 
-    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 4200 });
+    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 4000 });
     expect(tts.resumePlayback()).toMatchObject({ outcome: "noop" });
     const resumed = await players.at(1); await fixtureCheckpoint();
     expect(players.values).toHaveLength(2);
     expect(resumed.argv.at(-1)).toBe(trim.argv.at(-1));
     const speaking = events.filter(e => e.state === "speaking").at(-1);
-    expect(Math.abs(speaking.playback_offset_ms - 4200)).toBeLessThanOrEqual(150);
+    expect(Math.abs(speaking.playback_offset_ms - 4000)).toBeLessThanOrEqual(150);
     const resumedEvent = events.filter(e => e.type === "playback_state").at(-1);
-    expect(resumedEvent).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4200, word_index: 4 });
+    expect(resumedEvent).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4000, word_index: 4 });
     expect(resumedEvent.generation).toBeGreaterThan(pausedEvent.generation);
-    // Watchdog rebased on the remaining 5.8 s, never the pre-pause budget or paused wall time.
-    expect(timers).toContain(10_000 - 4200 + 5000);
+    // Watchdog rebased on the remaining 6 s, never the pre-pause budget or paused wall time.
+    expect(timers).toContain(10_000 - 4000 + 5000);
     expect(tts.isPlaybackPaused()).toBe(false);
 
     at(100_000); resumed.exit.resolve(0);
@@ -139,7 +145,7 @@ describe("P10 queue pause/resume", () => {
     player.exit.resolve(0); await fixtureCheckpoint();
     expect(players.values).toHaveLength(1);
     expect(tts.stopPlayback()).toBe(true);
-    expect(await handle.exited).toMatchObject({ status: "interrupted", reason: "stopped", stopped_at_ms: 4200, word_index: 4 });
+    expect(await handle.exited).toMatchObject({ status: "interrupted", reason: "stopped", stopped_at_ms: 4000, word_index: 4 });
     expect(events.filter(e => e.type === "state").at(-1)).toMatchObject({ state: "idle" });
     expect(tts.isPlaybackPaused()).toBe(false);
     expect(tts.resumePlayback()).toMatchObject({ outcome: "noop" });
@@ -176,7 +182,7 @@ describe("P10 queue pause/resume", () => {
     at(200_000); await fixtureCheckpoint();
     expect(players.values).toHaveLength(1);
     const fresh = tts.playAudioNonBlocking(`${TEST_TMP}/fresh.mp3`, { text: "Fresh", voice: "test", durationMs: 1000 });
-    expect(await handle.exited).toMatchObject({ status: "interrupted", reason: "replaced", stopped_at_ms: 4200 });
+    expect(await handle.exited).toMatchObject({ status: "interrupted", reason: "replaced", stopped_at_ms: 4000 });
     expect(tts.isPlaybackPaused()).toBe(false);
     expect(await held.exited).toMatchObject({ status: "skipped", reason: "expired" });
     const next = await players.at(1);
@@ -251,9 +257,9 @@ describe("P10 envelope and preparation", () => {
     expect(events.filter(e => e.state === "speaking")[0].playback_amplitude.samples).toEqual(samples);
     tts.resumePlayback();
     await players.at(1); await fixtureCheckpoint();
-    // VoiceBar indexes the envelope from 0 at the speaking edge: the resumed frame starts at sample 4200/50.
+    // VoiceBar indexes the envelope from 0 at the speaking edge: the resumed frame starts at sample 4000/50.
     expect(events.filter(e => e.state === "speaking").at(-1).playback_amplitude)
-      .toEqual({ source: "decoded-rms", sample_interval_ms: 50, samples: samples.slice(84) });
+      .toEqual({ source: "decoded-rms", sample_interval_ms: 50, samples: samples.slice(80) });
     expect(extractSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -300,7 +306,7 @@ describe("P10 socket pause/resume", () => {
   it("acks pause/resume idempotently, refuses recorder-active Resume, and Stop ends the parked read", async () => {
     await startTenSecondRead();
     at(4200);
-    expect(handleSocketCommand({ cmd: "pause", id: "p1" } as any)).toMatchObject({ type: "ack", command: "pause", id: "p1", outcome: "accept", offset_ms: 4200 });
+    expect(handleSocketCommand({ cmd: "pause", id: "p1" } as any)).toMatchObject({ type: "ack", command: "pause", id: "p1", outcome: "accept", offset_ms: 4000 });
     expect(handleSocketCommand({ cmd: "pause", id: "p2" } as any)).toMatchObject({ command: "pause", outcome: "noop" });
     (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
     const recording = spyOn(input, "getRecordingState").mockReturnValue("recording" as any);
@@ -319,8 +325,8 @@ describe("P10 socket pause/resume", () => {
   it("pause with the teleprompter clock freezes at the client's word", async () => {
     await startTenSecondRead();
     at(4200);
-    expect(handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 3950 } as any)).toMatchObject({ outcome: "accept", offset_ms: 3950 });
-    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "paused", offset_ms: 3950, word_index: 3 });
+    expect(handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 3950 } as any)).toMatchObject({ outcome: "accept", offset_ms: 3000 });
+    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "paused", offset_ms: 3000, word_index: 3 });
   });
   it("P16 e2e: VoiceBar's pause → resume wire continues the same utterance from the paused word", async () => {
     const { handle } = await startTenSecondRead();
@@ -332,19 +338,19 @@ describe("P10 socket pause/resume", () => {
     // The exact lines VoiceBar writes: both commands are scoped to that player.
     const pause = parseCommand(JSON.stringify({ cmd: "pause", id: "vb-p", playback_elapsed_ms: 4100,
       playback_id: firstSpeaking.playback_id, generation: firstSpeaking.generation }));
-    expect(handleSocketCommand(pause as any)).toMatchObject({ command: "pause", id: "vb-p", outcome: "accept", offset_ms: 4100 });
+    expect(handleSocketCommand(pause as any)).toMatchObject({ command: "pause", id: "vb-p", outcome: "accept", offset_ms: 4000 });
     const paused = events.filter(e => e.type === "playback_state").at(-1);
-    expect(paused).toMatchObject({ state: "paused", playback_id: handle.id, offset_ms: 4100, word_index: 4, word_count: 10 });
+    expect(paused).toMatchObject({ state: "paused", playback_id: handle.id, offset_ms: 4000, word_index: 4, word_count: 10 });
     (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
     at(60_000);
     const resume = parseCommand(JSON.stringify({ cmd: "resume", id: "vb-r", playback_id: paused.playback_id, generation: paused.generation }));
-    expect(handleSocketCommand(resume as any)).toMatchObject({ command: "resume", id: "vb-r", outcome: "accept", offset_ms: 4100 });
+    expect(handleSocketCommand(resume as any)).toMatchObject({ command: "resume", id: "vb-r", outcome: "accept", offset_ms: 4000 });
     const resumedPlayer = await players.at(1); await fixtureCheckpoint();
     const speaking = events.filter(e => e.state === "speaking").at(-1);
     // Same utterance: same text, same readback identity, clock anchored at the paused offset.
-    expect(speaking).toMatchObject({ text: firstSpeaking.text, readback_id: firstSpeaking.readback_id, playback_offset_ms: 4100 });
+    expect(speaking).toMatchObject({ text: firstSpeaking.text, readback_id: firstSpeaking.readback_id, playback_offset_ms: 4000 });
     const resumedEvent = events.filter(e => e.type === "playback_state").at(-1);
-    expect(resumedEvent).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4100, word_index: 4 });
+    expect(resumedEvent).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4000, word_index: 4 });
     // The resumed frame and its event agree on the new generation; the pre-pause scope is now stale.
     expect(speaking).toMatchObject({ playback_id: handle.id, generation: resumedEvent.generation });
     expect(handleSocketCommand(parseCommand(JSON.stringify({ cmd: "pause", playback_id: handle.id,
@@ -363,7 +369,7 @@ describe("P10 socket pause/resume", () => {
       const { handle } = await startTenSecondRead();
       at(base + 4200);
       const trim = trims.values.length;
-      expect(handleSocketCommand({ cmd: "pause" } as any)).toMatchObject({ outcome: "accept", offset_ms: 4200 });
+      expect(handleSocketCommand({ cmd: "pause" } as any)).toMatchObject({ outcome: "accept", offset_ms: 4000 });
       (await trims.at(trim)).exit.resolve(0); await fixtureCheckpoint();
       const recording = spyOn(input, "getRecordingState").mockReturnValue("recording" as any);
       try {
@@ -373,7 +379,7 @@ describe("P10 socket pause/resume", () => {
       expect(events.filter(e => e.type === "playback_outcome" && e.playback_id === handle.id)).toEqual([]);
       // Capture over: Play continues the same read from the same word.
       const next = players.values.length;
-      expect(handleSocketCommand({ cmd: "resume", playback_id: handle.id } as any)).toMatchObject({ outcome: "accept", offset_ms: 4200 });
+      expect(handleSocketCommand({ cmd: "resume", playback_id: handle.id } as any)).toMatchObject({ outcome: "accept", offset_ms: 4000 });
       const resumed = await players.at(next); await fixtureCheckpoint();
       expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "resumed", playback_id: handle.id });
       tts.stopPlayback(); resumed.exit.resolve(0); await handle.exited;
@@ -395,4 +401,193 @@ it("admitted paused playback restarts during drain without new admission", async
     expect(handleSocketCommand({ cmd: "replay" })).toMatchObject({ outcome: "accept" });
     await players.at(1);
   } finally { updateVoiceGate({ kind: "CANCEL", lease }); }
+});
+
+
+describe("R2-01 F5 capture ownership", () => {
+  it("snaps an arbitrary pause to the containing word, including nonzero words", async () => {
+    await startTenSecondRead();
+    expect(tts.pausePlayback({}, 4200)).toMatchObject({ outcome: "accept", offset_ms: 4000 });
+    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ word_index: 4, offset_ms: 4000 });
+  });
+
+  for (const outcome of ["pasted", "empty", "failed", "cancelled", "timeout"] as const) {
+    for (const manual of [false, true]) {
+      it(`${outcome}: F5 pauses before capture; manual=${manual} settles exactly once`, async () => {
+        await startTenSecondRead();
+        at(4200);
+        let rejectCapture!: (error: Error) => void;
+        const capture = deferred<string | null>();
+        const captureResult = Promise.race([capture.promise, new Promise<never>((_resolve, reject) => { rejectCapture = reject; })]);
+        let opened = false;
+        const wait = spyOn(input, "waitForInput").mockImplementation(() => {
+          opened = true;
+          expect(tts.isPlaybackPaused()).toBe(true);
+          expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ pause_owner: "f5", offset_ms: 4000 });
+          return finishSyntheticCapture(() => captureResult);
+        });
+        try {
+          const result = handleSocketCommand({ cmd: "record", id: "capture" });
+          await fixtureCheckpoint();
+          expect(tts.isPlaybackPaused()).toBe(true);
+          for (const trim of trims.values) trim.exit.resolve(0);
+          expect(await result).toMatchObject({ outcome: "accept" });
+          expect(opened).toBe(true);
+          if (manual) expect(await handleSocketCommand({ cmd: "pause" })).toMatchObject({ outcome: "accept", reason: "manual pause" });
+          if (outcome === "failed") rejectCapture(new Error("fixture failure"));
+          else capture.resolve(outcome === "pasted" ? "fixture transcript" : null);
+          await settleRecordingJobs();
+          await fixtureCheckpoint();
+          expect(tts.isPlaybackPaused()).toBe(manual);
+          expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(manual ? 0 : 1);
+          if (!manual) expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 4000 });
+        } finally { capture.resolve(null); wait.mockRestore(); }
+      });
+    }
+  }
+});
+
+
+it("R2-01 N6 all takes and actual paste delivery settle before exactly one resume", async () => {
+  await startTenSecondRead();
+  at(4300);
+  const a = deferred<void>(), b = deferred<void>(), bMic = deferred<void>();
+  let captures = 0;
+  const wait = spyOn(input, "waitForInput").mockImplementation(() => {
+    const index = captures++;
+    return (async () => {
+      if (index === 1) await bMic.promise;
+      return finishBarCapture(Promise.resolve(), "fixture.wav", async () => {
+        await (index === 0 ? a.promise : b.promise);
+        await deliverInputTranscription({ type: "transcription", text: index === 0 ? "first" : "second" });
+        return "transcript";
+      });
+    })();
+  });
+  try {
+    await handleSocketCommand({ cmd: "record", take_id: "A", playback_elapsed_ms: 2500 });
+    (await trims.at(0)).exit.resolve(0);
+    await fixtureCheckpoint();
+    expect(recordingJobsSnapshot().mic_take_id).toBeNull();
+    expect(recordingJobsSnapshot().processing_count).toBe(1);
+    await handleSocketCommand({ cmd: "record", take_id: "B" });
+    await fixtureCheckpoint();
+    expect(captures).toBe(2);
+    expect(recordingJobsSnapshot().mic_take_id).toBe("B");
+    a.resolve();
+    await fixtureCheckpoint();
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(acknowledgeDictationDelivery("A", "A")).toBe(true);
+    await fixtureCheckpoint();
+    expect(tts.isPlaybackPaused()).toBe(true);
+    bMic.resolve(); b.resolve();
+    await fixtureCheckpoint();
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(acknowledgeDictationDelivery("B", "B")).toBe(true);
+    await settleRecordingJobs(); await fixtureCheckpoint();
+    expect(tts.isPlaybackPaused()).toBe(false);
+    expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 2000 });
+    // Stale delivery plus stale recording idle cannot change a later manual pause.
+    expect(await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 3500 })).toMatchObject({ outcome: "accept", offset_ms: 3000 });
+    expect(acknowledgeDictationDelivery("A", "A")).toBe(false);
+    expect(acknowledgeDictationDelivery("B", "B")).toBe(false);
+    await fixtureCheckpoint();
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
+  } finally {
+    a.resolve(); b.resolve(); bMic.resolve();
+    acknowledgeDictationDelivery("A", "A"); acknowledgeDictationDelivery("B", "B");
+    await settleRecordingJobs(); wait.mockRestore();
+  }
+});
+
+it("R2-01 speech-scoped Stop wins without stopping an active take", async () => {
+  await startTenSecondRead();
+  const done = deferred<string | null>();
+  const wait = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(() => done.promise));
+  try {
+    await handleSocketCommand({ cmd: "record", take_id: "stop-capture" });
+    await fixtureCheckpoint();
+    expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
+    expect(recordingJobsSnapshot().recording_jobs).toHaveLength(1);
+    done.resolve(null); await settleRecordingJobs(); await fixtureCheckpoint();
+    expect(tts.isPlaybackPaused()).toBe(false);
+    expect(players.values).toHaveLength(1);
+    expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(0);
+  } finally { done.resolve(null); await settleRecordingJobs(); wait.mockRestore(); }
+});
+
+
+it("R2-01 waits for actual player exit and preserves the early physical release", async () => {
+  holdPlayerExit = true;
+  clearStopSignal();
+  const { player } = await startTenSecondRead();
+  at(2500);
+  const done = deferred<string | null>();
+  let opened = false;
+  const wait = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+    opened = true;
+    options?.onCaptureStart?.();
+    return finishSyntheticCapture(() => done.promise);
+  });
+  try {
+    expect(await handleSocketCommand({ cmd: "record", take_id: "early-release" })).toMatchObject({ outcome: "accept" });
+    await fixtureCheckpoint();
+    expect(opened).toBe(false);
+    expect(await handleSocketCommand({ cmd: "stop", scope: "capture", take_id: "early-release", physical_press: true })).toMatchObject({ outcome: "accept" });
+    player.exit.resolve(143);
+    (await trims.at(0)).exit.resolve(0);
+    await fixtureCheckpoint();
+    expect(opened).toBe(true);
+    expect(JSON.parse(readFileSync(STOP_FILE, "utf8"))).toMatchObject({ physical_press: true });
+    done.resolve(null); await settleRecordingJobs(); await fixtureCheckpoint();
+    expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
+  } finally { done.resolve(null); player.exit.resolve(143); await settleRecordingJobs(); wait.mockRestore(); }
+});
+
+it("R2-01 stale capture settlement cannot unpause a later user pause", async () => {
+  await startTenSecondRead();
+  at(2500);
+  const capture = tts.pauseForF5Capture();
+  await capture.ready;
+  (await trims.at(0)).exit.resolve(0);
+  await fixtureCheckpoint();
+  capture.settle();
+  await players.at(1);
+  expect(tts.pausePlayback({}, 3500)).toMatchObject({ outcome: "accept", offset_ms: 3000 });
+  capture.settle(); capture.settle();
+  await fixtureCheckpoint();
+  expect(tts.isPlaybackPaused()).toBe(true);
+  expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
+  expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ pause_owner: "user" });
+});
+
+it("R2-01 retains the containing word at a nonzero chunk offset", async () => {
+  tts.playAudioNonBlocking(`${TEST_TMP}/later-chunk.mp3`, { text: words.map(word => word.text).join(" "),
+    voice: "test", durationMs: 10000, wordBoundaries: words,
+    longRead: { id: "long", chunk_index: 1, chunk_count: 2, chunk_start_ms: 10000 } });
+  await players.at(0);
+  expect(tts.pausePlayback({}, 13500)).toMatchObject({ outcome: "accept", offset_ms: 13000 });
+  (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+  expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 13000 });
+  await players.at(1);
+  expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ word_index: 3, chunk_offset_ms: 3000, offset_ms: 13000 });
+});
+
+
+it("R2-01 uses clone alignment and retains its display word index", async () => {
+  tts.playAudioNonBlocking(`${TEST_TMP}/clone.mp3`, { text: "One two three", voice: "test", durationMs: 10000,
+    alignedWords: [
+      { word_index: 0, text: "One", offset_ms: 0, duration_ms: 1000 },
+      { word_index: 1, text: "two", offset_ms: 1000, duration_ms: 1000 },
+      { word_index: 2, text: "three", offset_ms: 2000, duration_ms: 8000 },
+    ] });
+  await players.at(0);
+  expect(tts.pausePlayback({}, 4200)).toMatchObject({ outcome: "accept", offset_ms: 2000 });
+  (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+  expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ word_index: 2, offset_ms: 2000 });
+  expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 2000 });
+  await players.at(1);
+  expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ word_index: 2, offset_ms: 2000 });
 });

@@ -8,6 +8,7 @@ import re
 import shutil
 import tempfile
 from admission_source import check_admission
+from f5_conformance import check_f5_runtime
 from f5_checks import EXPECTED as F5_EXPECTED, check_mutant_coverage, check_reachability, valid_result, render_receipt
 from supervision import Supervisor
 
@@ -37,6 +38,11 @@ def check(runner, f5_only=False, receipt=False):
     jar = Path.home() / ".cache/tla/tla2tools.jar"
     assert jar.is_file(), f"Missing TLC jar: {jar}"
     sources = [SPEC / "F5Pause.tla", SPEC / "check.py", SPEC / "f5_checks.py", *configs]
+    sources += [SPEC / "f5_conformance.py", *[ROOT / path for path in (
+        "src/tts.ts", "src/f5-capture.ts", "src/socket-handlers.ts", "src/socket-protocol.ts", "src/selection-read-queue.ts",
+        "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift", "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
+        "flow-bar/Sources/VoiceBarUI/VoiceState.swift", "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift",
+        "src/__tests__/tts-long-read-runtime.test.ts", "src/__tests__/tts-pause.test.ts")]]
     hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
     rows = []
     print(f"Evidence: {RUN}", flush=True)
@@ -134,6 +140,9 @@ def check(runner, f5_only=False, receipt=False):
     if status:
         raise SystemExit(status)
     check_admission(RUN, runner)
+    check_f5_runtime(RUN, runner)
+    assert all(hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest
+               for path, digest in hashes.items()), "Sources changed during runtime conformance"
     print(f"PASS: queue/History runtime and real Swift/daemon admission conformance; {sum(row['expected'] is not None for row in rows)} expected counterexamples")
 
 

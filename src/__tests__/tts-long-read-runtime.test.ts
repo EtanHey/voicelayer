@@ -1,3 +1,6 @@
+import { finishBarCapture, acknowledgeDictationDelivery } from "../recording-jobs";
+import { z } from "zod";
+import { parseCommand } from "../socket-protocol";
 import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { speechArchiveWriter } from "../speech-archive-writer";
 import * as speechReceipts from "../speak-archive";
@@ -45,6 +48,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let failHistory: boolean;
   let failPlayerSpawn = false;
   let synthLatencyMs = 0;
+  let modelReplay = false;
   type Child = { exit: ReturnType<typeof deferred<number>>; killed: boolean };
   let synthBarrier: ReturnType<typeof fixtureBarrier<typeof synths[number]>>;
   let playerBarrier: ReturnType<typeof fixtureBarrier<typeof players[number]>>;
@@ -55,6 +59,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let releaseAlignments: (() => void)[];
 
   beforeEach(() => {
+    modelReplay = false;
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
@@ -71,7 +76,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     Bun.spawnSync = ((argv: string[]) => {
       if (argv.includes("-af")) { writeFileSync(argv.at(-1)!, "adjusted audio"); return { exitCode: 0 }; }
       if (argv[0] === "which" && ["ffprobe", "ffmpeg"].includes(argv[1])) return {exitCode:0, stdout:Buffer.from(argv[1]), stderr:Buffer.alloc(0)};
-      return ({ exitCode: ["ffprobe", "ffmpeg"].includes(argv[0]) ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
+      return ({ exitCode: ["ffprobe", "ffmpeg"].includes(argv[0]) ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? modelReplay ? "4\n" : "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
     Bun.spawn = ((argv: string[]) => {
       if (argv[1] === "-version") return {pid: 70001, exited: Promise.resolve(argv[0] === "ffmpeg" ? 0 : 1), kill() {}};
       if (argv[0] === "which") return { pid: 70000, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg"]).stream(), kill: () => {} };
@@ -79,7 +84,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const media = argv.find((arg) => arg.startsWith("--write-media="))!.split("=").slice(1).join("=");
         const metadata = argv.find((arg) => arg.startsWith("--write-metadata="))!.split("=").slice(1).join("=");
         const spoken = argv.find(a => a.startsWith("--text="))!.slice(7);
-        writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * 120000, duration: 100000})).join("\n"));
+        writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * (modelReplay ? 20000000 : 120000), duration: modelReplay ? 18000000 : 100000})).join("\n"));
         const exit = deferred<number>(); const item = { argv, exit, killed: false }; synths.push(item); synthBarrier.push(item);
         if (!holdSynth || synths.length === 1) {
           if (synthLatencyMs > 0) setTimeout(() => exit.resolve(0), synthLatencyMs); else exit.resolve(0);
@@ -115,6 +120,114 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+  it.skipIf(!process.env.VOICELAYER_F5_CASES)("TLC F5 native command projection conforms to real daemon/player/take handlers", async () => {
+    const schema = z.array(z.object({ initial: z.enum(["playing", "preparing", "paused"]), press: z.number().int(),
+      manual: z.boolean(), stopped: z.boolean(), outcome: z.enum(["pasted", "empty", "failed", "cancelled", "timeout"]),
+      queued: z.number().int(), gesture: z.enum(["tap", "hold", "double"]) }));
+    const rows = schema.parse(JSON.parse(readFileSync(process.env.VOICELAYER_F5_CASES!, "utf8")));
+    const native = z.array(z.array(z.record(z.string(), z.unknown()))).parse(JSON.parse(readFileSync(process.env.VOICELAYER_F5_WIRE!, "utf8")));
+    expect(native).toHaveLength(rows.length);
+    modelReplay = true;
+    let replayed = 0;
+    for (const [index, row] of rows.entries()) {
+      resetSelectionReadQueueForTests();
+      const firstPlayer = players.length, firstEvent = events.length;
+      const capture = deferred<string | null>(), mic = deferred<void>();
+      let captures = 0;
+      const wait = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+        captures++;
+        expect(isPlaybackPaused(), `open mic row ${index}`).toBe(true);
+        options?.onCaptureStart?.();
+        return finishBarCapture(mic.promise, "fixture.wav", async () => capture.promise);
+      });
+      const speakText = spyOn(tts, "speakText").mockImplementation(text => start("edge", text));
+      try {
+        await handleSocketCommand({ cmd: "speak_text", text: "One two", source: "selection", id: `owner-${index}` });
+        const original = handles.at(-1)!;
+        if (row.initial !== "preparing") await playerBarrier.at(firstPlayer);
+        clockMs += Math.min(row.press * 1000, 4000);
+        for (const payload of native[index]) {
+          const control = { ...payload };
+          if (control.cmd === "pause" || control.cmd === "resume") {
+            const current = events.slice(firstEvent).findLast(event => event.type === "playback_state" || event.state === "speaking");
+            // Rebind the native fixture's symbolic player to the daemon's fresh scoped identity.
+            delete control.playback_id; delete control.generation;
+            if (current) { control.playback_id = current.playback_id; control.generation = current.generation; }
+          }
+          const command = parseCommand(JSON.stringify(control));
+          if (!command) throw new Error(`Invalid native command row ${index}`);
+          const ack = await handleSocketCommand(command);
+          expect(ack, `row ${index} ${command.cmd}`).not.toMatchObject({ outcome: "reject" });
+          await fixtureCheckpoint();
+        }
+        expect(captures, `row ${index}`).toBe(1);
+        for (let queued = 0; queued < row.queued; queued++) {
+          expect(await handleSocketCommand({ cmd: "speak_text", id: `queued-${index}-${queued}`, text: `Queued ${queued}`,
+            source: "selection", queue: true })).toMatchObject({ outcome: "accept", reason: "queued" });
+        }
+        const parked = events.slice(firstEvent).findLast(event => event.type === "playback_state" && event.state === "paused");
+        if (row.initial !== "preparing") expect(parked?.offset_ms, `word row ${index}`).toBe(Math.min(Math.floor(row.press / 2) * 2000, 4000));
+        mic.resolve();
+        if (row.outcome === "failed") capture.reject(new Error("model capture failure"));
+        else capture.resolve(row.outcome === "pasted" ? "fixture transcript" : null);
+        await settleRecordingJobs(); await fixtureCheckpoint();
+        const manual = row.initial === "paused" || row.manual;
+        if (!row.stopped && !manual && (row.initial === "preparing" || row.press < 4)) {
+          await playerBarrier.at(firstPlayer + (row.initial === "preparing" ? 0 : 1));
+          expect(events.slice(firstEvent).filter(event => event.type === "playback_state" && event.state === "resumed")).toHaveLength(1);
+          expect(events.slice(firstEvent).findLast(event => event.state === "speaking")?.playback_offset_ms)
+            .toBe(row.initial === "preparing" ? 0 : Math.min(Math.floor(row.press / 2) * 2000, 4000));
+        } else {
+          expect(events.slice(firstEvent).filter(event => event.type === "playback_state" && event.state === "resumed")).toHaveLength(0);
+          if (!row.stopped && manual) expect(isPlaybackPaused()).toBe(true);
+          if (!row.stopped && !manual) await original.done; // End-of-read sentinel: complete without a player.
+        }
+        expect(acknowledgeDictationDelivery("stale-take", "stale-take")).toBe(false);
+        stopPlayback();
+        for (const player of players) player.exit.resolve(0);
+        await original.done;
+        await awaitCurrentPlayback();
+        replayed++;
+      } finally {
+        mic.resolve(); capture.resolve(null);
+        await settleRecordingJobs(); wait.mockRestore(); speakText.mockRestore();
+        stopPlayback();
+      }
+    }
+    expect(replayed).toBe(rows.length);
+    console.log(`Replayed ${replayed} TLC F5 native command scenarios through real daemon, PlaybackQueueManager and Lane I take settlement`);
+  }, 120_000);
+
+  for (const control of ["settle", "manual", "stop"] as const) {
+    it(`R2-01 F5 holds a read before its first chunk (${control})`, async () => {
+      autoPlay = true;
+      const capture = deferred<string | null>();
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(() => capture.promise)));
+      const h = start("edge", "One two three four.");
+      const ack = handleSocketCommand({ cmd: "record", take_id: `preparing-${control}` });
+      await fixtureCheckpoint();
+      expect(await ack).toMatchObject({ outcome: "accept" });
+      await synthBarrier.at(0);
+      await fixtureCheckpoint();
+      expect(players).toHaveLength(0);
+      expect(isPlaybackPaused()).toBe(true);
+      if (control === "manual") expect(await handleSocketCommand({ cmd: "pause" })).toMatchObject({ outcome: "accept", reason: "manual pause" });
+      if (control === "stop") expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
+      capture.resolve(null);
+      await settleRecordingJobs();
+      await fixtureCheckpoint();
+      if (control === "settle") {
+        await h.done;
+        expect(players).toHaveLength(1);
+      } else {
+        expect(players).toHaveLength(0);
+        if (control === "manual") expect(isPlaybackPaused()).toBe(true);
+        stopPlayback();
+        await h.done;
+      }
+    });
+  }
+
   it("S2 a later structured player launch failure cannot strand bounded prefetch", async () => {
     spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
     const h = start("clone", "## Status\n" + "- Keep every complete word in this read.\n".repeat(8));
