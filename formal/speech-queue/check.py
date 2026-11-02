@@ -24,7 +24,9 @@ def check(runner):
                 "AdmissionOlderMatch": "EveryQueuedMatchStops", "QueueAdmissionFixed": None,
                 "QueueAdmissionClear": "NoSilentClear", "QueueAdmissionDuplicate": "NoDuplicateIdentity", "QueueAdmissionStopLeaves": "StopClearsAll",
                 "QueueAdmissionF5Clears": "F5KeepsQueue", "QueueAdmissionFreshClears": "NoSilentClear",
-                "QueueAdmissionInferredPlaying": "NoBlindAdvance"}
+                "QueueAdmissionInferredPlaying": "NoBlindAdvance",
+                "F5PauseCurrent": "F5PausesPlayingSpeech", "F5PauseFixed": None, "F5PauseOpenFirst": "NoSpeechDuringOpenMic",
+                "F5PauseResumeOnPaste": "NoF5PauseOutsideCapture", "F5PauseStuck": "temporal"}
     configs = sorted(SPEC.glob("*.cfg"))
     assert {p.stem for p in configs} == set(EXPECTED), "Every config needs an explicit expected result"
     print(f"Evidence: {RUN}", flush=True)
@@ -34,13 +36,14 @@ def check(runner):
                "-metadir", str(RUN / name), "-config", str(config)]
         if EXPECTED[name] is None:
             cmd += ["-dump", "dot,actionlabels", str(RUN / f"{name}.dot")]
-        module = "QueueAdmission" if name.startswith("QueueAdmission") else "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
+        module = "F5Pause" if name.startswith("F5Pause") else "QueueAdmission" if name.startswith("QueueAdmission") else "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
         status = runner.run([*cmd, str(SPEC / f"{module}.tla")], RUN / f"{name}.log", 90, cwd=ROOT,
                             env={**os.environ, "JAVA_TOOL_OPTIONS": "-Xmx512m"})
         output = (RUN / f"{name}.log").read_text()
         invariant = EXPECTED[name]
         violations = re.findall(r"Invariant (\w+) is violated", output)
-        valid = (status == 12 and violations == [invariant]) if invariant else (
+        valid = (status == 13 and not violations and "Temporal properties were violated" in output) if invariant == "temporal" else (
+            status == 12 and violations == [invariant]) if invariant else (
             status == 0 and "Model checking completed. No error has been found." in output)
         if not valid:
             raise SystemExit(f"Unexpected result for {name}:\n{output}")
@@ -99,7 +102,7 @@ def check(runner):
     if status:
         raise SystemExit(status)
     check_admission(RUN, runner)
-    print("PASS: queue/History runtime and real Swift/daemon admission conformance; twelve expected counterexamples")
+    print("PASS: queue/History runtime and real Swift/daemon admission conformance; sixteen expected counterexamples")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,10 @@
 
 Status: Q1 source candidate, **HOLD until Etan rules (PHX batch)**. No install, microphone, speaker, live socket or private archive access. Installed-app acceptance remains pending.
 
+## F5 pause over Option+F5 speech (lane F5-PAUSE, phase 1)
+
+`F5Pause.tla` models the F5 auto-pause contract. `F5PauseCurrent` must violate `F5PausesPlayingSpeech` (today a hold is ignored and a tap stops the speech); `F5PauseFixed` passes every safety invariant plus `AutoPauseNeverStuck`; `F5PauseOpenFirst`, `F5PauseResumeOnPaste` and `F5PauseStuck` are the sensitivity controls. Model only, no code replay yet. Real TLC output and the phase-2 code points: [F5PAUSE-TLC.md](F5PAUSE-TLC.md).
+
 ## Q1 admission gate (supersedes the historical T1 admission projection below)
 
 `QueueAdmission.tla` explores four normalized identities, up to two waiting reads, and active/F5-suspended ownership. Playing/queued policy remains cfg-parameterized. `NoSilentClear` now requires every previously pending identity to survive pending or promoted to playing for **every** selection, including fresh text. An explicit external `Preempt` clears the chain before a subsequent selection; that selection's pending pre-state is empty. Empty/failed capture retains its existing Stop contract and is outside the nonempty-selection invariant.
