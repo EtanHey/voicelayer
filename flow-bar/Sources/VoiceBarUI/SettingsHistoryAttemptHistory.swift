@@ -102,7 +102,6 @@ struct SettingsHistoryDiagnosticsCopy {
     let olderNotice: String?
     let technicalDetails: String
     let shouldExpand: Bool
-    let statusChip: String
     var defaultExpanded: Bool { shouldExpand }
     var visibleSentences: [String] {
         ([summary] + [latestUpdate].compactMap { $0 } + [olderNotice].compactMap { $0 }).filter { !$0.isEmpty }
@@ -118,11 +117,6 @@ struct SettingsHistoryDiagnosticsCopy {
         else if let latest = attemptHistory?.attempts.last {
             shouldExpand = latest.status == .failed || latest.status == .timedOut
         } else { shouldExpand = recordingError || snapshot?.archiveState == .failed }
-        if partial { statusChip = "Partial text" }
-        else if shouldExpand { statusChip = "Needs attention" }
-        else if let latest = attemptHistory?.attempts.last, latest.status == .transcribing || latest.status == .formatting {
-            statusChip = "Working"
-        } else { statusChip = snapshot?.savedTextState == .present ? "Text saved" : "Details" }
         attempts = attemptHistory?.attempts ?? []
         olderNotice = (snapshot != nil && attemptHistory?.isComplete != true) ||
             attempts.contains(where: { $0.hasMissingExecutionDetails }) ? Self.olderDetails : nil
