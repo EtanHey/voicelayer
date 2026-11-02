@@ -103,9 +103,9 @@ update-gate round1, error recovery, CLICK2 groundwork and recording review regre
 plus the approved integration repairs for the private-safety VM and MCP Ask schema.
 The full paused-Ask suite supplies explicit prompt word timings at its nonzero
 4200ms pause position, preserving every physical-exit, trim-failure and watchdog assertion.
-The approved shared fix 8093e582 (#673) is consumed unchanged; its two installer
-test files also run in full and are hashed, preserving every process-read and
-reads-under-lock assertion.
+The lead-authorized shared fix 8093e582 (#673) is consumed unchanged; cross-vendor
+review is pending. Its two installer test files also run in full and are hashed,
+preserving every process-read and reads-under-lock assertion.
 CLICK2 asserts exact
 containing-word offsets from explicit timing fixtures and one paused confirmation
 per preparation/admitted-chunk phase; repeated commands add no confirmation.
