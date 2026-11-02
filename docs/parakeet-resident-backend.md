@@ -218,6 +218,9 @@ choice, while effective and the result backend identify the actually restored
 provider. Later requests reuse that provider; legacy W load/effort controls
 cannot allocate W beside a restored P. Cleanup uncertainty blocks restoration.
 A failed restoration is Error with no effective engine, never a Ready claim.
+Selecting an already-ready desired engine is a no-op; sleeping and failed engines
+still warm on selection. Explicit desired-choice writes log the requested and
+previous engine enums so a later switch can be distinguished from recovery.
 
 The default idle timeout remains600seconds for either selected engine. The
 real lab daemon switch/idle checks use5seconds only to observe both unloads.
@@ -241,14 +244,20 @@ no model load or network. `available` remains runtime evidence, independently.
 Socket commands: `download_recognizer {engine}`, `cancel_recognizer_download
 {engine}`, `delete_recognizer {engine}`, and `set_recognizer_residency
 {engine,action:"load"|"unload"}`. Engines are `whisper` and `parakeet`. Progress
-arrives in the existing `recognizer_status` events. Voice work excludes mutations;
-delete additionally requires an unloaded engine and another installed recognizer.
-Deleting the selected engine saves the other selection first. Only named regular
+arrives in the existing `recognizer_status` events. Downloads hold only per-engine
+ownership and never block recording or transcription. Selection, residency and
+delete require idle voice work; delete unloads the engine first and requires
+another installed recognizer.
+Deleting the selected engine saves the other selection first; that remaining
+engine loads on the next dictation unless already resident. Only named regular
 model files are removed; shared-cache links and unrelated files are preserved.
 
 Downloads use the immutable revisions and SHA256 pins in
 `src/recognizer-download-manifest.ts`, stage beside the destination, then rename
 after verification. Failed/cancelled staging never counts as installed. Parakeet
+can be explicitly re-downloaded/Set up even with complete weights present: it
+verifies their pinned bytes read-only and validates/repairs only the runtime.
+The weight bytes, inodes and modification times remain unchanged. Setup
 also installs and validates a VoiceLayer-owned venv from the wheel-only,
 hash-locked `src/parakeet-runtime.lock` (mlx-audio 0.6.3), then atomically records
 its Python path in `parakeet-runtime.json`. The Python override still wins.

@@ -6,8 +6,24 @@
     "flow-bar/Sources/VoiceBarUI/BarView.swift"
   ],
   "checks": {
-    "Old": "NoOverlap",
-    "Fixed": null,
-    "MutantNoEntry": "NewestShows"
-  }
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Old": {
+      "role": "mutant",
+      "target": "NoOverlap",
+      "kind": "invariant"
+    },
+    "MutantNoEntry": {
+      "role": "mutant",
+      "target": "NewestShows",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "NewestShows",
+    "NoOverlap"
+  ]
 }

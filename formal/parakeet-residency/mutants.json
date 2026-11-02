@@ -1,0 +1,160 @@
+[
+  {
+    "name": "OneModel",
+    "module": "ResidentRecognizer.tla",
+    "property": "OneModel",
+    "replace": []
+  },
+  {
+    "name": "UnknownBlocks",
+    "module": "ResidentRecognizer.tla",
+    "property": "UnknownBlocks",
+    "replace": [
+      [
+        "UnknownCleanup == /\\ owner = \"picker\" /\\ stage \\in {\"stopP\",\"stopW\",\"cleanup\"}\n                  /\\ hold' = TRUE /\\ owner' = \"blocked\"",
+        "UnknownCleanup == /\\ owner = \"picker\" /\\ stage \\in {\"stopP\",\"stopW\",\"cleanup\"}\n                  /\\ hold' = TRUE /\\ owner' = \"none\""
+      ]
+    ]
+  },
+  {
+    "name": "ProvisionedSelectable",
+    "module": "ResidentRecognizer.tla",
+    "property": "ProvisionedSelectable",
+    "replace": []
+  },
+  {
+    "name": "MissingAssetsBlocked",
+    "module": "ResidentRecognizer.tla",
+    "property": "MissingAssetsBlocked",
+    "replace": [
+      [
+        "GateCanSelect(e) == e \\in assetsPresent /\\",
+        "GateCanSelect(e) == TRUE /\\"
+      ]
+    ]
+  },
+  {
+    "name": "GateDoesNotLoad",
+    "module": "ResidentRecognizer.tla",
+    "property": "GateDoesNotLoad",
+    "replace": [
+      [
+        "GateSelect == /\\ GateCanSelect(\"P\")",
+        "GateSelect == /\\ GateCanSelect(\"P\") /\\ models' = {\"P\"}"
+      ],
+      [
+        "UNCHANGED <<models,owner,stage,target,recovery,pendingLegacy,",
+        "UNCHANGED <<owner,stage,target,recovery,pendingLegacy,"
+      ]
+    ]
+  },
+  {
+    "name": "DownloadNeverBlocksAdmittedRequest",
+    "module": "ResidentRecognizer.tla",
+    "property": "DownloadNeverBlocksAdmittedRequest",
+    "replace": []
+  },
+  {
+    "name": "VerifiedDownloadAlwaysPublishable",
+    "module": "ResidentRecognizer.tla",
+    "property": "VerifiedDownloadAlwaysPublishable",
+    "replace": [
+      [
+        "DownloadPublish == /\\ stage = \"runtime\"",
+        "DownloadPublish == /\\ stage = \"runtime\" /\\ ~request"
+      ]
+    ]
+  },
+  {
+    "name": "IdleLoadedCanDelete",
+    "module": "ResidentRecognizer.tla",
+    "property": "IdleLoadedCanDelete",
+    "replace": []
+  },
+  {
+    "name": "DeletedModelNotResident",
+    "module": "ResidentRecognizer.tla",
+    "property": "DeletedModelNotResident",
+    "replace": [
+      [
+        "assetsPresent' = assetsPresent \\ {target} /\\ desired' = OtherEngine",
+        "assetsPresent' = assetsPresent \\ {target} /\\ desired' = desired"
+      ]
+    ]
+  },
+  {
+    "name": "DeleteExcludesRequest",
+    "module": "ResidentRecognizer.tla",
+    "property": "DeleteExcludesRequest",
+    "replace": [
+      [
+        "DeleteBegin == /\\ owner = \"none\" /\\ ~request /\\ ~capture /\\ ~hold",
+        "DeleteBegin == /\\ owner = \"none\" /\\ ~capture /\\ ~hold"
+      ]
+    ]
+  },
+  {
+    "name": "NoDeleteDuringCapture",
+    "module": "ResidentRecognizer.tla",
+    "property": "NoDeleteDuringCapture",
+    "replace": [
+      [
+        "DeleteFiles == /\\ owner = \"delete\" /\\ stage = \"unlink\" /\\ ~capture /\\ ~hold",
+        "DeleteFiles == /\\ owner = \"delete\" /\\ stage = \"unlink\" /\\ ~hold"
+      ]
+    ]
+  },
+  {
+    "name": "ReadyDuplicateKeepsLoaded",
+    "module": "ResidentRecognizer.tla",
+    "property": "ReadyDuplicateKeepsLoaded",
+    "replace": []
+  },
+  {
+    "name": "ReadySelectionIsNoop",
+    "module": "ResidentRecognizer.tla",
+    "property": "ReadySelectionIsNoop",
+    "replace": []
+  },
+  {
+    "name": "CleanupAfterExit",
+    "module": "RuntimeSetup.tla",
+    "property": "CleanupAfterExit",
+    "replace": [
+      [
+        "Cleanup == /\\ child = \"exited\" /\\ phase = \"joining\"",
+        "Cleanup == /\\ phase = \"joining\""
+      ]
+    ]
+  },
+  {
+    "name": "CancellationFinishes",
+    "module": "RuntimeSetup.tla",
+    "property": "CancellationFinishes",
+    "replace": []
+  },
+  {
+    "name": "PartialRemovalDropped",
+    "module": "ArchiveGateEvidence.tla",
+    "property": "FinalTranscriptEvidence",
+    "replace": []
+  },
+  {
+    "name": "GateRecordBeforeCommit",
+    "module": "ArchiveGateEvidence.tla",
+    "property": "FinalTranscriptEvidence",
+    "replace": []
+  },
+  {
+    "name": "GateMarkerStale",
+    "module": "ArchiveGateEvidence.tla",
+    "property": "FinalTranscriptEvidence",
+    "replace": []
+  },
+  {
+    "name": "GateDetailOnTranscribed",
+    "module": "ArchiveGateEvidence.tla",
+    "property": "NoFailureDetailOnTranscript",
+    "replace": []
+  }
+]

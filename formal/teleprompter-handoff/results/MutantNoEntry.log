@@ -1,101 +1,27 @@
-TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 85775] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
-Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/formal/teleprompter-handoff/PreparingHandoff.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
-Semantic processing of module Naturals
-Semantic processing of module Sequences
-Semantic processing of module PreparingHandoff
-Starting... (2026-11-02 10:42:58)
-Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 10:42:58.
-Error: Invariant NewestShows is violated.
-Error: The behavior up to this point is:
-State 1: <Initial predicate>
-/\ now = 0
-/\ views = <<[initial |-> TRUE, inserted |-> 0, removed |-> 87]>>
-
-State 2: <Switch line 37, col 11 to line 43, col 27 of module PreparingHandoff>
-/\ now = 0
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 3: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 1
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 4: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 2
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 5: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 3
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 6: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 4
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 7: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 5
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 8: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 6
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 9: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 7
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 10: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 8
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 11: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 9
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 12: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 10
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 13: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 11
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 14: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 12
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 15: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 13
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 16: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 14
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-State 17: <Tick line 34, col 9 to line 34, col 61 of module PreparingHandoff>
-/\ now = 15
-/\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],
-   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>
-
-3093 states generated, 3093 distinct states found, 681 states left on queue.
-The depth of the complete state graph search is 17.
-The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 2 and the 95th percentile is 2).
-Finished in 00s at (2026-11-02 10:42:58)
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NewestShows",
+  "status": "EXPECTED_FAIL",
+  "generated": 3093,
+  "distinct": 3093,
+  "trace": [
+    "/\\ now = 0\n/\\ views = <<[initial |-> TRUE, inserted |-> 0, removed |-> 87]>>",
+    "/\\ now = 0\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 1\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 2\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 3\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 4\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 5\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 6\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 7\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 8\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 9\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 10\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 11\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 12\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 13\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 14\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>",
+    "/\\ now = 15\n/\\ views = << [initial |-> TRUE, inserted |-> 0, removed |-> 0],\n   [initial |-> FALSE, inserted |-> 0, removed |-> 87] >>"
+  ]
+}

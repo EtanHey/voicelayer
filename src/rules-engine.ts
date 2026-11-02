@@ -1,4 +1,4 @@
-import { dictionarySurfacePattern, dictionaryOccurrencePattern, isWholeDictionarySurface } from "./stt-dictionary-matching";
+import { dictionarySurfacePattern, dictionaryOccurrencePattern, dictionaryReplacement, isWholeDictionarySurface } from "./stt-dictionary-matching";
 
 /**
  * Dev-aware post-processing rule engine for dictation output.
@@ -18,6 +18,8 @@ import { dictionarySurfacePattern, dictionaryOccurrencePattern, isWholeDictionar
 
 export interface RulesConfig {
   aliases?: Record<string, string>;
+  /** Only sources loaded from the user's vocabulary store may match an attached English possessive. */
+  possessiveAliasSources?: ReadonlySet<string>;
   hebrewLatinAliasSources?: ReadonlySet<string>;
   shouldApplyAlias?: (source: string, text: string) => boolean;
   disabledStages?: Set<string>;
@@ -55,6 +57,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
       config.aliases,
       config.hebrewLatinAliasSources,
       config.shouldApplyAlias,
+      config.possessiveAliasSources,
     );
   }
 
@@ -1275,9 +1278,10 @@ function applyAliases(
   aliases: Record<string, string>,
   hebrewLatinAliasSources: ReadonlySet<string> = new Set(),
   shouldApplyAlias?: (source: string, text: string) => boolean,
+  possessiveAliasSources: ReadonlySet<string> = new Set(),
 ): string {
   let result = text;
-  const prefixKey = [...hebrewLatinAliasSources].sort().join("\0");
+  const prefixKey = JSON.stringify([[...hebrewLatinAliasSources].sort(), [...possessiveAliasSources].sort()]);
   let cached = ALIAS_PATTERN_CACHE.get(aliases);
   if (!cached || cached.prefixKey !== prefixKey) {
     // A shorter spelling can be a prefix of a fuller mishearing. Rewrite the
@@ -1305,7 +1309,7 @@ function applyAliases(
         return [
           from.toLowerCase(),
           prefixMode === "plain"
-            ? dictionarySurfacePattern(from, to)
+            ? dictionarySurfacePattern(from, to, { clitics: possessiveAliasSources.has(from.toLowerCase()) })
             : dictionaryOccurrencePattern(source),
           to,
           prefixMode,
@@ -1338,7 +1342,7 @@ function applyAliases(
       if (rewrittenSpans.some(([left, right]) => start < right && end > left)) continue;
       const prefix = match[1];
       const replacement = !prefix || prefixMode === "plain"
-        ? to
+        ? dictionaryReplacement(match[0], fromLower, to)
         : prefixMode === "separate-prefix"
           ? `${prefix} ${to}`
           : `${prefix}-${to}`;

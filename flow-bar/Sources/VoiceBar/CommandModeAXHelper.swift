@@ -14,6 +14,13 @@ enum AXWriteDisposition: Equatable {
     case appliedUnverified
 }
 
+enum AXEnabledAttributeRead: Equatable {
+    case value(Bool), absent, failure(AXError)
+
+    var value: Bool? { if case .value(let value) = self { return value }; return nil }
+    var error: AXError? { if case .failure(let error) = self { return error }; return nil }
+}
+
 enum AXInsertionStrategy: Equatable {
     case valueRewrite
     case selectionLocal
@@ -97,47 +104,83 @@ final class CommandModeAXHelper {
 
     /// Captures focus identity and metadata only; never reads the element's text.
     static func captureFocusedTargetEligibility() -> DictationFocusedTargetEligibility? {
-        guard AXIsProcessTrusted(), let element = focusedElement() else { return nil }
+        guard AXIsProcessTrusted() else {
+            logNativePaste("paste_native_focus", ["reason": "ax_untrusted"])
+            return nil
+        }
+        guard let element = focusedElement() else {
+            logNativePaste("paste_native_focus", ["reason": "focused_element_unavailable"])
+            return nil
+        }
         var pid = pid_t()
-        guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+        guard AXUIElementGetPid(element, &pid) == .success else {
+            logNativePaste("paste_native_focus", ["reason": "focused_pid_unavailable"])
+            return nil
+        }
         let window = readElement(element, attribute: kAXWindowAttribute as CFString)
         return targetEligibility(element, pid: pid) {
-            guard AXIsProcessTrusted(),
-                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-                  let current = focusedElement(), CFEqual(current, element) else { return false }
-            if let window {
-                guard let currentWindow = readElement(current, attribute: kAXWindowAttribute as CFString),
-                      CFEqual(currentWindow, window) else { return false }
+            guard AXIsProcessTrusted() else { return focusDeclined("ax_untrusted", pid: pid) }
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                return focusDeclined("frontmost_pid_changed", pid: pid)
             }
-            return targetEligibility(current, pid: pid, matchesCurrentFocus: { true }).permitsTyping(into: pid)
+            guard let current = focusedElement() else { return focusDeclined("focused_element_unavailable", pid: pid) }
+            guard CFEqual(current, element) else { return focusDeclined("element_changed", pid: pid) }
+            if let window {
+                guard let currentWindow = readElement(current, attribute: kAXWindowAttribute as CFString) else {
+                    return focusDeclined("window_unavailable", pid: pid)
+                }
+                guard CFEqual(currentWindow, window) else { return focusDeclined("window_changed", pid: pid) }
+            }
+            let rechecked = targetEligibility(current, pid: pid, matchesCurrentFocus: { true })
+            let reason = rechecked.typingRejectionReason(into: pid)
+            var details = rechecked.diagnosticDetails
+            details["reason"] = reason ?? "eligible"
+            details["focusedPID"] = String(pid)
+            details["sameElement"] = "true"
+            details["sameWindow"] = window == nil ? "not_captured" : "true"
+            logNativePaste("paste_native_focus_revalidated", details)
+            return reason == nil
         }
     }
 
     static func typingEligibility(
         processIdentifier: pid_t, role: String?, subrole: String?, enabled: Bool?, editable: Bool?,
         selectedTextSettable: Bool, valueSettable: Bool, protectedContent: Bool,
+        enabledReadError: AXError? = nil,
         matchesCurrentFocus: @escaping () -> Bool
     ) -> DictationFocusedTargetEligibility {
+        // TextEdit omits AXEnabled; writable text is disabled only by an explicit false.
         DictationFocusedTargetEligibility(
             processIdentifier: processIdentifier, role: role,
-            isEditable: enabled == true && (editable ?? (selectedTextSettable || valueSettable)),
+            isEditable: enabledReadError == nil && enabled != false && (editable ?? (selectedTextSettable || valueSettable)),
             isSecure: subrole == kAXSecureTextFieldSubrole || protectedContent,
-            matchesCurrentFocus: matchesCurrentFocus
+            matchesCurrentFocus: matchesCurrentFocus,
+            diagnosticDetails: [
+                "enabledAttribute": enabledReadError == nil ? enabled.map(String.init) ?? "nil" : "error",
+                "enabledReadStatus": enabledReadError.map { String($0.rawValue) } ?? "ok_or_absent",
+                "editableAttribute": editable.map(String.init) ?? "nil",
+                "selectedTextSettable": String(selectedTextSettable),
+                "valueSettable": String(valueSettable),
+                "protectedContent": String(protectedContent),
+                "subrole": subrole ?? "nil",
+            ]
         )
     }
 
     private static func targetEligibility(
         _ element: AXUIElement, pid: pid_t, matchesCurrentFocus: @escaping () -> Bool
     ) -> DictationFocusedTargetEligibility {
-        typingEligibility(
+        let enabled = readEnabledAttribute(element)
+        return typingEligibility(
             processIdentifier: pid,
             role: readAttributeString(element, attribute: kAXRoleAttribute as CFString),
             subrole: readAttributeString(element, attribute: kAXSubroleAttribute as CFString),
-            enabled: readAttributeBool(element, attribute: kAXEnabledAttribute as CFString),
+            enabled: enabled.value,
             editable: readAttributeBool(element, attribute: "AXEditable" as CFString),
             selectedTextSettable: isSettable(element, attribute: kAXSelectedTextAttribute as CFString),
             valueSettable: isSettable(element, attribute: kAXValueAttribute as CFString),
             protectedContent: readAttributeBool(element, attribute: "AXProtectedContent" as CFString) == true,
+            enabledReadError: enabled.error,
             matchesCurrentFocus: matchesCurrentFocus
         )
     }
@@ -184,35 +227,48 @@ final class CommandModeAXHelper {
         completion: @escaping (DictationInsertionResult) -> Void
     ) -> Bool {
         guard let window = readElement(element, attribute: kAXWindowAttribute as CFString) else {
-            return false
+            return axDeclined("window_unavailable")
         }
         return beginSelectionLocalInsertion(
             text,
             readSnapshot: { selectionSnapshot(element) },
             isEligible: {
                 guard insertionStrategy(text: text, focusedValueLength: 0,
-                                        targetBundleIdentifier: targetBundleIdentifier(for: element)) == .selectionLocal,
-                      isCurrentTarget(element, window: window) else { return false }
+                                        targetBundleIdentifier: targetBundleIdentifier(for: element)) == .selectionLocal else {
+                    return axDeclined("strategy_not_selection_local")
+                }
+                guard isCurrentTarget(element, window: window) else { return false }
                 var ancestor: AXUIElement? = element
                 var reachedWindow = false
                 for _ in 0..<32 {
-                    guard let current = ancestor else { return false }
+                    guard let current = ancestor else { return axDeclined("ancestor_unavailable") }
                     if readAttributeString(current, attribute: kAXRoleAttribute as CFString) == "AXWebArea" {
                         // AX text/ranges do not certify rich nodes or browser selection.
                         // Native matched-prestate proof must precede enabling this route.
-                        return false
+                        return axDeclined("web_ancestor")
                     }
                     if CFEqual(current, window) { reachedWindow = true; break }
                     ancestor = readElement(current, attribute: kAXParentAttribute as CFString)
                 }
                 let role = readAttributeString(element, attribute: kAXRoleAttribute as CFString)
                 let subrole = readAttributeString(element, attribute: kAXSubroleAttribute as CFString)
-                return reachedWindow && (role == kAXTextFieldRole || role == kAXTextAreaRole)
-                    && subrole != kAXSecureTextFieldSubrole
-                    && readAttributeBool(element, attribute: "AXProtectedContent" as CFString) != true
-                    && readAttributeBool(element, attribute: kAXEnabledAttribute as CFString) == true
-                    && isSettable(element, attribute: kAXSelectedTextAttribute as CFString)
-                    && isSettable(element, attribute: kAXSelectedTextRangeAttribute as CFString)
+                let enabled = readEnabledAttribute(element)
+                if let reason = nativeWriteRejectionReason(
+                    role: role, subrole: subrole,
+                    protected: readAttributeBool(element, attribute: "AXProtectedContent" as CFString) == true,
+                    enabled: enabled.value,
+                    selectedTextSettable: isSettable(element, attribute: kAXSelectedTextAttribute as CFString),
+                    selectedRangeSettable: isSettable(element, attribute: kAXSelectedTextRangeAttribute as CFString),
+                    reachedWindow: reachedWindow, enabledReadError: enabled.error
+                ) {
+                    if let error = enabled.error {
+                        logNativePaste("paste_native_ax_guard_failed", ["reason": reason,
+                            "enabledAttribute": "error", "enabledReadStatus": String(error.rawValue)])
+                        return false
+                    }
+                    return axDeclined(reason)
+                }
+                return true
             },
             isCurrentTarget: { isCurrentTarget(element, window: window) },
             writeSelection: {
@@ -222,8 +278,25 @@ final class CommandModeAXHelper {
             observeSettled: { work in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
             },
+            onDecline: { _ = axDeclined($0) },
             completion: completion
         )
+    }
+
+    static func nativeWriteRejectionReason(
+        role: String?, subrole: String?, protected: Bool, enabled: Bool?,
+        selectedTextSettable: Bool, selectedRangeSettable: Bool, reachedWindow: Bool,
+        enabledReadError: AXError? = nil
+    ) -> String? {
+        guard reachedWindow else { return "window_not_in_ancestors" }
+        guard role == kAXTextFieldRole || role == kAXTextAreaRole else { return "non_text_role" }
+        guard subrole != kAXSecureTextFieldSubrole else { return "secure_target" }
+        guard !protected else { return "protected_content" }
+        guard enabledReadError == nil else { return "enabled_read_failed" }
+        guard enabled != false else { return "not_enabled" }
+        guard selectedTextSettable else { return "selected_text_not_settable" }
+        guard selectedRangeSettable else { return "selected_range_not_settable" }
+        return nil
     }
 
     /// The live F5 transport seam: one selection-local write, never whole AXValue.
@@ -237,19 +310,20 @@ final class CommandModeAXHelper {
         writeSelection: (String) -> Bool,
         writeCaret: (NSRange) -> Bool,
         observeSettled: (@escaping () -> Void) -> Void,
+        onDecline: (String) -> Void = { _ in },
         completion: @escaping (DictationInsertionResult) -> Void
     ) -> Bool {
-        guard isEligible(), let before = readSnapshot(),
-              let range = Range(before.selectedRange, in: before.value), isCurrentTarget() else {
-            return false
-        }
+        // Eligibility owns its specific refusal diagnostic.
+        guard isEligible() else { return false }
+        guard let before = readSnapshot() else { onDecline("snapshot_unavailable"); return false }
+        guard let range = Range(before.selectedRange, in: before.value) else { onDecline("invalid_range"); return false }
+        guard isCurrentTarget() else { onDecline("target_changed"); return false }
         let expected = CommandModeSelectionSnapshot(
             value: before.value.replacingCharacters(in: range, with: text),
             selectedRange: NSRange(location: before.selectedRange.location + text.utf16.count, length: 0)
         )
-        guard isCurrentTarget(), readSnapshot() == before else {
-            return false
-        }
+        guard isCurrentTarget() else { onDecline("target_changed_before_write"); return false }
+        guard readSnapshot() == before else { onDecline("selection_changed_before_write"); return false }
         // A rejected setter can still have changed the host. Never return false after
         // attempting a write and never dispatch a full retry from uncertain readback.
         guard writeSelection(text) else {
@@ -294,12 +368,30 @@ final class CommandModeAXHelper {
 
     private static func isCurrentTarget(_ element: AXUIElement, window: AXUIElement) -> Bool {
         var pid = pid_t()
-        guard AXUIElementGetPid(element, &pid) == .success,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-              let focused = focusedElement(), CFEqual(focused, element),
-              let currentWindow = readElement(focused, attribute: kAXWindowAttribute as CFString)
-        else { return false }
-        return CFEqual(currentWindow, window)
+        guard AXUIElementGetPid(element, &pid) == .success else { return axDeclined("focused_pid_unavailable") }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return axDeclined("frontmost_pid_mismatch") }
+        guard let focused = focusedElement() else { return axDeclined("focused_element_unavailable") }
+        guard CFEqual(focused, element) else { return axDeclined("element_changed") }
+        guard let currentWindow = readElement(focused, attribute: kAXWindowAttribute as CFString) else {
+            return axDeclined("current_window_unavailable")
+        }
+        guard CFEqual(currentWindow, window) else { return axDeclined("window_changed") }
+        return true
+    }
+
+    private static func axDeclined(_ reason: String) -> Bool {
+        logNativePaste("paste_native_ax_guard_failed", ["reason": reason])
+        return false
+    }
+
+    private static func focusDeclined(_ reason: String, pid: pid_t) -> Bool {
+        logNativePaste("paste_native_focus_revalidated", ["reason": reason, "focusedPID": String(pid)])
+        return false
+    }
+
+    private static func logNativePaste(_ event: String, _ details: [String: String]) {
+        let fields = details.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        NSLog("[VoiceBar][diag] %@ %@", event, fields)
     }
 
     private static func readElement(_ element: AXUIElement, attribute: CFString) -> AXUIElement? {
@@ -313,6 +405,20 @@ final class CommandModeAXHelper {
         var raw: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute, &raw) == .success else { return nil }
         return raw as? Bool
+    }
+
+    static func decodeEnabledAttribute(status: AXError, value: Bool?) -> AXEnabledAttributeRead {
+        switch status {
+        case .attributeUnsupported, .noValue: return .absent
+        case .success: return value.map(AXEnabledAttributeRead.value) ?? .failure(.failure)
+        default: return .failure(status)
+        }
+    }
+
+    private static func readEnabledAttribute(_ element: AXUIElement) -> AXEnabledAttributeRead {
+        var raw: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &raw)
+        return decodeEnabledAttribute(status: status, value: raw as? Bool)
     }
 
     private static func isSettable(_ element: AXUIElement, attribute: CFString) -> Bool {

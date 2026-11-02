@@ -1,16 +1,61 @@
 {
-  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
-  "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
-  "sourceHashes": {
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/notch-tab-morph/TabMorph.tla": "200dcf994b43da2200b04ec9be9247fd59dee1c99ff1fa250aeb770e45d4bf55",
+    "formal/notch-tab-morph/checks.json": "e4a5978565e3263c8c790dccfe7e0eea8cd6c24a93990a2c1b8bc3719066d73a",
+    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/notch-tab-morph/Async.cfg": "ac32fffc87f4372cdbfa7858ba0af334d38df7032071a3dc1a71bf95cd1e67d2",
+    "formal/notch-tab-morph/Unguarded.cfg": "407387a01772663cbaf3ff9284d01d4e721d7111140570a996372c8f92ee9cce",
+    "formal/notch-tab-morph/Old.cfg": "922ccd68fdc97f870c0c7f058f58a711be66c56b50803378b79e4c68f3382f1d",
+    "formal/notch-tab-morph/Fixed.cfg": "a7bb66b005791a7384236d6bb412a264b1e5d3d6d8daebf4e87c3d22419ac5e0",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchView.swift": "e184a614849a5a5fbe406bb65884011987b2194ee7eae53ae058e62f276327e3",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift": "2c8780574261d3b8c5333542e9f816290574363a49e9c0568c351a03211bf47f"
   },
-  "specSHA256": "200dcf994b43da2200b04ec9be9247fd59dee1c99ff1fa250aeb770e45d4bf55",
-  "cfgSHA256": {
-    "Old": "972da50e2bfe6a206a51e695f3d44c0cb2946c18964f3415874ccb4600d2245c",
-    "Async": "b83479e690b789c084ad82d5b7acc73f116fbad503f65f1c533fc2b8b1a79bef",
-    "Unguarded": "d285ba25726f33ed3a2cc1ccc0dae894154d1df90a573026f9fc8bb9d5810a54",
-    "Fixed": "a7bb66b005791a7384236d6bb412a264b1e5d3d6d8daebf4e87c3d22419ac5e0"
+  "mutants": {
+    "NoSlabSweep": [
+      "Old",
+      "Unguarded"
+    ],
+    "SettlesOnPresented": [
+      "Async"
+    ]
   },
-  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+  "graphHashes": {
+    "Fixed": "005a230f0f418ed62a1c1fe3aefa5af60619ecd73285c036dfc2a4f4f9e62890"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 492,
+      "distinct": 297
+    },
+    "Old": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSlabSweep",
+      "status": "EXPECTED_FAIL",
+      "generated": 15,
+      "distinct": 13
+    },
+    "Async": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "SettlesOnPresented",
+      "status": "EXPECTED_FAIL",
+      "generated": 15,
+      "distinct": 13
+    },
+    "Unguarded": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSlabSweep",
+      "status": "EXPECTED_FAIL",
+      "generated": 101,
+      "distinct": 72
+    }
+  }
 }

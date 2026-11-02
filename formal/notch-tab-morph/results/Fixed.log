@@ -1,17 +1,9 @@
-TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 75787] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
-Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/formal/notch-tab-morph/TabMorph.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
-Semantic processing of module Naturals
-Semantic processing of module TabMorph
-Starting... (2026-11-02 10:42:40)
-Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 10:42:40.
-Model checking completed. No error has been found.
-  Estimates of the probability that TLC did not check all reachable states
-  because two distinct states had the same fingerprint:
-  calculated (optimistic):  val = 3.1E-15
-492 states generated, 297 distinct states found, 0 states left on queue.
-The depth of the complete state graph search is 18.
-The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 3 and the 95th percentile is 2).
-Finished in 00s at (2026-11-02 10:42:40)
+{
+  "role": "positive",
+  "kind": "pass",
+  "target": null,
+  "status": "PASS",
+  "generated": 492,
+  "distinct": 297,
+  "trace": []
+}

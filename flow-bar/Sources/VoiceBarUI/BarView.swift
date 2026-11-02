@@ -484,6 +484,7 @@ public struct BarView: View {
             transientNote: state.selectionFeedbackNote
         )
         input.isHistoryPanelOpen = isHistoryPresented
+        input.transientNoteOffersHistory = state.selectionFeedbackNoteOffersHistory
         return VoiceBarPresentation.notchPresentation(from: input)
     }
 

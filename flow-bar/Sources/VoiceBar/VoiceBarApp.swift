@@ -669,13 +669,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         configurePanelStateObservation()
         voiceState.onHistoryArchiveChange = { path in
-            // Drop that entry from the History index first, so the reload the notification triggers can't serve a
-            // stale transcript (a re-transcription rewrites an old entry in place).
+            // Materialize the changed row on the archive actor. Known-path events patch History in place;
+            // they must not cancel paging or replace every row while the user is selecting text.
             Task {
-                if let path { await SettingsArchiveIndex.shared.invalidate(entryPath: path) }
-                await MainActor.run {
-                    NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
-                }
+                await SettingsHistoryArchiveChangeNotifier.post(entryPath: path)
             }
         }
         voiceState.onPolishStatusChange = { [weak self] in
@@ -1293,14 +1290,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let lease = controlledUpdateLease
             let refusalOwnsServer = ownsServer
             let refusalGate = gate
-            voiceState.reportQuitRefusal(isStillBlocked: { [weak self] in
-                guard let self else { return false }
-                return terminationPolicy.reply(
-                    enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance,
-                    voiceBusy: voiceState.isQuitBusy && refusalOwnsServer,
-                    gatePermitsQuit: !refusalOwnsServer || refusalGate.permitsTermination(controlledLease: lease)
-                ) != .terminateNow
-            })
+            // Voice work is read live by VoiceState; only the update gate's part is rechecked here.
+            voiceState.reportQuitRefusal(
+                gateBlocked: refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease),
+                isGateStillBlocked: { refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease) }
+            )
             NSLog("[VoiceBar] Quit refused: voice/update safety evidence unavailable")
             return reply
         }
@@ -2078,7 +2072,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isCollapsed: state?.isCollapsed ?? false,
                 coreWidth: coreWidth,
                 visibleCoreOcclusionInset: visibleCoreOcclusionInset,
-                transientNote: state?.selectionFeedbackNote
+                transientNote: state?.selectionFeedbackNote,
+                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory
             )
         )
     }

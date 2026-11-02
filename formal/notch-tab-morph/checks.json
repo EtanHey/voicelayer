@@ -6,9 +6,29 @@
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift"
   ],
   "checks": {
-    "Old": "NoSlabSweep",
-    "Async": "SettlesOnPresented",
-    "Unguarded": "NoSlabSweep",
-    "Fixed": null
-  }
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Old": {
+      "role": "mutant",
+      "target": "NoSlabSweep",
+      "kind": "invariant"
+    },
+    "Async": {
+      "role": "mutant",
+      "target": "SettlesOnPresented",
+      "kind": "invariant"
+    },
+    "Unguarded": {
+      "role": "mutant",
+      "target": "NoSlabSweep",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "NoSlabSweep",
+    "SettlesOnPresented"
+  ]
 }

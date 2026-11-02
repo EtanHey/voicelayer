@@ -53,6 +53,37 @@ test("one switch confirms old cleanup, persists desired, loads one target and ac
     expect(states.every((s, i) => i === 0 || s.revision > states[i - 1]!.revision)).toBe(true);
   } finally { off(); }
 });
+test("selecting either installed engine warms it immediately and keeps the 600-second default", async () => {
+  for (const engine of ["parakeet", "whisper"] as const) {
+    const { calls, deps } = ops();
+    const result = await selectRecognizer(engine, deps);
+    expect(calls).toEqual(["stopP", "stopW", engine === "parakeet" ? "startP" : "startW", "reset"]);
+    expect(result.recognizer_status).toMatchObject({ desired: engine, effective: engine,
+      phase: "ready", idle_unload_seconds: 600 });
+    const other = engine === "parakeet" ? "whisper" : "parakeet";
+    expect(result.recognizer_status.engines[other].phase).toBe("sleeping");
+  }
+});
+test("QA-04: reselecting a ready engine is a no-op; sleeping selection still warms", async () => {
+  for (const engine of ["parakeet", "whisper"] as const) {
+    await selectRecognizer(engine, ops().deps);
+    const before = readRecognizerStatus(), { calls, deps } = ops();
+    const selected = await selectRecognizer(engine, deps);
+    expect(calls).toEqual([]); expect(selected.recognizer_status).toEqual(before);
+    noteRecognizerEngine(engine, { phase: "sleeping" });
+    expect((await selectRecognizer(engine, deps)).recognizer_status.engines[engine].phase).toBe("ready");
+    expect(calls).toContain(engine === "parakeet" ? "startP" : "startW");
+  }
+});
+test("QA-04: desired selection survives a failed startup and a fresh daemon preference reader", async () => {
+  const { deps } = ops(); deps.startP = async () => { throw new Error("fixture startup failed"); };
+  const result = await selectRecognizer("parakeet", deps);
+  expect(result.recognizer_status).toMatchObject({ desired: "parakeet", effective: "whisper" });
+  const child = Bun.spawn([process.execPath, "-e", 'import {recognizerPreference} from "./src/recognizer-state.ts"; console.log(JSON.stringify(recognizerPreference()));'],
+    { env: process.env, stdout: "pipe", stderr: "pipe" });
+  expect(JSON.parse(await new Response(child.stdout).text())).toEqual({ recognizer: "parakeet", source: "settings" });
+  expect(await child.exited).toBe(0);
+});
 for (const reason of ["capture-active", "voice-busy"]) test(`busy ${reason} refuses before any effects or preference write`, async () => {
   const { calls, deps } = ops(); configureRecognizerBusyProbe(() => reason);
   expect(await selectRecognizer("parakeet", deps)).toMatchObject({ outcome: "reject", reason });

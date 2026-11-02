@@ -1,26 +1,27 @@
-"""Collapse TLC states only on dimensions unobserved by the real Swift projection.
-
-Replays the Fixed policy: after Lane A realised it, the application must match Fixed, not the
-historical Current bugs (README: "update the replay to the new implementation")."""
+"""Generate BOTH policy corpora from actual TLC states and cause-ending edges."""
+import argparse
 import json
 from pathlib import Path
-import re
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from corpus_support import graphs, write_corpus
 
-root = Path(__file__).resolve().parents[2]
-labels = json.loads((root / ".build.noindex/notch-presentation/fixed-states.json").read_text())
-
-
-def record(text):
-    return {key: (value == "TRUE" if value in {"TRUE", "FALSE"} else value.strip('"'))
-            for key, value in re.findall(r'(\w+) \|-> ("[^"]*"|TRUE|FALSE)', text)}
-
-
-cases = {}
-for label in labels:
-    shown, state = label.split("/\\ s = ")
-    row = {"input": record(state), "expected": record(shown)}
-    row["input"].pop("updateBusy")  # Only affects note lifecycle, not rendering.
-    cases[json.dumps(row, sort_keys=True)] = row
-path = root / ".build.noindex/notch-presentation/conformance.json"
-path.write_text(json.dumps(list(cases.values())))
-print(f"Notch (Fixed): {len(labels)} TLC states -> {len(cases)} distinct real-resolver cases; {path}")
+parser = argparse.ArgumentParser()
+parser.add_argument('--record', action='store_true')
+args = parser.parse_args()
+directory = Path(__file__).resolve().parent
+all_graphs = graphs(directory)
+rows, lifecycle, counts = {}, {}, {}
+for policy, graph in all_graphs.items():
+    counts[policy] = len(graph['nodes'])
+    for node in graph['nodes'].values():
+        inputs = {key: value for key, value in node['s'].items() if key not in {'raised', 'timer'}}
+        row = dict(policy=policy, input=inputs, expected={key: node['shown'][key] for key in ['shell','text','wingText','band','visible','transient','historyInline']})
+        rows[json.dumps(row, sort_keys=True)] = row
+    for source, target in graph['edges']:
+        before, after = graph['nodes'][source]['s'], graph['nodes'][target]['s']
+        if before['mode'] == 'recording' and after['mode'] == 'idle' and before['note'] == 'quit' and not before['preview'] and not before['updateBusy']:
+            lifecycle[policy] = dict(policy=policy, events=['recording', 'quit-refusal', 'idle'], noteVisible=after['note'] == 'quit')
+assert set(lifecycle) == {'Current', 'Fixed'}
+counts['projections'] = len(rows)
+write_corpus(directory, dict(rows=[rows[key] for key in sorted(rows)], lifecycle=list(lifecycle.values()), counts=counts), args.record)

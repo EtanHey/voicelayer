@@ -10,6 +10,8 @@ public enum RecognizerPickerEngine: String, CaseIterable, Identifiable, Sendable
         case .whisper: "Whisper large-v3-turbo"
         }
     }
+    public var shortName: String { self == .parakeet ? "Parakeet" : "Whisper" }
+    public var other: Self { self == .parakeet ? .whisper : .parakeet }
 }
 
 public enum RecognizerPickerResidency: String, Sendable {
@@ -156,13 +158,17 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public let whisperAssetsPresent: Bool
     public let diskBytes: [RecognizerPickerEngine: Int]
     public let downloads: [RecognizerPickerEngine: RecognizerDownloadProgress]
+    /// The daemon's idle-unload policy; nil when no snapshot reported one.
+    public let idleUnloadSeconds: Double?
 
     public init(selected: RecognizerPickerEngine?, effective: RecognizerPickerEngine?,
                 parakeet: RecognizerPickerResidency, whisper: RecognizerPickerResidency,
                 disabledReason: String? = nil, fallbackReason: String? = nil, notice: String? = nil,
                 parakeetAvailable: Bool? = nil, parakeetError: String? = nil,
                 parakeetAssetsPresent: Bool = false, whisperAssetsPresent: Bool = true,
-                diskBytes: [RecognizerPickerEngine: Int] = [:], downloads: [RecognizerPickerEngine: RecognizerDownloadProgress] = [:]) {
+                diskBytes: [RecognizerPickerEngine: Int] = [:], downloads: [RecognizerPickerEngine: RecognizerDownloadProgress] = [:],
+                idleUnloadSeconds: Double? = nil) {
+        self.idleUnloadSeconds = idleUnloadSeconds
         self.selected = selected; self.effective = effective; self.parakeet = parakeet; self.whisper = whisper
         self.disabledReason = disabledReason; self.fallbackReason = fallbackReason; self.commandNotice = notice
         self.diskBytes = diskBytes; self.downloads = downloads
@@ -177,7 +183,8 @@ public struct RecognizerPickerState: Equatable, Sendable {
                   fallbackReason: snapshot.fallbackReason, notice: notice, parakeetAvailable: snapshot.parakeet.available, parakeetError: snapshot.parakeet.error,
                   parakeetAssetsPresent: snapshot.parakeet.assetsPresent, whisperAssetsPresent: snapshot.whisper.assetsPresent,
                   diskBytes: [.parakeet: snapshot.parakeet.diskBytes, .whisper: snapshot.whisper.diskBytes],
-                  downloads: [.parakeet: snapshot.parakeet.download, .whisper: snapshot.whisper.download].compactMapValues { $0 })
+                  downloads: [.parakeet: snapshot.parakeet.download, .whisper: snapshot.whisper.download].compactMapValues { $0 },
+                  idleUnloadSeconds: snapshot.idleUnloadSeconds)
     }
     public static let unavailable = RecognizerPickerState(selected: nil, effective: nil,
         parakeet: .unknown, whisper: .unknown, disabledReason: "Recognizer status unavailable")
@@ -189,22 +196,59 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public func assetsPresent(for engine: RecognizerPickerEngine) -> Bool {
         engine == .parakeet ? parakeetAssetsPresent : whisperAssetsPresent
     }
+    /// Something of this engine is on disk. CodeRabbit #672: a named model file can exist with zero bytes, which
+    /// `disk_bytes` cannot show; the daemon's "delete first" download refusal is the evidence it is there.
+    public func hasFilesOnDisk(_ engine: RecognizerPickerEngine) -> Bool {
+        assetsPresent(for: engine) || (diskBytes[engine] ?? 0) > 0
+            || downloads[engine]?.error == "assets-exist-delete-first"
+    }
+    /// S3: a download arrow when the model isn't on disk, a trash can when it is (both for an incomplete download).
     public func assetActions(for engine: RecognizerPickerEngine) -> [RecognizerManagementAction] {
         var actions: [RecognizerManagementAction] = assetsPresent(for: engine) ? [] : [.download]
-        if assetsPresent(for: engine) || (diskBytes[engine] ?? 0) > 0 { actions.append(.delete) }
+        if hasFilesOnDisk(engine) { actions.append(.delete) }
         return actions
+    }
+    /// The Load/Unload control both rows show: Unload when resident, otherwise Load (which, on the row that is not
+    /// selected, selects it — the daemon loads it and unloads the other).
+    public func residencyAction(for engine: RecognizerPickerEngine) -> RecognizerManagementAction {
+        residency(for: engine) == .loaded || residency(for: engine) == .error ? .unload : .load
     }
     public func canManage(_ engine: RecognizerPickerEngine, action: RecognizerManagementAction) -> Bool {
         if action == .cancelDownload { return downloads[engine]?.isActive == true }
-        guard !isSelectionDisabled, downloads.values.allSatisfy({ !$0.isActive }) else { return false }
+        // S4: a download owns only its own engine; the other row stays fully usable.
+        guard !isSelectionDisabled, downloads[engine]?.isActive != true else { return false }
         switch action {
-        case .load: return assetsPresent(for: engine) && selected == engine && residency(for: engine) != .loaded
+        case .load: return assetsPresent(for: engine) && residency(for: engine) != .loaded
+            && (selected == engine || canSelect(engine))
         case .unload: return residency(for: engine) == .loaded || residency(for: engine) == .error
         case .download: return !assetsPresent(for: engine)
-        case .delete: return (diskBytes[engine] ?? 0) > 0 && residency(for: engine) == .unloaded
-            && assetsPresent(for: engine == .parakeet ? .whisper : .parakeet)
+        case .delete: return hasFilesOnDisk(engine) && residency(for: engine) == .unloaded
+            && assetsPresent(for: engine.other)
         case .cancelDownload: return false
         }
+    }
+    /// Why the trash can't act right now, or nil when it can (a resident model is unloaded first). The button stays
+    /// clickable and says this instead of sitting greyed out with the reason hidden in a tooltip.
+    public func deleteBlockReason(for engine: RecognizerPickerEngine) -> String? {
+        if downloads[engine]?.isActive == true { return "Wait for the download to finish, or cancel it." }
+        if !assetsPresent(for: engine.other) {
+            return "Keep at least one downloaded recognizer. Download \(engine.other.shortName) before deleting \(engine.shortName)."
+        }
+        if isSelectionDisabled { return disabledReason ?? "Recognizer status unavailable" }
+        if residency(for: engine) == .loading { return "Wait for \(engine.shortName) to finish loading." }
+        return nil
+    }
+    /// The selected row's one line about residency (S3): loading is automatic, and so is the idle unload.
+    public func autoLoadLine(for engine: RecognizerPickerEngine) -> String? {
+        guard selected == engine, assetsPresent(for: engine) else { return nil }
+        guard let idleUnloadSeconds else { return "Loads automatically when selected." }
+        return "Loads automatically when selected; unloads after \(Self.idleText(idleUnloadSeconds)) idle."
+    }
+    static func idleText(_ seconds: Double) -> String {
+        let whole = Int(seconds.rounded())
+        if whole >= 3600, whole % 3600 == 0 { return "\(whole / 3600) h" }
+        if whole >= 60, whole % 60 == 0 { return "\(whole / 60) min" }
+        return "\(whole) s"
     }
     public var parakeetSetupReason: String? {
         parakeetNotSetUp ? "Needs a one-time setup" : nil

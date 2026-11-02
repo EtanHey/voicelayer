@@ -36,7 +36,7 @@ final class QuitRefusalLifecycleTests: XCTestCase {
     func testTheRefusalClearsWhenItsCauseStops() async {
         let (state, release, ticks) = steppedState()
         var blocked = true
-        state.reportQuitRefusal(isStillBlocked: { blocked })
+        state.reportQuitRefusal(gateBlocked: true, isGateStillBlocked: { blocked })
         XCTAssertNotNil(state.quitRefusalMessage)
         XCTAssertEqual(state.selectionFeedbackNote, state.quitRefusalMessage, "it is the note the notch shows")
 
@@ -46,7 +46,7 @@ final class QuitRefusalLifecycleTests: XCTestCase {
         _ = await settle { ticks.count == 2 }
         XCTAssertNotNil(state.quitRefusalMessage, "the work is still running")
 
-        // The work stops: the very next recheck clears the note, long before the six-second limit.
+        // The update finishes: the very next recheck clears the note, long before the six-second limit.
         blocked = false
         release.yield()
         let cleared = await settle { state.quitRefusalMessage == nil }
@@ -56,9 +56,27 @@ final class QuitRefusalLifecycleTests: XCTestCase {
         release.finish()
     }
 
+    /// Voice work is read live: the note goes in the same update that ends the work, with no recheck
+    /// (formal/notch-presentation Fixed `Normalize`; the replay's cause-ending graph edge).
+    func testAVoiceCausedRefusalGoesInTheSameUpdateTheWorkEnds() async {
+        let (state, release, ticks) = steppedState()
+        state.mode = .recording
+        state.reportQuitRefusal()
+        XCTAssertEqual(state.selectionFeedbackNote, state.quitRefusalMessage, "shown while recording")
+        state.mode = .idle
+        XCTAssertNil(state.selectionFeedbackNote, "the cause ended; the note must not wait for a recheck")
+        XCTAssertFalse(state.showsQuitRefusal)
+        // The next recheck then drops the message itself.
+        _ = await settle { ticks.count == 1 }
+        release.yield()
+        let dropped = await settle { state.quitRefusalMessage == nil }
+        XCTAssertTrue(dropped)
+        release.finish()
+    }
+
     func testAStillBlockedRefusalExpiresAtTheDisplayLimit() async {
         let (state, release, ticks) = steppedState()
-        state.reportQuitRefusal(isStillBlocked: { true })
+        state.reportQuitRefusal(gateBlocked: true, isGateStillBlocked: { true })
         let rechecks = Int(VoiceState.quitRefusalDisplayLimit / VoiceState.quitRefusalRecheckInterval)
         XCTAssertEqual(rechecks, 24)
         for tick in 1 ..< rechecks {
@@ -76,9 +94,9 @@ final class QuitRefusalLifecycleTests: XCTestCase {
     func testANewRefusalSupersedesTheOldOnesTimer() async {
         let (state, release, ticks) = steppedState()
         var firstBlocked = true
-        state.reportQuitRefusal(isStillBlocked: { firstBlocked })
+        state.reportQuitRefusal(gateBlocked: true, isGateStillBlocked: { firstBlocked })
         _ = await settle { ticks.count == 1 }
-        state.reportQuitRefusal(isStillBlocked: { true })
+        state.reportQuitRefusal(gateBlocked: true, isGateStillBlocked: { true })
         firstBlocked = false
         release.yield()
         release.yield()

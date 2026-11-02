@@ -14,7 +14,7 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         let status = try XCTUnwrap(frames["status"])
         let hotkey = try XCTUnwrap(frames["hotkey"])
         let mic = try XCTUnwrap(frames["mic"])
-        let locality = try XCTUnwrap(frames["locality"])
+        XCTAssertNil(frames["locality"], "S2: local transcription is the default and earns no line")
         let transcript = try XCTUnwrap(frames["transcript"])
         let transcriptRow = try XCTUnwrap(frames["transcript-row"])
         let copy = try XCTUnwrap(frames["copy"])
@@ -29,8 +29,7 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         XCTAssertEqual(copy.height, 24, accuracy: 1)
         XCTAssertEqual(settings.midY, quit.midY, accuracy: 1)
         XCTAssertEqual(settings.width, quit.width, accuracy: 1)
-        XCTAssertEqual(locality.minY - max(status.maxY, hotkey.maxY), 10, accuracy: 1)
-        XCTAssertEqual(mic.minY - locality.maxY, 10, accuracy: 1)
+        XCTAssertEqual(mic.minY - max(status.maxY, hotkey.maxY), 10, accuracy: 1)
         XCTAssertEqual(transcriptRow.minY - mic.maxY, 10, accuracy: 1)
         XCTAssertEqual(divider.minY - transcriptRow.maxY, 10, accuracy: 1)
         XCTAssertEqual(footer.minY - divider.maxY, 10, accuracy: 1)
@@ -96,7 +95,7 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         var frames: [String: CGRect] = [:]
         let (window, _) = makeHost(transcript: "", mode: .transcribing) { frames = $0 }
         defer { window.contentView = nil }
-        XCTAssertTrue(["status", "hotkey", "locality", "mic", "divider", "footer", "settings", "quit"]
+        XCTAssertTrue(["status", "hotkey", "mic", "divider", "footer", "settings", "quit"]
             .allSatisfy { frames[$0] != nil })
     }
 

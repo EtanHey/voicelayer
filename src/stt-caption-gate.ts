@@ -6,10 +6,11 @@
 import { isDeadDevicePcm } from "./mic-disconnect";
 import { createVADSession, VAD_CHUNK_SAMPLES } from "./vad";
 import { parseWavAudioInfo, WAVE_FORMAT_PCM } from "./stt-pause-map";
-import { measureSpan, measureWavWindows, normalizeOutroKey, SPEECH_LEVEL_GUARD_DB, SPEECH_OVER_FLOOR_DB } from "./stt-outro-gate";
+import { CJK_HALLUCINATION_PHRASES, measureSpan, measureWavWindows, normalizeOutroKey, SPEECH_LEVEL_GUARD_DB, SPEECH_OVER_FLOOR_DB } from "./stt-outro-gate";
 import type { TranscriptSegment } from "./stt-transcript-alignment";
 
 const CAPTION_PREFIXES = [
+  ...CJK_HALLUCINATION_PHRASES.map(phrase => ({ key: normalizeOutroKey(phrase), class: "cjk-caption", extraWords: 0 })),
   { key: "the american pronunciation guide presents", class: "american-pronunciation-guide", extraWords: 6 },
   { key: "how to pronounce", class: "how-to-pronounce", extraWords: 4 },
   { key: "subtitles by the amara org community", class: "amara-subtitles", extraWords: 0 },
@@ -200,7 +201,8 @@ export async function stripHallucinatedCaption(
   const measured = windows && measureSpan(windows, candidate.startS, candidate.endS);
   if (!windows || !measured) return untouched("no-audio");
   const flat = windows.speechLevelDbfs - windows.floorDbfs < SPEECH_OVER_FLOOR_DB &&
-    probabilities.filter(speech).length <= MAX_SPEECH_CHUNKS;
+    probabilities.filter(speech).length <= MAX_SPEECH_CHUNKS &&
+    (candidate.class !== "cjk-caption" || isDeadDeviceSpan(wavData, info, candidate.startS, candidate.endS));
   if (measured.hasSpeech ||
       (!flat && measured.peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB)) {
     return untouched("speech-present");

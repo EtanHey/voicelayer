@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
-import { join } from "path";
+import { join, relative } from "path";
 import { testTmp } from "./setup/test-tmp";
 import { readRecognizerAssets, PARAKEET_FILES } from "../recognizer-assets";
 const root = testTmp("asset-status");
@@ -20,4 +20,10 @@ test("Whisper presence and size come only from file metadata", () => {
   expect(readRecognizerAssets("whisper", env)).toEqual({ assets_present: false, disk_bytes: 0 });
   writeFileSync(path, "fixture");
   expect(readRecognizerAssets("whisper", env)).toEqual({ assets_present: true, disk_bytes: 7 });
+});
+test("relative Whisper override resolves to the same file as the decoder", () => {
+  mkdirSync(root, { recursive: true }); const path = join(root, "relative.bin");
+  writeFileSync(path, "weights");
+  expect(readRecognizerAssets("whisper", { QA_VOICE_WHISPER_MODEL: relative(process.cwd(), path) }))
+    .toEqual({ assets_present: true, disk_bytes: 7 });
 });

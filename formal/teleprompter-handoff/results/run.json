@@ -1,15 +1,51 @@
 {
-  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
-  "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
-  "sourceHashes": {
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/teleprompter-handoff/PreparingHandoff.tla": "c65f2ebb8d8a0c357fb905e67e6d7310e94005c152262edbcda2c0af8d96778a",
+    "formal/teleprompter-handoff/checks.json": "ad2de732cb650ea66b8dbfea30660e0356982bafa9ef75458f91fc0c4ca86a83",
+    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/teleprompter-handoff/Old.cfg": "b1a3dfd025f66a8ce3c01b87cfb8a74060d9ec277217713563c3ebfe3815fa7a",
+    "formal/teleprompter-handoff/MutantNoEntry.cfg": "3f77165907cd00b9236f2f3d2ab0f1b596ba6aa2d894b4b6f347f5b661f89fc0",
+    "formal/teleprompter-handoff/Fixed.cfg": "f1ee953518951f06402c9e8cbb31727864f77ff7d5af5604ef8acbc7ac7f2bf4",
     "flow-bar/Sources/VoiceBarUI/TeleprompterPreparingHandoff.swift": "69eb35440a5a91b8d062a29a3c1dc6abcf26103cd59f277d0bb250cc5a706335",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "a0f384eed2a2c9a22d62b4fbdfd07552eca6b0faa4d0c4fb2455519229e225b8"
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "5efb8e53dd0411242149e2849de5fa7706692fb010add7768e38f691ef05fe2f"
   },
-  "specSHA256": "c65f2ebb8d8a0c357fb905e67e6d7310e94005c152262edbcda2c0af8d96778a",
-  "cfgSHA256": {
-    "Old": "d6d265cf78483baf7bc43055be67c4dc0eb77e46bbc5d6a42dcd8228c61c2033",
-    "Fixed": "f1ee953518951f06402c9e8cbb31727864f77ff7d5af5604ef8acbc7ac7f2bf4",
-    "MutantNoEntry": "9df2ea5a33db3fcea4baad3db1ac729e7665ae95e5b2e13be7540efa1d24ea7c"
+  "mutants": {
+    "NewestShows": [
+      "MutantNoEntry"
+    ],
+    "NoOverlap": [
+      "Old"
+    ]
   },
-  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+  "graphHashes": {
+    "Fixed": "a1d466cabf308f0ed80d6fc347db8be04a166f7e40274034be44c03995e7db65"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 677039,
+      "distinct": 677039
+    },
+    "Old": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoOverlap",
+      "status": "EXPECTED_FAIL",
+      "generated": 6,
+      "distinct": 6
+    },
+    "MutantNoEntry": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NewestShows",
+      "status": "EXPECTED_FAIL",
+      "generated": 3093,
+      "distinct": 3093
+    }
+  }
 }

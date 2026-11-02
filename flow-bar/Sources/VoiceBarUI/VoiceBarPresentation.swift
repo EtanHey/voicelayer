@@ -130,6 +130,9 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var isKeyboardFocused: Bool
     /// The notch History panel is open (spec §4). Recording and the teleprompter still take precedence.
     public var isHistoryPanelOpen: Bool = false
+    /// N5: whether `transientNote` is the busy-selection note (Open History inline). Callers that know set it from
+    /// `VoiceState.selectionFeedbackNoteOffersHistory`; nil falls back to recognising the app's own busy copy.
+    public var transientNoteOffersHistory: Bool?
     public var isCollapsed: Bool
     public var coreWidth: CGFloat
     public var visibleCoreOcclusionInset: CGFloat
@@ -156,7 +159,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         isCollapsed: Bool = false,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
         visibleCoreOcclusionInset: CGFloat = 0,
-        transientNote: String? = nil
+        transientNote: String? = nil,
+        transientNoteOffersHistory: Bool? = nil
     ) {
         self.mode = mode
         self.showsRecordingHold = showsRecordingHold
@@ -178,6 +182,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.coreWidth = coreWidth
         self.visibleCoreOcclusionInset = visibleCoreOcclusionInset
         self.transientNote = transientNote
+        self.transientNoteOffersHistory = transientNoteOffersHistory
     }
 }
 

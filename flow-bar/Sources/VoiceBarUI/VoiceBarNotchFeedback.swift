@@ -76,7 +76,7 @@ public struct VoiceBarNotchFeedback: Equatable {
             (presentation.visualState == .history && (input.commandModeState != nil || input.activeClipMarker != nil))
         let status = !text.isEmpty && eligible && (overflow || isNotice) ? text : nil
         let note = input.transientNote.flatMap { $0.isEmpty ? nil : $0 }
-        let noteOpensHistory = note.map(VoiceBarPresentation.isSelectionBusyNote) == true
+        let noteOpensHistory = note.map { input.transientNoteOffersHistory ?? VoiceBarPresentation.isSelectionBusyNote($0) } == true
         // N1: every note is the compact tab under the notch, never a band across the wings.
         let width = VoiceBarNotchContract.noteColumnWidth(
             for: presentation.geometry, ownBodyHeight: presentation.ownBodyHeight

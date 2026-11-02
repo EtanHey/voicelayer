@@ -1,40 +1,13 @@
-TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 86356] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
-Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/formal/idle-wings/IdleWings.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
-Semantic processing of module Naturals
-Semantic processing of module IdleWings
-Starting... (2026-11-02 10:42:59)
-Implied-temporal checking--satisfiability problem has 1 branches.
-Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 10:42:59.
-Error: Invariant NoVanishWhileFocused is violated.
-Error: The behavior up to this point is:
-State 1: <Initial predicate>
-/\ collapsed = FALSE
-/\ timerArmed = FALSE
-/\ vanishedWhileFocused = FALSE
-/\ hovering = TRUE
-/\ events = 0
-/\ focused = FALSE
-
-State 2: <Focus line 35, col 10 to line 36, col 67 of module IdleWings>
-/\ collapsed = FALSE
-/\ timerArmed = FALSE
-/\ vanishedWhileFocused = FALSE
-/\ hovering = TRUE
-/\ events = 1
-/\ focused = TRUE
-
-State 3: <PointerExits line 29, col 17 to line 33, col 36 of module IdleWings>
-/\ collapsed = TRUE
-/\ timerArmed = FALSE
-/\ vanishedWhileFocused = TRUE
-/\ hovering = FALSE
-/\ events = 2
-/\ focused = TRUE
-
-6 states generated, 6 distinct states found, 2 states left on queue.
-The depth of the complete state graph search is 3.
-The average outdegree of the complete state graph is 2 (minimum is 2, the maximum 2 and the 95th percentile is 2).
-Finished in 00s at (2026-11-02 10:42:59)
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoVanishWhileFocused",
+  "status": "EXPECTED_FAIL",
+  "generated": 6,
+  "distinct": 6,
+  "trace": [
+    "/\\ collapsed = FALSE\n/\\ timerArmed = FALSE\n/\\ vanishedWhileFocused = FALSE\n/\\ hovering = TRUE\n/\\ events = 0\n/\\ focused = FALSE",
+    "/\\ collapsed = FALSE\n/\\ timerArmed = FALSE\n/\\ vanishedWhileFocused = FALSE\n/\\ hovering = TRUE\n/\\ events = 1\n/\\ focused = TRUE",
+    "/\\ collapsed = TRUE\n/\\ timerArmed = FALSE\n/\\ vanishedWhileFocused = TRUE\n/\\ hovering = FALSE\n/\\ events = 2\n/\\ focused = TRUE"
+  ]
+}

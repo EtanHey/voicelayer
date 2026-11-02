@@ -118,36 +118,30 @@ final class VoiceBarFooterPresentationTests: XCTestCase {
         )
     }
 
-    func testPrivacyNeverClaimsLocalForUnknownOrRemoteConfiguration() {
-        XCTAssertEqual(
-            VoiceBarFooterPresentation
-                .resolve(isConnected: true, mode: .idle, captureLive: false, errorMessage: nil,
-                         remoteSTTConfigured: nil).privacy,
-            "Processing location unavailable"
-        )
-        XCTAssertEqual(
-            VoiceBarFooterPresentation
-                .resolve(isConnected: true, mode: .idle, captureLive: false, errorMessage: nil,
-                         remoteSTTConfigured: true).privacy,
-            "Remote speech backend configured"
-        )
-        XCTAssertEqual(
-            VoiceBarFooterPresentation
-                .resolve(isConnected: true, mode: .idle, captureLive: false, errorMessage: nil,
-                         remoteSTTConfigured: false).privacy,
-            "Transcribed on this Mac"
-        )
-    }
-
-    func testPrivacySymbolDistinguishesUnknownFromRemote() {
-        func symbol(_ remote: Bool?) -> String {
+    func testOnlyAConfiguredRemoteBackendEarnsALocalityLine() {
+        func notice(_ remote: Bool?) -> String? {
             VoiceBarFooterPresentation.resolve(
                 isConnected: true, mode: .idle, captureLive: false,
                 errorMessage: nil, remoteSTTConfigured: remote
-            ).privacySymbol
+            ).remoteNotice
         }
-        XCTAssertEqual(symbol(false), "lock.fill")
-        XCTAssertEqual(symbol(true), "network")
-        XCTAssertEqual(symbol(nil), "questionmark.circle")
+        XCTAssertNil(notice(false))
+        XCTAssertNil(notice(nil))
+        XCTAssertEqual(notice(true), "Remote speech backend configured")
+    }
+
+    /// S2 (Etan, 2026-11-02): "Transcribed on this Mac" is gone from every VoiceBar source file.
+    func testNoSourceSaysTranscribedOnThisMac() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 50)
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            XCTAssertFalse(text.contains("Transcribed on this Mac"), file.lastPathComponent)
+            XCTAssertFalse(text.contains("never leave this Mac"), file.lastPathComponent)
+        }
     }
 }

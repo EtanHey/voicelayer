@@ -388,7 +388,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(actions.contains(".frame(width: 28, height: 28)"))
         // H1-d (UI pass #10): a blocked action's tooltip is its reason; otherwise the action's name.
         XCTAssertTrue(actions.contains(".help(reason ?? (isPlaying ? \"Stop\" : \"Play\"))"))
-        XCTAssertTrue(actions.contains(".help(reason ?? \"Copy\")"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Copy transcript\")"), "QA-03: the tooltip names what is copied")
         XCTAssertTrue(actions.contains(".help(reason ?? \"Paste\")"))
         XCTAssertTrue(actions.contains(".help(reason ?? \"Re-transcribe\")"))
         XCTAssertTrue(actions.contains(".help(reason ?? \"Open in Finder\")"))

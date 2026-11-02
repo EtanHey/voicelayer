@@ -1,0 +1,12 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "N4NoSubstitute",
+  "status": "EXPECTED_FAIL",
+  "generated": 403,
+  "distinct": 403,
+  "trace": [
+    "/\\ shown = [ shell |-> \"hoverLauncher\",\n  visible |-> FALSE,\n  band |-> FALSE,\n  wingText |-> \"none\",\n  leading |-> 48,\n  trailing |-> 78,\n  core |-> 185,\n  feedbackWidth |-> 311,\n  bandHeight |-> 0,\n  bandLines |-> 0,\n  text |-> \"none\",\n  historyInline |-> FALSE,\n  transient |-> FALSE ]\n/\\ s = [ mode |-> \"idle\",\n  updateBusy |-> FALSE,\n  preview |-> FALSE,\n  status |-> \"none\",\n  details |-> TRUE,\n  lines |-> 1,\n  note |-> \"none\",\n  timer |-> 0,\n  collapsed |-> FALSE,\n  engaged |-> FALSE,\n  teleprompter |-> FALSE,\n  history |-> FALSE,\n  raised |-> {} ]",
+    "/\\ shown = [ shell |-> \"compactStatus\",\n  visible |-> TRUE,\n  band |-> TRUE,\n  wingText |-> \"none\",\n  leading |-> 48,\n  trailing |-> 78,\n  core |-> 185,\n  feedbackWidth |-> 311,\n  bandHeight |-> 26,\n  bandLines |-> 1,\n  text |-> \"Details below\",\n  historyInline |-> TRUE,\n  transient |-> FALSE ]\n/\\ s = [ mode |-> \"error\",\n  updateBusy |-> FALSE,\n  preview |-> FALSE,\n  status |-> \"none\",\n  details |-> TRUE,\n  lines |-> 1,\n  note |-> \"none\",\n  timer |-> 0,\n  collapsed |-> FALSE,\n  engaged |-> FALSE,\n  teleprompter |-> FALSE,\n  history |-> FALSE,\n  raised |-> {} ]"
+  ]
+}

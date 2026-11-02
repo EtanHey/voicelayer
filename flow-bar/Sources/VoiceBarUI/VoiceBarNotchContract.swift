@@ -291,10 +291,14 @@ public struct VoiceBarNotchPresentation: Equatable {
     /// existing lower content (teleprompter, History) sits below it.
     public var transientNoteRect: CGRect? {
         guard transientNoteWidth != nil else { return nil }
+        // N1: the note's own column, centred in the body (the tab itself, or the under-notch column inside a
+        // teleprompter or History body), not the full width of a body it merely shares.
+        let column = min(geometry.bodyWidth,
+                         VoiceBarNotchContract.noteColumnWidth(for: geometry, ownBodyHeight: ownBodyHeight))
         return CGRect(
-            x: geometry.bodyOriginX,
+            x: geometry.bodyOriginX + (geometry.bodyWidth - column) / 2,
             y: geometry.topHeight,
-            width: geometry.bodyWidth,
+            width: column,
             height: feedback?.noteHeight ?? VoiceBarNotchContract.transientNoteBandHeight
         )
     }

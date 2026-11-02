@@ -1,0 +1,56 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 119 and seed -1059429066154526047 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 2681] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file <model-check>/ArchiveGateEvidence.tla
+Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module ArchiveGateEvidence
+Starting... (2026-11-02 10:18:49)
+Computing initial states...
+Computed 2 initial states...
+Finished computing initial states: 4 distinct states generated at 2026-11-02 10:18:49.
+Error: Invariant FinalTranscriptEvidence is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ notTranscribedDetail = FALSE
+/\ storedRemoval = FALSE
+/\ hasText = FALSE
+/\ phase = "ready"
+/\ removed = FALSE
+/\ transcribed = FALSE
+
+State 2: <Begin line 9, col 10 to line 11, col 74 of module ArchiveGateEvidence>
+/\ notTranscribedDetail = FALSE
+/\ storedRemoval = FALSE
+/\ hasText = TRUE
+/\ phase = "before"
+/\ removed = TRUE
+/\ transcribed = FALSE
+
+State 3: <Before line 20, col 11 to line 23, col 43 of module ArchiveGateEvidence>
+/\ notTranscribedDetail = FALSE
+/\ storedRemoval = FALSE
+/\ hasText = TRUE
+/\ phase = "commit"
+/\ removed = TRUE
+/\ transcribed = FALSE
+
+State 4: <Commit line 25, col 11 to line 29, col 43 of module ArchiveGateEvidence>
+/\ notTranscribedDetail = FALSE
+/\ storedRemoval = FALSE
+/\ hasText = TRUE
+/\ phase = "record"
+/\ removed = TRUE
+/\ transcribed = TRUE
+
+State 5: <After line 30, col 10 to line 33, col 42 of module ArchiveGateEvidence>
+/\ notTranscribedDetail = FALSE
+/\ storedRemoval = FALSE
+/\ hasText = TRUE
+/\ phase = "done"
+/\ removed = TRUE
+/\ transcribed = TRUE
+
+56 states generated, 50 distinct states found, 9 states left on queue.
+The depth of the complete state graph search is 5.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 4 and the 95th percentile is 4).
+Finished in 00s at (2026-11-02 10:18:49)

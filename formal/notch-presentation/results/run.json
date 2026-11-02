@@ -1,28 +1,255 @@
 {
-  "sourceBaseline": "e75a4eb662a534665c36240916ab918a00aabf2c",
-  "runnerSHA256": "d46a714cfefea3bc4150450c13ce2d87bf996cfaa2a04eabb573331e2e2c9ec0",
-  "sourceHashes": {
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "d851c55bab2776b3d190e1c068c2896a3730e0a0b1bacf18d9bad2728f3d1737",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "a0f384eed2a2c9a22d62b4fbdfd07552eca6b0faa4d0c4fb2455519229e225b8",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "12bd11aec9193828417541124436cda99a597fb5c8fdfff83aa2742a77cb2c69",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "4d05c69a95897dde7fe81f9e30fc5fce5472206a62287d4e2402d3e0a96708e7",
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/notch-presentation/NotchPresentation.tla": "050ec8ddb0fc21028f2b5aba4cb9e4b5f92778327e19752df71cb909d50f9e7a",
+    "formal/notch-presentation/checks.json": "290db162ae86ffef5388f6a66924470eac78a7b507c469316c2582b1109e77b3",
+    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/notch-presentation/MutantNoShell.cfg": "bc37b20cedc1993180f1e4bf4c708c191c4a41e54fcda27c7aaa31cb26a5b66d",
+    "formal/notch-presentation/MutWideWing.cfg": "b22f3ef5491a57166731040142c9090c0ea4acba918d6dc52ffd676c5169dca3",
+    "formal/notch-presentation/OldBusyHistory.cfg": "4ab224b67a40c3c3e46d52d9d1cce73751ec2c0736784137dc354be7b84d16d1",
+    "formal/notch-presentation/MutStaleNote.cfg": "a152717689775d4383cfd007d79d9c0018613af5756283a3c0a7a7076272b630",
+    "formal/notch-presentation/OldProcessingNote.cfg": "bccbc215ab94aaa7e3dabfae6b559b4cc1c041c2bfe92c75576bc3208b4723dd",
+    "formal/notch-presentation/MutDetailsSubstitute.cfg": "898b335cfb11c23a7d40b0876facdf643f84dcf243d9608f8f86dd080def2789",
+    "formal/notch-presentation/MutTruncate.cfg": "a1921998b880a40296bd40b9ca6b601727fef4c0776daf5a5eab1cd6990cd24d",
+    "formal/notch-presentation/MutNoShell.cfg": "c2b07184810cf28f6447ad589ab9458a0c6659b833fee2597f7ba2be709f9eaf",
+    "formal/notch-presentation/MutBusyHistory.cfg": "3994d34b1260603cf93dedb7b427d72d81d4edbb3ab8956f8e01beaf52cb355c",
+    "formal/notch-presentation/OldWing.cfg": "4df185081c3cc70e63ebedcc2ec67eba16441641ab99240b5589ec008a813557",
+    "formal/notch-presentation/MutErrorSubstitute.cfg": "41ae0ae32190519c79f569168bdef4319f2d863ec99f8202fb8bd9f50b4f1bd5",
+    "formal/notch-presentation/MutType.cfg": "6c338085ae6a954451609189cee436ba1922da73f417c89083f2e8d3b743cb1e",
+    "formal/notch-presentation/MutNeverExpire.cfg": "950c0a0d91a9d57eff62a987170699f5d2ccae1a6dc5168d3cd4e11408dba110",
+    "formal/notch-presentation/Current.cfg": "6c3e0c7d96f1e13c1b4e51b83f2c88f3fdc3f435c4fa60e887a73060f7203a80",
+    "formal/notch-presentation/OldSubstitute.cfg": "4b8810d56420037f0d4c26f314092c54bb92cdea22fc64077d50f50a9c6268f7",
+    "formal/notch-presentation/MutErrorHistory.cfg": "2bf398423e512738303d43e97958e56b488709bc3796b3604b185d03ce23ab30",
+    "formal/notch-presentation/MutProcessingNote.cfg": "4cbee6b2414a5497b5b0722347527a54830c844b70f4d9e844523d8b82b0ed94",
+    "formal/notch-presentation/MutantType.cfg": "1f8f0ad92bd6b048787e023fc5b4b652abd65aea3368f3f2337e155d1c8019d5",
+    "formal/notch-presentation/MutantStuck.cfg": "fcb28a0ab8cadc9bec7d528da3ef455e59e6de12b8c28e86897036fd913a608a",
+    "formal/notch-presentation/MutTextWing.cfg": "8a14cd224cda080ee1841ee8391e1e9703fc61efd85dce194f4072b721cfd307",
+    "formal/notch-presentation/Fixed.cfg": "e99d612cd16fa6825688fed99c5c4998ced742765b9843096312f9a7f479ca41",
+    "formal/notch-presentation/OldQuitCause.cfg": "6c6fc8f33a06e3fd7babba4d98b5e7cb980fd966daf42659204397f0424a80b6",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "d65bce6118fa798402a33fc12827c92f78d3ecdac383da3a1ec8875acc625c02",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "4f56c63c22047c36215dced81eeb7c00a0e3614ef7dea5ce08665ed8d21963ed",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "39d4489796796e8f80deeaddeaed57300390433372d528c58160ccb91b6ab99a",
-    "flow-bar/Tests/VoiceBarUITests/NotchPresentationConformanceTests.swift": "e9ce1261fbf018a3d61ff92e0a7562d64317198496fc8a66f84c39d691a4e356"
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "2f232db6eaa5bba7898463c1c68bdea15ca26d87e4aceb6c0b905a5c4438f8fa",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "eff6a21b3d7f15c738b78d0ea859930ab3cd1b7992e5158cc39951c566650016",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "ff61bddbdb9d44e38a5849c686a724e69a13288a47b036c7cf1cd7f5a7cf4437",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "8fc70ea52d9d62ed00a2eb2230754c4fd70b5b18ea686ff7406656e591dc2830",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "5efb8e53dd0411242149e2849de5fa7706692fb010add7768e38f691ef05fe2f",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "a33e317806fc894e9bad96397b62f0e69532e5602a2eb311b06a75735e1d855a"
   },
-  "specSHA256": "5660ebf32721f8ec855ff2478df87f5c621fff1744a44cf283bcfc8f8d68bd3b",
-  "cfgSHA256": {
-    "Current": "7109ec7c014dc9044c8ec96b5b85a63d0e408286dcaa9edaee376274c6cfc9f9",
-    "OldWing": "a91c1f132cec126d6e1e4b0311d528936c12f7e97875e6243e4fcd3e0683e472",
-    "OldProcessingNote": "84bca1cb92271ab90ee58799ff74b6f1a10fc130b4c53970681e37506bcf260a",
-    "OldSubstitute": "b6e8e9a40033c590d154a80c0aff10b49ce395e27b69c4bdb2aba0e80b3f391a",
-    "OldBusyHistory": "8db256c29fc41455fed35f4d841d2bb59b497f071342072aca9a97850ca205b6",
-    "OldQuitCause": "028b8d3a9a0a9f99f1f2a71741188153fccc9c7060a7245197d7d29ef9f2dd9d",
-    "Fixed": "042b1adc73d88cac6b4073ebd98335da975d41331d9e33bdc4615928c2515b79",
-    "MutantNoShell": "6b4d1c5f94a242d42495e3ab4847260d2d902bb6a78b2f283f1989043f2736cb",
-    "MutantStuck": "b0dc4d9b889cc730a21ad1749dc6f03e427558152867f7b37462050f8d1270ca",
-    "MutantType": "26bf7a1da4c339702ddb191448eff8df31c0718b193fdbc73e21000f45127209"
+  "mutants": {
+    "N1CompactNote": [
+      "MutWideWing",
+      "MutTextWing"
+    ],
+    "N2NoProcessingBand": [
+      "MutProcessingNote"
+    ],
+    "N3GrowsDown": [
+      "MutTruncate"
+    ],
+    "N4NoSubstitute": [
+      "MutErrorSubstitute",
+      "MutDetailsSubstitute"
+    ],
+    "N5InlineHistory": [
+      "MutBusyHistory",
+      "MutErrorHistory"
+    ],
+    "NoteHasCause": [
+      "MutStaleNote"
+    ],
+    "NoteNeverStuck": [
+      "MutNeverExpire",
+      "MutantStuck"
+    ],
+    "TypeOK": [
+      "MutType",
+      "MutantType"
+    ],
+    "VisibleHasShell": [
+      "MutNoShell",
+      "MutantNoShell"
+    ]
   },
-  "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+  "graphHashes": {
+    "Current": "e597e2307301e0c156e2b233e1de9d2a4187eb16274f21b1a7f542222da865d2",
+    "Fixed": "b2a6bcee1e31a14435807b7ef388e39a831f9e42c563967b6873fd03009c29b9"
+  },
+  "checks": {
+    "Current": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 485868,
+      "distinct": 51264
+    },
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 450228,
+      "distinct": 47376
+    },
+    "OldWing": {
+      "role": "historical",
+      "kind": "invariant",
+      "target": "N1CompactNote",
+      "status": "EXPECTED_FAIL",
+      "generated": 160,
+      "distinct": 160
+    },
+    "OldProcessingNote": {
+      "role": "historical",
+      "kind": "invariant",
+      "target": "N2NoProcessingBand",
+      "status": "EXPECTED_FAIL",
+      "generated": 1874,
+      "distinct": 1714
+    },
+    "OldSubstitute": {
+      "role": "historical",
+      "kind": "invariant",
+      "target": "N4NoSubstitute",
+      "status": "EXPECTED_FAIL",
+      "generated": 160,
+      "distinct": 160
+    },
+    "OldBusyHistory": {
+      "role": "historical",
+      "kind": "invariant",
+      "target": "N5InlineHistory",
+      "status": "EXPECTED_FAIL",
+      "generated": 651,
+      "distinct": 651
+    },
+    "OldQuitCause": {
+      "role": "historical",
+      "kind": "invariant",
+      "target": "NoteHasCause",
+      "status": "EXPECTED_FAIL",
+      "generated": 5968,
+      "distinct": 2662
+    },
+    "MutType": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TypeOK",
+      "status": "EXPECTED_FAIL",
+      "generated": null,
+      "distinct": null
+    },
+    "MutNoShell": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "VisibleHasShell",
+      "status": "EXPECTED_FAIL",
+      "generated": 162,
+      "distinct": 162
+    },
+    "MutWideWing": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N1CompactNote",
+      "status": "EXPECTED_FAIL",
+      "generated": null,
+      "distinct": null
+    },
+    "MutTextWing": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N1CompactNote",
+      "status": "EXPECTED_FAIL",
+      "generated": 163,
+      "distinct": 163
+    },
+    "MutProcessingNote": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N2NoProcessingBand",
+      "status": "EXPECTED_FAIL",
+      "generated": 1874,
+      "distinct": 1714
+    },
+    "MutTruncate": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N3GrowsDown",
+      "status": "EXPECTED_FAIL",
+      "generated": 164,
+      "distinct": 164
+    },
+    "MutErrorSubstitute": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N4NoSubstitute",
+      "status": "EXPECTED_FAIL",
+      "generated": 160,
+      "distinct": 160
+    },
+    "MutDetailsSubstitute": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N4NoSubstitute",
+      "status": "EXPECTED_FAIL",
+      "generated": 403,
+      "distinct": 403
+    },
+    "MutBusyHistory": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N5InlineHistory",
+      "status": "EXPECTED_FAIL",
+      "generated": 651,
+      "distinct": 651
+    },
+    "MutErrorHistory": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N5InlineHistory",
+      "status": "EXPECTED_FAIL",
+      "generated": 1889,
+      "distinct": 1719
+    },
+    "MutStaleNote": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoteHasCause",
+      "status": "EXPECTED_FAIL",
+      "generated": 5968,
+      "distinct": 2662
+    },
+    "MutNeverExpire": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "NoteNeverStuck",
+      "status": "EXPECTED_FAIL",
+      "generated": 213756,
+      "distinct": 24552
+    },
+    "MutantNoShell": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "VisibleHasShell",
+      "status": "EXPECTED_FAIL",
+      "generated": 216,
+      "distinct": 216
+    },
+    "MutantType": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TypeOK",
+      "status": "EXPECTED_FAIL",
+      "generated": 165,
+      "distinct": 165
+    },
+    "MutantStuck": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "NoteNeverStuck",
+      "status": "EXPECTED_FAIL",
+      "generated": 176499,
+      "distinct": 30328
+    }
+  }
 }

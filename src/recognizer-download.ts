@@ -1,9 +1,12 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync, statfsSync, createReadStream, openSync, writeSync, closeSync, existsSync, rmdirSync, statSync, readdirSync } from "fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, statfsSync, createReadStream, openSync, writeSync, closeSync, existsSync, rmdirSync, statSync, readdirSync, lstatSync } from "fs";
 import { dirname, join, isAbsolute } from "path";
 import { createHash } from "crypto";
 import { recognizerAssetPaths, defaultParakeetModelPath, readRecognizerAssets } from "./recognizer-assets";
 import { RECOGNIZER_DOWNLOADS, type RecognizerDownloadFile } from "./recognizer-download-manifest";
 import { provisionParakeetRuntime } from "./parakeet-runtime";
+import { getCacheDir } from "./paths";
+import { parakeetServer } from "./parakeet-server";
+import { whisperHasResidentHandle } from "./whisper-server";
 import { beginRecognizerDownload, finishRecognizerDownload, noteRecognizerEngine, readRecognizerStatus,
   recognizerOwnerSignal, type Recognizer } from "./recognizer-state";
 export interface DownloadDeps {
@@ -39,8 +42,12 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
   try {
     if (deps === defaults && process.env.VOICELAYER_TEST_ISOLATED === "1") throw new Error("download-network-denied-in-tests");
     beginRecognizerDownload(engine); acquired = true; active.set(engine, controller);
-    if (readRecognizerAssets(engine).assets_present) throw new Error("assets-already-present");
-    if (readRecognizerStatus().engines[engine].phase !== "sleeping") throw new Error("recognizer-loaded");
+    // Parakeet Set up/re-download may repair its runtime with weights already
+    // present. The existingModels path verifies those pins read-only below.
+    if (engine === "whisper" && readRecognizerAssets(engine).assets_present) throw new Error("assets-already-present");
+    const phase = readRecognizerStatus().engines[engine].phase;
+    if (phase === "loading" || phase === "ready" ||
+        (engine === "parakeet" ? parakeetServer.pid !== null : whisperHasResidentHandle())) throw new Error("recognizer-loaded");
     const destination = engine === "whisper" ? recognizerAssetPaths(engine)[0]! : process.env.VOICELAYER_PARAKEET_MODEL || defaultParakeetModelPath();
     if (!isAbsolute(destination)) throw new Error("invalid-model-path");
     const parent = dirname(destination); mkdirSync(parent, { recursive: true, mode: 0o700 });
@@ -52,8 +59,8 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
     const reserve = engine === "parakeet" ? 3 * 1024 ** 3 : 256 * 1024 ** 2;
     if (deps.freeBytes(parent) < (existingModels ? 0 : total) + reserve) throw new Error("insufficient-disk-space");
     if (engine === "parakeet") {
-      const { getStateDir } = await import("./paths"); const state = getStateDir(); mkdirSync(state, { recursive: true, mode: 0o700 });
-      if (deps.freeBytes(state) < reserve) throw new Error("insufficient-disk-space");
+      const cache = getCacheDir(); mkdirSync(cache, { recursive: true, mode: 0o700 });
+      if (deps.freeBytes(cache) < reserve) throw new Error("insufficient-disk-space");
     }
     tmp = mkdtempSync(join(parent, ".recognizer-download-")); report("downloading");
     for (const file of files) {
@@ -68,7 +75,10 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
     // Publication is synchronous and protected by per-engine ownership. Busy
     // dictation must never discard verified files or wait for this download.
     if (engine === "whisper") {
-      if (existsSync(destination)) throw new Error("assets-exist-delete-first");
+      if (existsSync(destination)) {
+        const existing = lstatSync(destination);
+        if (!existing.isFile() || existing.size !== 0) throw new Error("assets-exist-delete-first");
+      }
       renameSync(join(tmp, files[0]!.name), destination);
     } else if (!existingModels) {
       // Empty directories from a prior explicit delete are safe; never replace

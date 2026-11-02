@@ -1,68 +1,12 @@
-TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 74003] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
-Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/formal/notch-presentation/NotchPresentation.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
-Semantic processing of module Naturals
-Semantic processing of module Sequences
-Semantic processing of module FiniteSets
-Semantic processing of module NotchPresentation
-Starting... (2026-11-02 10:42:37)
-Implied-temporal checking--satisfiability problem has 1 branches.
-Computing initial states...
-Computed 2 initial states...
-Computed 4 initial states...
-Computed 8 initial states...
-Computed 16 initial states...
-Computed 32 initial states...
-Finished computing initial states: 64 distinct states generated at 2026-11-02 10:42:37.
-Error: Invariant TypeOK is violated.
-Error: The behavior up to this point is:
-State 1: <Initial predicate>
-/\ shown = [ shell |-> "hoverLauncher",
-  visible |-> FALSE,
-  band |-> FALSE,
-  wing |-> FALSE,
-  variant |-> "compact",
-  text |-> "none",
-  historyInline |-> FALSE,
-  busyHistoryInline |-> FALSE,
-  transient |-> FALSE ]
-/\ s = [ mode |-> "idle",
-  updateBusy |-> FALSE,
-  preview |-> FALSE,
-  status |-> "none",
-  note |-> "none",
-  timer |-> 0,
-  collapsed |-> FALSE,
-  engaged |-> FALSE,
-  teleprompter |-> FALSE,
-  history |-> FALSE,
-  raised |-> {} ]
-
-State 2: <ShowNote line 59, col 16 to line 63, col 59 of module NotchPresentation>
-/\ shown = [ shell |-> "hoverLauncher",
-  visible |-> TRUE,
-  band |-> TRUE,
-  wing |-> FALSE,
-  variant |-> "compact",
-  text |-> "none",
-  historyInline |-> FALSE,
-  busyHistoryInline |-> FALSE,
-  transient |-> TRUE ]
-/\ s = [ mode |-> "idle",
-  updateBusy |-> FALSE,
-  preview |-> FALSE,
-  status |-> "none",
-  note |-> "rejection",
-  timer |-> 3,
-  collapsed |-> FALSE,
-  engaged |-> FALSE,
-  teleprompter |-> FALSE,
-  history |-> FALSE,
-  raised |-> {"rejection"} ]
-
-73 states generated, 73 distinct states found, 71 states left on queue.
-The depth of the complete state graph search is 2.
-Finished in 00s at (2026-11-02 10:42:37)
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "TypeOK",
+  "status": "EXPECTED_FAIL",
+  "generated": 165,
+  "distinct": 165,
+  "trace": [
+    "/\\ shown = [ shell |-> \"hoverLauncher\",\n  visible |-> FALSE,\n  band |-> FALSE,\n  wingText |-> \"none\",\n  leading |-> 48,\n  trailing |-> 78,\n  core |-> 185,\n  feedbackWidth |-> 311,\n  bandHeight |-> 0,\n  bandLines |-> 0,\n  text |-> \"none\",\n  historyInline |-> FALSE,\n  transient |-> FALSE ]\n/\\ s = [ mode |-> \"idle\",\n  updateBusy |-> FALSE,\n  preview |-> FALSE,\n  status |-> \"none\",\n  details |-> FALSE,\n  lines |-> 1,\n  note |-> \"none\",\n  timer |-> 0,\n  collapsed |-> FALSE,\n  engaged |-> FALSE,\n  teleprompter |-> FALSE,\n  history |-> FALSE,\n  raised |-> {} ]",
+    "/\\ shown = [ shell |-> \"hoverLauncher\",\n  visible |-> TRUE,\n  band |-> TRUE,\n  wingText |-> \"none\",\n  leading |-> 48,\n  trailing |-> 78,\n  core |-> 185,\n  feedbackWidth |-> 311,\n  bandHeight |-> 26,\n  bandLines |-> 1,\n  text |-> \"none\",\n  historyInline |-> FALSE,\n  transient |-> TRUE ]\n/\\ s = [ mode |-> \"idle\",\n  updateBusy |-> FALSE,\n  preview |-> FALSE,\n  status |-> \"none\",\n  details |-> FALSE,\n  lines |-> 1,\n  note |-> \"rejection\",\n  timer |-> 3,\n  collapsed |-> FALSE,\n  engaged |-> FALSE,\n  teleprompter |-> FALSE,\n  history |-> FALSE,\n  raised |-> {\"rejection\"} ]"
+  ]
+}
