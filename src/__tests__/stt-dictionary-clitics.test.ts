@@ -70,6 +70,10 @@ for (const raw of [
 }
 
 const emptyVocabulary = { QA_VOICE_STT_VOCABULARY_PATH: "", QA_VOICE_STT_COMMANDS_DIR: "" };
+test("the built-in carabiner alias still applies without a possessive", () => {
+  expect(cleanupTranscriptionText("Keep carabiner config.", emptyVocabulary)).toBe("Keep Karabiner config.");
+});
+
 for (const raw of ["Ligantas'", "Ligantas’", "SQLites'", "SQLites’"]) {
   test(`cleanup conserves the complete plural surface ${raw}`, () => {
     expect(cleanupTranscriptionText(raw, env)).toBe(raw);
@@ -91,6 +95,7 @@ for (const [raw, expected] of [
 }
 
 for (const raw of [
+  "Keep carabiner's config.", "Keep carabiner’s config.", "Keep claude md's rules.",
   "Keep gpts' outputs.", "Keep the ollamas' configs.", "Keep both SQLites' locks.",
   "She said 'use ollamas' yesterday.", "She said ‘use ollamas’ yesterday.",
   "I said 'ComfyUIs' twice.", "I said ‘ComfyUIs’ twice.",
