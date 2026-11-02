@@ -1,4 +1,4 @@
-import { finishSyntheticCapture } from "./setup/recording-jobs-fixture";
+import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { TEST_TMP } from "./setup/test-tmp";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
@@ -22,11 +22,7 @@ const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
 // Deferred pause readiness precedes Lane I job creation; zero jobs alone is not settlement.
 async function settleCapture() {
-  const deadline = performance.now() + 2000;
-  while (tts.hasF5Capture() || recordingJobsSnapshot().recording_jobs.length > 0) {
-    if (performance.now() >= deadline) throw Error("F5 capture/loan did not settle before spies were restored");
-    await Bun.sleep(1);
-  }
+  await settleRecordingJobs(tts.hasF5Capture);
   expect(tts.hasF5Capture()).toBe(false);
   expect(recordingJobsSnapshot().recording_jobs).toEqual([]);
 }

@@ -1,4 +1,5 @@
-import { finishSyntheticCapture } from "./setup/recording-jobs-fixture";
+import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
+import { deferredFixture as deferred } from "./long-read-fixture-barriers";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { handleSocketCommand } from "../socket-handlers";
 import * as input from "../input";
@@ -506,9 +507,12 @@ describe("socket residency command", () => {
     });
   });
 
-  test("F5 capture preempts unload maintenance and keeps the daemon booking", () => {
+  test("F5 capture preempts unload maintenance and keeps the daemon booking", async () => {
     spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
-    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => null));
+    const started = deferred<void>();
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => {
+      started.resolve(); return finishSyntheticCapture(async () => null);
+    });
     spies.push(capture);
     expect(booking.bookVoiceSession().success).toBe(true);
     const release = booking.reserveVoiceMaintenance(() => false);
@@ -516,11 +520,12 @@ describe("socket residency command", () => {
       expect(release).toBeFunction();
       expect(handleSocketCommand({ cmd: "record", id: "during-unload" }))
         .toMatchObject({ outcome: "accept" });
+      await started.promise;
       expect(capture).toHaveBeenCalledTimes(1);
       expect(booking.isVoiceBooked()).toMatchObject({ booked: true, ownedByUs: true });
     } finally {
-      release?.();
-      booking.releaseVoiceSession();
+      try { await settleRecordingJobs(tts.hasF5Capture); }
+      finally { release?.(); booking.releaseVoiceSession(); }
     }
   });
 });

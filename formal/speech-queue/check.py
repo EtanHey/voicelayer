@@ -53,7 +53,8 @@ def check(runner, f5_only=False, receipt=False):
         "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift", "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
         "flow-bar/Sources/VoiceBarUI/VoiceState.swift", "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift",
         "src/__tests__/tts-long-read-runtime.test.ts", "src/__tests__/tts-pause.test.ts",
-        "src/__tests__/socket-handlers-idempotency.test.ts", "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift",
+        "src/__tests__/socket-handlers-idempotency.test.ts", "src/__tests__/socket-residency.test.ts",
+        "src/__tests__/setup/recording-jobs-fixture.ts", "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift",
         "formal/speech-queue/F5-IMPLEMENTATION.md")]]
     sources += [SPEC / "check.sh", ROOT / "formal/setup-tlc.py"]
     hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}

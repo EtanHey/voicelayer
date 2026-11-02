@@ -97,7 +97,7 @@ def check_f5_runtime(run, runner):
         (["swift", "test", "--package-path", "flow-bar", "--scratch-path", ".build.noindex/swift", "--filter", "F5PauseConformanceTests|VoiceBarCommandRouterTests.testRealGestureStartsN6AfterALockedTakeBeginsTranscribing|PlaybackPauseTests.testPreparingPauseOwnerIsControllableBeforeAFirstChunkExists"], "f5-swift.log"),
         (["bun", "test", "src/__tests__/tts-long-read-runtime.test.ts", "-t", "TLC F5"], "f5-daemon.log"),
         (["bun", "test", "src/__tests__/tts-pause.test.ts", "-t", "R2-01"], "f5-settlement.log"),
-        (["bun", "test", "src/__tests__/socket-handlers-idempotency.test.ts"], "f5-socket-idempotency.log"),
+        (["bun", "test", "src/__tests__/socket-handlers-idempotency.test.ts", "src/__tests__/socket-residency.test.ts"], "f5-socket-idempotency.log"),
     ]
     for command, name in commands:
         status = runner.run(["nice", "-n", "19", *command], run / name, 900, cwd=root, env=env)

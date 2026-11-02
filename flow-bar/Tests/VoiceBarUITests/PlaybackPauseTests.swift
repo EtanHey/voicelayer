@@ -198,7 +198,7 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertFalse(state.isF5SpeechPausedDuringCapture)
         XCTAssertEqual(state.teleprompterText, "One two three four five six")
         XCTAssertTrue(state.showsSelectionBusyNote)
-        XCTAssertEqual(state.selectionRejectionMessage, "Speech stopped")
+        XCTAssertEqual(state.selectionFeedbackNote, "Speech stopped")
         XCTAssertFalse(sent().contains { $0["cmd"] as? String == "resume" })
     }
 
