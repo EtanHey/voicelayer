@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync, statfsSync, createReadStream, openSync, writeSync, closeSync, existsSync, rmdirSync } from "fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, statfsSync, createReadStream, openSync, writeSync, closeSync, existsSync, rmdirSync, statSync } from "fs";
 import { dirname, join, isAbsolute } from "path";
 import { createHash } from "crypto";
 import { recognizerAssetPaths, defaultParakeetModelPath, readRecognizerAssets } from "./recognizer-assets";
@@ -49,10 +49,13 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
       const { getStateDir } = await import("./paths"); const state = getStateDir(); mkdirSync(state, { recursive: true, mode: 0o700 });
       if (deps.freeBytes(state) < reserve) throw new Error("insufficient-disk-space");
     }
+    const existingModels = engine === "parakeet" && files.every(f => {
+      try { return statSync(join(destination, f.name)).isFile() && statSync(join(destination, f.name)).size === f.bytes; } catch { return false; }
+    });
     tmp = mkdtempSync(join(parent, ".recognizer-download-")); report("downloading");
     for (const file of files) {
-      const path = join(tmp, file.name);
-      await deps.transfer(file, path, signal, bytes => { received += bytes; if (Date.now() - lastPublish > 200) { lastPublish = Date.now(); report("downloading"); } });
+      const path = join(existingModels ? destination : tmp, file.name);
+      if (!existingModels) await deps.transfer(file, path, signal, bytes => { received += bytes; if (Date.now() - lastPublish > 200) { lastPublish = Date.now(); report("downloading"); } });
       signal.throwIfAborted(); report("verifying"); const hash = createHash("sha256"); let size = 0;
       for await (const chunk of createReadStream(path)) { signal.throwIfAborted(); size += chunk.length; hash.update(chunk); }
       if (size !== file.bytes || hash.digest("hex") !== file.sha256) throw new Error("download-checksum-mismatch");
@@ -62,12 +65,13 @@ export async function downloadRecognizer(engine: Recognizer, deps: DownloadDeps 
     if (engine === "whisper") {
       if (existsSync(destination)) throw new Error("assets-exist-delete-first");
       renameSync(join(tmp, files[0]!.name), destination);
-    } else {
+    } else if (!existingModels) {
       // Empty directories from a prior explicit delete are safe; never replace
       // a partial/external model tree or remove unrelated user files implicitly.
       if (existsSync(destination)) { try { rmdirSync(destination); } catch { throw new Error("assets-exist-delete-first"); } }
       renameSync(tmp, destination); tmp = undefined;
     }
+    if (!readRecognizerAssets(engine).assets_present) throw new Error("assets-validation-failed");
     report("complete");
   } catch (error) {
     outcome = "reject"; reason = signal.aborted ? "download-cancelled" : error instanceof Error ? error.message : "download-failed";

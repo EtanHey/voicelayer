@@ -77,3 +77,13 @@ test("Parakeet runtime failure publishes no model tree; retry records owned Pyth
   expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
   expect(readRecognizerStatus().engines.parakeet.assets_present).toBe(true);
 });
+
+test("runtime-only setup verifies existing weights read-only instead of downloading copies", async () => {
+  const model = join(root, "parakeet"); mkdirSync(model); process.env.VOICELAYER_PARAKEET_MODEL = model; delete process.env.VOICELAYER_PARAKEET_PYTHON;
+  noteRecognizerEngine("parakeet", { phase: "sleeping", error: null }); const d = deps();
+  d.files = () => ["config.json", "model.safetensors", "tokenizer.model"].map(name => ({ ...file, name }));
+  for (const f of d.files("parakeet")) writeFileSync(join(model, f.name), bytes);
+  d.transfer = async () => { throw new Error("must-not-copy-weights"); }; d.runtime = async () => { const python = join(root, "python"); writeFileSync(python, "fixture"); process.env.VOICELAYER_PARAKEET_PYTHON = python; };
+  expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
+  expect(readdirSync(model).sort()).toEqual(["config.json", "model.safetensors", "tokenizer.model"]);
+});
