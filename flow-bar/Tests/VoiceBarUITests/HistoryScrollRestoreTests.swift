@@ -174,7 +174,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         // Returning: a new scroll view whose content is still short, then grows (a lazy list laying out).
         let second = scrollView(height: 300)
         let clock = ManualRetryClock()
-        let rebuilt = keeper(memory, clock)
+        let rebuilt = makeKeeper(memory, clock)
         second.scroll.documentView?.addSubview(rebuilt)
         XCTAssertFalse(rebuilt.hasRestored, "waits for content tall enough to hold the position")
         XCTAssertEqual(memory.offset(for: .list), 650)
@@ -194,7 +194,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         memory.record(650, for: .list)
         let view = scrollView(height: 900) // 500 reachable: too short for 650
         let clock = ManualRetryClock()
-        let keeper = keeper(memory, clock)
+        let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
         XCTAssertFalse(keeper.hasRestored, "waiting for content")
         userScroll(view.scroll, by: 200)
@@ -214,7 +214,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         memory.record(650, for: .list)
         let view = scrollView(height: 900) // 500 reachable: too short for 650
         let clock = ManualRetryClock()
-        let keeper = keeper(memory, clock)
+        let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
         XCTAssertFalse(keeper.hasRestored, "waiting for content")
         // A layout pass resizes the visible area. AppKit posts no bounds notification for a frame-driven
@@ -244,7 +244,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         memory.record(650, for: .list)
         let view = scrollView(height: 600) // 200 reachable, and it stays that way
         let clock = ManualRetryClock()
-        let keeper = keeper(memory, clock)
+        let keeper = makeKeeper(memory, clock)
         let gaveUp = expectation(description: "the keeper gave up")
         keeper.onGaveUp = { gaveUp.fulfill() }
         view.scroll.documentView?.addSubview(keeper)
@@ -259,7 +259,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         _ = view.window
     }
 
-    private func keeper(_ memory: SettingsHistoryScrollMemory, _ clock: ManualRetryClock) -> SettingsHistoryScrollKeeper.KeeperView {
+    private func makeKeeper(_ memory: SettingsHistoryScrollMemory, _ clock: ManualRetryClock) -> SettingsHistoryScrollKeeper.KeeperView {
         let keeper = SettingsHistoryScrollKeeper.KeeperView(memory: memory, key: .list)
         keeper.scheduleRetry = { work in clock.schedule(work) }
         return keeper
