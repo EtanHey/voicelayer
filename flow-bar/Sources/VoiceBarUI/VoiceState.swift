@@ -35,6 +35,7 @@ public struct SelectionCaptureResult: Equatable {
         case secureField = "secure_field"
         case captureFailed = "capture_failed"
         case clipboardRestoreFailed = "clipboard_restore_failed"
+        case nothingSelected = "nothing_selected"
         case copyTimedOut = "copy_timeout"
         case copyEmpty = "copy_empty"
         case copyFailed = "copy_failed"
@@ -64,6 +65,7 @@ public struct SelectionCaptureResult: Equatable {
     public static let secureField = Self(.secureField)
     public static let captureFailed = Self(.captureFailed)
     public static let clipboardRestoreFailed = Self(.clipboardRestoreFailed)
+    public static let nothingSelected = Self(.nothingSelected)
     public static let copyTimedOut = Self(.copyTimedOut)
     public static let copyEmpty = Self(.copyEmpty)
     public static let copyFailed = Self(.copyFailed)
@@ -80,6 +82,14 @@ public struct SelectionCaptureResult: Equatable {
         result.outcome = .completed
         result.text = text
         result.path = .ax
+        return result
+    }
+
+    /// An empty AX selection explains an unchanged clipboard; keep the raw Copy receipt.
+    public func resolvingEmptyAXSelection() -> Self {
+        guard axRead == .empty, outcome == .copyTimedOut else { return self }
+        var result = self
+        result.outcome = .nothingSelected
         return result
     }
 
@@ -1354,6 +1364,7 @@ public final class VoiceState {
                 case .secureField: showConfirmation("Can't read a secure field")
                 case .clipboardRestoreFailed: showConfirmation("Couldn't restore the clipboard")
                 case .clipboardChanged: showConfirmation(SelectionErrorFeedback.clipboardChanged)
+                case .nothingSelected: showConfirmation(SelectionErrorFeedback.nothingSelected)
                 case .copyTimedOut: showConfirmation(SelectionErrorFeedback.copyTimedOut)
                 case .copyEmpty: showConfirmation(SelectionErrorFeedback.copyEmpty)
                 case .copyFailed: showConfirmation(SelectionErrorFeedback.copyFailed)
@@ -1477,6 +1488,8 @@ public final class VoiceState {
     private var recognizerAcceptedSnapshot: RecognizerStatusSnapshot?
     private var recognizerRevision = -1
     private var recognizerRefreshID: String?
+    private var recognizerPendingCommand: String?
+    private var recognizerCancelID: String?
     private var recognizerSelectionID: String?
     private var recognizerSelectionTarget: RecognizerPickerEngine?
     public var onRecognizerStatusChange: (() -> Void)?
@@ -1534,11 +1547,26 @@ public final class VoiceState {
         sendCommand(["cmd": "get_recognizer_status", "id": id])
     }
 
+    public func manageRecognizer(_ engine: RecognizerPickerEngine, action: RecognizerManagementAction) {
+        guard isConnected, let sendCommand, recognizerPickerState.canManage(engine, action: action) else { return }
+        let id = UUID().uuidString
+        var command: [String: Any] = ["cmd": action.command, "engine": engine.rawValue, "id": id]
+        if action == .load || action == .unload { command["action"] = action.rawValue }
+        if action == .cancelDownload {
+            recognizerCancelID = id
+        } else {
+            recognizerSelectionID = id; recognizerPendingCommand = action.command; recognizerSelectionTarget = nil
+            recognizerNotice = nil; onRecognizerStatusChange?()
+        }
+        sendCommand(command)
+    }
+
     public func selectRecognizer(_ engine: RecognizerPickerEngine) {
         guard isConnected, let sendCommand,
               recognizerPickerState.canSelect(engine) else { return }
         let id = UUID().uuidString
         recognizerSelectionID = id
+        recognizerPendingCommand = "set_recognizer"
         recognizerSelectionTarget = engine
         recognizerNotice = nil
         onRecognizerStatusChange?()
@@ -1549,7 +1577,13 @@ public final class VoiceState {
         guard isConnected else { return }
         let ack = event["type"] as? String == "ack"
         if ack {
-            guard event["command"] as? String == "set_recognizer",
+            if event["command"] as? String == "cancel_recognizer_download" {
+                guard event["id"] as? String == recognizerCancelID else { return }
+                recognizerCancelID = nil
+                if event["outcome"] as? String == "reject" { recognizerNotice = "No download is running."; onRecognizerStatusChange?() }
+                return
+            }
+            guard event["command"] as? String == recognizerPendingCommand,
                   let id = event["id"] as? String, id == recognizerSelectionID,
                   let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return }
             // Terminal correlation settles intent independently of snapshot authority.
@@ -2765,7 +2799,7 @@ public final class VoiceState {
             handleRecognizerEvent(event)
 
         case "ack":
-            if event["command"] as? String == "set_recognizer" { handleRecognizerEvent(event) }
+            if ["set_recognizer", "set_recognizer_residency", "download_recognizer", "delete_recognizer", "cancel_recognizer_download"].contains(event["command"] as? String ?? "") { handleRecognizerEvent(event) }
             handleAckEvent(event)
 
         case "read_queue":
@@ -3140,6 +3174,7 @@ public final class VoiceState {
         recognizerAcceptedSnapshot = nil
         recognizerRefreshID = nil
         recognizerSelectionID = nil
+        recognizerPendingCommand = nil; recognizerCancelID = nil
         recognizerSelectionTarget = nil
         recognizerNotice = nil
         if connected { refreshRecognizerStatus() }
@@ -4011,7 +4046,7 @@ public final class VoiceState {
         return (!isSelf ? currentFront : nil) ?? frontmostAppOnRecordStart
     }
 
-    /// Refocuses the target app and pastes text via Cmd+V.
+    /// Refocuses the target app and delivers text through AX or typed key events.
     private func pasteTranscript(
         _ text: String,
         for targetApp: NSRunningApplication?,
@@ -4127,11 +4162,12 @@ public final class VoiceState {
                     // working Shift+F5 typing route, never a whole-document AX write.
                     // PASTE2: Gemini.app (WebKit composer) and every Chromium/Electron/CEF host
                     // join them; AX cannot certify their web composers, so an AX miss there
-                    // used to stop at "Not pasted". Unknown native apps still take AX only.
+                    // used to stop at "Not pasted". Native apps try AX before guarded typing.
                     let usesRichHostTyping = Self.richHostTypingBundleIdentifiers.contains(pasteTargetBundleID)
                         || chromiumFamilyAppDetector(pasteTarget)
                     let skipsAX = isTerminalTarget || usesRichHostTyping
-                    let typingEligibility = requiresEditableTarget && !skipsAX
+                    let requiresFocusedTypingTarget = !skipsAX && (plan == .autoPaste || requiresEditableTarget)
+                    let typingEligibility = requiresFocusedTypingTarget
                         ? focusedTargetEligibilityProvider() : nil
                     if skipsAX {
                         logDiagnostic("paste_ax_insert_skipped", details: [
@@ -4200,13 +4236,16 @@ public final class VoiceState {
                             "axTrusted": boolString(accessibilityTrustChecker(false)),
                         ])
                     }
-                    // An AX miss in any other nonterminal is still insufficient
-                    // permission to dispatch global key events.
+                    // Only a pre-write AX decline reaches this fallback. Automatic
+                    // native delivery also requires the original recording process;
+                    // editability alone must not authorize typing into another app.
                     if plan == .autoPaste, !skipsAX {
-                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
-                        return
+                        guard recordStartTargetApp?.processIdentifier == pasteTarget.processIdentifier else {
+                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                            return
+                        }
                     }
-                    if requiresEditableTarget, !skipsAX {
+                    if requiresFocusedTypingTarget {
                         guard frontmostAppProvider()?.processIdentifier == pasteTarget.processIdentifier,
                               typingEligibility?.permitsTyping(into: pasteTarget.processIdentifier) == true else {
                             finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
@@ -4243,7 +4282,7 @@ public final class VoiceState {
                     // So the transcript is TYPED as printable text only, each line break sent
                     // as Shift+Return (SynthesizedTyping): no control character ever rides in
                     // a key event. This route serves terminals, known rich-host automatic
-                    // delivery and explicit re-paste; other auto AX misses retain text above.
+                    // delivery, explicit re-paste and verified editable native targets.
                     // There is no clipboard fallback anywhere, by design: a failed
                     // paste is recoverable with Shift+F5, a paste over his clipboard is not.
                     //

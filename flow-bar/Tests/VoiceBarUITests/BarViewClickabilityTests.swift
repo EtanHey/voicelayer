@@ -710,6 +710,9 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         let statusLabel = source[statusStart.lowerBound ..< textStart.lowerBound]
 
+        XCTAssertFalse(statusLabel.contains("replacesWingText"))
+        XCTAssertFalse(statusLabel.contains("Details below"))
+        XCTAssertFalse(statusLabel.contains("\"Error\""))
         XCTAssertFalse(statusLabel.contains(".contentTransition(.opacity)"))
         XCTAssertTrue(statusLabel.contains(".transaction"))
         XCTAssertTrue(statusLabel.contains("transaction.animation = nil"))

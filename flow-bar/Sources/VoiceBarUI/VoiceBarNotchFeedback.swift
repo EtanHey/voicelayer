@@ -8,11 +8,19 @@ public struct VoiceBarNotchFeedback: Equatable {
     public let noteText: String?
     public let opensHistory: Bool
     public let replacesWingText: Bool
+    public let wingText: String
     public let width: CGFloat
     public let statusHeight: CGFloat
     public let noteHeight: CGFloat
     public var height: CGFloat { statusHeight + noteHeight }
     public static let maximumTextHeight: CGFloat = 72
+    public static let historyButtonWidth: CGFloat = 96
+    public static let historyButtonSpacing: CGFloat = 8
+
+    public static func messageWidth(_ width: CGFloat, opensHistory: Bool) -> CGFloat {
+        max(1, width - 2 * VoiceBarNotchContract.transientNoteHorizontalInset -
+            (opensHistory ? historyButtonWidth + historyButtonSpacing : 0))
+    }
 
     public static func textHeight(_ text: String, width: CGFloat) -> CGFloat {
         let rect = (text as NSString).boundingRect(
@@ -39,13 +47,12 @@ public struct VoiceBarNotchFeedback: Equatable {
         let allowedLines = input.mode == .idle && TwoLineStatusFeedback.contains(input.confirmationText) ? 2 : 1
         let overflow = text.components(separatedBy: "\n").count > allowedLines || measured > available
         // Recording/teleprompter controls carry the primary state; expose their named status only when
-        // it is long or explicitly a command/clip label. Processing currently has no wing text at all.
-        let eligible = presentation.visualState == .compactStatus || input.mode == .error ||
-            input.mode == .transcribing ||
+        // it is long or explicitly a command/clip label. Processing already has a spinner and waveform.
+        let eligible = input.mode != .transcribing && (presentation.visualState == .compactStatus || input.mode == .error ||
             (input.mode == .recording && (input.commandModeState != nil || input.activeClipMarker != nil)) ||
             (presentation.visualState == .history &&
-                (input.confirmationText != nil || input.commandModeState != nil || input.activeClipMarker != nil))
-        let status = !text.isEmpty && eligible && (overflow || input.mode == .transcribing || input.mode == .error)
+                (input.confirmationText != nil || input.commandModeState != nil || input.activeClipMarker != nil)))
+        let status = !text.isEmpty && eligible && (overflow || input.mode == .error)
             ? text : nil
         let note = input.transientNote.flatMap { $0.isEmpty ? nil : $0 }
         let noteNeedsWrap = note.map {
@@ -53,13 +60,23 @@ public struct VoiceBarNotchFeedback: Equatable {
         } == true
         // Preserve the established single-line note geometry and renderer when it already fits.
         guard status != nil || noteNeedsWrap else { return nil }
-        let width = max(presentation.geometry.bodyWidth,
-                        input.coreWidth + 2 * VoiceBarNotchContract.morphCanvasWingCapacity)
+        // Reuse the compact note shell's fitted width; additional text grows down, never out to the canvas.
+        let width = presentation.geometry.bodyFlushWithWings.bodyWidth
         let failure = input.mode == .error && status != nil
+        // Keep the complete sentence in the note. A cancellation has a concise
+        // semantic label; other overflowing copy needs no duplicate wing label.
+        let shortText = text.lowercased().contains("cancel") ? "Cancelled" : ""
+        let shortWidth = (shortText as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium)
+        ]).width
+        let wingText = overflow ? (shortWidth <= available ? shortText : "") : text
         return Self(
-            statusText: status, noteText: note, opensHistory: failure, replacesWingText: overflow, width: width,
+            statusText: status, noteText: note, opensHistory: failure, replacesWingText: overflow,
+            wingText: wingText, width: width,
             statusHeight: status.map {
-                min(maximumTextHeight, Self.textHeight($0, width: width - 32) + 4) + 16 + (failure ? 34 : 0)
+                max(VoiceBarNotchContract.transientNoteBandHeight,
+                    min(maximumTextHeight, Self.textHeight($0,
+                        width: Self.messageWidth(width, opensHistory: failure))) + 10)
             } ?? 0,
             noteHeight: note.map {
                 max(VoiceBarNotchContract.transientNoteBandHeight,
@@ -81,27 +98,14 @@ public struct VoiceBarNotchFeedbackBand: View {
     public var body: some View {
         VStack(spacing: 0) {
             if let note = feedback.noteText {
-                text(note, viewport: feedback.noteHeight - 10)
-                    .padding(.horizontal, 16)
-                    .frame(height: feedback.noteHeight)
+                VoiceBarNotchTransientNoteBand(text: note, width: feedback.width, height: feedback.noteHeight)
             }
             if let status = feedback.statusText {
-                VStack(alignment: .leading, spacing: 6) {
-                    text(status, viewport: feedback.statusHeight - 16 - (feedback.opensHistory ? 34 : 0))
-                    if feedback.opensHistory {
-                        Button("Open History", action: onOpenHistory)
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .accessibilityHint("Opens the History settings window. Select a recording there to retry transcription.")
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .frame(height: feedback.statusHeight)
+                VoiceBarNotchTransientNoteBand(text: status, width: feedback.width, height: feedback.statusHeight,
+                    onOpenHistory: feedback.opensHistory ? onOpenHistory : nil)
             }
         }
         .frame(maxWidth: .infinity)
-        .font(.system(size: 12, weight: .medium))
         // Replace selectable text and its layout atomically. The outer shell owns
         // its shape animation; inherited spring transactions must not retain old glyphs.
         .transaction { transaction in
@@ -109,23 +113,61 @@ public struct VoiceBarNotchFeedbackBand: View {
             transaction.disablesAnimations = true
         }
     }
-    @ViewBuilder private func text(_ value: String, viewport: CGFloat) -> some View {
-        if VoiceBarNotchFeedback.textHeight(value, width: feedback.width - 32) > viewport {
-            VStack(alignment: .leading, spacing: 2) {
-                ScrollView(.vertical) { label(value) }
+}
+
+/// The original transient note node, shared by short selection notes and wrapped status/error text.
+public struct VoiceBarNotchTransientNoteBand: View {
+    public let text: String
+    public let width: CGFloat
+    public let height: CGFloat
+    public var onOpenHistory: (() -> Void)?
+
+    public init(text: String, width: CGFloat, height: CGFloat = VoiceBarNotchContract.transientNoteBandHeight,
+                onOpenHistory: (() -> Void)? = nil) {
+        self.text = text
+        self.width = width
+        self.height = height
+        self.onOpenHistory = onOpenHistory
+    }
+
+    public var body: some View {
+        HStack(spacing: VoiceBarNotchFeedback.historyButtonSpacing) {
+            message(viewport: height - 10)
+                .frame(width: VoiceBarNotchFeedback.messageWidth(width, opensHistory: onOpenHistory != nil))
+            if let onOpenHistory {
+                Button("Open History", action: onOpenHistory)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(width: VoiceBarNotchFeedback.historyButtonWidth)
+                    .accessibilityHint("Opens the History settings window. Select a recording there to retry transcription.")
+            }
+        }
+        .font(.system(size: 12, weight: .medium))
+        .padding(.horizontal, VoiceBarNotchContract.transientNoteHorizontalInset)
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+    }
+
+    @ViewBuilder private func message(viewport: CGFloat) -> some View {
+        if VoiceBarNotchFeedback.textHeight(text,
+            width: VoiceBarNotchFeedback.messageWidth(width, opensHistory: onOpenHistory != nil)) > viewport {
+            VStack(spacing: 2) {
+                ScrollView(.vertical) { label }
                     .scrollIndicators(.visible)
                     .accessibilityHint("Scroll for the full message")
                 Text("Scroll for full message").font(.system(size: 10)).opacity(0.7)
             }.frame(height: viewport)
         } else {
-            label(value).frame(maxWidth: .infinity, alignment: .leading)
+            label
         }
     }
-    private func label(_ value: String) -> some View {
-        Text(value).lineLimit(nil).fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private var label: some View {
+        Text(text).lineLimit(nil).fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
             .textSelection(.enabled)
-            .id(value)
+            .id(text)
             .transition(.identity)
     }
 }

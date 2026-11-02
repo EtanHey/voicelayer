@@ -9,7 +9,7 @@ import XCTest
 final class PasteFeedbackLayoutTests: XCTestCase {
     private var messages: [String] {
         let selectionFailures: [SelectionCaptureResult] = [
-            .clipboardChanged, .copyTimedOut, .copyEmpty, .copyFailed,
+            .clipboardChanged, .nothingSelected, .copyTimedOut, .copyEmpty, .copyFailed,
         ]
         return [PasteRecoveryFeedback.notInserted, PasteRecoveryFeedback.unverified,
                 PasteRecoveryFeedback.partial, MicDisconnectFeedback.pill(atMs: 42400)] + selectionFailures.map { result in
@@ -31,18 +31,18 @@ final class PasteFeedbackLayoutTests: XCTestCase {
 
     // This test has no OCR dependency and must never skip on a hosted runner.
     func testEveryRecoveryMessageIsFullyRenderedInBothAppearances() throws {
-        try forEveryRender { _, _, _ in }
+        try forEveryRender { _, _, _, _ in }
     }
 
     func testEveryRecoveryMessageAndBadgeHasVisibleWordsWhenOCRIsAvailable() throws {
-        try forEveryRender(checksOCR: true) { image, textFrame, message in
+        try forEveryRender(checksOCR: true) { image, textFrame, message, scale in
             let visible = try [0, 1].map { line in
                 let crop = try XCTUnwrap(image.cropping(to: CGRect(
-                    x: textFrame.minX, y: CGFloat(line) * textFrame.height / 2,
+                    x: textFrame.minX, y: textFrame.minY + CGFloat(line) * textFrame.height / 2,
                     width: textFrame.width, height: textFrame.height / 2)))
                 try reportCropInk(crop, label: "line=\(line) message=\(message.debugDescription)")
                 try requireReadableCrop(crop)
-                try requireOCR(size: CGSize(width: crop.width, height: crop.height), scale: textFrame.height / 32)
+                try requireOCR(size: CGSize(width: crop.width, height: crop.height), scale: scale)
                 return try recognize(crop).joined(separator: " ")
             }.joined(separator: " ")
             XCTAssertEqual(words(visible), words(message), "Full feedback must be visible: \(visible)")
@@ -109,11 +109,11 @@ final class PasteFeedbackLayoutTests: XCTestCase {
 
     func testOCRSkipStillChecksEveryRender() throws {
         var checked = 0
-        XCTAssertThrowsError(try forEveryRender { _, _, _ in
+        XCTAssertThrowsError(try forEveryRender { _, _, _, _ in
             checked += 1
             throw XCTSkip("Synthetic OCR capability skip")
         }) { error in XCTAssertTrue(error is XCTSkip) }
-        XCTAssertEqual(checked, 96, "A skip must preserve all screen/message/queue/appearance renders")
+        XCTAssertEqual(checked, 108, "A skip must preserve all screen/message/queue/appearance renders")
     }
 
     private func contrastFixture(range: Int) throws -> CGImage {
@@ -214,7 +214,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
         }
     }
 
-    private func forEveryRender(checksOCR: Bool = false, checkWords: (CGImage, CGRect, String) throws -> Void) throws {
+    private func forEveryRender(checksOCR: Bool = false, checkWords: (CGImage, CGRect, String, CGFloat) throws -> Void) throws {
         // A capability skip must not bypass later renders, geometry or readable OCR checks.
         var firstOCRSkip: XCTSkip?
         func checkOCR(_ check: () throws -> Void) throws {
@@ -281,18 +281,51 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         let textSize: CGSize
                         let textRect: CGRect
                         if let feedback = presentation.feedback {
-                            // The message is now in the actual selectable lower band. Measure
-                            // its real native text field, not the former trailing-wing proxy.
-                            func field(_ view: NSView) -> NSTextField? {
+                            // Selectable SwiftUI Text uses a native interaction view on macOS 27;
+                            // older renderers use NSTextView or NSTextField. Match the complete
+                            // mounted string and measure that node, never a trailing-wing proxy.
+                            func feedbackText(_ view: NSView) -> NSView? {
+                                if let text = view as? NSTextView, text.string == message { return text }
                                 if let text = view as? NSTextField, text.stringValue == message { return text }
-                                return view.subviews.compactMap { field($0) }.first
+                                if view.accessibilityValue() as? String == message { return view }
+                                return view.subviews.compactMap { feedbackText($0) }.first
                             }
-                            let text = try XCTUnwrap(field(host), "Full feedback text must be mounted")
+                            let text = try XCTUnwrap(feedbackText(host), "Full feedback text must be mounted")
                             textRect = text.convert(text.bounds, to: host)
                             textSize = textRect.size
                             availableWidth = feedback.width - 32
                             XCTAssertTrue(host.bounds.contains(textRect), "Full message stays inside its actual rendered frame")
-                            XCTAssertEqual(text.stringValue, message)
+                            XCTAssertTrue(text.visibleRect.insetBy(dx: -0.5, dy: -0.5).contains(text.bounds),
+                                          "Ancestor clipping must not hide the mounted feedback")
+                            XCTAssertEqual(feedback.width, geometry.bodyFlushWithWings.bodyWidth,
+                                           "Feedback uses the compact under-notch note width")
+                            XCTAssertLessThan(feedback.width, canvas.canvasGeometry.totalWidth,
+                                              "Feedback must not expand into a full-width band")
+                            if let nativeText = text as? NSTextView {
+                                XCTAssertTrue(nativeText.isSelectable, "Recovery feedback remains selectable")
+                                XCTAssertFalse(nativeText.isEditable, "Feedback must not become an editor")
+                                let manager = try XCTUnwrap(nativeText.layoutManager)
+                                let container = try XCTUnwrap(nativeText.textContainer)
+                                manager.ensureLayout(for: container)
+                                let glyphs = manager.glyphRange(for: container)
+                                XCTAssertEqual(manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil),
+                                               NSRange(location: 0, length: (message as NSString).length),
+                                               "Every character must be laid out in the mounted text view")
+                                var lineCount = 0
+                                manager.enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, range, _ in
+                                    lineCount += 1
+                                    XCTAssertEqual(manager.truncatedGlyphRange(inLineFragmentForGlyphAt: range.location).location,
+                                                   NSNotFound, "No native line may truncate the feedback")
+                                }
+                                XCTAssertEqual(lineCount, 2, "Both feedback lines must actually be laid out")
+                                let inkRect = manager.boundingRect(forGlyphRange: glyphs, in: container)
+                                    .offsetBy(dx: nativeText.textContainerOrigin.x, dy: nativeText.textContainerOrigin.y)
+                                XCTAssertTrue(nativeText.visibleRect.insetBy(dx: -0.5, dy: -0.5).contains(inkRect),
+                                              "Ancestor clipping must not hide any laid-out feedback glyphs")
+                            }
+                            let topY = host.isFlipped ? textRect.minY - host.bounds.minY : host.bounds.maxY - textRect.maxY
+                            XCTAssertGreaterThanOrEqual(topY, geometry.topHeight,
+                                                        "Feedback grows below the anchored top row")
                         } else {
                             availableWidth = geometry.trailingWingWidth - slot.coreInset - slot.outerInset - queueWidth
                             let label = NSHostingView(rootView:
@@ -335,11 +368,11 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         }
                         // Vision merges adjacent 12 pt lines in the whole notch. Preserve
                         // P1e's per-line crop and slack for the smaller rounded badge glyphs.
-                        let cropInset = max(0, queueWidth - 4)
                         let wingX = 12 + canvas.canvasGeometry.coreOriginX + geometry.coreWidth + slot.coreInset
+                        let textTop = host.isFlipped ? textRect.minY - host.bounds.minY : host.bounds.maxY - textRect.maxY
                         try checkOCR {
-                            try checkWords(image, CGRect(x: textRect.minX * scale, y: textRect.minY * scale,
-                                width: textRect.width * scale, height: textRect.height * scale), message)
+                            try checkWords(image, CGRect(x: (textRect.minX - host.bounds.minX) * scale, y: textTop * scale,
+                                width: textRect.width * scale, height: textRect.height * scale), message, scale)
                         }
                         if queueDepth > 0, checksOCR {
                             let badge = try XCTUnwrap(image.cropping(to: CGRect(
