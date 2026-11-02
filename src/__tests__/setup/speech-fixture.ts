@@ -66,5 +66,5 @@ export function prepareSpeechAiff(
   }
   rmSync(path, { force: true });
   return `speech synthesis unavailable in this process/session after one retry (${failures.join("; ")}). ` +
-    "macOS sandbox or non-GUI/ssh launch context can prevent synthesis; run from a session with working file synthesis. No speech assertions ran.";
+    "The macOS test sandbox in a non-GUI/ssh session can produce header-only output; run from the GUI session. No speech assertions ran.";
 }
