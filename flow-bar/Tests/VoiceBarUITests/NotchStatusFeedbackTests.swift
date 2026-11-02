@@ -11,6 +11,14 @@ final class NotchStatusFeedbackTests: XCTestCase {
     private func resolve(_ input: VoiceBarNotchOperationalInput) -> VoiceBarNotchPresentation {
         VoiceBarPresentation.notchPresentation(from: input)
     }
+    private func mountedText(_ view: NSView, matching text: String) -> NSView? {
+        if let label = view as? NSTextField, label.stringValue == text { return label }
+        if let label = view as? NSTextView, label.string == text { return label }
+        // macOS 27 uses AppKitTextInteractionView; older systems expose native
+        // text fields/views. Keep the measured node's actual layout bounds.
+        if view.accessibilityValue() as? String == text { return view }
+        return view.subviews.compactMap { mountedText($0, matching: text) }.first
+    }
     func testTranscribingNeverAddsAStatusBand() {
         for text in ["Transcribing", long] {
             let p = resolve(.init(mode: .transcribing, statusText: text))
@@ -85,8 +93,7 @@ final class NotchStatusFeedbackTests: XCTestCase {
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.08))
             host.layoutSubtreeIfNeeded()
-            func views(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap { views($0) } }
-            let message = try XCTUnwrap(views(host).first { $0.accessibilityValue() as? String == text })
+            let message = try XCTUnwrap(mountedText(host, matching: text))
             let messageFrame = message.convert(message.bounds, to: host)
             XCTAssertTrue(host.bounds.contains(messageFrame), "Full message stays in the compact shell")
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
@@ -130,16 +137,7 @@ final class NotchStatusFeedbackTests: XCTestCase {
         defer { window.contentView = nil; window.close() }
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.08))
-        func field(_ view: NSView) -> NSView? {
-            if let label = view as? NSTextField, label.stringValue == text { return label }
-            // Selectable SwiftUI Text can mount as NSTextView.
-            if let label = view as? NSTextView, label.string == text { return label }
-            // macOS 27 uses AppKitTextInteractionView, exposing the full string
-            // through accessibility while retaining the actual text layout bounds.
-            if view.accessibilityValue() as? String == text { return view }
-            return view.subviews.compactMap { field($0) }.first
-        }
-        let label = try XCTUnwrap(field(host), "Full quit instruction must be mounted")
+        let label = try XCTUnwrap(mountedText(host, matching: text), "Full quit instruction must be mounted")
         let font = NSFont.systemFont(ofSize: 12, weight: .medium)
         let lineHeight = ceil(font.ascender - font.descender + font.leading)
         XCTAssertEqual(Int((label.bounds.height / lineHeight).rounded()), 2, "Rendered lines, independent of OCR")
