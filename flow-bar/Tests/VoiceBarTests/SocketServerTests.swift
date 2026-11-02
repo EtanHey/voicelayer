@@ -9,6 +9,30 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testOwnedDictationReceiptsAndCancelRouteOnlyToTheirProducingClient() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.server.sendCommandToOwner(command: ["cmd": "record", "take_id": "early-release"])
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains("record"))
+        fixture.server.sendCommandToOwner(command: ["cmd": "stop", "take_id": "early-release"])
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains("stop"))
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.025))
+        // The original daemon owns the queue before a later hello replaces the generic command owner.
+        try writeLine(#"{"type":"state","state":"transcribing","mic_take_id":null,"recording_jobs":[{"take_id":"owned-take","kind":"live","phase":"processing"}]}"#, to: fixture.commandClient)
+        XCTAssertTrue(waitUntil(timeout: 1) { fixture.state.processingTakeCount == 1 })
+        try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":111,"accepts_commands":true}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForRegisteredRoles(fixture.server, ["mcp-daemon", "mcp-daemon"]))
+        for command in ["dictation_delivered", "cancel", "stop"] {
+            fixture.server.sendCommandToOwner(command: ["cmd": command, "take_id": "owned-take", "delivery_id": "owned-take"])
+            let line = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+            XCTAssertTrue(line.contains(command))
+            XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.025))
+        }
+        fixture.server.sendCommandToOwner(command: ["cmd": "cancel", "take_id": "unowned-take"])
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.025))
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.025))
+    }
+
     func testQuitDrainWritesAckBeforeRequestingTermination() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
