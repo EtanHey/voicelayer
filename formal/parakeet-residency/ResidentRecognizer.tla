@@ -1,12 +1,13 @@
 ------------------------- MODULE ResidentRecognizer -------------------------
 EXTENDS Naturals, FiniteSets
-CONSTANTS BrokenLegacy, BrokenRecovery
+CONSTANTS BrokenLegacy, BrokenRecovery, BrokenAssetsGate
 VARIABLES models, owner, stage, desired, target, recovery, pendingLegacy,
-          request, capture, hold, previous
-vars == <<models,owner,stage,desired,target,recovery,pendingLegacy,request,capture,hold,previous>>
+          request, capture, hold, previous, assetsPresent, attempted
+vars == <<models,owner,stage,desired,target,recovery,pendingLegacy,request,capture,hold,previous,assetsPresent,attempted>>
 Init == /\ models = {} /\ owner = "none" /\ stage = "idle"
         /\ desired = "W" /\ target = "P" /\ previous = "W" /\ recovery = "none"
         /\ pendingLegacy = FALSE /\ request = FALSE /\ capture = FALSE /\ hold = FALSE
+        /\ assetsPresent \in {{"W"}, {"W","P"}} /\ attempted = {}
 BeginPicker(t) == /\ owner = "none" /\ ~request /\ ~capture /\ ~hold
                   /\ owner' = "picker" /\ stage' = "stopP" /\ target' = t
                   /\ previous' = IF models = {} THEN desired ELSE CHOOSE e \in models: TRUE
@@ -56,10 +57,25 @@ RequestStart == /\ owner = "none" /\ ~request /\ ~capture /\ ~hold
                 /\ UNCHANGED <<previous,owner,stage,desired,target,recovery,pendingLegacy,capture,hold>>
 RequestCompletes == /\ request /\ request' = FALSE
                     /\ UNCHANGED <<previous,models,owner,stage,desired,target,recovery,pendingLegacy,capture,hold>>
-Next == (\E t \in {"P","W"}: BeginPicker(t)) \/ StopP \/ StopW \/ Load \/ StartupFails \/
+ResidencyNext == (\E t \in {"P","W"}: BeginPicker(t)) \/ StopP \/ StopW \/ Load \/ StartupFails \/
         RecoveryCleanup \/ RecoverPrevious \/ UnknownCleanup \/ ConfirmedCleanup \/ CaptureChanges \/
         CaptureWins \/ LegacyStart \/ LegacyCompletes \/ RequestStart \/ RequestCompletes
+Next == ResidencyNext /\ UNCHANGED <<assetsPresent,attempted>>
 Spec == Init /\ [][Next]_vars
 OneModel == Cardinality(models) <= 1
 UnknownBlocks == hold => (owner = "blocked" /\ ~request)
+
+\* Gate-only projection: assets are local file metadata, not model residency.
+\* attempted={} represents available=null, sleeping, no error/fallback. The old
+\* UI blocked P in exactly this pristine state even when its files were present.
+GateCanSelect(e) == e \in assetsPresent /\
+                   (~BrokenAssetsGate \/ e = "W" \/ e \in attempted)
+GateSelect == /\ GateCanSelect("P")
+              /\ desired' = "P" /\ attempted' = attempted \cup {"P"}
+              /\ UNCHANGED <<models,owner,stage,target,recovery,pendingLegacy,
+                             request,capture,hold,previous,assetsPresent>>
+GateSpec == Init /\ [][GateSelect]_vars
+ProvisionedSelectable == "P" \in assetsPresent => GateCanSelect("P")
+MissingAssetsBlocked == \A e \in {"W","P"}: e \notin assetsPresent => ~GateCanSelect(e)
+GateDoesNotLoad == models = {}
 =============================================================================

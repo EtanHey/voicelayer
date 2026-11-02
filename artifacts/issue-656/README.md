@@ -2,7 +2,7 @@
 
 Status: offscreen SwiftUI fixtures only; no installed-app or runtime qualification.
 
-Before images: picker from stack layer 3, before management controls.
+Before images: the picker before management controls.
 After images: the same missing-Parakeet / loaded-Whisper fixture with the native
 Load/Unload and download/trash buttons. 720 and 390 point layouts, light and dark,
 rendered at the host's 2x backing scale. No private recordings, paths or user data.
@@ -43,3 +43,8 @@ The same two failing files passed at the requested main 9e5355bd (43/0); the fix
 seven-file integration replay passed 90/0. Final whole-suite receipts live in the
 PR descriptions. No capture/F5 mechanics, microphone, resident socket, installed
 VoiceBar or /Applications operation is part of this implementation proof.
+
+Delivery changed to one lane branch under Etan's explicit 01:55Z deadline,
+overriding the original four-PR split. INT owns the integration PR and M4 install.
+The current Parakeet revision and all three SHA256 pins were posted immediately
+in the final-20261102 collab. No PR to main is opened by this lane.
