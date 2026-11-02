@@ -35,6 +35,7 @@ public struct SelectionCaptureResult: Equatable {
         case secureField = "secure_field"
         case captureFailed = "capture_failed"
         case clipboardRestoreFailed = "clipboard_restore_failed"
+        case nothingSelected = "nothing_selected"
         case copyTimedOut = "copy_timeout"
         case copyEmpty = "copy_empty"
         case copyFailed = "copy_failed"
@@ -64,6 +65,7 @@ public struct SelectionCaptureResult: Equatable {
     public static let secureField = Self(.secureField)
     public static let captureFailed = Self(.captureFailed)
     public static let clipboardRestoreFailed = Self(.clipboardRestoreFailed)
+    public static let nothingSelected = Self(.nothingSelected)
     public static let copyTimedOut = Self(.copyTimedOut)
     public static let copyEmpty = Self(.copyEmpty)
     public static let copyFailed = Self(.copyFailed)
@@ -80,6 +82,14 @@ public struct SelectionCaptureResult: Equatable {
         result.outcome = .completed
         result.text = text
         result.path = .ax
+        return result
+    }
+
+    /// An empty AX selection explains an unchanged clipboard; keep the raw Copy receipt.
+    public func resolvingEmptyAXSelection() -> Self {
+        guard axRead == .empty, outcome == .copyTimedOut else { return self }
+        var result = self
+        result.outcome = .nothingSelected
         return result
     }
 
@@ -1354,6 +1364,7 @@ public final class VoiceState {
                 case .secureField: showConfirmation("Can't read a secure field")
                 case .clipboardRestoreFailed: showConfirmation("Couldn't restore the clipboard")
                 case .clipboardChanged: showConfirmation(SelectionErrorFeedback.clipboardChanged)
+                case .nothingSelected: showConfirmation(SelectionErrorFeedback.nothingSelected)
                 case .copyTimedOut: showConfirmation(SelectionErrorFeedback.copyTimedOut)
                 case .copyEmpty: showConfirmation(SelectionErrorFeedback.copyEmpty)
                 case .copyFailed: showConfirmation(SelectionErrorFeedback.copyFailed)
