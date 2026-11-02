@@ -55,8 +55,11 @@ Stop, queued count, outcome and active-take completion order is run with tap, ho
 double gestures. Active take identities are normalized to one or two outstanding takes;
 the replay does not claim to reproduce TLC scheduling or every intermediate prefix.
 Two-take rows open B while A is processing, test partial settlement without resuming,
-then finish the remaining take. Lane I FIFO delivery remains authoritative when B
-finishes first. User ownership is exercised both before F5 and through conversion
+then finish the remaining take. The daemon fixture preserves Lane I FIFO when
+B’s input result arrives first; the native projection feeds both partial job-removal
+snapshots. A separate real-adapter guard makes B fail before archival while A is
+processing, verifies B actually leaves the take set without resuming, then verifies
+one resume after A ends. User ownership is exercised both before F5 and through conversion
 during capture. Every Current counterexample contributes its
 actual input prefix. Native Swift emits commands through the real router/VoiceState;
 the paired Bun replay parses those commands and drives the real daemon handlers,
@@ -73,7 +76,7 @@ after settlement, clone timing, nonzero chunks, quiescence and preparing-with-no
 also have focused real-logic guards.
 
 The implementation includes F-model round 2 `2b41acda` and its G1 supervised-budget
-follow-up `42ddf743`, plus approved Lane I FIXED-2 `4dd30fd1`. The original `9884ffa7`
+follow-up `af8f1457` (repository-pinned TLC v1.8.0), plus approved Lane I FIXED-2 `4dd30fd1`. The original `9884ffa7`
 model cannot establish the revised M1-M4/D-S4 contract. Gate outcomes and immutable
 source hashes belong to the lane receipt and generated check artifacts. Installed
 interaction/audio/permission proof belongs to the captain.

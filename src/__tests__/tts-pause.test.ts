@@ -504,6 +504,43 @@ it("R2-01 N6 all takes and actual paste delivery settle before exactly one resum
   }
 });
 
+it("R2-01 N6 actual early B failure keeps the read parked for processing A", async () => {
+  await startTenSecondRead();
+  at(4300);
+  const finishA = deferred<void>(), processingA = deferred<void>();
+  const first = runBarCaptureWithPausedRead("early-failure-A", async (opened) => {
+    opened();
+    return finishBarCapture(Promise.resolve(), "fixture.wav", async () => {
+      processingA.resolve();
+      await finishA.promise;
+      return null;
+    });
+  }, () => {}, () => {}, 2500);
+  (await trims.at(0)).exit.resolve(0);
+  try {
+    await processingA.promise;
+    const second = runBarCaptureWithPausedRead("early-failure-B", async () => {
+      throw new Error("B recorder failed before archive");
+    }, () => {}, () => {});
+    await expect(second).rejects.toThrow("B recorder failed before archive");
+    // B really left the take set; this is not just a result waiting behind A in FIFO.
+    expect(recordingJobsSnapshot().recording_jobs.map(job => job.take_id)).toEqual(["early-failure-A"]);
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(events.filter(event => event.type === "playback_state" && event.state === "resumed")).toHaveLength(0);
+    finishA.resolve();
+    await first;
+    await fixtureCheckpoint();
+    expect(recordingJobsSnapshot().recording_jobs).toHaveLength(0);
+    expect(tts.isPlaybackPaused()).toBe(false);
+    const resumed = events.filter(event => event.type === "playback_state" && event.state === "resumed");
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]).toMatchObject({ offset_ms: 2000 });
+  } finally {
+    finishA.resolve();
+    await first;
+  }
+});
+
 it("R2-01 speech-scoped Stop wins without stopping an active take", async () => {
   await startTenSecondRead();
   const done = deferred<string | null>();
