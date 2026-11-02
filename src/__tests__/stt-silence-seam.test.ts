@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync } from "fs";
+import { mkdirSync, readFileSync } from "fs";
 import { join } from "path";
+import { hasWavAudio, prepareSpeechAiff } from "./setup/speech-fixture";
 import { nextStartAfterSkippedChunk, WhisperServerBackend } from "../stt";
 import {
   chooseChunkEnd,
@@ -59,8 +60,10 @@ function whichOk(bin: string): boolean {
 
 const hasSay = whichOk("say");
 const hasSox = whichOk("sox");
-const ready = hasSay && hasSox;
-if (!ready) {
+const synthFailure = hasSay && hasSox ? buildLongFixture() : null;
+const ready = hasSay && hasSox && synthFailure === null;
+if (synthFailure) console.error(`[silence-seam] SKIPPING — ${synthFailure}`);
+if (!hasSay || !hasSox) {
   console.error(
     `[silence-seam] SKIPPING — missing: ${[hasSay ? null : "say", hasSox ? null : "sox"]
       .filter(Boolean)
@@ -153,27 +156,28 @@ function run(cmd: string[]): void {
 }
 
 /** ~105 s: six spoken sentences, each said three times with 2.5 s gaps. */
-function buildLongFixture(): void {
-  if (existsSync(LONG_WAV)) return;
+function buildLongFixture(): string | null {
+  if (hasWavAudio(LONG_WAV)) return null;
   mkdirSync(FIXTURE_DIR, { recursive: true });
   run(["sox", "-n", "-r", "16000", "-c", "1", "-b", "16", "seam-gap.wav", "trim", "0.0", String(GAP_SECONDS)]);
   const parts: string[] = [];
-  SENTENCES.forEach((sentence, index) => {
-    run(["say", "-o", `seam-${index}.aiff`, sentence]);
+  for (const [index, sentence] of SENTENCES.entries()) {
+    const failure = prepareSpeechAiff(join(FIXTURE_DIR, `seam-${index}.aiff`), sentence);
+    if (failure) return failure;
     run(["sox", `seam-${index}.aiff`, "-r", "16000", "-c", "1", "-b", "16", `seam-${index}.wav`]);
     // Repeated so the file clears the ≥90 s chunked-decode gate with margin.
     for (let repeat = 0; repeat < 3; repeat++) {
       parts.push(`seam-${index}.wav`, "seam-gap.wav");
     }
-  });
+  }
   run(["sox", ...parts, "-r", "16000", "-c", "1", "-b", "16", LONG_WAV]);
+  return null;
 }
 
 describe("silence seams end to end", () => {
   seamTest(
     "cuts inside pauses and joins the chunks without inventing a repeat",
     async () => {
-      buildLongFixture();
       const wav = new Uint8Array(readFileSync(LONG_WAV));
       const info = parseWavAudioInfo(wav);
       const duration = (info?.dataSize ?? 0) / (16000 * 2);
@@ -266,7 +270,6 @@ describe("silence seams end to end", () => {
   seamTest(
     "the default (unset) and an explicit off both use the fixed-cut schedule",
     async () => {
-      buildLongFixture();
       const sizes: number[] = [];
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,

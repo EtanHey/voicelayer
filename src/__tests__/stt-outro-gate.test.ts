@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
+import { hasWavAudio, prepareSpeechAiff } from "./setup/speech-fixture";
 import {
   findCandidateSpan,
   findOutroCandidates,
@@ -870,8 +871,10 @@ describe("outroGateEnabled", () => {
 
 const hasSay = whichOk("say");
 const hasFfmpeg = whichOk("ffmpeg");
-const sayReady = hasSay && hasFfmpeg;
-if (!sayReady) {
+const synthFailure = hasSay && hasFfmpeg ? buildSayFixture() : null;
+const sayReady = hasSay && hasFfmpeg && synthFailure === null;
+if (synthFailure) console.error(`[outro-gate] SKIPPING the spoken-tail cases — ${synthFailure}`);
+if (!hasSay || !hasFfmpeg) {
   console.error(
     `[outro-gate] SKIPPING the spoken-tail cases — missing: ${[
       hasSay ? null : "say",
@@ -883,17 +886,12 @@ if (!sayReady) {
 }
 const sayTest = sayReady ? test : test.skip;
 
-function buildSayFixture(): Uint8Array {
-  if (existsSync(SAY_WAV)) return readWav(SAY_WAV);
+function buildSayFixture(): string | null {
+  if (hasWavAudio(SAY_WAV)) return null;
   mkdirSync(FIXTURE_DIR, { recursive: true });
   const aiff = join(FIXTURE_DIR, "spoken-tail.aiff");
-  const spoken = Bun.spawnSync([
-    "say",
-    "-o",
-    aiff,
-    "Merge the pull requests and notify the engineering team on Slack",
-  ], { env: process.env });
-  if (spoken.exitCode !== 0) throw new Error("say failed");
+  const failure = prepareSpeechAiff(aiff, "Merge the pull requests and notify the engineering team on Slack");
+  if (failure) return failure;
   // 16 kHz mono, then 2 s of silence appended — the shape of a recording the
   // VAD stopped after the last word.
   const padded = Bun.spawnSync([
@@ -912,12 +910,12 @@ function buildSayFixture(): Uint8Array {
     SAY_WAV,
   ], { env: process.env });
   if (padded.exitCode !== 0) throw new Error("ffmpeg failed");
-  return readWav(SAY_WAV);
+  return null;
 }
 
 describe("stripHallucinatedOutro — real speech plus 2 s of silence", () => {
   sayTest("drops a farewell a fake decoder glued into the silent pad", () => {
-    const wav = buildSayFixture();
+    const wav = readWav(SAY_WAV);
     const durationS = wavDurationSeconds(wav);
     const spoken =
       "Merge the pull requests and notify the engineering team on Slack.";
@@ -936,7 +934,7 @@ describe("stripHallucinatedOutro — real speech plus 2 s of silence", () => {
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   sayTest("keeps the same farewell when it is inside the spoken region", () => {
-    const wav = buildSayFixture();
+    const wav = readWav(SAY_WAV);
     const speechEndS = wavDurationSeconds(wav) - 2;
     const spoken = "Merge the pull requests and notify the engineering team";
 
