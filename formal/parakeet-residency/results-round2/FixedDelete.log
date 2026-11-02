@@ -1,5 +1,5 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 85 and seed -8071261296989402859 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 4416] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 11 and seed -1159111002519657940 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 97820] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file <model-check>/ResidentRecognizer.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
@@ -8,9 +8,9 @@ Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
 Semantic processing of module ResidentRecognizer
-Starting... (2026-11-02 09:47:01)
+Starting... (2026-11-02 10:18:36)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 09:47:01.
+Finished computing initial states: 1 distinct state generated at 2026-11-02 10:18:36.
 Model checking completed. No error has been found.
   Estimates of the probability that TLC did not check all reachable states
   because two distinct states had the same fingerprint:
@@ -18,4 +18,4 @@ Model checking completed. No error has been found.
 50 states generated, 22 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 7.
 The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 3 and the 95th percentile is 3).
-Finished in 00s at (2026-11-02 09:47:01)
+Finished in 00s at (2026-11-02 10:18:36)

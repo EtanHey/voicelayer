@@ -1,5 +1,5 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 124 and seed -4987407580734476238 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 6328] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 82 and seed -6491603134654134299 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 946] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file <model-check>/ResidentRecognizer.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
@@ -8,7 +8,7 @@ Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
 Semantic processing of module ResidentRecognizer
-Starting... (2026-11-02 09:47:10)
+Starting... (2026-11-02 10:18:44)
 Computing initial states...
 Error: Invariant IdleLoadedCanDelete is violated by the initial state:
 /\ models = {"P"}
@@ -26,4 +26,4 @@ Error: Invariant IdleLoadedCanDelete is violated by the initial state:
 /\ hold = FALSE
 /\ owner = "none"
 
-Finished in 00s at (2026-11-02 09:47:11)
+Finished in 00s at (2026-11-02 10:18:44)

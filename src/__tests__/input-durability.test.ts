@@ -2049,7 +2049,7 @@ describe("input recording durability", () => {
     expect(broadcasts.some(event => event.type === "transcription" && event.recording_path === archive)).toBe(true);
   });
 
-  it("a transcribed live row carries no gate-removal note in History", async () => {
+  it("a live partial gate removal keeps its History marker outside not-transcribed fields", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
     backendText = "Real words remaining after a gated chunk.";
@@ -2060,9 +2060,30 @@ describe("input recording durability", () => {
     expect(await result).toBe(backendText);
     const metadata = voiceBarArchiveMetadata(capturedVoiceBarAudio()[0]);
     expect(metadata.transcription_status).toBe("transcribed");
-    expect(metadata).not.toHaveProperty("last_stt_gate_removal");
+    expect(metadata.last_stt_gate_removal).toEqual(backendAttemptEvidence.gateRemoval);
     expect(metadata).not.toHaveProperty("not_transcribed_detail");
     expect(metadata).not.toHaveProperty("not_transcribed_reason");
+  });
+
+  it.each(["archive", "retained"] as const)("a partial gate removal survives the %s transcript commit until a clean retry", async surface => {
+    const archive = await silentVoiceBarArchive();
+    const { retranscribeRecordingCapture, retranscribeLastCapture } = await import("../input");
+    const retry = () => surface === "archive" ? retranscribeRecordingCapture(archive) : retranscribeLastCapture();
+    backendText = "Real words kept after filtering.";
+    backendAttemptEvidence = { status: "RETURNED", gateRemoval: { gate: "cjk-outro", removedSpans: 1, rawCharacters: 48 } };
+    expect(await retry()).toBe(backendText);
+    const metadata = voiceBarArchiveMetadata(archive);
+    expect(metadata.transcription_status).toBe("transcribed");
+    expect(metadata.last_stt_gate_removal).toEqual(backendAttemptEvidence.gateRemoval);
+    expect(metadata).not.toHaveProperty("not_transcribed_detail");
+    expect(metadata).not.toHaveProperty("not_transcribed_reason");
+    expect(readFileSync(archive.replace("audio.wav", "voicelayer-transcript.txt"), "utf8")).toBe(backendText);
+
+    backendText = "A new result with no removal.";
+    backendAttemptEvidence = undefined;
+    expect(await retry()).toBe(backendText);
+    expect(voiceBarArchiveMetadata(archive)).not.toHaveProperty("last_stt_gate_removal");
+    expect(voiceBarArchiveMetadata(archive)).not.toHaveProperty("not_transcribed_detail");
   });
 
   it("NOTX1 records empty-transcript when the live decode returns no words", async () => {
@@ -3886,6 +3907,19 @@ describe("input recording durability", () => {
       expect(metadata).not.toHaveProperty("not_transcribed_detail");
       expect(metadata).not.toHaveProperty("not_transcribed_reason");
       expect(JSON.stringify(metadata)).not.toContain("closing-phrase filter");
+    });
+
+    it("an Ask partial gate removal keeps its History marker outside not-transcribed fields", async () => {
+      const archive = writeAskArchive();
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      backendText = "Real Ask words kept after filtering.";
+      backendAttemptEvidence = { status: "RETURNED", gateRemoval: { gate: "cjk-outro", removedSpans: 1, rawCharacters: 51 } };
+      expect(await retranscribeVoiceAskArchive(archive.id)).toBe(backendText);
+      const metadata = voiceBarArchiveMetadata(join(archive.archiveDir, "audio.wav"));
+      expect(metadata.transcription_status).toBe("transcribed");
+      expect(metadata.last_stt_gate_removal).toEqual(backendAttemptEvidence.gateRemoval);
+      expect(metadata).not.toHaveProperty("not_transcribed_detail");
+      expect(metadata).not.toHaveProperty("not_transcribed_reason");
     });
 
     it("preserves raw words and sends the complete immutable Ask WAV to STT", async () => {

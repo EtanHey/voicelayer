@@ -3508,6 +3508,7 @@ export async function waitForInput(
       }
       if (archivedRecordingPath) {
         linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
+        recordArchivedGateRemoval(join(archivedRecordingPath, "audio.wav"), gateRemoval);
       }
     } else if (voiceBarArchivePath) {
       markArchivedRecordingNotTranscribed(
@@ -4282,6 +4283,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
     delete metadata.not_transcribed_reason;
     delete metadata.not_transcribed_detail;
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
+    recordArchivedGateRemoval(snapshot.audioPath, result.attemptEvidence?.gateRemoval);
     // MCP's return-only retry must evict the original Ask's cached History row
     // after the pair is durable, without delivering a dictation/paste event.
     if (options.delivery === "return-only") {
@@ -4453,6 +4455,7 @@ async function retranscribeRecordingCaptureAdmitted(
           transcribedDurationMs,
           polishStatus: finalized.polishStatus,
         });
+        recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
         broadcast({
           type: "transcription",
           text,
@@ -4575,6 +4578,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
             transcribedDurationMs,
             polishStatus: finalized.polishStatus,
           });
+          recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
         }
         broadcast({
           type: "transcription",

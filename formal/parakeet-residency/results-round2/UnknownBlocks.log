@@ -1,5 +1,5 @@
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 130 and seed 4360886865889376380 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 4925] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 108 and seed 3675800668198851040 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 99131] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
 Parsing file <model-check>/ResidentRecognizer.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
 Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/FiniteSets.tla
@@ -8,9 +8,9 @@ Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
 Semantic processing of module ResidentRecognizer
-Starting... (2026-11-02 09:47:05)
+Starting... (2026-11-02 10:18:40)
 Computing initial states...
-Finished computing initial states: 2 distinct states generated at 2026-11-02 09:47:05.
+Finished computing initial states: 2 distinct states generated at 2026-11-02 10:18:40.
 Error: Invariant UnknownBlocks is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -64,4 +64,4 @@ State 3: <Next line 64, col 9 to line 64, col 83 of module ResidentRecognizer>
 16 states generated, 14 distinct states found, 10 states left on queue.
 The depth of the complete state graph search is 3.
 The average outdegree of the complete state graph is 5 (minimum is 5, the maximum 5 and the 95th percentile is 5).
-Finished in 00s at (2026-11-02 09:47:05)
+Finished in 00s at (2026-11-02 10:18:40)
