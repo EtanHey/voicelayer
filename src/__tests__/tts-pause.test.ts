@@ -1,5 +1,6 @@
 import { runBarCaptureWithPausedRead } from "../f5-capture";
 import { registerBarRecorderExit } from "../recording-jobs";
+import { setRecordingState } from "../recording-state";
 import { STOP_FILE } from "../paths";
 import { clearStopSignal } from "../session-booking";
 import { finishBarCapture, recordingJobsSnapshot, deliverInputTranscription, acknowledgeDictationDelivery } from "../recording-jobs";
@@ -583,6 +584,25 @@ it("R2-01 waits for actual player exit and preserves the early physical release"
     done.resolve(null); await settleRecordingJobs(); await fixtureCheckpoint();
     expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
   } finally { done.resolve(null); player.exit.resolve(143); await settleRecordingJobs(); wait.mockRestore(); }
+});
+
+it("R2-01 refused automatic resume releases the read instead of stranding its F5 park", async () => {
+  const { handle } = await startTenSecondRead();
+  const capture = tts.pauseForF5Capture(4200);
+  await capture.ready;
+  (await trims.at(0)).exit.resolve(0);
+  await fixtureCheckpoint();
+  setRecordingState("transcribing");
+  try {
+    capture.settle();
+    expect(tts.hasF5Capture()).toBe(false);
+    expect(tts.isPlaybackPaused()).toBe(false);
+    expect(await handle.exited).toMatchObject({ status: "interrupted", reason: "resume-refused", stopped_at_ms: 4000 });
+    expect(events.filter(e => e.type === "playback_outcome").at(-1)).toMatchObject({ playback_id: handle.id, reason: "resume-refused" });
+    expect(players.values).toHaveLength(1);
+  } finally { setRecordingState("idle"); capture.settle(); }
+  await startTenSecondRead("A later read can start");
+  expect(players.values).toHaveLength(2);
 });
 
 it("R2-01 stale capture settlement cannot unpause a later user pause", async () => {
