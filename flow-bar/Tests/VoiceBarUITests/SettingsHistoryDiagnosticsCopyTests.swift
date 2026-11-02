@@ -11,17 +11,18 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
                           "per-recording", "backend", "attributed", "Technical details", "Older details", "technical-id-"]
 
     private func snapshot(_ state: SettingsHistoryDiagnostics.ArchiveState = .transcribed, backend: String? = nil,
-                          language: String? = nil, mic: String? = nil) -> SettingsHistoryDiagnostics {
+                          language: String? = nil, mic: String? = nil, transcriptWrittenAt: Date? = nil,
+                          capturedAt: Date? = nil) -> SettingsHistoryDiagnostics {
         .init(archiveState: state, savedTextState: .present, selection: "2026-11-01/recording",
               summary: "Archive reports a transcribed result", savedResult: "Saved transcript present; attempt identity unknown",
-              capturedAt: nil, backend: backend, model: nil, detail: "Synthetic saved error",
+              capturedAt: capturedAt, backend: backend, model: nil, detail: "Synthetic saved error",
               warnings: ["Earlier attempts and retry times are not retained in this archive format."],
-              languageSetting: language, inputDeviceName: mic)
+              languageSetting: language, inputDeviceName: mic, transcriptWrittenAt: transcriptWrittenAt)
     }
-    private func entry(processingMs: Int? = 900, model: String? = nil) -> SettingsHistoryEntry {
+    private func entry(processingMs: Int? = 900, model: String? = nil, durationMs: Int? = 19_800) -> SettingsHistoryEntry {
         .init(id: "recording", dayKey: "2026-11-01", recordingID: "rec-123", createdAt: created,
               transcript: "Pack red. No, blue. Keep the fu… fragment.", audioPath: path,
-              durationMs: 19_800, processingDurationMs: processingMs, modelLabel: model)
+              durationMs: durationMs, processingDurationMs: processingMs, modelLabel: model)
     }
     private func copy(_ snapshot: SettingsHistoryDiagnostics?, runs: [SettingsHistoryRunLog.Run] = [],
                       history: SettingsHistoryAttemptHistory? = nil, entry: SettingsHistoryEntry? = nil) -> SettingsHistoryDiagnosticsCopy {
@@ -75,16 +76,21 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
         }
     }
 
-    func testFreshTakeLogIsOneRowWithItsTimeAndProcessing() {
+    func testFreshTakeLogIsOneSavedResultWithoutRepeatingFooterProcessing() {
         let lines = copy(snapshot(), entry: entry()).logLines
         XCTAssertEqual(lines.count, 1)
         XCTAssertEqual(lines[0].source, .archivedTake)
-        XCTAssertEqual(lines[0].title, "Original")
-        XCTAssertEqual(lines[0].time, clock(created), "the take's own capture time, local")
+        XCTAssertEqual(lines[0].title, "Saved result")
+        XCTAssertEqual(lines[0].time, clock(created), "without a transcript write time, fall back to Created")
         XCTAssertEqual(lines[0].outcome, "Finished")
-        XCTAssertEqual(lines[0].processing, "processed in 0.9 s")
+        XCTAssertNil(lines[0].processing, "the footer owns aggregate processing")
+        XCTAssertFalse(lines[0].text.contains("processing"))
+        XCTAssertFalse(lines[0].accessibilityText.contains("processed in"))
         XCTAssertFalse(lines[0].isProblem)
         XCTAssertNil(copy(snapshot(), entry: entry(processingMs: nil)).logLines[0].processing, "no measurement, no number")
+        let metadataCreated = created.addingTimeInterval(60)
+        XCTAssertEqual(copy(snapshot(capturedAt: metadataCreated), entry: entry()).logLines[0].time,
+                       clock(metadataCreated), "fallback uses the same Created precedence as the facts")
         let cancelled = copy(snapshot(.cancelled), entry: entry())
         XCTAssertEqual(cancelled.logLines.map(\.outcome), ["Cancelled"])
         XCTAssertEqual(cancelled.summary, "", "the Log row already says Cancelled")
@@ -98,7 +104,7 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
         log.observe(["type": "ack", "command": "retranscribe_recording", "id": "r2", "outcome": "reject", "reason": "Busy"])
         log.observe(["type": "transcription", "recording_path": path.path, "text": "Synthetic words"])
         let lines = copy(snapshot(), runs: log.runs, entry: entry()).logLines
-        XCTAssertEqual(lines.map(\.title), ["Original", "Retry", "Retry"], "earlier sessions' retries are unknown, so no numbering")
+        XCTAssertEqual(lines.map(\.title), ["Saved result", "Retry", "Retry"], "earlier sessions' retries are unknown, so no numbering")
         XCTAssertEqual(lines.map(\.time), [clock(created), clock(first), clock(second)], "oldest first")
         XCTAssertEqual(lines.map(\.outcome), ["Finished", "New text received", "Couldn't start"])
         XCTAssertEqual(lines.dropFirst().map(\.processing), [nil, nil], "observation times are never shown as processing")
@@ -157,7 +163,7 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
             .init(id: "original", status: .completed, startedAt: t0, savedText: "A.", engine: "parakeet-resident", processingDurationMs: 400),
             .init(id: "retry-1", status: .completed, startedAt: t1, savedText: "B.", engine: "whisper.cpp", model: "large-v3", processingDurationMs: 2750)
         ], isComplete: true)
-        let shot = snapshot(backend: "parakeet-resident")
+        let shot = snapshot(backend: "parakeet-resident", transcriptWrittenAt: created.addingTimeInterval(600))
         func facts(_ history: SettingsHistoryAttemptHistory, _ selected: String?) -> [SettingsHistoryFact] {
             SettingsHistoryDiagnosticsCopy.facts(snapshot: shot, entry: entry(model: "Archive model"), attemptHistory: history,
                                                  selectedAttemptID: selected, locale: locale, timeZone: utc)
@@ -178,6 +184,69 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
         XCTAssertFalse(facts(failedRetry, nil).contains { $0.title == "Last transcribed" }, "a failed retry did not transcribe it again")
         XCTAssertFalse(facts(failedRetry, "retry-1").contains { $0.title == "Engine" },
                        "an attempt with no reported engine shows none; the archive backend is not borrowed")
+    }
+
+    func testFreshTranscriptThresholdIncludesCaptureAndProcessingInSeconds() {
+        let recording = entry(processingMs: 75_000, durationMs: 90_000)
+        // 90 s capture + 75 s processing + 30 s tolerance. A fresh long take is not a retry.
+        for offset: TimeInterval in [-1, 0, 31, 194.999, 195, 195.001] {
+            let shot = snapshot(transcriptWrittenAt: created.addingTimeInterval(offset))
+            let facts = SettingsHistoryDiagnosticsCopy.facts(snapshot: shot, entry: recording,
+                attemptHistory: nil, selectedAttemptID: nil, locale: locale, timeZone: utc)
+            XCTAssertEqual(facts.filter { $0.title == "Created" }.count, 1)
+            XCTAssertEqual(facts.contains { $0.title == "Last transcribed" }, offset > 195, "offset \(offset)")
+        }
+        let noTimestamp = SettingsHistoryDiagnosticsCopy.facts(snapshot: snapshot(), entry: recording,
+            attemptHistory: nil, selectedAttemptID: nil)
+        XCTAssertFalse(noTimestamp.contains { $0.title == "Last transcribed" })
+        let noCreated = SettingsHistoryDiagnosticsCopy.facts(snapshot: snapshot(transcriptWrittenAt: created), entry: nil,
+            attemptHistory: nil, selectedAttemptID: nil)
+        XCTAssertFalse(noCreated.contains { $0.title == "Last transcribed" }, "no baseline, no invented retry")
+    }
+
+    func testReloadedArchiveShowsRetranscriptionWithoutAnAttemptReaderOrSessionLog() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let directory = root.appendingPathComponent("2026-11-01/recording")
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let audio = directory.appendingPathComponent("audio.wav")
+        let transcript = directory.appendingPathComponent("voicelayer-transcript.txt")
+        let metadata = directory.appendingPathComponent("metadata.json")
+        let createdString = ISO8601DateFormatter().string(from: created)
+        try JSONSerialization.data(withJSONObject: ["created_at": createdString, "transcription_status": "failed",
+            "not_transcribed_reason": "transcription-failed"]).write(to: metadata)
+        let recording = SettingsHistoryEntry(id: "recording", dayKey: "2026-11-01", recordingID: "rec-123", createdAt: created,
+            transcript: "", audioPath: audio, durationMs: 19_800, processingDurationMs: 900)
+        let failed = SettingsHistoryDiagnostics.load(audioPath: audio, root: root)
+        XCTAssertNil(failed.transcriptWrittenAt)
+        XCTAssertEqual(copy(failed, entry: recording).logLines.map(\.outcome), ["Failed"])
+
+        // Fixture the files a successful later transcription leaves, then load without any process history.
+        let written = created.addingTimeInterval(3600.125)
+        try Data("Pack red. No, blue. Keep the fu… fragment.".utf8).write(to: transcript, options: .atomic)
+        try fm.setAttributes([.modificationDate: written], ofItemAtPath: transcript.path)
+        try JSONSerialization.data(withJSONObject: ["created_at": createdString, "transcription_status": "transcribed",
+            "backend": "parakeet-resident"]).write(to: metadata)
+        let reloaded = SettingsHistoryDiagnostics.load(audioPath: audio, root: root)
+        XCTAssertEqual(try XCTUnwrap(reloaded.transcriptWrittenAt).timeIntervalSince1970,
+                       written.timeIntervalSince1970, accuracy: 0.001, "retain subsecond fstat mtime")
+        XCTAssertEqual(reloaded.savedTextState, .present)
+        let facts = SettingsHistoryDiagnosticsCopy.facts(snapshot: reloaded, entry: recording,
+            attemptHistory: nil, selectedAttemptID: nil, locale: locale, timeZone: utc)
+        XCTAssertEqual(facts.filter { $0.title == "Created" }.map(\.value),
+                       [SettingsHistoryDiagnosticsCopy.dateTime(created, locale: locale, timeZone: utc)])
+        XCTAssertEqual(facts.filter { $0.title == "Last transcribed" }.map(\.value),
+                       [SettingsHistoryDiagnosticsCopy.dateTime(written, locale: locale, timeZone: utc)])
+        let result = copy(reloaded, entry: recording)
+        XCTAssertNil(result.notice)
+        XCTAssertEqual(result.logLines.count, 1, "no invented attempt ownership or session retry")
+        XCTAssertEqual(result.logLines[0].title, "Saved result")
+        XCTAssertEqual(result.logLines[0].time, clock(written))
+        XCTAssertEqual(result.logLines[0].outcome, "Finished")
+        XCTAssertNil(result.logLines[0].processing, "aggregate processing still belongs to the footer")
+        XCTAssertFalse(result.logLines[0].text.contains("Original"))
     }
 
     func testCompleteStateHistoryReplacesProvisionalRequests() async throws {

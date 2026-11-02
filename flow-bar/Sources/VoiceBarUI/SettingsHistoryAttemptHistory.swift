@@ -92,7 +92,7 @@ public struct SettingsHistoryAttemptHistory: Equatable, Sendable {
 public typealias SettingsHistoryAttemptLogReader = @Sendable (URL) async -> SettingsHistoryAttemptHistory?
 
 /// One visible Log row. Every row is backed by a real event: an attempt from the per-recording
-/// reader, the archived take itself, or a retry request this app process sent. A row is never
+/// reader, the archive's saved result, or a retry request this app process sent. A row is never
 /// synthesized from a missing field, and the archive's single result is never split into attempts.
 struct SettingsHistoryLogLine: Identifiable, Equatable {
     enum Source: Equatable { case attempt(String), archivedTake, sessionRequest(String) }
@@ -233,8 +233,8 @@ struct SettingsHistoryDiagnosticsCopy {
             .map(SettingsHistoryDiagnosticPrivacy.text).joined(separator: "\n\n")
     }
 
-    /// The archive keeps one result per recording. Its row is the original take: capture time plus the
-    /// processing time the dictation path measured (a retranscription never rewrites that field).
+    /// The archive keeps the latest saved result, not the original attempt's outcome. Use the
+    /// transcript's write time when available; aggregate processing is shown once in the footer.
     /// An archive that could not establish an outcome gets no row, so nothing is asserted about it.
     static func archivedTake(_ snapshot: SettingsHistoryDiagnostics, entry: SettingsHistoryEntry?,
                              locale: Locale, timeZone: TimeZone) -> SettingsHistoryLogLine? {
@@ -246,9 +246,10 @@ struct SettingsHistoryDiagnosticsCopy {
         case .cancelled: ("Cancelled", "slash.circle", false)
         case .captured, .unavailable: ("Not transcribed", "clock", false)
         }
-        let time = (entry?.createdAt ?? snapshot.capturedAt).map { clockTime($0, locale: locale, timeZone: timeZone) }
-        return SettingsHistoryLogLine(source: .archivedTake, title: "Original", time: time, outcome: outcome,
-            processing: entry?.processingDurationMs.flatMap { $0 > 0 ? processingLabel($0) : nil },
+        let time = (snapshot.transcriptWrittenAt ?? snapshot.capturedAt ?? entry?.createdAt)
+            .map { clockTime($0, locale: locale, timeZone: timeZone) }
+        return SettingsHistoryLogLine(source: .archivedTake, title: "Saved result", time: time, outcome: outcome,
+            processing: nil,
             symbol: symbol, isProblem: problem)
     }
 
@@ -291,6 +292,16 @@ struct SettingsHistoryDiagnosticsCopy {
             if let engine = engineName(snapshot?.backend) { facts.append(.init(title: "Engine", value: engine)) }
             facts += SettingsHistoryDiagnosticsPanel.legacyRecognitionFacts(entry, hasAttempts: false)
                 .map { SettingsHistoryFact(title: $0.0, value: $0.1) }
+            // The shipping app has no attempt reader. A later transcript write survives restarts;
+            // allow the original capture, measured processing and 30 seconds before calling it a retry.
+            if attemptHistory == nil, let writtenAt = snapshot?.transcriptWrittenAt,
+               let created = snapshot?.capturedAt ?? entry?.createdAt {
+                let initialSeconds = Double(max(0, entry?.durationMs ?? 0)) / 1000
+                    + Double(max(0, entry?.processingDurationMs ?? 0)) / 1000
+                if writtenAt > created.addingTimeInterval(initialSeconds + 30) {
+                    facts.append(.init(title: "Last transcribed", value: dateTime(writtenAt, locale: locale, timeZone: timeZone)))
+                }
+            }
         } else {
             // An attempt's own facts only; archive-level settings never stand in for them.
             let attempt = attempts.first { $0.id == selectedAttemptID } ?? attempts.last

@@ -2,6 +2,57 @@ import XCTest
 @testable import VoiceBarUI
 
 final class SettingsHistoryDiagnosticsTests: XCTestCase {
+    func testTranscriptWriteTimePreservesSafeFileAndRootChecks() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let directory = root.appendingPathComponent("2026-11-01/recording")
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let audio = directory.appendingPathComponent("audio.wav")
+        let transcript = directory.appendingPathComponent("voicelayer-transcript.txt")
+        let metadata = directory.appendingPathComponent("metadata.json")
+        try Data("{}".utf8).write(to: metadata)
+        XCTAssertNil(SettingsHistoryDiagnostics.load(audioPath: audio, root: root).transcriptWrittenAt)
+
+        // Even an empty regular file has a write time; no transcript contents are needed.
+        let written = Date(timeIntervalSince1970: 1_793_000_000.125)
+        try Data().write(to: transcript)
+        try fm.setAttributes([.modificationDate: written], ofItemAtPath: transcript.path)
+        let empty = SettingsHistoryDiagnostics.load(audioPath: audio, root: root)
+        XCTAssertEqual(empty.savedTextState, .empty)
+        XCTAssertEqual(try XCTUnwrap(empty.transcriptWrittenAt).timeIntervalSince1970,
+                       written.timeIntervalSince1970, accuracy: 0.001)
+        try Data(repeating: 0x20, count: SettingsHistoryDiagnostics.metadataByteLimit + 1).write(to: metadata)
+        let oversized = SettingsHistoryDiagnostics.load(audioPath: audio, root: root)
+        XCTAssertEqual(oversized.archiveState, .unavailable, "the metadata size bound is unchanged")
+        XCTAssertEqual(oversized.transcriptWrittenAt, empty.transcriptWrittenAt)
+
+        try fm.removeItem(at: transcript)
+        try fm.createSymbolicLink(at: transcript, withDestinationURL: metadata)
+        let symlink = SettingsHistoryDiagnostics.load(audioPath: audio, root: root)
+        XCTAssertNil(symlink.transcriptWrittenAt)
+        XCTAssertEqual(symlink.savedTextState, .unavailable)
+        try fm.removeItem(at: transcript)
+        try fm.createDirectory(at: transcript, withIntermediateDirectories: false)
+        XCTAssertNil(SettingsHistoryDiagnostics.load(audioPath: audio, root: root).transcriptWrittenAt)
+
+        // Restore valid files so path rejection cannot pass only because the transcript is unsafe.
+        try fm.removeItem(at: transcript)
+        try Data("Synthetic saved words".utf8).write(to: transcript)
+        try Data("{}".utf8).write(to: metadata)
+        XCTAssertNotNil(SettingsHistoryDiagnostics.load(audioPath: audio, root: root).transcriptWrittenAt)
+
+        let wrongFilename = SettingsHistoryDiagnostics.load(audioPath: metadata, root: root)
+        XCTAssertEqual(wrongFilename.archiveState, .unavailable)
+        XCTAssertNil(wrongFilename.transcriptWrittenAt)
+        let outsideRoot = SettingsHistoryDiagnostics.load(audioPath: audio, root: root.appendingPathComponent("other"))
+        XCTAssertNil(outsideRoot.transcriptWrittenAt)
+        let linkedDay = root.appendingPathComponent("2026-11-02")
+        try fm.createSymbolicLink(at: linkedDay, withDestinationURL: directory.deletingLastPathComponent())
+        XCTAssertNil(SettingsHistoryDiagnostics.load(audioPath: linkedDay.appendingPathComponent("recording/audio.wav"), root: root).transcriptWrittenAt)
+    }
+
     func testSelectionChangeAppliesResultDefault() {
         var state = SettingsHistoryDiagnosticsDisclosure(selection: "2026-11-01/a")
         XCTAssertFalse(state.expanded)
