@@ -673,6 +673,54 @@ public enum TeleprompterPlaybackPolicy {
     }
 }
 
+/// R2-05: the highlighted word, the playback epoch it was reached in and the audio clock when it was reached.
+/// While the clock keeps moving forward in one epoch, a better timeline for the same words (measured timing
+/// replacing an estimate) never moves the highlight back: the word on screen is a floor, and the new timestamps
+/// drive every later step. A new epoch (a new read, a seek, a resume from a park, new text, entering or leaving
+/// read-back) or a clock that went back (a jump inside the epoch) lands exactly where the clock says.
+public struct TeleprompterHighlightCursor: Equatable {
+    public struct Epoch: Equatable {
+        public let playback: Int
+        public let text: String
+        public let isReadback: Bool
+
+        public init(playback: Int, text: String, isReadback: Bool) {
+            self.playback = playback
+            self.text = text
+            self.isReadback = isReadback
+        }
+    }
+
+    public private(set) var wordID: Int
+    public private(set) var epoch: Epoch?
+    /// The audio clock (ms) when `wordID` was reached.
+    public private(set) var reachedAtMilliseconds: Int
+
+    public init(wordID: Int, at clockMilliseconds: Int, epoch: Epoch? = nil) {
+        self.wordID = wordID
+        self.epoch = epoch
+        reachedAtMilliseconds = clockMilliseconds
+    }
+
+    /// Lands on the word the clock names. `keepingWordOnScreen` is set only when one live timeline replaces
+    /// another; it holds the current word as a floor if, and only if, that word was reached in this same epoch
+    /// and the clock has not gone back since.
+    public mutating func land(on clockWordID: Int, at clockMilliseconds: Int, in epoch: Epoch,
+                              keepingWordOnScreen: Bool = false) {
+        let keeps = keepingWordOnScreen && !epoch.isReadback && clockMilliseconds >= reachedAtMilliseconds &&
+            self.epoch == epoch
+        wordID = keeps ? max(clockWordID, wordID) : clockWordID
+        reachedAtMilliseconds = clockMilliseconds
+        self.epoch = epoch
+    }
+
+    /// The playback task reached the next word.
+    public mutating func step(to wordID: Int, at clockMilliseconds: Int) {
+        self.wordID = wordID
+        reachedAtMilliseconds = clockMilliseconds
+    }
+}
+
 public enum TeleprompterSeekPolicy {
     public static func offset(for word: TeleprompterWord, isReadback _: Bool) -> Int? {
         guard !word.hasEstimatedTiming, let offset = word.offsetMs, offset >= 0 else { return nil }
@@ -760,7 +808,10 @@ public struct TeleprompterView: View {
                 elapsedMilliseconds: playbackElapsedMilliseconds() -
                     (TeleprompterPlaybackPolicy.usesServerTimestamps(in: initialWords) ? 0 : estimatedPlaybackStartMilliseconds)
             )
-        _currentIndex = State(initialValue: initialWordIndex)
+        _cursor = State(initialValue: TeleprompterHighlightCursor(
+            wordID: initialWordIndex, at: playbackElapsedMilliseconds(),
+            epoch: .init(playback: playbackEpoch, text: text, isReadback: isReadback)
+        ))
     }
 
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
@@ -769,7 +820,11 @@ public struct TeleprompterView: View {
     @State private var contentHeight: CGFloat = 0
     @State private var hoveredWordID: Int?
     @State private var pointerState = TeleprompterPointerState()
-    @State private var currentIndex: Int
+    @State private var cursor: TeleprompterHighlightCursor
+    private var currentIndex: Int { cursor.wordID }
+    private var highlightEpoch: TeleprompterHighlightCursor.Epoch {
+        .init(playback: playbackEpoch, text: text, isReadback: isReadback)
+    }
     @State private var animationTask: Task<Void, Never>?
     @State private var renderCache = TeleprompterRenderCache()
     /// True while the animation task is the one moving `currentIndex`; any restart clears it.
@@ -839,9 +894,11 @@ public struct TeleprompterView: View {
                 restart()
                 scrollToCurrentWord(with: proxy, animated: false)
             }
-            .onChange(of: wordBoundaries) { _, _ in
-                // Timings change the clock, not the eagerly measured geometry.
-                restart()
+            .onChange(of: wordBoundaries) { old, new in
+                // Timings change the clock, not the eagerly measured geometry. A replaced timeline keeps the
+                // word on screen (R2-05). A timeline arriving on an empty one has no word to keep: it lands
+                // on the clock, which may still be before the first word.
+                restart(keepingWordOnScreen: !old.isEmpty && !new.isEmpty)
             }
             .onChange(of: playbackEpoch) { _, _ in
                 restart()
@@ -923,13 +980,18 @@ public struct TeleprompterView: View {
         playbackElapsedMilliseconds() - (hasServerTimestamps ? 0 : estimatedPlaybackStartMilliseconds)
     }
 
-    private func startAnimating() {
+    private func startAnimating(keepingWordOnScreen: Bool = false) {
         let hasTimeline = usesIndexedTiming ? !timedWords.isEmpty : !wordBoundaries.isEmpty
         guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), hasTimeline else { return }
         isPlaybackStep = false
-        currentIndex = TeleprompterPlaybackPolicy.currentWordIndex(
-            in: teleprompterWords,
-            elapsedMilliseconds: highlightElapsedMilliseconds
+        cursor.land(
+            on: TeleprompterPlaybackPolicy.currentWordIndex(
+                in: teleprompterWords,
+                elapsedMilliseconds: highlightElapsedMilliseconds
+            ),
+            at: playbackElapsedMilliseconds(),
+            in: highlightEpoch,
+            keepingWordOnScreen: keepingWordOnScreen
         )
 
         guard teleprompterWords.count > 1 else { return }
@@ -962,7 +1024,7 @@ public struct TeleprompterView: View {
 
                 if Task.isCancelled { break }
                 isPlaybackStep = true
-                currentIndex = word.id
+                cursor.step(to: word.id, at: playbackElapsedMilliseconds())
             }
         }
     }
@@ -987,7 +1049,7 @@ public struct TeleprompterView: View {
                 }
                 if Task.isCancelled { break }
                 isPlaybackStep = true
-                currentIndex = word.id
+                cursor.step(to: word.id, at: playbackElapsedMilliseconds())
             }
         }
     }
@@ -1015,14 +1077,20 @@ public struct TeleprompterView: View {
         }
     }
 
-    /// Restarts the highlight from the clock.
-    private func restart() {
-        defer { startAnimating() }
+    /// Restarts the highlight from the clock. With `keepingWordOnScreen` (a replaced timeline) it never lands
+    /// behind the word already reached in this epoch; the playback task then steps on the new timestamps.
+    private func restart(keepingWordOnScreen: Bool = false) {
+        defer { startAnimating(keepingWordOnScreen: keepingWordOnScreen) }
         stopAnimating()
         isPlaybackStep = false
-        currentIndex = TeleprompterPlaybackPolicy.restartWordIndex(
-            in: teleprompterWords, elapsedMilliseconds: highlightElapsedMilliseconds,
-            isReadback: isReadback || wordBoundaries.isEmpty
+        cursor.land(
+            on: TeleprompterPlaybackPolicy.restartWordIndex(
+                in: teleprompterWords, elapsedMilliseconds: highlightElapsedMilliseconds,
+                isReadback: isReadback || wordBoundaries.isEmpty
+            ),
+            at: playbackElapsedMilliseconds(),
+            in: highlightEpoch,
+            keepingWordOnScreen: keepingWordOnScreen
         )
     }
 }
