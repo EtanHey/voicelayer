@@ -448,9 +448,11 @@ export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "e
       : sentence;
     // Prefer a real clause over a bare word break. Short prefixes need enough speech
     // to cover preparation of the next request, including names and list markers.
+    const clauseLimit = Math.min(budget, sentence);
     for (const punctuation of [/[;:](?=\s|$)/gu, /[,،，](?=\s|$)/gu]) {
-      const boundary = [...remaining.slice(0, Math.min(budget, sentence)).matchAll(punctuation)]
-        .map(match => match.index + match[0].length).find(end => end >= minimum);
+      // The lookahead must see the real next character, not an artificial slice end.
+      const boundary = [...remaining.slice(0, clauseLimit + 1).matchAll(punctuation)]
+        .map(match => match.index + match[0].length).find(end => end >= minimum && end <= clauseLimit);
       if (boundary !== undefined) return boundary;
     }
     if (budget !== STARTUP_CHUNK_MAX_CHARS && sentence <= cap) return sentence;
@@ -1511,8 +1513,8 @@ class PlaybackQueueManager {
     job.enqueuedAt = Date.now();
     job.expiresAt = Date.now() + ttlForPriority(job.priority);
     this.pending.unshift(job);
-    this.emitQueueSnapshot();
     this.processNext();
+    this.emitQueueSnapshot();
     return true;
   }
 
@@ -1942,7 +1944,7 @@ class PlaybackQueueManager {
     }
 
     for (const active of this.terminating.values()) {
-      if (active.job === parked?.job) continue;
+      if (active.job === parked?.job || (active.job.resuming && this.pending.includes(active.job))) continue;
       items.push({
         text: active.job.metadata?.text ?? "",
         voice: active.job.metadata?.voice ?? "",
@@ -1977,7 +1979,8 @@ class PlaybackQueueManager {
         text: job.metadata?.text ?? "",
         voice: job.metadata?.voice ?? "",
         priority: job.priority,
-        is_current: false,
+        // Resume owns the current slot even while its old player is exiting.
+        is_current: job.resuming === true,
         progress: 0,
       });
     }

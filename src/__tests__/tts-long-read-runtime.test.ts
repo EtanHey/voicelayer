@@ -1,4 +1,4 @@
-import { finishBarCapture, acknowledgeDictationDelivery } from "../recording-jobs";
+import { finishBarCapture, acknowledgeDictationDelivery, runBarCapture } from "../recording-jobs";
 import { z } from "zod";
 import { parseCommand } from "../socket-protocol";
 import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
@@ -126,15 +126,17 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
-  it("F-speech QueuedCountExcludesCurrent real preparing/playing/parked snapshots", async () => {
+  it("F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots", async () => {
     const wire: { expected: number; events: unknown[] }[] = [];
     const rows = process.env.VOICELAYER_SPEECH_CASES
-      ? z.array(z.object({ phase: z.enum(["preparing", "playing", "parked"]), queued: z.number().int().min(0).max(2) }))
+      ? z.array(z.object({ phase: z.enum(["preparing", "playing", "parked", "resume_manual", "resume_f5"]), queued: z.number().int().min(0).max(2), holdExit: z.boolean().default(false) }))
           .parse(JSON.parse(readFileSync(process.env.VOICELAYER_SPEECH_CASES, "utf8")))
-      : ["preparing", "playing", "parked"].flatMap(phase => [0, 1, 2].map(queued => ({ phase, queued })));
+      : ["preparing", "playing", "parked", "resume_manual", "resume_f5"].flatMap(phase =>
+          (phase.startsWith("resume_") ? [false, true] : [false]).flatMap(holdExit =>
+            [0, 1, 2].map(queued => ({ phase, queued, holdExit }))));
     for (const row of rows) {
       const beginning = events.length, playerIndex = players.length, decoderIndex = decoders.length;
-      holdDecoder = true;
+      holdDecoder = true; holdPlayerExit = row.holdExit;
       // Fake media lives in the preload-owned run; no resident file is read.
       playAudioNonBlocking(TTS_HISTORY_FILE + ".owner.mp3", { text: "Current read", voice: "fixture", durationMs: 4000 });
       await decoderBarrier.at(decoderIndex);
@@ -142,17 +144,48 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         { text: `Waiting ${i}`, voice: "fixture", durationMs: 4000 });
       if (row.phase !== "preparing") {
         holdDecoder = false; decoders[decoderIndex].exit.resolve(0); await playerBarrier.at(playerIndex);
-        if (row.phase === "parked") { expect(pausePlayback().outcome).toBe("accept"); await fixtureCheckpoint(); }
+        if (row.phase === "resume_f5") {
+          const capture = tts.pauseForF5Capture(0);
+          try {
+            await fixtureCheckpoint();
+            expect(tts.hasF5Capture()).toBe(true);
+            // Settle the owned synthetic take even before physical exit: the queue
+            // must stay correct for this adversarial ordering, without opening a mic.
+            await runBarCapture(`F-speech-${playerIndex}`, () => finishSyntheticCapture(async () => null), { expectsAck: false });
+            await settleRecordingJobs();
+          } finally { capture.settle(); }
+          expect(tts.hasF5Capture()).toBe(false);
+        } else if (row.phase === "parked" || row.phase === "resume_manual") {
+          expect(pausePlayback({}, 0).outcome).toBe("accept"); await fixtureCheckpoint();
+          if (row.phase === "resume_manual") expect(tts.resumePlayback().outcome).toBe("accept");
+        }
+        if (row.phase.startsWith("resume_")) {
+          await fixtureCheckpoint();
+          if (row.holdExit) expect(players.length).toBe(playerIndex + 1);
+          else await playerBarrier.at(playerIndex + 1);
+        }
       }
       const snapshots = events.slice(beginning).filter(event => event.type === "queue");
       expect(snapshots.flatMap(event => event.items).filter(item => item.text === "Current read" && !item.is_current),
         "QueuedCountExcludesCurrent every published frame").toHaveLength(0);
       const queue = snapshots.at(-1);
+      if (row.phase.startsWith("resume_")) {
+        expect(queue.items.filter((item: {text: string}) => item.text === "Current read")).toHaveLength(1);
+        // Inspect frames both during the physical-exit wait and after promotion.
+        players[playerIndex].exit.resolve(143); await playerBarrier.at(playerIndex + 1);
+        snapshots.push(...events.slice(beginning).filter(event => event.type === "queue").slice(snapshots.length));
+        expect(snapshots.flatMap(event => event.items).filter(item => item.text === "Current read" && !item.is_current),
+          "QueuedCountExcludesCurrent across Resume").toHaveLength(0);
+      }
       expect(queue.items.filter((item: { is_current: boolean }) => !item.is_current).length,
         `QueuedCountExcludesCurrent ${row.phase}/${row.queued}`).toBe(row.queued);
+      for (const snapshot of snapshots) {
+        expect(snapshot.items.filter((item: {text: string; is_current: boolean}) => item.text.startsWith("Waiting ") && item.is_current),
+          "QueuedCountExcludesCurrent D2 waiting reads remain waiting").toHaveLength(0);
+      }
       wire.push({ expected: row.queued, events: [
         { type: "state", state: "speaking", text: "Current read", duration_ms: 4000 }, ...snapshots] });
-      stopPlayback(); for (const child of decoders) child.exit.resolve(0); await awaitCurrentPlayback();
+      stopPlayback(); for (const player of players) player.exit.resolve(143); for (const child of decoders) child.exit.resolve(0); await awaitCurrentPlayback();
     }
     if (process.env.VOICELAYER_SPEECH_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_WIRE, JSON.stringify(wire));
     console.log(`QueuedCountExcludesCurrent replayed ${rows.length} real queue scenarios`);

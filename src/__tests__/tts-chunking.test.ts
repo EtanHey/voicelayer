@@ -143,3 +143,41 @@ describe("SPEECH-PACING natural startup and ramp", () => {
     expect(chunks.slice(2).every(chunk => chunk.length <= 400)).toBe(true);
   });
 });
+
+
+describe("F-speech R2 real clause boundary", () => {
+  for (const [token, marker, language] of [
+    ["https://example.test/path", ":", "English"], ["1,000", ",", "English"],
+    ["inside;token", ";", "English"], ["מילה،המשך", "،", "Hebrew"],
+  ]) {
+    it(`keeps ${token} whole when ${marker} is at index 99 (${language})`, async () => {
+      const { chunkTextForLongRead } = await import("../tts");
+      const lead = (language === "Hebrew" ? "שלום " : "word ").repeat(20).slice(0, 99 - token.indexOf(marker) - 1) + " ";
+      const source = lead + token + " trailing words without a sentence break ".repeat(20);
+      expect(source[99]).toBe(marker);
+      for (const engine of ["edge", "clone"] as const) {
+        const chunks = chunkTextForLongRead(source, engine);
+        expect(source.slice(chunks[0].length, chunks[0].length + 1), "RealClauseBoundary head ends at whitespace").toMatch(/\s/u);
+        expect(chunks.join(" ").match(/\S+/gu), "RealClauseBoundary token conservation").toEqual(source.match(/\S+/gu));
+      }
+    });
+  }
+
+  it("fuzzes 6000 engine/text pairs with no head token splits or character drops/duplicates", async () => {
+    const { chunkTextForLongRead } = await import("../tts");
+    const vocabulary = ["https://example.test/path", "1,000", "inside;token", "מילה،המשך", "שלום", "U.S.", "alpha", "…"];
+    let seed = 2261, splits = 0, changed = 0;
+    const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+    for (let i = 0; i < 3000; i++) {
+      const source = Array.from({ length: 60 + next() % 30 }, () => vocabulary[(next() >>> 16) % vocabulary.length]).join(" ");
+      for (const engine of ["edge", "clone"] as const) {
+        const chunks = chunkTextForLongRead(source, engine), head = chunks[0];
+        if (head.length < source.length && !/\s/u.test(source[head.length])) splits++;
+        if (chunks.join("").replace(/\s/gu, "") !== source.replace(/\s/gu, "")) changed++;
+      }
+    }
+    console.log(`F-speech R2 fuzz: 6000 pairs; ${splits} head token splits; ${changed} character drops/duplicates`);
+    expect(splits, "RealClauseBoundary fuzz").toBe(0);
+    expect(changed).toBe(0);
+  });
+});

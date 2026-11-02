@@ -116,3 +116,16 @@ Capture-start assertions await their event;
 teardown waits for both Lane I jobs and the deferred F5 loan using the original
 2-second bound. The full Bun suite is a separate final check; known SSH-generated
 speech-fixture failures are reported for GUI verification, never silently passed.
+
+
+F-speech R2 extends the queue projection across actual model UserPlay and capture-end
+_auto_resume edges. Both manual and F5-owned Resume replay with old-player exit held
+and released, each at 0/1/2 waiting reads. Every published queue frame must exclude
+the current/resuming read while keeping real waiting reads. Resume retains current
+ownership even below the model while the old player terminates. The resume-order
+mutant restores publication-before-promotion plus a non-current pending resume.
+All speech-data mutants run in disposable source copies under .build.noindex;
+SIGKILL isolation and both Resume-edge projections have focused Python guards.
+An indivisible first token over 100 characters remains atomic by design. The
+pre-existing second-chunk 400-character mid-token fallback is a follow-up; an
+installed acoustic check must still measure the chunk-1 to chunk-2 gap.
