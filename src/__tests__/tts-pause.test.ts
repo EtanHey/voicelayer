@@ -1,7 +1,7 @@
 import { runBarCaptureWithPausedRead } from "../f5-capture";
 import { registerBarRecorderExit } from "../recording-jobs";
-import { setRecordingState } from "../recording-state";
-import { STOP_FILE } from "../paths";
+import { setRecordingState, getRecordingState, getEffectiveRecordingState } from "../recording-state";
+import { STOP_FILE, recordingStateFilePath, safeWriteFileSync } from "../paths";
 import { clearStopSignal } from "../session-booking";
 import { finishBarCapture, recordingJobsSnapshot, deliverInputTranscription, acknowledgeDictationDelivery } from "../recording-jobs";
 import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
@@ -612,7 +612,7 @@ for (const phase of ["opening", "capturing"] as const) {
       if (phase === "capturing") await opened.promise;
       expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
       await opened.promise;
-      expect(JSON.parse(readFileSync(STOP_FILE, "utf8"))).toMatchObject({ take_id: `unscoped-${phase}` });
+      expect(JSON.parse(readFileSync(STOP_FILE, "utf8"))).toMatchObject({ take_id: `unscoped-${phase}`, physical_press: false });
       expect(tts.isPlaybackPaused()).toBe(true);
       expect(events.filter(e => e.type === "playback_outcome")).toEqual([]);
       for (const trim of trims.values) trim.exit.resolve(0);
@@ -658,7 +658,9 @@ it("R2-01 refused automatic resume releases the read instead of stranding its F5
   await capture.ready;
   (await trims.at(0)).exit.resolve(0);
   await fixtureCheckpoint();
-  setRecordingState("transcribing");
+  expect(getRecordingState()).toBe("idle");
+  safeWriteFileSync(recordingStateFilePath(), JSON.stringify({ state: "transcribing", pid: process.ppid, updated_at: new Date().toISOString() }));
+  expect(getEffectiveRecordingState()).toBe("transcribing");
   try {
     capture.settle();
     expect(tts.hasF5Capture()).toBe(false);

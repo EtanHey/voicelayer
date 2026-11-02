@@ -4,14 +4,17 @@ import { onRecordingStateChange } from "./recording-state";
 import { pauseForF5Capture } from "./tts";
 
 /** Lane I owns mic, transcription, delivery and cancellation. This adapter only lends it the read. */
-const opening = new Map<string, { control?: "stop" | "cancel" }>();
+const opening = new Map<string, { control?: "stop" | "cancel"; physicalPress?: boolean }>();
 /** Preserve a physical up-edge that arrives while the old speech player is still exiting. */
-export function bufferOpeningCaptureControl(id: string | undefined, control: "stop" | "cancel"): boolean {
+export function bufferOpeningCaptureControl(id: string | undefined, control: "stop" | "cancel", physicalPress = false): boolean {
   id ??= [...opening.keys()].at(-1);
   if (!id) return false;
   const pending = opening.get(id);
   if (!pending) return false;
-  if (pending.control !== "cancel") pending.control = control;
+  if (pending.control !== "cancel") {
+    pending.control = control;
+    pending.physicalPress = pending.physicalPress === true || physicalPress;
+  }
   return true;
 }
 
@@ -48,7 +51,7 @@ export function runBarCaptureWithPausedRead(id: string, record: (opened: () => v
   }
   const current = loan;
   current.takes.add(id);
-  const pending: { control?: "stop" | "cancel" } = {};
+  const pending: { control?: "stop" | "cancel"; physicalPress?: boolean } = {};
   opening.set(id, pending);
   return current.pause.ready.then(() => runBarCapture(id, () => record(() => {
     if (opening.get(id) !== pending) return;
@@ -56,7 +59,7 @@ export function runBarCaptureWithPausedRead(id: string, record: (opened: () => v
     if (pending.control === "cancel") cancelRecordingJob(id);
     else if (pending.control === "stop") markBarCaptureDraining(id);
     if (pending.control) safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: id,
-      ...(pending.control === "cancel" ? { cancelled: true } : { physical_press: true }) }));
+      ...(pending.control === "cancel" ? { cancelled: true } : { physical_press: pending.physicalPress === true }) }));
   }), options)).finally(() => {
     opening.delete(id);
     current.finished.add(id);

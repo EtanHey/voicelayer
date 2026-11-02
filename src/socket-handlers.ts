@@ -337,7 +337,7 @@ function handleSocketCommandAdmitted(
         stopAll(command.playback_elapsed_ms, "clear");
         return buildAck(command, "accept");
       }
-      if (bufferOpeningCaptureControl(command.take_id, "stop")) return buildAck(command, "accept");
+      if (bufferOpeningCaptureControl(command.take_id, "stop", command.physical_press === true)) return buildAck(command, "accept");
       if (command.take_id) {
         if (recordingJobsSnapshot().mic_take_id !== command.take_id) return buildAck(command, "noop", "take is not recording");
         markBarCaptureDraining(command.take_id);
