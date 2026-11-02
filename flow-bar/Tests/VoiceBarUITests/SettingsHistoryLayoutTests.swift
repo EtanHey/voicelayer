@@ -70,6 +70,49 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         XCTAssertTrue(scope.contains("\\(historyLoadedEntryCount) saved shown"))
     }
 
+    /// L7 review NIT: Load more reads as the quiet end of the list, centred and small, not as a row.
+    func testLoadMoreIsSmallAndCentredUnderTheList() throws {
+        let source = try settingsSource()
+        let button = try XCTUnwrap(source.range(of: "Button(isHistoryLoading ? \"Loading…\" : \"Load more\") { loadOlderHistory() }"))
+        let modifiers = source[button.upperBound...].prefix(260)
+        XCTAssertTrue(modifiers.contains(".controlSize(.small)"))
+        XCTAssertTrue(modifiers.contains(".frame(maxWidth: .infinity)"))
+    }
+
+    /// L7 review LOW: the empty state names the section the user will actually see.
+    func testEmptyHistoryInvitesSelectionWithoutJargon() throws {
+        let source = try settingsSource()
+        XCTAssertTrue(source.contains("Select one to see its details."))
+        XCTAssertFalse(source.contains("Errors & runs"))
+    }
+
+    /// L7 review LOW: the archive-only rows keep their space while the read is in flight, and nothing is
+    /// reserved (or guessed) once it has landed.
+    func testArchiveOnlyFactsAreReservedOnlyWhileLoading() {
+        let created = SettingsHistoryFact(title: "Created", value: "Nov 2, 2026 at 05:25")
+        XCTAssertEqual(SettingsHistoryDiagnosticsPanel.reservedFactTitles(facts: [created], snapshotLoaded: false, hasRecording: true),
+                       ["Language setting", "Engine"])
+        XCTAssertEqual(SettingsHistoryDiagnosticsPanel.reservedFactTitles(facts: [created], snapshotLoaded: true, hasRecording: true), [])
+        XCTAssertEqual(SettingsHistoryDiagnosticsPanel.reservedFactTitles(facts: [], snapshotLoaded: false, hasRecording: false), [])
+        let attemptEngine = SettingsHistoryFact(title: "Engine", value: "Parakeet")
+        XCTAssertEqual(SettingsHistoryDiagnosticsPanel.reservedFactTitles(facts: [created, attemptEngine], snapshotLoaded: false, hasRecording: true),
+                       ["Language setting"], "a fact already shown is never reserved twice")
+    }
+
+    /// L7 review LOW: a narrow detail pane folds a log line instead of overflowing it, and a copy that
+    /// lands is announced to VoiceOver.
+    func testLogRowsFoldInsteadOfOverflowingAndCopyIsAnnounced() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/SettingsHistoryDiagnosticsView.swift"),
+            encoding: .utf8
+        )
+        let row = try XCTUnwrap(source.range(of: "private func logRow(_ line: SettingsHistoryLogLine) -> some View {"))
+        XCTAssertTrue(source[row.upperBound...].prefix(200).contains("ViewThatFits(in: .horizontal)"))
+        XCTAssertTrue(source.contains("if copied { AccessibilityNotification.Announcement(\"Copied \\(label)\").post() }"))
+    }
+
     func testSelectedDictationHeaderDoesNotRepeatTheRecordingDate() throws {
         let source = try settingsSource()
         let heading = try XCTUnwrap(source.range(of: "Text(\"Selected dictation\")"))

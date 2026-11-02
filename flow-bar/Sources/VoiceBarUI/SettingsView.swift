@@ -1539,7 +1539,7 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         Text("No transcript history yet")
                             .font(.headline)
-                        Text("Saved recordings, including failed or cancelled ones, will appear here. Select one to see Errors & runs.")
+                        Text("Saved recordings, including failed or cancelled ones, will appear here. Select one to see its details.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1562,6 +1562,8 @@ public struct SettingsView: View {
                                     if historyHasMore {
                                         Button(isHistoryLoading ? "Loading…" : "Load more") { loadOlderHistory() }
                                             .disabled(isHistoryLoading)
+                                            .controlSize(.small)
+                                            .frame(maxWidth: .infinity)
                                             .padding(.top, 8)
                                     }
                                 }.padding(12)

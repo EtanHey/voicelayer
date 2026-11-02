@@ -92,17 +92,37 @@ public struct SettingsHistoryDiagnosticsPanel: View {
     @ViewBuilder private var recordingFacts: some View {
         let facts = SettingsHistoryDiagnosticsCopy.facts(snapshot: snapshot, entry: recordingEntry,
                                                         attemptHistory: attemptHistory, selectedAttemptID: selectedAttemptID)
-        if !facts.isEmpty {
+        let reserved = Self.reservedFactTitles(facts: facts, snapshotLoaded: snapshot != nil,
+                                               hasRecording: recordingEntry != nil || !(recordingID ?? "").isEmpty)
+        if !facts.isEmpty || !reserved.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(facts, id: \.title) { fact in
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(fact.title).font(.caption).foregroundStyle(.secondary).frame(width: 110, alignment: .leading)
-                        Text(fact.value).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                    }
-                    .accessibilityElement(children: .combine)
+                    factRow(fact.title, value: fact.value)
+                        .accessibilityElement(children: .combine)
+                }
+                // Holds the rows the archive read fills in, so the facts do not reflow when it lands.
+                // Invisible and silent: no label or value is shown before the archive says what it is.
+                ForEach(reserved, id: \.self) { title in
+                    factRow(title, value: " ").hidden().accessibilityHidden(true)
                 }
             }
         }
+    }
+
+    private func factRow(_ title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title).font(.caption).foregroundStyle(.secondary).frame(width: 110, alignment: .leading)
+            Text(value).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Language setting and (without reader attempts) Engine come only from the archive read. Until it
+    /// lands, their space is held invisibly; once it lands nothing is reserved, so a recording whose
+    /// archive lacks them never shows a placeholder or a guessed value.
+    static func reservedFactTitles(facts: [SettingsHistoryFact], snapshotLoaded: Bool, hasRecording: Bool) -> [String] {
+        guard !snapshotLoaded, hasRecording else { return [] }
+        let shown = Set(facts.map(\.title))
+        return ["Language setting", "Engine"].filter { !shown.contains($0) }
     }
 
     /// One quiet row per real event: time, outcome, and that row's own processing time.
@@ -138,25 +158,63 @@ public struct SettingsHistoryDiagnosticsPanel: View {
         }
     }
 
+    /// One line per attempt whenever the whole line fits. In a narrow pane the same text folds into two
+    /// lines (title and time, then outcome and processing) instead of pushing fixed-width times past the
+    /// edge; the title truncates before anything overflows. Both forms show exactly the same facts.
     private func logRow(_ line: SettingsHistoryLogLine) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: line.symbol).font(.caption).frame(width: 14)
-                .foregroundStyle(line.isProblem ? Color.orange : Color.secondary)
-                .accessibilityHidden(true)
-            Text(line.title).font(.callout).fixedSize()
-            if let time = line.time { Text(time).font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize() }
-            Text(line.outcome).font(.caption).foregroundStyle(.secondary)
-                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            if let processing = line.processing {
-                Text(processing).font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize()
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                logSymbol(line)
+                Text(line.title).font(.callout).fixedSize()
+                logTime(line)
+                logOutcome(line).lineLimit(1).fixedSize()
+                Spacer(minLength: 8)
+                logProcessing(line)
+                logShown(line)
             }
-            if isShown(line) {
-                Text("Shown").font(.caption).foregroundStyle(.secondary).fixedSize()
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                logSymbol(line)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(line.title).font(.callout).lineLimit(1).truncationMode(.tail)
+                        logTime(line)
+                        Spacer(minLength: 8)
+                        logShown(line)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        logOutcome(line).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        logProcessing(line)
+                    }
+                }
             }
         }
         .padding(.horizontal, 6).padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func logSymbol(_ line: SettingsHistoryLogLine) -> some View {
+        Image(systemName: line.symbol).font(.caption).frame(width: 14)
+            .foregroundStyle(line.isProblem ? Color.orange : Color.secondary)
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private func logTime(_ line: SettingsHistoryLogLine) -> some View {
+        if let time = line.time { Text(time).font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize() }
+    }
+
+    private func logOutcome(_ line: SettingsHistoryLogLine) -> some View {
+        Text(line.outcome).font(.caption).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private func logProcessing(_ line: SettingsHistoryLogLine) -> some View {
+        if let processing = line.processing {
+            Text(processing).font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize()
+        }
+    }
+
+    @ViewBuilder private func logShown(_ line: SettingsHistoryLogLine) -> some View {
+        if isShown(line) { Text("Shown").font(.caption).foregroundStyle(.secondary).fixedSize() }
     }
 
     private func isShown(_ line: SettingsHistoryLogLine) -> Bool {
@@ -174,7 +232,11 @@ struct SettingsHistoryCopyIconButton: View {
 
     var body: some View {
         if let payload = SettingsCopyPayload.nonempty(text) {
-            Button { copied = SettingsCopyPayload.write(payload) } label: {
+            Button {
+                copied = SettingsCopyPayload.write(payload)
+                // Only a successful write is confirmed; the label swap alone is silent for VoiceOver.
+                if copied { AccessibilityNotification.Announcement("Copied \(label)").post() }
+            } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.caption)
                     .frame(width: 20, height: 20)
