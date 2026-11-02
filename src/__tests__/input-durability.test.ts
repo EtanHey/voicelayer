@@ -899,6 +899,134 @@ describe("input recording durability", () => {
     agentTtsVoice: "en-US-JennyNeural",
   };
 
+  it("D5 handler returns the default 120s away result with its kept recording", async () => {
+    const { handleConverse } = await import("../handlers");
+    const sessionBooking = await import("../session-booking");
+    const recorder = installFakeRecorder([makePcmChunk(0)], true);
+    const clock = installRecordingClock([120_000, 135_000]);
+    const bookingSpy = spyOn(sessionBooking, "isVoiceBooked").mockReturnValue({
+      booked: true, ownedByUs: true,
+      owner: { pid: process.pid, sessionId: "synthetic-D5", startedAt: new Date().toISOString() },
+    });
+    const playbackSpy = spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined);
+    const speakSpy = spyOn(tts, "speak").mockResolvedValue({
+      displayText: "Synthetic question?", engine: "edge-tts", voice: "en-US-JennyNeural",
+      audioArtifact: { bytes: new Uint8Array([0x49, 0x44, 0x33]), format: "mp3" },
+    });
+    const pending = handleConverse({ message: "Synthetic question?" });
+    try {
+      await recorder.waitForSpawn();
+      await waitUntil(() => vadCallCount === 1, "D5 handler silence");
+      clock.advance(120_000);
+      const result = await pending;
+      expect(result.isError).not.toBe(true);
+      const text = result.content[0].text;
+      expect(text).toContain("No answer within 2 minutes; recording kept at ");
+      const path = text.split("recording kept at ")[1].split(". You may")[0];
+      expectValidRetainedWav(path, VAD_CHUNK_BYTES);
+      expect(text).toContain("ONE follow-up voice_speak or voice_ask");
+      expect(text).toContain("continue as if the user is away");
+      expect(backendTranscribeCalls).toBe(0);
+    } finally {
+      writeFileSync(STOP_FILE, "stop"); clock.advance(0); await pending;
+      speakSpy.mockRestore(); playbackSpy.mockRestore(); bookingSpy.mockRestore(); clock.restore();
+    }
+  });
+
+  for (const pushToEnd of [false, true]) {
+    it(`D5 no speech for 120s closes ${pushToEnd ? "manual" : "VAD"} Ask and keeps exact WAV`, async () => {
+      const { waitForInput, getRecordingState } = await import("../input");
+      const { setRecordingHold } = await import("../recording-hold");
+      const recorder = installFakeRecorder([makePcmChunk(0)], true);
+      const clock = installRecordingClock([120_000]);
+      const abort = new AbortController();
+      let archivePath = "";
+      let noAnswer = false;
+      const recording = waitForInput(120_000, "thoughtful", pushToEnd, {
+        archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
+        onArchiveCreated: path => { archivePath = path; },
+        onNoAnswer: () => { expect(existsSync(join(archivePath, "audio.wav"))).toBe(true); noAnswer = true; },
+      });
+      try {
+        await recorder.waitForSpawn();
+        await waitUntil(() => vadCallCount === 1, "D5 silent PCM");
+        setRecordingHold(true);
+        clock.advance(119_999);
+        expect(getRecordingState()).toBe("recording");
+        clock.advance(1);
+        expect(await recording).toBeNull();
+        expect(noAnswer).toBe(true);
+        expectValidRetainedWav(join(archivePath, "audio.wav"), VAD_CHUNK_BYTES);
+        expect(backendTranscribeCalls).toBe(0);
+      } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
+    });
+  }
+
+  it("D5 in-flight late speech inference vetoes no-answer close", async () => {
+    const { waitForInput, getRecordingState } = await import("../input");
+    const recorder = installFakeRecorder([], true);
+    const clock = installRecordingClock([120_000, 50]);
+    const abort = new AbortController();
+    const inference = Promise.withResolvers<number>();
+    const slowVad = spyOn(vad, "processVADChunk").mockImplementation(() => inference.promise);
+    let noAnswer = false;
+    const recording = waitForInput(120_000, "thoughtful", false, {
+      archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
+      onNoAnswer: () => { noAnswer = true; },
+    });
+    try {
+      await recorder.waitForSpawn();
+      clock.advance(119_000);
+      recorder.push(makePcmChunk(1800));
+      await waitUntil(() => slowVad.mock.calls.length > 0, "D5 pending inference");
+      clock.advance(1_000);
+      expect(getRecordingState()).toBe("recording");
+      expect(noAnswer).toBe(false);
+      inference.resolve(0.95);
+      await waitUntil(() => broadcasts.some(event => event.type === "speech" && event.detected), "D5 inference speech");
+      clock.advance(120_000);
+      expect(getRecordingState()).toBe("recording");
+      expect(noAnswer).toBe(false);
+      writeFileSync(STOP_FILE, "stop"); clock.advance(0);
+      await recording;
+    } finally {
+      inference.resolve(0.95); abort.abort(); await recording.catch(() => null);
+      slowVad.mockRestore(); clock.restore();
+    }
+  });
+
+  it("D5 speech at 119s cancels no-answer permanently; normal silence closes and full answer transcribes", async () => {
+    const { waitForInput, getRecordingState } = await import("../input");
+    const recorder = installFakeRecorder([makePcmChunk(0)], true);
+    const clock = installRecordingClock([120_000]);
+    const abort = new AbortController();
+    let noAnswer = false;
+    vadProbabilityForCall = call => call > 1 && call <= 26 ? 0.95 : 0;
+    const recording = waitForInput(120_000, "thoughtful", false, {
+      archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
+      onNoAnswer: () => { noAnswer = true; },
+    });
+    try {
+      await recorder.waitForSpawn();
+      await waitUntil(() => vadCallCount === 1, "D5 opening silence");
+      clock.advance(119_000);
+      for (let i = 0; i < 25; i++) recorder.push(makePcmChunk(1800));
+      await waitUntil(() => vadCallCount === 26, "D5 late speech");
+      // Cross the former deadline and a long mid-answer wall-clock pause.
+      clock.advance(180_000);
+      expect(getRecordingState()).toBe("recording");
+      expect(noAnswer).toBe(false);
+      const silence = vad.silenceChunksForMode("thoughtful");
+      for (let i = 0; i < silence - 1; i++) recorder.push(makePcmChunk(0));
+      await waitUntil(() => vadCallCount === 26 + silence - 1, "D5 normal silence below threshold");
+      expect(getRecordingState()).toBe("recording");
+      recorder.push(makePcmChunk(0));
+      expect(await recording).toBe("Retained transcript.");
+      expect(noAnswer).toBe(false);
+      expect(backendTranscribedDataSize).toBe((26 + silence) * VAD_CHUNK_BYTES);
+    } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
+  });
+
   it("PTT-TIMEOUT keeps continuous speech beyond the old wall cap, then archives and transcribes every byte after silence", async () => {
     const { waitForInput, getRecordingState } = await import("../input");
     const recorder = installFakeRecorder([], true);
@@ -1153,9 +1281,9 @@ describe("input recording durability", () => {
     }
   });
 
-  it("VA-TIMEOUT grants the full no-speech budget after delayed mic opening", async () => {
+  it("VA-TIMEOUT counts delayed mic opening against the post-question budget", async () => {
     const { waitForInput, getRecordingState } = await import("../input");
-    const clock = installRecordingClock();
+    const clock = installRecordingClock([70_000]);
     const recorder = installFakeRecorder([makePcmChunk(0)], true, () => clock.advance(20_000));
     const abort = new AbortController();
     let captureStarts = 0;
@@ -1174,11 +1302,8 @@ describe("input recording durability", () => {
       await recorder.waitForSpawn();
       await waitUntil(() => vadCallCount === 1, "delayed-mic silent PCM");
       expect(captureStarts).toBe(1);
-      clock.advance(70_000);
-      // 90 seconds since the timer was armed, only 70 since capture opened.
-      expect(getRecordingState()).toBe("recording");
+      clock.advance(69_999);
       expect(noSpeech).toBe(0);
-      clock.advance(19_999);
       expect(getRecordingState()).toBe("recording");
       clock.advance(1);
       expect(await recording).toBeNull();

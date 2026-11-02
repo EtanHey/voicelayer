@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { voiceAskNoAnswerSeconds } from "../voice-ask-no-answer";
 
 // --- Shared refinements ---
 
@@ -48,7 +49,7 @@ export const VoiceSpeakSchema = z.object({
 const voiceAskNormalSchema = z.object({
   message: nonEmptyTrimmed,
   voice: z.string().optional(),
-  timeout_seconds: z.number().min(5).max(3600).default(30),
+  timeout_seconds: z.number().min(5).max(3600).default(voiceAskNoAnswerSeconds),
   silence_mode: silenceModeEnum.optional(),
   push_to_end: z.boolean().optional(),
   retranscribe_archive_id: z.never().optional(),
@@ -93,7 +94,7 @@ export const ConsultArgsSchema = z.object({
 /** Internal converse-mode args. */
 export const ConverseArgsSchema = z.object({
   message: nonEmptyTrimmed,
-  timeout_seconds: z.number().min(5).max(3600).default(30),
+  timeout_seconds: z.number().min(5).max(3600).default(voiceAskNoAnswerSeconds),
   silence_mode: silenceModeEnum.optional(),
   push_to_end: z.boolean().optional(),
   voice: z.string().optional(),

@@ -12,6 +12,7 @@ Environment variables and test commands.
 | `VOICELAYER_STT_AGGRESSIVE_FILLERS` | unset | Opt into legacy removal of meaning-bearing hedges/intensifiers; `QA_VOICE_STT_AGGRESSIVE_FILLERS` is supported as a legacy alias |
 | `QA_VOICE_WISPR_KEY` | -- | Wispr Flow API key (cloud fallback) |
 | `QA_VOICE_TTS_VOICE` | `en-US-JennyNeural` | edge-tts voice ID |
+| `VOICELAYER_ASK_NO_ANSWER_SECONDS` | `120` | Ask no-answer deadline after the question finishes; finite seconds from 5–3600, invalid values use 120. Explicit `timeout_seconds` overrides it. First detected speech cancels it permanently; normal silence/Stop rules then apply. Silent takes are archived, including while HOLD is engaged. |
 | `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate |
 | `VOICELAYER_TTS_DAEMON_SECRET_FILE` | `~/.voicelayer/daemon.secret` | Preferred override for the shared Qwen3 daemon bearer secret file |
 | `VOICELAYER_TTS_AUTH_TOKEN_FILE` | `~/.voicelayer/daemon.secret` | Backward-compatible override for the shared Qwen3 daemon bearer secret file |

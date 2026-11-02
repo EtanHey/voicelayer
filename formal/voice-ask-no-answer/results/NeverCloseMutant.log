@@ -1,0 +1,15 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "NoAnswerCloses",
+  "status": "EXPECTED_FAIL",
+  "generated": 14,
+  "distinct": 12,
+  "trace": [
+    "/\\ heard = FALSE\n/\\ elapsed = 0\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = FALSE\n/\\ elapsed = 1\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = FALSE\n/\\ elapsed = 2\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = FALSE\n/\\ elapsed = 3\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "Finished checking temporal properties in 00s at 2026-11-02 13:27:59"
+  ]
+}

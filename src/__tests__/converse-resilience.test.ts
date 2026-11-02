@@ -252,7 +252,7 @@ describe("handleConverse resilience — P0-2", () => {
             ? { kind: "answered", transcript, archiveId: archived ? "paired" : null, promptPlayback: undefined }
             : silent ? { kind: "no-speech", recovery, promptPlayback: undefined }
             : recovery ? { kind: "retained", recovery, promptPlayback: undefined }
-            : { kind: "no-input", timeoutSeconds: 30, pushToEnd: false, promptPlayback: undefined });
+            : { kind: "no-input", timeoutSeconds: 120, pushToEnd: false, promptPlayback: undefined });
           waitSpy.mockRestore();
         }
       }

@@ -1,0 +1,39 @@
+{
+  "module": "VoiceAskNoAnswer",
+  "sourceBaseline": "1e6377b1",
+  "sources": [
+    "src/input.ts",
+    "src/handlers.ts",
+    "src/voice-ask-no-answer.ts",
+    "src/voice-turn-result.ts",
+    "src/__tests__/input-durability.test.ts",
+    "src/__tests__/voice-ask-no-answer.test.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OldDeadlineMutant": {
+      "role": "mutant",
+      "target": "NoCutOffMidAnswer",
+      "kind": "invariant"
+    },
+    "NeverCloseMutant": {
+      "role": "mutant",
+      "target": "NoAnswerCloses",
+      "kind": "temporal"
+    },
+    "DropRecordingMutant": {
+      "role": "mutant",
+      "target": "RecordingKept",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "NoCutOffMidAnswer",
+    "NoAnswerCloses",
+    "RecordingKept"
+  ]
+}

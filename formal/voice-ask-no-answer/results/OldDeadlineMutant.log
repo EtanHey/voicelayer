@@ -1,0 +1,16 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoCutOffMidAnswer",
+  "status": "EXPECTED_FAIL",
+  "generated": 15,
+  "distinct": 13,
+  "trace": [
+    "/\\ heard = FALSE\n/\\ elapsed = 0\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = FALSE\n/\\ elapsed = 1\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = FALSE\n/\\ elapsed = 2\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = TRUE\n/\\ elapsed = 2\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = TRUE\n/\\ elapsed = 3\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = TRUE\n/\\ elapsed = 3\n/\\ kept = TRUE\n/\\ closed = TRUE\n/\\ armed = TRUE\n/\\ cause = \"no-answer\""
+  ]
+}

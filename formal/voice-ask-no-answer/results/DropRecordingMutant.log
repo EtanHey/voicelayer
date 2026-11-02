@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "RecordingKept",
+  "status": "EXPECTED_FAIL",
+  "generated": 7,
+  "distinct": 6,
+  "trace": [
+    "/\\ heard = FALSE\n/\\ elapsed = 0\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = TRUE\n/\\ cause = \"none\"",
+    "/\\ heard = TRUE\n/\\ elapsed = 0\n/\\ kept = FALSE\n/\\ closed = FALSE\n/\\ armed = FALSE\n/\\ cause = \"none\"",
+    "/\\ heard = TRUE\n/\\ elapsed = 0\n/\\ kept = FALSE\n/\\ closed = TRUE\n/\\ armed = FALSE\n/\\ cause = \"silence\""
+  ]
+}

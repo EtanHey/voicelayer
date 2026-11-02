@@ -1,3 +1,4 @@
+import { voiceAskNoAnswerSeconds } from "./voice-ask-no-answer";
 import { formatVoiceAskTurnResult, type VoiceAskTurnOutcome, type VoiceAskTimeoutStage, type McpTextResult } from "./voice-turn-result";
 import {
   parseVoiceAskIngress, invalidVoiceAskMode, formatAdmittedVoiceAskResult,
@@ -670,7 +671,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   }
 
   const timeoutSeconds = Math.min(
-    Math.max(validated.timeout_seconds ?? 30, 5),
+    Math.max(validated.timeout_seconds ?? voiceAskNoAnswerSeconds(), 5),
     3600,
   );
 
@@ -744,6 +745,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   const abandonedBeforeCapture = Promise.withResolvers<VoiceAskTurnOutcome>();
   let admissionFailed = false;
   let noSpeech = false;
+  let noAnswer = false;
   let captureArchivePath: string | null = null;
   let promptAttempted = false;
   const progressHeartbeat = context
@@ -946,13 +948,13 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
           captureActive = true;
           armTimeout(outerTimeoutMs, "capture");
         },
+        onSpeechStart: () => {
+          captureHasSpeech = true;
+          if (!captureActive || timeoutSettled || inputAbortController.signal.aborted) return;
+          if (timer) clearTimeout(timer);
+          timer = undefined;
+        },
         ...(!pushToEnd ? {
-          onSpeechStart: () => {
-            captureHasSpeech = true;
-            if (!captureActive || timeoutSettled || inputAbortController.signal.aborted) return;
-            if (timer) clearTimeout(timer);
-            timer = undefined;
-          },
           onRecordingHoldChange: (held: boolean) => {
             if (!captureActive || timeoutSettled ||
                 inputAbortController.signal.aborted) return;
@@ -976,6 +978,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         onPhaseChange: (phase) => {
           progressHeartbeat?.setStage(phase);
         },
+        onNoAnswer: () => { noAnswer = true; },
         onNoSpeech: () => {
           noSpeech = true;
         },
@@ -986,6 +989,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     if (response === null) {
       const recovery = recoveryOptions();
       const promptPlayback = speech.playbackOutcome;
+      if (noAnswer && recovery) return { kind: "no-answer", timeoutSeconds, recovery, promptPlayback };
       if (noSpeech) return { kind: "no-speech", recovery: recovery ?? null, promptPlayback };
       if (recovery) return { kind: "retained", recovery, promptPlayback };
       return { kind: "no-input", timeoutSeconds, pushToEnd, promptPlayback };
