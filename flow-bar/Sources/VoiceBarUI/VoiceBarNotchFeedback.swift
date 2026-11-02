@@ -8,6 +8,7 @@ public struct VoiceBarNotchFeedback: Equatable {
     public let noteText: String?
     public let opensHistory: Bool
     public let replacesWingText: Bool
+    public let wingText: String
     public let width: CGFloat
     public let statusHeight: CGFloat
     public let noteHeight: CGFloat
@@ -62,8 +63,16 @@ public struct VoiceBarNotchFeedback: Equatable {
         // Reuse the compact note shell's fitted width; additional text grows down, never out to the canvas.
         let width = presentation.geometry.bodyFlushWithWings.bodyWidth
         let failure = input.mode == .error && status != nil
+        // Keep the complete sentence in the note. A cancellation has a concise
+        // semantic label; other overflowing copy needs no duplicate wing label.
+        let shortText = text.lowercased().contains("cancel") ? "Cancelled" : ""
+        let shortWidth = (shortText as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium)
+        ]).width
+        let wingText = overflow ? (shortWidth <= available ? shortText : "") : text
         return Self(
-            statusText: status, noteText: note, opensHistory: failure, replacesWingText: overflow, width: width,
+            statusText: status, noteText: note, opensHistory: failure, replacesWingText: overflow,
+            wingText: wingText, width: width,
             statusHeight: status.map {
                 max(VoiceBarNotchContract.transientNoteBandHeight,
                     min(maximumTextHeight, Self.textHeight($0,

@@ -18,6 +18,31 @@ final class NotchStatusFeedbackTests: XCTestCase {
             XCTAssertEqual(p.geometry.lowerSurfaceHeight, 0)
         }
     }
+    func testOverflowingWingCopyFitsWithoutLosingTheFullNote() throws {
+        let cancelled = "Transcription cancelled. Audio saved. Re-transcribe it from History when processing finishes."
+        for text in [cancelled, long] {
+            for mode in [VoiceMode.idle, .error] {
+                for queueDepth in [0, 12, 99999] {
+                    let p = resolve(.init(mode: mode, confirmationText: text,
+                                          queueDepth: queueDepth, statusText: text))
+                    let f = try XCTUnwrap(p.feedback)
+                    XCTAssertEqual(f.statusText, text, "Full copy remains in the compact note")
+                    let accessory: CGFloat = mode == .error ? 23 :
+                        (queueDepth > 0 ? Theme.intrinsicPillStatusWidth(for: "\(queueDepth)") + 16 : 0)
+                    let available = p.geometry.trailingWingWidth - WaveformLayout.coreGap -
+                        WaveformLayout.outerInset - VoiceBarNotchContract.compactStatusTrailingSafetyInset - accessory
+                    let measured = (f.wingText as NSString).size(withAttributes: [
+                        .font: NSFont.systemFont(ofSize: 12, weight: .medium)
+                    ]).width
+                    XCTAssertLessThanOrEqual(measured, max(0, available))
+                    XCTAssertFalse(f.wingText.contains("…") || f.wingText.contains("..."))
+                    if text == cancelled && queueDepth == 0 {
+                        XCTAssertEqual(f.wingText, "Cancelled")
+                    }
+                }
+            }
+        }
+    }
     func testFullErrorSurvivesInsideCompactNoteShellWithHistory() throws {
         let p = resolve(.init(mode: .error, statusText: long))
         let f = try XCTUnwrap(p.feedback)
