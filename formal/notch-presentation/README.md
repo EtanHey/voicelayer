@@ -91,3 +91,25 @@ selection feedback adds a processing band; missing diagnostics synthesize `Error
 busy notes omit History; quit refusal survives its resolved cause until expiry.
 Their normalized traces and all mutation results are under `results/`.
 See [MUTANTS.md](results/MUTANTS.md) and [run.json](results/run.json).
+
+## Lane A integration (2.2.61)
+
+`formal/runtime-contract.json` now sets `notchPolicy` to `fixed`: the application implements Fixed, its
+production assertions are strict, and only the historical Current comparison is an expected mismatch.
+Lane A's changes on top of Lane G's round-2 model (union, nothing dropped):
+
+- **Mutants added** (each a different knob from Lane G's): `MutantNoShell` drops only the shell a notice gets
+  in a collapsed notch (`VisibleHasShell`); `MutantType` arms a note timer outside 0..2 (`TypeOK`);
+  `MutantStuck` re-arms the timer instead of expiring the note (`NoteNeverStuck`, temporal). Lane G's
+  `MutNoShell` (every shell idle), `MutType` (negative band height) and `MutNeverExpire` (no expiry) stay.
+- **Fixed refinement:** the F5 hint is an operational label, not a notice, so Fixed draws it only as the sole
+  content of a compact-status wing (`hinted`): never in a collapsed shell and never beside a visible notice.
+  Before, Fixed's `text` kept "preview" where nothing could draw it, and counted it as a band row that
+  `TextLines` never budgets. Current is unchanged.
+- **Harness adaptation points** (`LaneGFormalConformanceTests.input`, `visibleWing`): the busy-selection note is
+  marked through `transientNoteOffersHistory` (production: `VoiceState.selectionFeedbackNoteOffersHistory`)
+  instead of being recognised by its copy, and the wing label is read through `wingLabel(for:)`, as `BarView`
+  draws it.
+- **Production fixes the replay found:** the quit refusal now hides in the same update that ends the voice
+  work (`VoiceState.showsQuitRefusal`; only the update-gate part is rechecked), and `transientNoteRect` reports
+  the note's own column rather than the full width of a teleprompter body it shares.

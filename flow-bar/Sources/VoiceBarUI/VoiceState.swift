@@ -456,12 +456,46 @@ public final class VoiceState {
     public private(set) var quitRefusalMessage: String? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalMessage) }
     }
-    public func reportQuitRefusal() {
+    public static let quitRefusalDisplayLimit: Duration = .seconds(6)
+    public static let quitRefusalRecheckInterval: Duration = .milliseconds(250)
+    @ObservationIgnored var quitRefusalSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    @ObservationIgnored private var quitRefusalTask: Task<Void, Never>?
+
+    /// Whether the update gate (not voice work) still refuses the quit; rechecked while the refusal shows.
+    public private(set) var quitRefusalGateBlocked = false {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalGateBlocked) }
+    }
+
+    /// The refusal shows only while its cause does (formal/notch-presentation `NoteHasCause`). The voice part is
+    /// read live from `isQuitBusy`, so the note disappears in the same update that ends the work; the update-gate
+    /// part is rechecked every `quitRefusalRecheckInterval` through `isGateStillBlocked`. After
+    /// `quitRefusalDisplayLimit` at the latest the message is dropped. Presentation only; it never retries or
+    /// forces the quit.
+    public var showsQuitRefusal: Bool {
+        // Every reader is on the main thread (views, the app's panel resolver); isQuitBusy is main-actor state.
+        quitRefusalMessage != nil && (quitRefusalGateBlocked || MainActor.assumeIsolated { isQuitBusy })
+    }
+
+    public func reportQuitRefusal(gateBlocked: Bool = false,
+                                  isGateStillBlocked: @escaping @MainActor () -> Bool = { false }) {
         let message = "Finish voice work or cancel the update, then quit again."
+        quitRefusalGateBlocked = gateBlocked
         quitRefusalMessage = message
         expandFromCollapse()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
-            if self?.quitRefusalMessage == message { self?.quitRefusalMessage = nil }
+        quitRefusalTask?.cancel()
+        let sleep = quitRefusalSleep
+        quitRefusalTask = Task { @MainActor [weak self] in
+            var waited: Duration = .zero
+            while waited < Self.quitRefusalDisplayLimit {
+                try? await sleep(Self.quitRefusalRecheckInterval)
+                guard !Task.isCancelled, let self else { return }
+                waited += Self.quitRefusalRecheckInterval
+                self.quitRefusalGateBlocked = isGateStillBlocked()
+                if !self.showsQuitRefusal { break }
+            }
+            guard let self, !Task.isCancelled, self.quitRefusalMessage == message else { return }
+            self.quitRefusalMessage = nil
+            self.quitRefusalGateBlocked = false
         }
     }
     public var errorMessage: String? {
@@ -1116,10 +1150,15 @@ public final class VoiceState {
 
     private var selectionRejectionMessage: String?
     public var selectionFeedbackNote: String? {
-        if let quitRefusalMessage { return quitRefusalMessage }
+        if showsQuitRefusal, let quitRefusalMessage { return quitRefusalMessage }
         guard showsSelectionBusyNote else { return nil }
         return selectionRejectionMessage ?? VoiceBarPresentation.selectionBusyNote(
             isRequested: true, mode: mode, hotkeyPhase: hotkeyPhase)
+    }
+
+    /// N5: the shown note is the busy-selection note, which carries Open History inline.
+    public var selectionFeedbackNoteOffersHistory: Bool {
+        !showsQuitRefusal && showsSelectionBusyNote && selectionRejectionMessage == nil
     }
 
     private func clearSelectionBusyNoteIfSessionEnded() {
@@ -3323,6 +3362,22 @@ public final class VoiceState {
 
     // MARK: - Idle collapse
 
+    /// R0856-12: one of VoiceBar's own windows (Settings, the menu-bar popover) has keyboard focus. The pointer
+    /// necessarily leaves the notch to use it, and that exit used to collapse the idle wings 2.5 s later (seen at
+    /// 08:58:05 on 2026-11-02 as the wings vanishing for 1.5 s while Settings was key). While it has focus the
+    /// wings stay; the ordinary idle countdown resumes when it resigns. It never expands a collapsed notch.
+    public private(set) var isVoiceBarWindowFocused = false
+
+    public func setVoiceBarWindowFocused(_ focused: Bool) {
+        guard focused != isVoiceBarWindowFocused else { return }
+        isVoiceBarWindowFocused = focused
+        if focused {
+            collapseTimer?.cancel()
+        } else if mode == .idle, !isHovering, !isCollapsed {
+            startCollapseTimer()
+        }
+    }
+
     /// Starts the ordinary idle grace period once the product surface exists.
     /// The initial state does not pass through `enterIdleState`, so the app
     /// delegate calls this after installing the panel.
@@ -3340,7 +3395,8 @@ public final class VoiceState {
         }
         collapseTimer = Task { @MainActor in
             try? await Task.sleep(for: .seconds(idleCollapseDelay))
-            if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0 {
+            if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0,
+               !isVoiceBarWindowFocused {
                 withAnimation(.smooth(duration: 0.3)) {
                     isCollapsed = true
                 }
@@ -3382,6 +3438,7 @@ public final class VoiceState {
         collapseTimer?.cancel()
         guard mode == .idle,
               modalInteractionDepth == 0,
+              !isVoiceBarWindowFocused,
               !keepsExpandedInDevState,
               retainedTeleprompterText == nil
         else { return }

@@ -6,6 +6,6 @@
 | N4NoSubstitute | MutErrorSubstitute, MutDetailsSubstitute |
 | N5InlineHistory | MutBusyHistory, MutErrorHistory |
 | NoteHasCause | MutStaleNote |
-| NoteNeverStuck | MutNeverExpire |
-| TypeOK | MutType |
-| VisibleHasShell | MutNoShell |
+| NoteNeverStuck | MutNeverExpire, MutantStuck |
+| TypeOK | MutType, MutantType |
+| VisibleHasShell | MutNoShell, MutantNoShell |

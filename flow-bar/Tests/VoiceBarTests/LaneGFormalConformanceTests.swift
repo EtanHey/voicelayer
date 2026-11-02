@@ -72,6 +72,9 @@ final class LaneGFormalConformanceTests: XCTestCase {
             confirmationText: row.input.status == "none" ? nil : status, hotkeyPhase: row.input.preview ? .pressing : .idle,
             statusText: status, isHovered: row.input.engaged, isCollapsed: row.input.collapsed, transientNote: note(row.input))
         result.isHistoryPanelOpen = row.input.history
+        // Adaptation point (Lane A): the busy-selection note is marked explicitly, as VoiceState does through
+        // `selectionFeedbackNoteOffersHistory`, rather than recognised by its copy.
+        result.transientNoteOffersHistory = row.input.note == "busy"
         return result
     }
     private func source(_ path: String) throws -> String { try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) }
@@ -129,7 +132,9 @@ final class LaneGFormalConformanceTests: XCTestCase {
             let base = VoiceBarNotchContract.geometry(for: p.visualState).lowerSurfaceHeight
             let hasBand = p.geometry.lowerSurfaceHeight > base
             let candidateWing = p.feedback?.wingText ?? ""
-            let visibleWing = p.visualState == .compactStatus && routed.contains(row.input.mode) ? (p.feedback?.wingText ?? input.statusText) : ""
+            // Adaptation point (Lane A): BarView labels the compact-status wing through `wingLabel(for:)`, which is
+            // empty while any notice shows (N1), including a plain short note that needs no feedback band.
+            let visibleWing = p.visualState == .compactStatus && routed.contains(row.input.mode) ? p.wingLabel(for: input.statusText) : ""
             let actualText = p.feedback?.statusText.flatMap { $0.isEmpty ? nil : $0 } ?? (visibleWing.isEmpty ? "" : visibleWing)
             let expectedText = row.expected.text == "none" ? "" : copy(row.expected.text, lines: row.input.lines)
             let actualNote = p.feedback?.noteText ?? (p.transientNoteRect != nil ? input.transientNote : nil)
