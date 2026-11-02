@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, existsSync, readdirSync } from "fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import { testTmp } from "./setup/test-tmp";
@@ -105,13 +105,22 @@ test("Parakeet runtime failure publishes no model tree; retry records owned Pyth
   expect(readRecognizerStatus().engines.parakeet.assets_present).toBe(true);
 });
 
-test("runtime-only setup verifies existing weights read-only instead of downloading copies", async () => {
+test("Parakeet re-download repairs only runtime and leaves existing weight bytes and identity untouched", async () => {
   const model = join(root, "parakeet"); mkdirSync(model); process.env.VOICELAYER_PARAKEET_MODEL = model; delete process.env.VOICELAYER_PARAKEET_PYTHON;
   noteRecognizerEngine("parakeet", { phase: "sleeping", error: null }); const d = deps();
   d.files = () => ["config.json", "model.safetensors", "tokenizer.model"].map(name => ({ ...file, name }));
   for (const f of d.files("parakeet")) writeFileSync(join(model, f.name), bytes);
+  const before = d.files("parakeet").map(f => ({ path: join(model, f.name), info: statSync(join(model, f.name)) }));
   d.transfer = async () => { throw new Error("must-not-copy-weights"); }; d.runtime = async () => { const python = join(root, "python"); writeFileSync(python, "fixture"); process.env.VOICELAYER_PARAKEET_PYTHON = python; };
   expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
+  // A second explicit Set up reaches validation even after metadata says present.
+  expect(readRecognizerStatus().engines.parakeet.assets_present).toBe(true);
+  expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
+  for (const { path, info } of before) {
+    expect(readFileSync(path)).toEqual(bytes);
+    expect(statSync(path).ino).toBe(info.ino);
+    expect(statSync(path).mtimeMs).toBe(info.mtimeMs);
+  }
   expect(readdirSync(model).sort()).toEqual(["config.json", "model.safetensors", "tokenizer.model"]);
 });
 test("Set up reaches runtime repair after validation failed despite present model metadata", async () => {
