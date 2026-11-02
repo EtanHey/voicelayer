@@ -673,6 +673,41 @@ public enum TeleprompterPlaybackPolicy {
     }
 }
 
+/// R2-05: the highlighted word and the playback epoch it was reached in. Inside one epoch the audio clock only
+/// moves forward, so a better timeline for the same words (measured timing replacing an estimate) never moves the
+/// highlight back: the word on screen is a floor, and the new timestamps drive every later step. A new epoch (a new
+/// read, a seek, a resume from a park, new text, entering or leaving read-back) lands exactly where the clock says.
+public struct TeleprompterHighlightCursor: Equatable {
+    public struct Epoch: Equatable {
+        public let playback: Int
+        public let text: String
+        public let isReadback: Bool
+
+        public init(playback: Int, text: String, isReadback: Bool) {
+            self.playback = playback
+            self.text = text
+            self.isReadback = isReadback
+        }
+    }
+
+    /// The highlighted word; the playback task steps it forward between landings.
+    public var wordID: Int
+    public private(set) var epoch: Epoch?
+
+    public init(wordID: Int, epoch: Epoch? = nil) {
+        self.wordID = wordID
+        self.epoch = epoch
+    }
+
+    /// Lands on the word the clock names. `keepingWordOnScreen` is set only when one live timeline replaces
+    /// another; it holds the current word as a floor if, and only if, that word was reached in this same epoch.
+    public mutating func land(on clockWordID: Int, in epoch: Epoch, keepingWordOnScreen: Bool = false) {
+        let keeps = keepingWordOnScreen && !epoch.isReadback && self.epoch == epoch
+        wordID = keeps ? max(clockWordID, wordID) : clockWordID
+        self.epoch = epoch
+    }
+}
+
 public enum TeleprompterSeekPolicy {
     public static func offset(for word: TeleprompterWord, isReadback _: Bool) -> Int? {
         guard !word.hasEstimatedTiming, let offset = word.offsetMs, offset >= 0 else { return nil }
