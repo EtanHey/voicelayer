@@ -16,6 +16,6 @@
     "s = [ stage |-> [A |-> \"transcribing\", B |-> \"cancelled\"],\n  guard |-> \"A\",\n  cooldown |-> 1,\n  event |-> \"tick\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {\"A\", \"B\"},\n  cancelRequested |-> {\"B\"},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 1, B |-> 0],\n  ring |-> TRUE,\n  requestId |-> \"B\",\n  reply |-> \"guard\" ]",
     "s = [ stage |-> [A |-> \"transcribing\", B |-> \"cancelled\"],\n  guard |-> \"A\",\n  cooldown |-> 0,\n  event |-> \"tick\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {\"A\", \"B\"},\n  cancelRequested |-> {\"B\"},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"B\",\n  reply |-> \"guard\" ]",
     "s = [ stage |-> [A |-> \"transcribing\", B |-> \"cancelled\"],\n  guard |-> \"A\",\n  cooldown |-> 0,\n  event |-> \"Escape\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {\"A\", \"B\"},\n  cancelRequested |-> {\"B\"},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"stale\",\n  reply |-> \"noop\" ]",
-    "Finished checking temporal properties in 00s at 2026-11-02 11:08:44"
+    "Finished checking temporal properties in 00s at 2026-11-02 11:10:41"
   ]
 }
