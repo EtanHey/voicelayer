@@ -214,10 +214,14 @@ describe("mcp-handler", () => {
         "Short question",
       );
       const budget = voiceAsk.inputSchema.properties.timeout_seconds.description;
-      expect(budget).toContain("No-speech budget");
-      expect(budget).toContain("first speech cancels it");
-      expect(budget).toContain("30-minute ceiling");
-      expect(budget).toContain("Lock suspends");
+      expect(budget).toContain("No-answer budget after the question finishes");
+      expect(budget).toContain("First speech cancels it");
+      expect(budget).toContain("Unlocked VAD Ask ends on normal post-speech silence");
+      expect(budget).toContain("silence_mode, 2.5s default");
+      expect(budget).toContain("HOLD pauses the no-answer budget");
+      expect(budget).toContain("locked Ask stops after 10 minutes of continuous silence");
+      expect(budget).toContain("renewed by speech, with NO cap");
+      expect(budget).toContain("Every take is archived");
     });
 
     it("keeps response-bearing content out of non-blocking voice_speak", async () => {
