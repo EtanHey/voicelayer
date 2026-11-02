@@ -2321,6 +2321,15 @@ public struct SettingsView: View {
             TextField("Search terms and variants", text: $dictionarySearch)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .search)
+            // QA-27: the same clear (X) the History search has. It follows the raw field, not the trimmed query:
+            // a lone space is not a search, but it is still text the X should clear.
+            if dictionarySearch != "" {
+                SettingsIconButton(spec: .clearSearch, layoutInset: 5) {
+                    dictionarySearch = ""
+                    focusedEditorField = .search
+                }
+                .foregroundStyle(.secondary)
+            }
         }
         .dictionaryFieldContainer()
         .contentShape(Rectangle())
