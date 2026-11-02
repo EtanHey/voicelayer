@@ -13,24 +13,25 @@ Shown == IF Worker # {} THEN CHOOSE t \in Worker: TRUE ELSE Newest(Processing)
 EscapeTarget == IF Mic # {} THEN CHOOSE t \in Mic: TRUE ELSE Newest(Processing)
 Commit(x,e,t) == s' = [x EXCEPT !.event=e, !.target=t]
 Init == s = [stage |-> [t \in Takes |-> "fresh"], capable |-> [t \in Takes |-> FALSE],
-             age |-> [t \in Takes |-> 0], matches |-> [t \in Takes |-> TRUE],
+             age |-> [t \in Takes |-> 0], readable |-> [t \in Takes |-> TRUE], matches |-> [t \in Takes |-> TRUE],
              focusSame |-> TRUE, guard |-> "none", cooldown |-> 0,
              event |-> "init", target |-> "none", expected |-> "none",
              escapedGuarded |-> TRUE, notice |-> FALSE]
-Record(t,c) == /\ s.stage[t]="fresh" /\ Mic={} /\ (t="A" \/ s.stage["A"] # "fresh")
-               /\ Commit([s EXCEPT !.stage[t]="recording", !.capable[t]=c], "record", t)
+Record(t,c,r) == /\ s.stage[t]="fresh" /\ Mic={} /\ (t="A" \/ s.stage["A"] # "fresh")
+               /\ Commit([s EXCEPT !.stage[t]="recording", !.capable[t]=c, !.readable[t]=r], "record", t)
 Stop(t) == /\ s.stage[t]="recording" /\ Commit([s EXCEPT !.stage[t]="draining"],"stop",t)
 DrainPress == /\ \E t \in Takes: s.stage[t]="draining"
               /\ Commit([s EXCEPT !.notice=Mutation # "silentDrain"],"drain-press","none")
 Archive(t) == /\ s.stage[t]="draining" /\ Commit([s EXCEPT !.stage[t]="captured"],"archive",t)
 Decode(t) == /\ s.stage[t]="captured" /\ Worker={}
              /\ Commit([s EXCEPT !.stage[t]="processing"],"decode",t)
-ChangeTarget(t) == /\ s.stage[t]="processing" /\ s.matches[t]
+ChangeTarget(t) == /\ s.stage[t]="processing" /\ s.readable[t] /\ s.matches[t]
                    /\ Commit([s EXCEPT !.matches[t]=FALSE],"target-change",t)
 ChangeFocus == /\ s.focusSame /\ Commit([s EXCEPT !.focusSame=FALSE],"focus-change","none")
 Complete(t) ==
-  LET allowed == (s.matches[t] \/ Mutation="retarget") /\
-                 (Mic={} \/ s.focusSame \/ Mutation="stealFocus")
+  LET identityOK == IF s.readable[t] THEN (s.matches[t] \/ Mutation="retarget")
+                    ELSE (Mic={} \/ Mutation="unreadableOverlap") /\ Mutation # "rejectUnreadable"
+      allowed == identityOK /\ (s.focusSame \/ Mutation="stealFocus")
       wait == s.capable[t] \/ Mutation="legacyAck"
   IN /\ s.stage[t]="processing" /\ Mutation # "stall"
      /\ Commit([s EXCEPT !.stage[t]=IF allowed /\ wait THEN "ack" ELSE "done"],
@@ -60,7 +61,7 @@ DismissStaleGuard == /\ Mutation # "staleGuard" /\ s.guard # "none" /\ s.guard \
 CaptureFailure(t) == /\ t \in Mic
                      /\ Commit([s EXCEPT !.stage[t]=IF Mutation="failedMic" THEN "recording" ELSE "failed"],"capture-failed",t)
 MicReleaseOnFailure == s.event="capture-failed" => s.stage[s.target]="failed" /\ s.target \notin Mic
-Next == (\E t \in Takes: (\E c \in BOOLEAN: Record(t,c)) \/ Stop(t) \/ Archive(t) \/ Decode(t)
+Next == (\E t \in Takes: (\E c,r \in BOOLEAN: Record(t,c,r)) \/ Stop(t) \/ Archive(t) \/ Decode(t)
          \/ CaptureFailure(t) \/ Complete(t) \/ Ack(t) \/ AckTimeout(t) \/ Arm(t) \/ Escape(t) \/ Click(t) \/ ChangeTarget(t))
         \/ Tick \/ DismissStaleGuard \/ DrainPress \/ ChangeFocus
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(DismissStaleGuard)
@@ -68,7 +69,12 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(DismissStaleGuard)
 EscapeTargetsNewest == s.event="Escape" => s.target=s.expected
 GuardedEscape == s.event="Escape" => s.escapedGuarded
 NoStaleGuard == (s.guard # "none" /\ s.guard \notin Active) ~> s.guard="none"
-NoDeliveryOutsideCapturedTarget == s.event="deliver" => s.matches[s.target]
+NoDeliveryOutsideCapturedTarget == s.event="deliver" =>
+  IF s.readable[s.target] THEN s.matches[s.target] ELSE Mic={}
+UnreadableIdentitySingleTakeDelivers == \A t \in Takes:
+  (s.stage[t]="processing" /\ ~s.readable[t] /\ s.focusSame /\ Mic={}) =>
+    /\ ENABLED Complete(t)
+    /\ ~ENABLED (Complete(t) /\ s'.event # "deliver")
 NoFocusStealDuringCapture == s.event="deliver" /\ Mic # {} => s.focusSame
 DrainRequestVisible == s.event="drain-press" => s.notice
 LegacyNoAckWait == \A t \in Takes: s.stage[t]="ack" => s.capable[t]

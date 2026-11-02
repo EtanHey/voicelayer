@@ -1,4 +1,4 @@
-UNION: 49/49 mutants killed; all G and I properties retained. No property dropped.
+UNION: 63/63 mutants killed; all G and I properties retained. No property dropped.
 
 | Model | Property | Mutant | Result |
 | --- | --- | --- | --- |
@@ -29,6 +29,18 @@ UNION: 49/49 mutants killed; all G and I properties retained. No property droppe
 | record-while-processing | ProcessingSettles | MutUnfairProcessing | exact-property FAIL |
 | record-while-processing | OverlapPastes | MutNoOverlapProgress | exact-property FAIL |
 | record-while-processing | EventuallyIdle | MutNoIdle | exact-property FAIL |
+| record-while-processing | N8DecodeAdmissible | MutHeldDecode | exact-property FAIL |
+| record-while-processing | N8ImmediatePaste | MutHeldDecodeImmediate | exact-property FAIL |
+| record-while-processing | OverlapPastes | MutHeldDecodeOverlap | exact-property FAIL |
+| record-while-processing | EventuallyIdle | MutNoDecodeFairness | exact-property FAIL |
+| record-while-processing | SpeechRenewsDeadline | MutSpeechNoRenew | exact-property FAIL |
+| record-while-processing | SpeechRenewsDeadline | MutSpeechDisabled | exact-property FAIL |
+| record-while-processing | NoEarlySilenceTimeout | MutEarlyTimeout | exact-property FAIL |
+| record-while-processing | SilenceTimesOut | MutTimeoutNeverFires | exact-property FAIL |
+| record-while-processing | CapAlwaysFires | MutNoCap | exact-property FAIL |
+| record-while-processing | CaptureWithinCap | MutNoCapBound | exact-property FAIL |
+| record-while-processing | CapAlwaysFires | MutCapRenewedBySpeech | exact-property FAIL |
+| record-while-processing | CapAlwaysFires | MutCapBlockedBySpeech | exact-property FAIL |
 | record-while-processing | EscapeTargetsNewest | MutEscapeMic | exact-property FAIL |
 | record-while-processing | EscapeTargetsNewest | MutEscapeOlder | exact-property FAIL |
 | record-while-processing | NoStaleGuard | MutStaleGuard | exact-property FAIL |
@@ -45,6 +57,8 @@ UNION: 49/49 mutants killed; all G and I properties retained. No property droppe
 | record-while-processing-runtime | DeliveryAckBound | NoAckBoundMutant | exact-property FAIL |
 | record-while-processing-runtime | ProcessingSettles | StallMutant | exact-property FAIL |
 | record-while-processing-runtime | MicReleaseOnFailure | FailedMicMutant | exact-property FAIL |
+| record-while-processing-runtime | NoDeliveryOutsideCapturedTarget | UnreadableOverlapMutant | exact-property FAIL |
+| record-while-processing-runtime | UnreadableIdentitySingleTakeDelivers | UnreadableRefusalMutant | exact-property FAIL |
 | ptt-silence-timeout | NoTimeoutDuringSpeech | WallClockMutant | exact-property FAIL |
 | ptt-silence-timeout | EveryEndedTakeRetained | DropArchiveMutant | exact-property FAIL |
 | ptt-silence-timeout | RawAccurate | TrimWordsMutant | exact-property FAIL |

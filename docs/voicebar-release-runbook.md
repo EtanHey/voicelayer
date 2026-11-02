@@ -147,3 +147,14 @@ gate rejects those.
   id. Logging the id on the capture line needs a VoiceBar change.
 - Nothing in `EtanHey/homebrew-layers` itself rejects a hand-written tap commit yet. A
   tap-repo CI check is a separate follow-up. Until then, this runbook forbids raw tap writes.
+
+## Recorder exit remains unconfirmed
+
+A failed take can report “Recorder exit unconfirmed” with a retained recovery WAV.
+VoiceBar shows an explicit failure and refuses new capture; it never claims that
+it is recording. A late proven recorder exit clears this owner automatically.
+If exit is never proven, capture stays blocked until the daemon is restarted.
+There is no automatic forced reset: releasing an unproven microphone owner could
+admit a second recorder. Keep the named recovery WAV; finish any active voice
+operation and use the normal idle-safe restart procedure before recording again.
+This is the documented review-I2 P3-5 limit, not installed/live recovery proof.

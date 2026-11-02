@@ -69,6 +69,16 @@
       "role": "mutant",
       "target": "MicReleaseOnFailure",
       "kind": "invariant"
+    },
+    "UnreadableOverlapMutant": {
+      "role": "mutant",
+      "target": "NoDeliveryOutsideCapturedTarget",
+      "kind": "invariant"
+    },
+    "UnreadableRefusalMutant": {
+      "role": "mutant",
+      "target": "UnreadableIdentitySingleTakeDelivers",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -81,6 +91,7 @@
     "NoDeliveryOutsideCapturedTarget",
     "NoFocusStealDuringCapture",
     "NoStaleGuard",
-    "ProcessingSettles"
+    "ProcessingSettles",
+    "UnreadableIdentitySingleTakeDelivers"
   ]
 }

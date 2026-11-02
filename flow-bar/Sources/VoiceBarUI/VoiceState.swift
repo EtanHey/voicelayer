@@ -2006,7 +2006,7 @@ public final class VoiceState {
                 sendCommand?(["cmd": "cancel", "take_id": takeID, "id": UUID().uuidString])
                 return
             }
-            if let takeID = bypassingProcessingGuard ? processingJobIDs.last : displayedProcessingTakeID {
+            if let takeID = processingJobIDs.last {
                 if bypassingProcessingGuard, takeID == displayedProcessingTakeID {
                     if processingCancellationGuard?.takeID == takeID { dismissProcessingCancellationGuard() }
                     sendCommand?(["cmd": "cancel", "take_id": takeID, "id": UUID().uuidString])
@@ -4440,7 +4440,7 @@ public final class VoiceState {
                         }
                     }
 
-                    if ownedTarget != nil, !skipsAX {
+                    if let ownedTarget, ownedTarget.matchesFocus != nil, !skipsAX {
                         // A captured native cursor that declined cannot authorize typing into a
                         // different field in the same app. The exact text remains in History.
                         finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
@@ -4542,7 +4542,8 @@ public final class VoiceState {
                         "trailingNewlineStripped": boolString(deliveredText != text),
                     ])
                     let typed: Bool
-                    if let ownedTarget, let ownedTextTypingHandler, let matches = ownedTarget.matchesFocus {
+                    if let ownedTarget, let ownedTextTypingHandler {
+                        let matches = { [weak self] in self?.ownedTargetIsCurrent(ownedTarget) == true }
                         switch ownedTextTypingHandler(deliveredText, pasteTarget.processIdentifier, matches) {
                         case .posted: typed = true
                         case .failed: typed = false
@@ -4586,7 +4587,13 @@ public final class VoiceState {
     }
 
     private func ownedTargetIsCurrent(_ target: DictationTakeTarget) -> Bool {
-        Self.sameApp(frontmostAppProvider(), target.app) && target.matchesFocus?() == true
+        guard let current = frontmostAppProvider(), let captured = target.app,
+              current.processIdentifier == captured.processIdentifier,
+              Self.sameApp(current, captured) else { return false }
+        if let matchesFocus = target.matchesFocus { return matchesFocus() }
+        // Unreadable at record start is not a changed identity. The fallback
+        // requires the same process and no other recording or pending take.
+        return microphoneTakeID == nil && activeBarTakeID == nil && !remoteOwnedRecording
     }
 
     private func noteOwnedDelivery(path: String?, text: String, note: String) {

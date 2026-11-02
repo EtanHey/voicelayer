@@ -6,7 +6,8 @@
 | GuardedEscape | GuardedEscapeMutant |
 | LegacyNoAckWait | LegacyAckMutant |
 | MicReleaseOnFailure | FailedMicMutant |
-| NoDeliveryOutsideCapturedTarget | RetargetMutant |
+| NoDeliveryOutsideCapturedTarget | RetargetMutant, UnreadableOverlapMutant |
 | NoFocusStealDuringCapture | FocusStealMutant |
 | NoStaleGuard | StaleGuardMutant |
 | ProcessingSettles | StallMutant |
+| UnreadableIdentitySingleTakeDelivers | UnreadableRefusalMutant |
