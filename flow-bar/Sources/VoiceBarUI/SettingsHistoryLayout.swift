@@ -61,3 +61,14 @@ enum SettingsHistoryLayout {
         return current
     }
 }
+
+/// Visible words of the Dictations list and detail pane, kept as values so tests read what the user
+/// reads instead of grepping view source.
+enum SettingsHistoryRecordingCopy {
+    static let emptyTitle = "No transcript history yet"
+    static let emptyHint = "Saved recordings, including failed or cancelled ones, will appear here. Select one to see its details."
+    /// The detail heading carries no date; Created appears once, inside Recording details.
+    static let detailHeading = "Selected dictation"
+    static let noSelection = "Select a dictation to read its transcript."
+    static func loadMoreTitle(isLoading: Bool) -> String { isLoading ? "Loading…" : "Load more" }
+}

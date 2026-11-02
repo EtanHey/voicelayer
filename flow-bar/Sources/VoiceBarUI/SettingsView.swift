@@ -1537,9 +1537,9 @@ public struct SettingsView: View {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 28))
                             .foregroundStyle(.secondary)
-                        Text("No transcript history yet")
+                        Text(SettingsHistoryRecordingCopy.emptyTitle)
                             .font(.headline)
-                        Text("Saved recordings, including failed or cancelled ones, will appear here. Select one to see its details.")
+                        Text(SettingsHistoryRecordingCopy.emptyHint)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1560,7 +1560,7 @@ public struct SettingsView: View {
                                         } header: { historyDayHeader(group.dayTitle()) }
                                     }
                                     if historyHasMore {
-                                        Button(isHistoryLoading ? "Loading…" : "Load more") { loadOlderHistory() }
+                                        Button(SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: isHistoryLoading)) { loadOlderHistory() }
                                             .disabled(isHistoryLoading)
                                             .controlSize(.small)
                                             .frame(maxWidth: .infinity)
@@ -1573,7 +1573,7 @@ public struct SettingsView: View {
                                 SettingsHistoryAttemptDetailPane(entry: entry, load: historyDiagnostics,
                                     loadAttempts: historyAttempts, runs: historyRunLog().runs(for: entry.audioPath.path),
                                     omittedCount: historyRunLog().omittedCount) {
-                                    Text("Selected dictation").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                    Text(SettingsHistoryRecordingCopy.detailHeading).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 } content: { displayedEntry in
                                     recordingHistoryDetail(displayedEntry)
                                 } actions: { displayedEntry in
@@ -1581,7 +1581,7 @@ public struct SettingsView: View {
                                 }
                                 .id(entry.id)
                             } else {
-                                Text("Select a dictation to read its transcript.")
+                                Text(SettingsHistoryRecordingCopy.noSelection)
                                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                             }
                         }

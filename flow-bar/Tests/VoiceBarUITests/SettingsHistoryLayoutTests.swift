@@ -63,7 +63,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         XCTAssertEqual(list[groupsEnd.upperBound..<pagination.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines), "}",
                        "the day-group loop ends before pagination, so the button appears once")
         let paginationContent = list[pagination.upperBound...]
-        XCTAssertTrue(paginationContent.contains("Button(isHistoryLoading ? \"Loading…\" : \"Load more\") { loadOlderHistory() }"))
+        XCTAssertTrue(paginationContent.contains("Button(SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: isHistoryLoading)) { loadOlderHistory() }"))
         XCTAssertTrue(paginationContent.contains(".disabled(isHistoryLoading)"))
         XCTAssertFalse(scope[listEnd.upperBound...].contains("loadOlderHistory()"), "no pagination outside the list")
         XCTAssertTrue(scope.contains("\\(historyLoadedEntryCount) matches shown"))
@@ -72,18 +72,30 @@ final class SettingsHistoryLayoutTests: XCTestCase {
 
     /// L7 review NIT: Load more reads as the quiet end of the list, centred and small, not as a row.
     func testLoadMoreIsSmallAndCentredUnderTheList() throws {
+        XCTAssertEqual(SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: false), "Load more")
+        XCTAssertEqual(SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: true), "Loading…")
         let source = try settingsSource()
-        let button = try XCTUnwrap(source.range(of: "Button(isHistoryLoading ? \"Loading…\" : \"Load more\") { loadOlderHistory() }"))
+        let button = try XCTUnwrap(source.range(of: "Button(SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: isHistoryLoading)) { loadOlderHistory() }"))
         let modifiers = source[button.upperBound...].prefix(260)
         XCTAssertTrue(modifiers.contains(".controlSize(.small)"))
         XCTAssertTrue(modifiers.contains(".frame(maxWidth: .infinity)"))
     }
 
-    /// L7 review LOW: the empty state names the section the user will actually see.
-    func testEmptyHistoryInvitesSelectionWithoutJargon() throws {
-        let source = try settingsSource()
-        XCTAssertTrue(source.contains("Select one to see its details."))
-        XCTAssertFalse(source.contains("Errors & runs"))
+    /// L7 review LOW + Etan 02:54Z: every visible word of the list and pane is plain, with no jargon
+    /// and no date in the heading. Checked on the values the view renders, not on view source.
+    func testVisibleListAndPaneCopyIsPlainAndDateFree() {
+        let visible = [SettingsHistoryRecordingCopy.emptyTitle, SettingsHistoryRecordingCopy.emptyHint,
+                       SettingsHistoryRecordingCopy.detailHeading, SettingsHistoryRecordingCopy.noSelection,
+                       SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: false)]
+        XCTAssertTrue(SettingsHistoryRecordingCopy.emptyHint.hasSuffix("Select one to see its details."))
+        for text in visible {
+            for jargon in ["Errors & runs", "Archive backend", "Attempt identity", "Technical details", "Text saved"] {
+                XCTAssertFalse(text.localizedCaseInsensitiveContains(jargon), "\(text) shows \(jargon)")
+            }
+        }
+        XCTAssertEqual(SettingsHistoryRecordingCopy.detailHeading, "Selected dictation")
+        XCTAssertNil(SettingsHistoryRecordingCopy.detailHeading.rangeOfCharacter(from: .decimalDigits),
+                     "the heading never carries the date; Created sits in Recording details once")
     }
 
     /// L7 review LOW: the archive-only rows keep their space while the read is in flight, and nothing is
@@ -115,7 +127,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
 
     func testSelectedDictationHeaderDoesNotRepeatTheRecordingDate() throws {
         let source = try settingsSource()
-        let heading = try XCTUnwrap(source.range(of: "Text(\"Selected dictation\")"))
+        let heading = try XCTUnwrap(source.range(of: "Text(SettingsHistoryRecordingCopy.detailHeading)"))
         let content = try XCTUnwrap(source.range(of: "} content: { displayedEntry in", range: heading.upperBound..<source.endIndex))
         let header = source[heading.lowerBound..<content.lowerBound]
         XCTAssertFalse(header.contains("createdAt"), "the date belongs in Recording details")
