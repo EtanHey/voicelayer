@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { assertInstallerSocketPath, installerProcessIdentity, installerGateContended as contended,
-  retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
+import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
 import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -212,7 +211,10 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
         return acknowledgeVoiceDrain(lease, verify, { throwOnContention: true });
       });
       if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; }
-      if (!ack && !contended() && readUpdateGateFile().kind === "UNKNOWN") throw Error("UNKNOWN: drain evidence unavailable");
+      if (!ack) {
+        const drained = await retryContention(() => readInstallerGateState(), () => false);
+        if (drained.kind === "UNKNOWN") throw Error("UNKNOWN: drain evidence unavailable");
+      }
       if (ack && proof.ready && proof.native && proof.daemon) {
         const prepared = await transition({ kind: "PREPARE", lease, native: proof.native, daemon: proof.daemon });
         if (prepared.kind !== "APPLIED") throw Error("UNKNOWN: preparation refused");

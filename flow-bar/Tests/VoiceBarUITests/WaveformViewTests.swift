@@ -643,7 +643,8 @@ final class WaveformViewTests: XCTestCase {
             compactStatusTrailingWingWidth: presentation.visualState == .compactStatus
                 ? presentation.geometry.trailingWingWidth
                 : nil,
-            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset,
+            feedback: presentation.feedback
         )
         let size = CGSize(
             width: presentation.geometry.totalWidth,
@@ -657,6 +658,7 @@ final class WaveformViewTests: XCTestCase {
                 presentationModel: model
             )
             .frame(width: size.width, height: size.height)
+            .transaction { $0.disablesAnimations = true; $0.animation = nil }
         )
         let window = NSWindow(
             contentRect: CGRect(origin: .zero, size: size),

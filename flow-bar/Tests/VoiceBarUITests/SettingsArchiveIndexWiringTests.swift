@@ -259,7 +259,9 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         XCTAssertTrue(app.contains("SettingsWindowLifecycle.settingsWindowWillClose(window)"))
         XCTAssertTrue(app.contains("SettingsWindowLifecycle.rebuildContentIfNeeded("))
         XCTAssertTrue(app.contains("initialTab: lastSettingsTab"))
-        XCTAssertTrue(app.contains("onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab }"))
+        let tabCallback = try XCTUnwrap(app.range(of: "onSelectedTabChange: { [weak self] tab in"))
+        XCTAssertTrue(app[tabCallback.upperBound...].prefix(240).contains("self?.lastSettingsTab = tab"),
+                      "the remembered tab survives the added visible-Transcription refresh hook")
         // A reopen with no tab asked for must not replay the last menu request over the remembered tab.
         XCTAssertTrue(app.contains("if tab == nil, settingsWindow.contentViewController == nil {\n"
                 + "                settingsTabRequest = nil"))

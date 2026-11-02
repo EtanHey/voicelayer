@@ -238,7 +238,8 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         model.updateOperationalEnvelope(
                             hasTeleprompter: false, isRecording: false, hasCompactStatus: true,
                             compactStatusLeadingWingWidth: presentation.geometry.leadingWingWidth,
-                            compactStatusTrailingWingWidth: presentation.geometry.trailingWingWidth
+                            compactStatusTrailingWingWidth: presentation.geometry.trailingWingWidth,
+                            feedback: presentation.feedback
                         )
                         XCTAssertEqual(model.presentation.geometry, presentation.geometry)
                         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation)
@@ -255,6 +256,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                             BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
                                     presentationModel: model, includesPanelOutsets: true)
                                 .environment(\.colorScheme, light ? .light : .dark)
+                                .transaction { $0.disablesAnimations = true; $0.animation = nil }
                         )
                         host.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
                         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
@@ -273,13 +275,33 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         let queueWidth = queueDepth > 0 ? Theme.intrinsicPillStatusWidth(for: "\(queueDepth)") + 16 : 0
                         let slot = VoiceBarNotchContract.material.wingContentLayout(for: .trailing,
                             state: .compactStatus, visibleCoreOcclusionInset: 0)
-                        let availableWidth = geometry.trailingWingWidth - slot.coreInset - slot.outerInset - queueWidth
                         let font = NSFont.systemFont(ofSize: 12, weight: .medium)
                         let lines = message.components(separatedBy: "\n")
-                        let label = NSHostingView(rootView:
-                            CompactStatusLabel(text: message, mode: state.mode, confirmationText: state.confirmationText)
-                                .frame(width: availableWidth).fixedSize(horizontal: false, vertical: true))
-                        let textSize = label.fittingSize
+                        let availableWidth: CGFloat
+                        let textSize: CGSize
+                        let textRect: CGRect
+                        if let feedback = presentation.feedback {
+                            // The message is now in the actual selectable lower band. Measure
+                            // its real native text field, not the former trailing-wing proxy.
+                            func field(_ view: NSView) -> NSTextField? {
+                                if let text = view as? NSTextField, text.stringValue == message { return text }
+                                return view.subviews.compactMap { field($0) }.first
+                            }
+                            let text = try XCTUnwrap(field(host), "Full feedback text must be mounted")
+                            textRect = text.convert(text.bounds, to: host)
+                            textSize = textRect.size
+                            availableWidth = feedback.width - 32
+                            XCTAssertTrue(host.bounds.contains(textRect), "Full message stays inside its actual rendered frame")
+                            XCTAssertEqual(text.stringValue, message)
+                        } else {
+                            availableWidth = geometry.trailingWingWidth - slot.coreInset - slot.outerInset - queueWidth
+                            let label = NSHostingView(rootView:
+                                CompactStatusLabel(text: message, mode: state.mode, confirmationText: state.confirmationText)
+                                    .frame(width: availableWidth).fixedSize(horizontal: false, vertical: true))
+                            textSize = label.fittingSize
+                            textRect = CGRect(x: 12 + canvas.canvasGeometry.coreOriginX + geometry.coreWidth + slot.coreInset + max(0, queueWidth - 4),
+                                              y: 0, width: availableWidth, height: 32)
+                        }
                         XCTAssertEqual(lines.count, 2, "Feedback must have two explicit lines: \(message)")
                         XCTAssertFalse(message.contains("…") || message.contains("..."))
                         // Unwrapped line widths plus the two-line height prove that fitting
@@ -293,7 +315,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         let required = (message as NSString).boundingRect(
                             with: CGSize(width: availableWidth, height: .greatestFiniteMagnitude),
                             options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font])
-                        XCTAssertLessThanOrEqual(ceil(required.height), geometry.topHeight)
+                        XCTAssertLessThanOrEqual(ceil(required.height), presentation.feedback == nil ? geometry.topHeight : textSize.height + 0.5)
                         XCTAssertLessThanOrEqual(ceil(required.height), textSize.height + 0.5,
                                                  "A one-line rendered label must not pass a two-line fit check")
                         let lineHeight = ceil(font.ascender - font.descender + font.leading)
@@ -314,16 +336,14 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         // Vision merges adjacent 12 pt lines in the whole notch. Preserve
                         // P1e's per-line crop and slack for the smaller rounded badge glyphs.
                         let cropInset = max(0, queueWidth - 4)
-                        let textX = 12 + canvas.canvasGeometry.coreOriginX + geometry.coreWidth
-                            + slot.coreInset + cropInset
+                        let wingX = 12 + canvas.canvasGeometry.coreOriginX + geometry.coreWidth + slot.coreInset
                         try checkOCR {
-                            try checkWords(image, CGRect(x: textX * scale, y: 0,
-                                width: (geometry.trailingWingWidth - slot.coreInset - slot.outerInset - cropInset) * scale,
-                                height: 32 * scale), message)
+                            try checkWords(image, CGRect(x: textRect.minX * scale, y: textRect.minY * scale,
+                                width: textRect.width * scale, height: textRect.height * scale), message)
                         }
                         if queueDepth > 0, checksOCR {
                             let badge = try XCTUnwrap(image.cropping(to: CGRect(
-                                x: (textX - cropInset) * scale, y: 0,
+                                x: wingX * scale, y: 0,
                                 width: (queueWidth - 4) * scale, height: 32 * scale)))
                             try reportCropInk(badge, label: "badge screen=\(screenWidth) message=\(index) light=\(light)")
                             try checkOCR {

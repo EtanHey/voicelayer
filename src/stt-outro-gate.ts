@@ -278,7 +278,7 @@ export interface OutroGateOptions {
    * Macroscope, PR #34: the span lookup counts words to find a candidate's
    * position, so it is only sound while the text still matches the segment
    * stream. `verifyLeadingPunctuation` can swap in a retry decode that adds
-   * leading words and `trimEchoedTrailingPhrase` can remove some
+   * leading words and audio-gated echo cleanup can remove some
    * (`verifyTailForLongRecording` is log-only since 2026-10-19; when it would
    * have rewritten, the caller still skips this gate) — each shifts every
    * later offset, and the word-verification check catches most but not all
@@ -669,6 +669,25 @@ function isClearOfSpeech(
   return !containsSustainedSpeech(windows, first - context, last + context);
 }
 
+/** Shared acoustic predicate for outro and echo deletion. No text policy here. */
+export function evaluateSilentSpan(
+  windows: WavWindows,
+  startS: number,
+  endS: number,
+  isTail: boolean,
+): { reason: "segment-not-found" | "energy-present" | "near-speech-level" | "not-clear-of-speech" | "removed" } {
+  const measured = measureSpan(windows, startS, endS);
+  if (!measured) return { reason: "segment-not-found" };
+  if (measured.hasSpeech) return { reason: "energy-present" };
+  if (Number.isFinite(windows.speechLevelDbfs) &&
+      measured.peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB) {
+    return { reason: "near-speech-level" };
+  }
+  const margin = isTail ? SILENCE_MARGIN_SECONDS : INTERNAL_SILENCE_MARGIN_SECONDS;
+  if (!isClearOfSpeech(windows, startS, endS, margin)) return { reason: "not-clear-of-speech" };
+  return { reason: "removed" };
+}
+
 /** True when no window in the whole recording carries sustained speech. */
 function isSilentThroughout(windows: WavWindows): boolean {
   return !containsSustainedSpeech(windows, 0, windows.dbfs.length);
@@ -747,8 +766,8 @@ export function findCandidateSpan(
  * this gate exists for. Conditions (b) and (c) are strictly stronger anyway:
  * they prove no word is inside the span and that the silence extends clear of
  * it on both sides. If the phrase's own audio is silence, it was not spoken,
- * whatever the words beside it say. De-duplicating two REAL utterances remains
- * the echo trimmer's job in `stt.ts`.
+ * whatever the words beside it say. The echo gate uses this same acoustic
+ * predicate; two real spoken utterances must both survive.
  */
 
 /** Cut `[startIndex, endIndex)` out of `text` and close the seam. */
@@ -814,7 +833,13 @@ export function stripHallucinatedOutro(
   if (
     !segments ||
     segments.length === 0 ||
-    options.segmentsMatchAudio === false
+    options.segmentsMatchAudio === false ||
+    // A padded/invalid decoder span cannot establish silence in this WAV.
+    // Permit only the ordinary 150 ms timestamp jitter at the file edge.
+    segments.some((segment) =>
+      !Number.isFinite(segment.startS) || !Number.isFinite(segment.endS) ||
+      segment.startS < 0 || segment.endS <= segment.startS ||
+      segment.endS > windows.durationSeconds + SILENCE_MARGIN_SECONDS)
   ) {
     return { text, removed: [], reason: "no-segments" };
   }
@@ -873,33 +898,10 @@ export function stripHallucinatedOutro(
         reason: evaluationReason,
       });
     };
-    // (b) No word anywhere under the phrase. Checked as sustained speech, not
-    // as a mean: a mean can be dragged below the floor by a long silent pad
-    // around a real word, and a peak can be tripped by a lone click.
-    if (measured.hasSpeech) {
-      reason = "energy-present";
-      recordEvaluation(reason);
-      continue;
-    }
-    // The backstop that replaces the old fixed upper clamp: however the
-    // threshold landed, a span as loud as this recording's own speech is not
-    // silence. Protects the low-gain recording whose speech sits only a little
-    // over its noise floor.
-    if (
-      Number.isFinite(windows.speechLevelDbfs) &&
-      measured.peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB
-    ) {
-      reason = "near-speech-level";
-      recordEvaluation(reason);
-      continue;
-    }
-    // (c) The silence must extend clear of the span on both sides.
-    const marginSeconds = candidate.isTail
-      ? SILENCE_MARGIN_SECONDS
-      : INTERNAL_SILENCE_MARGIN_SECONDS;
-    if (!isClearOfSpeech(windows, span.startS, span.endS, marginSeconds)) {
-      reason = "not-clear-of-speech";
-      recordEvaluation(reason);
+    const acoustic = evaluateSilentSpan(windows, span.startS, span.endS, candidate.isTail);
+    if (acoustic.reason !== "removed") {
+      reason = acoustic.reason;
+      if (reason !== "segment-not-found") recordEvaluation(reason);
       continue;
     }
     recordEvaluation("removed");

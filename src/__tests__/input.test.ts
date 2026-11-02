@@ -1545,6 +1545,7 @@ describe("input module", () => {
       const logPath = join(tempDir, "polish.jsonl");
       const controlLayerRoot = join(tempDir, "control-layer");
       const received: string[] = [];
+      let fixtureReply = "VoiceLayer!";
       const server = Bun.listen<{ buffer: string }>({
         unix: socketPath,
         socket: {
@@ -1558,7 +1559,7 @@ describe("input module", () => {
             for (const line of lines) {
               if (!line.trim()) continue;
               received.push(line);
-              socket.write(`${JSON.stringify({ text: "Voice Layer." })}\n`);
+              socket.write(`${JSON.stringify({ text: fixtureReply })}\n`);
             }
           },
           close() {},
@@ -1583,7 +1584,7 @@ describe("input module", () => {
         ).resolves.toBe("VoiceLayer.");
         await expect(
           finalizeTranscriptionTextForSurface("voice layer", "dictation", env),
-        ).resolves.toBe("Voice Layer.");
+        ).resolves.toBe("VoiceLayer!");
         expect(received.length).toBe(1);
         for (let i = 0; i < 50 && !existsSync(logPath); i++) {
           await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1612,10 +1613,15 @@ describe("input module", () => {
             changed: true,
           });
           expect(payload.cleaned_chars).toBe("VoiceLayer.".length);
-          expect(payload.final_chars).toBe("Voice Layer.".length);
+          expect(payload.final_chars).toBe("VoiceLayer!".length);
         } finally {
           db.close();
         }
+        fixtureReply = "Voice Layer.";
+        await expect(
+          finalizeTranscriptionTextForSurface("voice layer", "dictation", env),
+        ).resolves.toBe("VoiceLayer.");
+        expect(received.length).toBe(2);
       } finally {
         if (savedDisable === undefined) {
           delete process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
@@ -1667,10 +1673,28 @@ describe("input module", () => {
       expect(result).toContain("Wispr Flow");
     });
 
-    it("returns empty text when chunk STT only produces no-input labels", async () => {
+    for (const surface of ["dictation", "voice_ask"] as const) {
+      it(`preserves bare speech phrases on ${surface}`, async () => {
+        await expect(finalizeTranscriptionTextForSurface("music playing", surface, {
+          QA_VOICE_STT_POLISH: "off",
+          QA_VOICE_CORRECTOR: "off",
+        })).resolves.toBe("Music playing.");
+      });
+    }
+
+    it("retains unbracketed short speech from chunk STT", async () => {
       const result = await transcribeChunkSequence(
         [new Uint8Array([1]), new Uint8Array([2])],
         async (_chunk, _prompt) => "- Oh, my God.",
+      );
+
+      expect(result).toBe("- Oh, my God.");
+    });
+
+    it("returns empty text for structured non-speech chunk labels", async () => {
+      const result = await transcribeChunkSequence(
+        [new Uint8Array([1]), new Uint8Array([2])],
+        async (_chunk, _prompt) => "[BLANK_AUDIO]",
       );
 
       expect(result).toBe("");

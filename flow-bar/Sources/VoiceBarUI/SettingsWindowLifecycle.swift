@@ -9,6 +9,12 @@ import SwiftUI
 /// with Settings closed. Closing therefore drops the hosting controller FIRST (the views go away and cancel
 /// their loads), THEN releases the index. Reopen rebuilds the hosting controller.
 public enum SettingsWindowLifecycle {
+    /// Settings participates in ordinary app stacking; explicit open ordering stays in the app delegate.
+    @MainActor
+    public static func configureWindowBehavior(_ window: NSWindow) {
+        window.level = .normal
+    }
+
     @MainActor
     public static func settingsWindowWillClose(
         _ window: NSWindow,

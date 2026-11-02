@@ -6,12 +6,13 @@
  *   2. Wispr Flow WebSocket API → cloud fallback (requires QA_VOICE_WISPR_KEY)
  *
  * Environment variables:
- *   QA_VOICE_STT_BACKEND   — "whisper-server" | "whisper" | "wispr" | "auto" (default: "auto")
+ *   QA_VOICE_STT_BACKEND   — "parakeet" (opt-in) | "whisper-server" | "whisper" | "wispr" | "auto"
  *   QA_VOICE_WHISPER_MODEL — path to GGML model file (auto-detected if not set)
  *   QA_VOICE_WISPR_KEY     — Wispr Flow API key (required for wispr backend)
  */
 
 import { processingEnv } from "./processing-settings";
+import { recognizerRecovery, recognizerRecoveryWhisper, recognizerPreference, beginRecognizerRequestAfterMaintenance, closeRecognizerOwner, joinRecognizerMaintenance, assertRecognizerCleanupConfirmed, finishRecognizerRequest, readRecognizerStatus, noteRecognizerEffective, noteRecognizerEngine } from "./recognizer-state";
 import { existsSync, readdirSync, appendFileSync, mkdirSync } from "fs";
 import { getStateDir, SESSION_TOKEN } from "./paths";
 import { chooseSeamVariant } from "./stt-seam-stride";
@@ -20,6 +21,7 @@ import { join } from "path";
 import { calculateRMS } from "./audio-utils";
 import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
 import {
+  shutdownWhisperServer,
   isServerAvailable,
   transcribeViaServer,
   type WhisperServerTranscribeOptions,
@@ -28,8 +30,11 @@ import {
   getInitialPrompt,
   getLanguageConfig,
   getLanguageModeFromEnv,
+  requestedLanguageCode,
 } from "./language-config";
 import { getSTTVocabularyPrompt } from "./stt-cleanup";
+import { ParakeetBackend } from "./parakeet-backend";
+import { parakeetOwnerShutdownSignal, shutdownParakeetEngines } from "./parakeet-server";
 import { createHash } from "crypto";
 import {
   chooseChunkEnd,
@@ -40,6 +45,7 @@ import {
 } from "./stt-pause-map";
 import type { TranscriptSegment } from "./stt-transcript-alignment";
 import { outroGateEnabled, stripHallucinatedOutro } from "./stt-outro-gate";
+import { stripAudioUnsupportedEcho } from "./stt-echo-gate";
 import { stripHallucinatedCaption } from "./stt-caption-gate";
 import type {
   SpeechToTextBackend,
@@ -54,6 +60,12 @@ export interface STTResult extends TranscriptionResult {
   text: string;
   backend: string;
   durationMs: number;
+  /** Advisory only; automatic language is not classified English. */
+  languageWarning?: "auto-language-unverified" | "unsupported-language-advisory" | "language-detection-low-confidence";
+  /** Optional, request-scoped warning; never an engine-selection gate. */
+  languageEvidence?: import("./parakeet-lid").ParakeetLanguageEvidence;
+  /** Private alternate-attempt diagnostic when Parakeet retries via Whisper. */
+  fallbackEvidencePath?: string;
   /**
    * Whisper segment timestamps on the source recording's absolute timeline.
    * Present when the outro gate requests verbose responses. On the chunked path, overlap words keep the earlier chunk's
@@ -90,6 +102,8 @@ function residentBackendWithFallbackReason(
 }
 
 export interface STTTranscribeOptions extends TranscribeAudioOptions {
+  /** Cancel admission while an already admitted capture awaits maintenance. */
+  signal?: AbortSignal;
   promptOverride?: string;
 }
 
@@ -280,6 +294,13 @@ function preferOverlapWord(
   next: string,
   nextContinues: boolean,
 ): string {
+  // A cutoff is spoken content, not a punctuation preference. Equal lexical
+  // bases may share their overlap occurrence, but must keep its cutoff marker.
+  if (isMarkedCutoff(current)) return current;
+  if (isMarkedCutoff(next)) {
+    return compactSeamKey(current) === compactSeamKey(next)
+      ? next : current;
+  }
   const punctuated = preferPunctuatedOverlapWord(current, next, nextContinues);
   if (punctuated !== current) return punctuated;
   const currentKey = normalizeChunkWordForOverlap(current);
@@ -288,6 +309,18 @@ function preferOverlapWord(
     return next;
   }
   return current;
+}
+
+function retainedOverlapWords(current: string, next: string, nextContinues: boolean): string[] {
+  if (
+    (isMarkedCutoff(current) || isMarkedCutoff(next)) &&
+    normalizeChunkWordForOverlap(current) !== normalizeChunkWordForOverlap(next)
+  ) {
+    // Retain both readings at this position; following exact anchor words
+    // still represent one overlap occurrence and must not be appended twice.
+    return [current, next];
+  }
+  return [preferOverlapWord(current, next, nextContinues)];
 }
 
 function containsSimilarWordSequence(
@@ -437,13 +470,10 @@ function skippedPrefixIsOverlap(prefixKeys: string[], beforeKeys: string[]): boo
  * are dropped only when they re-decode the merged words right before it
  * (skippedPrefixIsOverlap); two cut-edge words only when the next chunk
  * re-says them. Anything else is concatenated rather than guessed.
- * KNOWN LIMITATION (lead's call, #139 round 2): ONE cut-edge word is replaced
- * by the next chunk's reading whenever that chunk decodes past the match. That
- * is right for a word cut mid-audio ("harbor" / "harness"), but a genuine
- * cut-off fragment ("fu…") the next decode omits is lost. A text heuristic
- * cost +49 looped words per corpus run; the planned fix is timing-based
- * (replace only when the next word starts inside the cut word's audio span,
- * and never drop a word the decoder ended with "…", "-" or "—").
+ * ONE unmarked cut-edge word may still be replaced by the next reading
+ * ("harbor" / "harness"). Explicit cutoff markers are conserved by the caller
+ * while the shared anchor folds; preserving them does not duplicate the anchor.
+ * Unmarked word substitutions remain an acoustic-validation limitation.
  */
 function findCompactChunkSeam(
   mergedWords: string[],
@@ -495,7 +525,11 @@ function findCompactChunkSeam(
 
 type ChunkSeam =
   | { kind: "exact"; overlap: number; skipPrefix: number }
-  | { kind: "compact"; dropMerged: number; skipNext: number };
+  | { kind: "compact"; dropMerged: number; skipNext: number; preserveRagged: boolean };
+
+function isMarkedCutoff(word: string): boolean {
+  return /[\p{L}\p{N}\p{M}](?:…|\.\.\.|[\p{Pd}])["'”’)]*$/u.test(word);
+}
 
 /** The exact anchor merge, unless the compact match covers more of the overlap. */
 function findChunkSeam(mergedWords: string[], nextWords: string[]): ChunkSeam {
@@ -512,7 +546,10 @@ function findChunkSeam(mergedWords: string[], nextWords: string[]): ChunkSeam {
   }
   const compact = findCompactChunkSeam(mergedWords, nextWords);
   if (compact && compact.matchedNext > exact.overlap) {
-    return { kind: "compact", dropMerged: compact.dropMerged, skipNext: compact.skipNext };
+    const preserveRagged = compact.dropMerged > 0 && mergedWords
+      .slice(-compact.dropMerged)
+      .some(isMarkedCutoff);
+    return { kind: "compact", dropMerged: compact.dropMerged, skipNext: compact.skipNext, preserveRagged };
   }
   return { kind: "exact", ...exact };
 }
@@ -1462,10 +1499,11 @@ export function mergeChunkTranscripts(
 
     const seam = findChunkSeam(merged, nextWords);
     if (seam.kind === "compact") {
-      merged.splice(merged.length - seam.dropMerged);
-      // Carry the seam-end punctuation the way the exact merge does.
-      merged[merged.length - 1] = preferOverlapWord(
-        merged[merged.length - 1],
+      const anchorIndex = merged.length - seam.dropMerged - 1;
+      if (!seam.preserveRagged) merged.splice(merged.length - seam.dropMerged);
+      // Punctuation belongs to the anchor, not to a retained cutoff fragment.
+      merged[anchorIndex] = preferOverlapWord(
+        merged[anchorIndex],
         nextWords[seam.skipNext - 1],
         seam.skipNext < nextWords.length,
       );
@@ -1475,14 +1513,16 @@ export function mergeChunkTranscripts(
     const { overlap, skipPrefix } = seam;
 
     if (overlap > 0) {
+      const retained: string[] = [];
       for (let index = 0; index < overlap; index++) {
         const mergedIndex = merged.length - overlap + index;
-        merged[mergedIndex] = preferOverlapWord(
+        retained.push(...retainedOverlapWords(
           merged[mergedIndex],
           nextWords[skipPrefix + index],
           skipPrefix + index < nextWords.length - 1,
-        );
+        ));
       }
+      merged.splice(merged.length - overlap, overlap, ...retained);
     }
 
     merged.push(...nextWords.slice(skipPrefix + overlap));
@@ -1766,8 +1806,9 @@ export function mergeChunkTranscriptsWithSegments(
     }
 
     if (seam.kind === "compact") {
-      merged.splice(merged.length - seam.dropMerged);
-      const last = merged[merged.length - 1]!;
+      const anchorIndex = merged.length - seam.dropMerged - 1;
+      if (!seam.preserveRagged) merged.splice(merged.length - seam.dropMerged);
+      const last = merged[anchorIndex]!;
       last.text = preferOverlapWord(
         last.text,
         nextWords[seam.skipNext - 1]!.text,
@@ -1778,15 +1819,21 @@ export function mergeChunkTranscriptsWithSegments(
     }
     const { overlap, skipPrefix } = seam;
     if (overlap > 0) {
+      const retained: TimedChunkWord[] = [];
       for (let index = 0; index < overlap; index++) {
         const mergedIndex = merged.length - overlap + index;
         const nextIndex = skipPrefix + index;
-        merged[mergedIndex]!.text = preferOverlapWord(
-          merged[mergedIndex]!.text,
-          nextWords[nextIndex]!.text,
+        const earlier = merged[mergedIndex]!;
+        const later = nextWords[nextIndex]!;
+        const words = retainedOverlapWords(
+          earlier.text,
+          later.text,
           nextIndex < nextWords.length - 1,
         );
+        if (words.length === 2) retained.push(earlier, later);
+        else retained.push({ ...earlier, text: words[0]! });
       }
+      merged.splice(merged.length - overlap, overlap, ...retained);
     }
     merged.push(...nextWords.slice(skipPrefix + overlap));
   }
@@ -1993,32 +2040,6 @@ function containsWordSequence(words: string[], sequence: string[]): boolean {
   return false;
 }
 
-function trimEchoedTrailingPhrase(
-  text: string,
-  options: { allowAdjacentEcho: boolean },
-): string {
-  let current = text.trim();
-  let allowAdjacentEchoContinuation = false;
-  for (let passes = 0; passes < 8; passes++) {
-    const result = trimOneEchoedTrailingPhrase(current, {
-      ...options,
-      allowAdjacentEchoContinuation,
-    });
-    const trimmed = result.text;
-    if (trimmed === current) return current;
-    allowAdjacentEchoContinuation = result.trimmedAdjacentEcho;
-    current = trimmed;
-  }
-  return current;
-}
-
-function allowsAdjacentTailEchoCleanup(wavData: Uint8Array): boolean {
-  const info = parseWavPcmInfo(wavData);
-  return (
-    !!info && info.durationSeconds >= WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS
-  );
-}
-
 function combinePromptOverride(
   original: string | undefined,
   transcript: string,
@@ -2131,10 +2152,20 @@ function getBrewPrefix(): string | null {
   return cachedBrewPrefix;
 }
 
+const ownedFallbackExits = new Set<Promise<number>>();
+
+export class WhisperCliError extends Error {
+  readonly outcome = "UNRESOLVED_FALLBACK_FAILED";
+  constructor(readonly attempt: { stdout: string; stderr: string; exitCode: number }) {
+    super(`whisper-cpp failed (exit ${attempt.exitCode})`); this.name = "WhisperCliError";
+  }
+}
+
 export class WhisperCppBackend implements STTBackend {
   name = "whisper.cpp";
   private binaryPath: string | null = null;
   private modelPath: string | null = null;
+  constructor(private readonly lifecycle: { signal?: AbortSignal; noVocabularyPrompt?: boolean } = {}) {}
 
   async isAvailable(): Promise<boolean> {
     this.binaryPath = findWhisperBinary();
@@ -2146,6 +2177,7 @@ export class WhisperCppBackend implements STTBackend {
     audioPath: string,
     options?: STTTranscribeOptions,
   ): Promise<STTResult> {
+    if (this.lifecycle.signal?.aborted) throw new Error("STT owner is shut down");
     if (!this.binaryPath) this.binaryPath = findWhisperBinary();
     if (!this.modelPath) this.modelPath = findModel();
 
@@ -2182,7 +2214,7 @@ export class WhisperCppBackend implements STTBackend {
     // Initial prompt primes vocabulary for dev terms in the configured language.
     const langMode = getLanguageModeFromEnv();
     const langConfig = getLanguageConfig(langMode);
-    const basePrompt = [getInitialPrompt(langMode), getSTTVocabularyPrompt()]
+    const basePrompt = this.lifecycle.noVocabularyPrompt || langConfig.mode === "auto" ? "" : [getInitialPrompt(langMode), getSTTVocabularyPrompt()]
       .filter(Boolean)
       .join(" ")
       .trim();
@@ -2190,9 +2222,16 @@ export class WhisperCppBackend implements STTBackend {
       ? `${basePrompt} ${options.promptOverride}`.trim()
       : basePrompt;
     const whisperArgs = [...langConfig.whisperArgs];
+    const requestedLanguage = requestedLanguageCode(options?.detectedLanguage ?? options?.language);
+    if (requestedLanguage) {
+      whisperArgs[whisperArgs.indexOf("-l") + 1] = requestedLanguage;
+    }
     const promptIndex = whisperArgs.indexOf("--prompt");
     if (promptIndex >= 0 && promptIndex + 1 < whisperArgs.length) {
-      whisperArgs[promptIndex + 1] = prompt;
+      if (prompt) whisperArgs[promptIndex + 1] = prompt;
+      else whisperArgs.splice(promptIndex, 2);
+    } else if (options?.promptOverride?.trim()) {
+      whisperArgs.push("--prompt", prompt);
     }
 
     const args = [
@@ -2210,7 +2249,13 @@ export class WhisperCppBackend implements STTBackend {
       stdout: "pipe",
       stderr: "pipe",
       env,
+      ...(this.lifecycle.signal ? { signal: this.lifecycle.signal, killSignal: "SIGKILL" } : {}),
     });
+    if (this.lifecycle.signal) {
+      const exited = proc.exited;
+      ownedFallbackExits.add(exited);
+      void exited.then(() => ownedFallbackExits.delete(exited), () => ownedFallbackExits.delete(exited));
+    }
 
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -2219,9 +2264,7 @@ export class WhisperCppBackend implements STTBackend {
     const exitCode = await proc.exited;
 
     if (exitCode !== 0) {
-      throw new Error(
-        `whisper-cpp failed (exit ${exitCode}): ${stderr.slice(0, 500)}`,
-      );
+      throw new WhisperCliError({ stdout, stderr, exitCode });
     }
 
     // whisper-cpp outputs transcription text, clean it up
@@ -2236,6 +2279,7 @@ export class WhisperCppBackend implements STTBackend {
       text,
       backend: this.name,
       durationMs: Date.now() - start,
+      attemptEvidence: { status: text.trim() ? "RETURNED" : "EMPTY_RESPONSE", processExitCode: exitCode, inputPath: audioPath, decodeCoverage: "UNKNOWN", tail: "UNKNOWN" },
     };
   }
 
@@ -2293,7 +2337,7 @@ export class WhisperServerBackend implements STTBackend {
     this.transcribeResident =
       deps.transcribeViaServer ??
       ((wavData, options) => transcribeViaServer(wavData, undefined, options));
-    this.fallbackBackend = deps.fallbackBackend ?? new WhisperCppBackend();
+    this.fallbackBackend = deps.fallbackBackend ?? new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal });
   }
 
   async isAvailable(): Promise<boolean> {
@@ -2356,7 +2400,8 @@ export class WhisperServerBackend implements STTBackend {
           text: gated.text,
           backend: backendParts.join("+"),
           durationMs: Date.now() - start,
-          ...(chunkedResult.segments.length > 0
+          ...(chunkedResult.segments.length > 0 &&
+              chunkedResult.segmentsText === gated.text
             ? {
                 segments: chunkedResult.segments,
                 segmentsAudioSha256: createHash("sha256")
@@ -2410,18 +2455,19 @@ export class WhisperServerBackend implements STTBackend {
         options,
       );
       const verifiedText = tail.text;
-      const cleanedText = trimEchoedTrailingPhrase(verifiedText, {
-        allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
+      const echo = stripAudioUnsupportedEcho(verifiedText, wavData, {
+        segments, segmentsText: text, segmentsMatchAudio: !tail.wouldRewrite,
       });
+      const cleanedText = echo.text;
       // Last, on the finished text: an invented closer is only removable
       // against the audio it was attributed to, and `segments` describe THIS
       // decode of THIS wav.
       //
       // `segmentsText` is the raw decode output, so the gate can refuse when an
       // earlier stage rewrote the transcript out from under those timings.
-      // `verifyLeadingPunctuation` can swap in a whole retry decode and
-      // `trimEchoedTrailingPhrase` can remove words — each shifts the word
-      // positions the span lookup counts on. A repaired transcript therefore
+      // `verifyLeadingPunctuation` can swap in a whole retry decode, shifting
+      // the word positions the span lookup counts on. Echo cleanup returns
+      // retained timings only for a proven segment-boundary cut. A repaired transcript therefore
       // gets NO outro gating, which is the deliberate trade: skipping a
       // hallucinated closer is recoverable, deleting a real word is not.
       //
@@ -2437,8 +2483,8 @@ export class WhisperServerBackend implements STTBackend {
         : tail.wouldRewrite
           ? { text: cleanedText, removed: [], reason: "segments-stale" as const }
           : stripHallucinatedOutro(cleanedText, wavData, {
-              segments,
-              segmentsText: text,
+              segments: echo.segments,
+              segmentsText: echo.segmentsText,
             });
       if (outroGate && gated.reason === "segments-stale") {
         console.error(
@@ -2458,8 +2504,8 @@ export class WhisperServerBackend implements STTBackend {
       // pass or trusting stitched segment timing for deletion.
       const caption = outroGate && !tail.wouldRewrite
         ? await stripHallucinatedCaption(gated.text, wavData, {
-            segments,
-            segmentsText: text,
+            segments: echo.segments,
+            segmentsText: echo.segmentsText,
           })
         : { text: gated.text, removed: null };
       if (caption.removed) {
@@ -2477,9 +2523,10 @@ export class WhisperServerBackend implements STTBackend {
         text: caption.text,
         backend: backendParts.join("+"),
         durationMs: Date.now() - start,
-        ...(segments && segments.length > 0
+        ...(echo.segments && echo.segments.length > 0 &&
+            echo.segmentsText === caption.text
           ? {
-              segments,
+              segments: echo.segments,
               segmentsAudioSha256: createHash("sha256")
                 .update(wavData)
                 .digest("hex"),
@@ -3181,7 +3228,9 @@ export class WhisperServerBackend implements STTBackend {
           buildWhisperServerOptions({ ...options, promptOverride: undefined }),
         );
         if (!shortFinalChunkAgrees(text, unpromptedText)) {
-          break;
+          // Two decodes disagreeing does not prove that the first one's words
+          // were not spoken. Keep the original attempt; do not drop its tail.
+          console.error("[voicelayer] short final chunk: decode disagreement; retaining original words");
         }
       }
       seamKinds[transcripts.length] = seamKindBeforeThisChunk;
@@ -3207,16 +3256,17 @@ export class WhisperServerBackend implements STTBackend {
       mergedText,
       options,
     );
-    const cleanedText = trimEchoedTrailingPhrase(headResult.text, {
-      allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
+    const echo = stripAudioUnsupportedEcho(headResult.text, wavData, {
+      segments: merged.segments, segmentsText: mergedText,
     });
+    const cleanedText = echo.text;
     return {
       text: cleanedText,
       witnessed,
       headChanged: headResult.changed,
       cleaned: cleanedText !== headResult.text,
-      segments: merged.segments,
-      segmentsText: mergedText,
+      segments: echo.segments ?? [],
+      segmentsText: echo.segmentsText ?? mergedText,
     };
   }
 
@@ -3272,7 +3322,8 @@ export function buildWhisperServerOptions(
     .trim();
 
   const result: WhisperServerTranscribeOptions = {};
-  result.language = languageConfig.whisperLang;
+  const requestedLanguage = requestedLanguageCode(options?.detectedLanguage ?? options?.language);
+  result.language = requestedLanguage ?? languageConfig.whisperLang;
   if (prompt) {
     result.prompt = prompt;
   }
@@ -3422,21 +3473,90 @@ export class WisprFlowBackend implements STTBackend {
 // --- Backend Detection ---
 
 let cachedBackend: STTBackend | null = null;
+const activeBackendRequests = new Set<Promise<STTResult>>();
 
 /**
  * Detect and return the best available STT backend.
  * Result is cached for the lifetime of the process.
  */
+function observeRecognizerBackend<T extends STTBackend>(backend: T): T {
+  const transcribe = backend.transcribe.bind(backend);
+  const observed: STTBackend["transcribe"] = async (path, options) => {
+    await beginRecognizerRequestAfterMaintenance(options?.signal);
+    try {
+      if (backend.name.startsWith("whisper")) {
+        if (readRecognizerStatus().engines.whisper.phase !== "ready") noteRecognizerEngine("whisper", { phase: "loading", error: null });
+        noteRecognizerEffective("whisper");
+      }
+      const result = await transcribe(path, options);
+      const finalProvider = result.backend.split("->").pop() ?? result.backend;
+      const reason = result.backend.match(/\+fallback-([^>]+)->/)?.[1] ?? (result.backend.includes("+vad-no-speech") ? "vad-no-speech" : null);
+      if (finalProvider.startsWith("parakeet")) noteRecognizerEffective("parakeet", reason);
+      else if (finalProvider.startsWith("whisper")) {
+        // A CLI transcript can follow an empty reply without unloading the
+        // resident server. Its producer lifecycle still owns that readiness.
+        const residentReady = readRecognizerStatus().engines.whisper.phase === "ready";
+        noteRecognizerEngine("whisper", { phase: finalProvider.startsWith("whisper-server") || residentReady ? "ready" : "sleeping", available: true, error: null });
+        noteRecognizerEffective("whisper", reason);
+      }
+      return result;
+    } catch (error) {
+      // A cloud failure says nothing about either local engine's lifecycle.
+      if (!backend.name.startsWith("wispr")) {
+        const engine = readRecognizerStatus().effective ?? (backend.name.startsWith("parakeet") ? "parakeet" : "whisper");
+        if (readRecognizerStatus().engines[engine].error !== "cleanup-unconfirmed") noteRecognizerEngine(engine, { phase: "error", error: "transcription-failed" });
+      }
+      throw error;
+    } finally { finishRecognizerRequest(); }
+  };
+  backend.transcribe = (path, options) => {
+    const request = observed(path, options);
+    activeBackendRequests.add(request);
+    void request.then(() => activeBackendRequests.delete(request), () => activeBackendRequests.delete(request));
+    return request;
+  };
+  return backend;
+}
+
 export async function getBackend(): Promise<STTBackend> {
   if (cachedBackend) return cachedBackend;
 
-  const preference = (process.env.QA_VOICE_STT_BACKEND || "auto").toLowerCase();
+  const saved = recognizerPreference();
+  const preference = saved.source === "settings" ? saved.recognizer === "parakeet" ? "parakeet" : "whisper-server" : (process.env.QA_VOICE_STT_BACKEND || "auto").toLowerCase();
+
+  const restored = recognizerRecovery();
+  if (restored?.engine === "parakeet") {
+    // A failed Whisper selection restored the previous owned P. Do not launch
+    // Whisper again beside it just because desired still records that click.
+    const backend = new ParakeetBackend({ fallbackBackend: new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal, noVocabularyPrompt: true }) });
+    const transcribe = backend.transcribe.bind(backend);
+    backend.transcribe = async (path, options) => {
+      const result = await transcribe(path, options);
+      return { ...result, backend: `whisper-server+fallback-whisper-startup-failed->${result.backend}`,
+        fallbackEvidencePath: result.fallbackEvidencePath ?? restored.evidencePath };
+    };
+    cachedBackend = observeRecognizerBackend(backend);
+    return cachedBackend;
+  }
+
+  if (preference === "parakeet" || preference === "parakeet-resident") {
+    // This router unloads P before fallback. A one-shot Whisper child then
+    // exits with the request instead of leaving a second model resident when
+    // the next user-selected P request arrives. The ordinary auto/server
+    // selections below keep their existing resident Whisper behavior.
+    const recovery = recognizerRecoveryWhisper();
+    const backend = new ParakeetBackend({ fallbackBackend: recovery ? new WhisperServerBackend() : new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal, noVocabularyPrompt: true }), recoveryWhisper: recognizerRecoveryWhisper });
+    // The selected P remains authoritative; fallback is for failed/incomplete
+    // responses, never an automatic language or prompt-based switch.
+    cachedBackend = observeRecognizerBackend(backend);
+    return cachedBackend;
+  }
 
   if (preference === "whisper") {
-    const backend = new WhisperCppBackend();
+    const backend = new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal });
     if (await backend.isAvailable()) {
-      cachedBackend = backend;
-      return backend;
+      cachedBackend = observeRecognizerBackend(backend);
+      return cachedBackend;
     }
     throw new Error(
       "whisper backend requested but not available. " +
@@ -3447,8 +3567,8 @@ export async function getBackend(): Promise<STTBackend> {
   if (preference === "whisper-server" || preference === "resident") {
     const backend = new WhisperServerBackend();
     if (await backend.isAvailable()) {
-      cachedBackend = backend;
-      return backend;
+      cachedBackend = observeRecognizerBackend(backend);
+      return cachedBackend;
     }
     throw new Error(
       "whisper-server backend requested but not available. " +
@@ -3459,8 +3579,8 @@ export async function getBackend(): Promise<STTBackend> {
   if (preference === "wispr") {
     const backend = new WisprFlowBackend();
     if (await backend.isAvailable()) {
-      cachedBackend = backend;
-      return backend;
+      cachedBackend = observeRecognizerBackend(backend);
+      return cachedBackend;
     }
     throw new Error("wispr backend requested but QA_VOICE_WISPR_KEY not set.");
   }
@@ -3470,25 +3590,25 @@ export async function getBackend(): Promise<STTBackend> {
   // if the sidecar dies during inference.
   const resident = new WhisperServerBackend();
   if (await resident.isAvailable()) {
-    cachedBackend = resident;
+    cachedBackend = observeRecognizerBackend(resident);
     console.error("[voicelayer] STT backend: whisper-server (resident)");
-    return resident;
+    return cachedBackend;
   }
 
-  const whisper = new WhisperCppBackend();
+  const whisper = new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal });
   if (await whisper.isAvailable()) {
-    cachedBackend = whisper;
+    cachedBackend = observeRecognizerBackend(whisper);
     console.error(
       `[voicelayer] STT backend: whisper.cpp (${whisper.getModelInfo().model})`,
     );
-    return whisper;
+    return cachedBackend;
   }
 
   const wispr = new WisprFlowBackend();
   if (await wispr.isAvailable()) {
-    cachedBackend = wispr;
+    cachedBackend = observeRecognizerBackend(wispr);
     console.error("[voicelayer] STT backend: Wispr Flow (cloud fallback)");
-    return wispr;
+    return cachedBackend;
   }
 
   throw new Error(
@@ -3508,6 +3628,22 @@ export async function getBackend(): Promise<STTBackend> {
 export function resetBackendCache(): void {
   cachedBackend = null;
   cachedBrewPrefix = undefined;
+}
+
+/** Controlled daemon shutdown confirms both P and opt-in one-shot W children. */
+export async function shutdownSTTBackends(): Promise<void> {
+  closeRecognizerOwner();
+  // Start every cancellation before awaiting any cleanup; join all owners even
+  // when one cleanup reports UNKNOWN. Daemon ownership must not escape a picker.
+  const p = shutdownParakeetEngines();
+  const w = shutdownWhisperServer();
+  const { joinRecognizerSelections } = await import("./recognizer-controller");
+  const results = await Promise.allSettled([p, w, joinRecognizerSelections(), joinRecognizerMaintenance(),
+    Promise.all([...ownedFallbackExits]), Promise.allSettled([...activeBackendRequests]),
+    cachedBackend instanceof ParakeetBackend ? cachedBackend.drain() : Promise.resolve()]);
+  const failed = results.find(result => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+  assertRecognizerCleanupConfirmed();
 }
 
 export class VoiceLayerSTTBackendSelector implements SpeechToTextBackendSelector {

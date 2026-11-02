@@ -11,7 +11,7 @@ final class SettingsSlopShotsTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent()
         let models = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift"))
         let settings = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"))
-        XCTAssertTrue(models.contains("LabeledContent(\"Local recognizer\")"))
+        XCTAssertTrue(models.contains("RecognizerPickerView("))
         for removed in ["Transcription model", "Last dictation used", "Transcription effort", "models-effort-picker",
                         "no measurable word difference"] {
             XCTAssertFalse(models.contains(removed), removed)
@@ -21,7 +21,9 @@ final class SettingsSlopShotsTests: XCTestCase {
         let rowStart = try XCTUnwrap(settings.range(of: "private func recordingHistoryListRow"))
         let detailStart = try XCTUnwrap(settings.range(of: "private func recordingHistoryDetail"))
         XCTAssertFalse(settings[rowStart.lowerBound..<detailStart.lowerBound].contains("entry.performanceEffort"))
-        XCTAssertTrue(settings[detailStart.lowerBound...].contains("entry.modelLabel, entry.performanceEffort?.displayName"))
+        let details = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SettingsHistoryDiagnosticsView.swift"))
+        XCTAssertTrue(details.contains("entry.modelLabel"))
+        XCTAssertTrue(details.contains("entry.performanceEffort?.displayName"))
     }
 
     func testRenderCleanedSettings() throws {

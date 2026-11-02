@@ -686,7 +686,10 @@ public struct BarView: View {
     /// shell to hold it); the History panel or teleprompter, when open, keeps the space below.
     private var notchLowerContent: some View {
         VStack(spacing: 0) {
-            if notchPresentation.transientNoteRect != nil, let note = state.selectionFeedbackNote {
+            if let feedback = notchPresentation.feedback {
+                VoiceBarNotchFeedbackBand(feedback: feedback, onOpenHistory: onOpenHistory)
+                    .foregroundStyle(notchPrimaryLabelColor)
+            } else if notchPresentation.transientNoteRect != nil, let note = state.selectionFeedbackNote {
                 transientNoteBand(note)
             }
             notchLowerPanelContent
@@ -925,7 +928,7 @@ public struct BarView: View {
             notchButton(
                 icon: iconName,
                 accessibilityLabel: state.mode == .error
-                    ? "Retry voice recording"
+                    ? "New recording"
                     : "Start voice recording",
                 tooltip: state.mode == .error
                     ? SettingsCopyPayload.nonempty(state.errorMessage) ?? "No error details are available."
@@ -969,7 +972,8 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        compactStatusLabel(statusText, confirmationText: state.confirmationText)
+        compactStatusLabel(notchPresentation.feedback?.replacesWingText != true || notchPresentation.feedback?.statusText == nil ? statusText :
+            (state.mode == .error ? "Error" : "Details below"), confirmationText: state.confirmationText)
     }
 
     private func compactStatusLabel(_ text: String, confirmationText: String? = nil) -> some View {

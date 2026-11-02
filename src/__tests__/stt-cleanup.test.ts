@@ -33,16 +33,16 @@ describe("stt-cleanup", () => {
     }
   });
 
-  it("suppresses no-input STT hallucinations and non-speech labels", () => {
-    expect(cleanupTranscriptionText("thank you")).toBe("");
-    expect(cleanupTranscriptionText("Thank you.")).toBe("");
-    expect(cleanupTranscriptionText("thanks for watching")).toBe("");
+  it("preserves unbracketed short speech and rejects structured non-speech labels", () => {
+    expect(cleanupTranscriptionText("thank you")).not.toBe("");
+    expect(cleanupTranscriptionText("Thank you.")).not.toBe("");
+    expect(cleanupTranscriptionText("thanks for watching")).not.toBe("");
     expect(cleanupTranscriptionText("[BLANK_AUDIO]")).toBe("");
     expect(cleanupTranscriptionText("[Music playing]")).toBe("");
-    expect(cleanupTranscriptionText("subtitle by rev dot com")).toBe("");
-    expect(cleanupTranscriptionText("sad music")).toBe("");
-    expect(cleanupTranscriptionText("Oh, my God.")).toBe("");
-    expect(cleanupTranscriptionText("- Oh, my God.")).toBe("");
+    expect(cleanupTranscriptionText("subtitle by rev dot com")).not.toBe("");
+    expect(cleanupTranscriptionText("sad music")).not.toBe("");
+    expect(cleanupTranscriptionText("Oh, my God.")).not.toBe("");
+    expect(cleanupTranscriptionText("- Oh, my God.")).not.toBe("");
     expect(cleanupTranscriptionText("-")).toBe("");
     expect(cleanupTranscriptionText("(Music)")).toBe("");
     expect(cleanupTranscriptionText("[music]")).toBe("");
@@ -161,10 +161,10 @@ describe("stt-cleanup", () => {
     expect(
       cleanupTranscriptionText("Fixture ready. sampleproject vTerm3-S-C"),
     ).toBe("Fixture ready. Sampleproject vTerm3 -s -c");
-    // The agent-name canonicalizer first folds "fixtureVariant8" ->
-    // "vTerm6"; the glued flag suffix must still be split off.
+    // A glued identifier is a literal, not the stored whole alias. Flag
+    // spacing still normalizes without substituting the agent name.
     expect(cleanupTranscriptionText("fixtureVariant8-S-C")).toBe(
-      "vTerm6 -s -c",
+      "fixtureVariant8 -s -c",
     );
   });
 
@@ -310,8 +310,9 @@ describe("stt-cleanup", () => {
           [`please call ${variant}`, `Please call ${canonical}`],
           [`please call ${variant}.`, `Please call ${canonical}.`],
           [`please call ${variant}, then wait`, `Please call ${canonical}, then wait`],
-          [`${variant}'s message`, `${canonical}'s message`],
-          [`please check ${variant}’s message`, `Please check ${canonical}’s message`],
+          // A base alias is not authority to replace an unstored possessive.
+          [`${variant}'s message`, `${variant[0].toUpperCase()}${variant.slice(1)}'s message`],
+          [`please check ${variant}’s message`, `Please check ${variant}’s message`],
           [`שלום ${variant} עכשיו`, `שלום ${canonical} עכשיו`],
           [`please call ${variant.toUpperCase()}`, `Please call ${canonical}`],
         ];
@@ -770,13 +771,13 @@ describe("stt-cleanup", () => {
     );
   });
 
-  it("collapses immediate duplicated STT function words from dictation", () => {
-    expect(cleanupTranscriptionText("see the the bars")).toBe("See the bars");
+  it("preserves immediate repeated function words without acoustic disproof", () => {
+    expect(cleanupTranscriptionText("see the the bars")).toBe("See the the bars");
     expect(cleanupTranscriptionText("I I think this should paste")).toBe(
-      "I think this should paste",
+      "I I think this should paste",
     );
     expect(cleanupTranscriptionText("send to to the current input")).toBe(
-      "Send to the current input",
+      "Send to to the current input",
     );
   });
 

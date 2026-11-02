@@ -1,7 +1,13 @@
 name: Ratchet
 on:
+  push:
+    branches: [main]
+  workflow_dispatch:
   pull_request:
     branches: [main]
+concurrency:
+  group: ratchet-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -12,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -26,14 +32,105 @@ jobs:
           xcodebuild -version
           swift --version
           bun --version
+      - name: Cache identity (before Python or harness modifications)
+        id: identity
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          git worktree add --detach .verified/base-source "$BASE_SHA"
+          harness=$(bash ratchet/cache_identity.sh "$BASE_SHA")
+          tools=$( { sw_vers; xcodebuild -version; swift --version; bun --version; python3 --version; printf '%s' "$ImageOS-$ImageVersion"; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "key=ratchet-base-v2-$BASE_SHA-$harness-$tools" >> "$GITHUB_OUTPUT"
+          echo "harness=$harness" >> "$GITHUB_OUTPUT"
       - name: Harness safety and comment validation
         run: python3 -m unittest discover -s ratchet -p 'test_*.py'
+      - name: Assert stable identity after Python
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          EXPECTED: ${{ steps.identity.outputs.harness }}
+        run: test "$(bash ratchet/cache_identity.sh "$BASE_SHA")" = "$EXPECTED"
+      - uses: actions/cache/restore@v4
+        id: row0
+        with:
+          path: .verified/ratchet/cache/ndjson-partial-write
+          key: ${{ steps.identity.outputs.key }}-ndjson-partial-write
+      - uses: actions/cache/restore@v4
+        id: row1
+        with:
+          path: .verified/ratchet/cache/socket-isolation
+          key: ${{ steps.identity.outputs.key }}-socket-isolation
+      - uses: actions/cache/restore@v4
+        id: row2
+        with:
+          path: .verified/ratchet/cache/retranscribe-history-refresh
+          key: ${{ steps.identity.outputs.key }}-retranscribe-history-refresh
+      - uses: actions/cache/restore@v4
+        id: row3
+        with:
+          path: .verified/ratchet/cache/recents-newest-after-retranscribe
+          key: ${{ steps.identity.outputs.key }}-recents-newest-after-retranscribe
+      - uses: actions/cache/restore@v4
+        id: row4
+        with:
+          path: .verified/ratchet/cache/voice-ask-lock-suspends-timeout
+          key: ${{ steps.identity.outputs.key }}-voice-ask-lock-suspends-timeout
       - name: Main baseline
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 ratchet/run.py --ref "$BASE_SHA" --output .verified/ratchet/baseline
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          RATCHET_BASE_HARNESS: ${{ github.workspace }}/.verified/base-source/ratchet
+        run: python3 ratchet/base_cache.py --ref "$BASE_SHA" --cached .verified/ratchet/cache --output .verified/ratchet/baseline
+      - name: Stage ndjson-partial-write
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row0.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/ndjson-partial-write/result.json') != '' }}
+        run: |
+          mkdir -p .verified/ratchet/cache/ndjson-partial-write
+          cp .verified/ratchet/baseline/cache/ndjson-partial-write/result.json .verified/ratchet/cache/ndjson-partial-write/result.json
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row0.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/ndjson-partial-write/result.json') != '' }}
+        with:
+          path: .verified/ratchet/cache/ndjson-partial-write
+          key: ${{ steps.identity.outputs.key }}-ndjson-partial-write
+      - name: Stage socket-isolation
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row1.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/socket-isolation/result.json') != '' }}
+        run: |
+          mkdir -p .verified/ratchet/cache/socket-isolation
+          cp .verified/ratchet/baseline/cache/socket-isolation/result.json .verified/ratchet/cache/socket-isolation/result.json
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row1.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/socket-isolation/result.json') != '' }}
+        with:
+          path: .verified/ratchet/cache/socket-isolation
+          key: ${{ steps.identity.outputs.key }}-socket-isolation
+      - name: Stage retranscribe-history-refresh
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row2.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/retranscribe-history-refresh/result.json') != '' }}
+        run: |
+          mkdir -p .verified/ratchet/cache/retranscribe-history-refresh
+          cp .verified/ratchet/baseline/cache/retranscribe-history-refresh/result.json .verified/ratchet/cache/retranscribe-history-refresh/result.json
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row2.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/retranscribe-history-refresh/result.json') != '' }}
+        with:
+          path: .verified/ratchet/cache/retranscribe-history-refresh
+          key: ${{ steps.identity.outputs.key }}-retranscribe-history-refresh
+      - name: Stage recents-newest-after-retranscribe
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row3.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/recents-newest-after-retranscribe/result.json') != '' }}
+        run: |
+          mkdir -p .verified/ratchet/cache/recents-newest-after-retranscribe
+          cp .verified/ratchet/baseline/cache/recents-newest-after-retranscribe/result.json .verified/ratchet/cache/recents-newest-after-retranscribe/result.json
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row3.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/recents-newest-after-retranscribe/result.json') != '' }}
+        with:
+          path: .verified/ratchet/cache/recents-newest-after-retranscribe
+          key: ${{ steps.identity.outputs.key }}-recents-newest-after-retranscribe
+      - name: Stage voice-ask-lock-suspends-timeout
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row4.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/voice-ask-lock-suspends-timeout/result.json') != '' }}
+        run: |
+          mkdir -p .verified/ratchet/cache/voice-ask-lock-suspends-timeout
+          cp .verified/ratchet/baseline/cache/voice-ask-lock-suspends-timeout/result.json .verified/ratchet/cache/voice-ask-lock-suspends-timeout/result.json
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.row4.outputs.cache-hit != 'true' && hashFiles('.verified/ratchet/baseline/cache/voice-ask-lock-suspends-timeout/result.json') != '' }}
+        with:
+          path: .verified/ratchet/cache/voice-ask-lock-suspends-timeout
+          key: ${{ steps.identity.outputs.key }}-voice-ask-lock-suspends-timeout
       - name: PR head
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 ratchet/run.py --ref "$HEAD_SHA" --output .verified/ratchet/head

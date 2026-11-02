@@ -130,7 +130,7 @@ extension VoiceBarNotchMorphCanvasLayout {
     /// shorter window at once while the shell was still easing up, cutting its bottom flat.
     static func restingLowerSurfaceHeight(of presentation: VoiceBarNotchPresentation) -> CGFloat {
         presentation.geometry.lowerSurfaceHeight -
-            (presentation.transientNoteWidth == nil ? 0 : VoiceBarNotchContract.transientNoteBandHeight)
+            presentation.feedbackHeight
     }
 }
 

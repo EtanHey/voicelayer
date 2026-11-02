@@ -285,6 +285,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
         }
+        voiceState.onRecognizerStatusChange = { [weak self] in
+            self?.refreshSettingsWindowAnchorState()
+        }
         voiceState.onSpeechSettled = { [weak self] in
             self?.refreshSettingsWindowAnchorState()
         }
@@ -2007,7 +2010,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             coreWidth: coreWidth,
             visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0,
             virtualNotchIdleCoreHeight: screenGeometry?.virtualNotchIdleCoreHeight,
-            transientNoteWidth: resolved.transientNoteWidth
+            transientNoteWidth: resolved.transientNoteWidth,
+            feedback: resolved.feedback
         )
         notchPresentationModel.setHovered(voiceState.isHovering)
     }
@@ -2853,6 +2857,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             SettingsWindowSizing.apply(to: settingsWindow)
             settingsWindow.makeKeyAndOrderFront(nil)
             settingsWindow.orderFrontRegardless()
+            voiceState.refreshRecognizerStatus()
             refreshRelaySetupStatusAsync()
             return
         }
@@ -2870,7 +2875,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.collectionBehavior = [.moveToActiveSpace]
-        window.level = .floating
+        MainActor.assumeIsolated { SettingsWindowLifecycle.configureWindowBehavior(window) }
         SettingsWindowSizing.apply(to: window)
         window.center()
         window.setFrameAutosaveName(SettingsWindowSizing.autosaveName)
@@ -2879,6 +2884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+        voiceState.refreshRecognizerStatus()
         refreshRelaySetupStatusAsync()
     }
 
@@ -3078,7 +3084,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func makeSettingsView() -> SettingsView {
-        SettingsView(
+        voiceState.recognizerSettingsIsVisible = { [weak self] in
+            guard let self, let window = self.settingsWindow else { return false }
+            return window.isVisible && !window.isMiniaturized && !NSApp.isHidden
+                && self.lastSettingsTab == .transcription
+        }
+        return SettingsView(
             hotkeyEnabled: hotkeyEnabled,
             missingPermissions: missingHotkeyPermissions,
             availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
@@ -3099,11 +3110,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             modelsStatus: { [weak self] in self?.voiceState.modelsSettingsState ?? .disconnected },
             onRefreshModelsStatus: { [weak self] in
                 self?.voiceState.refreshModelsSettingsStatus()
+                self?.voiceState.refreshRecognizerStatus()
             },
             residencyNotice: { [weak self] in self?.voiceState.residencyNotice },
             onSelectResidency: { [weak self] target in
                 self?.voiceState.setWhisperResidency(target)
             },
+            recognizerStatus: { [weak self] in self?.voiceState.recognizerPickerState ?? .unavailable },
+            onSelectRecognizer: { [weak self] in self?.voiceState.selectRecognizer($0) },
             speechControls: { [weak self] in self?.voiceState.speechControls },
             speechConnected: { [weak self] in self?.voiceState.isConnected ?? false },
             speechBusyReason: { [weak self] in self?.voiceState.speechBusyReason },
@@ -3207,6 +3221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onRetranscribeHistoryEntry: { [weak self] recordingPath in
                 self?.voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)
             },
+            historyRunLog: { [weak self] in self?.voiceState.historyRunLog ?? SettingsHistoryRunLog() },
             isHistoryRetranscribing: { [weak self] recordingPath in
                 self?.voiceState.activeHistoryRetranscriptionPath == recordingPath
             },
@@ -3239,7 +3254,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onRunSetup: { [weak self] in self?.openSetupWizard() },
             initialTab: lastSettingsTab,
             tabRequest: settingsTabRequest,
-            onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab },
+            onSelectedTabChange: { [weak self] tab in
+                self?.lastSettingsTab = tab
+                if tab == .transcription { self?.voiceState.refreshRecognizerStatus() }
+            },
             historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback },
             versionCheck: .live
         )

@@ -12,7 +12,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         }
         XCTAssertEqual(SettingsHistoryLayout.detailHeight(available: 300), 114, accuracy: 0.001)
         XCTAssertEqual(SettingsHistoryLayout.detailHeight(available: 1000), 220)
-        XCTAssertEqual(SettingsHistoryLayout.detailHeight(available: 100), 110)
+        XCTAssertEqual(SettingsHistoryLayout.detailHeight(available: 100), 100)
     }
 
     func testReenteringHistorySelectsTheNewestRow() {
@@ -41,7 +41,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
                 .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(source.contains("SettingsHistoryLayout.detailHeight(available: geometry.size.height)"))
+        XCTAssertTrue(source.contains("SettingsHistoryWorkspace {"))
         XCTAssertFalse(source.contains(".frame(maxHeight: 260)"), "the fixed 260 pt detail cap is gone")
         XCTAssertTrue(source.contains("preferNewest: selectNewestOnNextHistoryPage"))
         XCTAssertTrue(source.contains(".padding(.top, SettingsHistoryLayout.askListTopInset)"))

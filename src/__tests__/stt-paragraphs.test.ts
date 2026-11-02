@@ -81,13 +81,14 @@ describe('pause paragraphs', () => {
     expect(readPolishControlsStatus(env).pause_paragraphs).toEqual({source:'settings',raw:null,effective:false});
     expect(parseCommand('{"cmd":"set_processing_setting","key":"pause_paragraphs","value":false}')).toMatchObject({key:'pause_paragraphs',value:false});
   });
-  test('paragraphs run after finalization even with model polish off or no surface', async () => {
+  test('acoustic setting selects boundaries while the final floor survives polish off or no surface', async () => {
     const env = { QA_VOICE_STT_POLISH:'off', VOICELAYER_STT_CORRECTIONS:'off' };
     for (const surface of ['dictation','voice_ask',null] as const) {
       const on = await finalizeTranscriptionResultForSurface(text, surface, env, {segments,pauses});
       const off = await finalizeTranscriptionResultForSurface(text, surface, {...env,VOICELAYER_STT_PAUSE_PARAGRAPHS:'0'}, {segments,pauses});
       expect(on.text).toContain('\n\n');
-      expect(off.text).not.toContain('\n\n');
+      expect(off.text).toContain('\n\n');
+      expect(on.text).not.toBe(off.text);
       expect(on.text.replace(/\s/gu,'')).toBe(off.text.replace(/\s/gu,''));
     }
   });
