@@ -46,6 +46,16 @@ final class VoiceBarSnapshotTests: XCTestCase {
                            "paused-controls": "paused"]
     private var referenceEnvironment: [String: String]?
     private var recordedEnvironment: [String: String]?
+    private var comparisonCanvasHeight: CGFloat {
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: true, isRecording: false, hasCompactStatus: false,
+            isHovered: false, isKeyboardFocused: false
+        )
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        return ceil(VoiceBarPanelLayout.make(
+            presentation: presentation, canvasGeometry: canvas.canvasGeometry
+        ).panelSize.height)
+    }
     private var root: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -94,7 +104,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
                 let a = try rgba(actual), e = try rgba(expected)
                 // A common canvas prevents fixture-selected height alone from
                 // disguising a fallback to the default visual state.
-                let distinct = try rgba(render(name, light: light, canvasHeight: 270))
+                let distinct = try rgba(render(name, light: light, canvasHeight: comparisonCanvasHeight))
                 for (other, pixels) in distinctImages {
                     XCTAssertFalse(distinct == pixels, "Distinct fixtures silently render identically: \(name), \(other)")
                 }
@@ -182,9 +192,16 @@ final class VoiceBarSnapshotTests: XCTestCase {
         let old = app.appearance
         app.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
         defer { app.appearance = old }
-        // Paused playback intentionally collapses the teleprompter, including when
-        // its dismissal flag is false. Both pause fixtures share the compact canvas.
-        let height: CGFloat = canvasHeight ?? (name == "teleprompter-expanded" ? 270 : (name == "busy-note" ? 90 : 64))
+        // Measure the actual panel content, including the morph canvas's reserved
+        // feedback space and shadow outsets. A short fixture-selected host can
+        // center overflowing SwiftUI content above its bounds and crop the top row.
+        let bar = BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
+                          includesPanelOutsets: true)
+            .fixedSize(horizontal: false, vertical: true)
+        let fittingHost = NSHostingView(rootView: bar)
+        let panelHeight = ceil(fittingHost.fittingSize.height)
+        let height = canvasHeight ?? panelHeight
+        XCTAssertGreaterThanOrEqual(height, panelHeight, "Snapshot canvas clips the full panel: \(name)")
         let size = CGSize(width: 540, height: height)
         // The real app orders its panel out while snoozed. Model that visibility boundary;
         // BarView alone intentionally does not implement window lifecycle.
@@ -193,9 +210,9 @@ final class VoiceBarSnapshotTests: XCTestCase {
         let host = NSHostingView(rootView: ZStack(alignment: .top) {
             (light ? Color(red: 0.88, green: 0.89, blue: 0.91) : Color(red: 0.16, green: 0.17, blue: 0.19))
             if !state.isHidden {
-                BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {}, includesPanelOutsets: true)
+                bar
             }
-        }.frame(width: size.width, height: size.height)
+        }.frame(width: size.width, height: size.height, alignment: .top)
             .environment(\.colorScheme, light ? .light : .dark)
             .environment(\.visualRenderTime, 0)
             .environment(\.dynamicTypeSize, .large)

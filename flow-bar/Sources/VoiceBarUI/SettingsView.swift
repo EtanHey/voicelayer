@@ -503,7 +503,7 @@ public struct SettingsView: View {
     public let footerPresentation: () -> VoiceBarFooterPresentation
     /// Opens the setup wizard (F3): General › Setup › Run setup again.
     public let onRunSetup: () -> Void
-    /// General › Version: the running bundle's version and release commit.
+    /// Sidebar footer: the running bundle's version and release commit.
     public let installedVersion: VoiceBarInstalledVersion
     /// Nil (tests, the UI E2E host) means no network check; the row then shows the version only.
     public let versionCheck: VoiceBarVersionCheck?
@@ -576,7 +576,7 @@ public struct SettingsView: View {
     @State private var isAdvancedExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @State private var microphoneDrag: MicrophoneDragState
-    /// Nil until the Version section first appears with a checker; then checking, then the result.
+    /// Nil until Settings first appears with a checker; then checking, then the result.
     @State private var versionStatus: VoiceBarVersionStatus?
     @FocusState private var focusedEditorField: DictEditorField?
 
@@ -830,7 +830,10 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        SettingsNavigationShell(selection: $selectedTab, footer: footerPresentation()) {
+        SettingsNavigationShell(
+            selection: $selectedTab, footer: footerPresentation(),
+            installedVersion: installedVersion, versionStatus: versionStatus
+        ) {
             switch selectedTab {
             case .dictionary:
                 dictionaryTab
@@ -865,6 +868,12 @@ public struct SettingsView: View {
         }
         // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
         .onAppear { onSelectedTabChange(selectedTab) }
+        // Once per Settings open; the checker retains its six-hour cache across windows.
+        .task {
+            guard let versionCheck, versionStatus == nil else { return }
+            versionStatus = .checking
+            versionStatus = await versionCheck.status(installed: installedVersion.version)
+        }
         .task(id: selectedTab) {
             guard selectedTab == .dictionary else { return }
             // UXP-1: the bundled rows come only from the daemon's reply; ask again if they never arrived.
@@ -1103,8 +1112,6 @@ public struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
-            versionSection
         }
         .formStyle(.grouped)
         .onAppear(perform: refreshMicrophoneSnapshot)
@@ -1146,48 +1153,6 @@ public struct SettingsView: View {
         }
         .onAppear {
             localVoiceBarHidden = isVoiceBarHidden()
-        }
-    }
-
-    // MARK: - General version
-
-    /// Where an update control would later sit. Read-only: no update action, no `voicelayer update`.
-    private var versionSection: some View {
-        Section("Version") {
-            LabeledContent("VoiceBar") {
-                Text(installedVersion.label)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            if let versionStatus {
-                LabeledContent("Updates") {
-                    Label {
-                        Text(versionStatus.message)
-                            .foregroundStyle(.secondary)
-                    } icon: {
-                        Image(systemName: versionStatus.symbolName)
-                            .foregroundStyle(versionStatusTint(versionStatus))
-                    }
-                    .labelStyle(SettingsVersionStatusLabelStyle())
-                    .accessibilityElement(children: .combine)
-                    .animation(.easeOut(duration: 0.2), value: versionStatus)
-                }
-            }
-        }
-        // At most once per Settings open: a reopened window is a new view; the checker caches for 6 hours.
-        .task {
-            guard let versionCheck, versionStatus == nil else { return }
-            versionStatus = .checking
-            versionStatus = await versionCheck.status(installed: installedVersion.version)
-        }
-    }
-
-    private func versionStatusTint(_ status: VoiceBarVersionStatus) -> Color {
-        switch status {
-        case .latest, .ahead: .green
-        case .available: .accentColor
-        case .checking, .couldNotCheck: .secondary
         }
     }
 
@@ -3179,16 +3144,6 @@ enum SettingsPermissionActions {
             if let url = URL(string: url) { openURL(url) }
         case .requestMicrophone:
             requestMicrophone(refresh)
-        }
-    }
-}
-
-/// Icon then text with a tight gap, matching the trailing value column of the other General rows.
-private struct SettingsVersionStatusLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 6) {
-            configuration.icon
-            configuration.title
         }
     }
 }

@@ -260,7 +260,11 @@ final class VoiceBarPresentationTests: XCTestCase {
                 .filter { !$0.isEmpty }.joined(separator: " ")
         }
         let capability = try GlassTextCapability.current.get()
-        let expectedNote = state.selectionFeedbackNote
+        let selectionNote = state.selectionFeedbackNote
+        // An overflowing compact status (for example "Release to send") already
+        // occupies this slot before a selection note appears. The note is inserted
+        // above that status; processing still leaves the slot empty.
+        let expectedNote = selectionNote ?? resolvedPresentation(note: nil).feedback?.statusText
         let deadline = ProcessInfo.processInfo.systemUptime + 10
         var bitmap: NSBitmapImageRep
         var previousPixels: Data?
@@ -281,7 +285,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             let pixels = Data(bytes: try XCTUnwrap(bitmap.bitmapData), count: bitmap.bytesPerRow * bitmap.pixelsHigh)
             if ((!capability.isReadable && expectedNote != nil)
                 || normalizedOCR(renderedText) == normalizedOCR(expectedNote ?? "")),
-               state.selectionFeedbackNote == expectedNote, pixels == previousPixels,
+               state.selectionFeedbackNote == selectionNote, pixels == previousPixels,
                let previousCaptureTime, capturedAt - previousCaptureTime >= 0.05 { break }
             previousPixels = pixels
             previousCaptureTime = capturedAt

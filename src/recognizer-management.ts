@@ -4,12 +4,13 @@ import { resetBackendCache } from "./stt";
 import { parakeetServer } from "./parakeet-server";
 import { whisperHasResidentHandle } from "./whisper-server";
 import { recognizerAssetPaths, readRecognizerAssets } from "./recognizer-assets";
-import { beginRecognizerTransition, finishRecognizerTransition, readRecognizerStatus,
+import { assertRecognizerNotDownloading, beginRecognizerTransition, finishRecognizerTransition, readRecognizerStatus,
   noteRecognizerEngine, noteRecognizerEffective, persistRecognizer, setRecognizerRecovery, type Recognizer } from "./recognizer-state";
 
 export function deleteRecognizer(engine: Recognizer): { outcome: "accept" | "reject"; reason?: string; recognizer_status: ReturnType<typeof readRecognizerStatus> } {
   let acquired = false, outcome: "accept" | "reject" = "accept", reason: string | undefined;
   try {
+    assertRecognizerNotDownloading(engine);
     beginRecognizerTransition(); acquired = true;
     const status = readRecognizerStatus(), other = engine === "parakeet" ? "whisper" : "parakeet";
     if (status.engines[engine].phase !== "sleeping" || (engine === "parakeet" ? parakeetServer.pid !== null : whisperHasResidentHandle())) throw new Error("recognizer-loaded");

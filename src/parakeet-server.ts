@@ -10,7 +10,7 @@ import { ModelResidency, modelIdleSeconds } from "./model-residency";
 import { residencyBusy } from "./model-residency-busy";
 import type { STTAttemptEvidence } from "./soundlayer/contracts";
 import { isCurrentProcessLockOwner } from "./process-lock";
-import { noteRecognizerEngine, confirmRecognizerCleanup, markRecognizerCleanupUnconfirmed } from "./recognizer-state";
+import { assertRecognizerNotDownloading, noteRecognizerEngine, confirmRecognizerCleanup, markRecognizerCleanupUnconfirmed } from "./recognizer-state";
 
 export interface ParakeetResponse {
   text: string;
@@ -188,6 +188,7 @@ export class ParakeetServer {
   }
 
   private async ensure(): Promise<Child> {
+    assertRecognizerNotDownloading("parakeet");
     if (this.closed) throw new Error("Parakeet owner is shut down");
     if (!this.options.command && !this.options.canLaunch?.()) throw new Error("Parakeet must be owned by the VoiceBar MCP daemon");
     if (this.child) {

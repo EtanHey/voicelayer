@@ -602,25 +602,20 @@ public enum VoiceBarNotchContract {
         }
     }
 
-    /// NOTCH1: grow the shell down by one note band. The top row is untouched. A shell without a lower body
-    /// gets one flush with both wings (the launcher's shape for History), widened symmetrically only when
-    /// the note needs it; a teleprompter or History body grows taller and keeps its content below the band.
+    /// Grow down inside the existing shell. Text must wrap rather than widen either side of the notch;
+    /// a teleprompter or History body keeps its existing width and its content below the note.
     static func addingTransientNoteBand(
         to geometry: VoiceBarNotchGeometry,
-        noteWidth: CGFloat
+        noteWidth _: CGFloat
     ) -> VoiceBarNotchGeometry {
-        let neededExtent = (noteWidth + 2 * transientNoteHorizontalInset - geometry.coreWidth) / 2
         let hasBody = geometry.lowerSurfaceHeight > 0
-        func extent(_ current: CGFloat, wing: CGFloat) -> CGFloat {
-            min(max(hasBody ? current : wing, neededExtent), max(current, wing, morphCanvasWingCapacity))
-        }
         return VoiceBarNotchGeometry(
             coreWidth: geometry.coreWidth,
             topHeight: geometry.topHeight,
             leadingWingWidth: geometry.leadingWingWidth,
             trailingWingWidth: geometry.trailingWingWidth,
-            bodyLeadingExtent: extent(geometry.bodyLeadingExtent, wing: geometry.leadingWingWidth),
-            bodyTrailingExtent: extent(geometry.bodyTrailingExtent, wing: geometry.trailingWingWidth),
+            bodyLeadingExtent: hasBody ? geometry.bodyLeadingExtent : geometry.leadingWingWidth,
+            bodyTrailingExtent: hasBody ? geometry.bodyTrailingExtent : geometry.trailingWingWidth,
             lowerSurfaceHeight: geometry.lowerSurfaceHeight + transientNoteBandHeight
         )
     }

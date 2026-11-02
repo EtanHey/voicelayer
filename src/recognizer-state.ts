@@ -32,6 +32,19 @@ export function persistRecognizer(recognizer: Recognizer): void {
 }
 let revision = 0, effective: Recognizer | null = null, phase: RecognizerPhase = "sleeping", fallbackReason: string | null = null;
 let requests = 0, transition = false, queuedRequests = 0;
+// Downloads own only their engine; admitted requests never join this work.
+const downloads = new Set<Recognizer>();
+export function assertRecognizerNotDownloading(engine: Recognizer): void {
+  if (downloads.has(engine)) throw new Error("download-active");
+}
+export function beginRecognizerDownload(engine: Recognizer): void {
+  assertRecognizerOwnerOpen();
+  assertRecognizerNotDownloading(engine);
+  if (transition) throw new Error("transition-active");
+  assertRecognizerCleanupConfirmed();
+  downloads.add(engine);
+}
+export function finishRecognizerDownload(engine: Recognizer): void { downloads.delete(engine); }
 let maintenance: Promise<void> | null = null;
 let releaseMaintenance: (() => void) | null = null;
 const owner = new AbortController();

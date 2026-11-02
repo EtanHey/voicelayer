@@ -13,6 +13,13 @@ public struct VoiceBarNotchFeedback: Equatable {
     public let noteHeight: CGFloat
     public var height: CGFloat { statusHeight + noteHeight }
     public static let maximumTextHeight: CGFloat = 72
+    public static let historyButtonWidth: CGFloat = 96
+    public static let historyButtonSpacing: CGFloat = 8
+
+    public static func messageWidth(_ width: CGFloat, opensHistory: Bool) -> CGFloat {
+        max(1, width - 2 * VoiceBarNotchContract.transientNoteHorizontalInset -
+            (opensHistory ? historyButtonWidth + historyButtonSpacing : 0))
+    }
 
     public static func textHeight(_ text: String, width: CGFloat) -> CGFloat {
         let rect = (text as NSString).boundingRect(
@@ -59,7 +66,8 @@ public struct VoiceBarNotchFeedback: Equatable {
             statusText: status, noteText: note, opensHistory: failure, replacesWingText: overflow, width: width,
             statusHeight: status.map {
                 max(VoiceBarNotchContract.transientNoteBandHeight,
-                    min(maximumTextHeight, Self.textHeight($0, width: width - 32)) + 10) + (failure ? 34 : 0)
+                    min(maximumTextHeight, Self.textHeight($0,
+                        width: Self.messageWidth(width, opensHistory: failure))) + 10)
             } ?? 0,
             noteHeight: note.map {
                 max(VoiceBarNotchContract.transientNoteBandHeight,
@@ -114,12 +122,14 @@ public struct VoiceBarNotchTransientNoteBand: View {
     }
 
     public var body: some View {
-        VStack(spacing: 6) {
-            message(viewport: height - 10 - (onOpenHistory == nil ? 0 : 34))
+        HStack(spacing: VoiceBarNotchFeedback.historyButtonSpacing) {
+            message(viewport: height - 10)
+                .frame(width: VoiceBarNotchFeedback.messageWidth(width, opensHistory: onOpenHistory != nil))
             if let onOpenHistory {
                 Button("Open History", action: onOpenHistory)
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .frame(width: VoiceBarNotchFeedback.historyButtonWidth)
                     .accessibilityHint("Opens the History settings window. Select a recording there to retry transcription.")
             }
         }
@@ -131,7 +141,8 @@ public struct VoiceBarNotchTransientNoteBand: View {
     }
 
     @ViewBuilder private func message(viewport: CGFloat) -> some View {
-        if VoiceBarNotchFeedback.textHeight(text, width: width - 32) > viewport {
+        if VoiceBarNotchFeedback.textHeight(text,
+            width: VoiceBarNotchFeedback.messageWidth(width, opensHistory: onOpenHistory != nil)) > viewport {
             VStack(spacing: 2) {
                 ScrollView(.vertical) { label }
                     .scrollIndicators(.visible)

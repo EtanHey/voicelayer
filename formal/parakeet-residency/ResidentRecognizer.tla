@@ -78,4 +78,31 @@ GateSpec == Init /\ [][GateSelect]_vars
 ProvisionedSelectable == "P" \in assetsPresent => GateCanSelect("P")
 MissingAssetsBlocked == \A e \in {"W","P"}: e \notin assetsPresent => ~GateCanSelect(e)
 GateDoesNotLoad == models = {}
+
+\* Download-only projection. pendingLegacy is per-engine in-flight ownership;
+\* capture is an admitted request waiting to enter the recognizer. BrokenLegacy
+\* reproduces the old download's maintenance owner across transfer/hash/runtime.
+DownloadBegin == /\ stage = "idle" /\ owner = "none" /\ ~request /\ ~capture
+                 /\ pendingLegacy' = TRUE /\ stage' = "transfer"
+                 /\ owner' = IF BrokenLegacy THEN "download" ELSE "none"
+                 /\ UNCHANGED <<models,desired,target,recovery,request,capture,hold,previous,assetsPresent,attempted>>
+DownloadAdvance == /\ stage \in {"transfer","verify"}
+                   /\ stage' = IF stage = "transfer" THEN "verify" ELSE "runtime"
+                   /\ UNCHANGED <<models,owner,desired,target,recovery,pendingLegacy,request,capture,hold,previous,assetsPresent,attempted>>
+DownloadAdmit == /\ pendingLegacy /\ ~capture /\ ~request
+                 /\ capture' = TRUE
+                 /\ UNCHANGED <<models,owner,stage,desired,target,recovery,pendingLegacy,request,hold,previous,assetsPresent,attempted>>
+DownloadRequestStart == /\ capture /\ owner = "none" /\ ~request
+                        /\ request' = TRUE /\ capture' = FALSE
+                        /\ UNCHANGED <<models,owner,stage,desired,target,recovery,pendingLegacy,hold,previous,assetsPresent,attempted>>
+DownloadPublish == /\ stage = "runtime"
+                   /\ owner \in {"none","download"}
+                   /\ stage' = "idle" /\ owner' = "none" /\ pendingLegacy' = FALSE
+                   /\ UNCHANGED <<models,desired,target,recovery,request,capture,hold,previous,assetsPresent,attempted>>
+\* Atomic publication changes no resident model and remains enabled while busy.
+DownloadNext == DownloadBegin \/ DownloadAdvance \/ DownloadAdmit \/ DownloadRequestStart \/
+                (RequestCompletes /\ UNCHANGED <<assetsPresent,attempted>>) \/ DownloadPublish
+DownloadSpec == Init /\ [][DownloadNext]_vars
+DownloadNeverBlocksAdmittedRequest == pendingLegacy /\ capture => ENABLED DownloadRequestStart
+VerifiedDownloadAlwaysPublishable == stage = "runtime" => ENABLED DownloadPublish
 =============================================================================
