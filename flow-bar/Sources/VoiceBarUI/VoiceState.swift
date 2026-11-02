@@ -388,8 +388,14 @@ public final class VoiceState {
     /// MICDROP2: CoreAudio evidence of a lost input device, bound to the daemon's `capture_id`; nil in tests.
     public var inputDeviceLossMonitor: InputDeviceLossMonitor?
 
+    /// Synchronous publication of cancellation eligibility, before any UI/IPC work.
+    @ObservationIgnored public var onHotkeyCancellationChange: ((Bool) -> Void)?
+    public var shouldHandleHotkeyEscape: Bool {
+        mode == .recording || mode == .transcribing || mode == .speaking
+    }
     public var mode: VoiceMode = .idle {
         didSet {
+            onHotkeyCancellationChange?(shouldHandleHotkeyEscape)
             if mode != .recording { inputDeviceLossMonitor?.endCapture() }
             clearSelectionBusyNoteIfSessionEnded()
             if mode == .recording || mode == .transcribing || mode == .disconnected || mode == .error {

@@ -1446,7 +1446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return outcome
     }
 
-    private func makeHotkeyManager() -> HotkeyManager {
+    func makeHotkeyManager() -> HotkeyManager {
         let manager = HotkeyManager(gesture: gestureStateMachine)
         manager.onKeyDown = { [weak self] in
             self?.handleHotkeyKeyDown(from: .native)
@@ -1522,6 +1522,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configureHotkeyCallbacks() {
+        voiceState.onHotkeyCancellationChange = { [weak self] active in
+            self?.gestureStateMachine.activity.setCancellationActive(active)
+        }
+        gestureStateMachine.activity.setCancellationActive(commandRouter.shouldHandleEscape)
         // Hold start → push-to-talk recording
         gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
             if phase == .pressing {

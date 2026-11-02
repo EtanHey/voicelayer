@@ -81,9 +81,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     var shouldHandleEscape: Bool {
-        voiceState.mode == .recording ||
-            voiceState.mode == .transcribing ||
-            voiceState.mode == .speaking
+        voiceState.shouldHandleHotkeyEscape
     }
 
     /// One owned Escape interrupts either direction through existing commands.
