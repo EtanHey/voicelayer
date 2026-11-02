@@ -8,7 +8,7 @@ CONSTANTS Fixed, PauseBeforeOpen, ResumeOnEveryEnd, SpeechLen, MaxSpeeches,
 VARIABLES s, pressPos, beforeRead, manualHold, f5Saw, transcribingBefore,
           issuedBefore, obligations
 vars == <<s, pressPos, beforeRead, manualHold, f5Saw, transcribingBefore, issuedBefore, obligations>>
-IDs == 1..MaxCaptures
+IDs == 1..MaxCaptures (* Total, never reused: pause/resume/pause/N6 needs a larger bound. *)
 Active(caps) == {c \in IDs : caps[c] # "idle"}
 Recording == {c \in IDs : s.caps[c] = "recording"}
 Transcribing == {c \in IDs : s.caps[c] = "transcribing"}
@@ -139,7 +139,7 @@ F5(g) ==
 LatePause ==
   /\ s.pendingPause /\ ~Settled /\ s.speech \in {"playing", "preparing"}
   /\ s' = [s EXCEPT !.speech = IF s.speech = "preparing" THEN "parked_preparing" ELSE "paused",
-                    !.pos = Boundary(pressPos), !.pausedAt = WordAt(pressPos), !.owner = "f5",
+                    !.pos = Boundary(s.pos), !.pausedAt = WordAt(s.pos), !.owner = "f5",
                     !.pendingPause = FALSE, !.event = "late_pause"]
 HoldRelease ==
   /\ s.held # "no"
@@ -195,6 +195,7 @@ NormalNext == Observe(NewSpeech \/ StartPlayback \/ TimingArrives \/ Tick \/ Deq
 Next == IF s.pendingPause THEN Observe(LatePause) ELSE NormalNext
 (* Clock and deadline callbacks progress; a transcription hang is explicitly ended
    by the per-identity deadline. No fairness on user input or ordinary settlement. *)
+(* PTT deadline fairness is a liveness assumption, not a cutoff while speaking; VAD needs its own assumption. *)
 Fair == (IF Fault = "NoFairness" THEN TRUE ELSE WF_vars(Observe(Clock)))
         /\ \A c \in IDs: WF_vars(Observe(Timeout(c)))
 Spec == Init /\ [][Next]_vars /\ Fair
@@ -208,7 +209,7 @@ TypeOK == s.speech \in {"none", "preparing", "playing", "paused", "parked_prepar
           /\ s.started \in 0..MaxSpeeches /\ s.held \in {"no", "hold", "locked"} /\ s.keyCap \in 0..MaxCaptures
           /\ s.timing \in {"none", "estimate", "real"} /\ manualHold \in BOOLEAN
           /\ s.stopWon \in BOOLEAN /\ s.pendingPause \in BOOLEAN /\ s.event \in STRING
-NoSpeechDuringOpenMic == ~Settled => s.speech # "playing"
+NoSpeechDuringOpenMic == ~Settled => s.speech # "playing" (* Includes transcribing captures under D-S4. *)
 F5PausesPlayingSpeech == f5Saw = "playing" /\ s.event \in F5Events
                          => s.speech = "paused" /\ s.owner = "f5" /\ Recording # {}
 F5HoldsPreparingRead == f5Saw = "preparing" /\ s.event \in F5Events
