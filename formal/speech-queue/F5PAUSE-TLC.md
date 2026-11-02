@@ -218,19 +218,25 @@ The 8.5-second preparation stall has no model latency budget or improvement clai
 
 ## Reproduction
 
-All TLC and Swift checks on this M4 run through the captain lock; no separate
-load-12 gate. From this worktree:
+All model gates run on the M1 Pro through its captain lock (5-minute load <12).
+Fetch lane-f/model from etanheyman@macbook-pro:Gits/voicelayer into the M1 worktree
+~/Gits/voicelayer/.worktrees/F-model-m1, check out the exact commit, and run
+bun install --frozen-lockfile without changing bun.lock. From that M1 worktree:
 
 ```bash
 set -euo pipefail
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
-~/.local/state/captain-2.2.61/heavy.sh F-model /opt/homebrew/bin/gtimeout -s TERM -k 10 900 bash formal/speech-queue/check.sh --receipt
+~/.local/state/captain-2.2.61/heavy.sh F-model /opt/homebrew/bin/gtimeout -s TERM -k 10 3320 bash formal/speech-queue/check.sh --receipt
 ```
 
 The jar is ~/.cache/tla/tla2tools.jar and must exist. TLC uses ParallelGC, 512 MB,
 one worker for isolated checks and two TLC workers in the same cross-check process,
 fp 0, seed 1 and per-run .build.noindex metadata. The single captain heavy lock
-covers both; the per-TLC 90-second bound is unchanged. --f5-only includes
+covers both; the per-TLC 90-second bound is unchanged. The original gate retains
+880 seconds excluding the cross-kill matrix, which has its own 2400-second supervisor:
+24 unchanged 90-second per-case limits plus 240 seconds of overhead on the slower M1.
+The outer 3320-second bound covers both budgets and shutdown; timings.json records
+isolated TLC, cross-kill, and reachability/runtime replay stages. --f5-only includes
 the F5 isolated checks and matrix, but excludes the legacy/runtime admission replays.
 --receipt regenerates the following tables from the actual logs; source/config and
 jar SHA-256 hashes are retained with results.json. Test preload stays enabled.
@@ -488,14 +494,14 @@ Error: Invariant ResumeFromPausedPosition is violated.
 66 states generated, 57 distinct states found, 46 states left on queue.
 The depth of the complete state graph search is 4.
 F5PauseFixed:
-Progress(9) at 2026-11-02 11:47:17: 72,114 states generated (72,114 s/min), 18,557 distinct states found (18,557 ds/min), 9,965 states left on queue.
-Progress(22) at 2026-11-02 11:47:53: 1,637,135 states generated, 178,577 distinct states found, 0 states left on queue.
+Progress(9) at 2026-11-02 13:14:26: 68,983 states generated (68,983 s/min), 18,005 distinct states found (18,005 ds/min), 9,751 states left on queue.
+Progress(22) at 2026-11-02 13:15:05: 1,637,135 states generated, 178,577 distinct states found, 0 states left on queue.
 Model checking completed. No error has been found.
 1637135 states generated, 178577 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 22.
 F5PauseFixedTranscribing:
-Progress(14) at 2026-11-02 11:47:59: 322,267 states generated (322,267 s/min), 46,744 distinct states found (46,744 ds/min), 4,600 states left on queue.
-Progress(20) at 2026-11-02 11:47:59: 415,239 states generated, 55,317 distinct states found, 0 states left on queue.
+Progress(14) at 2026-11-02 13:15:11: 298,626 states generated (298,626 s/min), 44,139 distinct states found (44,139 ds/min), 5,210 states left on queue.
+Progress(20) at 2026-11-02 13:15:12: 415,239 states generated, 55,317 distinct states found, 0 states left on queue.
 Model checking completed. No error has been found.
 415239 states generated, 55317 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 20.
@@ -652,8 +658,8 @@ Error: Invariant StopWins is violated.
 355 states generated, 248 distinct states found, 193 states left on queue.
 The depth of the complete state graph search is 5.
 F5PauseStuck:
-Progress(12) at 2026-11-02 11:48:17: 356,168 states generated (356,168 s/min), 62,715 distinct states found (62,715 ds/min), 21,460 states left on queue.
-Progress(22) at 2026-11-02 11:48:26: 1,637,135 states generated, 178,577 distinct states found, 0 states left on queue.
+Progress(12) at 2026-11-02 13:15:29: 368,941 states generated (368,941 s/min), 64,263 distinct states found (64,263 ds/min), 21,616 states left on queue.
+Progress(22) at 2026-11-02 13:15:38: 1,637,135 states generated, 178,577 distinct states found, 0 states left on queue.
 Error: Temporal properties were violated.
 /\ obligations = [AutoPauseNeverStuck |-> FALSE]
 /\ obligations = [AutoPauseNeverStuck |-> FALSE]
@@ -739,7 +745,8 @@ The depth of the complete state graph search is 4.
 The same-source gate passed 52 expected-result checks (7 PASS, 45 named expected
 FAIL), and the 24-by-16 cross-kill matrix completed. Fixed's full graph and the
 transcribing-boundary scenario passed safety plus the stronger temporal property.
-The per-TLC 90-second and total supervised 880-second limits were not increased.
+G1 separates the matrix's M1-sized 2400-second budget from the original gate's 880 seconds;
+every per-TLC 90-second limit and every correctness check remain unchanged.
 The reviewer StaleResumesPaused case fails both the behavioural stale-settlement
 property and persistent manual ownership. KeepOwner is an isolated owner-consistency
 kill, and NoFairness is an isolated liveness kill across every Fixed property.
