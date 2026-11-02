@@ -101,6 +101,8 @@ Every final paired gate runs the complete pause/runtime files and all changed
 socket/handler caller files (idempotency, socket residency, whisper residency,
 update-gate round1, error recovery, CLICK2 groundwork and recording review regressions),
 plus the approved integration repairs for the private-safety VM and MCP Ask schema.
+The full paused-Ask suite supplies explicit prompt word timings at its nonzero
+4200ms pause position, preserving every physical-exit, trim-failure and watchdog assertion.
 CLICK2 asserts exact
 containing-word offsets from explicit timing fixtures and one paused confirmation
 per preparation/admitted-chunk phase; repeated commands add no confirmation.
