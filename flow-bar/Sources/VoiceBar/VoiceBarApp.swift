@@ -3258,7 +3258,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.lastSettingsTab = tab
                 if tab == .transcription { self?.voiceState.refreshRecognizerStatus() }
             },
-            historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback }
+            historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback },
+            versionCheck: .live
         )
     }
 
