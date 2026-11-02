@@ -524,7 +524,7 @@ final class UIE2EFocusedGalleryTests: XCTestCase {
     func testRealRoutesProduceEveryFamilyWithoutHardwareOrTransport() throws {
         let (gallery, root) = try gallery()
         defer { try? FileManager.default.removeItem(at: root) }
-        XCTAssertEqual(gallery.items.count, 11)
+        XCTAssertEqual(gallery.items.count, 12)
         XCTAssertEqual(Set(gallery.items.map { $0.spec.family }), Set(["paste-feedback", "terminal", "busy", "selection-error"]))
         for item in gallery.items {
             XCTAssertEqual(item.actualText, item.spec.expectedText, item.spec.id)
@@ -636,7 +636,7 @@ final class UIE2EFocusedGalleryTests: XCTestCase {
         XCTAssertEqual(after["copyStateID"] as? String, "paste-not-inserted")
         XCTAssertEqual(after["copyControlLabel"] as? String, "Copy last dictation")
         let states = try XCTUnwrap(after["states"] as? [[String: Any]])
-        XCTAssertEqual(states.count, 11)
+        XCTAssertEqual(states.count, 12)
         XCTAssertEqual(states.first?["confirmation"] as? String, item.renderedVoice.confirmationText)
         XCTAssertEqual(Self.axTestFrame, UIE2EStateGallery.axFrame(CGRect(x: -100, y: 100, width: 300, height: 50), primaryTop: 1080))
     }

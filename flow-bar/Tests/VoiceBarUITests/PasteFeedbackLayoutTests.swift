@@ -9,7 +9,7 @@ import XCTest
 final class PasteFeedbackLayoutTests: XCTestCase {
     private var messages: [String] {
         let selectionFailures: [SelectionCaptureResult] = [
-            .clipboardChanged, .copyTimedOut, .copyEmpty, .copyFailed,
+            .clipboardChanged, .nothingSelected, .copyTimedOut, .copyEmpty, .copyFailed,
         ]
         return [PasteRecoveryFeedback.notInserted, PasteRecoveryFeedback.unverified,
                 PasteRecoveryFeedback.partial, MicDisconnectFeedback.pill(atMs: 42400)] + selectionFailures.map { result in
@@ -113,7 +113,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
             checked += 1
             throw XCTSkip("Synthetic OCR capability skip")
         }) { error in XCTAssertTrue(error is XCTSkip) }
-        XCTAssertEqual(checked, 96, "A skip must preserve all screen/message/queue/appearance renders")
+        XCTAssertEqual(checked, 108, "A skip must preserve all screen/message/queue/appearance renders")
     }
 
     private func contrastFixture(range: Int) throws -> CGImage {

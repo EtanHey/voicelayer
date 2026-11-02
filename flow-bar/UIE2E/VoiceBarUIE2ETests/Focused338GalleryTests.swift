@@ -12,6 +12,7 @@ extension VoiceBarFlowTests {
         "busy-f5-preview": "Busy with F5. Selection not read",
         "selection-clipboard-changed": "Clipboard\nReselect",
         "selection-copy-timeout": "Timed out\nReselect",
+        "selection-nothing-selected": "Select text\nfirst",
         "selection-copy-empty": "No text\nReselect",
         "selection-copy-failed": "Can't copy\nCheck A11y",
     ]

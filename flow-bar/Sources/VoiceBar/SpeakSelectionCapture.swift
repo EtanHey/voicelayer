@@ -221,7 +221,7 @@ final class SpeakSelectionCapture {
                             default: break
                             }
                         }
-                        complete(observed)
+                        complete(observed.resolvingEmptyAXSelection())
                     }
                 }
             }

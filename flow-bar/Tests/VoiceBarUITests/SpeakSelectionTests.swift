@@ -218,6 +218,7 @@ final class SpeakSelectionTests: XCTestCase {
                                   (.captureFailed, "Couldn't read the selection, try again"),
                                   (.clipboardRestoreFailed, "Couldn't restore the clipboard"),
                                   (.copyTimedOut, "Timed out\nReselect"),
+                                  (.nothingSelected, "Select text\nfirst"),
                                   (.copyEmpty, "No text\nReselect"),
                                   (.copyFailed, "Can't copy\nCheck A11y"),
                                   (.clipboardChanged, "Clipboard\nReselect")] {
