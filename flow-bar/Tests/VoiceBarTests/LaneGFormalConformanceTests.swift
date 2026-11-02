@@ -103,23 +103,21 @@ final class LaneGFormalConformanceTests: XCTestCase {
         }
         print("Confirmed TLC native F5 cancellation, direct-record gate, click and Escape counterexamples")
     }
-    func testTLCDeferredFinalSupersededByNewRecording() async throws {
-        guard ProcessInfo.processInfo.environment["VOICEBAR_NOTCH_TLC_CASES"] != nil else {
-            throw XCTSkip("Historical current-code counterexample replay is opt-in")
-        }
+    func testTLCFinalIsImmediateAndSurvivesNewRecording() async throws {
         for newRecording in [false, true] {
             let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                 recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
                 transcriptionVocabularyLoader: { [] }, transcriptionVocabularyAliasLoader: { [] })
             state.controlLayerEventWriter = { _, _ in }
             state.frontmostAppProvider = { nil }
-            state.minimumTranscribingDisplayDuration = 0.01
+            state.minimumTranscribingDisplayDuration = 60
             state.handleEvent(["type": "state", "state": "transcribing"])
             state.handleEvent(["type": "transcription", "text": "Synthetic final A"])
+            XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), ["Synthetic final A"])
             if newRecording { state.handleEvent(["type": "state", "state": "recording", "bar_owned": false]) }
             try await Task.sleep(for: .milliseconds(100))
-            XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), newRecording ? [] : ["Synthetic final A"])
+            XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), ["Synthetic final A"])
         }
-        print("Confirmed TLC deferred-final loss on a new recording event; control retains A")
+        print("Fixed replay: final A retained immediately and survives a new recording event")
     }
 }

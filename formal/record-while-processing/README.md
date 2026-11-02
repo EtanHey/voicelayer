@@ -111,3 +111,13 @@ The Swift replay also runs a positive timer control and reproduces the deferred-
 loss on a new recording event. This is admission/projection/event-handler conformance, not an audio, paste, filesystem-durability,
 or full-pipeline refinement proof. See the [conformance receipt](results/Conformance.log).
 No fixed-runtime replay is claimed before implementation.
+
+## Lane I, part 1: N8 implementation
+
+Final transcription events now retain words and dispatch paste synchronously through
+`VoiceState.handleFinalTranscription`; there is no deferred final task for a new
+recording to cancel. The historical display-duration setting cannot delay delivery.
+`N8Fixed.cfg` checks immediate delivery with the old admission/cancel policies, so
+this part does not imply N6/N7 implementation. Old display-floor and deferred-drop
+configs remain expected FAIL controls. Swift tests replay immediate retention and
+new recording events, receipt retention, late History results and paste dispatch.

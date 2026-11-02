@@ -19,6 +19,7 @@
     "OldDeferredFinalDrop": "N8FinalNotSuperseded",
     "ConcurrentGlobalCancel": "N7ScopedCancel",
     "DropCancelledMutant": "D3EveryTakeKept",
-    "Fixed": null
+    "Fixed": null,
+    "N8Fixed": null
   }
 }

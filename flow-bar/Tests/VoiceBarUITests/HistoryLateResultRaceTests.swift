@@ -1,9 +1,7 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// #186 review round 3 (High): a late History result must not touch a new dictation's deferred final. With a
-/// positive transcribing display floor, the new dictation's final is deferred; a late archived result arriving
-/// inside that window used to cancel and replace the single deferred task, losing the new dictation's words.
+/// A late History result must only update its own row, before or after immediate live delivery.
 @MainActor
 final class HistoryLateResultRaceTests: XCTestCase {
     private static let archivedPath = "/tmp/fixture/recordings/2025-12-31T00-00-00/audio.wav"
@@ -93,9 +91,9 @@ final class HistoryLateResultRaceTests: XCTestCase {
 
     func testALateHistoryResultDoesNotDropANewDictationsDeferredFinal() async throws {
         let harness = try startNewDictationAfterAbandonedHistoryRequest()
-        // Inside the display floor: the new final is deferred…
+        // The new final dispatches immediately.
         sendNewFinal(to: harness.state)
-        // …and the old History result lands before the deferral fires.
+        // An old History result still cannot replace it.
         sendLateArchivedFinal(to: harness.state)
         try? await Task.sleep(for: .milliseconds(300))
 
@@ -112,7 +110,6 @@ final class HistoryLateResultRaceTests: XCTestCase {
 
         assertNewDictationLanded(harness)
         XCTAssertFalse(harness.state.recentTranscriptionEntries.contains { $0.recordingPath == Self.archivedPath })
-        // Deferred behind the floor, the old result was the task the new final replaced: its rewrite never ran.
         XCTAssertTrue(harness.archiveChanges().contains(Self.archivedPath), "the old result still rewrote its row")
     }
 
@@ -127,9 +124,9 @@ final class HistoryLateResultRaceTests: XCTestCase {
         sendNewFinal(to: harness.state)
         sendLateArchivedFinal(to: harness.state)
         // Handled at once, not held behind the display floor, and without pasting.
-        XCTAssertEqual(harness.state.recentTranscriptionEntries.first?.recordingPath, Self.archivedPath)
-        XCTAssertEqual(harness.state.recentTranscriptionEntries.first?.text, Self.archivedText)
-        XCTAssertEqual(harness.pasted(), [])
+        XCTAssertEqual(harness.state.recentTranscriptionEntries.last?.recordingPath, Self.archivedPath)
+        XCTAssertEqual(harness.state.recentTranscriptionEntries.last?.text, Self.archivedText)
+        XCTAssertEqual(harness.pasted(), [Self.newText])
         XCTAssertTrue(harness.archiveChanges().contains(Self.archivedPath))
         try? await Task.sleep(for: .milliseconds(300))
 

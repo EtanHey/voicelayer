@@ -905,8 +905,6 @@ public final class VoiceState {
     private var barInitiatedTimeout: Task<Void, Never>?
     private var transcriptionTimeoutTask: Task<Void, Never>?
     private var recordingIdleCleanupTask: Task<Void, Never>?
-    private var deferredFinalTranscriptionTask: Task<Void, Never>?
-    private var deferredFinalTranscriptionRecordingPath: String?
     private var recordStartAckTimeoutTask: Task<Void, Never>?
     private var recordStartLateRecoveryTask: Task<Void, Never>?
     private var transcribingStartedAt: Date?
@@ -1449,6 +1447,7 @@ public final class VoiceState {
     public var recordStartAckTimeout: Duration = .seconds(2)
     public var recordStartLateRecoveryWindow: Duration = .seconds(10)
     public var recordingIdleFinalTranscriptGrace: Duration = .seconds(2)
+    /// Cosmetic compatibility setting; never delays final-result retention or delivery.
     public var minimumTranscribingDisplayDuration: TimeInterval = 0.65
 
     public init(
@@ -1897,7 +1896,6 @@ public final class VoiceState {
     public func dismissError() {
         pendingIntent = nil
         errorMessage = nil
-        cancelDeferredFinalTranscription()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
@@ -1935,7 +1933,6 @@ public final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
-        cancelDeferredFinalTranscription()
         recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
@@ -2055,7 +2052,6 @@ public final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
-        cancelDeferredFinalTranscription()
         recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
@@ -2503,7 +2499,6 @@ public final class VoiceState {
         recordingStateUptimeMs = nil
         didLogFirstRecordingAudioLevel = false
         captureLive = false
-        cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
@@ -2610,16 +2605,7 @@ public final class VoiceState {
                     if parkedRead != nil { scheduleParkedReadRestore() }
                 }
                 if barInitiatedRecording, mode == .transcribing {
-                    if idleSource == "recording", deferredFinalTranscriptionTask != nil {
-                        pendingRecordingIdleAfterFinal = true
-                        return
-                    }
-
-                    // Ignore stale idle from losing clients so the bar keeps
-                    // the thinking state until the winning transcription lands.
-                    // If a final transcript is already pending its minimum UI
-                    // display window, ignore even recording-sourced idle so the
-                    // pill stays blue until paste/history handling completes.
+                    // Ignore passive-client idle until the owning recording settles.
                     if idleSource != "recording" {
                         return
                     }
@@ -2634,8 +2620,7 @@ public final class VoiceState {
                     modelsRecordingReason = nil
                     releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
                     barInitiatedTimeout?.cancel()
-                    if historyRetranscriptionRequest.currentPath() != nil,
-                       deferredFinalTranscriptionTask == nil {
+                    if historyRetranscriptionRequest.currentPath() != nil {
                         historyRetranscriptionRequest.clear(removeSuppression: true)
                     }
                     scheduleRecordingIdleCleanupIfNeeded()
@@ -2695,7 +2680,6 @@ public final class VoiceState {
                 }
                 selectionReadIsPreparing = isPreparing
                 selectionReadHash = event["text_hash"] as? String
-                cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
@@ -2769,7 +2753,6 @@ public final class VoiceState {
                 isRecordingHandoffPending = false
                 pendingMicDisconnectNotice = nil
                 let startsNewRecording = mode != .recording
-                cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 // AIDEV-NOTE: `bar_owned` is optional on the wire. Only explicit `true` confirms
                 // a local bar capture; explicit `false` confirms remote ownership, while absence
                 // leaves the ownership gate untouched and fails closed for auto-paste.
@@ -2954,15 +2937,8 @@ public final class VoiceState {
                     ? DictationReceipt.parse(event["dictation_receipt"])
                     : nil
 
-                if scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
-                    trimmed,
-                    recordingPath: normalizedRecordingPath,
-                    dictationReceipt: dictationReceipt,
-                    recordingCreatedAt: recordingCreatedAt,
-                    recordingIsLatest: recordingIsLatest
-                ) {
-                    return
-                }
+                // N8: history retention and paste dispatch belong to the final-result event.
+                // Presentation timing must never hold or supersede the words.
                 handleFinalTranscription(
                     trimmed,
                     recordingPath: normalizedRecordingPath,
@@ -3136,8 +3112,7 @@ public final class VoiceState {
                 releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
                 barInitiatedTimeout?.cancel()
                 recordingIdleCleanupTask?.cancel()
-                cancelDeferredFinalTranscription()
-                pendingRecordingIdleAfterFinal = false
+                        pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 clearRecordStartLateRecovery(clearPasteTarget: false)
                 transcribingStartedAt = nil
@@ -3263,7 +3238,6 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
-        cancelDeferredFinalTranscription()
         recordStartAckTimeoutTask?.cancel()
         clearRecordStartLateRecovery(clearPasteTarget: false)
         pendingRecordingIdleAfterFinal = false
@@ -3787,21 +3761,6 @@ public final class VoiceState {
         isRecordingHoldEngaged = false
     }
 
-    private func cancelDeferredFinalTranscription() {
-        deferredFinalTranscriptionTask?.cancel()
-        deferredFinalTranscriptionTask = nil
-        deferredFinalTranscriptionRecordingPath = nil
-    }
-
-    private func cancelDeferredFinalTranscriptionUnlessHistoryRetranscription() {
-        guard let path = deferredFinalTranscriptionRecordingPath,
-              historyRetranscriptionRequest.suppressesPaste(for: path)
-        else {
-            cancelDeferredFinalTranscription()
-            return
-        }
-    }
-
     private func clearHistoryRetranscriptionRequest(removeSuppression: Bool) {
         historyRetranscriptionRequest.clear(removeSuppression: removeSuppression)
     }
@@ -3850,37 +3809,6 @@ public final class VoiceState {
             onModeChange?(.transcribing)
         }
         expandFromCollapse()
-    }
-
-    private func scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
-        _ text: String,
-        recordingPath: String?,
-        dictationReceipt: DictationReceipt?,
-        recordingCreatedAt: Date? = nil,
-        recordingIsLatest: Bool = false
-    ) -> Bool {
-        guard mode == .transcribing, let transcribingStartedAt else { return false }
-
-        let elapsed = currentDateProvider().timeIntervalSince(transcribingStartedAt)
-        let remainingDisplayDuration = minimumTranscribingDisplayDuration - elapsed
-        guard remainingDisplayDuration > 0 else { return false }
-
-        cancelDeferredFinalTranscription()
-        deferredFinalTranscriptionRecordingPath = recordingPath
-        deferredFinalTranscriptionTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(remainingDisplayDuration))
-            guard let self, !Task.isCancelled else { return }
-            deferredFinalTranscriptionTask = nil
-            deferredFinalTranscriptionRecordingPath = nil
-            handleFinalTranscription(
-                text,
-                recordingPath: recordingPath,
-                dictationReceipt: dictationReceipt,
-                recordingCreatedAt: recordingCreatedAt,
-                recordingIsLatest: recordingIsLatest
-            )
-        }
-        return true
     }
 
     /// A result for a History request whose live state was already cleaned up. Only a nonempty final touches
@@ -3937,7 +3865,6 @@ public final class VoiceState {
             return
         }
         transcriptionTimeoutTask?.cancel()
-        cancelDeferredFinalTranscription()
         transcribingStartedAt = nil
         transcribingStatusText = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
@@ -4046,7 +3973,6 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
-        cancelDeferredFinalTranscription()
         recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false

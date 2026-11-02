@@ -3,9 +3,9 @@
   "runnerSHA256": "94c5365f361d0423750ce4c04f547f890173ab6804949c00ba1fc2534314e167",
   "sourceHashes": {
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "796417c6cf8b1ff6e98d552bd98da410b2caf72498fa70065fc3351f4181c4a1",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "df4a24033276bb0f0dba45e343bff6c3d1306bd7e201014f500a122b61f72877",
-    "src/input.ts": "93fb052c3aac50743dbb97937e101da8cd3c38dea66214b4ee486e265b3fe473",
-    "src/socket-handlers.ts": "a7c995bf08443d45a7e8b5994c2887881547ae7902d85cc505794b50a458bbbd",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "34fb2ea99c75b4d56a7ff214adf290fa329abf2dc4fbe411a407890c1e4505eb",
+    "src/input.ts": "c93e6b1bec2e0440ec7ce0f61bbb0e87a8f866f2fd3bbe0b064f45cc5e1254f2",
+    "src/socket-handlers.ts": "f16f7849a82858860dca2f550e73a6eff318ea9074e6abb8025bc67f084c75b3",
     "src/recording-state.ts": "579d74ce2d05ff9c21bd7f80f57559461ea666dd23a02f6411bbf3dc7840461e",
     "src/session-booking.ts": "8354241ad3c54e1b2333630c095178e2da77dce049e8ca3a44ae55c5653b5b62",
     "src/mcp-server-daemon.ts": "105b601474c8260741f9513a6aee200dc08ab6c8f6bf2c0acf033ab075484b3d"
@@ -20,7 +20,8 @@
     "OldDeferredFinalDrop": "b541043c2733ec99aedf44fcb8f6e46e4e28f0d561e903c07a6c72dff23d57f9",
     "ConcurrentGlobalCancel": "d4a0c2aacdcd093ecaebba449dfdf9ce418bae61e155a7f3aa92a21ae5c45291",
     "DropCancelledMutant": "8e15258b373861ac3ba9899da0cf95e9a4d4d7c95e68c6eda087bf78d471e037",
-    "Fixed": "ece28ee0b11ad73a97b9751d186e0c078e2c00b5a33a35f0179f70be435cf3f4"
+    "Fixed": "ece28ee0b11ad73a97b9751d186e0c078e2c00b5a33a35f0179f70be435cf3f4",
+    "N8Fixed": "8462ea18d9300494aca99c1f6d3b6e41406c40d47233faef131426cd0e01a72e"
   },
   "tlcJarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
 }

@@ -1866,7 +1866,7 @@ final class VoiceStatePasteTests: XCTestCase {
         )
     }
 
-    func testFastFinalTranscriptionKeepsBlueStateUntilPendingRecordingIdleCanApply() async {
+    func testFastFinalTranscriptionDispatchesBeforeDisplayFloor() async {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.minimumTranscribingDisplayDuration = 0.12
@@ -1893,8 +1893,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "source": "recording",
         ])
 
-        XCTAssertEqual(state.mode, .transcribing)
-        XCTAssertEqual(pastedTexts, [])
+        XCTAssertEqual(pastedTexts, ["fast final transcript"])
 
         do {
             let settled = await settle { !pastedTexts.isEmpty && state.mode == .idle }
