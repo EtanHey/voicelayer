@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
+import { hasWavAudio, prepareSpeechAiff } from "./setup/speech-fixture";
 import {
   GOLDEN_FIXTURE_PATH,
   loadSmartChunkGolden,
@@ -598,9 +599,11 @@ const SYNTH_WAV_REVERSED = join(FIXTURE_DIR, "speech-silence-speech-reversed.wav
 const SYNTH_GAP_SECONDS = 1.2;
 const hasSay = whichOk("say");
 const hasSox = whichOk("sox");
-const synthReady = hasSay && hasSox;
+const synthFailure = hasSay && hasSox ? buildSynthFixture() : null;
+const synthReady = hasSay && hasSox && synthFailure === null;
+if (synthFailure) console.error(`[pause-map] SKIPPING synthetic-WAV VAD tests — ${synthFailure}`);
 
-if (!synthReady) {
+if (!hasSay || !hasSox) {
   console.error(
     `[pause-map] SKIPPING synthetic-WAV VAD test — missing: ${[
       hasSay ? null : "say",
@@ -611,8 +614,8 @@ if (!synthReady) {
   );
 }
 
-function buildSynthFixture(): void {
-  if (existsSync(SYNTH_WAV) && existsSync(SYNTH_WAV_REVERSED)) return;
+function buildSynthFixture(): string | null {
+  if (hasWavAudio(SYNTH_WAV) && hasWavAudio(SYNTH_WAV_REVERSED)) return null;
   mkdirSync(FIXTURE_DIR, { recursive: true });
   const run = (cmd: string[]): void => {
     const proc = Bun.spawnSync(cmd, { env: process.env, cwd: FIXTURE_DIR });
@@ -622,8 +625,13 @@ function buildSynthFixture(): void {
       );
     }
   };
-  run(["say", "-o", "a.aiff", "The morning train left the station a few minutes behind schedule."]);
-  run(["say", "-o", "b.aiff", "She poured the coffee slowly and watched the steam rise."]);
+  for (const [file, text] of [
+    ["a.aiff", "The morning train left the station a few minutes behind schedule."],
+    ["b.aiff", "She poured the coffee slowly and watched the steam rise."],
+  ]) {
+    const failure = prepareSpeechAiff(join(FIXTURE_DIR, file), text);
+    if (failure) return failure;
+  }
   run(["sox", "a.aiff", "-r", "16000", "-c", "1", "-b", "16", "a.wav"]);
   run(["sox", "b.aiff", "-r", "16000", "-c", "1", "-b", "16", "b.wav"]);
   run([
@@ -635,6 +643,7 @@ function buildSynthFixture(): void {
     "-r", "16000", "-c", "1", "-b", "16", SYNTH_WAV,
   ]);
   run(["sox", SYNTH_WAV, SYNTH_WAV_REVERSED, "reverse"]);
+  return null;
 }
 
 const synthTest = synthReady ? test : test.skip;
@@ -680,7 +689,6 @@ describe("computePauseMap over synthesized speech", () => {
   synthTest(
     "finds the inserted gap and nothing else",
     async () => {
-      buildSynthFixture();
       const wav = new Uint8Array(readFileSync(SYNTH_WAV));
       const info = parseWavAudioInfo(wav);
       expect(info?.sampleRate).toBe(16000);
@@ -709,7 +717,6 @@ describe("computePauseMap over synthesized speech", () => {
   synthTest(
     "a sub-minimum gap is not a pause",
     async () => {
-      buildSynthFixture();
       const wav = new Uint8Array(readFileSync(SYNTH_WAV));
       // Raise the floor above the inserted gap: the same audio now has no cut point.
       const spans = await computePauseMap(wav, {
@@ -723,7 +730,6 @@ describe("computePauseMap over synthesized speech", () => {
   synthTest(
     "chooseChunkEnd falls back to the clock when the only pause is outside the window",
     async () => {
-      buildSynthFixture();
       const spans = await computePauseMap(new Uint8Array(readFileSync(SYNTH_WAV)));
       // The fixture is ~7.6 s long, so its single pause is far below a 20 s floor.
       expect(chooseChunkEnd(0, spans)).toBe(SMART_CHUNK_MAX_SECONDS);
@@ -770,7 +776,6 @@ describe("VAD isolation", () => {
   synthTest(
     "a pause map computed mid-recording leaves the live decisions bit-identical",
     async () => {
-      buildSynthFixture();
       const live = new Uint8Array(readFileSync(SYNTH_WAV));
       const offlineAudio = new Uint8Array(readFileSync(SYNTH_WAV_REVERSED));
 
@@ -795,7 +800,6 @@ describe("VAD isolation", () => {
   synthTest(
     "a pause map running concurrently with a live stream changes nothing",
     async () => {
-      buildSynthFixture();
       const live = new Uint8Array(readFileSync(SYNTH_WAV));
       const offlineAudio = new Uint8Array(readFileSync(SYNTH_WAV_REVERSED));
 
@@ -817,7 +821,6 @@ describe("VAD isolation", () => {
   synthTest(
     "two isolated sessions do not see each other's state",
     async () => {
-      buildSynthFixture();
       const wav = new Uint8Array(readFileSync(SYNTH_WAV));
 
       const solo = await createVADSession();
@@ -842,7 +845,6 @@ describe("VAD isolation", () => {
   );
 
   synthTest("reset() clears only the session it is called on", async () => {
-    buildSynthFixture();
     const wav = new Uint8Array(readFileSync(SYNTH_WAV));
 
     const own = await createVADSession();
