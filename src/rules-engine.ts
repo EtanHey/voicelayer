@@ -1,4 +1,4 @@
-import { dictionarySurfacePattern, dictionaryOccurrencePattern, isWholeDictionarySurface } from "./stt-dictionary-matching";
+import { dictionarySurfacePattern, dictionaryOccurrencePattern, dictionaryReplacement, isWholeDictionarySurface } from "./stt-dictionary-matching";
 
 /**
  * Dev-aware post-processing rule engine for dictation output.
@@ -1338,7 +1338,7 @@ function applyAliases(
       if (rewrittenSpans.some(([left, right]) => start < right && end > left)) continue;
       const prefix = match[1];
       const replacement = !prefix || prefixMode === "plain"
-        ? to
+        ? dictionaryReplacement(match[0], fromLower, to)
         : prefixMode === "separate-prefix"
           ? `${prefix} ${to}`
           : `${prefix}-${to}`;
