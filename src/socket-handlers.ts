@@ -1,3 +1,4 @@
+import { deleteRecognizer } from "./recognizer-management";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
 import { selectRecognizer } from "./recognizer-controller";
@@ -645,6 +646,10 @@ function handleSocketCommandAdmitted(
       // voice is busy, then returns its reason and fresh residency snapshot.
       if (residencyBusy()) return handleResidencyCommand(command);
       return withRecognizerMaintenance(command, () => handleResidencyCommand(command));
+    case "delete_recognizer": {
+      const result = deleteRecognizer(command.engine);
+      return { ...buildAck(command, result.outcome, result.reason), recognizer_status: readRecognizerStatus() };
+    }
     case "get_recognizer_status":
       return { type: "recognizer_status", ...(command.id ? { id: command.id } : {}), recognizer_status: readRecognizerStatus() };
     case "set_recognizer":

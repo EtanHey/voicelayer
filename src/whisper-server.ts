@@ -162,6 +162,8 @@ interface CoreMLRuntimeFlag {
 }
 
 let serverState: WhisperServerState | null = null;
+/** Includes adopted handles: disk mutation must not race any resident engine. */
+export function whisperHasResidentHandle(): boolean { return serverState !== null; }
 const whisperResidency = new ModelResidency(async () => {
   if (!serverState || serverState.adopted) return;
   const result = await unloadOwnedServerWithEscalation(residencyBusy, true);
