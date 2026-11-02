@@ -1,3 +1,5 @@
+import { runBarCaptureWithPausedRead } from "../f5-capture";
+import { registerBarRecorderExit } from "../recording-jobs";
 import { STOP_FILE } from "../paths";
 import { clearStopSignal } from "../session-booking";
 import { finishBarCapture, recordingJobsSnapshot, deliverInputTranscription, acknowledgeDictationDelivery } from "../recording-jobs";
@@ -590,4 +592,37 @@ it("R2-01 uses clone alignment and retains its display word index", async () => 
   expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 2000 });
   await players.at(1);
   expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ word_index: 2, offset_ms: 2000 });
+});
+
+
+it("R2-01 Lane I failed-take promise does not release the read before physical exit proof", async () => {
+  await startTenSecondRead();
+  const exit = deferred<void>();
+  const capture = runBarCaptureWithPausedRead("failed-exit-proof", async () => {
+    registerBarRecorderExit(exit.promise);
+    throw new Error("fixture recorder failure");
+  }, () => {}, () => {}, undefined, { failureSettlementMs: 1 });
+  try {
+    await expect(capture).rejects.toThrow("fixture recorder failure");
+    expect(recordingJobsSnapshot().capture_error).toContain("Recorder exit unconfirmed");
+    expect(tts.hasF5Capture()).toBe(true);
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(0);
+    exit.resolve();
+    await settleRecordingJobs(); await fixtureCheckpoint();
+    expect(tts.hasF5Capture()).toBe(false);
+    expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
+  } finally { exit.resolve(); await settleRecordingJobs(); }
+});
+
+it("R2-01 Lane I legacy delivery capability is passed through the single adapter", async () => {
+  await startTenSecondRead();
+  await runBarCaptureWithPausedRead("legacy-no-ack", () => finishSyntheticCapture(async () => {
+    await deliverInputTranscription({ type: "transcription", text: "legacy fixture" });
+    return "legacy fixture";
+  }), () => {}, () => {}, undefined, { expectsAck: false });
+  await fixtureCheckpoint();
+  expect(recordingJobsSnapshot().recording_jobs).toHaveLength(0);
+  expect(acknowledgeDictationDelivery("legacy-no-ack", "legacy-no-ack")).toBe(false);
+  expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
 });
