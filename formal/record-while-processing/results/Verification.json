@@ -1,0 +1,131 @@
+{
+  "status": "CODE_COMPLETE_FOCUSED_PROOF_ONLY",
+  "base": "01ca5dec",
+  "runtimeCommit": "f6cebe3e2916b49b37c17cf7d4eff42bbb169f04",
+  "checks": [
+    {
+      "command": "/Users/etanheyman/.local/state/captain-2.2.61/heavy.sh I bun test src/__tests__/tts-long-read-runtime.test.ts src/__tests__/socket-byte-framing.test.ts src/__tests__/qwen3-cancel.test.ts src/__tests__/recognizer-management.test.ts src/__tests__/update-gate-review.test.ts src/__tests__/update-gate-g2f.test.ts src/__tests__/input-durability.test.ts",
+      "passed": 379,
+      "failed": 0,
+      "log": "docs.local/lane-i/readiness-bun-final.log",
+      "logSHA256": "8ac5a96f3a211a087f5ad84ce097f7f258d882325f7993c31ad15219612ef603"
+    },
+    {
+      "command": "/Users/etanheyman/.local/state/captain-2.2.61/heavy.sh I bun test src/__tests__/recording-jobs.test.ts src/__tests__/recording-take-queue.test.ts src/__tests__/ack-protocol.test.ts src/__tests__/socket-handlers-idempotency.test.ts src/__tests__/socket-client.test.ts src/__tests__/socket-stop-queue.test.ts src/__tests__/socket-residency.test.ts src/__tests__/whisper-residency.test.ts src/__tests__/update-gate-round1.test.ts src/__tests__/update-gate-admission.test.ts",
+      "passed": 133,
+      "failed": 0,
+      "log": "docs.local/lane-i/runtime-bun.log",
+      "logSHA256": "9915f076dba4d8f71fbcc5e293af2b536110b187be2654fb7cd1b03ceb65d3c7"
+    },
+    {
+      "command": "nice -n 19 bun test src/__tests__/input-durability.test.ts --test-name-pattern PTT-TIMEOUT",
+      "passed": 2,
+      "failed": 0,
+      "log": "docs.local/lane-i/ptt-edge-cases-final.log",
+      "logSHA256": "2f8e29ca573577e12a9fe6aad97ecc4fae9f21c3687dae6d383ef92ce849c627"
+    },
+    {
+      "command": "/Users/etanheyman/.local/state/captain-2.2.61/heavy.sh I swift test --package-path flow-bar --scratch-path .build.noindex/swift --filter 'RecordingJobOwnershipTests|VoiceBarCommandRouterTests|HotkeyManagerTests|SocketServerTests|DictationNeverTouchesPasteboardTests|SettingsArchiveIndexTests/testReleaseDuringAPrewarmLeavesNothingBehind|HistoryLateResultRaceTests|DictationReceiptTests|CancelledTranscriptionTests|VoiceStateTests|VoiceStatePasteTests'",
+      "passed": 361,
+      "failed": 0,
+      "log": "docs.local/lane-i/runtime-swift.log"
+    },
+    {
+      "command": "bash formal/record-while-processing/conformance.sh",
+      "bunPassed": 2,
+      "swiftPassed": 6,
+      "failed": 0,
+      "log": "formal/record-while-processing/results/Conformance.log"
+    },
+    {
+      "command": "bash formal/record-while-processing/check.sh",
+      "positiveConfigs": [
+        "Current",
+        "Fixed",
+        "N8Fixed"
+      ],
+      "expectedInvariantFailures": 7,
+      "log": "docs.local/lane-i/lifecycle-tlc-final.log"
+    },
+    {
+      "command": "bash formal/ptt-silence-timeout/check.sh",
+      "positiveConfigs": [
+        "Fixed"
+      ],
+      "expectedInvariantFailures": 3,
+      "expectedTemporalFailures": 1,
+      "log": "docs.local/lane-i/ptt-tlc-final.log"
+    },
+    {
+      "command": "nice -n 19 bun run typecheck",
+      "exit": 0,
+      "log": "docs.local/lane-i/typecheck-final.log"
+    }
+  ],
+  "parts": [
+    {
+      "row": "N8",
+      "commit": "1b269db2",
+      "source": "flow-bar/Sources/VoiceBarUI/VoiceState.swift:3122",
+      "change": "Remove deferred final task and cosmetic delay from delivery; final text cannot be cancelled by B",
+      "commitDiffs": [
+        {
+          "commit": "1b269db2",
+          "insertionsExcludingResults": 51,
+          "deletionsExcludingResults": 124
+        }
+      ]
+    },
+    {
+      "row": "N6/N7",
+      "commits": [
+        "79e7a44c",
+        "3e0d3418",
+        "f6cebe3e"
+      ],
+      "source": "src/socket-handlers.ts:462; flow-bar/Sources/VoiceBarUI/VoiceState.swift:1010",
+      "change": "Independent mic/worker owners, scoped AbortSignals, identity-bound guard and two 325ms ring ticks; Escape targets mic before processing",
+      "commitDiffs": [
+        {
+          "commit": "79e7a44c",
+          "insertionsExcludingResults": 278,
+          "deletionsExcludingResults": 0
+        },
+        {
+          "commit": "3e0d3418",
+          "insertionsExcludingResults": 607,
+          "deletionsExcludingResults": 83
+        },
+        {
+          "commit": "f6cebe3e",
+          "insertionsExcludingResults": 629,
+          "deletionsExcludingResults": 65
+        }
+      ]
+    },
+    {
+      "row": "D3/PTT",
+      "commit": "3e0d3418",
+      "source": "src/input.ts:2586; src/input.ts:3026",
+      "change": "Renew PTT silence deadline on speech, defer under unclassified PCM, retain failed/empty/cancelled/timed-out captures",
+      "commitDiffs": [
+        {
+          "commit": "3e0d3418",
+          "insertionsExcludingResults": 607,
+          "deletionsExcludingResults": 83
+        }
+      ]
+    }
+  ],
+  "remaining": [
+    "Lane A consumes processingCancellationGuard.takeID, remainingTicks, isRingActive and ringProgress; no notch visual files modified",
+    "Captain reconciles Lane G lifecycle invariant/mutant expansion; Lane I changed no lifecycle operators/invariants",
+    "Lead-routed review and installed-candidate native macOS acceptance; no install, real mic, audio emission or input synthesis authorized",
+    "No full Bun/Swift suite run; only focused suites authorized"
+  ],
+  "cleanup": {
+    "worktree": "/Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915",
+    "matchingTestProcesses": [],
+    "swiftCacheRemoved": true
+  }
+}

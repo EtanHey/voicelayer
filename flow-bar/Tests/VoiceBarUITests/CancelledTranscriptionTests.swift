@@ -40,22 +40,16 @@ final class CancelledTranscriptionTests: XCTestCase {
         XCTAssertNil(state.confirmationText)
     }
 
-    func testCancelDropsADeferredFinalInsteadOfSavingOrPastingIt() {
+    func testCancelAfterFinalCannotEraseAlreadyDispatchedWords() {
         let state = fixtureState()
         state.minimumTranscribingDisplayDuration = 60
         var pasted: [String] = []
-        state.pasteHandler = { pasted.append($0)
-            return true
-        }
-        state.pasteboardWriter = { pasted.append($0) }
-        state.handleEvent(["type": "transcription", "text": "Synthetic deferred words",
+        state.pasteHandler = { pasted.append($0); return true }
+        state.handleEvent(["type": "transcription", "text": "Synthetic final words",
                            "recording_path": "/tmp/synthetic-cancel/audio.wav"])
+        XCTAssertEqual(pasted, ["Synthetic final words"])
         state.cancel()
-        XCTAssertEqual(state.mode, .idle)
-        XCTAssertTrue(state.latestReusableTranscript.isEmpty)
-        XCTAssertNil(state.lastDictationCardEntry)
-        XCTAssertTrue(pasted.isEmpty)
-        XCTAssertEqual(state.confirmationText,
-                       "Transcription cancelled. Audio saved. Re-transcribe it from History when processing finishes.")
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.text, "Synthetic final words")
+        XCTAssertEqual(pasted, ["Synthetic final words"])
     }
 }

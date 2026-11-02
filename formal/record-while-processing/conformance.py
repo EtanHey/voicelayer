@@ -19,18 +19,29 @@ def stage(label):
 
 
 cases = {}
-for label in current:
+for label in fixed:
     if field(label, "event") != "socket":
         continue
     target = field(label, "target")
     after = stage(label)
-    outcome = "accept" if after[target] == "recording" else "reject"
+    assert after[target] == "recording", "Fixed admission must start its target"
     worker = any(value in {"transcribing", "cancelling"} for value in after.values())
-    assert outcome == ("reject" if worker else "accept"), "Daemon and UI ownership were conflated"
-    row = {"state": "transcribing" if worker else "idle", "outcome": outcome}
+    row = {"state": "transcribing" if worker else "idle", "outcome": "accept"}
     cases[json.dumps(row, sort_keys=True)] = row
-assert {row["outcome"] for row in cases.values()} == {"accept", "reject"}
-(cache / "conformance.json").write_text(json.dumps(list(cases.values())))
+assert {row["state"] for row in cases.values()} == {"idle", "transcribing"}
+cancels = {}
+for source, target in graph["edges"]:
+    before, after = graph["nodes"][source], graph["nodes"][target]
+    origin = field(after, "event")
+    if origin not in {"Escape", "click"} or stage(before).get("A") != "transcribing":
+        continue
+    if stage(before).get("B") not in {"fresh", "recording"}:
+        continue
+    row = {"origin": origin, "target": field(after, "target"),
+           "hasMic": stage(before)["B"] == "recording"}
+    cancels[json.dumps(row, sort_keys=True)] = row
+assert len(cancels) == 5, cancels
+(cache / "conformance.json").write_text(json.dumps(dict(admissions=list(cases.values()), cancellations=list(cancels.values()))))
 predicates = {
     "A pastes while B records": lambda x: stage(x) == {"A": "pasted", "B": "recording"},
     "B cancelled while A still transcribes": lambda x: stage(x) == {"A": "transcribing", "B": "cancelled"},
@@ -44,6 +55,6 @@ coverage["Escape cancels before cooldown completes"] = sum(
     and "ring |-> FALSE" in graph["nodes"][target]
     for source, target in graph["edges"])
 assert all(coverage.values()), coverage
-coverage.update(currentStates=len(current), fixedStates=len(fixed), daemonAdmissionCases=len(cases))
+coverage.update(currentStates=len(current), fixedStates=len(fixed), daemonAdmissionCases=len(cases), nativeCancellationCases=len(cancels))
 (root / "formal/record-while-processing/results/coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
 print(json.dumps(coverage, indent=2))

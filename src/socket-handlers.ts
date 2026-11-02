@@ -1,3 +1,5 @@
+import { runBarCapture, runHistoryTranscription, canStartBarCapture, cancelRecordingJob,
+  acknowledgeDictationDelivery, recordingJobsSnapshot } from "./recording-jobs";
 import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-download";
 import { deleteRecognizer } from "./recognizer-management";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
@@ -195,7 +197,7 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
 const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer", "download_recognizer", "set_recognizer_residency"]);
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", ...recognizerMutationCommands]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
-  if (args[0].cmd === "stop" || args[0].cmd === "cancel") {
+  if ((args[0].cmd === "stop" || args[0].cmd === "cancel") && !args[0].take_id) {
     const capture = cancelPendingVoiceAdmissions("capture");
     const speech = cancelPendingVoiceAdmissions("speech");
     const result = handleSocketCommandAdmitted(...args);
@@ -240,6 +242,9 @@ function handleSocketCommandAdmitted(
   const isSpeaking = recordingState === "idle" && playbackQueueDepth > 0;
 
   switch (command.cmd) {
+    case "dictation_delivered":
+      acknowledgeDictationDelivery(command.take_id, command.delivery_id);
+      return;
     case "seek": {
       if (recordingState !== "idle" || getEffectiveRecordingState() !== "idle") return buildAck(command, "reject", "busy");
       const result = seekPlayback(command.offset_ms, command.scope, command.readback_id);
@@ -324,6 +329,11 @@ function handleSocketCommandAdmitted(
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)));
     }
     case "stop":
+      if (command.take_id) {
+        if (recordingJobsSnapshot().mic_take_id !== command.take_id) return buildAck(command, "noop", "take is not recording");
+        safeWriteFileSync(STOP_FILE, JSON.stringify({ physical_press: command.physical_press === true }));
+        return buildAck(command, "accept");
+      }
       if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
         // An explicit Stop also discards reads F5 left waiting for Next.
         if (command.retain_read_queue !== true) selectionReads.clear();
@@ -350,6 +360,14 @@ function handleSocketCommandAdmitted(
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
       );
     case "cancel":
+      if (command.discard_read_queue === true) selectionReads.clear();
+      if (command.take_id || recordingJobsSnapshot().recording_jobs.length > 0) {
+        const cancelled = cancelRecordingJob(command.take_id);
+        if (!cancelled) return buildAck(command, "noop", "take is not active");
+        if (cancelled === "delivery") return buildAck(command, "reject", "delivery is already in progress");
+        if (cancelled === "capture") safeWriteFileSync(STOP_FILE, "owned capture cancelled");
+        return buildAck(command, "accept");
+      }
       // Hide (QUEUE1b ruling) and an idle Cancel with no capture (QUEUE1c ruling) end the user read chain,
       // before the idle no-op below. A Cancel aimed at a capture keeps the waiting reads.
       if (command.discard_read_queue === true || recordingState === "idle") selectionReads.clear();
@@ -408,18 +426,19 @@ function handleSocketCommandAdmitted(
       if (
         recordingState === "recording" ||
         recordingState === "transcribing" ||
-        isSpeaking
+        isSpeaking || hasActiveVoiceOperation()
       ) {
         return buildAck(command, "reject", "busy");
       }
       if (!hasRetainedRecording()) {
         return buildAck(command, "noop", "nothing to retranscribe");
       }
-      retranscribeLastCapture().catch((err) => {
+      const admission = captureVoiceAdmission();
+      runHistoryTranscription(command.id ?? randomUUID(), () => admission.run(retranscribeLastCapture)).finally(admission.release).catch((err) => {
         console.error(
           "[voicelayer] Retranscribe last capture failed: status=failed (details redacted)",
         );
-        broadcast({ type: "state", state: "idle" });
+        broadcast({ type: "state", state: getEffectiveRecordingState(), ...recordingJobsSnapshot() });
       });
       return buildAck(command, "accept");
     }
@@ -427,15 +446,16 @@ function handleSocketCommandAdmitted(
       if (
         recordingState === "recording" ||
         recordingState === "transcribing" ||
-        isSpeaking
+        isSpeaking || hasActiveVoiceOperation()
       ) {
         return buildAck(command, "reject", "busy");
       }
-      retranscribeRecordingCapture(command.audio_path).catch((err) => {
+      const admission = captureVoiceAdmission();
+      runHistoryTranscription(command.id ?? randomUUID(), () => admission.run(() => retranscribeRecordingCapture(command.audio_path))).finally(admission.release).catch((err) => {
         console.error(
           "[voicelayer] Retranscribe archived recording failed: status=failed (details redacted)",
         );
-        broadcast({ type: "state", state: "idle", source: "recording" });
+        broadcast({ type: "state", state: getEffectiveRecordingState(), source: "recording", ...recordingJobsSnapshot() });
       });
       return buildAck(command, "accept");
     }
@@ -443,7 +463,7 @@ function handleSocketCommandAdmitted(
       if (recordingState === "recording") {
         return buildAck(command, "noop", "already recording");
       }
-      if (recordingState === "transcribing") {
+      if (recordingState === "transcribing" && !canStartBarCapture()) {
         return buildAck(command, "reject", "busy");
       }
       if (existsSync(VOICE_DISABLED_FILE) || existsSync(MIC_DISABLED_FILE)) {
@@ -490,9 +510,8 @@ function handleSocketCommandAdmitted(
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";
       const ptt = command.press_to_talk ?? false;
-      waitForInput(timeoutMs, silenceMode, ptt, {
-        archiveSource: "voicebar",
-      }).catch((err) => {
+      const record = () => waitForInput(timeoutMs, silenceMode, ptt, { archiveSource: "voicebar" });
+      runBarCapture(command.take_id ?? randomUUID(), record).catch((err) => {
         console.error(
           `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -538,11 +557,11 @@ function handleSocketCommandAdmitted(
     }
     case "health":
       return readWhisperModelStatus().then((modelStatus) =>
-        buildHealthResponse({
+        ({ ...buildHealthResponse({
           queueDepth: getPlaybackQueueDepth(),
           recordingState: getRecordingState(),
           modelStatus,
-        }),
+        }), ...recordingJobsSnapshot() }),
       );
     case "command":
       broadcast({

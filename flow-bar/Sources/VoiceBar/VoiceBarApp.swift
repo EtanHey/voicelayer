@@ -1562,7 +1562,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         gestureStateMachine.onCancel = { [weak self] in
             NSLog("[VoiceBar] Hotkey cancel — cancelling active recording")
-            self?.commandRouter.handleCancel()
+            self?.commandRouter.handleEscape()
         }
     }
 

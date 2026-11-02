@@ -1,0 +1,15 @@
+{
+  "module": "PttSilenceTimeout",
+  "sourceBaseline": "01ca5dec",
+  "sources": [
+    "src/input.ts",
+    "src/__tests__/input-durability.test.ts"
+  ],
+  "checks": {
+    "Fixed": null,
+    "WallClockMutant": "NoTimeoutDuringSpeech",
+    "DropArchiveMutant": "EveryEndedTakeRetained",
+    "TrimWordsMutant": "RawAccurate",
+    "StallMutant": "SettlesAfterSilence"
+  }
+}

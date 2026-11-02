@@ -1,3 +1,4 @@
+import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { TEST_TMP } from "./setup/test-tmp";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
@@ -38,7 +39,7 @@ describe("socket handler idempotency matrix", () => {
     restartPlaybackSpy = spyOn(tts, "restartPlayback").mockImplementation(
       () => true,
     );
-    waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue("");
+    waitForInputSpy = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => ""));
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
@@ -82,7 +83,8 @@ describe("socket handler idempotency matrix", () => {
     ).mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await settleRecordingJobs();
     stopPlaybackSpy.mockRestore();
     restartPlaybackSpy.mockRestore();
     waitForInputSpy.mockRestore();
@@ -204,7 +206,7 @@ describe("socket handler idempotency matrix", () => {
     });
     waitForInputSpy.mockImplementation(async () => {
       calls.push("waitForInput");
-      return "";
+      return finishSyntheticCapture(async () => "");
     });
     queueDepthSpy.mockReturnValue(1);
 
@@ -298,9 +300,9 @@ describe("socket handler idempotency matrix", () => {
   });
 
   it("does not broadcast idle when an accepted record hits a recording conflict", async () => {
-    waitForInputSpy.mockRejectedValue(
-      new Error("Recording already in progress (state: recording)"),
-    );
+    waitForInputSpy.mockImplementation(() => finishSyntheticCapture(async () => {
+      throw new Error("Recording already in progress (state: recording)");
+    }));
 
     const response = handleSocketCommand({
       cmd: "record",
@@ -316,7 +318,7 @@ describe("socket handler idempotency matrix", () => {
     });
     expect(
       broadcastSpy.mock.calls.filter(
-        ([event]: any[]) => event.type === "state" && event.state === "idle",
+        ([event]: any[]) => event.type === "state" && event.state === "idle" && event.recording_jobs === undefined,
       ),
     ).toHaveLength(0);
   });
@@ -406,7 +408,7 @@ describe("socket handler idempotency matrix", () => {
     });
     expect(
       broadcastSpy.mock.calls.filter(
-        ([event]: any[]) => event.type === "state" && event.state === "idle",
+        ([event]: any[]) => event.type === "state" && event.state === "idle" && event.recording_jobs === undefined,
       ),
     ).toHaveLength(0);
   });
@@ -453,7 +455,7 @@ describe("socket-handlers record — cross-process booking (V1)", () => {
   let bookVoiceSessionSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue("");
+    waitForInputSpy = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => ""));
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
@@ -472,7 +474,8 @@ describe("socket-handlers record — cross-process booking (V1)", () => {
     ).mockReturnValue({ success: true });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await settleRecordingJobs();
     waitForInputSpy.mockRestore();
     broadcastSpy.mockRestore();
     stopPlaybackSpy.mockRestore();
