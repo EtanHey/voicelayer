@@ -93,6 +93,20 @@ final class CommandModeAXHelper {
         return .axVerified("Applied to selection")
     }
 
+    /// Identity only: all hosts, including terminals and Electron, must retain the same app/window/element.
+    static func captureFocusedTargetIdentity() -> (() -> Bool)? {
+        guard AXIsProcessTrusted(), let element = focusedElement(),
+              let window = readElement(element, attribute: kAXWindowAttribute as CFString) else { return nil }
+        var pid = pid_t()
+        guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+        return {
+            guard AXIsProcessTrusted(), NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                  let current = focusedElement(), CFEqual(current, element),
+                  let currentWindow = readElement(current, attribute: kAXWindowAttribute as CFString) else { return false }
+            return CFEqual(currentWindow, window)
+        }
+    }
+
     static func captureFocusedInsertionHandler() -> AsyncDictationInsertionHandler? {
         guard AXIsProcessTrusted(), let element = focusedElement() else { return nil }
         return { text, completion in

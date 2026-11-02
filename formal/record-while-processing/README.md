@@ -1,147 +1,124 @@
-# Record while processing: two-take lifecycle
+# Recording during processing — availability, identity and delivery
 
-Historical source baseline: `e75a4eb662a534665c36240916ab918a00aabf2c`.
-Lane I implements the fixed admission, take cancellation and final dispatch on
-integration base `01ca5dec`. Fixed PASS is model evidence; the conformance replay
-below exercises the new real handlers. Neither establishes installed/live acceptance.
+`Current.cfg` models the source policy starting at
+`e75a4eb662a534665c36240916ab918a00aabf2c`. `Fixed.cfg` refines the merged Lane I code; it is the mandatory runtime policy.
+A model PASS does not establish installed or live acceptance.
 
 ```sh
 bash formal/record-while-processing/check.sh
 bash formal/record-while-processing/conformance.sh
 ```
 
-The shared runner uses `nice -n 19 java -Xmx512m -XX:+UseParallelGC -cp
-~/.cache/tla/tla2tools.jar tlc2.TLC`, one worker, seed 1, fingerprint 0,
-and temporary state directories under this worktree's `.build.noindex/`.
-Logs in `results/` include the installed TLC 2.19 version and full counterexamples.
-Expected failures require exit 12 and the exact named invariant, not merely nonzero exit.
-No state/depth constraints truncate either positive graph; weak fairness is checked.
-`results/run.json` records source, spec, config, runner and TLC-jar SHA-256 hashes,
-and refuses a receipt if source/spec/config/runner changes during checking.
+Default checks run the full union of Lane G and Lane I exact-property mutants
+and event-anchored witness queries, then generate both corpora. The runtime
+ownership and PTT silence/cap modules are composed by the root check script.
+The complete [union table](results/UNION-MUTANTS.md) records all 49 mutants; no
+property was dropped during reconciliation. Logs and graphs stay in `.build.noindex/`;
+`check.sh --record` explicitly refreshes normalized committed evidence and the
+checksum-bound corpus. The versioned TLC jar is verified against `formal/tlc.lock.json`.
+No positive graph is truncated by a state/depth constraint.
 
-## State and intended contract
+## State and contracts
 
-Two stable identities, A and B, each progress through fresh, recording, captured,
-transcribing, ready-for-delivery, cancelling, pasted, cancelled, failed, or superseded.
-There is one microphone and one decoder. Captured takes form a bounded pending set;
-FIFO scheduling is not asserted. A decoder remains occupied while cancellation
-settles, rather than pretending a cancellation immediately makes resources safe.
-In the historical model, `ready` belongs to the Swift display-floor task: the daemon has already become
-idle and released the decoder. Socket record can enter this window even though
-native F5 still sees transcribing mode. These are separate ownership boundaries.
+Two identities A/B each own their capture, decoder/delivery phase, speech flag,
+retained audio, cancellation request and dispatch count. There is one microphone
+and one decoder. Cancellation keeps decoder ownership until completion or reap.
+A Swift display-floor result (`ready`) is distinct from a decoder: the daemon is
+already idle, so a socket-started B can supersede A's deferred UI result in Current.
 
-- N6: a qualified new F5 start or trusted socket record request must start B while
-  A processes, preserving A. Current distinguishes the two actual ingress routes:
-  native F5 cancels A; a direct socket `record` is rejected with `busy`.
-- N7: cancelling recording B targets only B and leaves processing A intact.
-  Cancelling processing A is a transaction with an identity-bound guard, a two-step
-  cooldown/ring, then a commit. The model does not choose the physical confirmation
-  gesture or a real duration. Escape bypasses the guard and cancels the foreground
-  recording when present, otherwise the active processing take.
-  Stale A guards cannot cancel a later B; cancelling B preserves an unrelated A guard.
-- N8: a successful, eligible final result dispatches its paste immediately, including
-  while B records. `deliveries` counts dispatches, **not** successful AX/keyboard
-  insertion observed in another app. The model excludes the current cosmetic
-  minimum-display wait in Fixed, and checks it as a separate Current failure.
-  `N8FinalNotSuperseded` also catches a new recording event cancelling A's deferred
-  final before its timer fires. Its audio remains archived; the dropped item is delivery.
-- D3: every completed/cancelled/timed-out/failed take remains retained. Archive writes
-  are assumed successful. Capture-to-archive is an atomic boundary here; incremental
-  WAV durability, disk errors, recorder crashes and byte-level audio fidelity are not proved.
+N6/N7/N8 are **state/action contracts**, not violation-history flags. `ENABLED`
+requires that the operation exists, and a second enabled-action query excludes
+bad postconditions. Consequently disabling Record, holding Complete, or disabling
+Cancel(B) cannot dodge the acceptance checks. The runner also requires these
+negated reachability queries to fail on Fixed:
 
-The historical capture/archive handoff was admission-busy and is collapsed before
-another start can enter. The historical Current design has no concurrent A-decoding/B-recording state;
-it can overlap A's deferred UI result with socket-started B.
-Fixed releases capture ownership after archival and owns worker/delivery/cancel state
-per take. The implementation keeps the cross-process session booking while a process owns jobs,
-and separately releases its microphone only after archival, recorder exit and VAD
-settlement. `recording_jobs` snapshots project these owners; old completion cannot
-publish idle over a new capture. Only this managed concurrent path admits B over A.
-Legacy unowned processing remains admission-busy, and no new concurrent owner uses
-the legacy cancel file.
+- `WitnessOverlapPaste`: an actual `result(A)` event must occur while B records.
+- `WitnessScopedCancel`: an actual click/Escape for B must occur while A decodes.
 
-`ProcessingSettles` requires fair decoder completion, cancellation settlement and
-timer/delivery scheduling. It allows a failure, user cancellation, or known Current
-supersession instead of a paste; Fixed separately forbids supersession. It does not
-assert that a hung backend or permanently failing disk recovers.
-Recording can remain open indefinitely while someone speaks; timeout is an optional
-capture-end event, never a forced fairness assumption that cuts off speech.
+These are event-anchored TLC gates, not unordered state counts in a later Python check.
+Every positive invariant and temporal property has a targeted failing mutant;
+[the table](results/MUTANTS.md) records the exact property/config relation.
 
-## Action to code map (Lane I implementation)
+- N6 requires a qualified new F5/socket start to record B while A processes and
+  preserve A. Current's native F5 cancels A; its direct socket route replies busy.
+- N7 requires identity-scoped cancel commands. Current uses the actual global,
+  identity-free primitive; its possible recipient is nondeterministic among live
+  backend consumers. Fixed validates a take ID, rejects stale IDs, and preserves
+  unrelated takes. Processing cancellation arms a cooldown guard/ring; recording
+  cancellation is immediate. Escape targets the foreground recording when present, otherwise the newest
+  processing take, using its identity-bound guard when it is not displayed.
+  `EscapeTargetsNewest` is an enabled-action contract; `NoStaleGuard` checks
+  stale guard dismissal. Both have exact-property mutants.
+- N8 requires Complete to be enabled and dispatch immediately, including overlap.
+  A separate invariant rejects superseded finals. `deliveries` is a dispatch count,
+  not proof that a host inserted characters.
+- `cancelRequested` survives phase changes. Complete can race cancellation while
+  the phase is `cancelling`; it must consume that request rather than paste. The
+  paste-after-cancel mutant deliberately ignores the token and fails `NoCancelledPaste`.
+- D3 retains stopped, cancelled, timed-out and failed captures. Archive writes are
+  assumed successful; byte durability and disk failures are not proved here.
+- `talking[t]` changes through speech/silence events. Fixed timeout is enabled only
+  in silence. `OldSpeechTimeout` exposes the Current PTT wall-clock timeout; the
+  fixed policy's timeout-while-speaking mutant must fail `NoTimeoutWhileTalking`.
+  This lifecycle timeout is the silence stop; the separate PTT module models
+  the 60-second renewal budget and the explicit 20-minute hard cap, which may
+  end speech while keeping/transcribing the full recording.
 
-| Model action/operator | Implemented code |
+`ProcessingSettles` assumes fair decode, result, cancellation-reap and timer work.
+`OverlapPastes` additionally requires A's overlap to dispatch or reach an explicit
+failure/user cancellation; supersession is not success. `EventuallyIdle` is a
+**conditional drain** property after both takes have finished capture. It does not
+force a live speaker to stop or make recording terminate by fairness. Each of
+these temporal properties has a mutant that fails on that exact named property.
+
+## Default source conformance and integration seam
+
+Both policy graphs export real socket/click/Escape contexts, outcomes and cancel
+signal tokens. The harness does not recompute expected replies from a phase rule.
+It calls the production `handleSocketCommand`, checks its reply and signal identity,
+and rejects an unscoped stop signal for a scoped cancellation. Recording/playback
+edges are silent fixtures under the normal isolation preload. `corpus.json` and its
+hash allow the same tests to run by default without a prior TLC invocation.
+
+`runtime-adapter.ts` seeds the production owned queue with silent recorder and
+blocked-decoder fixtures; it observes the real per-take AbortSignal. Admission
+and cancellation are never mocked. Fixed wire requests represent the native
+resolved target ID or an unknown stale ID; arbitrary IDs for another active
+take remain ordinary explicit socket cancellation requests. The native replay
+checks stale guards and foreground selection before a command is emitted.
+`runtime-contract.json` selects `fixed`; Fixed is a mandatory pass and Current
+is an executed strict historical mismatch. No corpus uses an opt-in gate.
+
+`conformance.sh` runs Bun socket replay and Swift LaneG/LaneI replay by default,
+with Swift through heavy.sh. The Swift corpus includes F5, guarded click,
+Escape, all distinct Fixed cancellation contexts, immediate final dispatch,
+and the deferred-final-not-dropped trace. Lane G's notch corpora remain intact
+and run through their existing expected-baseline comparison. These checks do
+not exercise a real mic, input synthesis, or the installed application.
+
+## Source map
+
+| Model action / property | Merged production code |
 | --- | --- |
-| `Init`, `Mic`, `Worker` | `src/recording-take-queue.ts:24` (`capture`, entries, serialized worker tail); `src/recording-jobs.ts:14` (aggregate snapshots) |
-| `Record(t,"F5")` | `VoiceBarCommandRouter.swift:135`, `:163`; `VoiceState.swift:2570` (original target per new take) |
-| `Record(t,"socket")` | `src/socket-handlers.ts:462`, `:514`; `src/recording-jobs.ts:30`, `:48` (mic-free admission; missing trusted take ID assigned at ingress) |
-| `Capture(t,"stop"/"timeout")`, D3 | `src/input.ts:3132` (full WAV archive before processing), `:3218` (cancelled archive kept), `:3026` and `:3087` (failed/empty take retained); `src/recording-take-queue.ts:65` (draining fence) |
-| `Decode` | `src/input.ts:3356`; `src/recording-take-queue.ts:97` (live and History share one worker) |
-| `Complete`, immediate dispatch | `src/input.ts:3575`; `src/recording-jobs.ts:111`; `VoiceState.swift:2640`, `:2719` (owned final bypasses foreground capture and cosmetic floor), `:3122` (legacy final synchronous) |
-| `Deliver`, historical floor `Tick`/`DropDeferred` | There is no deferred-final task in the new source. `VoiceState.swift:4010` handles legacy final immediately; owned final dispatch is identity-bound. The historical actions remain only in Old* controls |
-| `Fail` | `src/input.ts:3610` (archive reason updated, audio kept); queue settlement removes only the failed owner |
-| `Cancel`, Escape | `VoiceState.swift:1990` (mic-first scoped target), `VoiceBarCommandRouter.swift:91` and `VoiceBarApp.swift:1566` (Escape bypasses click guard); `src/socket-handlers.ts:362` (take cancel never writes global cancel file) |
-| `Arm`, guard `Tick`, `DismissStaleGuard` | `VoiceState.swift:1010`, `:1019`, `:2651`; two 325 ms ticks publish ring progress; snapshots dismiss retired identities |
-| Guarded commit | `VoiceState.swift:1030` requires same ID, completed cooldown and still-processing take; a stale A guard cannot target B |
-| Scoped signal, `ReapCancelled` | `src/recording-jobs.ts:46`, `:83` (per-take AbortController); `src/input.ts:713`, `:3497` (owned jobs ignore the global legacy file); worker is retained until the cancelled decode settles |
-| Producer routing / reconnect | `SocketServer.swift:420`, `:563` (take→producer); `src/socket-client.ts:261`, `src/recording-jobs.ts:132` (command-owner snapshots and pending delivery replay) |
+| Record F5; visible drain rejection | `VoiceBarCommandRouter.swift:135`, `:164`; `VoiceState.swift:2586`, `:3395` |
+| Record socket; capable/legacy ACK policy | `src/socket-handlers.ts:463`, `:516` |
+| Mic/decoder ownership; bounded failed capture | `src/recording-take-queue.ts:84`, `:112`; `src/recording-jobs.ts:63` |
+| Capture exit proof; full archive; decode queue | `src/input.ts:2663`, `:3035`, `:3363` |
+| Speech renewal; 60-second silence; 20-minute cap | `src/input.ts:2571`, `:2595`, `:2680`, `:2809` |
+| Immediate final; no cosmetic floor | `VoiceState.swift:2654`, `:4063`, `:4254` |
+| Scoped cancel / durable take signal | `src/socket-handlers.ts:363`; `src/recording-jobs.ts:115` |
+| Guard/cooldown; newest Escape; stale guard | `VoiceState.swift:1019`, `:2009`, `:2667` |
+| Captured app/window/element delivery | `VoiceState.swift:2643`, `:4588`; `CommandModeAXHelper.swift:97`; `SynthesizedKeyEvents.swift:9` |
+| Delivery ACK bound and unverified persistence | `src/recording-jobs.ts:143`; `VoiceState.swift:4769` |
+| Disconnect/new owner reset | `VoiceState.swift:3399`, `:3412`; `SocketServer.swift:497` |
+| Transcript commit then Lane D gate evidence | `src/input.ts:3581`, `:4365`, `:4538`, `:4661` |
 
-Concrete `capturing`/`draining` refines abstract `recording`; archived `queued`
-refines `captured`; active decoder refines `transcribing`. An aborted worker
-refines `cancelling`. `Complete` is a paste **dispatch**, never proof of insertion.
-The concrete worker queue retains its slot through the matching delivery ACK to
-preserve order. That post-dispatch wait stutters at abstract `pasted`; the model
-allows a following decode earlier than this stricter implementation does.
-Processing liveness assumes decoder settlement and eventual delivery ACK, including
-reconnection. It does not assert recovery from a hung backend/AX write or disk fault.
-Archival failures and unconfirmed recorder exit retain admission for recovery.
+The ownership supplement checks acknowledgement settlement without fair ACK
+arrival, captured-target delivery, focus custody, drain notice and mic release.
+The PTT supplement checks raw sequence retention, speech renewal and hard cap.
+All properties in both supplements have their own exact-property failing mutants.
 
-The PTT silence-budget addition has its own speech-bearing model and exact-property
-mutants in [ptt-silence-timeout](../ptt-silence-timeout/README.md), separate from
-Lane G's lifecycle operator edits.
-
-## Exact findings and mutation controls
-
-| Config | Counterexample / classification |
-| --- | --- |
-| [OldSocketBusy](results/OldSocketBusy.log) | socket record A -> stop/archive A -> decode A -> socket record B: B stays fresh, A keeps transcribing, `N6StartsB` fails (`busy` in real daemon replay) |
-| [OldF5CancelsA](results/OldF5CancelsA.log) | F5 A -> stop/archive A -> decode A -> F5 B: A becomes cancelling, B stays fresh, `N6PreservesA` fails. Historical `handleHotkeyHoldStart` called `handleCancel` |
-| [OldUnguardedCancel](results/OldUnguardedCancel.log) | start A -> archive -> decode -> click cancel: A becomes cancelling with no guard/cooldown, `N7GuardedClick` fails |
-| [OldDisplayFloor](results/OldDisplayFloor.log) | start A -> archive -> decode (`floor[A]=2`) -> final result: A is ready with zero dispatches, `N8ImmediatePaste` fails. Historical default floor was 0.65 s |
-| [OldDeferredFinalDrop](results/OldDeferredFinalDrop.log) | socket start A -> archive/decode -> final A held by Swift while daemon idle -> socket starts B -> recording event cancels A's deferred task: A is superseded with zero dispatches, `N8FinalNotSuperseded` fails |
-| [ConcurrentGlobalCancel](results/ConcurrentGlobalCancel.log) | **Mutation of the proposed concurrent design**, not a reachable current bug: allow B while A processes, keep the current unscoped signal, then cancel B but consume it for A; `N7ScopedCancel` fails |
-| [DropCancelledMutant](results/DropCancelledMutant.log) | **Synthetic retention mutation**, not a current finding: cancel an unarchived capture without retaining it; `D3EveryTakeKept` fails |
-
-[Current](results/Current.log) checks types, one microphone/decoder, retention,
-no duplicate/cancelled paste, ring consistency, and eventual processing settlement.
-It deliberately omits failing acceptance rows. [Fixed](results/Fixed.log) adds all
-N6/N7/N8 invariants. `results/coverage.json` requires reachable successful A-paste
-during B-recording, B-cancel with A-processing, stale guards, timeout retention, and
-an actual graph edge taking Escape during an armed cooldown; empty coverage fails.
-
-`conformance.sh` extracts all fixed socket-admission equivalence classes and five
-cancellation edge classes from the complete TLC graph. Bun replays admission over
-live and History jobs through real `handleSocketCommand`/queue ownership, including
-trusted requests without an explicit take ID, scoped B cancel preserving A, stale A
-cancel after a later take, and an owned take ignoring an unrelated global signal.
-Only recorder/booking/playback/broadcast IO is substituted; no mic/audio is used.
-Swift `LaneGFormalConformanceTests` replays the fixed native hold/tap/direct/toggle/
-start paths, those five cancellation classes, guard/ring cooldown and stale identity,
-Escape's foreground priority, and raw final dispatch while B records. A legacy
-positive-display-duration test verifies immediate final retention across B's event.
-These are handler/queue/projection proofs, not installed, actual paste or VAD proofs.
-See [Conformance.log](results/Conformance.log).
-
-No existing lifecycle invariant or temporal operator changed in Lane I. Lane G owns
-the standing-rule mutation expansion for that model. Historical controls still
-require the exact named invariant and exit 12; the separate PTT model has a mutant
-for each of its four properties and refuses any unexpected pass.
-
-## Lane I, part 1: N8 implementation
-
-Final transcription events now retain words and dispatch paste synchronously through
-`VoiceState.handleFinalTranscription`; there is no deferred final task for a new
-recording to cancel. The historical display-duration setting cannot delay delivery.
-`N8Fixed.cfg` checks immediate delivery with the old admission/cancel policies, so
-this part does not imply N6/N7 implementation. Old display-floor and deferred-drop
-configs remain expected FAIL controls. Swift tests replay immediate retention and
-new recording events, receipt retention, late History results and paste dispatch.
+Current failures, all exact-property checks: native F5 cancels A, socket start is
+busy, processing click lacks a guard, result delivery waits for a cosmetic floor,
+new recording drops a deferred final, and PTT timeout is allowed during speech.
+See normalized traces, [run.json](results/run.json), and [MUTANTS.md](results/MUTANTS.md).

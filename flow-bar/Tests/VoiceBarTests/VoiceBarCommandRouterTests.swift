@@ -150,7 +150,9 @@ final class VoiceBarCommandRouterTests: XCTestCase {
             if escape {
                 XCTAssertEqual(state.confirmationText,
                                "Transcription cancelled. Audio saved. Re-transcribe it from History when processing finishes.")
-            } else { XCTAssertNil(state.confirmationText) }
+            } else {
+                XCTAssertEqual(state.confirmationText, "Finishing previous recording. Press F5 again when ready.")
+            }
             XCTAssertTrue(state.latestReusableTranscript.isEmpty)
             XCTAssertNil(state.lastDictationCardEntry)
         }

@@ -19,7 +19,6 @@ final class ModelsStatusStabilityTests: XCTestCase {
     private func readyState() -> VoiceState {
         let state = VoiceState()
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0
         state.setConnectionStatus(true)
         state.handleEvent(Self.health)
         XCTAssertEqual(VoiceBarFooterPresentation.resolve(state: state).status, "Ready")
@@ -50,7 +49,6 @@ final class ModelsStatusStabilityTests: XCTestCase {
     func testAnUnreadableDaemonKeepsItsStatusAcrossADictationAndARefresh() {
         let state = VoiceState()
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0
         state.setConnectionStatus(true)
         state.handleEvent(["type": "health", "recording_state": "idle"])
         XCTAssertEqual(VoiceBarFooterPresentation.resolve(state: state).status, "Status unreadable")

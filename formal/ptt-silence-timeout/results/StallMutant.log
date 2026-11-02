@@ -1,67 +1,21 @@
-TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
-Running breadth-first search Model-Checking with fp 0 and seed 1 with 1 worker on 14 cores with 491MB heap and 64MB offheap memory [pid: 17509] (Mac OS X 27.0 aarch64, Homebrew 17.0.19 x86_64, MSBDiskFPSet, DiskStateQueue).
-Parsing file /Users/etanheyman/.t3/worktrees/voicelayer/t3-eb980915/formal/ptt-silence-timeout/PttSilenceTimeout.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Naturals.tla
-Parsing file /private/var/folders/nb/ddw_4cvn2s9dfrhw3hvsdvwm0000gn/T/Sequences.tla
-Semantic processing of module Naturals
-Semantic processing of module Sequences
-Semantic processing of module PttSilenceTimeout
-Starting... (2026-11-02 09:48:37)
-Implied-temporal checking--satisfiability problem has 1 branches.
-Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 09:48:37.
-Progress(8) at 2026-11-02 09:48:38: 359 states generated, 202 distinct states found, 0 states left on queue.
-Checking temporal properties for the complete state space with 202 total distinct states at (2026-11-02 09:48:38)
-Error: Temporal properties were violated.
-
-Error: The following behavior constitutes a counter-example:
-
-State 1: <Initial predicate>
-s = [ phase |-> "recording",
-  speech |-> FALSE,
-  silence |-> 0,
-  wall |-> 0,
-  pcm |-> <<>>,
-  saved |-> <<>>,
-  text |-> <<>> ]
-
-State 2: <Frame line 9, col 18 to line 11, col 71 of module PttSilenceTimeout>
-s = [ phase |-> "recording",
-  speech |-> TRUE,
-  silence |-> 0,
-  wall |-> 0,
-  pcm |-> <<TRUE>>,
-  saved |-> <<>>,
-  text |-> <<>> ]
-
-State 3: <Tick line 12, col 9 to line 14, col 52 of module PttSilenceTimeout>
-s = [ phase |-> "recording",
-  speech |-> FALSE,
-  silence |-> 1,
-  wall |-> 1,
-  pcm |-> <<TRUE>>,
-  saved |-> <<>>,
-  text |-> <<>> ]
-
-State 4: <Tick line 12, col 9 to line 14, col 52 of module PttSilenceTimeout>
-s = [ phase |-> "recording",
-  speech |-> FALSE,
-  silence |-> 2,
-  wall |-> 2,
-  pcm |-> <<TRUE>>,
-  saved |-> <<>>,
-  text |-> <<>> ]
-
-State 5: <Timeout line 15, col 12 to line 18, col 86 of module PttSilenceTimeout>
-s = [ phase |-> "ended",
-  speech |-> FALSE,
-  silence |-> 2,
-  wall |-> 2,
-  pcm |-> <<TRUE>>,
-  saved |-> <<TRUE>>,
-  text |-> <<>> ]
-
-State 6: Stuttering
-Finished checking temporal properties in 00s at 2026-11-02 09:48:38
-359 states generated, 202 distinct states found, 0 states left on queue.
-Finished in 00s at (2026-11-02 09:48:38)
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "SettlesAfterSilence",
+  "status": "EXPECTED_FAIL",
+  "generated": 19531,
+  "distinct": 7039,
+  "trace": [
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 2,\n  event |-> \"tick\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 2,\n  event |-> \"silence\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 2,\n  event |-> \"silence\",\n  pcm |-> <<FALSE, FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 3,\n  event |-> \"tick\",\n  pcm |-> <<FALSE, FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 4,\n  event |-> \"tick\",\n  pcm |-> <<FALSE, FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 4,\n  event |-> \"silence\",\n  pcm |-> <<FALSE, FALSE, FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 4,\n  event |-> \"silence\",\n  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 4,\n  event |-> \"end\",\n  pcm |-> <<FALSE, FALSE, FALSE, FALSE>>,\n  saved |-> <<FALSE, FALSE, FALSE, FALSE>>,\n  text |-> <<>> ]",
+    "Finished checking temporal properties in 00s at 2026-11-02 11:11:22"
+  ]
+}

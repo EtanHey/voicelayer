@@ -239,17 +239,20 @@ public struct RecentTranscriptionEntry: Codable, Equatable {
     public var dictationReceipt: DictationReceipt?
     /// When it was dictated. Nil for entries saved before times were recorded; those show no time.
     public var createdAt: Date?
+    public var deliveryNote: String?
 
     public init(
         text: String,
         recordingPath: String? = nil,
         dictationReceipt: DictationReceipt? = nil,
-        createdAt: Date? = nil
+        createdAt: Date? = nil,
+        deliveryNote: String? = nil
     ) {
         self.text = text
         self.recordingPath = recordingPath
         self.dictationReceipt = dictationReceipt
         self.createdAt = createdAt
+        self.deliveryNote = deliveryNote
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -257,6 +260,7 @@ public struct RecentTranscriptionEntry: Codable, Equatable {
         case recordingPath
         case dictationReceipt
         case createdAt
+        case deliveryNote
     }
 
     public init(from decoder: Decoder) throws {
@@ -265,6 +269,7 @@ public struct RecentTranscriptionEntry: Codable, Equatable {
         recordingPath = try container.decodeIfPresent(String.self, forKey: .recordingPath)
         dictationReceipt = try? container.decode(DictationReceipt.self, forKey: .dictationReceipt)
         createdAt = try? container.decode(Date.self, forKey: .createdAt)
+        deliveryNote = try? container.decode(String.self, forKey: .deliveryNote)
     }
 }
 
@@ -911,7 +916,6 @@ public final class VoiceState {
     private var recordStartAckTimeoutTask: Task<Void, Never>?
     private var recordStartLateRecoveryTask: Task<Void, Never>?
     private var transcribingStartedAt: Date?
-    private var pendingRecordingIdleAfterFinal = false
     private var pendingIdleAfterAutoPasteCompletion = false
     private var pendingRecoveredTranscriptionPaste = false
     private var historyRetranscriptionRequest = HistoryRetranscriptionRequest()
@@ -980,12 +984,16 @@ public final class VoiceState {
     private struct DictationTakeTarget {
         let app: NSRunningApplication?
         let insertion: AsyncDictationInsertionHandler?
+        let matchesFocus: (() -> Bool)?
     }
     private var dictationTakeTargets: [String: DictationTakeTarget] = [:]
     private var activeBarTakeID: String?
+    public private(set) var displayedProcessingTakeID: String?
+    public private(set) var isRecordingDrainPending = false
+    private var stoppingBarTakeID: String?
     private var processingJobIDs: [String] = []
     private var historyJobIDs: Set<String> = []
-    private var ownedPasteOperations: [UUID: (takeID: String, deliveryID: String)] = [:]
+    private var ownedPasteOperations: [UUID: (takeID: String, deliveryID: String, path: String?, text: String)] = [:]
     private var completedDictationDeliveries: Set<String> = []
     public private(set) var processingTakeCount = 0
     public private(set) var microphoneTakeID: String?
@@ -1086,6 +1094,8 @@ public final class VoiceState {
 
     /// Production installs a batch builder with a final PID check. Nil preserves the legacy
     /// injection seam for tests/embedders; manual routes always use textTypingHandler directly.
+    public var ownedTextTypingHandler: ((_ text: String, _ expectedPID: pid_t, _ matches: () -> Bool) -> GuardedTypingResult)?
+
     public var guardedTextTypingHandler: ((_ text: String, _ expectedPID: pid_t) -> GuardedTypingResult)?
 
     /// Test seam for Accessibility permission checks.
@@ -1103,6 +1113,8 @@ public final class VoiceState {
     }
 
     /// Read only at delivery, never while starting capture or handling a hotkey.
+    public var dictationTargetIdentityProvider: () -> (() -> Bool)? = { nil }
+
     public var focusedTargetEligibilityProvider: () -> DictationFocusedTargetEligibility? = { nil }
 
     /// Test seam for clipboard writes used by fallback paste.
@@ -1513,8 +1525,6 @@ public final class VoiceState {
     public var recordStartAckTimeout: Duration = .seconds(2)
     public var recordStartLateRecoveryWindow: Duration = .seconds(10)
     public var recordingIdleFinalTranscriptGrace: Duration = .seconds(2)
-    /// Cosmetic compatibility setting; never delays final-result retention or delivery.
-    public var minimumTranscribingDisplayDuration: TimeInterval = 0.65
 
     public init(
         recentTranscriptionsLoader: @escaping () -> [String] = {
@@ -1929,7 +1939,11 @@ public final class VoiceState {
         let retainsReadQueue = stopRetainsReadQueue && shouldExitInterruptedPlayback && readQueueCount > 0
         var payload: [String: Any] = ["cmd": "stop"]
         if shouldShowTranscribing { payload["scope"] = "capture" }
-        if let activeBarTakeID { payload["take_id"] = activeBarTakeID }
+        if let takeID = microphoneTakeID ?? activeBarTakeID {
+            payload["take_id"] = takeID
+            stoppingBarTakeID = takeID
+            isRecordingDrainPending = true
+        }
         if retainsReadQueue { payload["retain_read_queue"] = true }
         if physicalPress, shouldShowTranscribing, barInitiatedRecording,
            !remoteOwnedRecording, recordingMode == "ptt" {
@@ -1964,7 +1978,6 @@ public final class VoiceState {
     public func dismissError() {
         pendingIntent = nil
         errorMessage = nil
-        pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
         clearHistoryRetranscriptionRequest(removeSuppression: true)
@@ -1993,18 +2006,21 @@ public final class VoiceState {
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
         if supportsRecordingJobs {
-            // Escape and capture cancellation select the microphone first; an older job keeps its guard.
             if let takeID = microphoneTakeID ?? activeBarTakeID {
                 sendCommand?(["cmd": "cancel", "take_id": takeID, "id": UUID().uuidString])
-            } else if let takeID = processingJobIDs.first {
-                if bypassingProcessingGuard {
+                return
+            }
+            if let takeID = bypassingProcessingGuard ? processingJobIDs.last : displayedProcessingTakeID {
+                if bypassingProcessingGuard, takeID == displayedProcessingTakeID {
                     if processingCancellationGuard?.takeID == takeID { dismissProcessingCancellationGuard() }
                     sendCommand?(["cmd": "cancel", "take_id": takeID, "id": UUID().uuidString])
                 } else {
                     requestProcessingCancellation(takeID: takeID)
                 }
+                return
             }
-            return
+            if displayedProcessingTakeID != nil { return } // Delivery has started; it is bounded, and cannot be cancelled safely.
+            // A legacy MCP capture may have no managed take. Its cancel path remains authoritative.
         }
         if selectionCaptureInFlight { selectionCaptureCancelled = true }
         selectionSpeechRequestID = nil
@@ -2016,7 +2032,6 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
         recordStartAckTimeoutTask?.cancel()
-        pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
         clearHistoryRetranscriptionRequest(removeSuppression: true)
@@ -2135,7 +2150,6 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
         recordStartAckTimeoutTask?.cancel()
-        pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
         clearHistoryRetranscriptionRequest(removeSuppression: true)
@@ -2602,6 +2616,7 @@ public final class VoiceState {
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     public func record(pressToTalk: Bool = false) {
         guard !isHidden else { return }
+        if isRecordingDrainPending { rejectRecordingDuringDrain(); return }
         guard mode == .idle || mode == .error || mode == .speaking || (mode == .transcribing && canRecordDuringProcessing) else { return }
         guard pendingIntent?.command != .record else { return }
         let pressedAt = mode == .speaking ? playbackElapsedMilliseconds() : nil
@@ -2612,7 +2627,6 @@ public final class VoiceState {
         recordingStateUptimeMs = nil
         didLogFirstRecordingAudioLevel = false
         captureLive = false
-        pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
         if !supportsRecordingJobs { clearHistoryRetranscriptionRequest(removeSuppression: false) }
@@ -2661,7 +2675,7 @@ public final class VoiceState {
 
         let takeID = UUID().uuidString
         activeBarTakeID = takeID
-        dictationTakeTargets[takeID] = DictationTakeTarget(app: frontmostAppOnRecordStart, insertion: recordStartInsertionHandler)
+        dictationTakeTargets[takeID] = DictationTakeTarget(app: frontmostAppOnRecordStart, insertion: recordStartInsertionHandler, matchesFocus: dictationTargetIdentityProvider())
         var recordPayload: [String: Any] = [
             "cmd": "record",
             "take_id": takeID,
@@ -2684,11 +2698,20 @@ public final class VoiceState {
                 let phase = job["phase"] as? String
                 return phase == "queued" || phase == "processing" ? job["take_id"] as? String : nil
             }
-            processingTakeCount = processingJobIDs.count
+            displayedProcessingTakeID = jobs.first(where: { ["processing", "delivering"].contains($0["phase"] as? String ?? "") })?["take_id"] as? String
+                ?? processingJobIDs.first
+            processingTakeCount = jobs.filter { ["queued", "processing", "delivering"].contains($0["phase"] as? String ?? "") }.count
             if let guardID = processingCancellationGuard?.takeID, !processingJobIDs.contains(guardID) {
                 dismissProcessingCancellationGuard()
             }
             microphoneTakeID = event["mic_take_id"] as? String
+            isRecordingDrainPending = microphoneTakeID != nil && (microphoneTakeID == stoppingBarTakeID ||
+                jobs.contains { $0["take_id"] as? String == microphoneTakeID && $0["phase"] as? String == "draining" })
+            if microphoneTakeID == nil { stoppingBarTakeID = nil }
+            if let captureError = event["capture_error"] as? String {
+                failTranscription(message: captureError)
+                return true
+            }
             if let activeBarTakeID, microphoneTakeID != activeBarTakeID,
                pendingIntent?.command != .record { self.activeBarTakeID = nil }
             let ids = Set(jobs.compactMap { $0["take_id"] as? String })
@@ -2699,7 +2722,8 @@ public final class VoiceState {
                     return false
                 }
                 if microphoneTakeID != nil {
-                    if mode != .recording { mode = .recording; onModeChange?(.recording) }
+                    if isRecordingDrainPending { enterTranscribingMode() }
+                    else if mode != .recording { mode = .recording; onModeChange?(.recording) }
                 } else if pendingIntent?.command != .record {
                     barInitiatedRecording = false
                     if processingTakeCount > 0 {
@@ -2709,12 +2733,18 @@ public final class VoiceState {
                     } else {
                         isCaptureSettlementPending = false
                         if mode == .speaking { return true }
-                        enterIdleState(clearQueue: false)
+                        if mode != .error { enterIdleState(clearQueue: false) }
                         if parkedRead != nil { scheduleParkedReadRestore() }
                     }
                 }
                 return true
             }
+        }
+        if type == "dictation_delivery_status", let deliveryID = event["delivery_id"] as? String {
+            if let operation = ownedPasteOperations.first(where: { $0.value.deliveryID == deliveryID })?.key {
+                finishPasteConfirmation(outcome: .unverified, text: "", operationID: operation)
+            }
+            return true
         }
         guard let takeID = event["take_id"] as? String, let kind = event["job_kind"] as? String else { return false }
         if type == "transcription", event["partial"] as? Bool == true {
@@ -2746,13 +2776,14 @@ public final class VoiceState {
             latestDictationInsertionStatus = .pending
             refreshTranscriptionVocabulary()
             guard let target = dictationTakeTargets[takeID] else {
+                noteOwnedDelivery(path: path, text: text, note: "Not pasted: target changed")
                 latestDictationInsertionStatus = .notInserted
                 // A reconnect can recover a transcript, never invent the original cursor target.
                 completedDictationDeliveries.insert(deliveryID)
-                sendCommand?(["cmd": "dictation_delivered", "take_id": takeID, "delivery_id": deliveryID])
+                sendCommand?(["cmd": "dictation_delivered", "take_id": takeID, "delivery_id": deliveryID, "outcome": "not_inserted"])
                 return true
             }
-            ownedPasteOperations[operationID] = (takeID, deliveryID)
+            ownedPasteOperations[operationID] = (takeID, deliveryID, path, text)
             if microphoneTakeID == nil { transcript = text }
             pasteTranscript(text, for: target.app, plan: .autoPaste, operationID: operationID, ownedTarget: target)
             return true
@@ -2763,7 +2794,7 @@ public final class VoiceState {
         }
         if type == "error" {
             if microphoneTakeID == nil || microphoneTakeID == takeID {
-                showConfirmation(event["message"] as? String ?? "Transcription failed. Audio saved.")
+                failTranscription(message: event["message"] as? String ?? "Transcription failed. Audio saved.")
             }
             return true
         }
@@ -2898,7 +2929,6 @@ public final class VoiceState {
                 }
                 selectionReadIsPreparing = isPreparing
                 selectionReadHash = event["text_hash"] as? String
-                pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
                 clearHistoryRetranscriptionRequest(removeSuppression: false)
@@ -3002,7 +3032,6 @@ public final class VoiceState {
                     barInitiatedRecording = true
                 }
                 clearRecordStartLateRecovery(clearPasteTarget: false)
-                pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
                 if !supportsRecordingJobs { clearHistoryRetranscriptionRequest(removeSuppression: false) }
@@ -3330,7 +3359,6 @@ public final class VoiceState {
                 releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
                 barInitiatedTimeout?.cancel()
                 recordingIdleCleanupTask?.cancel()
-                        pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 clearRecordStartLateRecovery(clearPasteTarget: false)
                 transcribingStartedAt = nil
@@ -3402,8 +3430,32 @@ public final class VoiceState {
         }
     }
 
+    public func rejectRecordingDuringDrain() {
+        showConfirmation("Finishing previous recording. Press F5 again when ready.")
+    }
+
+    private func resetRecordingJobConnectionState() {
+        supportsRecordingJobs = false
+        microphoneTakeID = nil
+        activeBarTakeID = nil
+        processingJobIDs = []
+        displayedProcessingTakeID = nil
+        processingTakeCount = 0
+        historyJobIDs = []
+        isRecordingDrainPending = false
+        stoppingBarTakeID = nil
+        dismissProcessingCancellationGuard()
+    }
+
+    public func prepareForCommandOwner() {
+        let hadOwnedWork = microphoneTakeID != nil || !processingJobIDs.isEmpty
+        resetRecordingJobConnectionState()
+        if hadOwnedWork { enterIdleState(clearQueue: false) }
+    }
+
     public func setConnectionStatus(_ connected: Bool) {
         let previous = isConnected
+        if !connected || !previous { resetRecordingJobConnectionState() }
         isConnected = connected
         guard previous != connected else { return }
         recognizerSnapshot = nil
@@ -3458,7 +3510,6 @@ public final class VoiceState {
         recordingIdleCleanupTask?.cancel()
         recordStartAckTimeoutTask?.cancel()
         clearRecordStartLateRecovery(clearPasteTarget: false)
-        pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
         clearHistoryRetranscriptionRequest(removeSuppression: true)
@@ -3639,7 +3690,8 @@ public final class VoiceState {
                 text: trimmed,
                 recordingPath: normalizedPath,
                 dictationReceipt: receipt,
-                createdAt: recentTranscriptionEntries[existingIndex].createdAt ?? recordingCreatedAt
+                createdAt: recentTranscriptionEntries[existingIndex].createdAt ?? recordingCreatedAt,
+                deliveryNote: recentTranscriptionEntries[existingIndex].deliveryNote
             )
             recentTranscriptionEntries[existingIndex] = entry
         } else {
@@ -3771,7 +3823,8 @@ public final class VoiceState {
                 text: text,
                 recordingPath: normalizedPath,
                 dictationReceipt: entry.dictationReceipt,
-                createdAt: entry.createdAt
+                createdAt: entry.createdAt,
+                deliveryNote: entry.deliveryNote
             ))
             if unique.count == maxRecentTranscriptions {
                 break
@@ -4125,7 +4178,7 @@ public final class VoiceState {
                 && !rewritesArchivedRecording
         let normalizedRecordingPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
         let cardIsThisDictation = !rewritesArchivedRecording && !remoteCaptureBlocksPaste
-            && (barInitiatedRecording || pendingRecoveredTranscriptionPaste || pendingRecordingIdleAfterFinal)
+            && (barInitiatedRecording || pendingRecoveredTranscriptionPaste)
             && recentTranscriptionEntries.first?.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
             && recentTranscriptionEntries.first?.recordingPath == (normalizedRecordingPath?.isEmpty == false
                 ? normalizedRecordingPath : nil)
@@ -4136,8 +4189,6 @@ public final class VoiceState {
             latestDictationInsertionStatus = shouldAutoPaste || shouldPasteRecoveredTranscription
                 ? .pending : .notInserted
         }
-        let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
-        pendingRecordingIdleAfterFinal = false
         pendingRecoveredTranscriptionPaste = false
         if wasHistoryRetranscription, let recordingPath {
             historyRetranscriptionRequest.finish(path: recordingPath)
@@ -4164,10 +4215,6 @@ public final class VoiceState {
             )
         }
 
-        if shouldApplyPendingRecordingIdle, !shouldAutoPaste, !shouldPasteRecoveredTranscription {
-            enterIdleState(clearQueue: false)
-        }
-
         // The remote caller's transcript has been delivered; release the ownership gate so a
         // following F5 dictation pastes normally.
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
@@ -4192,7 +4239,6 @@ public final class VoiceState {
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
         recordStartAckTimeoutTask?.cancel()
-        pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
         clearHistoryRetranscriptionRequest(removeSuppression: true)
@@ -4256,6 +4302,10 @@ public final class VoiceState {
             "axTrusted": boolString(accessibilityTrustChecker(false)),
         ])
 
+        if let ownedTarget, !ownedTargetIsCurrent(ownedTarget) {
+            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+            return
+        }
         if let pasteHandler {
             if let targetApp {
                 lastPasteTargetApp = targetApp
@@ -4331,7 +4381,11 @@ public final class VoiceState {
                     "targetMatchesRecordStart": boolString(targetMatchesRecordStart),
                     "freshFocusPreferred": boolString(plan == .autoPaste && currentPasteTarget != nil),
                 ])
-                targetAppActivator(pasteTarget)
+                if let ownedTarget {
+                    guard ownedTargetIsCurrent(ownedTarget) else {
+                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID); return
+                    }
+                } else { targetAppActivator(pasteTarget) }
                 lastPasteTargetApp = pasteTarget
                 logDiagnostic("paste_after_activate", details: [
                     "plan": String(describing: plan),
@@ -4341,6 +4395,9 @@ public final class VoiceState {
 
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
+                    if let ownedTarget, !ownedTargetIsCurrent(ownedTarget) {
+                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID); return
+                    }
                     if (plan == .autoPaste || allowAXInsertion),
                        frontmostAppProvider()?.processIdentifier != pasteTarget.processIdentifier {
                         finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
@@ -4376,7 +4433,7 @@ public final class VoiceState {
                             "reason": isTerminalTarget ? "terminal_target" : "rich_host_typed_delivery",
                         ])
                     }
-                    let deliveredText = isTerminalTarget && ownedTarget == nil
+                    let deliveredText = isTerminalTarget
                         ? TerminalPasteTargets.strippingSingleTrailingNewline(text)
                         : text
 
@@ -4523,7 +4580,14 @@ public final class VoiceState {
                         "trailingNewlineStripped": boolString(deliveredText != text),
                     ])
                     let typed: Bool
-                    if (plan == .autoPaste || allowAXInsertion), let guardedTextTypingHandler {
+                    if let ownedTarget, let ownedTextTypingHandler, let matches = ownedTarget.matchesFocus {
+                        switch ownedTextTypingHandler(deliveredText, pasteTarget.processIdentifier, matches) {
+                        case .posted: typed = true
+                        case .failed: typed = false
+                        case .focusChanged:
+                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID); return
+                        }
+                    } else if (plan == .autoPaste || allowAXInsertion), let guardedTextTypingHandler {
                         switch guardedTextTypingHandler(deliveredText, pasteTarget.processIdentifier) {
                         case .posted: typed = true
                         case .failed: typed = false
@@ -4556,6 +4620,19 @@ public final class VoiceState {
                 recordStartInsertionHandler = nil
             }
             return
+        }
+    }
+
+    private func ownedTargetIsCurrent(_ target: DictationTakeTarget) -> Bool {
+        Self.sameApp(frontmostAppProvider(), target.app) && target.matchesFocus?() == true
+    }
+
+    private func noteOwnedDelivery(path: String?, text: String, note: String) {
+        if let index = recentTranscriptionEntries.firstIndex(where: { path != nil ? $0.recordingPath == path : $0.text == text.trimmingCharacters(in: .whitespacesAndNewlines) }) {
+            recentTranscriptionEntries[index].deliveryNote = note
+            if lastDictationCardEntry?.recordingPath == recentTranscriptionEntries[index].recordingPath {
+                lastDictationCardEntry = recentTranscriptionEntries[index]
+            }
         }
     }
 
@@ -4592,6 +4669,7 @@ public final class VoiceState {
         var handlerReturned = false
         var completionResult: DictationInsertionResult?
         var didFinish = false
+        var reportedOwnedTimeout = false
 
         let finish = { [weak self] (result: DictationInsertionResult) in
             guard let self, !didFinish else { return }
@@ -4600,6 +4678,7 @@ public final class VoiceState {
             axInsertionWatchdog = nil
             isAXInsertionInFlight = false
             activeAXInsertionTargetBundleID = nil
+            if reportedOwnedTimeout { return }
             logDiagnostic("paste_ax_insert_complete", details: [
                 "plan": String(describing: plan),
                 "targetApp": targetBundleID,
@@ -4643,10 +4722,10 @@ public final class VoiceState {
             let watchdog = DispatchWorkItem { [weak self] in
                 guard let self, !didFinish, isAXInsertionInFlight else { return }
                 if let operationID, ownedPasteOperations[operationID] != nil {
-                    // A timeout cannot prove that an asynchronous AX write stopped. Keep FIFO closed
-                    // until its actual completion, including when the transport reconnects meanwhile.
+                    // Report uncertainty and release daemon FIFO; keep the AX writer mutex until actual completion.
                     axInsertionWatchdog = nil
-                    if microphoneTakeID == nil { showConfirmation(PasteRecoveryFeedback.unverified) }
+                    finishPasteConfirmation(outcome: .unverified, text: text, operationID: operationID)
+                    reportedOwnedTimeout = true
                     return
                 }
                 didFinish = true
@@ -4731,14 +4810,19 @@ public final class VoiceState {
                 case .failed: .failed
                 }
             }
+            if outcome == .notInserted { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: "Not pasted: target changed") }
+            if outcome == .unverified { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: PasteRecoveryFeedback.unverified) }
             completedDictationDeliveries.insert(delivery.deliveryID)
             dictationTakeTargets.removeValue(forKey: delivery.takeID)
-            sendCommand?(["cmd": "dictation_delivered", "take_id": delivery.takeID, "delivery_id": delivery.deliveryID])
+            var receipt: [String: Any] = ["cmd": "dictation_delivered", "take_id": delivery.takeID, "delivery_id": delivery.deliveryID]
+            if outcome == .notInserted { receipt["outcome"] = "not_inserted" }
+            if outcome == .unverified { receipt["outcome"] = "unverified" }
+            sendCommand?(receipt)
             if microphoneTakeID == nil {
                 let message: String = switch outcome {
                 case .insertedAtCursor, .pasted: text
                 case .typed: PasteDeliveryFeedback.typed
-                case .notInserted: PasteRecoveryFeedback.notInserted
+                case .notInserted: "Not pasted: target changed"
                 case .unverified: PasteRecoveryFeedback.unverified
                 case .partial: PasteRecoveryFeedback.partial
                 case let .failed(message): Self.failureMessageWithRetryHint(message)

@@ -1,0 +1,29 @@
+{
+  "command": "bash formal/notch-presentation/conformance.sh",
+  "status": "PASS_WITH_EXPLICIT_BASELINE_EXPECTED_FAILURES",
+  "corpora": [
+    "Current",
+    "Fixed"
+  ],
+  "skips": 0,
+  "productionPolicy": "current",
+  "remoteCI": "NOT_RUN",
+  "installedOrLiveAcceptance": "NOT_RUN",
+  "sourceSHA256": {
+    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "89868c17ab367e38c4a5f61ff16d818ed118c820d9ac4dc7ad5250b66a3e4920",
+    "formal/runtime-contract.json": "ab6305773cb1884474e665a1c421dfcd78250fe49613625de6aef6b4fcf877d8"
+  },
+  "tests": 3,
+  "unexpectedFailures": 0,
+  "notchFrames": 12330,
+  "nativePaths": 8,
+  "expectedFailureGroups": {
+    "Fixed NoteHasCause": 1,
+    "FixedText": 1524,
+    "N1": 3020,
+    "N2": 468,
+    "N4": 462,
+    "N5": 792,
+    "Fixed native graph paths": 4
+  }
+}

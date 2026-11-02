@@ -1,0 +1,86 @@
+{
+  "module": "RuntimeOwnership",
+  "sourceBaseline": "dada8744",
+  "sources": [
+    "src/recording-jobs.ts",
+    "src/recording-take-queue.ts",
+    "src/socket-handlers.ts",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift",
+    "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "EscapeMicMutant": {
+      "role": "mutant",
+      "target": "EscapeTargetsNewest",
+      "kind": "invariant"
+    },
+    "EscapeOlderMutant": {
+      "role": "mutant",
+      "target": "EscapeTargetsNewest",
+      "kind": "invariant"
+    },
+    "GuardedEscapeMutant": {
+      "role": "mutant",
+      "target": "GuardedEscape",
+      "kind": "invariant"
+    },
+    "StaleGuardMutant": {
+      "role": "mutant",
+      "target": "NoStaleGuard",
+      "kind": "temporal"
+    },
+    "RetargetMutant": {
+      "role": "mutant",
+      "target": "NoDeliveryOutsideCapturedTarget",
+      "kind": "invariant"
+    },
+    "FocusStealMutant": {
+      "role": "mutant",
+      "target": "NoFocusStealDuringCapture",
+      "kind": "invariant"
+    },
+    "SilentDrainMutant": {
+      "role": "mutant",
+      "target": "DrainRequestVisible",
+      "kind": "invariant"
+    },
+    "LegacyAckMutant": {
+      "role": "mutant",
+      "target": "LegacyNoAckWait",
+      "kind": "invariant"
+    },
+    "NoAckBoundMutant": {
+      "role": "mutant",
+      "target": "DeliveryAckBound",
+      "kind": "temporal"
+    },
+    "StallMutant": {
+      "role": "mutant",
+      "target": "ProcessingSettles",
+      "kind": "temporal"
+    },
+    "FailedMicMutant": {
+      "role": "mutant",
+      "target": "MicReleaseOnFailure",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "DeliveryAckBound",
+    "DrainRequestVisible",
+    "EscapeTargetsNewest",
+    "GuardedEscape",
+    "LegacyNoAckWait",
+    "MicReleaseOnFailure",
+    "NoDeliveryOutsideCapturedTarget",
+    "NoFocusStealDuringCapture",
+    "NoStaleGuard",
+    "ProcessingSettles"
+  ]
+}

@@ -1315,12 +1315,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.guardedTextTypingHandler = { text, pid in
             Self.typeTextGuarded(text, expectedPID: pid)
         }
+        voiceState.ownedTextTypingHandler = { text, pid, matches in
+            Self.typeTextGuarded(text, expectedPID: pid, matchesCapturedTarget: matches)
+        }
         voiceState.accessibilityTrustChecker = { prompt in
             Self.isAccessibilityTrusted(prompt: prompt)
         }
         voiceState.asyncDictationInsertionHandlerProvider = {
             CommandModeAXHelper.captureFocusedInsertionHandler()
         }
+        voiceState.dictationTargetIdentityProvider = { CommandModeAXHelper.captureFocusedTargetIdentity() }
         voiceState.focusedTargetEligibilityProvider = {
             CommandModeAXHelper.captureFocusedTargetEligibility()
         }
@@ -1398,7 +1402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    private static func typeTextGuarded(_ text: String, expectedPID: pid_t) -> GuardedTypingResult {
+    private static func typeTextGuarded(_ text: String, expectedPID: pid_t, matchesCapturedTarget: () -> Bool = { true }) -> GuardedTypingResult {
         guard isAccessibilityTrusted(prompt: false),
               let source = CGEventSource(stateID: .hidSystemState) else { return .failed }
         return SynthesizedKeyEvents.postGuardedBatch(
@@ -1407,6 +1411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: text), source: source)
             },
             frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+            matchesCapturedTarget: matchesCapturedTarget,
             postEvent: { $0.post(tap: .cghidEventTap) }
         )
     }

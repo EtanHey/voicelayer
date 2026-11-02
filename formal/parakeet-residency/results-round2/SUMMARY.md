@@ -6,6 +6,7 @@
 | FixedDownload | fixed | 0 | 24 | True |
 | FixedReadyReselect | fixed | 0 | 4 | True |
 | FixedSetupCancel | fixed | 0 | 5 | True |
+| FixedArchiveGate | fixed | 0 | 70 | True |
 | OneModel | OneModel | 12 | 192 | True |
 | UnknownBlocks | UnknownBlocks | 12 | 14 | True |
 | ProvisionedSelectable | ProvisionedSelectable | 12 | - | True |
@@ -21,3 +22,7 @@
 | ReadySelectionIsNoop | ReadySelectionIsNoop | 13 | 38 | True |
 | CleanupAfterExit | CleanupAfterExit | 12 | 4 | True |
 | CancellationFinishes | CancellationFinishes | 13 | 2 | True |
+| PartialRemovalDropped | FinalTranscriptEvidence | 12 | 50 | True |
+| GateRecordBeforeCommit | FinalTranscriptEvidence | 12 | 44 | True |
+| GateMarkerStale | FinalTranscriptEvidence | 12 | 54 | True |
+| GateDetailOnTranscribed | NoFailureDetailOnTranscript | 12 | 50 | True |

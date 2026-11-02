@@ -125,7 +125,6 @@ final class CommandModeAXHelperTests: XCTestCase {
             )
             var typed: [String] = []
             state.sendCommand = { _ in }
-            state.minimumTranscribingDisplayDuration = 0
             state.frontmostAppProvider = { editor }
             state.targetAppActivator = { _ in }
             state.pasteScheduler = { _, work in work() }
@@ -210,7 +209,6 @@ final class CommandModeAXHelperTests: XCTestCase {
             var freshAttempts = 0
             var events: [(String, [String: String])] = []
             state.sendCommand = { _ in }
-            state.minimumTranscribingDisplayDuration = 0
             state.frontmostAppProvider = { editor }
             state.targetAppActivator = { _ in }
             state.pasteScheduler = { _, work in work() }
@@ -586,7 +584,6 @@ final class CommandModeAXHelperTests: XCTestCase {
         var pasteShortcutPosted = false
         var insertionAttempts = 0
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.frontmostAppProvider = { cmux }
         state.targetAppActivator = { _ in }
@@ -649,7 +646,6 @@ final class CommandModeAXHelperTests: XCTestCase {
         var insertionAttempts = 0
         var clipboardWrites: [String] = []
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.frontmostAppProvider = { editor }
         state.targetAppActivator = { _ in }

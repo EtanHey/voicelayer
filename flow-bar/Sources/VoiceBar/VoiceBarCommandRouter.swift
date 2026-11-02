@@ -139,6 +139,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
         physicalKeyDown = true
         hotkeyLocked = false
         defer { physicalCaptureTakeID = voiceState.activeCaptureTakeID }
+        if voiceState.isRecordingDrainPending { voiceState.rejectRecordingDuringDrain(); return }
         if voiceState.isPlaybackPaused {
             voiceState.record(pressToTalk: true)
             return
@@ -175,6 +176,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeySingleTap() {
+        if voiceState.isRecordingDrainPending { voiceState.rejectRecordingDuringDrain(); return }
         hotkeyLocked = false
         if voiceState.isPlaybackPaused { voiceState.record(pressToTalk: true); return }
         switch voiceState.mode {

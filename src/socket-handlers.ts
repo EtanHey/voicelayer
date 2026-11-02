@@ -1,6 +1,6 @@
 import { runBarCaptureWithPausedRead, bufferOpeningCaptureControl } from "./f5-capture";
 import { runHistoryTranscription, canStartBarCapture, cancelRecordingJob,
-  acknowledgeDictationDelivery, recordingJobsSnapshot } from "./recording-jobs";
+  acknowledgeDictationDelivery, recordingJobsSnapshot, markBarCaptureDraining, isBarCaptureDraining } from "./recording-jobs";
 import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-download";
 import { deleteRecognizer } from "./recognizer-management";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
@@ -246,7 +246,7 @@ function handleSocketCommandAdmitted(
 
   switch (command.cmd) {
     case "dictation_delivered":
-      acknowledgeDictationDelivery(command.take_id, command.delivery_id);
+      acknowledgeDictationDelivery(command.take_id, command.delivery_id, command.outcome);
       return;
     case "seek": {
       if (recordingState !== "idle" || getEffectiveRecordingState() !== "idle") return buildAck(command, "reject", "busy");
@@ -340,7 +340,8 @@ function handleSocketCommandAdmitted(
       if (bufferOpeningCaptureControl(command.take_id, "stop")) return buildAck(command, "accept");
       if (command.take_id) {
         if (recordingJobsSnapshot().mic_take_id !== command.take_id) return buildAck(command, "noop", "take is not recording");
-        safeWriteFileSync(STOP_FILE, JSON.stringify({ physical_press: command.physical_press === true }));
+        markBarCaptureDraining(command.take_id);
+        safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: command.take_id, physical_press: command.physical_press === true }));
         return buildAck(command, "accept");
       }
       if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
@@ -375,7 +376,7 @@ function handleSocketCommandAdmitted(
         const cancelled = cancelRecordingJob(command.take_id);
         if (!cancelled) return buildAck(command, "noop", "take is not active");
         if (cancelled === "delivery") return buildAck(command, "reject", "delivery is already in progress");
-        if (cancelled === "capture") safeWriteFileSync(STOP_FILE, "owned capture cancelled");
+        if (cancelled === "capture") safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: command.take_id ?? recordingJobsSnapshot().mic_take_id, cancelled: true }));
         return buildAck(command, "accept");
       }
       // Hide (QUEUE1b ruling) and an idle Cancel with no capture (QUEUE1c ruling) end the user read chain,
@@ -471,10 +472,11 @@ function handleSocketCommandAdmitted(
     }
     case "record": {
       if (recordingState === "recording") {
+        if (isBarCaptureDraining()) return buildAck(command, "reject", "Previous recording is finishing. Try record again when ready.");
         return buildAck(command, "noop", "already recording");
       }
-      if (recordingState === "transcribing" && !canStartBarCapture()) {
-        return buildAck(command, "reject", "busy");
+      if (!canStartBarCapture()) {
+        return buildAck(command, "reject", recordingJobsSnapshot().capture_error ?? "busy");
       }
       if (existsSync(VOICE_DISABLED_FILE) || existsSync(MIC_DISABLED_FILE)) {
         broadcast({
@@ -520,7 +522,7 @@ function handleSocketCommandAdmitted(
       let capture: Promise<string | null>;
       try {
         capture = runBarCaptureWithPausedRead(command.take_id ?? randomUUID(), record,
-          () => selectionReads.holdForCapture(), () => selectionReads.releaseCapture(), command.playback_elapsed_ms);
+          () => selectionReads.holdForCapture(), () => selectionReads.releaseCapture(), command.playback_elapsed_ms, { expectsAck: command.take_id !== undefined });
       } catch (error) {
         return buildAck(command, "reject", error instanceof Error ? error.message : String(error));
       }

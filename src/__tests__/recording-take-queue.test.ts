@@ -73,11 +73,13 @@ describe("independent recording take ownership", () => {
     await entered.promise;
     const b = queue.beginCapture("b", "B");
     queue.cancel(b);
+    const archivedB = Promise.withResolvers<void>();
     const second = queue.finishCapture(b, {
-      recorderExited: Promise.resolve(), archive: async () => { events.push("archive B"); return "b.wav"; },
+      recorderExited: Promise.resolve(), archive: async () => { events.push("archive B"); archivedB.resolve(); return "b.wav"; },
       transcribe: async () => { events.push("decode B"); return "two"; },
       deliver: async () => { events.push("paste B"); },
     });
+    await archivedB.promise;
     firstDecode.resolve("one"); await Promise.all([first, second]);
     expect(events).toEqual(["archive B", "paste A"]);
     expect(queue.cancel(a)).toBe(false);
@@ -138,7 +140,11 @@ describe("independent recording take ownership", () => {
       transcribe: async () => { events.push("decode B"); return "two"; },
       deliver: async () => { events.push("paste B"); },
     });
-    await tick();
+    const admissionDeadline = performance.now() + 2000;
+    while (queue.snapshot.microphone !== "free") {
+      if (performance.now() >= admissionDeadline) throw Error("B capture did not settle");
+      await Bun.sleep(1);
+    }
     const c = queue.beginCapture("c", "C");
     expect(queue.cancel({ ...b })).toBe(false);
     expect(queue.cancel(b)).toBe(true);

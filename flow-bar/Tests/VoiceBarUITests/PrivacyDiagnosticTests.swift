@@ -53,7 +53,6 @@ final class PrivacyDiagnosticTests: XCTestCase {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { rows = $0 })
         state.mode = .idle
-        state.minimumTranscribingDisplayDuration = 0
         var diagnostics: [(String, [String: String])] = []
         var journal: [(String, [String: String])] = []
         state.diagnosticLogger = {

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check fixed models and require a specific counterexample for every property mutant."""
+import hashlib
 import json
 import os
 import re
@@ -7,13 +8,27 @@ import signal
 import subprocess
 import tempfile
 from pathlib import Path
+from tlc_result import valid_result
 
 root = Path(__file__).resolve().parent
-logs = root / 'results-round2'
-logs.mkdir(exist_ok=True)
 scratch = root.parent.parent / '.build.noindex' / 'tlc-lane-d'
 scratch.mkdir(parents=True, exist_ok=True)
-jar = Path.home() / '.cache/tla/tla2tools.jar'
+logs = Path(tempfile.mkdtemp(prefix='run-', dir=scratch))
+source_jar = Path.home() / '.cache/tla/tla2tools.jar'
+# Freeze the bytes used by every Java child even if the shared cache changes.
+jar = logs / 'tla2tools.jar'
+jar_bytes = source_jar.read_bytes()
+jar.write_bytes(jar_bytes)
+jar_sha = hashlib.sha256(jar_bytes).hexdigest()
+help_result = subprocess.run(['java', '-cp', str(jar), 'tlc2.TLC', '-help'],
+                             env=os.environ.copy(), capture_output=True, text=True, timeout=10)
+version = re.search(r'\bVersion ([^\r\n]+)', help_result.stdout + help_result.stderr)
+if help_result.returncode not in (0, 1) or not version:
+    raise RuntimeError('Cannot identify the TLC jar version')
+identity = {'version': version.group(1), 'sha256': jar_sha, 'source': str(source_jar)}
+(logs / 'jar.json').write_text(json.dumps(identity, indent=2) + '\n')
+print(f'TLC jar: Version {identity["version"]}; sha256={jar_sha}; source={source_jar}', flush=True)
+print(f'Run output: {logs}', flush=True)
 manifest = json.loads((root / 'mutants.json').read_text())
 rows = []
 required = set()
@@ -43,15 +58,7 @@ def run(directory, module, config, label, expected=None):
             child.wait()
     text = path.read_text()
     path.write_text(text.replace(str(directory), '<model-check>').replace(str(root), '<formal-root>'))
-    violated = re.search(r'Invariant (\w+) is violated', text)
-    temporal = 'Temporal properties were violated.' in text
-    action = re.search(r'Action property (\w+) is violated', text)
-    # Each temporal mutant config names exactly one PROPERTY. A parse/runtime
-    # error, deadlock, or a different invariant is never a successful mutant.
-    valid = ((code == 0 and 'No error has been found.' in text) if expected is None else
-             ((code == 12 and violated and violated.group(1) == expected) or
-              (code == 13 and ((temporal and not action) or (action and action.group(1) == expected)) and not violated and
-               re.findall(r'^PROPERTY (\w+)$', Path(config).read_text(), re.M) == [expected])))
+    valid = valid_result(code, text, expected, Path(config).read_text())
     states = re.search(r'(\d+) states generated, (\d+) distinct states found', text)
     rows.append((label, expected or 'fixed', code, states.group(2) if states else '-', bool(valid)))
     print(f'{label}: exit={code} expected={expected or "PASS"} valid={bool(valid)}', flush=True)
@@ -60,11 +67,12 @@ def run(directory, module, config, label, expected=None):
 success = True
 with tempfile.TemporaryDirectory(prefix='check-', dir=scratch) as temporary:
     directory = Path(temporary)
-    for module in ['ResidentRecognizer.tla', 'RuntimeSetup.tla']:
+    for module in ['ResidentRecognizer.tla', 'RuntimeSetup.tla', 'ArchiveGateEvidence.tla']:
         (directory / module).write_text((root / module).read_text())
     for config in ['Fixed.cfg', 'FixedAssetsGate.cfg', 'FixedDelete.cfg', 'FixedDownload.cfg',
-                   'FixedReadyReselect.cfg', 'FixedSetupCancel.cfg']:
-        module = 'RuntimeSetup.tla' if 'Setup' in config else 'ResidentRecognizer.tla'
+                   'FixedReadyReselect.cfg', 'FixedSetupCancel.cfg', 'FixedArchiveGate.cfg']:
+        module = ('ArchiveGateEvidence.tla' if 'ArchiveGate' in config else
+                  'RuntimeSetup.tla' if 'Setup' in config else 'ResidentRecognizer.tla')
         success = run(directory, module, root / config, config[:-4]) and success
     for mutant in manifest:
         module = mutant['module']

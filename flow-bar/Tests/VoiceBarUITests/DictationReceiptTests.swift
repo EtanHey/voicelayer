@@ -38,7 +38,6 @@ final class DictationReceiptTests: XCTestCase {
             recentTranscriptionEntriesLoader: { entries },
             recentTranscriptionEntriesSaver: saver
         )
-        state.minimumTranscribingDisplayDuration = 0
         return state
     }
 
@@ -174,7 +173,6 @@ final class DictationReceiptTests: XCTestCase {
 
     func testImmediateFinalCarriesItsReceipt() async throws {
         let state = state()
-        state.minimumTranscribingDisplayDuration = 0.02
         state.handleEvent(["type": "state", "state": "transcribing"])
 
         state.handleEvent(finalEvent(audioMilliseconds: 2000, processingMilliseconds: 420))
@@ -185,7 +183,6 @@ final class DictationReceiptTests: XCTestCase {
 
     func testCancelAfterFinalPreservesReceiptAndEntry() async {
         let state = state()
-        state.minimumTranscribingDisplayDuration = 0.02
         state.handleEvent(["type": "state", "state": "transcribing"])
         state.handleEvent(finalEvent())
 

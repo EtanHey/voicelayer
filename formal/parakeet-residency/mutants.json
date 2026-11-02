@@ -132,5 +132,29 @@
     "module": "RuntimeSetup.tla",
     "property": "CancellationFinishes",
     "replace": []
+  },
+  {
+    "name": "PartialRemovalDropped",
+    "module": "ArchiveGateEvidence.tla",
+    "property": "FinalTranscriptEvidence",
+    "replace": []
+  },
+  {
+    "name": "GateRecordBeforeCommit",
+    "module": "ArchiveGateEvidence.tla",
+    "property": "FinalTranscriptEvidence",
+    "replace": []
+  },
+  {
+    "name": "GateMarkerStale",
+    "module": "ArchiveGateEvidence.tla",
+    "property": "FinalTranscriptEvidence",
+    "replace": []
+  },
+  {
+    "name": "GateDetailOnTranscribed",
+    "module": "ArchiveGateEvidence.tla",
+    "property": "NoFailureDetailOnTranscript",
+    "replace": []
   }
 ]
