@@ -39,6 +39,9 @@ Every positive invariant and temporal property has a targeted failing mutant;
 
 - N6 requires a qualified new F5/socket start to record B while A processes and
   preserve A. Current's native F5 cancels A; its direct socket route replies busy.
+  The [runtime ownership refinement](../record-while-processing-runtime/README.md)
+  extends `N6StartsB` through capture drain: F5 admits B immediately, then opens
+  its mic after A's exit proof. Rejection and stranded-intent mutants must fail.
 - N7 requires identity-scoped cancel commands. Current uses the actual global,
   identity-free primitive; its possible recipient is nondeterministic among live
   backend consumers. Fixed validates a take ID, rejects stale IDs, and preserves

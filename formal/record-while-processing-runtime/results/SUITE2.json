@@ -1,0 +1,72 @@
+{
+  "status": "PASS",
+  "scope": "LANE I FIXED-SUITE2",
+  "implementationHead": "13e9ceb576ca339b302a7442c53b0d13f31aa122",
+  "base": "12dff9af7fafb7c5c1b2c985a317fd347c08a331",
+  "machine": "Apple M1 Pro",
+  "heavyLock": "heavy.sh I",
+  "formal": {
+    "command": "bash formal/record-while-processing/check.sh --record",
+    "configs": 81,
+    "positivePasses": 6,
+    "expectedFailures": 75,
+    "exactPropertyMutantsKilled": 64,
+    "exactPropertyMutantsTotal": 64,
+    "families": {
+      "record-while-processing": {
+        "FixedStates": 30010,
+        "mutantsKilled": 41
+      },
+      "record-while-processing-runtime": {
+        "FixedStates": 119486,
+        "mutantsKilled": 16
+      },
+      "ptt-silence-timeout": {
+        "FixedStates": 9596,
+        "mutantsKilled": 7
+      }
+    },
+    "table": "formal/record-while-processing/results/UNION-MUTANTS.md",
+    "all108RecordedModelSourceHashesVerified": true,
+    "droppedProperties": [],
+    "droppedConfigs": []
+  },
+  "focusedSwift": {
+    "command": "swift test --package-path flow-bar --scratch-path .build.noindex/swift --filter 'RecordingJobOwnershipTests|VoiceBarCommandRouterTests|CancelledTranscriptionTests'",
+    "passed": 68,
+    "failed": 0,
+    "suites": {
+      "RecordingJobOwnershipTests": 24,
+      "VoiceBarCommandRouterTests": 41,
+      "CancelledTranscriptionTests": 3
+    }
+  },
+  "conformance": {
+    "command": "bash formal/record-while-processing/conformance.sh",
+    "bunPassed": 5,
+    "swiftPassed": 8,
+    "failed": 0,
+    "fixedSocketRecordContexts": 13,
+    "fixedSocketCancelContexts": 107,
+    "fixedSocketDivergences": 0,
+    "pipelineNativePaths": 8,
+    "runtimeDrainAdmissions": 1,
+    "runtimeQueuedCancellations": 16,
+    "runtimeOtherCancellations": 77,
+    "originalCancellationContextsRetained": "73/73",
+    "historicalCurrentDivergencesAreExpected": true
+  },
+  "refusalGuardMutation": {
+    "oldRejectionInjected": true,
+    "redTestsFailed": 2,
+    "redAssertionsFailed": 3,
+    "restoredTestsPassed": 2,
+    "sourceRestoredExactly": true
+  },
+  "m4SingleBun": {
+    "command": "nice -n 19 bun test src/__tests__/update-gate-review.test.ts",
+    "passed": 8,
+    "failed": 0
+  },
+  "installedOrLiveClaim": false
+}

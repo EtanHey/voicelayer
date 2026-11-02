@@ -1,4 +1,4 @@
-UNION: 61/61 mutants killed; all ownership/readability/retention properties retained. D3 retires only CapAlwaysFires, CaptureWithinCap and CapStops; renewable 10-minute silence replaces capped recording.
+UNION: 64/64 mutants killed; all ownership/readability/retention properties retained. D3 retires only CapAlwaysFires, CaptureWithinCap and CapStops; renewable 10-minute silence replaces capped recording.
 
 | Model | Property | Mutant | Result |
 | --- | --- | --- | --- |
@@ -56,6 +56,9 @@ UNION: 61/61 mutants killed; all ownership/readability/retention properties reta
 | record-while-processing-runtime | MicReleaseOnFailure | FailedMicMutant | exact-property FAIL |
 | record-while-processing-runtime | NoDeliveryOutsideCapturedTarget | UnreadableOverlapMutant | exact-property FAIL |
 | record-while-processing-runtime | UnreadableIdentitySingleTakeDelivers | UnreadableRefusalMutant | exact-property FAIL |
+| record-while-processing-runtime | N6StartsB | RejectDrainMutant | exact-property FAIL |
+| record-while-processing-runtime | N6StartsB | StallQueuedAdmissionMutant | exact-property FAIL |
+| record-while-processing-runtime | QueuedCaptureStarts | StallQueuedProgressMutant | exact-property FAIL |
 | ptt-silence-timeout | NoTimeoutDuringSpeech | WallClockMutant | exact-property FAIL |
 | ptt-silence-timeout | EveryEndedTakeRetained | DropArchiveMutant | exact-property FAIL |
 | ptt-silence-timeout | RawAccurate | TrimWordsMutant | exact-property FAIL |

@@ -58,7 +58,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         }
     }
 
-    func testSecondPressPreservesTranscriptionAndEscapeStillCancelsWithRecoveryNotice() {
+    func testSecondPressQueuesCaptureAndEscapeStillCancelsWithRecoveryNotice() {
         for escape in [false, true] {
             let state = VoiceState(
                 recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
@@ -74,12 +74,19 @@ final class VoiceBarCommandRouterTests: XCTestCase {
             let router = VoiceBarCommandRouter(voiceState: state)
             if escape { router.handleEscape() } else { router.handleHotkeySingleTap() }
             XCTAssertEqual(commands.last, escape ? "cancel" : "stop")
-            XCTAssertEqual(state.mode, escape ? .idle : .transcribing)
+            XCTAssertEqual(state.mode, escape ? .idle : .recording)
             if escape {
                 XCTAssertEqual(state.confirmationText,
                                "Transcription cancelled. Audio saved. Re-transcribe it from History when processing finishes.")
             } else {
-                XCTAssertEqual(state.confirmationText, "Finishing previous recording. Press F5 again when ready.")
+                XCTAssertNotNil(state.queuedRecordingTakeID)
+                XCTAssertNil(state.confirmationText)
+                XCTAssertEqual(commands, ["record", "stop"])
+                state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+                XCTAssertEqual(commands, ["record", "stop", "record"])
+                state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+                XCTAssertEqual(state.mode, .recording)
+                XCTAssertNil(state.confirmationText)
             }
             XCTAssertTrue(state.latestReusableTranscript.isEmpty)
             XCTAssertNil(state.lastDictationCardEntry)

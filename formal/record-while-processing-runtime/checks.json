@@ -79,6 +79,21 @@
       "role": "mutant",
       "target": "UnreadableIdentitySingleTakeDelivers",
       "kind": "invariant"
+    },
+    "RejectDrainMutant": {
+      "role": "mutant",
+      "target": "N6StartsB",
+      "kind": "invariant"
+    },
+    "StallQueuedAdmissionMutant": {
+      "role": "mutant",
+      "target": "N6StartsB",
+      "kind": "invariant"
+    },
+    "StallQueuedProgressMutant": {
+      "role": "mutant",
+      "target": "QueuedCaptureStarts",
+      "kind": "temporal"
     }
   },
   "acceptance": [
@@ -88,10 +103,12 @@
     "GuardedEscape",
     "LegacyNoAckWait",
     "MicReleaseOnFailure",
+    "N6StartsB",
     "NoDeliveryOutsideCapturedTarget",
     "NoFocusStealDuringCapture",
     "NoStaleGuard",
     "ProcessingSettles",
+    "QueuedCaptureStarts",
     "UnreadableIdentitySingleTakeDelivers"
   ]
 }
