@@ -1211,8 +1211,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         expect(isPlaybackPaused()).toBe(false);
         expect(events.find(e => e.type === "playback_outcome" && e.reason === "resume-refused")).toBeDefined();
         await awaitCurrentPlayback();
-        expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
         effectiveStateSpy.mockReturnValue("idle");
+        expect(await handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "noop", reason: "stale" });
         expect(await select("D", "A later Option+F5 works.")).toMatchObject({ outcome: "accept" });
         await playerBarrier.at(1);
         expect(receipts("D").length).toBeGreaterThan(0);
