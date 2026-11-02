@@ -31,10 +31,13 @@ export function hasWavAudio(path: string): boolean {
   try {
     const data = readFileSync(path);
     const info = parseWavAudioInfo(data);
-    return info !== null && info.audioFormat === 1 && info.sampleRate === 16000 &&
-      info.channels === 1 && info.bitsPerSample === 16 && info.dataSize >= 1024 &&
-      info.dataOffset + info.dataSize <= data.length &&
-      data.subarray(info.dataOffset, info.dataOffset + info.dataSize).some(byte => byte !== 0);
+    if (info === null || info.audioFormat !== 1 || info.sampleRate !== 16000 ||
+        info.channels !== 1 || info.bitsPerSample !== 16 || info.dataSize < 1024 ||
+        info.dataOffset + info.dataSize > data.length) return false;
+    for (let offset = info.dataOffset; offset + 2 <= info.dataOffset + info.dataSize; offset += 2) {
+      if (Math.abs(data.readInt16LE(offset)) > 2) return true;
+    }
+    return false;
   } catch { return false; }
 }
 

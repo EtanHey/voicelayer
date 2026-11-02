@@ -68,6 +68,10 @@ describe("speech fixture audio validation", () => {
     data.write("data", 36); data.writeUInt32LE(32000, 40);
     writeFileSync(path, data);
     expect(hasWavAudio(path)).toBe(false);
+    data.writeInt16LE(-1, 100);
+    data.writeInt16LE(1, 102);
+    writeFileSync(path, data);
+    expect(hasWavAudio(path)).toBe(false);
     data.writeInt16LE(8192, 100);
     writeFileSync(path, data);
     expect(hasWavAudio(path)).toBe(true);
