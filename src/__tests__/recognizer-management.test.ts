@@ -1,4 +1,4 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
+import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from "fs";
 import { join } from "path";
 import { testTmp } from "./setup/test-tmp";
@@ -51,4 +51,14 @@ test("delete refuses a model symlink into an external cache", () => {
   rmSync(join(root, "config.json")); symlinkSync(join(root, "python"), join(root, "config.json"));
   expect(deleteRecognizer("parakeet")).toMatchObject({ outcome: "reject", reason: "external-model-link" });
   expect(existsSync(join(root, "python"))).toBe(true);
+});
+
+test("deleting selected assets invalidates the cached backend before the next request", async () => {
+  const stt = await import("../stt"); stt.resetBackendCache();
+  const available = spyOn(stt.WhisperServerBackend.prototype, "isAvailable").mockResolvedValue(true);
+  try {
+    await stt.getBackend();
+    expect(deleteRecognizer("whisper").outcome).toBe("accept");
+    expect((await stt.getBackend()).name).toBe("parakeet-resident");
+  } finally { available.mockRestore(); stt.resetBackendCache(); }
 });
