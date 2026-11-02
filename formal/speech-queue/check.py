@@ -1,4 +1,6 @@
+import argparse
 import collections
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -6,13 +8,14 @@ import re
 import shutil
 import tempfile
 from admission_source import check_admission
+from f5_checks import EXPECTED as F5_EXPECTED, check_mutant_coverage, check_reachability, valid_result, render_receipt
 from supervision import Supervisor
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = ROOT / "formal/speech-queue"
 
 
-def check(runner):
+def check(runner, f5_only=False, receipt=False):
     OUT = ROOT / ".build.noindex/formal-speech-queue"
     OUT.mkdir(parents=True, exist_ok=True)
     RUN = Path(tempfile.mkdtemp(prefix=f"run-{os.getpid()}-", dir=OUT))
@@ -24,28 +27,60 @@ def check(runner):
                 "AdmissionOlderMatch": "EveryQueuedMatchStops", "QueueAdmissionFixed": None,
                 "QueueAdmissionClear": "NoSilentClear", "QueueAdmissionDuplicate": "NoDuplicateIdentity", "QueueAdmissionStopLeaves": "StopClearsAll",
                 "QueueAdmissionF5Clears": "F5KeepsQueue", "QueueAdmissionFreshClears": "NoSilentClear",
-                "QueueAdmissionInferredPlaying": "NoBlindAdvance"}
+                "QueueAdmissionInferredPlaying": "NoBlindAdvance",
+                **F5_EXPECTED}
+    check_mutant_coverage(SPEC)
     configs = sorted(SPEC.glob("*.cfg"))
     assert {p.stem for p in configs} == set(EXPECTED), "Every config needs an explicit expected result"
+    if f5_only:
+        configs = [config for config in configs if config.stem in F5_EXPECTED]
+    jar = Path.home() / ".cache/tla/tla2tools.jar"
+    assert jar.is_file(), f"Missing TLC jar: {jar}"
+    sources = [SPEC / "F5Pause.tla", SPEC / "check.py", SPEC / "f5_checks.py", *configs]
+    hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
+    rows = []
     print(f"Evidence: {RUN}", flush=True)
     for config in configs:
         name = config.stem
-        cmd = [os.environ.get("TLC", str(Path.home() / ".local/bin/tlc")), "-workers", "1", "-fp", "0", "-seed", "1",
+        cmd = ["nice", "-n", "19", "java", "-Xmx512m", "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC", "-workers", "1", "-fp", "0", "-seed", "1",
                "-metadir", str(RUN / name), "-config", str(config)]
-        if EXPECTED[name] is None:
+        if EXPECTED[name] is None or name == "F5PauseStuck":
             cmd += ["-dump", "dot,actionlabels", str(RUN / f"{name}.dot")]
-        module = "QueueAdmission" if name.startswith("QueueAdmission") else "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
+        module = "F5Pause" if name.startswith("F5Pause") else "QueueAdmission" if name.startswith("QueueAdmission") else "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
         status = runner.run([*cmd, str(SPEC / f"{module}.tla")], RUN / f"{name}.log", 90, cwd=ROOT,
-                            env={**os.environ, "JAVA_TOOL_OPTIONS": "-Xmx512m"})
+                            env=os.environ)
         output = (RUN / f"{name}.log").read_text()
         invariant = EXPECTED[name]
-        violations = re.findall(r"Invariant (\w+) is violated", output)
-        valid = (status == 12 and violations == [invariant]) if invariant else (
-            status == 0 and "Model checking completed. No error has been found." in output)
-        if not valid:
+        if not valid_result(status, output, invariant, config.read_text()):
             raise SystemExit(f"Unexpected result for {name}:\n{output}")
-        counts = re.search(r"\d+ states generated, \d+ distinct states found", output)
-        print(f"{name}: {'PASS' if not invariant else 'EXPECTED violation ' + invariant}; {counts[0] if counts else 'no counts'}", flush=True)
+        counts = re.search(r"(\d+) states generated, (\d+) distinct states found", output)
+        assert counts, f"Missing TLC state counts: {name}"
+        depth = re.search(r"The depth of the complete state graph search is (\d+)", output)
+        progress_depth = re.search(r"Progress\((\d+)\)[^\n]* 0 states left on queue\.", output)
+        measured_depth = depth[1] if depth else (
+            progress_depth[1] + " (TLC completed Progress)" if progress_depth
+            and "Checking temporal properties for the complete state space" in output else "not emitted by TLC")
+        actual = "FAIL " + invariant if invariant else "PASS"
+        excerpt = [line for line in output.splitlines() if any(marker in line for marker in
+                   ("Invariant ", "Temporal properties were violated", "Model checking completed.",
+                    "states generated,", "The depth of", "Progress(", "AutoPauseNeverStuck |->", "Back to state", "Stuttering"))]
+        rows.append(dict(name=name, expected=invariant, actual=actual, generated=int(counts[1]),
+                         distinct=int(counts[2]), depth=measured_depth, excerpt=excerpt))
+        print(f"{name}: {actual}; {counts[0]}; depth {measured_depth}", flush=True)
+    check_reachability(RUN)
+    assert all(hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest
+               for path, digest in hashes.items()), "Sources changed during TLC"
+    (RUN / "results.json").write_text(json.dumps(dict(rows=rows, sourceSHA256=hashes,
+        tlcJarSHA256=hashlib.sha256(jar.read_bytes()).hexdigest()), indent=2) + "\n")
+    if receipt:
+        document = SPEC / "F5PAUSE-TLC.md"
+        before, separator, rest = document.read_text().partition("<!-- TLC-RESULTS-START -->")
+        assert separator and "<!-- TLC-RESULTS-END -->" in rest, "Receipt markers missing"
+        after = rest.split("<!-- TLC-RESULTS-END -->", 1)[1]
+        document.write_text(before + separator + "\n" + render_receipt(rows) + "<!-- TLC-RESULTS-END -->" + after)
+    if f5_only:
+        print("PASS: F5 fixed contract, current failures, and every exact-property mutant (no runtime replay)", flush=True)
+        return
 
     def graph(name, event_pattern, parse_event):
         nodes, edges = {}, []
@@ -99,9 +134,13 @@ def check(runner):
     if status:
         raise SystemExit(status)
     check_admission(RUN, runner)
-    print("PASS: queue/History runtime and real Swift/daemon admission conformance; twelve expected counterexamples")
+    print(f"PASS: queue/History runtime and real Swift/daemon admission conformance; {sum(row['expected'] is not None for row in rows)} expected counterexamples")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--f5-only", action="store_true", help="Focused F5 TLC, without the existing conformance replays")
+    parser.add_argument("--receipt", action="store_true", help="Regenerate TLC tables from this run")
+    args = parser.parse_args()
     with Supervisor(880) as runner:
-        check(runner)
+        check(runner, args.f5_only, args.receipt)

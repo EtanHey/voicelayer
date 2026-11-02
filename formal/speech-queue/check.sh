@@ -2,4 +2,4 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PYTHONDONTWRITEBYTECODE=1
-exec python3 -B formal/speech-queue/check.py
+exec python3 -B formal/speech-queue/check.py "$@"
