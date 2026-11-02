@@ -615,7 +615,7 @@ for (const phase of ["opening", "capturing"] as const) {
       expect(JSON.parse(readFileSync(STOP_FILE, "utf8"))).toMatchObject({ take_id: `unscoped-${phase}`, physical_press: false });
       expect(tts.isPlaybackPaused()).toBe(true);
       expect(events.filter(e => e.type === "playback_outcome")).toEqual([]);
-      for (const trim of trims.values) trim.exit.resolve(0);
+      (await trims.at(0)).exit.resolve(0);
       result.resolve(null);
       await settleRecordingJobs(); await fixtureCheckpoint();
       await players.at(1);

@@ -40,6 +40,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let synths: { argv: string[]; exit: ReturnType<typeof deferred<number>>; killed: boolean }[];
   let players: { exit: ReturnType<typeof deferred<number>>; killed: boolean; synthCount: number; argv: string[]; signals: string[] }[];
   let events: any[];
+  let holdFirstSynth = false;
   let holdSynth: boolean, autoPlay: boolean, holdPlayerExit: boolean;
   let handles: { done: Promise<void> }[];
   let spies: ReturnType<typeof spyOn>[];
@@ -62,7 +63,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   beforeEach(() => {
     modelReplay = false;
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
-    holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
+    holdFirstSynth = false; holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
     clockMs = 100_000;
     releaseAlignments = [];
@@ -87,7 +88,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const spoken = argv.find(a => a.startsWith("--text="))!.slice(7);
         writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * (modelReplay ? 20000000 : 120000), duration: modelReplay ? 18000000 : 100000})).join("\n"));
         const exit = deferred<number>(); const item = { argv, exit, killed: false }; synths.push(item); synthBarrier.push(item);
-        if (!holdSynth || synths.length === 1) {
+        if (!holdSynth || (synths.length === 1 && !holdFirstSynth)) {
           if (synthLatencyMs > 0) setTimeout(() => exit.resolve(0), synthLatencyMs); else exit.resolve(0);
         }
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
@@ -224,7 +225,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
 
   for (const phase of ["preparing", "playing"] as const) {
     it(`R2-01 refused automatic resume releases ${phase} read and retains its History text`, async () => {
-      holdSynth = phase === "preparing";
+      holdFirstSynth = holdSynth = phase === "preparing";
       const text = "Keep this whole read in History.";
       const archive = beginSpeechArchive(text);
       await archive.settled();
@@ -246,6 +247,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       const metadata = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
       expect(metadata.speech.state).toBe(phase === "preparing" ? "cancelled" : "stopped");
       expect(archive.failures).toEqual([]);
+      holdFirstSynth = holdSynth = false;
       const later = start("edge", "A later read works.");
       await playerBarrier.at(phase === "preparing" ? 0 : 1);
       stopPlayback(); await later.done;

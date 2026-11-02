@@ -378,8 +378,8 @@ function handleSocketCommandAdmitted(
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
       );
     case "cancel":
-      if (bufferOpeningCaptureControl(command.take_id, "cancel")) return buildAck(command, "accept");
       if (command.discard_read_queue === true) selectionReads.clear();
+      if (bufferOpeningCaptureControl(command.take_id, "cancel")) return buildAck(command, "accept");
       if (command.take_id || recordingJobsSnapshot().recording_jobs.length > 0) {
         const cancelled = cancelRecordingJob(command.take_id);
         if (!cancelled) return buildAck(command, "noop", "take is not active");
