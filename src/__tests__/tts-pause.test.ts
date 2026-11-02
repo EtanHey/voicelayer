@@ -630,7 +630,7 @@ it("R2-01 a fresh daemon has no loan or parked read after restart", async () => 
   await capture.ready;
   try {
     const child = Bun.spawnSync([process.execPath, "--preload", "./src/__tests__/setup/preload.ts", "-e",
-      'import { hasF5Capture, isPlaybackPaused } from "./src/tts.ts"; if (hasF5Capture() || isPlaybackPaused()) process.exit(1);'],
+      'import { hasF5Capture, isPlaybackPaused, getPlaybackQueueDepth, hasPendingSpeechPreparation } from "./src/tts.ts"; if (hasF5Capture() || isPlaybackPaused() || getPlaybackQueueDepth() !== 0 || hasPendingSpeechPreparation()) process.exit(1);'],
       { cwd: process.cwd(), env: process.env, stdout: "pipe", stderr: "pipe" });
     expect(child.exitCode).toBe(0);
   } finally { tts.stopPlayback(); capture.settle(); }
@@ -644,9 +644,8 @@ it("R2-01 refused automatic resume after slice preparation releases the read", a
   setRecordingState("transcribing");
   try {
     (await trims.at(0)).exit.resolve(0);
-    await fixtureCheckpoint();
-    expect(tts.isPlaybackPaused()).toBe(false);
     expect(await handle.exited).toMatchObject({ reason: "resume-refused" });
+    expect(tts.isPlaybackPaused()).toBe(false);
     expect(events.filter(e => e.type === "error")).toEqual([]);
     expect(players.values).toHaveLength(1);
   } finally { setRecordingState("idle"); capture.settle(); }
