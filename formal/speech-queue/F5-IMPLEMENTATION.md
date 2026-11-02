@@ -47,9 +47,15 @@ on the 2.3 notch list, coordinated with Lane A/N1 by a Claude UI worker.
 ## Verification boundary
 
 `check.sh` retains the queue/History/admission replays and additionally projects TLC
-capture-end states onto R2-01 runtime scenarios. Every distinct projected combination
-of initial read, containing-word cursor, ownership, Stop, queued count and outcome is
-run with tap, hold and double gestures. Every Current counterexample contributes its
+capture-end edges from both Fixed graphs onto R2-01 runtime scenarios. Every distinct
+projected combination of initial read, the independent press-position ghost, ownership,
+Stop, queued count, outcome and active-take completion order is run with tap, hold and
+double gestures. Active take identities are normalized to one or two outstanding takes;
+the replay does not claim to reproduce TLC scheduling or every intermediate prefix.
+Two-take rows open B while A is processing, test partial settlement without resuming,
+then finish the remaining take. Lane I FIFO delivery remains authoritative when B
+finishes first. User ownership is exercised both before F5 and through conversion
+during capture. Every Current counterexample contributes its
 actual input prefix. Native Swift emits commands through the real router/VoiceState;
 the paired Bun replay parses those commands and drives the real daemon handlers,
 PlaybackQueueManager, long-read synthesis lifecycle and Lane I take settlement.

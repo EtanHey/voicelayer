@@ -1,4 +1,4 @@
-"""Project TLC capture-end states onto R2-01 runtime scenarios; retain every distinct ownership/gesture/cursor case.
+"""Project TLC capture-end edges onto R2-01 scenarios; retain distinct ownership/gesture/cursor/take cases.
 
 Queue-count presentation and initial-timing are separate R2-03/R2-05 work. Their Current traces remain
 explicitly enumerated by the gate, but this replay asserts R2-01 ownership/cursor/capture behaviour only.
@@ -9,59 +9,82 @@ from pathlib import Path
 
 
 def capture_cases(run):
-    labels = {}
-    for line in (run / "F5PauseFixed.dot").read_text().splitlines():
-        node = re.match(r'(-?\d+) \[label="((?:\\.|[^"\\])*)"', line)
-        if node:
-            labels[node[1]] = json.loads('"' + node[2] + '"')
-    def value(label, key):
-        match = re.search(rf'\b{key} = ("[^"\n]*"|TRUE|FALSE|\d+)', label)
-        assert match, key
-        token = match[1]
-        return token == "TRUE" if token in {"TRUE", "FALSE"} else json.loads(token)
-    cases = {}
-    for label in labels.values():
-        event = value(label, "event")
-        if not event.startswith("end_"):
-            continue
-        saw = value(label, "f5Saw")
-        if saw not in {"playing", "paused", "preparing"}:
-            continue
-        owner = value(label, "endOwner")
-        row = dict(initial=saw, press=value(label, "pausedAt") * 2 + 1,
-                   manual=saw != "paused" and owner == "user", stopped=value(label, "stopInCapture"),
-                   outcome=event.removeprefix("end_").removesuffix("_auto_resume"),
-                   queued=value(label, "queued"))
-        # End-state held is intentionally ignored: physical key state is independently exercised below.
-        for gesture in ("tap", "hold", "double"):
-            case = {**row, "gesture": gesture}
-            cases[json.dumps(case, sort_keys=True)] = case
-    # Every Current counterexample contributes its actual input prefix, projected onto this lane.
-    # R2-03/05 prefixes prepare/start speech here; presentation/timing assertions stay with their lane.
+    # The model owns capture identities; normalize only the active identities for this read loan.
+    # This is a scenario projection, not an implementation of TLC's transition relation.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from corpus_support import state
     from f5_checks import CURRENT
+    cases, graph_counts = {}, {}
+    for name in ("F5PauseFixed", "F5PauseFixedTranscribing"):
+        labels, edges = {}, []
+        for line in (run / f"{name}.dot").open():
+            node = re.match(r'(-?\d+) \[label="((?:\\.|[^"\\])*)"', line)
+            edge = re.match(r'(-?\d+) -> (-?\d+) ', line)
+            if node:
+                labels[node[1]] = state(json.loads('"' + node[2] + '"'))
+            elif edge:
+                edges.append(edge.groups())
+        reported = re.findall(r"(\d+) distinct states found", (run / f"{name}.log").read_text())
+        assert reported and len(labels) == int(reported[-1]), f"Incomplete {name} graph"
+        selected = 0
+        for source, target in edges:
+            before, after = labels[source], labels[target]
+            old, new = before["s"], after["s"]
+            event = new["event"]
+            if not event.startswith("end_") or not (old["owner"] in {"f5", "user"} or old["stopWon"]):
+                continue
+            # DOT includes stuttering/self edges retaining the previous end-event label.
+            if old == new:
+                continue
+            caps = old["caps"]
+            active = [i for i, phase in enumerate(caps) if phase != "idle"]
+            ended = [i for i in active if new["caps"][i] == "idle"]
+            assert len(ended) == 1 and len(active) in {1, 2}, (source, target, old, new)
+            selected += 1
+            initial = "preparing" if old["speech"] == "parked_preparing" or old["timing"] == "none" else "playing"
+            # A user owner can arise before F5 or through the approved manual conversion while recording.
+            ownership = [(False, False)] if old["owner"] != "user" else [(True, False), (False, True)]
+            for manual_before, manual in ownership:
+                row = dict(initial=initial, press=before["pressPos"], manualBefore=manual_before,
+                           manual=manual, stopped=old["stopWon"],
+                           outcome=event.removeprefix("end_").removesuffix("_auto_resume"),
+                           queued=old["queued"], takes=len(active), ending=active.index(ended[0]))
+                for gesture in ("tap", "hold", "double"):
+                    case = {**row, "gesture": gesture}
+                    cases[json.dumps(case, sort_keys=True)] = case
+        graph_counts[name] = dict(states=len(labels), edges=len(edges), capture_end_edges=selected)
+        assert selected, f"No read/capture settlement edges in {name}"
     counterexamples = {}
     for name in CURRENT:
         log = (run / f"{name}.log").read_text()
-        states = re.findall(r"State \d+:[^\n]*\n(.*?)(?=\nState \d+:|\n\d+ states generated|\Z)", log, re.S)
+        bodies = re.findall(r"State \d+:[^\n]*\n(.*?)(?=\nState \d+:|\n\d+ states generated|\Z)", log, re.S)
+        states = [state(body) for body in bodies]
         assert states, f"Missing actual Current trace: {name}"
-        events = [value(state, "event") for state in states]
+        events = [item["s"]["event"] for item in states]
         counterexamples[name] = events
-        failing = states[-1]
-        pause = next((state for state in states if "f5_hold_ignored" in state or "f5_tap_stops" in state), None)
-        initial = "paused" if "user_pause" in events else value(pause, "f5Saw") if pause else (
-            "playing" if "start_playback" in events else "preparing")
-        row = dict(initial=initial, press=value(failing, "pos"), manual=False, stopped=False,
-                   outcome="empty" if "hold_release" in events else "timeout", queued=0,
-                   gesture="hold" if pause else "tap", current=name, current_events=events)
+        edge = next((i for i, item in enumerate(states) if item["f5Saw"] != "none"), None)
+        prior = states[max(0, edge - 1)] if edge is not None else states[0]
+        seen = prior["s"]["speech"]
+        overlapping = any(item["transcribingBefore"] for item in states)
+        initial = "preparing" if seen in {"none", "preparing", "parked_preparing"} else "playing"
+        row = dict(initial=initial, press=states[edge]["pressPos"] if edge is not None else 0,
+                   manualBefore=prior["s"]["owner"] == "user", manual=False, stopped=False,
+                   outcome="cancelled" if "f5_cancel_transcribing" in events else "timeout",
+                   queued=0, takes=2 if overlapping else 1, ending=0,
+                   gesture="hold" if any("release" in event or "hold" in event for event in events) else "tap",
+                   current=name, current_events=events)
         cases["current-" + name] = row
     (run / "f5-current-prefixes.json").write_text(json.dumps(counterexamples, indent=2))
-    assert cases
+    (run / "f5-projection-counts.json").write_text(json.dumps(graph_counts, indent=2))
     rows = sorted(cases.values(), key=lambda row: json.dumps(row, sort_keys=True))
     assert {row["outcome"] for row in rows} == {"pasted", "empty", "failed", "cancelled", "timeout"}
     assert any(row["press"] >= 3 and not row["manual"] and not row["stopped"] for row in rows)
+    assert {row["ending"] for row in rows if row["takes"] == 2} == {0, 1}
+    assert any(row["initial"] == "preparing" and row["manual"] for row in rows)
     path = run / "f5-cases.json"
     path.write_text(json.dumps(rows))
-    print(f"F5 R2-01 projection: {len(labels)} TLC states -> {len(rows)} capture scenarios, every outcome/gesture/owner/cursor", flush=True)
+    print(f"F5 R2-01 projection: {graph_counts} -> {len(rows)} scenarios; all capture-end edges projected, both N6 settlement orders, all Current prefixes", flush=True)
     return path
 
 

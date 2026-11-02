@@ -123,7 +123,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it.skipIf(!process.env.VOICELAYER_F5_CASES)("TLC F5 native command projection conforms to real daemon/player/take handlers", async () => {
     const schema = z.array(z.object({ initial: z.enum(["playing", "preparing", "paused"]), press: z.number().int(),
       manual: z.boolean(), stopped: z.boolean(), outcome: z.enum(["pasted", "empty", "failed", "cancelled", "timeout"]),
-      queued: z.number().int(), gesture: z.enum(["tap", "hold", "double"]) }));
+      queued: z.number().int(), gesture: z.enum(["tap", "hold", "double"]),
+      takes: z.union([z.literal(1), z.literal(2)]).default(1), ending: z.union([z.literal(0), z.literal(1)]).default(0),
+      manualBefore: z.boolean().optional() }));
     const rows = schema.parse(JSON.parse(readFileSync(process.env.VOICELAYER_F5_CASES!, "utf8")));
     const native = z.array(z.array(z.record(z.string(), z.unknown()))).parse(JSON.parse(readFileSync(process.env.VOICELAYER_F5_WIRE!, "utf8")));
     expect(native).toHaveLength(rows.length);
@@ -132,13 +134,20 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     for (const [index, row] of rows.entries()) {
       resetSelectionReadQueueForTests();
       const firstPlayer = players.length, firstEvent = events.length;
-      const capture = deferred<string | null>(), mic = deferred<void>();
+      const takes = Array.from({ length: row.takes }, () => ({
+        result: deferred<{ text: string | null; failed: boolean }>(), mic: deferred<void>(),
+      }));
       let captures = 0;
       const wait = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
-        captures++;
+        const take = takes[captures++];
+        expect(take, `unexpected capture row ${index}`).toBeDefined();
         expect(isPlaybackPaused(), `open mic row ${index}`).toBe(true);
         options?.onCaptureStart?.();
-        return finishBarCapture(mic.promise, "fixture.wav", async () => capture.promise);
+        return finishBarCapture(take.mic.promise, "fixture.wav", async () => {
+          const outcome = await take.result.promise;
+          if (outcome.failed) throw new Error("model capture failure");
+          return outcome.text;
+        });
       });
       const speakText = spyOn(tts, "speakText").mockImplementation(text => start("edge", text));
       try {
@@ -146,8 +155,14 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const original = handles.at(-1)!;
         if (row.initial !== "preparing") await playerBarrier.at(firstPlayer);
         clockMs += Math.min(row.press * 1000, 4000);
+        let records = 0;
         for (const payload of native[index]) {
           const control = { ...payload };
+          if (control.cmd === "record" && records++ > 0) {
+            // N6 opens B after A's physical recorder exits, while A's result remains pending.
+            takes[0].mic.resolve();
+            await fixtureCheckpoint();
+          }
           if (control.cmd === "pause" || control.cmd === "resume") {
             const current = events.slice(firstEvent).findLast(event => event.type === "playback_state" || event.state === "speaking");
             // Rebind the native fixture's symbolic player to the daemon's fresh scoped identity.
@@ -160,18 +175,26 @@ describe("long-read real runtime with owned synth/player fakes", () => {
           expect(ack, `row ${index} ${command.cmd}`).not.toMatchObject({ outcome: "reject" });
           await fixtureCheckpoint();
         }
-        expect(captures, `row ${index}`).toBe(1);
+        expect(captures, `row ${index}`).toBe(row.takes);
         for (let queued = 0; queued < row.queued; queued++) {
           expect(await handleSocketCommand({ cmd: "speak_text", id: `queued-${index}-${queued}`, text: `Queued ${queued}`,
             source: "selection", queue: true })).toMatchObject({ outcome: "accept", reason: "queued" });
         }
         const parked = events.slice(firstEvent).findLast(event => event.type === "playback_state" && event.state === "paused");
         if (row.initial !== "preparing") expect(parked?.offset_ms, `word row ${index}`).toBe(Math.min(Math.floor(row.press / 2) * 2000, 4000));
-        mic.resolve();
-        if (row.outcome === "failed") capture.reject(new Error("model capture failure"));
-        else capture.resolve(row.outcome === "pasted" ? "fixture transcript" : null);
+        const ending = takes[row.ending];
+        ending.mic.resolve();
+        ending.result.resolve({ text: row.outcome === "pasted" ? "fixture transcript" : null, failed: row.outcome === "failed" });
+        if (takes.length === 2) {
+          await fixtureCheckpoint();
+          expect(events.slice(firstEvent).filter(event => event.type === "playback_state" && event.state === "resumed"),
+            `partial settle row ${index}`).toHaveLength(0);
+          // Lane I retains FIFO delivery even when B finishes first. The other take still owns the loan.
+          const remaining = takes[1 - row.ending];
+          remaining.mic.resolve(); remaining.result.resolve({ text: null, failed: false });
+        }
         await settleRecordingJobs(); await fixtureCheckpoint();
-        const manual = row.initial === "paused" || row.manual;
+        const manual = row.initial === "paused" || row.manualBefore === true || row.manual;
         if (!row.stopped && !manual && (row.initial === "preparing" || row.press < 4)) {
           await playerBarrier.at(firstPlayer + (row.initial === "preparing" ? 0 : 1));
           expect(events.slice(firstEvent).filter(event => event.type === "playback_state" && event.state === "resumed")).toHaveLength(1);
@@ -189,7 +212,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         await awaitCurrentPlayback();
         replayed++;
       } finally {
-        mic.resolve(); capture.resolve(null);
+        for (const take of takes) { take.mic.resolve(); take.result.resolve({ text: null, failed: false }); }
         await settleRecordingJobs(); wait.mockRestore(); speakText.mockRestore();
         stopPlayback();
       }

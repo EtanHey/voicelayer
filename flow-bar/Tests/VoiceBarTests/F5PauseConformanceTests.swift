@@ -11,6 +11,9 @@ final class F5PauseConformanceTests: XCTestCase {
         let outcome: String
         let queued: Int
         let gesture: String
+        let takes: Int?
+        let ending: Int?
+        let manualBefore: Bool?
     }
 
     func testN6TakeSetKeepsF5ReadParkedUntilEveryTakeSettles() throws {
@@ -84,16 +87,25 @@ final class F5PauseConformanceTests: XCTestCase {
             var commands: [[String: Any]] = []
             state.sendCommand = { commands.append($0) }
             let router = VoiceBarCommandRouter(voiceState: state)
-            let press = min(row.press * 1000, 4000)
+            let manualBefore = row.initial == "paused" || row.manualBefore == true
+            let press = row.initial == "preparing" ? 0 : min(row.press * 1000, 4000)
             let offset = min(press / 2000 * 2000, 4000)
             let speaking: [String: Any] = ["type": "state", "state": "speaking", "text": "One two",
                                            "duration_ms": 4000, "playback_id": "model-read", "generation": 1]
-            state.handleEvent(speaking)
+            if row.initial == "preparing" {
+                state.handleEvent(["type": "state", "state": "speaking", "text": "One two",
+                                   "long_read": ["id": "model-read", "chunk_index": 0, "chunk_count": 1,
+                                                 "chunk_start_ms": 0, "preparing": true, "text": "One two"]])
+            } else { state.handleEvent(speaking) }
             clock += Double(press) / 1000
             var paused: [String: Any] = ["type": "playback_state", "state": "paused", "playback_id": "model-read",
                                          "generation": 2, "offset_ms": offset, "chunk_offset_ms": offset,
-                                         "pause_owner": row.initial == "paused" ? "user" : "f5"]
-            if row.initial == "paused" {
+                                         "pause_owner": manualBefore ? "user" : "f5"]
+            if row.initial == "preparing" {
+                paused["long_read"] = ["id": "model-read", "chunk_index": 0, "chunk_count": 1,
+                                       "chunk_start_ms": 0, "preparing": true, "text": "One two"]
+            }
+            if manualBefore {
                 state.togglePlaybackPause()
                 state.handleEvent(paused)
             }
@@ -105,6 +117,24 @@ final class F5PauseConformanceTests: XCTestCase {
             XCTAssertNotNil(record["take_id"] as? String)
             state.pendingIntent = nil
             state.handleEvent(paused)
+            var takeIDs = [try XCTUnwrap(record["take_id"] as? String)]
+            if row.takes == 2 {
+                // Release only A's microphone; A is still processing when F5 starts B (N6).
+                router.handleHotkeyHoldEnd(holdDuration: 1)
+                if row.gesture != "hold" { router.handleHotkeySingleTap() }
+                state.pendingIntent = nil
+                state.handleEvent(["type": "state", "state": "transcribing", "source": "recording",
+                                   "recording_jobs": [["take_id": takeIDs[0], "kind": "live", "phase": "processing"]],
+                                   "mic_take_id": NSNull()])
+                XCTAssertTrue(state.canRecordDuringProcessing, "N6 row \(index)")
+                if row.gesture == "tap" { router.handleHotkeySingleTap() }
+                else { router.handleHotkeyHoldStart() }
+                if row.gesture == "double" { router.handleHotkeyDoubleTap() }
+                XCTAssertEqual(commands.last?["cmd"] as? String, "record", "N6 row \(index)")
+                takeIDs.append(try XCTUnwrap(commands.last?["take_id"] as? String))
+                XCTAssertNotEqual(takeIDs[0], takeIDs[1])
+                state.pendingIntent = nil
+            }
             if row.manual {
                 XCTAssertTrue(state.isF5SpeechPausedDuringCapture, "row \(index)")
                 state.pauseSpeechDuringCapture()
@@ -121,10 +151,19 @@ final class F5PauseConformanceTests: XCTestCase {
                 }
                 state.mode = .transcribing
             }
-            state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+            if takeIDs.count == 2 {
+                let remaining = takeIDs[1 - (row.ending ?? 0)]
+                state.handleEvent(["type": "state", "state": "transcribing", "source": "recording",
+                                   "recording_jobs": [["take_id": remaining, "kind": "live", "phase": "processing"]],
+                                   "mic_take_id": NSNull()])
+                XCTAssertEqual(state.mode, .transcribing, "partial settlement row \(index)")
+                XCTAssertFalse(commands.contains { ["resume", "cancel"].contains($0["cmd"] as? String ?? "") })
+            }
+            state.handleEvent(["type": "state", "state": "idle", "source": "recording",
+                               "recording_jobs": [], "mic_take_id": NSNull()])
             RunLoop.main.run(until: Date().addingTimeInterval(0.001))
             XCTAssertFalse(commands.contains { $0["cmd"] as? String == "resume" }, "only daemon settles row \(index)")
-            let manual = row.initial == "paused" || row.manual
+            let manual = manualBefore || row.manual
             if !row.stopped && !manual {
                 var resumed = speaking
                 resumed["generation"] = 3
