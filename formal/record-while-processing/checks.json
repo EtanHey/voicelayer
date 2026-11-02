@@ -21,6 +21,11 @@
       "target": null,
       "kind": "pass"
     },
+    "ProductClock": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
     "OldSocketBusy": {
       "role": "historical",
       "target": "N6StartsB",
@@ -186,6 +191,66 @@
       "target": "EventuallyIdle",
       "kind": "temporal"
     },
+    "MutHeldDecode": {
+      "role": "mutant",
+      "target": "N8DecodeAdmissible",
+      "kind": "invariant"
+    },
+    "MutHeldDecodeImmediate": {
+      "role": "mutant",
+      "target": "N8ImmediatePaste",
+      "kind": "invariant"
+    },
+    "MutHeldDecodeOverlap": {
+      "role": "mutant",
+      "target": "OverlapPastes",
+      "kind": "temporal"
+    },
+    "MutNoDecodeFairness": {
+      "role": "mutant",
+      "target": "EventuallyIdle",
+      "kind": "temporal"
+    },
+    "MutSpeechNoRenew": {
+      "role": "mutant",
+      "target": "SpeechRenewsDeadline",
+      "kind": "invariant"
+    },
+    "MutSpeechDisabled": {
+      "role": "mutant",
+      "target": "SpeechRenewsDeadline",
+      "kind": "invariant"
+    },
+    "MutEarlyTimeout": {
+      "role": "mutant",
+      "target": "NoEarlySilenceTimeout",
+      "kind": "invariant"
+    },
+    "MutTimeoutNeverFires": {
+      "role": "mutant",
+      "target": "SilenceTimesOut",
+      "kind": "temporal"
+    },
+    "MutNoCap": {
+      "role": "mutant",
+      "target": "CapAlwaysFires",
+      "kind": "temporal"
+    },
+    "MutNoCapBound": {
+      "role": "mutant",
+      "target": "CaptureWithinCap",
+      "kind": "invariant"
+    },
+    "MutCapRenewedBySpeech": {
+      "role": "mutant",
+      "target": "CapAlwaysFires",
+      "kind": "temporal"
+    },
+    "MutCapBlockedBySpeech": {
+      "role": "mutant",
+      "target": "CapAlwaysFires",
+      "kind": "temporal"
+    },
     "WitnessOverlapPaste": {
       "role": "witness",
       "target": "NoOverlapPaste",
@@ -195,9 +260,21 @@
       "role": "witness",
       "target": "NoScopedCancelDuringDecode",
       "kind": "invariant"
+    },
+    "WitnessDecodeOverlap": {
+      "role": "witness",
+      "target": "NoDecodeDuringRecording",
+      "kind": "invariant"
+    },
+    "WitnessSpeechSilenceTimeout": {
+      "role": "witness",
+      "target": "NoSpeechSilenceTimeout",
+      "kind": "invariant"
     }
   },
   "acceptance": [
+    "CapAlwaysFires",
+    "CaptureWithinCap",
     "D3EveryTakeKept",
     "EventuallyIdle",
     "N6Admissible",
@@ -207,15 +284,19 @@
     "N7GuardedClick",
     "N7Identity",
     "N7ScopedCancel",
+    "N8DecodeAdmissible",
     "N8FinalNotSuperseded",
     "N8ImmediatePaste",
     "NoCancelledPaste",
     "NoDuplicatePaste",
+    "NoEarlySilenceTimeout",
     "NoTimeoutWhileTalking",
     "OneDecoder",
     "OneMic",
     "OverlapPastes",
     "ProcessingSettles",
+    "SilenceTimesOut",
+    "SpeechRenewsDeadline",
     "TypeOK"
   ]
 }

@@ -1,27 +1,8 @@
-Notch (Fixed): 20864 TLC states -> 1376 distinct real-resolver cases; /Users/etanheyman/.t3/worktrees/voicelayer/t3-59cbb61f/.build.noindex/notch-presentation/conformance.json
-[heavy.sh] laneA start 2026-11-02T08:46:19Z load { 9.20 10.28 10.60 }
-Building for debugging...
-[Constructing description]
-[Planning deferred tasks]
-[2 / 6]
-[5 / 9] VoiceBarUITests-product
-Build complete! (1.11 sec)
-Test Suite 'Selected tests' started at 2026-11-02 10:46:21.562.
-Test Suite 'VoiceBarUITests.xctest' started at 2026-11-02 10:46:21.563.
-Test Suite 'NotchPresentationConformanceTests' started at 2026-11-02 10:46:21.563.
-Test Case '-[VoiceBarUITests.NotchPresentationConformanceTests testTLCFixedNotchProjection]' started.
-Test Case '-[VoiceBarUITests.NotchPresentationConformanceTests testTLCFixedNotchProjection]' passed (0.179 seconds).
-Test Suite 'NotchPresentationConformanceTests' passed at 2026-11-02 10:46:21.742.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.179 (0.179) seconds
-Test Suite 'VoiceBarUITests.xctest' passed at 2026-11-02 10:46:21.742.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.179 (0.179) seconds
-Test Suite 'Selected tests' passed at 2026-11-02 10:46:21.742.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.179 (0.180) seconds
-Replayed 1376 Fixed TLC notch projection cases (672 notices) through the real VoiceBarPresentation
-Test Suite 'Selected tests' started at 2026-11-02 10:46:21.866.
-Test Suite 'VoiceBarTests.xctest' started at 2026-11-02 10:46:21.867.
-Test Suite 'VoiceBarTests.xctest' passed at 2026-11-02 10:46:21.867.
-	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
-Test Suite 'Selected tests' passed at 2026-11-02 10:46:21.867.
-	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
-[heavy.sh] laneA end rc=0 2026-11-02T08:46:22Z
+Swift focused conformance: 3 tests, 0 unexpected failures.
+Current and Fixed notch: 12,330 frames; two cause-ending cases.
+Fixed notch: 8 pinned families, zero divergences, zero expected failures.
+Historical Current notch: two required historical mismatch groups.
+History affordance: explicit metadata with synthetic busy-note copy.
+Current/Fixed pipeline native paths: 8; Current strict, Fixed baseline count 4 pinned by mandatory assertions.
+Production source: f98243d2b2141ff0f0d16c3f145cb76cfcd0ebae.
+See conformance.json for complete source hashes and divergence pins.

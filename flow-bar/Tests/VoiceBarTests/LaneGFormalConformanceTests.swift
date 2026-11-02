@@ -10,14 +10,16 @@ final class LaneGFormalConformanceTests: XCTestCase {
     private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
     struct Pin: Decodable { let sha256: String }
+    struct DivergencePin: Decodable { let sha256: String; let count: Int }
+    struct ReplayReceipt: Decodable { let divergencePins: [String: DivergencePin] }
     struct Contract: Decodable { let notchPolicy, pipelinePolicy, cancelIdField: String; let captureIds: [String: Int] }
     struct Frame: Decodable {
-        struct Input: Decodable {
+        struct Input: Codable {
             let mode, status, note: String
-            let history, teleprompter, engaged, collapsed, preview, details, updateBusy: Bool
+            let history, teleprompter, engaged, collapsed, preview, details, updateBusy, transientNoteOffersHistory: Bool
             let lines: Int
         }
-        struct Expected: Decodable { let shell, text, wingText: String; let band, visible, transient, historyInline: Bool }
+        struct Expected: Codable { let shell, text, wingText: String; let band, visible, transient, historyInline: Bool }
         let policy: String; let input: Input; let expected: Expected
     }
     struct NotchCorpus: Decodable {
@@ -59,7 +61,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
             ? first : ([first] + Array(repeating: "Synthetic line", count: lines - 1)).joined(separator: "\n")
     }
     private func note(_ input: Frame.Input) -> String? {
-        let first: String = switch input.note { case "busy": "Busy"; case "quit": "Quit refused"; case "rejection": "Selection not read"; default: "" }
+        let first: String = switch input.note { case "busy": "Work in progress"; case "quit": "Quit refused"; case "rejection": "Selection not read"; default: "" }
         return first.isEmpty ? nil : ([first] + Array(repeating: "Synthetic line", count: input.lines - 1)).joined(separator: "\n")
     }
     private func input(_ row: Frame) throws -> VoiceBarNotchOperationalInput {
@@ -74,7 +76,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
         result.isHistoryPanelOpen = row.input.history
         // Adaptation point (Lane A): the busy-selection note is marked explicitly, as VoiceState does through
         // `selectionFeedbackNoteOffersHistory`, rather than recognised by its copy.
-        result.transientNoteOffersHistory = row.input.note == "busy"
+        result.transientNoteOffersHistory = row.input.transientNoteOffersHistory
         return result
     }
     private func source(_ path: String) throws -> String { try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) }
@@ -100,6 +102,24 @@ final class LaneGFormalConformanceTests: XCTestCase {
         return result
     }
     private func check(_ errors: [String], family: String, expectedFailure: Bool) {
+        let pinnedFamilies: Set<String> = ["FixedProjection", "FixedText", "N1", "N2", "N4", "N5", "N3NoticeBand", "Fixed NoteHasCause"]
+        if pinnedFamilies.contains(family) || (expectedFailure && family == "Fixed native graph paths") {
+            let bytes = Data(errors.sorted().joined(separator: "\n").utf8)
+            let sha = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            print("LANEG_DIVERGENCE \(family)|\(errors.count)|\(sha)")
+            do {
+                let receipt = try decode(ReplayReceipt.self, "formal/notch-presentation/results/conformance.json")
+                let pin = try XCTUnwrap(receipt.divergencePins[family], "Missing baseline divergence pin: \(family)")
+                XCTAssertEqual(sha, pin.sha256, "Baseline divergence SET drifted: \(family)")
+                XCTAssertEqual(errors.count, pin.count, "Baseline divergence COUNT drifted: \(family)")
+            } catch { XCTFail("Baseline divergence ledger: \(error)") }
+        }
+        // Until Lane I lands, native pipeline differences are an exact mandatory baseline
+        // comparison, not a Fixed implementation PASS or an expected-failure wrapper.
+        if family == "Fixed native graph paths" && expectedFailure {
+            XCTAssertFalse(errors.isEmpty, "Pipeline policy must flip when its baseline gaps disappear")
+            return
+        }
         let assertion = { XCTAssertTrue(errors.isEmpty, "\(family): \(errors.count) divergences; \(errors.prefix(3))") }
         if expectedFailure { XCTExpectFailure("Baseline gap \(family); set runtime-contract.json policy to fixed when the implementing lane lands", failingBlock: assertion) }
         else { assertion() }
@@ -116,6 +136,8 @@ final class LaneGFormalConformanceTests: XCTestCase {
             XCTAssertEqual(Set(frames.map { $0.input.note }), ["none","busy","quit","rejection"])
             XCTAssertEqual(Set(frames.map { $0.input.lines }), [1,2,3])
             XCTAssertEqual(Set(frames.map { $0.input.details }), [false,true])
+            XCTAssertEqual(Set(frames.map { $0.input.transientNoteOffersHistory }), [false,true])
+            XCTAssertTrue(frames.allSatisfy { $0.input.transientNoteOffersHistory == ($0.input.note == "busy") })
         }
         let routed = try wingModes()
         let renderer = try source("flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift")
@@ -123,9 +145,10 @@ final class LaneGFormalConformanceTests: XCTestCase {
         let noteHistoryWired = noteBranch.contains("onOpenHistory")
         let label = try XCTUnwrap(renderer.range(of: "private var label: some View")).lowerBound
         let fullTextLabel = String(renderer[label...])
-        var errors = Dictionary(uniqueKeysWithValues: ["Current", "FixedText", "N1", "N2", "N3", "N4", "N5", "WingBounds", "Resident"].map { ($0, [String]()) })
+        var errors = Dictionary(uniqueKeysWithValues: ["Current", "FixedProjection", "FixedText", "N1", "N2", "N3", "N4", "N5", "WingBounds", "Resident", "N3NoticeBand"].map { ($0, [String]()) })
         var heights: [Int: CGFloat] = [:]
         let resident = VoiceBarNotchPresentationModel()
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         for row in corpus.rows {
             let input = try input(row)
             let p = VoiceBarPresentation.notchPresentation(from: input)
@@ -142,7 +165,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
             let needsBusy = row.expected.transient && row.input.note == "busy"
             let busyInline = p.feedback?.opensHistory == true && (p.feedback?.noteText == nil || noteHistoryWired)
             let inlineHistory = (needsBusy ? busyInline : p.feedback?.opensHistory == true)
-            let tag = "\(row.policy)/\(row.input.mode)/\(row.input.status)/\(row.input.note)/\(row.input.lines)"
+            let tag = "\(row.policy)/\(String(decoding: try encoder.encode(row.input), as: UTF8.self))"
             resident.setHovered(input.isHovered)
             resident.setHistoryPanelOpen(input.isHistoryPanelOpen)
             resident.updateOperationalEnvelope(hasTeleprompter: p.visualState == .teleprompter,
@@ -152,7 +175,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
                 teleprompterLeadingWingWidth: input.mode == .speaking ? p.geometry.leadingWingWidth : nil,
                 keepsIdleExpanded: input.mode == .idle && !input.isCollapsed, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback)
             if resident.presentation != p { errors["Resident"]!.append(tag) }
-            if p.geometry.leadingWingWidth > p.geometry.coreWidth || p.geometry.trailingWingWidth > p.geometry.coreWidth { errors["WingBounds"]!.append(tag) }
+            if p.geometry.leadingWingWidth > 132 || p.geometry.trailingWingWidth > 132 { errors["WingBounds"]!.append(tag) }
             if row.policy == "Current" {
                 if String(describing: p.visualState) != row.expected.shell || hasBand != row.expected.band || actualText != expectedText ||
                     visibleWing != (row.expected.wingText == "none" ? "" : copy(row.expected.wingText, lines: row.input.lines)) || actualNote != expectedNote || inlineHistory != row.expected.historyInline {
@@ -160,15 +183,29 @@ final class LaneGFormalConformanceTests: XCTestCase {
                 }
                 continue
             }
+            if String(describing: p.visualState) != row.expected.shell || hasBand != row.expected.band || actualText != expectedText ||
+                visibleWing != (row.expected.wingText == "none" ? "" : copy(row.expected.wingText, lines: row.input.lines)) ||
+                actualNote != expectedNote || inlineHistory != row.expected.historyInline {
+                let expected = String(decoding: try encoder.encode(row.expected), as: UTF8.self)
+                errors["FixedProjection"]!.append(tag + "/expected:" + expected + "/actual:\(p.visualState)/\(hasBand)/\(actualText)/\(visibleWing)/\(actualNote ?? "")/\(inlineHistory)")
+            }
             // These constraints use production measurements/text/actions, not Project(Fixed)'s booleans.
             let notice = hasBand || (!visibleWing.isEmpty && !(input.mode == .idle && row.input.status == "none" && row.input.preview && row.input.note == "none"))
             let width = p.feedback?.width ?? p.transientNoteRect?.width ?? 0
-            if p.geometry.leadingWingWidth > p.geometry.coreWidth || p.geometry.trailingWingWidth > p.geometry.coreWidth ||
+            if p.geometry.leadingWingWidth > 132 || p.geometry.trailingWingWidth > 132 ||
                 (notice && (!candidateWing.isEmpty || !visibleWing.isEmpty || width > p.geometry.topWidth)) { errors["N1"]!.append(tag) }
             if input.mode == .transcribing && (hasBand || p.feedback?.statusText != nil || p.feedback?.noteText != nil || p.transientNoteRect != nil) { errors["N2"]!.append(tag) }
             if actualText != expectedText || actualNote != expectedNote { errors["FixedText"]!.append(tag) } // Includes forbidden extra text when expected is none.
             if [p.feedback?.statusText ?? "", p.feedback?.noteText ?? "", candidateWing, visibleWing].contains(where: { ["Error", "Details below"].contains($0) }) { errors["N4"]!.append(tag) }
             if ((p.feedback?.statusText != nil && input.mode == .error) || (hasBand && row.input.note == "busy")) && !inlineHistory { errors["N5"]!.append(tag) }
+            if row.expected.visible && (row.expected.text != "none" || row.expected.transient) && !hasBand {
+                errors["N3NoticeBand"]!.append(tag + "/visible notice has no band")
+            }
+            if let rect = p.transientNoteRect, p.feedback == nil, let text = actualNote {
+                let measured = VoiceBarNotchFeedback.textHeight(text, width: max(1, rect.width - 32))
+                let required = max(26, min(72, measured) + 10)
+                if rect.height < required { errors["N3NoticeBand"]!.append(tag + "/legacy note geometry too short") }
+            }
             if let f = p.feedback {
                 let requiredStatus = f.statusText.map { max(26, min(VoiceBarNotchFeedback.maximumTextHeight, VoiceBarNotchFeedback.textHeight($0, width: VoiceBarNotchFeedback.messageWidth(f.width, opensHistory: f.opensHistory))) + 10) } ?? 0
                 let requiredNote = f.noteText.map { max(26, min(VoiceBarNotchFeedback.maximumTextHeight, VoiceBarNotchFeedback.textHeight($0, width: f.width - 32)) + 10) } ?? 0
@@ -182,11 +219,12 @@ final class LaneGFormalConformanceTests: XCTestCase {
             if current <= previous { errors["N3"]!.append("Line class \(line) did not grow down") }
         }
         check(errors["Current"]!, family: "Current projection (including absent text)", expectedFailure: contract.notchPolicy == "fixed")
-        for family in ["FixedText", "N1", "N2", "N4", "N5"] { check(errors[family]!, family: family, expectedFailure: contract.notchPolicy == "current") }
+        for family in ["FixedProjection", "FixedText", "N1", "N2", "N4", "N5", "N3NoticeBand"] { check(errors[family]!, family: family, expectedFailure: contract.notchPolicy == "current") }
         check(errors["Resident"]!, family: "Resident model agrees with real resolver", expectedFailure: false)
         check(errors["WingBounds"]!, family: "N1 numeric wing bounds in EVERY mode and BOTH corpora", expectedFailure: false)
         check(errors["N3"]!, family: "N3 real text geometry and untruncated renderer", expectedFailure: false)
         print("Replayed BOTH notch corpora: \(corpus.rows.count) frames; production ledger evaluated independently")
+        print("History affordance replay uses explicit metadata with synthetic busy-note copy")
     }
     private func state() -> VoiceState {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },

@@ -2,8 +2,8 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/notch-presentation/NotchPresentation.tla": "050ec8ddb0fc21028f2b5aba4cb9e4b5f92778327e19752df71cb909d50f9e7a",
-    "formal/notch-presentation/checks.json": "290db162ae86ffef5388f6a66924470eac78a7b507c469316c2582b1109e77b3",
+    "formal/notch-presentation/NotchPresentation.tla": "84bd512fcadb90733ad93d47600fe217dfc892a6c75b01d21ae3d6c1a33784f3",
+    "formal/notch-presentation/checks.json": "857c2e5ff0b61d6430a64ae7c180a105b446dcf9e4ba6ef7219ad8b10fdfb7e0",
     "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
     "formal/notch-presentation/MutantNoShell.cfg": "bc37b20cedc1993180f1e4bf4c708c191c4a41e54fcda27c7aaa31cb26a5b66d",
     "formal/notch-presentation/MutWideWing.cfg": "b22f3ef5491a57166731040142c9090c0ea4acba918d6dc52ffd676c5169dca3",
@@ -14,6 +14,7 @@
     "formal/notch-presentation/MutTruncate.cfg": "a1921998b880a40296bd40b9ca6b601727fef4c0776daf5a5eab1cd6990cd24d",
     "formal/notch-presentation/MutNoShell.cfg": "c2b07184810cf28f6447ad589ab9458a0c6659b833fee2597f7ba2be709f9eaf",
     "formal/notch-presentation/MutBusyHistory.cfg": "3994d34b1260603cf93dedb7b427d72d81d4edbb3ab8956f8e01beaf52cb355c",
+    "formal/notch-presentation/MutOutsideBand.cfg": "e9ee09079b3d25aab9ac45d5579ebf0ab039ab9ef815bbd8b3dea9c7f5286df1",
     "formal/notch-presentation/OldWing.cfg": "4df185081c3cc70e63ebedcc2ec67eba16441641ab99240b5589ec008a813557",
     "formal/notch-presentation/MutErrorSubstitute.cfg": "41ae0ae32190519c79f569168bdef4319f2d863ec99f8202fb8bd9f50b4f1bd5",
     "formal/notch-presentation/MutType.cfg": "6c338085ae6a954451609189cee436ba1922da73f417c89083f2e8d3b743cb1e",
@@ -21,6 +22,7 @@
     "formal/notch-presentation/Current.cfg": "6c3e0c7d96f1e13c1b4e51b83f2c88f3fdc3f435c4fa60e887a73060f7203a80",
     "formal/notch-presentation/OldSubstitute.cfg": "4b8810d56420037f0d4c26f314092c54bb92cdea22fc64077d50f50a9c6268f7",
     "formal/notch-presentation/MutErrorHistory.cfg": "2bf398423e512738303d43e97958e56b488709bc3796b3604b185d03ce23ab30",
+    "formal/notch-presentation/MutCoreWing.cfg": "e836924cc438054b8c20720cd0f874cbb5e03a0fe42f546f1ce0842954da6f17",
     "formal/notch-presentation/MutProcessingNote.cfg": "4cbee6b2414a5497b5b0722347527a54830c844b70f4d9e844523d8b82b0ed94",
     "formal/notch-presentation/MutantType.cfg": "1f8f0ad92bd6b048787e023fc5b4b652abd65aea3368f3f2337e155d1c8019d5",
     "formal/notch-presentation/MutantStuck.cfg": "fcb28a0ab8cadc9bec7d528da3ef455e59e6de12b8c28e86897036fd913a608a",
@@ -38,13 +40,15 @@
   "mutants": {
     "N1CompactNote": [
       "MutWideWing",
+      "MutCoreWing",
       "MutTextWing"
     ],
     "N2NoProcessingBand": [
       "MutProcessingNote"
     ],
     "N3GrowsDown": [
-      "MutTruncate"
+      "MutTruncate",
+      "MutOutsideBand"
     ],
     "N4NoSubstitute": [
       "MutErrorSubstitute",
@@ -155,6 +159,14 @@
       "generated": null,
       "distinct": null
     },
+    "MutCoreWing": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N1CompactNote",
+      "status": "EXPECTED_FAIL",
+      "generated": null,
+      "distinct": null
+    },
     "MutTextWing": {
       "role": "mutant",
       "kind": "invariant",
@@ -178,6 +190,14 @@
       "status": "EXPECTED_FAIL",
       "generated": 164,
       "distinct": 164
+    },
+    "MutOutsideBand": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "N3GrowsDown",
+      "status": "EXPECTED_FAIL",
+      "generated": 165,
+      "distinct": 165
     },
     "MutErrorSubstitute": {
       "role": "mutant",
@@ -248,8 +268,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 176499,
-      "distinct": 30328
+      "generated": 195311,
+      "distinct": 31358
     }
   }
 }

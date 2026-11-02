@@ -35,7 +35,7 @@ Project(x) ==
       shell == IF Fault = "no-shell" THEN "idle"
                ELSE IF Variant = "fixed" /\ Fault # "no-collapsed-shell" /\ visible /\ baseShell = "idle" THEN "compactStatus"
                ELSE baseShell
-      band == IF Variant = "fixed" THEN visible ELSE HasStatusBand(x, shell) \/ note
+      band == IF Fault = "outside-band" THEN visible /\ ~note ELSE IF Variant = "fixed" THEN visible ELSE HasStatusBand(x, shell) \/ note
       \* Lane A refinement: the F5 hint is an operational label, not a notice. Fixed draws it only as the sole
       \* content of a compact-status wing: never in a collapsed (idle) shell, never beside a visible notice.
       hinted == status /\ (Variant # "fixed" \/ StatusText(x) # "preview" \/ (~visible /\ shell = "compactStatus"))
@@ -43,7 +43,7 @@ Project(x) ==
                   ELSE IF hinted /\ x.status # "long" /\ shell = "compactStatus" /\
                           ~(x.mode = "error" /\ x.status = "select") /\ (x.status # "short" \/ x.lines = 1) THEN StatusText(x) ELSE "none"
       leading == 48
-      trailing == IF Fault = "wide-wing" THEN 186 ELSE IF wingText # "none" THEN 132 ELSE 78
+      trailing == IF Fault = "wide-wing" THEN 186 ELSE IF Fault = "core-wing" THEN 185 ELSE IF wingText # "none" THEN 132 ELSE 78
       statusLines == IF ~hinted \/ ~band THEN 0 ELSE IF x.status = "select" THEN 2 ELSE IF x.status \in {"long", "short"} THEN x.lines ELSE 1
       noteLines == IF note /\ band THEN x.lines ELSE 0
       rows == (IF statusLines > 0 THEN 1 ELSE 0) + (IF noteLines > 0 THEN 1 ELSE 0)
@@ -89,7 +89,7 @@ TypeOK == /\ s.mode \in Modes /\ s.note \in Notes /\ s.timer \in 0..2
           /\ s.status \in {"none", "short", "long", "select"} /\ s.lines \in 1..3 /\ s.details \in BOOLEAN
           /\ s.raised \subseteq Notes \ {"none"} /\ shown.bandHeight \in Nat
           /\ ((s.note = "none") = (s.timer = 0))
-N1CompactNote == /\ shown.leading <= shown.core /\ shown.trailing <= shown.core
+N1CompactNote == /\ shown.leading <= 132 /\ shown.trailing <= 132
                  /\ (shown.visible => shown.wingText = "none" /\
                      shown.feedbackWidth <= shown.core + shown.leading + shown.trailing)
 VisibleHasShell == shown.visible => shown.shell # "idle"
@@ -97,7 +97,7 @@ N2NoProcessingBand == s.mode = "transcribing" => ~shown.band
 TextLines(x) == (IF x.mode = "error" /\ StatusText(x) # "none" THEN IF x.status \in {"long", "short"} THEN x.lines ELSE IF x.status = "select" THEN 2 ELSE 1
                 ELSE IF x.mode = "idle" /\ x.status # "none" THEN IF x.status \in {"long", "short"} THEN x.lines ELSE IF x.status = "select" THEN 2 ELSE 1 ELSE 0) +
                (IF x.note # "none" THEN x.lines ELSE 0)
-N3GrowsDown == shown.band => shown.bandLines >= TextLines(s)
+N3GrowsDown == (shown.visible /\ TextLines(s) > 0) => shown.band /\ shown.bandLines >= TextLines(s)
 N4NoSubstitute == shown.text \notin {"Error", "Details below"}
 N5InlineHistory == ((shown.text # "none" /\ s.mode = "error") \/
                    (shown.transient /\ s.note = "busy")) => shown.historyInline

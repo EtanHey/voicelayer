@@ -30,7 +30,7 @@ jobs:
           python-version: '3.13'
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: '1.4.4'
       - uses: actions/cache@v4
         with:
           path: ~/.cache/tla/v1.8.0

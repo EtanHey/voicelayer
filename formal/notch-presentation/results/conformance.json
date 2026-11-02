@@ -1,29 +1,91 @@
 {
   "command": "bash formal/notch-presentation/conformance.sh",
-  "status": "PASS_WITH_EXPLICIT_BASELINE_EXPECTED_FAILURES",
+  "status": "PASS_FIXED_NOTCH_STRICT_PIPELINE_BASELINE_PINNED",
   "corpora": [
     "Current",
     "Fixed"
   ],
   "skips": 0,
-  "productionPolicy": "current",
+  "productionPolicy": "fixed",
   "remoteCI": "NOT_RUN",
   "installedOrLiveAcceptance": "NOT_RUN",
   "sourceSHA256": {
-    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "89868c17ab367e38c4a5f61ff16d818ed118c820d9ac4dc7ad5250b66a3e4920",
-    "formal/runtime-contract.json": "ab6305773cb1884474e665a1c421dfcd78250fe49613625de6aef6b4fcf877d8"
+    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "2c090c01488677a0a87a95e912a1dc0471c6e64dc50edef39ebb82c508d10220",
+    "formal/runtime-contract.json": "d5fde60fe38663b6b603b9c34ff3735112d33232966d48e5e79c568a05b48821"
   },
   "tests": 3,
   "unexpectedFailures": 0,
   "notchFrames": 12330,
   "nativePaths": 8,
-  "expectedFailureGroups": {
-    "Fixed NoteHasCause": 1,
-    "FixedText": 1524,
-    "N1": 3020,
-    "N2": 468,
-    "N4": 462,
-    "N5": 792,
-    "Fixed native graph paths": 4
-  }
+  "expectedFailureGroups": {},
+  "divergencePins": {
+    "Fixed NoteHasCause": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "FixedText": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "N1": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "N2": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "N4": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "N5": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "N3NoticeBand": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "Fixed native graph paths": {
+      "count": 4,
+      "sha256": "8305f180ed6ea9f1087dd38cb15b404e57b65e0861de8fce60009fc7b06f82de"
+    },
+    "FixedProjection": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "driftProbe": {
+    "model": "notch-presentation",
+    "mutatedRows": 468,
+    "returncode": 1,
+    "strictFailureMarker": "Baseline divergence SET drifted: FixedProjection",
+    "status": "EXPECTED_FAIL",
+    "command": [
+      "swift",
+      "test",
+      "--package-path",
+      "flow-bar",
+      "--scratch-path",
+      ".build.noindex/swift",
+      "--filter",
+      "LaneGFormalConformanceTests.testBothNotchCorporaAndIndependentProductionLedger"
+    ],
+    "note": "Historical Current-policy probe from FIXED-2; Fixed notch is now strict."
+  },
+  "priorReplayBase": "0fb80413992d7aeb74be8a37f87a24455fa353b9",
+  "productionSource": "f98243d2b2141ff0f0d16c3f145cb76cfcd0ebae",
+  "fixedNotchExpectedFailures": 0,
+  "historicalCurrentExpectedMismatchGroups": {
+    "Current projection": 2436,
+    "Current NoteHasCause": 1
+  },
+  "pinnedNativePipelineBaseline": {
+    "policy": "current",
+    "count": 4,
+    "sha256": "8305f180ed6ea9f1087dd38cb15b404e57b65e0861de8fce60009fc7b06f82de",
+    "expectedFailureWrapper": false
+  },
+  "explicitHistoryMetadataCases": true
 }
