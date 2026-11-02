@@ -344,12 +344,20 @@ function handleSocketCommandAdmitted(
         safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: command.take_id, physical_press: command.physical_press === true }));
         return buildAck(command, "accept");
       }
+      if (hasF5Capture()) {
+        const takeID = recordingJobsSnapshot().mic_take_id;
+        if (takeID) {
+          markBarCaptureDraining(takeID);
+          safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: takeID, physical_press: command.physical_press === true }));
+        }
+        return buildAck(command, "accept");
+      }
       if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
         // An explicit Stop also discards reads F5 left waiting for Next.
         if (command.retain_read_queue !== true) selectionReads.clear();
         return buildAck(command, "noop", "already idle");
       }
-      if (recordingState === "transcribing") {
+      if (recordingState === "transcribing" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
         return buildAck(command, "noop", "already transcribing");
       }
       safeWriteFileSync(
@@ -363,7 +371,7 @@ function handleSocketCommandAdmitted(
       // P16: a stop/cancel aimed at an active capture (F5 release over a paused read) ends only the
       // capture; the parked read stays parked for Play, and the ack never waits on it (P16b, TLA+
       // CaptureCmdAckWithoutAwait): a parked long read cannot finish, so awaiting it false-rejected at 35 s.
-      if (command.scope === "capture" || hasF5Capture() || (recordingState !== "idle" && isPlaybackPaused())) return buildAck(command, "accept");
+      if (command.scope === "capture") return buildAck(command, "accept");
       stopAll(command.playback_elapsed_ms, stopQueuePolicy(recordingState, command.retain_read_queue === true));
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),

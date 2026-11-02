@@ -376,7 +376,7 @@ describe("P10 socket pause/resume", () => {
       (await trims.at(trim)).exit.resolve(0); await fixtureCheckpoint();
       const recording = spyOn(input, "getRecordingState").mockReturnValue("recording" as any);
       try {
-        expect(await handleSocketCommand({ cmd, id: `${cmd}-1` } as any)).toMatchObject({ command: cmd, outcome: "accept" });
+        expect(await handleSocketCommand({ cmd, id: `${cmd}-1`, ...(cmd === "stop" ? { scope: "capture" } : {}) } as any)).toMatchObject({ command: cmd, outcome: "accept" });
       } finally { recording.mockRestore(); }
       expect(tts.isPlaybackPaused()).toBe(true);
       expect(events.filter(e => e.type === "playback_outcome" && e.playback_id === handle.id)).toEqual([]);
@@ -584,6 +584,56 @@ it("R2-01 waits for actual player exit and preserves the early physical release"
     done.resolve(null); await settleRecordingJobs(); await fixtureCheckpoint();
     expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
   } finally { done.resolve(null); player.exit.resolve(143); await settleRecordingJobs(); wait.mockRestore(); }
+});
+
+for (const state of ["idle", "recording", "transcribing"] as const) {
+  it(`R2-01 legacy unscoped Stop ends paused speech without an F5 capture (${state})`, async () => {
+    const { handle } = await pauseAt4200();
+    setRecordingState(state);
+    try {
+      expect(tts.hasF5Capture()).toBe(false);
+      expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+      expect(tts.isPlaybackPaused()).toBe(false);
+      expect(await handle.exited).toMatchObject({ reason: "stopped" });
+    } finally { setRecordingState("idle"); }
+  });
+}
+
+for (const phase of ["opening", "capturing"] as const) {
+  it(`R2-01 unscoped Stop targets only its F5 take (${phase})`, async () => {
+    await startTenSecondRead();
+    const opened = deferred<void>(), result = deferred<string | null>();
+    const wait = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+      options?.onCaptureStart?.(); opened.resolve();
+      return finishSyntheticCapture(() => result.promise);
+    });
+    try {
+      expect(handleSocketCommand({ cmd: "record", take_id: `unscoped-${phase}`, playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept" });
+      if (phase === "capturing") await opened.promise;
+      expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+      await opened.promise;
+      expect(JSON.parse(readFileSync(STOP_FILE, "utf8"))).toMatchObject({ take_id: `unscoped-${phase}` });
+      expect(tts.isPlaybackPaused()).toBe(true);
+      expect(events.filter(e => e.type === "playback_outcome")).toEqual([]);
+      for (const trim of trims.values) trim.exit.resolve(0);
+      result.resolve(null);
+      await settleRecordingJobs(); await fixtureCheckpoint();
+      await players.at(1);
+      expect(tts.hasF5Capture()).toBe(false);
+    } finally { result.resolve(null); await settleRecordingJobs(); wait.mockRestore(); clearStopSignal(); }
+  });
+}
+
+it("R2-01 a fresh daemon has no loan or parked read after restart", async () => {
+  await startTenSecondRead();
+  const capture = tts.pauseForF5Capture();
+  await capture.ready;
+  try {
+    const child = Bun.spawnSync([process.execPath, "--preload", "./src/__tests__/setup/preload.ts", "-e",
+      'import { hasF5Capture, isPlaybackPaused } from "./src/tts.ts"; if (hasF5Capture() || isPlaybackPaused()) process.exit(1);'],
+      { cwd: process.cwd(), env: process.env, stdout: "pipe", stderr: "pipe" });
+    expect(child.exitCode).toBe(0);
+  } finally { tts.stopPlayback(); capture.settle(); }
 });
 
 it("R2-01 refused automatic resume releases the read instead of stranding its F5 park", async () => {

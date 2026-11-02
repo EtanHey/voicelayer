@@ -257,6 +257,7 @@ export type PlaybackOutcomeReason =
   | "expired"
   | "collapsed"
   | "refused"
+  | "resume-refused"
   | "player-error"
   | "replaced";
 

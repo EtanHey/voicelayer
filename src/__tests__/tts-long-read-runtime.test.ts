@@ -49,6 +49,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let failPlayerSpawn = false;
   let synthLatencyMs = 0;
   let modelReplay = false;
+  let effectiveStateSpy: ReturnType<typeof spyOn>;
   type Child = { exit: ReturnType<typeof deferred<number>>; killed: boolean };
   let synthBarrier: ReturnType<typeof fixtureBarrier<typeof synths[number]>>;
   let playerBarrier: ReturnType<typeof fixtureBarrier<typeof players[number]>>;
@@ -70,7 +71,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     historyBarrier = fixtureBarrier(); decoderBarrier = fixtureBarrier(); histories = []; decoders = [];
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
     spies.push(spyOn(socket, "broadcast").mockImplementation((event) => events.push(structuredClone(event))));
-    spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
+    spies.push(effectiveStateSpy = spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(alignment, "alignCloneAudio").mockResolvedValue({ status: "untimed", identity: {} as any, words: [] }));
     // Only platform probing uses spawnSync; all synth/play/decode/conversion spawns are fakes.
     Bun.spawnSync = ((argv: string[]) => {
@@ -220,6 +221,36 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(replayed).toBe(rows.length);
     console.log(`Replayed ${replayed} TLC F5 native command scenarios through real daemon, PlaybackQueueManager and Lane I take settlement`);
   }, 120_000);
+
+  for (const phase of ["preparing", "playing"] as const) {
+    it(`R2-01 refused automatic resume releases ${phase} read and retains its History text`, async () => {
+      holdSynth = phase === "preparing";
+      const text = "Keep this whole read in History.";
+      const archive = beginSpeechArchive(text);
+      await archive.settled();
+      const h = speakLongRead(text, { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+      handles.push(h);
+      if (phase === "preparing") await synthBarrier.at(0);
+      else await playerBarrier.at(0);
+      const capture = tts.pauseForF5Capture();
+      await capture.ready;
+      effectiveStateSpy.mockReturnValue("transcribing");
+      try {
+        capture.settle();
+        expect(isPlaybackPaused()).toBe(false);
+        expect(events.find(e => e.type === "playback_outcome" && e.reason === "resume-refused")).toBeDefined();
+      } finally { effectiveStateSpy.mockReturnValue("idle"); capture.settle(); }
+      await h.done;
+      await flushSpeechArchives();
+      expect(readFileSync(join(archive.context.path, "input.txt"), "utf8")).toBe(text);
+      const metadata = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+      expect(metadata.speech.state).toBe(phase === "preparing" ? "cancelled" : "stopped");
+      expect(archive.failures).toEqual([]);
+      const later = start("edge", "A later read works.");
+      await playerBarrier.at(phase === "preparing" ? 0 : 1);
+      stopPlayback(); await later.done;
+    });
+  }
 
   for (const control of ["settle", "manual", "stop"] as const) {
     it(`R2-01 F5 holds a read before its first chunk (${control})`, async () => {
@@ -1148,7 +1179,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const timer = spyOn(globalThis, "setTimeout").mockImplementation(((fn: any, ms: number, ...args: any[]) =>
       realTimer(fn, ms === 35000 ? 25 : ms, ...args)) as any);
     try {
-      expect(await handleSocketCommand({ cmd, id: `capture-${cmd}` })).toMatchObject({ command: cmd, outcome: "accept" });
+      expect(await handleSocketCommand({ cmd, id: `capture-${cmd}`, ...(cmd === "stop" ? { scope: "capture" as const } : {}) })).toMatchObject({ command: cmd, outcome: "accept" });
       expect(isPlaybackPaused()).toBe(true);
     } finally { timer.mockRestore(); capture.mockRestore(); }
   });

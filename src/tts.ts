@@ -1231,12 +1231,12 @@ class PlaybackQueueManager {
     return true;
   }
 
-  cancelUtterance(id: string, elapsedMs?: number): boolean {
+  cancelUtterance(id: string, elapsedMs?: number, reason: PlaybackOutcomeReason = "stopped"): boolean {
     let cancelled = false;
     for (const job of this.jobs.values()) {
       if (job.metadata?.longRead?.id === id) {
         const localMs = elapsedMs === undefined ? undefined : Math.max(0, elapsedMs - job.metadata.longRead.chunk_start_ms);
-        cancelled = this.cancel({ id: job.id }, localMs) || cancelled;
+        cancelled = this.cancel({ id: job.id }, localMs, reason) || cancelled;
       }
     }
     return cancelled;
@@ -1430,7 +1430,10 @@ class PlaybackQueueManager {
   }
 
   autoResumeCapture(identity?: string): void {
-    if (identity && this.parked?.owner === "f5" && this.capturePauseIdentity() === identity) this.resume({});
+    if (identity && this.parked?.owner === "f5" && this.capturePauseIdentity() === identity) {
+      const result = this.resume({});
+      if (result.outcome === "reject") cancelRefusedCaptureRead(identity);
+    }
     this.processNext();
   }
 
@@ -1484,8 +1487,11 @@ class PlaybackQueueManager {
       if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) throw new Error("Resume refused: voice is busy");
     } catch (error) {
       parked.resumeRequested = false;
-      broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
-      this.broadcastPlaybackState(parked.job, "paused");
+      if (parked.owner === "f5") cancelRefusedCaptureRead(parked.job.metadata?.longRead?.id ?? parked.job.id);
+      else {
+        broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
+        this.broadcastPlaybackState(parked.job, "paused");
+      }
       return false;
     }
     this.parked = undefined;
@@ -2255,8 +2261,9 @@ export function pauseForF5Capture(playbackElapsedMs?: number): { ready: Promise<
     if (settled) return;
     settled = true;
     f5CaptureActive = false;
-    if (identity && activeLongRead?.id === identity && activeLongRead.firstAdmission?.owner === "f5") resumePlayback();
-    else playbackQueueManager.autoResumeCapture(identity);
+    if (identity && activeLongRead?.id === identity && activeLongRead.firstAdmission?.owner === "f5") {
+      if (resumePlayback().outcome === "reject") cancelRefusedCaptureRead(identity);
+    } else playbackQueueManager.autoResumeCapture(identity);
   } };
 }
 export function hasF5Capture(): boolean { return f5CaptureActive; }
@@ -2419,7 +2426,14 @@ export function preemptLongRead(by: "external" | "successor" = "external"): bool
   return true;
 }
 
-function cancelLongRead(playbackElapsedMs?: number, read = activeLongRead): boolean {
+/** A refused automatic resume is terminal for this read, never for another queued read. */
+function cancelRefusedCaptureRead(identity: string): void {
+  const read = longReads.get(identity);
+  if (read) cancelLongRead(undefined, read, "resume-refused");
+  else playbackQueueManager.cancel({ id: identity }, undefined, "resume-refused");
+}
+
+function cancelLongRead(playbackElapsedMs?: number, read = activeLongRead, reason: PlaybackOutcomeReason = "stopped"): boolean {
   if (!read) return false;
   const done = read.done;
   if (!cancelledLongReadTeardowns.has(done)) {
@@ -2428,7 +2442,10 @@ function cancelLongRead(playbackElapsedMs?: number, read = activeLongRead): bool
   }
   if (read.controller.signal.aborted) return false;
   read.controller.abort();
-  playbackQueueManager.cancelUtterance(read.id, playbackElapsedMs);
+  const cancelled = playbackQueueManager.cancelUtterance(read.id, playbackElapsedMs, reason);
+  // Preparation has no chunk job to publish its terminal outcome yet.
+  if (!cancelled && reason === "resume-refused") broadcast({ type: "playback_outcome", playback_id: read.id,
+    status: "interrupted", reason, stopped_at_ms: 0, progress: 0 });
   return true;
 }
 
