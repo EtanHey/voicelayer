@@ -7,6 +7,7 @@ protocol HotkeyListening: AnyObject {
     /// Disables and removes the tap. Safe on a listener that never started.
     func stop()
     var missingPermissions: [HotkeyPermission] { get }
+    var isEnabled: Bool { get }
 }
 
 extension HotkeyManager: HotkeyListening {
@@ -31,7 +32,8 @@ final class HotkeyListenerLifecycle {
 
     /// At launch. A listener that fails to start is stopped before it is dropped, so no half-made tap survives.
     func start() -> HotkeyListenerRestartOutcome {
-        if running != nil { return .alreadyRunning }
+        if running?.isEnabled == true { return .alreadyRunning }
+        stop()
         let listener = makeListener()
         guard listener.start() else {
             listener.stop()
@@ -44,8 +46,9 @@ final class HotkeyListenerLifecycle {
     /// "Restart F5 listener": a running listener is left alone (never a second tap), and nothing starts while a
     /// recording is in progress.
     func restart(isRecording: Bool) -> HotkeyListenerRestartOutcome {
-        if running != nil { return .alreadyRunning }
+        if running?.isEnabled == true { return .alreadyRunning }
         if isRecording { return .refusedWhileRecording }
+        stop() // Rebuild a disabled tap, never leave it behind as a second consumer.
         return start()
     }
 

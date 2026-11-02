@@ -57,6 +57,12 @@ final class HotkeyTapRunLoop {
         CFRunLoopWakeUp(runLoop)
     }
 
+    /// Called only by the owning loop; timers continue while main is blocked.
+    static func schedule(on loop: CFRunLoop, after delay: TimeInterval, _ work: @escaping () -> Void) {
+        let timer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + delay, 0, 0, 0) { _ in work() }!
+        CFRunLoopAddTimer(loop, timer, .commonModes)
+    }
+
     func stop() {
         guard let runLoop else { return }
         self.runLoop = nil
@@ -66,10 +72,11 @@ final class HotkeyTapRunLoop {
 }
 
 /// Each notification permits one delayed attempt, bounded to three per failure burst.
-/// A healthy 30s interval restores the budget; no timer-driven retry loop.
+/// A healthy 30s interval restores the budget; an exhausted burst gets one cool-off retry.
 struct HotkeyTapRecovery {
     private(set) var timeoutCount = 0
     private(set) var userInputCount = 0
+    var disableCount: Int { timeoutCount + userInputCount }
     private var lastDisableTime: TimeInterval?
     private var attempts = 0
 
@@ -79,6 +86,6 @@ struct HotkeyTapRecovery {
         lastDisableTime = now
         attempts += 1
         if type == .tapDisabledByTimeout { timeoutCount += 1 } else { userInputCount += 1 }
-        return (timeoutCount + userInputCount, attempts <= 3 ? pow(2, Double(attempts - 1)) : nil)
+        return (timeoutCount + userInputCount, attempts <= 3 ? pow(2, Double(attempts - 1)) : 30)
     }
 }

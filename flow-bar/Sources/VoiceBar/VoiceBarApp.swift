@@ -1446,7 +1446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return outcome
     }
 
-    private func makeHotkeyManager() -> HotkeyManager {
+    func makeHotkeyManager() -> HotkeyManager {
         let manager = HotkeyManager(gesture: gestureStateMachine)
         manager.onKeyDown = { [weak self] in
             self?.handleHotkeyKeyDown(from: .native)
