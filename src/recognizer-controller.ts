@@ -21,6 +21,7 @@ onWhisperModelStateChange((event) => {
   noteRecognizerEngine("whisper", { phase: record ? "ready" : "sleeping", ...(record ? { available: true, error: null } : {}) });
 });
 export interface RecognizerTransitionDeps {
+  assetsPresent?(engine: Recognizer): boolean;
   stopP(): Promise<unknown>; stopW(): Promise<unknown>; startP(): Promise<unknown>; startW(): Promise<unknown>; reset(): void;
 }
 const defaults: RecognizerTransitionDeps = {
@@ -63,6 +64,7 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
     return engine === "parakeet" ? deps.startP() : deps.startW();
   };
   try {
+    if (!(deps.assetsPresent?.(value) ?? readRecognizerStatus().engines[value].assets_present)) throw new Error("assets-not-present");
     // Never mutate preference or load a successor until both prior owners have
     // accepted cleanup. A foreign/adopted Whisper is not ours to signal.
     await stop("parakeet");
