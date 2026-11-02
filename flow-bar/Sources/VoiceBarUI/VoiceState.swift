@@ -4011,7 +4011,7 @@ public final class VoiceState {
         return (!isSelf ? currentFront : nil) ?? frontmostAppOnRecordStart
     }
 
-    /// Refocuses the target app and pastes text via Cmd+V.
+    /// Refocuses the target app and delivers text through AX or typed key events.
     private func pasteTranscript(
         _ text: String,
         for targetApp: NSRunningApplication?,
@@ -4127,11 +4127,12 @@ public final class VoiceState {
                     // working Shift+F5 typing route, never a whole-document AX write.
                     // PASTE2: Gemini.app (WebKit composer) and every Chromium/Electron/CEF host
                     // join them; AX cannot certify their web composers, so an AX miss there
-                    // used to stop at "Not pasted". Unknown native apps still take AX only.
+                    // used to stop at "Not pasted". Native apps try AX before guarded typing.
                     let usesRichHostTyping = Self.richHostTypingBundleIdentifiers.contains(pasteTargetBundleID)
                         || chromiumFamilyAppDetector(pasteTarget)
                     let skipsAX = isTerminalTarget || usesRichHostTyping
-                    let typingEligibility = requiresEditableTarget && !skipsAX
+                    let requiresFocusedTypingTarget = !skipsAX && (plan == .autoPaste || requiresEditableTarget)
+                    let typingEligibility = requiresFocusedTypingTarget
                         ? focusedTargetEligibilityProvider() : nil
                     if skipsAX {
                         logDiagnostic("paste_ax_insert_skipped", details: [
@@ -4200,13 +4201,16 @@ public final class VoiceState {
                             "axTrusted": boolString(accessibilityTrustChecker(false)),
                         ])
                     }
-                    // An AX miss in any other nonterminal is still insufficient
-                    // permission to dispatch global key events.
+                    // Only a pre-write AX decline reaches this fallback. Automatic
+                    // native delivery also requires the original recording process;
+                    // editability alone must not authorize typing into another app.
                     if plan == .autoPaste, !skipsAX {
-                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
-                        return
+                        guard recordStartTargetApp?.processIdentifier == pasteTarget.processIdentifier else {
+                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                            return
+                        }
                     }
-                    if requiresEditableTarget, !skipsAX {
+                    if requiresFocusedTypingTarget {
                         guard frontmostAppProvider()?.processIdentifier == pasteTarget.processIdentifier,
                               typingEligibility?.permitsTyping(into: pasteTarget.processIdentifier) == true else {
                             finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
@@ -4243,7 +4247,7 @@ public final class VoiceState {
                     // So the transcript is TYPED as printable text only, each line break sent
                     // as Shift+Return (SynthesizedTyping): no control character ever rides in
                     // a key event. This route serves terminals, known rich-host automatic
-                    // delivery and explicit re-paste; other auto AX misses retain text above.
+                    // delivery, explicit re-paste and verified editable native targets.
                     // There is no clipboard fallback anywhere, by design: a failed
                     // paste is recoverable with Shift+F5, a paste over his clipboard is not.
                     //
