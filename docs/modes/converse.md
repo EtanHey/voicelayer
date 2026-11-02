@@ -78,8 +78,8 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 
 1. **User stop signal** (PRIMARY): `touch /tmp/voicelayer-stop`
 2. **Silero VAD silence detection** (FALLBACK): configurable silence duration after speech is detected
-3. **No-answer deadline**: no detected speech for 120s after the question finishes (configurable with `VOICELAYER_ASK_NO_ANSWER_SECONDS` or explicit `timeout_seconds`); HOLD does not extend it. The recording is kept. First speech permanently cancels this deadline.
-4. **Safety ceiling**: VAD captures retain the existing 30-minute ceiling after first speech, including while held.
+3. **No-answer deadline**: no detected speech for 120s after the question finishes (configurable with `VOICELAYER_ASK_NO_ANSWER_SECONDS` or explicit `timeout_seconds`); HOLD pauses it; locked Ask uses 10 minutes of continuous silence, renewed by speech, with no cap. The recording is kept. First speech permanently cancels this deadline.
+4. **No wall-clock cap**: speech may continue beyond 30 minutes; unlocked Ask uses normal post-speech silence, and locked Ask uses the ten-minute silence rule.
 
 !!! info "Why user-controlled stop is primary"
     Silence detection can misfire — background noise, thinking pauses, or mic sensitivity issues cause premature cutoff. The touch-file approach gives the user explicit control over when they're done speaking.

@@ -1,3 +1,4 @@
+import { claimVoiceCall, recordNoAnswer, STILL_AWAY, userVoicePresent } from "./voice-away-policy";
 import { voiceAskNoAnswerSeconds } from "./voice-ask-no-answer";
 import { formatVoiceAskTurnResult, type VoiceAskTurnOutcome, type VoiceAskTimeoutStage, type McpTextResult } from "./voice-turn-result";
 import {
@@ -306,6 +307,7 @@ async function handleVoiceSpeakAdmitted(
 
   // Replay mode — replay_index present
   if (typeof a.replay_index === "number") {
+    if (!claimVoiceCall(context)) return textResult(STILL_AWAY);
     return withFreshAsyncVoiceAdmission(() => {
       ensureVoiceBarRunning();
       return handleReplay({ index: a.replay_index });
@@ -331,6 +333,7 @@ async function handleVoiceSpeakAdmitted(
     return handleThink({ thought: rawMessage, category });
   }
 
+  if (!claimVoiceCall(context)) return textResult(STILL_AWAY);
   return withFreshAsyncVoiceAdmission(async () => {
     ensureVoiceBarRunning();
   // Bound raw archive input separately from the later speech-duration policy.
@@ -655,7 +658,15 @@ export type VoiceAskTurnRequest = {
 
 export async function runVoiceAskTurn(request: VoiceAskTurnRequest): Promise<VoiceAskTurnOutcome> {
   try {
-    return await withAsyncVoiceAdmission(() => runVoiceAskTurnAdmitted(request), { maxWaitMs: 20 });
+    return await withAsyncVoiceAdmission(async () => {
+      if (!claimVoiceCall(request.context)) {
+        finishSpeakReceipt(request.archiveContext, "rejected", "REJECTED");
+        return { kind: "away" };
+      }
+      const outcome = await runVoiceAskTurnAdmitted(request);
+      if (outcome.kind === "answered") userVoicePresent();
+      return outcome;
+    }, { maxWaitMs: 20 });
   } catch (error) {
     if (error instanceof VoiceAdmissionCancelledError) return { kind: "admission-cancelled", message: error.message };
     if (error instanceof UpdateBusyError) return { kind: "update-busy", message: error.message };
@@ -746,6 +757,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   let admissionFailed = false;
   let noSpeech = false;
   let noAnswer = false;
+  let unclassifiedAnswer = false;
   let captureArchivePath: string | null = null;
   let promptAttempted = false;
   const progressHeartbeat = context
@@ -950,6 +962,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         },
         onSpeechStart: () => {
           captureHasSpeech = true;
+          userVoicePresent();
           if (!captureActive || timeoutSettled || inputAbortController.signal.aborted) return;
           if (timer) clearTimeout(timer);
           timer = undefined;
@@ -978,7 +991,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         onPhaseChange: (phase) => {
           progressHeartbeat?.setStage(phase);
         },
-        onNoAnswer: () => { noAnswer = true; },
+        onNoAnswer: (unclassified) => { noAnswer = !unclassified; unclassifiedAnswer = unclassified; },
         onNoSpeech: () => {
           noSpeech = true;
         },
@@ -989,7 +1002,11 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     if (response === null) {
       const recovery = recoveryOptions();
       const promptPlayback = speech.playbackOutcome;
-      if (noAnswer && recovery) return { kind: "no-answer", timeoutSeconds, recovery, promptPlayback };
+      if (unclassifiedAnswer && recovery) return { kind: "retained", recovery: { ...recovery,
+        reason: "Speech could not be ruled out: VAD classification stalled. The complete recording was kept." }, promptPlayback };
+      if (noAnswer && recovery) return recordNoAnswer(context)
+        ? { kind: "no-answer", timeoutSeconds, recovery, promptPlayback }
+        : { kind: "away" };
       if (noSpeech) return { kind: "no-speech", recovery: recovery ?? null, promptPlayback };
       if (recovery) return { kind: "retained", recovery, promptPlayback };
       return { kind: "no-input", timeoutSeconds, pushToEnd, promptPlayback };

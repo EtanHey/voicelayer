@@ -1,3 +1,4 @@
+import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
  * Input module — mic recording + STT transcription.
@@ -173,8 +174,10 @@ const PRE_ROLL_CHUNKS = Math.ceil(
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
-/** Absolute MCP VAD capture ceiling measured from first speech, even while held. */
-export const VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS = 30 * 60 * 1000;
+/** Allow already captured PCM a bounded chance to reach Silero at the no-answer edge. */
+export const NO_ANSWER_CLASSIFY_GRACE_MS = 2_000;
+const MIN_ASK_LISTEN_MS = 15_000;
+const LOCKED_SILENCE_TIMEOUT_MS = 10 * 60_000;
 
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
@@ -683,7 +686,7 @@ export interface RecordingCaptureState {
   /** End-exclusive sample offset of the last Silero speech chunk in captured mono 16 kHz PCM. */
   pttLastSpeechEndSample?: number;
   vadSpeechDetected?: boolean;
-  noAnswerExpired?: boolean;
+  noAnswerExpired?: "silence" | "unclassified";
   noAnswerStartedAtMs?: number;
   onCaptureStart?: () => void;
   onSpeechStart?: () => void;
@@ -764,7 +767,7 @@ export interface WaitForInputOptions {
   onCaptureEnd?: () => void;
   onPhaseChange?: (phase: "transcribing") => void;
   onNoSpeech?: () => void;
-  onNoAnswer?: () => void;
+  onNoAnswer?: (unclassified: boolean) => void;
   signal?: AbortSignal;
   /** Monotonic clock seam for receipt tests; production uses performance.now(). */
   monotonicNow?: () => number;
@@ -2479,14 +2482,13 @@ export async function recordToBuffer(
         );
       }
       clearTimeout(timer);
-      clearTimeout(speechSafetyTimer);
       if (stopSignalPoll) clearInterval(stopSignalPoll);
       if (abortHandler && signal) {
         signal.removeEventListener("abort", abortHandler);
       }
 
       if (captureState) {
-        captureState.recorderExited = (recorder?.exited ?? Promise.resolve()).then(async () => { await processingSettled; });
+        captureState.recorderExited = (recorder?.exited ?? Promise.resolve()).then(async () => { if (!voiceAsk) await processingSettled; });
         // Observe rejection now without converting the original exit proof to success.
         // The queue still receives that rejected promise and keeps admission closed.
         void captureState.recorderExited.catch(() => {});
@@ -2531,7 +2533,7 @@ export async function recordToBuffer(
         );
       } else if (capturedPcmBytes === 0) {
         // Even a stalled device's empty no-answer take gets an archive receipt.
-        resolve(captureState?.noAnswerExpired ? new Uint8Array() : null);
+        resolve(captureState?.noAnswerExpired || captureState?.pttSilenceTimeout ? new Uint8Array() : null);
       } else if (!pushToEnd && !hasSpeech && !preserveNoSpeechCapture) {
         resolve(null);
       } else {
@@ -2577,14 +2579,27 @@ export async function recordToBuffer(
     let pttVadPending = false;
     let recordingHeld = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let speechSafetyTimer: ReturnType<typeof setTimeout> | undefined;
-    const pttSilenceTimeoutMs = captureState?.archiveSource === "voicebar" ? 10 * 60_000 : timeoutMs;
+    let noAnswerDeadlineAtMs = 0;
+    let noAnswerRemainingMs = timeoutMs;
+    let classificationGraceEndsAtMs: number | undefined;
+    const pttSilenceTimeoutMs = voiceAsk || captureState?.archiveSource === "voicebar" ? LOCKED_SILENCE_TIMEOUT_MS : timeoutMs;
     const synchronizeRecordingHold = () => {
       if (pushToEnd || resolved) return false;
       const held = isRecordingHoldEngaged();
       if (held !== recordingHeld) {
         recordingHeld = held;
-        if (!voiceAsk) clearTimeout(timer);
+        clearTimeout(timer);
+        if (voiceAsk) {
+          if (held) {
+            noAnswerRemainingMs = Math.max(0, noAnswerDeadlineAtMs - Date.now());
+            pttLastSpeechAtMs = Date.now();
+            timer = setTimeout(onTimeout, pttSilenceTimeoutMs);
+          } else if (!hasSpeech) {
+            noAnswerDeadlineAtMs = Date.now() + noAnswerRemainingMs;
+            classificationGraceEndsAtMs = undefined;
+            timer = setTimeout(onTimeout, noAnswerRemainingMs);
+          }
+        }
         // Preserve speech detection, but discard silence accumulated before
         // either edge, even if no VAD chunk arrived while the lock was held.
         silencePolicy.observe({ speechDetected: false, holdEngaged: true });
@@ -2600,28 +2615,44 @@ export async function recordToBuffer(
       if (resolved) return;
       const held = synchronizeRecordingHold();
       if (!voiceAsk && (held || previouslyHeld)) return;
-      if (voiceAskVad && hasSpeech) return;
-      if (voiceAsk && !hasSpeech) {
+      if (voiceAskVad && hasSpeech && !held) return;
+      if (voiceAsk && !hasSpeech && !held) {
         if (!pttSpeechDetectionAvailable) return; // Missing VAD evidence cannot prove absence.
-        // Classify queued/in-flight PCM before concluding that no speech occurred.
-        if (pttVadPending || chunkQueue.length > 0) {
-          timer = setTimeout(onTimeout, STOP_POLL_MS);
+        if (Date.now() < noAnswerDeadlineAtMs) {
+          timer = setTimeout(onTimeout, noAnswerDeadlineAtMs - Date.now());
           return;
         }
-        if (captureState) captureState.noAnswerExpired = true;
+        // Classify queued/in-flight PCM before concluding that no speech occurred.
+        const unclassified = pttVadPending || chunkQueue.length > 0;
+        if (unclassified) {
+          classificationGraceEndsAtMs ??= Date.now() + NO_ANSWER_CLASSIFY_GRACE_MS;
+          if (Date.now() < classificationGraceEndsAtMs) {
+            timer = setTimeout(onTimeout, STOP_POLL_MS);
+            return;
+          }
+        }
+        if (captureState) captureState.noAnswerExpired = unclassified ? "unclassified" : "silence";
         finish();
         return;
       }
-      if (pushToEnd) {
+      if (pushToEnd || (voiceAskVad && held)) {
         if (!pttSpeechDetectionAvailable) return;
         // A slow inference or queued PCM may contain speech. Classify it before deciding it was silence.
         const remaining = pttSilenceTimeoutMs - (Date.now() - pttLastSpeechAtMs);
+        if (voiceAsk && remaining <= 0 && (pttVadPending || chunkQueue.length > 0)) {
+          classificationGraceEndsAtMs ??= Date.now() + NO_ANSWER_CLASSIFY_GRACE_MS;
+          if (Date.now() >= classificationGraceEndsAtMs) {
+            if (captureState) captureState.noAnswerExpired = "unclassified";
+            finish();
+            return;
+          }
+        }
         if (pttVadPending || chunkQueue.length > 0 || remaining > 0) {
           timer = setTimeout(onTimeout, pttVadPending || chunkQueue.length > 0 ? STOP_POLL_MS : remaining);
           return;
         }
       }
-      if (pushToEnd && captureState?.archiveSource === "voicebar") captureState.pttSilenceTimeout = true;
+      if (captureState && (pushToEnd || held)) captureState.pttSilenceTimeout = true;
       finish();
     };
     // PTT and MCP VAD start their silence budget only once the microphone opens.
@@ -2698,10 +2729,12 @@ export async function recordToBuffer(
       if (voiceAsk || (pushToEnd && pttSpeechDetectionAvailable)) {
         pttLastSpeechAtMs = Date.now();
         const remaining = voiceAsk
-          ? Math.max(0, timeoutMs - (Date.now() - (captureState?.noAnswerStartedAtMs ?? Date.now())))
+          ? Math.max(Math.min(timeoutMs, MIN_ASK_LISTEN_MS), timeoutMs - (Date.now() - (captureState?.noAnswerStartedAtMs ?? Date.now())))
           : pttSilenceTimeoutMs;
+        noAnswerDeadlineAtMs = Date.now() + remaining;
         timer = setTimeout(onTimeout, remaining);
       }
+      if (captureState?.archiveSource === "voicebar") userVoicePresent();
       invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
       if (resolved) return;
 
@@ -2831,8 +2864,11 @@ export async function recordToBuffer(
             if (pttSpeechDetectionAvailable) {
               pttVadPending = true;
               try {
-                if (isSpeech(await processVADChunk(chunk))) {
+                const detected = isSpeech(await processVADChunk(chunk));
+                if (resolved) continue;
+                if (detected) {
                   pttLastSpeechAtMs = Date.now();
+                  if (!resolved) userVoicePresent();
                   if (voiceAsk && !hasSpeech && !resolved) {
                     hasSpeech = true;
                     clearTimeout(timer);
@@ -2884,18 +2920,15 @@ export async function recordToBuffer(
             hasSpeech = silenceObservation.hasSpeech;
 
             if (speechDetected) {
+              pttLastSpeechAtMs = Date.now();
+              classificationGraceEndsAtMs = undefined;
+              if (captureState) captureState.pttLastSpeechEndSample = processedPcmBytes / BYTES_PER_SAMPLE;
+              userVoicePresent();
               if (!hadSpeech) {
                 firstSpeechChunkIndex = pcmChunks.length - 1;
                 if (voiceAskVad && !resolved) {
                   clearTimeout(timer);
-                  timer = undefined;
-                  speechSafetyTimer = setTimeout(() => {
-                    if (resolved) return;
-                    console.error(
-                      `[voicelayer] voice_ask speech safety ceiling reached after ${VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS / 60_000} min — retaining recording`,
-                    );
-                    finish();
-                  }, VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS);
+                  timer = recordingHeld ? setTimeout(onTimeout, pttSilenceTimeoutMs) : undefined;
                   invokeCaptureObserver("speech_start", captureState?.onSpeechStart);
                 }
                 broadcast({ type: "speech", detected: true });
@@ -3269,8 +3302,9 @@ export async function waitForInput(
   }
   throwIfWaitForInputAborted(options.signal);
   if (captureState.noAnswerExpired) {
-    invokeCaptureObserver("no_answer", options.onNoAnswer);
-    invokeCaptureObserver("no_speech", options.onNoSpeech);
+    clearCancelSignal();
+    invokeCaptureObserver("no_answer", () => options.onNoAnswer?.(captureState.noAnswerExpired === "unclassified"));
+    if (captureState.noAnswerExpired === "silence") invokeCaptureObserver("no_speech", options.onNoSpeech);
     broadcast({ type: "state", state: "idle", source: "recording" });
     return null; // Already archived above; never send a silent take to STT.
   }

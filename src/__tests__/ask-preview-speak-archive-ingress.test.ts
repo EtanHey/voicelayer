@@ -250,7 +250,7 @@ describe(`Ask and Preview real receipt ingress: ${caller} (canonical preload; sy
     const result = await ask({ message: raw });
     retained(raw, "received"); expect(disk()).not.toHaveProperty("lifecycle");
     expect(capture).toHaveBeenCalledTimes(1); expect(speak).toHaveBeenCalledTimes(1);
-    expect(result.content[0].text).toContain(failure === "timeout" ? "timeout after 30s" : "synthetic recording failed");
+    expect(result.content[0].text).toContain(failure === "timeout" ? "timeout after 120s" : "synthetic recording failed");
   });
   for (const fault of ["clearInput", "booking"] as const)
     for (const connection of ["stdio", "daemon"] as const) it(`preflight rejection identity and reservation reuse: ${fault}/${connection}`, async () => {

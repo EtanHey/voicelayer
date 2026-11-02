@@ -32,5 +32,6 @@ test("D5 no-answer result explains retained path and follow-up limit", () => {
   expect(result.isError).not.toBe(true);
   expect(result.content[0].text).toContain("No answer within 2 minutes; recording kept at /synthetic/audio.wav");
   expect(result.content[0].text).toContain("ONE follow-up");
+  expect(result.content[0].text).toContain("archive synthetic");
   expect(result.content[0].text).toContain("continue as if the user is away");
 });

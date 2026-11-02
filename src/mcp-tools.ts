@@ -153,7 +153,7 @@ export function getToolDefinitions() {
           timeout_seconds: {
             type: "number",
             description:
-              "No-answer budget in seconds after the question finishes. In VAD mode, first speech cancels it; recording ends on silence or stop, with a 30-minute ceiling after first speech (also while locked). Lock does not extend a no-answer wait. Prior playback and prompt synthesis/playback have separate bounds. Clamped to 5-3600. Default: VOICELAYER_ASK_NO_ANSWER_SECONDS or 120.",
+              "No-answer budget after the question finishes (default VOICELAYER_ASK_NO_ANSWER_SECONDS or 120; 5-3600s). First speech cancels it. Unlocked VAD Ask ends on normal post-speech silence (silence_mode, 2.5s default). HOLD pauses the no-answer budget; locked Ask stops after 10 minutes of continuous silence, renewed by speech, with NO cap. Every take is archived.",
             default: voiceAskNoAnswerSeconds(),
             minimum: 5,
             maximum: 3600,

@@ -24,6 +24,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   clearCancelSignal,
+  hasCancelSignal,
   clearStopSignal,
   setCancelSignal,
 } from "../session-booking";
@@ -902,7 +903,7 @@ describe("input recording durability", () => {
     agentTtsVoice: "en-US-JennyNeural",
   };
 
-  it("D5 handler returns the default 120s away result with its kept recording", async () => {
+  it("D5 long prompt finishes before the full default 120s answer window starts", async () => {
     const { handleConverse } = await import("../handlers");
     const sessionBooking = await import("../session-booking");
     const recorder = installFakeRecorder([makePcmChunk(0)], true);
@@ -912,20 +913,23 @@ describe("input recording durability", () => {
       owner: { pid: process.pid, sessionId: "synthetic-D5", startedAt: new Date().toISOString() },
     });
     const playbackSpy = spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined);
-    const speakSpy = spyOn(tts, "speak").mockResolvedValue({
-      displayText: "Synthetic question?", engine: "edge-tts", voice: "en-US-JennyNeural",
-      audioArtifact: { bytes: new Uint8Array([0x49, 0x44, 0x33]), format: "mp3" },
+    const speakSpy = spyOn(tts, "speak").mockImplementation(async () => {
+      clock.advance(60_000);
+      return { displayText: "Synthetic question?", engine: "edge-tts", voice: "en-US-JennyNeural",
+        audioArtifact: { bytes: new Uint8Array([0x49, 0x44, 0x33]), format: "mp3" } };
     });
     const pending = handleConverse({ message: "Synthetic question?" });
     try {
       await recorder.waitForSpawn();
       await waitUntil(() => vadCallCount === 1, "D5 handler silence");
-      clock.advance(120_000);
+      clock.advance(119_999);
+      expect((await import("../input")).getRecordingState()).toBe("recording");
+      clock.advance(1);
       const result = await pending;
       expect(result.isError).not.toBe(true);
       const text = result.content[0].text;
       expect(text).toContain("No answer within 2 minutes; recording kept at ");
-      const path = text.split("recording kept at ")[1].split(". You may")[0];
+      const path = text.split("recording kept at ")[1].split(" (archive")[0];
       expectValidRetainedWav(path, VAD_CHUNK_BYTES);
       expect(text).toContain("ONE follow-up voice_speak or voice_ask");
       expect(text).toContain("continue as if the user is away");
@@ -947,13 +951,12 @@ describe("input recording durability", () => {
       let noAnswer = false;
       const recording = waitForInput(120_000, "thoughtful", pushToEnd, {
         archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
-        onArchiveCreated: path => { archivePath = path; },
-        onNoAnswer: () => { expect(existsSync(join(archivePath, "audio.wav"))).toBe(true); noAnswer = true; },
+        onArchiveCreated: path => { archivePath = path; setCancelSignal(); },
+        onNoAnswer: () => { expect(hasCancelSignal()).toBe(false); expect(existsSync(join(archivePath, "audio.wav"))).toBe(true); noAnswer = true; },
       });
       try {
         await recorder.waitForSpawn();
         await waitUntil(() => vadCallCount === 1, "D5 silent PCM");
-        setRecordingHold(true);
         clock.advance(119_999);
         expect(getRecordingState()).toBe("recording");
         clock.advance(1);
@@ -1433,45 +1436,74 @@ describe("input recording durability", () => {
   });
 
   for (const held of [false, true]) {
-    it(`VA-TIMEOUT speech safety ceiling ends ${held ? "held" : "unlocked"} capture at 30 minutes and keeps its audio`, async () => {
+    it(`D5 ${held ? "locked recurring" : "unlocked"} speech beyond 30 minutes stays open without a cap`, async () => {
       const { waitForInput, getRecordingState } = await import("../input");
       const { setRecordingHold } = await import("../recording-hold");
-      const logSpy = spyOn(console, "error");
       const recorder = installFakeRecorder([], true);
-      const clock = installRecordingClock([3_600_000, 1_800_000]);
+      const clock = installRecordingClock([1, 120_000, 600_000, 1_800_000]);
       const abort = new AbortController();
-      let archivePath: string | undefined;
+      let archivePath = "";
       vadProbabilityForCall = () => 0.95;
-      // The public schema permits 3600 seconds. A larger no-speech budget must
-      // not postpone the separate 30-minute cap after detected speech.
-      const recording = waitForInput(3_600_000, "thoughtful", false, {
-        archiveSource: "voice_ask",
-        voiceAskArtifacts: timeoutPromptArtifacts,
-        signal: abort.signal,
-        onArchiveCreated: (path) => { archivePath = path; },
+      const recording = waitForInput(120_000, "thoughtful", false, {
+        archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
+        onArchiveCreated: path => { archivePath = path; },
       });
-      void recording.catch(() => null);
       try {
         await recorder.waitForSpawn();
-        clock.advance(60_000);
-        for (let i = 0; i < 25; i++) recorder.push(makePcmChunk(1800));
-        await waitUntil(() => vadCallCount === 25, "safety-ceiling speech processed");
         if (held) { setRecordingHold(true); clock.advance(0); }
-        clock.advance(1_799_999);
-        expect(getRecordingState()).toBe("recording");
-        clock.advance(1);
-        expect(getRecordingState()).not.toBe("recording");
+        for (let period = 0; period < 4; period++) {
+          for (let n = 0; n < 25; n++) recorder.push(makePcmChunk(1800));
+          await waitUntil(() => vadCallCount === 25 * (period + 1), "recurring Ask speech");
+          clock.advance(held ? 599_999 : 600_000);
+          expect(getRecordingState()).toBe("recording");
+        }
+        writeFileSync(STOP_FILE, "stop"); clock.advance(0);
         expect(await recording).toBe("Retained transcript.");
-        expectValidRetainedWav(join(archivePath!, "audio.wav"), 25 * VAD_CHUNK_BYTES);
-        expect(logSpy.mock.calls.some((args) => /safety ceiling.*30.*min/i.test(args.join(" ")))).toBe(true);
-      } finally {
-        abort.abort();
-        await recording.catch(() => null);
-        clock.restore();
-        logSpy.mockRestore();
-      }
+        expectValidRetainedWav(join(archivePath, "audio.wav"), 100 * VAD_CHUNK_BYTES);
+      } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
     });
   }
+
+  it("D5 delayed recorder still gets a minimum real listening window", async () => {
+    const { waitForInput, getRecordingState } = await import("../input");
+    const clock = installRecordingClock([15_000]);
+    const recorder = installFakeRecorder([makePcmChunk(0)], true, () => clock.advance(119_000));
+    const abort = new AbortController();
+    let archivePath = "";
+    const recording = waitForInput(120_000, "thoughtful", false, {
+      archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
+      onArchiveCreated: path => { archivePath = path; },
+    });
+    try {
+      await recorder.waitForSpawn(); await waitUntil(() => vadCallCount === 1, "delayed Ask PCM");
+      clock.advance(14_999); expect(getRecordingState()).toBe("recording");
+      clock.advance(1); expect(await recording).toBeNull();
+      expectValidRetainedWav(join(archivePath, "audio.wav"), VAD_CHUNK_BYTES);
+    } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
+  });
+
+  it("D5 HOLD protects a silent Ask at 120s, then ten-minute silence closes and archives", async () => {
+    const { waitForInput, getRecordingState } = await import("../input");
+    const { setRecordingHold } = await import("../recording-hold");
+    const recorder = installFakeRecorder([makePcmChunk(0)], true);
+    const clock = installRecordingClock([120_000, 600_000]);
+    const abort = new AbortController();
+    let archivePath = "", noAnswer = false;
+    const recording = waitForInput(120_000, "thoughtful", false, {
+      archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
+      onArchiveCreated: path => { archivePath = path; }, onNoAnswer: () => { noAnswer = true; },
+    });
+    try {
+      await recorder.waitForSpawn(); await waitUntil(() => vadCallCount === 1, "held silent Ask");
+      setRecordingHold(true); clock.advance(0);
+      clock.advance(120_000); expect(getRecordingState()).toBe("recording");
+      clock.advance(479_999); expect(getRecordingState()).toBe("recording");
+      clock.advance(1); expect(await recording).toBeNull();
+      expect(noAnswer).toBe(false);
+      expectValidRetainedWav(join(archivePath, "audio.wav"), VAD_CHUNK_BYTES);
+      expect(backendTranscribeCalls).toBe(0);
+    } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
+  });
 
   for (const ending of ["stop", "cancel", "unlock"] as const) {
     it(`locked voice_ask survives timeout and thoughtful silence until ${ending}`, async () => {
@@ -1851,8 +1883,10 @@ describe("input recording durability", () => {
     installFakeRecorder(chunks, true);
     const { waitForInput } = await import("../input");
 
+    const clock = installRecordingClock([100, 50]);
+    let uncertain: boolean | undefined;
     const capture = waitForInput(100, "thoughtful", false, {
-      archiveSource: "voice_ask",
+      archiveSource: "voice_ask", onNoAnswer: value => { uncertain = value; },
       voiceAskArtifacts: {
         agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
         agentAudioFormat: "mp3",
@@ -1865,7 +1899,14 @@ describe("input recording durability", () => {
 
     try {
       await waitUntil(() => vadCallCount === 1, "timeout VAD backlog");
+      clock.advance(100);
+      expect((await import("../input")).getRecordingState()).toBe("recording");
+      clock.advance(1_999);
+      expect((await import("../input")).getRecordingState()).toBe("recording");
+      clock.advance(50);
       await expect(capture).resolves.toBeNull();
+      expect(uncertain).toBe(true);
+      expect(backendTranscribeCalls).toBe(0);
 
       const dayDir = join(tmpRoot, "recordings", "2026-08-01");
       const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
@@ -1876,6 +1917,7 @@ describe("input recording durability", () => {
     } finally {
       releaseVad?.();
       await capture.catch(() => null);
+      clock.restore();
     }
   });
 

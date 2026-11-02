@@ -97,7 +97,7 @@ Recordings backup: `bash scripts/backup-recordings-icloud.sh [--dry-run]` copies
 - Voice samples: `~/.voicelayer/voices/{name}/samples/*.wav`
 
 ## Environment Variables
-- `VOICELAYER_ASK_NO_ANSWER_SECONDS`: Ask no-answer deadline after prompt playback, default 120 seconds; finite values 5–3600 accepted, invalid values fall back to 120. Explicit `timeout_seconds` overrides it. Any Silero-detected speech permanently cancels this deadline; normal silence/Stop rules then apply. HOLD does not extend a silent Ask. The take is archived before returning the away result. Agents may make ONE follow-up `voice_speak` or `voice_ask`, then continue as if the user is away.
+- `VOICELAYER_ASK_NO_ANSWER_SECONDS`: Ask no-answer deadline after prompt playback, default 120 seconds; finite values 5–3600 accepted, invalid values fall back to 120. Explicit `timeout_seconds` overrides it. Any Silero-detected speech permanently cancels this deadline; normal silence/Stop rules then apply. HOLD pauses the no-answer budget; locked Ask stops only after 10 minutes of continuous silence, renewed by speech, with no cap. The take is archived before returning the away result. Agents may make ONE follow-up `voice_speak` or `voice_ask`, then continue as if the user is away.
 - `QA_VOICE_STT_BACKEND`, `QA_VOICE_WHISPER_MODEL`, `QA_VOICE_WISPR_KEY`
 - `VOICELAYER_STT_AGGRESSIVE_FILLERS=1` opts into legacy removal of meaning-bearing English hedges/intensifiers; `QA_VOICE_STT_AGGRESSIVE_FILLERS` remains a legacy alias. Default cleanup preserves those words.
 - `QA_VOICE_TTS_VOICE`, `QA_VOICE_TTS_RATE`, `QA_VOICE_THINK_FILE`

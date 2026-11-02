@@ -1,18 +1,24 @@
-# Ask no-answer deadline — D5 (11:00Z)
+# Ask no-answer deadline — D5, final review round
 
-Three abstract ticks represent the 120-second post-question budget. `Speech` may
-arrive on the last pre-deadline tick (the 119-second case). It permanently disarms
-`NoAnswer`; `NormalSilence` may still close the answer. Only the no-answer close
-is prohibited after speech. The existing 30-minute safety ceiling and manual Stop
-are outside this small model. Captured PCM is archived before the away result.
-Fair ticking and no-answer closure model a responsive event loop. Runtime drains
-queued/in-flight Silero inference before concluding no speech occurred.
+Two abstract ticks represent the configurable post-question no-answer deadline;
+one grace tick represents the bounded 2s classification grace. `Capture` may
+arrive at the exact deadline and `Classify` later, or `VadStall` may prevent it
+from ever finishing. Unknown speech closes as retained/unclassified, never away.
+The pending-speech invariant protects actual spoken frames, including at the
+same instant as the deadline. The heard-speech invariant protects classified
+answers. The stall property requires eventual closure despite stuck inference.
 
-Run through the captain lock:
+`held` selects a locked Ask, sharing the runtime ten-minute continuous-silence
+rule with locked VoiceBar PTT (`SilenceLimit` abstracts ten minutes). Speech
+resets silence; there is no wall-clock ceiling. `SpeechCapMutant` restores one.
+Unlocked post-speech silence remains independent of no-answer closure.
+The model abstracts recorder startup/HOLD pause transitions, which are pinned
+by simulated-clock runtime tests. Fair ticks and timer delivery model a live
+event loop. Strong timer fairness also covers repeated quiet candidate frames.
+
+Run ONLY on M1 through its captain lock:
 `~/.local/state/captain-2.2.61/heavy.sh J bash formal/voice-ask-no-answer/check.sh --record`
-
-The shared runner uses `formal/tlc_support.py` and the checksum-pinned
-`formal/tlc.lock.json`. Every mutant must fail on its exact property; a passing
-mutant or another failure fails the gate. `results/MUTANTS.md` is the receipt.
-`OldDeadlineMutant` reproduces the uncancelled wall deadline, not an entire
-historical implementation. The other mutants disable closure and archive retention.
+Use `/opt/homebrew/opt/openjdk/bin` on PATH. The shared runner imports
+`formal/tlc_support.py` and verifies `formal/tlc.lock.json`'s checksum pin.
+Each of the seven properties has an exact failing mutant; a passing mutant or
+an unrelated failure fails `check.sh`. Evidence is in `results/MUTANTS.md`.
