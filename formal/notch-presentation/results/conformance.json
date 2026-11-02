@@ -1,6 +1,6 @@
 {
   "command": "bash formal/notch-presentation/conformance.sh",
-  "status": "PASS_WITH_EXPLICIT_BASELINE_EXPECTED_FAILURES",
+  "status": "PASS_WITH_PINNED_BASELINE_DIVERGENCES",
   "corpora": [
     "Current",
     "Fixed"
@@ -10,7 +10,7 @@
   "remoteCI": "NOT_RUN",
   "installedOrLiveAcceptance": "NOT_RUN",
   "sourceSHA256": {
-    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "89868c17ab367e38c4a5f61ff16d818ed118c820d9ac4dc7ad5250b66a3e4920",
+    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "2a0c5e13c01615ef4ac8fb3a0ed9f259595d9541e22efd9f9bfb768a14e06b6d",
     "formal/runtime-contract.json": "ab6305773cb1884474e665a1c421dfcd78250fe49613625de6aef6b4fcf877d8"
   },
   "tests": 3,
@@ -24,6 +24,63 @@
     "N2": 468,
     "N4": 462,
     "N5": 792,
-    "Fixed native graph paths": 4
+    "N3NoticeBand": 252,
+    "Fixed native graph paths": 4,
+    "FixedProjection": 2374
+  },
+  "divergencePins": {
+    "Fixed NoteHasCause": {
+      "count": 1,
+      "sha256": "1246fc93bca00b90d0fcaf2f7b7b41546f08817ce552c25eabc7dca19181c65a"
+    },
+    "FixedText": {
+      "count": 1524,
+      "sha256": "11b06d47d2ac80b718bca0fd57b0f153d53094e9a44655ba14d20c86d1bf3152"
+    },
+    "N1": {
+      "count": 3020,
+      "sha256": "7fa695f3df28e5ebcc65d30fd6ab9f36982b74ed5477e6190e78a802253bb6a7"
+    },
+    "N2": {
+      "count": 468,
+      "sha256": "51f83fde06ccf606b0a0e9bcc7cfc4c335e500b49e953deb20aa10075612219a"
+    },
+    "N4": {
+      "count": 462,
+      "sha256": "18cb55537117c4476db870733226c0db616106a286b9b5282ed6193a6733be64"
+    },
+    "N5": {
+      "count": 792,
+      "sha256": "a8c8b111647ca9e7112a65f0132c124390495798f91261a102c2b5fccab0d6a9"
+    },
+    "N3NoticeBand": {
+      "count": 252,
+      "sha256": "74476fa2d99eb622649266437c1897b1f74da70af9bd92a15977933097b73d57"
+    },
+    "Fixed native graph paths": {
+      "count": 4,
+      "sha256": "8305f180ed6ea9f1087dd38cb15b404e57b65e0861de8fce60009fc7b06f82de"
+    },
+    "FixedProjection": {
+      "count": 2374,
+      "sha256": "f19c12de6beed6c064c7bd1fd563ce881a6d9804fdc2e29a20e33c7df6cc0e6b"
+    }
+  },
+  "driftProbe": {
+    "model": "notch-presentation",
+    "mutatedRows": 468,
+    "returncode": 1,
+    "strictFailureMarker": "Baseline divergence SET drifted: FixedProjection",
+    "status": "EXPECTED_FAIL",
+    "command": [
+      "swift",
+      "test",
+      "--package-path",
+      "flow-bar",
+      "--scratch-path",
+      ".build.noindex/swift",
+      "--filter",
+      "LaneGFormalConformanceTests.testBothNotchCorporaAndIndependentProductionLedger"
+    ]
   }
 }

@@ -3,11 +3,11 @@
   "kind": "invariant",
   "target": "D3EveryTakeKept",
   "status": "EXPECTED_FAIL",
-  "generated": 14,
-  "distinct": 7,
+  "generated": 20,
+  "distinct": 6,
   "trace": [
-    "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"init\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"none\" ]",
-    "s = [ stage |-> [A |-> \"recording\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"F5\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]",
-    "s = [ stage |-> [A |-> \"cancelled\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"click\",\n  target |-> \"A\",\n  cancelToken |-> \"A\",\n  saved |-> {},\n  cancelRequested |-> {\"A\"},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"A\",\n  reply |-> \"accept\" ]"
+    "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"init\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"none\" ]",
+    "s = [ stage |-> [A |-> \"recording\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"F5\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]",
+    "s = [ stage |-> [A |-> \"cancelled\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"click\",\n  target |-> \"A\",\n  cancelToken |-> \"A\",\n  saved |-> {},\n  cancelRequested |-> {\"A\"},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"A\",\n  reply |-> \"accept\" ]"
   ]
 }

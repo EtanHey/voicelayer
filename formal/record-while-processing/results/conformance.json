@@ -1,40 +1,66 @@
 {
   "command": "bash formal/record-while-processing/conformance.sh",
-  "status": "PASS_WITH_EXPLICIT_BASELINE_EXPECTED_FAILURES",
+  "status": "PASS_FIXED_WITH_HISTORICAL_CURRENT_DIVERGENCES",
   "corpora": [
     "Current",
     "Fixed"
   ],
   "skips": 0,
-  "productionPolicy": "current",
+  "productionPolicy": "fixed",
   "remoteCI": "NOT_RUN",
   "installedOrLiveAcceptance": "NOT_RUN",
   "sourceSHA256": {
-    "formal/record-while-processing/conformance.test.ts": "a74dc8f68ffbceb7791f015598e197a11f386c2595f976fd347680b3870dd21f",
-    "formal/record-while-processing/runtime-adapter.ts": "d0701d298af8e77fb725077980e2e77e018183cd5dfe8125778e570e19b9f164",
-    "formal/runtime-contract.json": "ab6305773cb1884474e665a1c421dfcd78250fe49613625de6aef6b4fcf877d8"
+    "formal/record-while-processing/conformance.test.ts": "39ff487a58d5be3716a0accd8875c942cd944d6743210f4ed589e2928482ec91",
+    "formal/record-while-processing/runtime-adapter.ts": "13fb1499008a3a54da92fe1e92c2223a4bdf33c98e5a40b281001e6eeab4c9a4",
+    "formal/runtime-contract.json": "6909a5b1fd71691a454f94d59634f70991a1fbf1a739eef0853a3d2323b5871f"
   },
   "tests": 5,
-  "strictPasses": 3,
-  "expectedFailureTests": 2,
+  "strictPasses": 5,
+  "expectedFailureTests": 0,
   "unexpectedFailures": 0,
-  "wireContexts": 410,
+  "wireContexts": 391,
   "contexts": {
     "Current/record": {
       "cases": 26,
-      "divergences": 0
+      "divergences": 10
     },
     "Current/cancel": {
-      "cases": 206,
-      "divergences": 0
+      "cases": 245,
+      "divergences": 324
     },
     "Fixed/record": {
-      "cases": 38,
-      "divergences": 12
+      "cases": 13,
+      "divergences": 0
     },
     "Fixed/cancel": {
-      "cases": 140,
-      "divergences": 280
+      "cases": 107,
+      "divergences": 0
     }
-  }
+  },
+  "divergencePins": {
+    "Fixed/record": {
+      "count": 12,
+      "sha256": "db73aab2355b6e76d8e5c755864ca8b5a6c81dc52a3242327352118504012da1"
+    },
+    "Fixed/cancel": {
+      "count": 280,
+      "sha256": "97e7934e0cfa45d99299f8bbf60e18cf8f6ebbc2dab80f69cdddca2b7d1f6092"
+    }
+  },
+  "pinnedBaselineComparisons": 2,
+  "driftProbe": {
+    "model": "record-while-processing",
+    "mutatedRows": 34,
+    "returncode": 1,
+    "strictFailureMarker": "(fail) Fixed cancel",
+    "status": "EXPECTED_FAIL",
+    "command": [
+      "bun",
+      "test",
+      "formal/record-while-processing/conformance.test.ts"
+    ]
+  },
+  "nativeTests": 9,
+  "nativeCancellationClasses": 73,
+  "divergencePinScope": "Preserved G pre-implementation Fixed-family pins apply only to a current pipeline policy. The merged fixed implementation requires zero Fixed divergences. Visual baseline pins are independently enforced by the Swift replay."
 }
