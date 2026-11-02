@@ -281,8 +281,10 @@ export function isSpeech(probability: number): boolean {
  */
 export async function resetVAD(): Promise<void> {
   if (cachedSession) {
-    cachedSession.state = freshVADState();
-    cachedSession.context = new Float32Array(VAD_CONTEXT_SAMPLES);
+    // An old inference may settle after a bounded Ask closed. Keep its writes
+    // on the previous conversation, never the next capture's recurrence.
+    cachedSession = { ...cachedSession, state: freshVADState(),
+      context: new Float32Array(VAD_CONTEXT_SAMPLES) };
   }
 }
 

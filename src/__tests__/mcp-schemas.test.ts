@@ -160,11 +160,11 @@ describe("MCP input schemas", () => {
       }
     });
 
-    it("defaults timeout_seconds to 30", () => {
+    it("defaults timeout_seconds to 120", () => {
       const result = VoiceAskSchema.safeParse({ message: "hello" });
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.timeout_seconds).toBe(30);
+        expect(result.data.timeout_seconds).toBe(120);
       }
     });
 
