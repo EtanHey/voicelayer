@@ -43,7 +43,8 @@ Every positive invariant and temporal property has a targeted failing mutant;
   backend consumers. Fixed validates a take ID, rejects stale IDs, and preserves
   unrelated takes. Processing cancellation arms a cooldown guard/ring; recording
   cancellation is immediate. Escape targets the foreground recording when present.
-- N8 requires Complete to be enabled and dispatch immediately, including overlap.
+- N8 requires captured takes to enter an available decoder without waiting for
+  the microphone, then Complete to dispatch immediately, including overlap.
   A separate invariant rejects superseded finals. `deliveries` is a dispatch count,
   not proof that a host inserted characters.
 - `cancelRequested` survives phase changes. Complete can race cancellation while
@@ -51,14 +52,16 @@ Every positive invariant and temporal property has a targeted failing mutant;
   paste-after-cancel mutant deliberately ignores the token and fails `NoCancelledPaste`.
 - D3 retains stopped, cancelled, timed-out and failed captures. Archive writes are
   assumed successful; byte durability and disk failures are not proved here.
-- `talking[t]` changes through speech/silence events. Fixed timeout is enabled only
-  in silence. `OldSpeechTimeout` exposes the Current PTT wall-clock timeout; the
+- `talking[t]` changes through speech/silence events. Fixed silence timeout is enabled only
+  after the renewed silence deadline, while the hard cap is a separate stop cause. `OldSpeechTimeout` exposes the Current PTT wall-clock timeout; the
   fixed policy's timeout-while-speaking mutant must fail `NoTimeoutWhileTalking`.
 
 `ProcessingSettles` assumes fair decode, result, cancellation-reap and timer work.
-`OverlapPastes` additionally requires A's overlap to dispatch or reach an explicit
+`OverlapPastes` starts from captured **or** transcribing A and additionally
+requires decode/result availability during B's recording, plus dispatch or an explicit
 failure/user cancellation; supersession is not success. `EventuallyIdle` is a
-**conditional drain** property after both takes have finished capture. It does not
+**conditional drain** property after both takes have finished capture. Its idle set excludes captured work
+as well as recording/decoding/delivery work. It does not
 force a live speaker to stop or make recording terminate by fairness. Each of
 these temporal properties has a mutant that fails on that exact named property.
 
@@ -75,7 +78,11 @@ hash allow the same tests to run by default without a prior TLC invocation.
 `row.before` and `captureIds`, and point the signal observer at its new cancellation
 primitive. Decision logic stays in the real handler; do not stub admission/cancel.
 `runtime-contract.json` holds the wire ID field and Current/Fixed implementation
-policy. Baseline Fixed gaps run as strict `test.failing` checks. Switching the
+policy. Baseline Fixed gaps have exact sorted divergence SHA-256/count pins in
+`results/conformance.json`, asserted by ordinary mandatory Bun tests. Each tag
+includes the entire model context and expected/observed outcome, so model changes
+on already-divergent contexts also fail. Swift pins each Fixed family outside
+its strict `XCTExpectFailure` wrapper. Switching the
 policy to `fixed` makes them ordinary mandatory passes; Current then remains an
 executed historical comparison with a required mismatch. Neither corpus is skipped.
 
@@ -104,3 +111,43 @@ Current failures, all exact-property checks: native F5 cancels A, socket start i
 busy, processing click lacks a guard, result delivery waits for a cosmetic floor,
 new recording drops a deferred final, and PTT timeout is allowed during speech.
 See normalized traces, [run.json](results/run.json), and [MUTANTS.md](results/MUTANTS.md).
+
+## Capture timing and captured-take overlap
+
+`ProductClock.cfg` checks the exact product ratio: one clock step is 60 seconds,
+`SilenceLimit = 1`, `CapLimit = 20` (1,200 seconds). Speech renews the silence
+deadline but never the hard cap. The silence `timeout` and hard `cap` are distinct
+causes: speech forbids the former; the latter must stop even continuous speech.
+Both archive the take. Deadline service availability and fair timeout/cap handlers
+are checked, not just a guard that could hold because timeout is disabled. There
+is no fairness assumption that forces the speaker to become silent.
+
+The full two-take graph uses `CapLimit = 3` as a conservative finite concurrency
+abstraction. The single-capture ProductClock graph uses the same operators with
+the literal 1/20 ratio, restricting only admission to A; A/B capture-clock logic
+is symmetric. All dedicated timing mutants also run that literal ratio. This
+keeps exhaustive graph and fairness checking small without silently dropping the
+real product deadlines. Neither clock model proves wall-clock scheduler latency.
+
+`SpeechRenewsDeadline` rejects missed speech registration and failed renewal;
+`NoEarlySilenceTimeout` rejects early firing; `SilenceTimesOut` checks deadline
+service availability and eventual stop under uninterrupted silence;
+`CaptureWithinCap` and `CapAlwaysFires` check the bound and eventual stop. A broken
+timeout cannot hide behind a later cap because the deadline-availability clause
+fails first. The cap-disabled, cap-renewed-by-speech, cap-blocked-during-speech,
+never-timeout, no-renewal and early-timeout mutants all have exact failing configs.
+
+`N8DecodeAdmissible` and `N8ImmediatePaste` require an enabled capture-to-decode
+transition while B records and preserve B's microphone ownership. `OverlapPastes`
+combines progress from captured A with immediate decode/result availability. A
+plain leads-to formula would still accept Decode delayed until B's bounded cap;
+the availability clauses deliberately close that dodge. Weak fairness alone does
+not promise that a scheduler will finish A before an adversarial immediate stop
+of B, so that stronger ordering is not claimed. Three hold-decode mutants target
+N8DecodeAdmissible, N8ImmediatePaste and OverlapPastes separately.
+
+Event-anchored negative queries require decode(A) during B's recording and
+speech(A) → silence(A) → timeout(A), alongside the prior overlap/cancel witnesses.
+Removing Decode fairness must fail `EventuallyIdle` because captured work remains
+unsettled. Default replay still executes both policies; switching runtime policy
+to Fixed makes its comparison strict and removes baseline-pin expectations.

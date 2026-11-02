@@ -61,6 +61,11 @@
       "target": "N1CompactNote",
       "kind": "invariant"
     },
+    "MutCoreWing": {
+      "role": "mutant",
+      "target": "N1CompactNote",
+      "kind": "invariant"
+    },
     "MutTextWing": {
       "role": "mutant",
       "target": "N1CompactNote",
@@ -72,6 +77,11 @@
       "kind": "invariant"
     },
     "MutTruncate": {
+      "role": "mutant",
+      "target": "N3GrowsDown",
+      "kind": "invariant"
+    },
+    "MutOutsideBand": {
       "role": "mutant",
       "target": "N3GrowsDown",
       "kind": "invariant"

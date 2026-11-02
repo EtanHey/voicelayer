@@ -27,12 +27,12 @@ The renderer model allocates a body from text measurements, control/wing widths,
 row counts and inline action slots. Invariants inspect the resulting geometry and
 text, not shadow success flags:
 
-- N1 bounds **both wing widths in every mode** by the core width. A visible notice
+- N1 bounds **both wing widths in every mode** by the compact maximum of 132 pt (strictly below the 185 pt core). A visible notice
   has no wing text and its feedback width fits the compact shell. Controls and the
   microphone/waveform lanes remain legitimate wings.
 - N2 forbids every text band during processing, including transient feedback and warm-up.
 - N3 measures one, two and three-line classes. Allocated band height determines
-  `bandLines`, and `N3GrowsDown` requires capacity for the full requested text.
+  `bandLines`, and `N3GrowsDown` requires every visible notice to have a band with capacity for the full requested text, including notes that a faulty renderer leaves outside the band.
   Font wrapping can add lines; the Swift observer separately measures the real font.
 - N4 rejects synthesized `Error` **and** `Details below`. The model has an explicit
   absent-diagnostic/available-details input. Separate placeholder mutants exercise
@@ -70,7 +70,11 @@ are strict `XCTExpectFailure` assertions, **not skipped tests or Fixed source PA
 Lane A changes `notchPolicy` to `fixed` after implementing the ledger, including
 cause clearing. Then the Fixed production assertions are strict, and only the
 historical Current comparison expects a mismatch. A missing expected mismatch is
-also a failure. The input/routing/observation helpers live together in the Swift
+also a failure. Every Fixed baseline family additionally has an exact sorted
+divergence multiset SHA-256 and count in `results/conformance.json`; those checks
+run outside `XCTExpectFailure`, so drift cannot be absorbed by the wrapper.
+`FixedProjection` pins the complete expected projection plus actual observation,
+including mismatches on frames that were already failing. The input/routing/observation helpers live together in the Swift
 harness so a changed presentation API has one explicit adaptation point.
 
 ## Source map
@@ -91,3 +95,12 @@ selection feedback adds a processing band; missing diagnostics synthesize `Error
 busy notes omit History; quit refusal survives its resolved cause until expiry.
 Their normalized traces and all mutation results are under `results/`.
 See [MUTANTS.md](results/MUTANTS.md) and [run.json](results/run.json).
+
+## Final review additions
+
+`MutCoreWing` rejects a wing equal to the core; `MutOutsideBand` rejects visible
+notes omitted from the lower band. The Swift observer has the same 132 pt bound
+for every mode. N3 covers all visible notes, and the missing-band baseline family
+is explicitly pinned. Real text measurement is strict for 1–3 line probes; above
+72 pt the production feedback uses its vertical ScrollView, rather than growing
+without bound. This model does not prove native scroll interaction.
