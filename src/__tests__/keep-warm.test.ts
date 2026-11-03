@@ -5,7 +5,7 @@ import { ModelResidency, modelIdlePolicy, modelIdleSeconds, setModelIdleSeconds,
 import { parseCommand } from "../socket-protocol";
 import { handleSocketCommand } from "../socket-handlers";
 import { warmSelectedRecognizer, type RecognizerTransitionDeps } from "../recognizer-controller";
-import { beginRecognizerRequestAfterMaintenance, finishRecognizerRequest, readRecognizerStatus, configureRecognizerBusyProbe, noteRecognizerEngine } from "../recognizer-state";
+import { beginRecognizerRequestAfterMaintenance, finishRecognizerRequest, readRecognizerStatus, configureRecognizerBusyProbe, noteRecognizerEngine, noteRecognizerEffective } from "../recognizer-state";
 import { canStartBarCapture } from "../recording-jobs";
 
 const settings = testTmp("keep-warm.json");
@@ -81,6 +81,7 @@ test("pressure command refuses capture before touching the provider", async () =
 for (const engine of ["parakeet", "whisper"] as const) test(`boot warms selected ${engine}; capture remains admitted and inference waits for that load`, async () => {
   process.env.QA_VOICE_STT_BACKEND = engine;
   configureRecognizerBusyProbe(() => null);
+  noteRecognizerEffective(null);
   const ready = Promise.withResolvers<void>();
   const calls: string[] = [];
   const deps: RecognizerTransitionDeps = { assetsPresent: () => true, reset: () => {}, stopP: async () => {}, stopW: async () => {},
