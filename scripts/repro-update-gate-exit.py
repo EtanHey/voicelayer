@@ -25,7 +25,7 @@ if pid == 0:
 try:
     for _ in range(100):
         _, pinned, _ = identity(pid)
-        if pinned.endswith("/bin/sleep"):
+        if pinned.split()[-1].split("/")[-1] == "sleep":
             break
         time.sleep(0.001)
     else:

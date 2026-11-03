@@ -182,13 +182,13 @@ test("exit observer refuses replacement owners, PID reuse and unavailable proces
   const proof = { identities: f.identities, native: "native-birth", daemon: "daemon-birth" };
   expect(observeInstallerExit(proof, { identity: () => null, table: () => "123 /usr/bin/other\n" })).toBe(true);
   for (const table of ["123 /Applications/VoiceBar.app/Contents/MacOS/VoiceBar\n", "123 VoiceBar\n"]) {
-    expect(observeInstallerExit(proof, { identity: () => null, table: () => table })).toBe("UNKNOWN");
+    expect(observeInstallerExit(proof, { identity: () => null, table: () => table })).toBe("UNSAFE");
   }
   for (const table of ["", "malformed process row"]) {
     expect(observeInstallerExit(proof, { identity: () => null, table: () => table })).toBe("UNKNOWN");
   }
-  expect(observeInstallerExit(proof, { identity: () => "reused-birth", table: () => "" })).toBe("UNKNOWN");
-  expect(observeInstallerExit(proof, { identity: pid => pid === 101 ? proof.native : null, table: () => "" })).toBe(false);
+  expect(observeInstallerExit(proof, { identity: () => "reused-birth", table: () => "" })).toBe("UNSAFE");
+  expect(observeInstallerExit(proof, { identity: pid => pid === 101 ? proof.native : null, table: () => "123 /usr/bin/other\n" })).toBe(false);
   expect(observeInstallerExit(proof, { identity: () => null, table: () => { throw Error("ps failed"); } })).toBe("UNKNOWN");
   expect(observeInstallerExit(proof, { identity: () => { throw Error("permission denied"); }, table: () => "" })).toBe("UNKNOWN");
 });
@@ -355,7 +355,7 @@ test("same-birth defunct participant waits for reaping under the exit deadline",
   });
   await f.participant.quit(f.lease);
   expect(polls).toBeGreaterThan(2);
-  expect(observeInstallerExit(proof, { identity: () => "Fri Oct 30 09:10:11 2026 <defunct>", table: () => "" })).toBe("UNKNOWN");
+  expect(observeInstallerExit(proof, { identity: () => "Fri Oct 30 09:10:11 2026 <defunct>", table: () => "" })).toBe("UNSAFE");
 });
 
 test.each(["empty-ps", "unreaped", "teardown", "defunct"])("healthy quit polls through %s before verified exit", async observation => {
@@ -408,6 +408,32 @@ test("uncertain exit exhausts its deadline and names availability recovery", asy
   await expect(f.participant.quit(f.lease)).rejects.toThrow("voicelayer setup --cask-postflight");
   expect(sleeps).toBe(3);
   expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+});
+
+test("empty ps while the pid exists is unavailable identity, never gone", async () => {
+  const { installerProcessIdentity } = await import("../update-gate-installer-participant");
+  const sample = () => ({ exitCode: 1, stdout: "" });
+  expect(() => installerProcessIdentity(101, { sample, exists: () => true })).toThrow("identity unavailable");
+  expect(installerProcessIdentity(101, { sample, exists: () => false })).toBeNull();
+  expect(() => installerProcessIdentity(101, { sample, exists: () => { throw Error("EPERM"); } })).toThrow("EPERM");
+});
+
+test.each(["reuse", "competitor"])("%s refuses immediately even during uncertain teardown", async fault => {
+  const { observeInstallerExit } = await import("../update-gate-installer-participant");
+  const f = fixture(); await f.commit();
+  const proof = { identities: f.identities, native: "native-birth", daemon: "daemon-birth" };
+  let sleeps = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.sleep = async () => { sleeps++; };
+  f.deps.participantsExited = () => observeInstallerExit(proof, {
+    identity: pid => {
+      if (pid === 101) throw Error("identity unavailable");
+      return fault === "reuse" ? "birth /usr/bin/other" : proof.daemon;
+    },
+    table: () => "999 /Applications/VoiceBar.app/Contents/MacOS/VoiceBar\n",
+  });
+  await expect(f.participant.quit(f.lease)).rejects.toThrow("PID reused or competing VoiceBar");
+  expect(sleeps).toBe(0);
 });
 
 test("stale receipt never pins identities for a later fresh drain", async () => {

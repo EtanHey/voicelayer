@@ -54,3 +54,18 @@ startup actions assume functioning host launchd/LaunchServices outside the
 observed sandbox denial. This is an ordering proof, not an installed acceptance
 claim or protection for the legacy updater's ungated brew mutation. Every new
 property has an exact failing mutant, enforced by the shared check runner.
+
+## Controlled quit (G3)
+
+`QuitSpec` models alive, exiting, unreaped, teardown, empty-ps, defunct, gone,
+reused and competitor observations. Each poll records process evidence and the
+locked COMMITTED-lease check before deciding. Healthy schedules traverse the
+transitional classes and finish within the budget; persistent uncertainty expires.
+This is an observation/order model, not a macOS scheduler or installed-app proof.
+
+| Config | Expected | Exact property |
+| --- | --- | --- |
+| QuitOld | FAIL on the first transitional observation | HealthyQuitCompletes |
+| QuitFixed | PASS | All three quit properties |
+| QuitMutantReuse | FAIL when reuse is treated as gone | NeverProceedOnReusedOrCompetitor |
+| QuitMutantHeld | FAIL without locked lease verification | NeverProceedWithoutHeldLease |
