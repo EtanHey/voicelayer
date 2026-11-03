@@ -383,7 +383,7 @@ describe("promote-voicebar-release.sh is the only delivery path and requires the
 
   // A tap clone with a bare "origin", at the previous release, and a gh stub whose uploads
   // land in a local "release" store that `release download` serves back.
-  function promoteFixture() {
+  function promoteFixture(postflight = "postflight") {
     makeReleaseFixture();
     const remote = join(dir, "tap-remote.git");
     git(dir, "init", "-q", "--bare", "-b", "main", remote);
@@ -396,7 +396,8 @@ describe("promote-voicebar-release.sh is the only delivery path and requires the
       join(tap, "Formula", "voicelayer.rb"),
       `class Voicelayer < Formula\n  url "https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-0.0.1.tgz"\n  sha256 "${"a".repeat(64)}"\n  license "Apache-2.0"\nend\n`,
     );
-    writeFileSync(join(tap, "Casks", "voicebar.rb"), `cask "voicebar" do\n  version "0.0.1"\n  sha256 "${"b".repeat(64)}"\n  postflight do\n    system_command "#{HOMEBREW_PREFIX}/bin/voicelayer", args: ["setup"]\n  end\nend\n`);
+    const command = postflight === "postflight" ? 'system_command "#{HOMEBREW_PREFIX}/bin/voicelayer"' : 'run "{{HOMEBREW_PREFIX}}/bin/voicelayer"';
+    writeFileSync(join(tap, "Casks", "voicebar.rb"), `cask "voicebar" do\n  version "0.0.1"\n  sha256 "${"b".repeat(64)}"\n  ${postflight} do\n    ${command}, args: ["setup"]\n  end\nend\n`);
     git(tap, "add", ".");
     git(tap, "commit", "-q", "-m", "previous release");
     git(tap, "push", "-q", "origin", "HEAD:main");
@@ -476,8 +477,8 @@ exit 2
     expect(r.gh).toBe("");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("valid proof: uploads the verified ZIP, then commits and pushes formula and cask together", () => {
-    const { tap, remote } = promoteFixture();
+  for (const hook of ["postflight", "postflight_steps"]) test(`valid proof: migrates ${hook}, uploads ZIP, commits and pushes both recipes`, () => {
+    const { tap, remote } = promoteFixture(hook);
     const zipSha = createHash("sha256").update(readFileSync(join(dir, "VoiceBar.zip"))).digest("hex");
     const r = runPromote(["--t3-proof", writeProof(proof())]);
     expect(r.err).toBe("");

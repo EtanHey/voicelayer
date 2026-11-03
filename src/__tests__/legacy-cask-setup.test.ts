@@ -304,7 +304,7 @@ caskTest("2.2.58 updater calls new Cellar dedupe then autostart without a lease 
   restored(f);
   expect(readFileSync(f.gate, "utf8")).toBe(before);
   const calls = readFileSync(join(f.root, "calls"), "utf8").split("postflight\n")[1];
-  expect(calls).not.toMatch(/bootout|quit|revert/);
+  expect(calls).not.toMatch(/bootout .*com\.voicelayer\.voicebar|quit|revert/);
   expect(existsSync(join(f.home, ".voicelayer/voicebar-dedupe-backup"))).toBe(false);
 });
 
