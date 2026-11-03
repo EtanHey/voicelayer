@@ -5,8 +5,10 @@ import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-downl
 import { deleteRecognizer } from "./recognizer-management";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
-import { setRecognizerResidency, selectRecognizer } from "./recognizer-controller";
-import { readRecognizerStatus, onRecognizerStatusChange, beginRecognizerMaintenance, finishRecognizerTransition } from "./recognizer-state";
+import { setRecognizerResidency, selectRecognizer, unloadParakeetForMemoryPressure } from "./recognizer-controller";
+import { setModelUnloadWhenIdle } from "./model-residency";
+import { parakeetServer } from "./parakeet-server";
+import { readRecognizerStatus, publishRecognizerStatus, onRecognizerStatusChange, beginRecognizerMaintenance, finishRecognizerTransition } from "./recognizer-state";
 import { settleSpeechArchivesForUpdate, finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
  * Socket command handlers — logic for Voice Bar socket commands.
@@ -692,6 +694,19 @@ function handleSocketCommandAdmitted(
       return withRecognizerMaintenance(command, () => handleResidencyCommand(command));
     case "set_recognizer_residency":
       return setRecognizerResidency(command.engine, command.action).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
+    case "memory_pressure":
+      return unloadParakeetForMemoryPressure().then(result => ({ ...buildAck(command, result.outcome, "reason" in result ? result.reason : undefined), recognizer_status: readRecognizerStatus() }));
+    case "set_model_unload_when_idle": {
+      try {
+        setModelUnloadWhenIdle(command.value);
+        parakeetServer.refreshIdlePolicy();
+        publishRecognizerStatus();
+        const status = readRecognizerStatus();
+        return { ...buildAck(command, "accept"), recognizer_status: status };
+      } catch (error) {
+        return { ...buildAck(command, "reject", vocabularyErrorReason(error)), recognizer_status: readRecognizerStatus() };
+      }
+    }
     case "download_recognizer":
       return downloadRecognizer(command.engine).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
     case "cancel_recognizer_download": {

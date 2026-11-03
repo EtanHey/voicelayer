@@ -1,5 +1,5 @@
 /** Lazy private-pipe sidecar. VoiceBar -> MCP daemon -> this exact child.
- * No launchd owner, shared port, process adoption or startup-time model loading.
+ * No launchd owner, shared port or process adoption. The daemon warms at boot.
  */
 import { existsSync } from "fs";
 import { defaultParakeetModelPath, parakeetPython } from "./recognizer-assets";
@@ -7,7 +7,7 @@ import { migrateLegacyParakeetRuntime } from "./parakeet-runtime";
 import { isAbsolute, join } from "path";
 import { homedir } from "os";
 import type { Subprocess } from "bun";
-import { ModelResidency, modelIdleSeconds } from "./model-residency";
+import { ModelResidency, modelIdleSeconds, modelIdlePolicy } from "./model-residency";
 import { residencyBusy } from "./model-residency-busy";
 import type { STTAttemptEvidence } from "./soundlayer/contracts";
 import { isCurrentProcessLockOwner } from "./process-lock";
@@ -41,6 +41,7 @@ export interface ParakeetServerOptions {
   requestMs?: number;
   stopMs?: number;
   idleSeconds?: () => number;
+  unloadWhenIdle?: () => boolean;
   isBusy?: () => boolean;
   /** Daemon registration in production; explicit isolated owner in lab tools. */
   canLaunch?: () => boolean;
@@ -80,10 +81,29 @@ export class ParakeetServer {
 
   constructor(private readonly options: ParakeetServerOptions = {}) {
     this.residency = new ModelResidency(() => this.serial(async () => {
+      if (this.residency.inUse || (options.isBusy ?? residencyBusy)() ||
+          !(options.unloadWhenIdle?.() ?? modelIdlePolicy().unload_when_idle)) return false;
       try { await this.stopChild(); }
       catch (error) { this.notify("error", "cleanup-unconfirmed"); throw error; }
     }),
-      options.idleSeconds ?? modelIdleSeconds, options.isBusy ?? residencyBusy);
+      options.idleSeconds ?? modelIdleSeconds, options.isBusy ?? residencyBusy,
+      options.unloadWhenIdle ?? (() => modelIdlePolicy().unload_when_idle));
+  }
+
+  refreshIdlePolicy(): void { this.residency.refresh(); }
+
+  /** A pressure event is dropped while busy, never deferred into a dictation.
+   * Recheck inside the pipe queue; a request may arrive before this turn runs. */
+  async unloadForMemoryPressure(): Promise<boolean> {
+    const busy = () => this.residency.inUse || (this.options.isBusy ?? residencyBusy)();
+    if (busy()) return false;
+    return this.serial(async () => {
+      if (busy() || !this.child) return false;
+      try { await this.stopChild(); }
+      catch (error) { this.notify("error", "cleanup-unconfirmed"); throw error; }
+      console.error('[voicelayer] {"event":"parakeet_unloaded","cause":"memory-pressure"}');
+      return true;
+    });
   }
 
   isAvailable(): boolean {
