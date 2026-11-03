@@ -96,3 +96,36 @@ holds the winner's critical section to force overlap, and checks exactly one com
 It also checks persisted fencing/replay, UNKNOWN, verification and failure retention.
 Swift/Bun runtime interoperability and real installed-app safety remain G3/batch
 proofs; no Swift build or live swap was performed for this shared primitive slice.
+
+## Controlled-quit exit observation (G3)
+
+After the one authorized quit, unavailable identity evidence is still exiting,
+never proof of exit: empty `ps` while `kill(pid, 0)` succeeds, teardown, unreaped
+and same-birth `<defunct>`/`(basename)` observations keep polling for five seconds.
+Both process samples must prove absence, bracketing the exact COMMITTED lease,
+empty admission ledger and clean diagnostics checked under G1 on **every poll**.
+A positively different birth/executable or competing VoiceBar refuses immediately;
+unknown process-table evidence waits until the deadline and cannot authorize a swap.
+Only confirmed absence can finish the final poll just past the deadline; uncertainty
+at that point refuses. No process is killed.
+
+The updater prints `RECOVERY_REQUIRED`, the gate and receipt paths, and a refusal
+saying VoiceBar may be stopped. It gives this exact availability repair command,
+to run only after the owning updater exits:
+
+```bash
+voicelayer setup --cask-postflight
+```
+
+That command restores the canonical bundle's UI/agents when no live controller
+owns startup. It preserves the COMMITTED gate and evidence; it does **not** restore
+voice admission or complete committed-gate recovery. Do not delete the gate to retry.
+
+Proposal: the outer controller should restore the previous, verified bundle after
+a pre-mutation quit refusal only once all original owners are positively absent,
+no competitor exists, and its recorded bundle identity still matches. This follows
+G0/G1's availability restoration while retaining closed admission. Do not relaunch
+from this observer: its refusal can mean PID reuse, a competing app, or an unknown
+owner, and it has no verified bundle custody. Post-mutation failures need the
+installer's final canonical bundle instead. Automatic restore is a separate change;
+this lane makes refusal and manual availability repair explicit.

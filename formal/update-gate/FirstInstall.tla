@@ -1,7 +1,8 @@
 --------------------------- MODULE FirstInstall ---------------------------
 EXTENDS Naturals, FiniteSets
 CONSTANTS AllowLive, IgnoreEvidence, BadRecord, SkipBootstrap, ReplaceExisting,
-          SandboxedPostflight, LegacyAvailability, IgnoreUpgradeController
+          SandboxedPostflight, LegacyAvailability, IgnoreUpgradeController,
+          AbortTransitionalQuit, ReuseMeansGone, SkipQuitHeldCheck
 VARIABLES gate, participants, evidence, mutex, phase, created, creation,
           scenario, available
 vars == <<gate, participants, evidence, mutex, phase, created, creation,
@@ -105,4 +106,46 @@ UpgradeSpec == UpgradeInit /\ [][UpgradeNext]_vars
                /\ WF_vars(UpgradeDedupe) /\ WF_vars(UpgradeAutostart) /\ WF_vars(UpgradeOwnerRestore)
 VoiceBarRunningAfterUpgrade == (scenario = "oldUpdater") ~> (phase = "done" /\ created /\ available /\ gate = "OPEN")
 UpgradeControllerOwnsStartup == mutex => ~available
+
+(* G3 exit observation. Reuses this module's variables for a separate spec:
+   participants = sampled exit state, available = poll index, gate = held
+   lease, evidence = unsafe observation, mutex = locked verification result.
+   A healthy schedule exposes each Darwin exit class then becomes gone within
+   the polling budget. This assumes healthy OS progress within five seconds;
+   uncertainty forever instead exercises deadline refusal, never success. *)
+QuitStates == <<"alive", "exiting", "unreaped", "teardown", "emptyPs", "defunct", "gone">>
+QuitUnsafe == {"reused", "competitor"}
+QuitTransitional == {"exiting", "unreaped", "teardown", "emptyPs", "defunct"}
+QuitInit ==
+  /\ scenario \in {"healthy", "reused", "competitor", "unknown", "lostLease"}
+  /\ gate = IF scenario = "lostLease" THEN "LOST" ELSE "COMMITTED"
+  /\ phase = "poll" /\ available = 1
+  /\ participants = IF scenario = "healthy" THEN "alive"
+                     ELSE IF scenario = "lostLease" THEN "gone" ELSE scenario
+  /\ evidence = FALSE /\ mutex = FALSE /\ created = FALSE
+  /\ creation = "none"
+QuitSample ==
+  /\ phase = "poll"
+  /\ mutex' = (gate = "COMMITTED" \/ SkipQuitHeldCheck)
+  /\ evidence' = (participants \in QuitUnsafe)
+  /\ creation' = participants
+  /\ phase' = "decide"
+  /\ UNCHANGED <<gate, participants, scenario, available, created>>
+QuitDecide ==
+  /\ phase = "decide"
+  /\ LET gone == participants = "gone" \/ (ReuseMeansGone /\ participants = "reused")
+         unsafe == evidence /\ ~(ReuseMeansGone /\ participants = "reused")
+     IN phase' = IF ~mutex \/ unsafe THEN "refused"
+                  ELSE IF gone THEN "proceed"
+                  ELSE IF (AbortTransitionalQuit /\ participants \in QuitTransitional) \/ available = 8
+                       THEN "refused" ELSE "poll"
+  /\ participants' = IF scenario = "healthy" THEN QuitStates[IF available < 7 THEN available + 1 ELSE 7]
+                       ELSE participants
+  /\ available' = IF available < 8 THEN available + 1 ELSE 8
+  /\ UNCHANGED <<gate, evidence, mutex, created, creation, scenario>>
+QuitNext == QuitSample \/ QuitDecide
+QuitSpec == QuitInit /\ [][QuitNext]_vars /\ WF_vars(QuitSample) /\ WF_vars(QuitDecide)
+HealthyQuitCompletes == (scenario = "healthy") ~> (phase = "proceed")
+NeverProceedOnReusedOrCompetitor == phase = "proceed" => ~evidence
+NeverProceedWithoutHeldLease == phase = "proceed" => (gate = "COMMITTED" /\ mutex)
 =============================================================================

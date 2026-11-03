@@ -115,6 +115,13 @@ exclusive ownership and recovery are established may the operator remove that
 specific empty supervisor directory with `rmdir` and retry. Never remove G1's
 `.lock`, gate evidence or another live supervisor's mutex this way.
 
+For a protected update that refuses after controlled quit, the terminal names
+`voicelayer setup --cask-postflight` as the availability repair command after the
+updater exits. It can restart the canonical bundle while preserving the closed
+gate; voice admission still requires verified committed-gate recovery. The
+[G3 contract](update-gate-contract.md#controlled-quit-exit-observation-g3) explains
+why uncertain owner evidence cannot trigger an automatic previous-bundle relaunch.
+
 Qualification remains pending: real M4 launchd/quit/socket behavior, signed target
 identity and postcommit recovery/readiness; the SHA above is lease bookkeeping,
 not artifact verification. Tap saved-recipe hooks and the golems consumer remain

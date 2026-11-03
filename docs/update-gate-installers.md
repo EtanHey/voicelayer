@@ -95,12 +95,12 @@ drops), the controller verifies the outcome rather than reporting a plain
 install failure: both pinned processes must be absent, no
 VoiceBar executable may remain in the process table, and G2 must still observe
 the exact COMMITTED lease with no diagnostic or admission records. It observes
-exit with a five-second polling budget. A clean exit confirmed by the final poll
-continues installation even when that poll finishes just past the deadline;
-otherwise the deadline refuses and never proves exit. A same-start-time
-`<defunct>` participant is still exiting and is polled until reaped. An unreadable process table, reused PID, explicit
-refusal, malformed reply, changed lease, retained process, diagnostic or ledger
-entry stops UNKNOWN,
+exit with a five-second polling budget. Confirmed absence can finish the final poll
+just past the deadline; otherwise expiry refuses.
+Same-start-time `<defunct>`/`(basename)` participants, empty ps while a PID exists,
+and unreadable process evidence keep polling without authorizing installation.
+A reused PID or competing VoiceBar refuses immediately. Deadline exhaustion,
+explicit refusal, malformed reply, changed lease, diagnostic or ledger entry stops UNKNOWN,
 writes the recovery receipt and keeps admission closed. Nothing force-stops a
 participant or reopens the gate. Nested helpers validate the retained COMMITTED
 lease and the controller's PID, start time and executable name recorded in the

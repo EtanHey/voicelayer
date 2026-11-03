@@ -8,7 +8,8 @@
     "scripts/lib/update-gate.sh",
     "scripts/voicelayer-dedupe-voicebar.sh",
     "scripts/install-voicebar-autostart.sh",
-    "scripts/promote-voicebar-release.sh"
+    "scripts/promote-voicebar-release.sh",
+    "src/update-gate-installer-participant.ts"
   ],
   "checks": {
     "Fixed": {
@@ -60,6 +61,26 @@
       "role": "mutant",
       "target": "UpgradeControllerOwnsStartup",
       "kind": "invariant"
+    },
+    "QuitFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "QuitOld": {
+      "role": "mutant",
+      "target": "HealthyQuitCompletes",
+      "kind": "temporal"
+    },
+    "QuitMutantReuse": {
+      "role": "mutant",
+      "target": "NeverProceedOnReusedOrCompetitor",
+      "kind": "invariant"
+    },
+    "QuitMutantHeld": {
+      "role": "mutant",
+      "target": "NeverProceedWithoutHeldLease",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -69,6 +90,9 @@
     "BootstrapOpenGenerationZero",
     "FreshInstallCompletes",
     "VoiceBarRunningAfterUpgrade",
-    "UpgradeControllerOwnsStartup"
+    "UpgradeControllerOwnsStartup",
+    "HealthyQuitCompletes",
+    "NeverProceedOnReusedOrCompetitor",
+    "NeverProceedWithoutHeldLease"
   ]
 }
