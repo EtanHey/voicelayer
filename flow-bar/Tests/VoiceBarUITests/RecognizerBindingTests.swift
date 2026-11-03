@@ -63,7 +63,8 @@ final class RecognizerBindingTests: XCTestCase {
         }
     }
     func testOnlyKnownAvailableParakeetShowsReadyAndSleepingIsDistinctFromSetup() throws {
-        for (phase, title) in [("sleeping", "Sleeping (loads when you dictate)"), ("ready", "Ready")] {
+        // Parakeet is not the selected engine here, so Sleeping carries no "loads when you dictate" hint (K-ui row 3).
+        for (phase, title) in [("sleeping", "Sleeping"), ("ready", "Ready")] {
             let payload = Self.event(parakeet: phase, parakeetAvailable: true)["recognizer_status"] as! [String: Any]
             let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
             XCTAssertFalse(state.parakeetNotSetUp)
@@ -82,7 +83,7 @@ final class RecognizerBindingTests: XCTestCase {
         let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
         XCTAssertTrue(state.canSelect(.parakeet))
         XCTAssertFalse(state.parakeetNotSetUp)
-        XCTAssertEqual(state.statusText(for: .parakeet), "Sleeping (loads when you dictate)")
+        XCTAssertEqual(state.statusText(for: .parakeet), "Sleeping", "not selected: dictating would not load it")
     }
     func testInvalidAndUnknownPayloadsFailClosed() {
         let base = Self.event()["recognizer_status"] as! [String: Any]

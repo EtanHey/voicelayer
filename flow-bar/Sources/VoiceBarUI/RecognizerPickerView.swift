@@ -22,8 +22,10 @@ public struct RecognizerPickerView: View {
     }
     /// The secondary line under a recognizer's name: its state, and its size once it's on disk.
     static func subtitle(_ state: RecognizerPickerState, _ engine: RecognizerPickerEngine) -> String {
+        // Row 3: a Sleeping SELECTED engine loads on the next dictation; say so beside "Sleeping".
         let status = state.residency(for: engine) == .unloaded && state.assetsPresent(for: engine)
-            ? "Sleeping" : state.statusText(for: engine)
+            ? (state.showsSleepingHint(for: engine) ? "Sleeping (\(RecognizerPickerState.sleepingHint))" : "Sleeping")
+            : state.statusText(for: engine)
         guard state.assetsPresent(for: engine), let bytes = state.diskBytes[engine], bytes > 0 else { return status }
         return "\(status) · \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))"
     }
@@ -57,7 +59,7 @@ public struct RecognizerPickerView: View {
             .accessibilityIdentifier("recognizer-picker")
             if let explanation = displayedExplanation {
                 Text(explanation).font(.caption)
-                    .foregroundStyle(state.fallbackReason != nil || state.parakeet == .error ? Color.orange : Color.secondary)
+                    .foregroundStyle(state.explanationIsWarning ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("recognizer-picker-explanation")
             }
             if let engine = state.retryEngine {

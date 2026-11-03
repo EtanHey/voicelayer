@@ -1643,6 +1643,9 @@ public final class VoiceState {
     private var recognizerRebasableReadID: String?
     private var recognizerSelectionID: String?
     private var recognizerSelectionTarget: RecognizerPickerEngine?
+    /// The keep-warm value the user just chose, until the daemon answers (K2: `set_model_unload_when_idle`).
+    public private(set) var recognizerUnloadWhenIdlePending: Bool?
+    private var recognizerUnloadWhenIdleID: String?
     public var onRecognizerStatusChange: (() -> Void)?
 
     public var recognizerPickerState: RecognizerPickerState {
@@ -1654,7 +1657,8 @@ public final class VoiceState {
         let busyReason = mode == .recording ? "Finish recording before switching recognizers."
             : (mode == .transcribing ? "Wait for transcription before switching recognizers." : nil)
         return RecognizerPickerState(snapshot: snapshot, pending: recognizerSelectionID != nil,
-                                     notice: recognizerNotice, busyReason: busyReason)
+                                     notice: recognizerNotice, busyReason: busyReason,
+                                     unloadWhenIdlePending: recognizerUnloadWhenIdlePending)
     }
 
     private func refreshRecognizerForVoiceTransition(from previous: VoiceMode, to next: VoiceMode) {
@@ -1719,6 +1723,43 @@ public final class VoiceState {
         sendCommand(command)
     }
 
+    /// Keep-warm switch (row 2). Refused while the daemon does not report the setting or the environment owns it.
+    public func setRecognizerUnloadWhenIdle(_ value: Bool) {
+        guard isConnected, let sendCommand, recognizerUnloadWhenIdleID == nil,
+              let current = recognizerSnapshot?.unloadWhenIdle, !current.locked,
+              current.effective != value else { return }
+        let id = UUID().uuidString
+        recognizerUnloadWhenIdleID = id
+        recognizerUnloadWhenIdlePending = value
+        recognizerNotice = nil
+        onRecognizerStatusChange?()
+        sendCommand(["cmd": RecognizerUnloadWhenIdle.command, "value": value, "id": id])
+        let timeout = processingAckTimeout
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard let self, self.recognizerUnloadWhenIdleID == id else { return }
+            self.recognizerUnloadWhenIdleID = nil; self.recognizerUnloadWhenIdlePending = nil
+            self.recognizerNotice = "Couldn't confirm the Unload when idle change; showing VoiceLayer's current setting."
+            self.refreshRecognizerStatus()
+            self.onRecognizerStatusChange?()
+        }
+    }
+
+    /// Settles a keep-warm ack. Returns true when the event was that ack and carries no snapshot to apply.
+    private func settleUnloadWhenIdleAck(_ event: [String: Any]) -> Bool {
+        guard event["command"] as? String == RecognizerUnloadWhenIdle.command else { return false }
+        guard let id = event["id"] as? String, id == recognizerUnloadWhenIdleID,
+              let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return true }
+        recognizerUnloadWhenIdleID = nil; recognizerUnloadWhenIdlePending = nil
+        let reason = (event["reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        recognizerNotice = outcome == "reject" ? "Couldn't change Unload when idle" + (reason.isEmpty ? "." : ": \(reason).") : nil
+        guard event["recognizer_status"] is [String: Any] else {
+            // An ack without a snapshot must not erase the picker; read the daemon's state instead.
+            refreshRecognizerStatus(); onRecognizerStatusChange?(); return true
+        }
+        return false
+    }
+
     public func selectRecognizer(_ engine: RecognizerPickerEngine) {
         guard isConnected, let sendCommand,
               recognizerPickerState.canSelect(engine) else { return }
@@ -1735,6 +1776,14 @@ public final class VoiceState {
         guard isConnected else { return }
         let ack = event["type"] as? String == "ack"
         if ack {
+            if event["command"] as? String == RecognizerUnloadWhenIdle.command {
+                if settleUnloadWhenIdleAck(event) { return }
+                let notice = recognizerNotice
+                applyRecognizerSnapshot(event, ack: true)
+                // Keep this ack's own outcome line, unless the snapshot it carried could not be read.
+                if recognizerSnapshot != nil { recognizerNotice = notice; onRecognizerStatusChange?() }
+                return
+            }
             if event["command"] as? String == "cancel_recognizer_download" {
                 guard event["id"] as? String == recognizerCancelID else { return }
                 recognizerCancelID = nil
@@ -1767,6 +1816,10 @@ public final class VoiceState {
             }
             recognizerRebasableReadID = nil
         } else if event["id"] != nil { return }
+        applyRecognizerSnapshot(event, ack: ack)
+    }
+
+    private func applyRecognizerSnapshot(_ event: [String: Any], ack: Bool) {
         // A stale malformed response must not erase a newer authoritative Ready state.
         if let payload = event["recognizer_status"] as? [String: Any],
            let revision = payload["revision"] as? Int, revision < recognizerRevision {
@@ -3226,7 +3279,8 @@ public final class VoiceState {
             handleRecognizerEvent(event)
 
         case "ack":
-            if ["set_recognizer", "set_recognizer_residency", "download_recognizer", "delete_recognizer", "cancel_recognizer_download"].contains(event["command"] as? String ?? "") { handleRecognizerEvent(event) }
+            if ["set_recognizer", "set_recognizer_residency", "download_recognizer", "delete_recognizer", "cancel_recognizer_download",
+                RecognizerUnloadWhenIdle.command].contains(event["command"] as? String ?? "") { handleRecognizerEvent(event) }
             handleAckEvent(event)
 
         case "read_queue":
@@ -3630,6 +3684,7 @@ public final class VoiceState {
         recognizerPendingCommand = nil; recognizerCancelID = nil
         recognizerDownloadID = nil; recognizerRebasableReadID = nil
         recognizerSelectionTarget = nil
+        recognizerUnloadWhenIdleID = nil; recognizerUnloadWhenIdlePending = nil
         recognizerNotice = nil
         if connected { refreshRecognizerStatus() }
         onRecognizerStatusChange?()
