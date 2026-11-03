@@ -1643,7 +1643,7 @@ public final class VoiceState {
     private var recognizerRebasableReadID: String?
     private var recognizerSelectionID: String?
     private var recognizerSelectionTarget: RecognizerPickerEngine?
-    /// The keep-warm value the user just chose, until the daemon answers (adapter: `RecognizerUnloadWhenIdle`).
+    /// The keep-warm value the user just chose, until the daemon answers (K2: `set_model_unload_when_idle`).
     public private(set) var recognizerUnloadWhenIdlePending: Bool?
     private var recognizerUnloadWhenIdleID: String?
     public var onRecognizerStatusChange: (() -> Void)?
@@ -1726,7 +1726,7 @@ public final class VoiceState {
     /// Keep-warm switch (row 2). Refused while the daemon does not report the setting or the environment owns it.
     public func setRecognizerUnloadWhenIdle(_ value: Bool) {
         guard isConnected, let sendCommand, recognizerUnloadWhenIdleID == nil,
-              let current = recognizerSnapshot?.unloadWhenIdle, current.lockedReason == nil,
+              let current = recognizerSnapshot?.unloadWhenIdle, !current.locked,
               current.effective != value else { return }
         let id = UUID().uuidString
         recognizerUnloadWhenIdleID = id
@@ -1751,7 +1751,8 @@ public final class VoiceState {
         guard let id = event["id"] as? String, id == recognizerUnloadWhenIdleID,
               let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return true }
         recognizerUnloadWhenIdleID = nil; recognizerUnloadWhenIdlePending = nil
-        recognizerNotice = outcome == "reject" ? "Couldn't change Unload when idle." : nil
+        let reason = (event["reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        recognizerNotice = outcome == "reject" ? "Couldn't change Unload when idle" + (reason.isEmpty ? "." : ": \(reason).") : nil
         guard event["recognizer_status"] is [String: Any] else {
             // An ack without a snapshot must not erase the picker; read the daemon's state instead.
             refreshRecognizerStatus(); onRecognizerStatusChange?(); return true

@@ -231,7 +231,9 @@ public struct ModelsSettingsView: View {
         }
     }
 
-    /// Row 2 (Etan ruling: Parakeet stays resident). OFF by default; nil while the daemon does not report it.
+    /// Row 2 (Etan ruling: Parakeet stays resident). OFF by default; nil while the daemon does not report it. The switch
+    /// governs Parakeet's idle eviction (K2), so it names Parakeet and measures Parakeet's reported size, whichever
+    /// engine is selected.
     struct UnloadWhenIdleRow: Equatable {
         let title: String
         let isOn: Bool
@@ -245,7 +247,7 @@ public struct ModelsSettingsView: View {
 
     static func unloadWhenIdleRow(for recognizer: RecognizerPickerState, canChange: Bool = true) -> UnloadWhenIdleRow? {
         guard let setting = recognizer.unloadWhenIdle else { return nil }
-        let engine = recognizer.selected ?? .parakeet
+        let engine = RecognizerPickerEngine.parakeet
         let size = recognizer.assetsPresent(for: engine) ? recognizer.diskBytes[engine].flatMap(approximateSize) : nil
         let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) idle" } ?? "when idle"
         return UnloadWhenIdleRow(
@@ -257,7 +259,8 @@ public struct ModelsSettingsView: View {
                 || recognizer.selected == nil || !canChange)
     }
 
-    /// "~3 GB", not "2.51 GB": the saving is approximate (memory, measured by the model's size on disk).
+    /// "~2.5 GB" from the reported 2.51 GB, to the nearest half gigabyte: the saving is approximate (memory, measured
+    /// by the model's size on disk), and the number is always the model's own, never a literal.
     static func approximateSize(_ bytes: Int) -> String? {
         guard bytes > 0 else { return nil }
         let gigabytes = Double(bytes) / 1_000_000_000

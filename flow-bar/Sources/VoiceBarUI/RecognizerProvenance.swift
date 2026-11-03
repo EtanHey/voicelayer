@@ -42,12 +42,9 @@ public struct RecognizerProvenance: Equatable, Sendable {
     public let writer: Engine?
     /// The first `+fallback-<reason>` on the way to the writer.
     public let fallbackReason: String?
-    /// Another engine that re-checked only the ending while the writer's text was kept.
-    public let endingRecheckedBy: Engine?
 
-    public init(firstEngine: Engine?, writer: Engine?, fallbackReason: String? = nil, endingRecheckedBy: Engine? = nil) {
-        self.firstEngine = firstEngine; self.writer = writer
-        self.fallbackReason = fallbackReason; self.endingRecheckedBy = endingRecheckedBy
+    public init(firstEngine: Engine?, writer: Engine?, fallbackReason: String? = nil) {
+        self.firstEngine = firstEngine; self.writer = writer; self.fallbackReason = fallbackReason
     }
 
     public init?(backend: String?) {
@@ -58,19 +55,7 @@ public struct RecognizerProvenance: Equatable, Sendable {
         guard first != nil || writer != nil else { return nil }
         let reason = segments.dropLast().lazy.flatMap { $0.dropFirst() }
             .first { $0.hasPrefix("fallback-") }.map { String($0.dropFirst("fallback-".count)) }
-        // ADAPTER (lane K's tail re-check format is not posted yet): a kept transcript whose ending a second engine
-        // re-checked is marked by a `+…tail…` token naming that engine, e.g. `parakeet-resident+tail-recheck-whisper`.
-        let recheckToken = segments.last?.dropFirst().first { token in
-            let t = token.lowercased()
-            return t.contains("tail") && (t.contains("recheck") || t.contains("re-check") || t.contains("verif"))
-        }
-        let rechecker = recheckToken.flatMap { token -> Engine? in
-            let t = token.lowercased()
-            let named: Engine? = t.contains("whisper") ? .whisper : t.contains("parakeet") ? .parakeet : nil
-            return named ?? writer.map { $0 == .parakeet ? .whisper : .parakeet }
-        }
-        self.init(firstEngine: first ?? writer, writer: writer ?? first, fallbackReason: reason,
-                  endingRecheckedBy: rechecker == writer ? nil : rechecker)
+        self.init(firstEngine: first ?? writer, writer: writer ?? first, fallbackReason: reason)
     }
 
     /// One plain sentence about how this transcript was made, or nil when the engine asked first wrote it alone.
@@ -78,11 +63,7 @@ public struct RecognizerProvenance: Equatable, Sendable {
 
     /// `subject` names the recording: History says "this recording", the picker "your last recording".
     public func notice(about subject: String) -> String? {
-        guard let writer else { return nil }
-        if let checker = endingRecheckedBy {
-            return "\(writer.name) transcribed; \(checker.name) re-checked the ending."
-        }
-        guard let first = firstEngine, first != writer else { return nil }
+        guard let writer, let first = firstEngine, first != writer else { return nil }
         let wrote = "\(writer.name) transcribed \(subject)"
         switch fallbackReason {
         // Legacy routing reasons: report the writer without implying the first engine failed.

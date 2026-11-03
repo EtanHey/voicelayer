@@ -23,7 +23,8 @@ final class RecognizerManagementShotsTests: XCTestCase {
         let locked = RecognizerPickerState(selected: .parakeet, effective: .parakeet, parakeet: .loaded, whisper: .unloaded,
                                            parakeetAvailable: true, parakeetAssetsPresent: true, whisperAssetsPresent: true,
                                            diskBytes: [.parakeet: 2_509_000_000, .whisper: 1_620_000_000], idleUnloadSeconds: 600,
-                                           unloadWhenIdle: RecognizerUnloadWhenIdle(effective: true, source: .environment))
+                                           unloadWhenIdle: RecognizerUnloadWhenIdle(effective: true, locked: true,
+                                                                                   environmentVariable: "VOICELAYER_MODEL_UNLOAD_WHEN_IDLE"))
         for (stateName, state) in [("fresh", fresh), ("installed", installed), ("kui-sleeping", sleeping), ("kui-locked", locked)] {
         let height = stateName.hasPrefix("kui") ? 440 : 310
         for width in [720, 390] {
