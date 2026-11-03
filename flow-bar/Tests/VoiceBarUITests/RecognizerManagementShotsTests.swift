@@ -14,12 +14,24 @@ final class RecognizerManagementShotsTests: XCTestCase {
         let installed = RecognizerPickerState(selected: .parakeet, effective: .parakeet, parakeet: .loaded, whisper: .unloaded,
                                               parakeetAvailable: true, parakeetAssetsPresent: true, whisperAssetsPresent: true,
                                               diskBytes: [.parakeet: 2_509_000_000, .whisper: 1_620_000_000], idleUnloadSeconds: 600)
-        for (stateName, state) in [("fresh", fresh), ("installed", installed)] {
+        // Lane K-ui: a Sleeping selected engine with the keep-warm switch off and the live fallback notice, and the
+        // switch locked by the environment.
+        let sleeping = RecognizerPickerState(selected: .parakeet, effective: .whisper, parakeet: .unloaded, whisper: .loaded,
+                                             fallbackReason: "uncovered-tail", parakeetAvailable: true, parakeetAssetsPresent: true,
+                                             whisperAssetsPresent: true, diskBytes: [.parakeet: 2_509_000_000, .whisper: 1_620_000_000],
+                                             idleUnloadSeconds: 600, unloadWhenIdle: RecognizerUnloadWhenIdle(effective: false))
+        let locked = RecognizerPickerState(selected: .parakeet, effective: .parakeet, parakeet: .loaded, whisper: .unloaded,
+                                           parakeetAvailable: true, parakeetAssetsPresent: true, whisperAssetsPresent: true,
+                                           diskBytes: [.parakeet: 2_509_000_000, .whisper: 1_620_000_000], idleUnloadSeconds: 600,
+                                           unloadWhenIdle: RecognizerUnloadWhenIdle(effective: true, source: .environment))
+        for (stateName, state) in [("fresh", fresh), ("installed", installed), ("kui-sleeping", sleeping), ("kui-locked", locked)] {
+        let height = stateName.hasPrefix("kui") ? 440 : 310
         for width in [720, 390] {
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-                let view = ModelsSettingsView(state: .disconnected, recognizerState: state, onSelectRecognizer: { _ in }, onManageRecognizer: { _, _ in })
-                let host = NSHostingView(rootView: view.frame(width: CGFloat(width), height: 310))
-                host.appearance = NSAppearance(named: appearance); host.frame = NSRect(x: 0, y: 0, width: width, height: 310)
+                let view = ModelsSettingsView(state: .disconnected, recognizerState: state, onSelectRecognizer: { _ in },
+                                               onManageRecognizer: { _, _ in }, onSetUnloadWhenIdle: { _ in })
+                let host = NSHostingView(rootView: view.frame(width: CGFloat(width), height: CGFloat(height)))
+                host.appearance = NSAppearance(named: appearance); host.frame = NSRect(x: 0, y: 0, width: width, height: height)
                 let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
                 window.appearance = host.appearance; window.backgroundColor = .windowBackgroundColor; window.contentView = host
                 window.setFrameOrigin(NSPoint(x: -20000, y: -20000)); host.layoutSubtreeIfNeeded()

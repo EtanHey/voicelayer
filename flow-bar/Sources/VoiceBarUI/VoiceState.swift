@@ -1779,7 +1779,8 @@ public final class VoiceState {
                 if settleUnloadWhenIdleAck(event) { return }
                 let notice = recognizerNotice
                 applyRecognizerSnapshot(event, ack: true)
-                recognizerNotice = notice; onRecognizerStatusChange?()
+                // Keep this ack's own outcome line, unless the snapshot it carried could not be read.
+                if recognizerSnapshot != nil { recognizerNotice = notice; onRecognizerStatusChange?() }
                 return
             }
             if event["command"] as? String == "cancel_recognizer_download" {

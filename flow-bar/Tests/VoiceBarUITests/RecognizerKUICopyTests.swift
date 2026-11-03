@@ -210,7 +210,7 @@ final class RecognizerKUICopyTests: XCTestCase {
         XCTAssertTrue(RecognizerPickerView.subtitle(sleeping, .parakeet).hasPrefix("Sleeping (loads when you dictate) · "))
         // The other engine is also Sleeping, but dictating would not load it.
         XCTAssertFalse(sleeping.showsSleepingHint(for: .whisper))
-        XCTAssertTrue(RecognizerPickerView.subtitle(sleeping, .whisper).hasPrefix("Sleeping · "))
+        XCTAssertEqual(RecognizerPickerView.subtitle(sleeping, .whisper), "Sleeping", "no size reported for Whisper in this fixture")
         XCTAssertEqual(sleeping.statusText(for: .whisper), "Sleeping")
         // After a dictation it reads Ready, with no leftover hint.
         let ready = try Self.state(Self.payload(2, parakeet: "ready", unloadWhenIdle: Self.off))
