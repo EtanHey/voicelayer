@@ -79,8 +79,17 @@ run()  { # run a mutating command, or just print it in dry-run
 }
 
 # --- codesign helpers -------------------------------------------------------
-app_authority() { codesign -dvvv "$1" 2>&1 | awk -F= '/^Authority=/{print $2; exit}'; }
-app_teamid()    { codesign -dvvv "$1" 2>&1 | awk -F= '/^TeamIdentifier=/{print $2; exit}'; }
+app_authority() {
+  local out
+  # Drain codesign before parsing: an early awk exit can SIGPIPE the producer.
+  out="$(codesign -dvvv "$1" 2>&1)" || true
+  awk -F= '/^Authority=/{print $2; exit}' <<<"$out"
+}
+app_teamid() {
+  local out
+  out="$(codesign -dvvv "$1" 2>&1)" || true
+  awk -F= '/^TeamIdentifier=/{print $2; exit}' <<<"$out"
+}
 app_bundleid()  { defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null || echo "?"; }
 
 is_canonical_signature() { # $1 = app path -> 0 if Developer-ID + required team
