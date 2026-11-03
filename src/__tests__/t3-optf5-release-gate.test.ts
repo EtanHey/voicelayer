@@ -396,7 +396,7 @@ describe("promote-voicebar-release.sh is the only delivery path and requires the
       join(tap, "Formula", "voicelayer.rb"),
       `class Voicelayer < Formula\n  url "https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-0.0.1.tgz"\n  sha256 "${"a".repeat(64)}"\n  license "Apache-2.0"\nend\n`,
     );
-    writeFileSync(join(tap, "Casks", "voicebar.rb"), `cask "voicebar" do\n  version "0.0.1"\n  sha256 "${"b".repeat(64)}"\nend\n`);
+    writeFileSync(join(tap, "Casks", "voicebar.rb"), `cask "voicebar" do\n  version "0.0.1"\n  sha256 "${"b".repeat(64)}"\n  postflight do\n    system_command "#{HOMEBREW_PREFIX}/bin/voicelayer", args: ["setup"]\n  end\nend\n`);
     git(tap, "add", ".");
     git(tap, "commit", "-q", "-m", "previous release");
     git(tap, "push", "-q", "origin", "HEAD:main");
@@ -487,6 +487,12 @@ exit 2
     const cask = readFileSync(join(tap, "Casks", "voicebar.rb"), "utf8");
     expect(cask).toContain(`version "${version}"`);
     expect(cask).toContain(`sha256 "${zipSha}"`);
+    expect(cask).toContain('["setup", "--cask-postflight"]');
+    expect(cask).toContain('must_succeed: false');
+    expect(cask).toContain('postflight_steps do');
+    expect(cask).not.toMatch(/\bpostflight\s+do\b/);
+    expect(cask).toContain('run "{{HOMEBREW_PREFIX}}/bin/voicelayer"');
+    expect(cask).toContain('writable_paths:');
     const formula = readFileSync(join(tap, "Formula", "voicelayer.rb"), "utf8");
     expect(formula).toContain(`voicelayer-mcp-${version}.tgz`);
     expect(formula).toContain(`sha256 "${FORMULA_SHA}"`);
@@ -496,6 +502,39 @@ exit 2
     const pushed = git(remote, "show", "--name-only", "--format=", "main").stdout.toString();
     expect(pushed).toContain("Casks/voicebar.rb");
     expect(pushed).toContain("Formula/voicelayer.rb");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+
+  test("new cask with old formula reports failed setup and retains the bundle", () => {
+    const { tap } = promoteFixture();
+    expect(runPromote(["--t3-proof", writeProof(proof())]).code).toBe(0);
+    // Execute the rendered Ruby postflight DSL. The old formula rejects the flag;
+    // a raising system_command would reproduce Homebrew rollback here.
+    const harness = join(dir, "postflight.rb");
+    writeFileSync(harness, `def cask(_name, &block); instance_eval(&block); end
+def version(*); end
+def sha256(*); end
+def postflight_steps(&block); instance_eval(&block); end
+def run(path, args:, must_succeed: true, **)
+  if path == "{{HOMEBREW_PREFIX}}/bin/voicelayer"
+    raise "postflight flag lost" unless args == ["setup", "--cask-postflight"]
+    warn "setup accepts no options (old formula)"
+    raise "Homebrew rollback: app deleted" if must_succeed
+  elsif path == "/bin/echo"
+    puts args.fetch(0)
+  else
+    raise "unexpected step"
+  end
+end
+load ARGV.fetch(0)
+puts "bundle retained"
+`);
+    const r = Bun.spawnSync(["ruby", harness, join(tap, "Casks/voicebar.rb")], { env: process.env, stdout: "pipe", stderr: "pipe" });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString()).toContain("bundle retained");
+    expect(r.stdout.toString()).toContain("formula/cask version mismatch");
+    expect(r.stdout.toString()).toContain("update etanhey/layers/voicelayer and etanhey/layers/voicebar together");
+    expect(r.stderr.toString()).not.toContain("Homebrew rollback");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a rejected tap push retries the existing release commit without uploading again", () => {

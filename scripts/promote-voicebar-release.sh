@@ -122,8 +122,26 @@ awk -v version="$VERSION" -v sha="$FORMULA_SHA256" '
 awk -v version="$VERSION" -v sha="$ZIP_SHA256" '
     !v && /^[[:space:]]*version "/ { sub(/"[^"]*"/, "\"" version "\""); v = 1 }
     !s && /^[[:space:]]*sha256 "/ { sub(/"[^"]*"/, "\"" sha "\""); s = 1 }
+    /^  postflight(_steps)? do$/ {
+        if (postflight++) exit 2
+        print "  postflight_steps do"
+        print "    run \"{{HOMEBREW_PREFIX}}/bin/voicelayer\","
+        print "        args:         [\"setup\", \"--cask-postflight\"],"
+        print "        env:          { \"PATH\" => \"{{HOMEBREW_PREFIX}}/bin:/usr/bin:/bin:/usr/sbin:/sbin\" },"
+        print "        writable_paths: [\"~/.local/state/voicelayer\", \"~/.voicelayer\", \"~/Library/LaunchAgents\", \"~/Library/Logs/voicelayer\"],"
+        print "        must_succeed: false,"
+        print "        print_stdout: true,"
+        print "        print_stderr: true"
+        print "    run \"/bin/echo\", args: [\"VoiceBar bundle retained. If setup reported an error (formula/cask version mismatch or Homebrew sandbox), update etanhey/layers/voicelayer and etanhey/layers/voicebar together, then run voicelayer setup --cask-postflight from a terminal outside brew. Do not delete update-gate evidence.\"], print_stdout: true"
+        print "  end"
+        skipping = 1; next
+    }
+    skipping && /^  end$/ { skipping = 0; next }
+    skipping { next }
     { print }
-' "$PREPARED/cask-base" > "$PREPARED/cask"
+    END { if (postflight != 1 || skipping) exit 2 }
+' "$PREPARED/cask-base" > "$PREPARED/cask" || die "could not render the cask postflight contract"
+
 grep -F "sha256 \"$FORMULA_SHA256\"" "$PREPARED/formula" >/dev/null || die "could not update the formula sha256"
 
 if [ "$AHEAD" = 1 ]; then
