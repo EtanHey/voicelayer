@@ -1,0 +1,67 @@
+{
+  "module": "LeasedUpdate",
+  "sourceBaseline": "1479ea77255ffaf80d4f131526040d7c7ed1d624",
+  "sources": [
+    "src/update-gate.ts",
+    "src/update-gate-admission.ts",
+    "src/update-gate-storage.ts",
+    "src/update-gate-installer.ts",
+    "src/update-gate-installer-participant.ts"
+  ],
+  "checks": {
+    "LeaseFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "LeaseOld": {
+      "role": "mutant",
+      "target": "VerifiedUpdateReleases",
+      "kind": "temporal"
+    },
+    "LeaseOldExit": {
+      "role": "mutant",
+      "target": "NoHealthyExitHoldingLease",
+      "kind": "invariant"
+    },
+    "LeaseMutantNoCancel": {
+      "role": "mutant",
+      "target": "AbortedUpdateReleases",
+      "kind": "temporal"
+    },
+    "LeaseMutantSteal": {
+      "role": "mutant",
+      "target": "LeaseExclusive",
+      "kind": "invariant"
+    },
+    "LeaseMutantForeignComplete": {
+      "role": "mutant",
+      "target": "ReleaseByOwnerOnly",
+      "kind": "invariant"
+    },
+    "LeaseMutantRollback": {
+      "role": "mutant",
+      "target": "MutationExclusive",
+      "kind": "invariant"
+    },
+    "LeaseMutantCrashReopens": {
+      "role": "mutant",
+      "target": "MutationExclusive",
+      "kind": "invariant"
+    },
+    "LeaseMutantNoRecheck": {
+      "role": "mutant",
+      "target": "ReopenOnlyVerified",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "LeaseExclusive",
+    "ReleaseByOwnerOnly",
+    "MutationExclusive",
+    "ReopenOnlyVerified",
+    "NoHealthyExitHoldingLease",
+    "VerifiedUpdateReleases",
+    "AbortedUpdateReleases"
+  ]
+}

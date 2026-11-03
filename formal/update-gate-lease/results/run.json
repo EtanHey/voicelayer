@@ -1,0 +1,123 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "e20447644bfabd29d6bd0fc2c0eb1473fb301c1a0e4dfe1961938ce5a191edbf",
+  "hashes": {
+    "formal/update-gate-lease/LeasedUpdate.tla": "cbd971f92c52585ed72f8fa86494d9cdb23f8e566bc84c5421030f9bfb1a2f6c",
+    "formal/update-gate-lease/checks.json": "5f54ea32527418142ede34f4c8d59a637ce93b6c5eb6540bb3d3fe66a5b09a4a",
+    "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/update-gate-lease/LeaseMutantForeignComplete.cfg": "9346596caccaab76ddf65d0858bdb887c88015ab3d5de2d482a926066b90ba21",
+    "formal/update-gate-lease/LeaseOldExit.cfg": "38b0b1032c391c3d6020e5348a408cf74eefc6782e39f3c2a8aa01ca1cb1c483",
+    "formal/update-gate-lease/LeaseOld.cfg": "56f72b72ae7e37c508a277ec37107e74df34a77e6d31508af0f354fe37b0b9ff",
+    "formal/update-gate-lease/LeaseFixed.cfg": "d36053dea610bdfadcbde3069bf85005a1ce6b6565d8c6ad20a9dbdd93938066",
+    "formal/update-gate-lease/LeaseMutantNoCancel.cfg": "4bcb31cd53b294df17d1f710d3ab386deca35c2c600f8368d80c904abc444325",
+    "formal/update-gate-lease/LeaseMutantCrashReopens.cfg": "30917c10ce02603a30ce0873851554cd95bd19ada5bd249fcc37f924ad843f82",
+    "formal/update-gate-lease/LeaseMutantSteal.cfg": "d813b9fb734c54c2d981a553e43c75e1aabfd2c3977d4da5448ee16d71ce62c3",
+    "formal/update-gate-lease/LeaseMutantRollback.cfg": "d786a26cd3940b44d57c92c4fca1d54c0c08d4b36079e5d93e636938881c7e57",
+    "formal/update-gate-lease/LeaseMutantNoRecheck.cfg": "9692072486a712d55179c128cd5fdf1e0c831f9e3c2b8846d9a4883f2e8977a2",
+    "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
+    "src/update-gate-admission.ts": "675cdd7a8e9dc69c243cd58a97f8afde881cfbbcb3bc5d9304e3a304ce78262d",
+    "src/update-gate-storage.ts": "c33977d31799636a3a9292f4977827c52b6ab784f249512437f67b2553210476",
+    "src/update-gate-installer.ts": "40d017444510880d653fc44a30299da62a57f4fd1636832d3a28896d253bf4e2",
+    "src/update-gate-installer-participant.ts": "254f1e555a4bf56678ef33dd5d247bb0ef93eb282898ef9ef65e0bd50d96f736"
+  },
+  "mutants": {
+    "LeaseExclusive": [
+      "LeaseMutantSteal"
+    ],
+    "ReleaseByOwnerOnly": [
+      "LeaseMutantForeignComplete"
+    ],
+    "MutationExclusive": [
+      "LeaseMutantRollback",
+      "LeaseMutantCrashReopens"
+    ],
+    "ReopenOnlyVerified": [
+      "LeaseMutantNoRecheck"
+    ],
+    "NoHealthyExitHoldingLease": [
+      "LeaseOldExit"
+    ],
+    "VerifiedUpdateReleases": [
+      "LeaseOld"
+    ],
+    "AbortedUpdateReleases": [
+      "LeaseMutantNoCancel"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "LeaseFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 16125,
+      "distinct": 4992
+    },
+    "LeaseOld": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "VerifiedUpdateReleases",
+      "status": "EXPECTED_FAIL",
+      "generated": 4867,
+      "distinct": 1700
+    },
+    "LeaseOldExit": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoHealthyExitHoldingLease",
+      "status": "EXPECTED_FAIL",
+      "generated": 675,
+      "distinct": 356
+    },
+    "LeaseMutantNoCancel": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "AbortedUpdateReleases",
+      "status": "EXPECTED_FAIL",
+      "generated": 12199,
+      "distinct": 3662
+    },
+    "LeaseMutantSteal": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "LeaseExclusive",
+      "status": "EXPECTED_FAIL",
+      "generated": 12,
+      "distinct": 10
+    },
+    "LeaseMutantForeignComplete": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReleaseByOwnerOnly",
+      "status": "EXPECTED_FAIL",
+      "generated": 332,
+      "distinct": 196
+    },
+    "LeaseMutantRollback": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MutationExclusive",
+      "status": "EXPECTED_FAIL",
+      "generated": 689,
+      "distinct": 361
+    },
+    "LeaseMutantCrashReopens": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MutationExclusive",
+      "status": "EXPECTED_FAIL",
+      "generated": 323,
+      "distinct": 183
+    },
+    "LeaseMutantNoRecheck": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReopenOnlyVerified",
+      "status": "EXPECTED_FAIL",
+      "generated": 2901,
+      "distinct": 1147
+    }
+  }
+}
