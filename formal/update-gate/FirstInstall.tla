@@ -68,7 +68,7 @@ FreshInstallCompletes == (scenario \in {"fresh", "legacy258"}) ~> (created /\ av
    repair sequence, not just cask success; otherwise fixing A alone hides B. *)
 UpgradeInit ==
   /\ scenario \in {"oldUpdater", "leaseOwner"}
-  /\ gate = IF scenario = "leaseOwner" THEN "COMMITTED" ELSE "ABSENT"
+  /\ gate \in IF scenario = "leaseOwner" THEN {"COMMITTED"} ELSE {"ABSENT", "OPEN"}
   /\ mutex = (scenario = "leaseOwner")
   /\ available = (scenario = "oldUpdater")
   /\ phase = "formula"

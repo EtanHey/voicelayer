@@ -32,6 +32,8 @@ The shared runner rejects any mutant which passes or fails the wrong property.
 
 `UpgradeSpec` models 2.2.58's still-running updater installing new formula bytes,
 then cask replacement/postflight, then the NEW dedupe and autostart scripts.
+The old updater starts with either an absent gate or the already OPEN gate
+observed in the captain's restored 2.2.58 upgrade path.
 Homebrew's stop/delete/move is abstracted by `UpgradeCask`. Cask setup and the
 compatibility helpers restore only availability. A lease-holding controller
 gets plists only until `UpgradeOwnerRestore`; its COMMITTED gate is retained.
