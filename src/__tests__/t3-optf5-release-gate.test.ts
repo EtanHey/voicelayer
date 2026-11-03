@@ -489,6 +489,10 @@ exit 2
     expect(cask).toContain(`sha256 "${zipSha}"`);
     expect(cask).toContain('["setup", "--cask-postflight"]');
     expect(cask).toContain('must_succeed: false');
+    expect(cask).toContain('postflight_steps do');
+    expect(cask).not.toMatch(/\bpostflight\s+do\b/);
+    expect(cask).toContain('run "{{HOMEBREW_PREFIX}}/bin/voicelayer"');
+    expect(cask).toContain('writable_paths:');
     const formula = readFileSync(join(tap, "Formula", "voicelayer.rb"), "utf8");
     expect(formula).toContain(`voicelayer-mcp-${version}.tgz`);
     expect(formula).toContain(`sha256 "${FORMULA_SHA}"`);
@@ -507,26 +511,29 @@ exit 2
     // Execute the rendered Ruby postflight DSL. The old formula rejects the flag;
     // a raising system_command would reproduce Homebrew rollback here.
     const harness = join(dir, "postflight.rb");
-    writeFileSync(harness, `HOMEBREW_PREFIX = "/fixture"
-def cask(_name, &block); instance_eval(&block); end
+    writeFileSync(harness, `def cask(_name, &block); instance_eval(&block); end
 def version(*); end
 def sha256(*); end
-def postflight(&block); instance_eval(&block); end
-def system_command(_path, args:, must_succeed: true, **)
-  raise "postflight flag lost" unless args == ["setup", "--cask-postflight"]
-  warn "setup accepts no options (old formula)"
-  raise "Homebrew rollback: app deleted" if must_succeed
-  Struct.new(:success?).new(false)
+def postflight_steps(&block); instance_eval(&block); end
+def run(path, args:, must_succeed: true, **)
+  if path == "{{HOMEBREW_PREFIX}}/bin/voicelayer"
+    raise "postflight flag lost" unless args == ["setup", "--cask-postflight"]
+    warn "setup accepts no options (old formula)"
+    raise "Homebrew rollback: app deleted" if must_succeed
+  elsif path == "/bin/echo"
+    puts args.fetch(0)
+  else
+    raise "unexpected step"
+  end
 end
-def opoo(message); warn message; end
 load ARGV.fetch(0)
 puts "bundle retained"
 `);
     const r = Bun.spawnSync(["ruby", harness, join(tap, "Casks/voicebar.rb")], { env: process.env, stdout: "pipe", stderr: "pipe" });
     expect(r.exitCode).toBe(0);
     expect(r.stdout.toString()).toContain("bundle retained");
-    expect(r.stderr.toString()).toContain("formula/cask version mismatch");
-    expect(r.stderr.toString()).toContain("Update etanhey/layers/voicelayer and etanhey/layers/voicebar together");
+    expect(r.stdout.toString()).toContain("formula/cask version mismatch");
+    expect(r.stdout.toString()).toContain("update etanhey/layers/voicelayer and etanhey/layers/voicebar together");
     expect(r.stderr.toString()).not.toContain("Homebrew rollback");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 

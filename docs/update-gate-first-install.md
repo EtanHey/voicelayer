@@ -11,10 +11,12 @@ controllers, malformed state and live legacy owners refuse bootstrap. G4d still
 restores canonical availability and loudly reports RECOVERY_REQUIRED; that does
 not grant update authorization or clear refusal evidence.
 
-Promotion rewrites the existing cask postflight to pass `--cask-postflight` and
-explicitly retain the app on setup failure. This lets a new cask paired with a
+Promotion rewrites the old cask block to supported `postflight_steps`, with a
+literal `run` passing `--cask-postflight` and `must_succeed: false`, and an
+explicit visible repair message. It accepts either the old or new block as its
+input, so promotion retries remain idempotent. This lets a new cask paired with a
 2.2.59 formula report its unsupported option without Homebrew deleting the app.
-The error names both recipes and the repair command. Updating both recipes first
+The output names both recipes and the repair command. Updating both recipes first
 avoids depending on that fallback. No new cask is published by this lane.
 
 ## M1 restore recipe after G0 is released
@@ -64,3 +66,18 @@ refuses to resolve the formula's origin or linking, stop with that exact error;
 do not uninstall data or force-link over another package. The captain must still
 verify installed bundle provenance, daemon/bridge recovery and real Option+F5 on
 the M1; this recipe and isolated tests do not supply installed acceptance.
+
+## Homebrew DSL migration evidence
+
+Checked the current [Cask Cookbook](https://docs.brew.sh/Cask-Cookbook#stanza-flight_steps)
+and installed Homebrew `install_steps.rb` DSL. Supported steps contain literal
+`run` calls, not arbitrary Ruby result handling; install-time paths use
+`{{HOMEBREW_PREFIX}}`. `must_succeed: false` retains the bundle on command
+failure. Setup's writable state/plist/log roots are explicitly declared.
+
+The [artifact sandbox contract](https://docs.brew.sh/Cask-Cookbook#cask-artifact-trust-and-sandboxing)
+prohibits LaunchServices and outbound Unix sockets. Declaring writable paths
+does not grant those capabilities. The cask therefore prints the terminal repair
+command after its attempt; the restore recipe above runs it outside brew. A
+sandboxed hook cannot establish real startup availability by itself. Automatic
+startup from this new Homebrew sandbox is not claimed as qualified.

@@ -46,10 +46,14 @@ OPEN, closed/live, malformed, locked and orphaned states, nested failure, intern
 mode refusal, isolation and mutex signal cleanup. These are isolated proofs, not
 real cask, launchd or installed-app qualification.
 
-Promotion renders `setup --cask-postflight` with `must_succeed: false` and checks
-the command result. An old formula rejecting the option, or a new setup unable
+Promotion renders a declarative `postflight_steps` block with a literal `run`
+for `setup --cask-postflight`, `must_succeed: false`, declared writable setup
+directories and a visible terminal repair message. No deprecated Ruby
+`postflight do` block is emitted. An old formula rejecting the option, or a new setup unable
 to start the app, prints an explicit formula/cask mismatch and repair message;
-Homebrew retains the installed bundle. This is an availability failure, never a
+Homebrew retains the installed bundle. The steps sandbox can prohibit
+LaunchServices/launchd startup even with writable directories; a terminal setup
+after brew is required in that case. This is an availability failure, never a
 claim of runtime health. Old cask + new formula uses the no-flag compatibility
 path above. Neither pairing requires a target SHA for availability.
 
