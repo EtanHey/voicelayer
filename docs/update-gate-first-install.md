@@ -11,13 +11,34 @@ controllers, malformed state and live legacy owners refuse bootstrap. G4d still
 restores canonical availability and loudly reports RECOVERY_REQUIRED; that does
 not grant update authorization or clear refusal evidence.
 
-Promotion rewrites the old cask block to supported `postflight_steps`, with a
-literal `run` passing `--cask-postflight` and `must_succeed: false`, and an
-explicit visible repair message. It accepts either the old or new block as its
-input, so promotion retries remain idempotent. This lets a new cask paired with a
-2.2.59 formula report its unsupported option without Homebrew deleting the app.
-The output names both recipes and the repair command. Updating both recipes first
-avoids depending on that fallback. No new cask is published by this lane.
+Promotion renders an unsandboxed legacy `postflight do` with
+`system_command ... must_succeed: false`, plus one explicit repair message. It
+accepts either flight-block syntax as input, so promotion retries are idempotent.
+A formula rejecting the option or setup failing to start VoiceBar must not make
+Homebrew roll back and delete the newly installed bundle. The repair message
+names both recipes and `voicelayer setup --cask-postflight` outside brew.
+
+### G1: old updater, new formula scripts
+
+2.2.58 upgrades the formula first, then runs the NEW Cellar dedupe script with
+`--apply --no-relaunch`, followed by the NEW autostart script with `--reload`.
+It supplies neither a target SHA nor a lease. Those exact modes, from a physical
+`/opt/homebrew/Cellar/voicelayer/<version>/libexec/lib/node_modules/voicelayer-mcp`
+(or `/usr/local/Cellar/...`) root, use setup's availability path instead.
+Destructive dedupe and reload are deferred with a visible message. Existing
+canonical startup is idempotent: no stop, bundle moves or loaded-job reload.
+
+This chooses availability-only compatibility rather than deriving a target SHA:
+a bundle GitCommit is not target verification, and an old updater cannot finalize
+a newly committed lease before its later autostart call. No lease is acquired or
+committed, and no gate evidence is cleared or reopened. Setup retains its absent
+bootstrap and live-controller fences. A supplied operation (including invalid
+ones), Homebrew operation or target disables the exception. A lease-holding
+updater still validates its exact operation before destructive repair; cask
+postflight remains plist-only until the owning finalizer restores availability.
+Checkout/global-package repair and other modes retain the normal gate.
+This compatibility does not make the old updater's preceding brew mutation
+idle-gated; it only restores the canonical bundle that brew already installed.
 
 ## M1 restore recipe after G0 is released
 
@@ -67,17 +88,27 @@ do not uninstall data or force-link over another package. The captain must still
 verify installed bundle provenance, daemon/bridge recovery and real Option+F5 on
 the M1; this recipe and isolated tests do not supply installed acceptance.
 
-## Homebrew DSL migration evidence
+## Homebrew execution evidence and follow-up ledger
 
-Checked the current [Cask Cookbook](https://docs.brew.sh/Cask-Cookbook#stanza-flight_steps)
-and installed Homebrew `install_steps.rb` DSL. Supported steps contain literal
-`run` calls, not arbitrary Ruby result handling; install-time paths use
-`{{HOMEBREW_PREFIX}}`. `must_succeed: false` retains the bundle on command
-failure. Setup's writable state/plist/log roots are explicitly declared.
+Read the installed Homebrew 7.0.12 source on the M4 (no brew execution):
+`cask/artifact/install_steps.rb:40` calls `cask_sandbox` for declarative steps;
+`cask/artifact/abstract_flight_block.rb:39` calls `abstract_phase` directly,
+which evaluates the legacy DSL without that sandbox. `cask/dsl/base.rb:28`
+forwards `system_command` options to `SystemCommand.run!`.
+`system_command.rb:175` forwards the explicit `must_succeed: false` to `run`,
+and `:289` calls `assert_success!` only when that flag is true. Thus a nonzero
+setup command status returns a result rather than raising into cask rollback.
+The rendered repair echo is also non-raising. The isolated Ruby guard exercises
+bundle retention and proves its raising mutant deletes the fixture bundle.
 
-The [artifact sandbox contract](https://docs.brew.sh/Cask-Cookbook#cask-artifact-trust-and-sandboxing)
-prohibits LaunchServices and outbound Unix sockets. Declaring writable paths
-does not grant those capabilities. The cask therefore prints the terminal repair
-command after its attempt; the restore recipe above runs it outside brew. A
-sandboxed hook cannot establish real startup availability by itself. Automatic
-startup from this new Homebrew sandbox is not claimed as qualified.
+The real R2 failure showed the steps sandbox denying quarantine removal,
+launchd bootstrap and LaunchServices open. Writable paths cannot grant those
+capabilities. Legacy postflight accepts a deprecation warning to restore startup.
+
+Ledger G1-HOMEBREW: revisit before Homebrew removes legacy `postflight`; qualify
+an unsandboxed supported startup mechanism before migrating to `postflight_steps`.
+Never substitute a sandboxed setup attempt for installed startup proof.
+
+Installed qualification remains the captain's R2 rows (b), (b2), (c) and (a),
+after rebuilding this lane's integrated head. These isolated guards and TLC
+checks do not prove the installed bundle, sockets, launchd or real-agent health.

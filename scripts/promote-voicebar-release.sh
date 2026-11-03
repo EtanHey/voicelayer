@@ -124,15 +124,16 @@ awk -v version="$VERSION" -v sha="$ZIP_SHA256" '
     !s && /^[[:space:]]*sha256 "/ { sub(/"[^"]*"/, "\"" sha "\""); s = 1 }
     /^  postflight(_steps)? do$/ {
         if (postflight++) exit 2
-        print "  postflight_steps do"
-        print "    run \"{{HOMEBREW_PREFIX}}/bin/voicelayer\","
+        # Homebrew 7 sandboxes postflight_steps, blocking launchd/LaunchServices.
+        # Legacy flight blocks remain unsandboxed; false prevents setup rollback.
+        print "  postflight do"
+        print "    system_command \"#{HOMEBREW_PREFIX}/bin/voicelayer\","
         print "        args:         [\"setup\", \"--cask-postflight\"],"
-        print "        env:          { \"PATH\" => \"{{HOMEBREW_PREFIX}}/bin:/usr/bin:/bin:/usr/sbin:/sbin\" },"
-        print "        writable_paths: [\"~/.local/state/voicelayer\", \"~/.voicelayer\", \"~/Library/LaunchAgents\", \"~/Library/Logs/voicelayer\"],"
+        print "        env:          { \"PATH\" => \"#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin\" },"
         print "        must_succeed: false,"
         print "        print_stdout: true,"
         print "        print_stderr: true"
-        print "    run \"/bin/echo\", args: [\"VoiceBar bundle retained. If setup reported an error (formula/cask version mismatch or Homebrew sandbox), update etanhey/layers/voicelayer and etanhey/layers/voicebar together, then run voicelayer setup --cask-postflight from a terminal outside brew. Do not delete update-gate evidence.\"], print_stdout: true"
+        print "    system_command \"/bin/echo\", args: [\"VoiceBar bundle retained. If setup reported an error (formula/cask version mismatch or startup failure), update etanhey/layers/voicelayer and etanhey/layers/voicebar together, then run voicelayer setup --cask-postflight from a terminal outside brew. Do not delete update-gate evidence.\"], must_succeed: false, print_stdout: true"
         print "  end"
         skipping = 1; next
     }

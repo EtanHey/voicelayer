@@ -62,6 +62,9 @@ done
 
 if [[ "$APPLY" -eq 1 ]]; then
   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if [[ "$STOP_RUNNING" -eq 1 && "$RELAUNCH" -eq 0 ]]; then
+    vl_gate_legacy_formula_availability "$ROOT_DIR"
+  fi
   vl_update_gate "$ROOT_DIR" bash "$ROOT_DIR/scripts/voicelayer-dedupe-voicebar.sh" "$@"
 fi
 

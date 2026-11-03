@@ -82,6 +82,25 @@ vl_gate_arm_restore() {
 }
 vl_gate_arm_restore "${BASH_SOURCE[1]:-$0}"
 
+# 2.2.58 upgrades its formula before invoking these NEW repair scripts, without
+# a target or lease. It cannot safely run destructive dedupe/reload, nor finish
+# a newly committed lease. Use the existing non-destructive cask availability
+# path instead; setup preserves gate evidence and fences a live controller.
+vl_gate_legacy_formula_availability() {
+    local root runtime
+    [[ -z "${VOICELAYER_INSTALL_OPERATION:-}" &&
+       -z "${HOMEBREW_VOICELAYER_INSTALL_OPERATION:-}" &&
+       -z "${VOICELAYER_UPDATE_TARGET_SHA:-}" ]] || return 0
+    root="$(cd "$1" && pwd -P)" || return 1
+    [[ "$root" =~ ^/(opt/homebrew|usr/local)/Cellar/voicelayer/[^/]+/libexec/lib/node_modules/voicelayer-mcp$ ]] || return 0
+    runtime="$(vl_gate_bun)" || {
+        echo "[update-gate] REFUSED UNKNOWN: bun runtime not found; nothing was changed" >&2
+        return 1
+    }
+    echo "[update-gate] Legacy formula repair: restoring canonical availability; destructive dedupe/reload deferred (no update lease)." >&2
+    exec "$runtime" "$root/src/cli/setup.ts" "$root" --cask-postflight
+}
+
 vl_update_gate() {
     local root="$1" runtime; shift
     if [[ -z "${VOICELAYER_INSTALL_OPERATION:-}" && "$#" -eq 0 ]]; then

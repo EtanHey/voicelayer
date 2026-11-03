@@ -4,7 +4,11 @@
   "sources": [
     "src/cli/setup.ts",
     "src/update-gate-admission.ts",
-    "src/update-gate-storage.ts"
+    "src/update-gate-storage.ts",
+    "scripts/lib/update-gate.sh",
+    "scripts/voicelayer-dedupe-voicebar.sh",
+    "scripts/install-voicebar-autostart.sh",
+    "scripts/promote-voicebar-release.sh"
   ],
   "checks": {
     "Fixed": {
@@ -36,6 +40,26 @@
       "role": "mutant",
       "target": "FreshInstallCompletes",
       "kind": "temporal"
+    },
+    "UpgradeFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "UpgradeOld": {
+      "role": "mutant",
+      "target": "VoiceBarRunningAfterUpgrade",
+      "kind": "temporal"
+    },
+    "MutantMissingTarget": {
+      "role": "mutant",
+      "target": "VoiceBarRunningAfterUpgrade",
+      "kind": "temporal"
+    },
+    "MutantUpgradeController": {
+      "role": "mutant",
+      "target": "UpgradeControllerOwnsStartup",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -43,6 +67,8 @@
     "BootstrapPreservesEvidence",
     "BootstrapExclusiveCreate",
     "BootstrapOpenGenerationZero",
-    "FreshInstallCompletes"
+    "FreshInstallCompletes",
+    "VoiceBarRunningAfterUpgrade",
+    "UpgradeControllerOwnsStartup"
   ]
 }
