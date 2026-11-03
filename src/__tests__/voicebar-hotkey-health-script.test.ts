@@ -1,4 +1,3 @@
-import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "child_process";
 import {
@@ -9,6 +8,7 @@ import {
   writeFileSync,
 } from "fs";
 import { join } from "path";
+import { fileURLToPath } from "node:url";
 
 // Real subprocesses: standalone p95 <= 26 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
@@ -219,7 +219,10 @@ describe("verify-voicebar-hotkey-health.sh", () => {
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("health exempts TTS resources but rejects executable strays and stale loaded programs", async () => {
-    const tempRoot = mkdtempSync(join(bundleFixtureRoot(), "voicebar-health-stopped-"));
+    // The simulated canonical app must be outside the excluded test-run component.
+    const fixtureRoot = fileURLToPath(new URL("../../.build.noindex/hotkey-health/", import.meta.url));
+    mkdirSync(fixtureRoot, { recursive: true });
+    const tempRoot = mkdtempSync(join(fixtureRoot, "voicebar-health-stopped-"));
     const tempHome = join(tempRoot, "home");
     const binDir = join(tempRoot, "bin");
     const appDir = join(tempRoot, "VoiceBar.app");

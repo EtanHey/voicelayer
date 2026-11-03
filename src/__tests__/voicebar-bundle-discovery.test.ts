@@ -2,14 +2,17 @@ import { stubInstallerTransport } from "./setup/installer-transport";
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bundleFixtureRoot } from "./setup/bundle-fixtures";
+import { fileURLToPath } from "node:url";
 
 const bundleId = "com.voicelayer.voicebar";
 const scriptsRoot = new URL("../../scripts/", import.meta.url);
 const scriptNames: [string, string] = ["verify-voicebar-hotkey-health.sh", "voicelayer-dedupe-voicebar.sh"];
 // Isolated real-directory fixtures; OS effects are stubbed, never the classifier.
 function fixture() {
-  const root = mkdtempSync(join(bundleFixtureRoot(), "bundle-discovery-"));
+  // Real stray-copy paths must stay outside .test-tmp to exercise health discovery.
+  const fixtureRoot = fileURLToPath(new URL("../../.build.noindex/bundle-discovery/", import.meta.url));
+  mkdirSync(fixtureRoot, { recursive: true });
+  const root = mkdtempSync(join(fixtureRoot, "case-"));
   const bin = join(root, "bin"), candidates = join(root, "candidates");
   const app = join(candidates, "Applications/VoiceBar.app");
   const effects = join(root, "effects.log");
@@ -80,6 +83,42 @@ print(value)
       VB_TEST_EFFECTS: effects, ...overrides } },
   );
   return { root, app, candidates, plist, run, stub, effects };
+}
+
+for (const source of ["find", "mdfind"]) {
+  for (const relativePath of [
+    "Gits/repo/.test-tmp/run/VoiceBar.app",
+    "Gits/foo/VoiceBar.app",
+    "Downloads/VoiceBar.app",
+    "Gits/repo/.build.noindex/VoiceBar.app",
+    "Gits/foo.test-tmp-bar/VoiceBar.app",
+  ]) {
+    test(`health discovery via ${source}: ${relativePath}`, () => {
+      const f = fixture();
+      const ignored = relativePath === "Gits/repo/.test-tmp/run/VoiceBar.app";
+      try {
+        const candidate = join(f.candidates, relativePath);
+        f.plist(candidate, bundleId);
+        if (source === "mdfind") f.stub("find", "exit 0");
+        const result = f.run(scriptNames[0], {
+          VB_TEST_SPOTLIGHT: source === "mdfind" ? `${f.app}\n${candidate}` : f.app,
+        });
+        expect(result.exitCode).toBe(ignored ? 0 : 1);
+        if (ignored) {
+          expect(result.stderr.toString()).toBe("");
+          expect(result.stdout.toString()).not.toContain(candidate);
+        } else {
+          expect(result.stderr.toString()).toContain("expected exactly one canonical VoiceBar bundle");
+          expect(result.stderr.toString()).toContain(candidate);
+        }
+        expect(existsSync(candidate)).toBe(true);
+        expect(readFileSync(f.effects, "utf8")).toBe("");
+      } finally {
+        // Retain .test-tmp fixtures as evidence; never delete them to fix discovery.
+        if (!ignored) rmSync(f.root, { recursive: true, force: true });
+      }
+    }, 16_000);
+  }
 }
 
 test("both discovery paths preserve inert directories and valid missing/other IDs", () => {
