@@ -13,6 +13,7 @@ const rl=createInterface({input:process.stdin});
 for await (const line of rl) {
  const r=JSON.parse(line),p=r.audio_path; let out={id:r.id,ok:true};
  if(r.op==='health'){
+  if(process.argv[2]==='slow-start')await new Promise(r=>setTimeout(r,80));
   out={...out,ready:true,protocol:1,pid:process.pid};
   if(process.argv[2]==='startup-cleanup'){
    Bun.spawn([process.execPath,'-e','await Bun.sleep(350)'],{env:process.env,stdout:'inherit',stderr:'inherit'});out.ready=false;
@@ -42,7 +43,7 @@ for await (const line of rl) {
   });
   afterEach(async () => { for (const server of servers.splice(0)) await server.shutdown(); });
   function make(options: Partial<ConstructorParameters<typeof ParakeetServer>[0]> = {}) {
-    const server = new ParakeetServer({ command: [process.execPath, fixture], startupMs: 3000, requestMs: 500, stopMs: 1000, idleSeconds: () => 600, isBusy: () => false, ...options }); servers.push(server); return server;
+    const server = new ParakeetServer({ command: [process.execPath, fixture], startupMs: 3000, requestMs: 500, stopMs: 1000, idleSeconds: () => 600, unloadWhenIdle: () => true, isBusy: () => false, ...options }); servers.push(server); return server;
   }
   test("not configured never downloads or pretends available", () => { expect(parakeetCommand({})).toBeNull(); });
   test("health alone does not launch/load a model", async () => { expect(await make().health()).toBe(false); });
@@ -52,6 +53,14 @@ for await (const line of rl) {
   });
   test("concurrent requests preserve command identities", async () => {
     const s = make(); const rs = await Promise.all([s.transcribe("delay"), s.transcribe("normal"), s.transcribe("normal")]); expect(rs.length).toBe(3);
+  });
+  test("dictation during boot warm-up shares the child and pressure cannot evict it", async () => {
+    let loads = 0;
+    const s = make({ command: [process.execPath, fixture, "slow-start"], onState: phase => { if (phase === "loading") loads++; } });
+    const boot = s.start();
+    const dictation = s.transcribe("normal");
+    expect(await s.unloadForMemoryPressure()).toBe(false);
+    await boot; expect((await dictation).complete).toBe(true); expect(loads).toBe(1);
   });
   test.each(["crash", "partial", "wrong-id", "bad-frames", "provider-error"])("%s destroys owned service; a later request can start cleanly", async bad => {
     const s = make(); await expect(s.transcribe(bad)).rejects.toThrow(); expect(await s.health()).toBe(false);
@@ -115,6 +124,36 @@ for await (const line of rl) {
   });
   test("idle timer unloads model after use", async () => {
     const s = make({ idleSeconds: () => 0.04 }); await s.start(); await Bun.sleep(110); expect(await s.health()).toBe(false);
+  });
+  test("resident policy keeps the model after the old idle deadline", async () => {
+    const s = make({ idleSeconds: () => 0.02, unloadWhenIdle: () => false });
+    await s.start(); const pid = s.pid; await Bun.sleep(80);
+    expect(s.pid).toBe(pid); expect(await s.health()).toBe(true);
+  });
+  test("idle policy changes apply to an already resident child", async () => {
+    let enabled = false;
+    const s = make({ idleSeconds: () => 0.02, unloadWhenIdle: () => enabled });
+    await s.start(); enabled = true; s.refreshIdlePolicy();
+    await Bun.sleep(80); expect(s.pid).toBeNull();
+  });
+  test("pressure while capture is busy never schedules an unload", async () => {
+    let busy = false; const s = make({ isBusy: () => busy, unloadWhenIdle: () => false });
+    await s.start(); const pid = s.pid; busy = true;
+    expect(await s.unloadForMemoryPressure()).toBe(false);
+    busy = false; await Bun.sleep(20); expect(s.pid).toBe(pid);
+  });
+  test("pressure during inference is dropped; idle pressure unloads and next dictation reloads", async () => {
+    const s = make({ unloadWhenIdle: () => false }); await s.start(); const pid = s.pid;
+    const request = s.transcribe("delay");
+    expect(await s.unloadForMemoryPressure()).toBe(false);
+    expect((await request).complete).toBe(true); expect(s.pid).toBe(pid);
+    expect(await s.unloadForMemoryPressure()).toBe(true); expect(s.pid).toBeNull();
+    expect((await s.transcribe("normal")).complete).toBe(true); expect(s.pid).not.toBe(pid);
+  });
+  test("pressure rechecks capture after entering the serial queue", async () => {
+    let busy = false; const s = make({ isBusy: () => busy }); await s.start(); const pid = s.pid;
+    const pressure = s.unloadForMemoryPressure(); busy = true;
+    expect(await pressure).toBe(false); expect(s.pid).toBe(pid);
   });
   test("idle timer cannot unload an active request", async () => {
     const s = make({ idleSeconds: () => 0.02 }); expect((await s.transcribe("delay")).complete).toBe(true);

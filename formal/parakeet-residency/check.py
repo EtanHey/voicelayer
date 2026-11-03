@@ -67,11 +67,12 @@ def run(directory, module, config, label, expected=None):
 success = True
 with tempfile.TemporaryDirectory(prefix='check-', dir=scratch) as temporary:
     directory = Path(temporary)
-    for module in ['ResidentRecognizer.tla', 'RuntimeSetup.tla', 'ArchiveGateEvidence.tla']:
+    for module in ['ResidentRecognizer.tla', 'RuntimeSetup.tla', 'ArchiveGateEvidence.tla', 'MemoryPressure.tla']:
         (directory / module).write_text((root / module).read_text())
     for config in ['Fixed.cfg', 'FixedAssetsGate.cfg', 'FixedDelete.cfg', 'FixedDownload.cfg',
-                   'FixedReadyReselect.cfg', 'FixedSetupCancel.cfg', 'FixedArchiveGate.cfg']:
-        module = ('ArchiveGateEvidence.tla' if 'ArchiveGate' in config else
+                   'FixedReadyReselect.cfg', 'FixedSetupCancel.cfg', 'FixedArchiveGate.cfg', 'FixedMemoryPressure.cfg']:
+        module = ('MemoryPressure.tla' if 'MemoryPressure' in config else
+                  'ArchiveGateEvidence.tla' if 'ArchiveGate' in config else
                   'RuntimeSetup.tla' if 'Setup' in config else 'ResidentRecognizer.tla')
         success = run(directory, module, root / config, config[:-4]) and success
     for mutant in manifest:

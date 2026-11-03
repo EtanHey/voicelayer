@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { initializeVoiceGate } from "./update-gate-admission";
+import { initializeVoiceGate, withFreshAsyncVoiceAdmission } from "./update-gate-admission";
 import { createNativeDrainParticipant, createVoiceDrainControl } from "./update-gate-native-participant";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { stopPlayback } from "./tts";
@@ -45,6 +45,7 @@ import {
 import { handleSocketCommand } from "./socket-handlers";
 import { createMcpDaemon, isSocketLive, logUnhandledNdjsonMessage } from "./mcp-daemon";
 import { registerParakeetDaemonOwner } from "./parakeet-server";
+import { warmSelectedRecognizer } from "./recognizer-controller";
 import { getConnectionCount, getUptimeSeconds } from "./daemon-health";
 import {
   isProcessAlive,
@@ -251,6 +252,9 @@ async function main() {
   });
 
   // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
+  void withFreshAsyncVoiceAdmission(() => warmSelectedRecognizer()).catch(() => {
+    console.error("[voicelayer-daemon] Boot recognizer warm-up failed; dictation can retry");
+  });
   void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
     console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   });

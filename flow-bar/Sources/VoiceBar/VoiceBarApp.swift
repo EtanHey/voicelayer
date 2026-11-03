@@ -172,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     #endif
 
     private var socketServer: SocketServer?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var panelPointerMovementHandler: ((NSPoint) -> Void)?
@@ -632,6 +633,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Socket server — listens on VoiceLayerPaths.socketPath
         let server = SocketServer(state: voiceState)
         socketServer = server
+        let pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        pressure.setEventHandler { [weak self, weak server] in
+            guard let pressure = self?.memoryPressureSource else { return }
+            let level = pressure.data.contains(.critical) ? "critical" : "warning"
+            server?.sendCommandToOwner(command: ["cmd": "memory_pressure", "level": level])
+        }
+        memoryPressureSource = pressure
+        pressure.resume()
         server.onControlCommand = { [weak self] command in
             self?.handleLocalControlCommand(command)
         }
@@ -850,6 +859,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func performTerminationCleanup() {
+        memoryPressureSource?.cancel()
+        memoryPressureSource = nil
         microphonePriorityTimer?.invalidate()
         microphonePriorityTimer = nil
         if let isolatedInstanceMarkerPID {
