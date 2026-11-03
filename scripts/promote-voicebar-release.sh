@@ -122,8 +122,27 @@ awk -v version="$VERSION" -v sha="$FORMULA_SHA256" '
 awk -v version="$VERSION" -v sha="$ZIP_SHA256" '
     !v && /^[[:space:]]*version "/ { sub(/"[^"]*"/, "\"" version "\""); v = 1 }
     !s && /^[[:space:]]*sha256 "/ { sub(/"[^"]*"/, "\"" sha "\""); s = 1 }
+    /^  postflight do$/ {
+        if (postflight++) exit 2
+        print "  postflight do"
+        print "    result = system_command \"#{HOMEBREW_PREFIX}/bin/voicelayer\","
+        print "                            args:         [\"setup\", \"--cask-postflight\"],"
+        print "                            env:          { \"PATH\" => \"#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin\" },"
+        print "                            must_succeed: false,"
+        print "                            print_stdout: true,"
+        print "                            print_stderr: true"
+        print "    unless result&.success?"
+        print "      opoo \"VoiceBar was retained, but setup failed (possibly a formula/cask version mismatch). Update etanhey/layers/voicelayer and etanhey/layers/voicebar together, then run: voicelayer setup --cask-postflight. Do not delete update-gate evidence.\""
+        print "    end"
+        print "  end"
+        skipping = 1; next
+    }
+    skipping && /^  end$/ { skipping = 0; next }
+    skipping { next }
     { print }
-' "$PREPARED/cask-base" > "$PREPARED/cask"
+    END { if (postflight != 1 || skipping) exit 2 }
+' "$PREPARED/cask-base" > "$PREPARED/cask" || die "could not render the cask postflight contract"
+
 grep -F "sha256 \"$FORMULA_SHA256\"" "$PREPARED/formula" >/dev/null || die "could not update the formula sha256"
 
 if [ "$AHEAD" = 1 ]; then

@@ -40,7 +40,7 @@ function fixture(fault = "") {
   const stub = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/bash\n${preamble}\n${body}\n`, { mode: 0o755 });
   stub("bun", `[[ "$*" != *setup.ts* ]] || echo $$ > "$ROOT/setup-pid"\nexec ${quote(process.execPath)} "$@"`);
   stub("which", "exit 1");
-  stub("pgrep", '[[ "$FAULT" != inventory ]] || exit 2; [[ -s "$ROOT/running" ]] || exit 1; echo 101');
+  stub("pgrep", 'if [[ "$*" == *"-fl"* && -s "$ROOT/participant" ]]; then cat "$ROOT/participant"; exit 0; fi; [[ "$FAULT" != inventory ]] || exit 2; [[ -s "$ROOT/running" ]] || exit 1; echo 101');
   stub("ps", 'if [[ "$*" == *comm=* ]]; then cat "$ROOT/running"; else exec /bin/ps "$@"; fi');
   stub("plutil", '[[ "$FAULT" != persistent ]] || exit 7; if [[ ( "$FAULT" == plist || ( "$FAULT" == relay && "$*" == *f5-to-f18* ) ) && ! -f "$ROOT/failed-once" ]]; then : > "$ROOT/failed-once"; exit 7; fi');
   stub("xattr", "exit 1"); stub("hidutil", "exit 0");
@@ -96,7 +96,7 @@ exit "$status"`);
     VOICELAYER_SUPERVISED_BOOTSTRAP: "", VOICELAYER_UPDATE_TARGET_SHA: "", HOMEBREW_VOICELAYER_INSTALL_OPERATION: "" };
   const command = [join(bin, "brew"), "upgrade", "--cask", "voicebar"];
   const run = (extra: Record<string, string> = {}) => Bun.spawnSync(command, { env: { ...process.env, ...env, ...extra }, stdout: "pipe", stderr: "pipe", timeout: 25000 });
-  const setup = (extra: Record<string, string> = {}) => Bun.spawnSync([join(bin, "bun"), join(root, "src/cli/setup.ts"), root], { env: { ...process.env, ...env, ...extra }, stdout: "pipe", stderr: "pipe", timeout: 25000 });
+  const setup = (extra: Record<string, string> = {}, flag = "") => Bun.spawnSync([join(bin, "bun"), join(root, "src/cli/setup.ts"), root, ...(flag ? [flag] : [])], { env: { ...process.env, ...env, ...extra }, stdout: "pipe", stderr: "pipe", timeout: 25000 });
   return { root, gate, app, agents, bin, home, env, command, run, setup };
 }
 function restored(f: ReturnType<typeof fixture>, agentsLoaded = true) {
@@ -112,7 +112,9 @@ function restored(f: ReturnType<typeof fixture>, agentsLoaded = true) {
 for (const fault of ["", "open"]) for (const flag of ["", "--cask-postflight"]) caskTest(`cask ${fault || "absent"} gate upgrades with ${flag || "legacy no-flag"} after env -i`, () => {
   const f = fixture(fault), r = f.run({ HOMEBREW_TEST_POSTFLIGHT_FLAG: flag });
   expect({ exit: r.exitCode, err: r.stderr.toString() }).toMatchObject({ exit: 0 });
-  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN"); restored(f);
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual({ version: 1, kind: "OPEN", generation: 0, released: null });
+  expect(r.stderr.toString()).not.toContain("RECOVERY_REQUIRED");
+  expect(r.stderr.toString()).not.toContain("target SHA"); restored(f);
   const calls = readFileSync(join(f.root, "calls"), "utf8");
   expect(calls.lastIndexOf("remove ")).toBeLessThan(calls.indexOf("delete ")); expect(calls.lastIndexOf("delete ")).toBeLessThan(calls.indexOf("quit"));
 });
@@ -241,4 +243,38 @@ caskTest("internal marker cannot restore while a live controller owns the host",
   });
   expect(r.exitCode).not.toBe(0);
   expect(readFileSync(join(f.root, "calls"), "utf8")).toBe("");
+});
+
+for (const flag of ["", "--cask-postflight"]) caskTest(`fresh stopped bundle bootstraps via ${flag || "old cask plain setup"} without target SHA`, () => {
+  const f = fixture();
+  writeFileSync(join(f.root, "running"), "");
+  const r = f.setup({}, flag);
+  expect({ exit: r.exitCode, err: r.stderr.toString() }).toMatchObject({ exit: 0 });
+  expect(r.stderr.toString()).not.toContain("RECOVERY_REQUIRED");
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual({ version: 1, kind: "OPEN", generation: 0, released: null });
+  expect(existsSync(f.gate + ".admissions")).toBe(true);
+});
+for (const participant of ["VoiceBar", "bun src/mcp-server-daemon.ts", "bun src/mcp-server.ts", "voicelayer-mcp", "whisper-server", "bun src/cli/ask.ts"])
+  caskTest(`absent gate with live ${participant} refuses bootstrap, retains availability`, () => {
+    const f = fixture();
+    writeFileSync(join(f.root, "participant"), `101 ${participant}\n`);
+    if (participant !== "VoiceBar") writeFileSync(join(f.root, "running"), "");
+    const r = f.setup({}, "--cask-postflight");
+    expect(r.exitCode).toBe(0); // G4d keeps the canonical bundle, but never initializes UNKNOWN.
+    expect(r.stderr.toString()).toContain("RECOVERY_REQUIRED");
+    expect(r.stderr.toString()).toContain("no live voice participants");
+    expect(existsSync(f.gate)).toBe(false);
+  });
+caskTest("participant born while acquiring bootstrap mutex refuses initialization", () => {
+  const f = fixture(); writeFileSync(join(f.root, "running"), "");
+  writeFileSync(join(f.bin, "pgrep"), `#!/bin/bash
+if [[ "$*" == *"-fl"* ]]; then
+  if [[ -f "$ROOT/probed" ]]; then echo '101 bun src/mcp-server-daemon.ts'; exit 0; fi
+  : > "$ROOT/probed"; exit 1
+fi
+[[ -s "$ROOT/running" ]] || exit 1; echo 101
+`, { mode: 0o755 });
+  const r = f.setup({}, "--cask-postflight");
+  expect(r.exitCode).toBe(0); expect(r.stderr.toString()).toContain("participant started");
+  expect(existsSync(f.gate)).toBe(false); expect(existsSync(f.gate + ".bootstrap-lock")).toBe(false);
 });

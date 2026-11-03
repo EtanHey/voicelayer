@@ -138,7 +138,7 @@ export function initializeVoiceGate(env: NodeJS.ProcessEnv = process.env): Promi
  * A concurrent voice initializer wins without its state being adopted or deleted. */
 export function initializeSupervisedVoiceGate(env: NodeJS.ProcessEnv = process.env): boolean {
   return safeGateLock(path => {
-    for (const suffix of ["", ".admissions", ".controller", ".voice-diag.json"]) {
+    for (const suffix of ["", ".admissions", ".bootstrap", ".controller", ".voice-diag.json"]) {
       try { lstatSync(path + suffix); return false; }
       catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return false; }
     }

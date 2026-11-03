@@ -5,13 +5,12 @@
 Homebrew removes all services, deletes their plists, quits VoiceBar and replaces
 its bundle before running setup. Postflight restores availability for the bundle
 Homebrew will keep; it never requests an update lease or calls `runGatedInstall`.
-The tap should explicitly call `voicelayer setup --cask-postflight`. Until that
-follow-up lands, no-flag setup with the canonical installed bundle uses the same
+Promotion renders the tap to explicitly call `voicelayer setup --cask-postflight`. For old-cask compatibility, no-flag setup with the canonical installed bundle uses the same
 availability path. Manual nested setup (`VOICELAYER_INSTALL_OPERATION`) instead
 validates its lease and never owns recovery, including on failure.
 
 * Absent means `lstat` returned ENOENT. Under the shared `.bootstrap-lock`, setup
-  rechecks stopped-process evidence and exclusively initializes OPEN through
+  rechecks stopped VoiceBar, daemon, direct CLI, decoder and audio-process evidence and exclusively initializes OPEN through
   `initializeSupervisedVoiceGate`. Retained `.bootstrap`, `.lock`, `.admissions`,
   `.controller` and `.voice-diag.json` evidence refuses initialization. Signals
   SIGINT, SIGTERM, SIGHUP and SIGQUIT unwind the owned mutex; cleanup errors are
@@ -47,7 +46,14 @@ OPEN, closed/live, malformed, locked and orphaned states, nested failure, intern
 mode refusal, isolation and mutex signal cleanup. These are isolated proofs, not
 real cask, launchd or installed-app qualification.
 
-Tap follow-up: pass `--cask-postflight` explicitly; move the cask's uninstall
+Promotion renders `setup --cask-postflight` with `must_succeed: false` and checks
+the command result. An old formula rejecting the option, or a new setup unable
+to start the app, prints an explicit formula/cask mismatch and repair message;
+Homebrew retains the installed bundle. This is an availability failure, never a
+claim of runtime health. Old cask + new formula uses the no-flag compatibility
+path above. Neither pairing requires a target SHA for availability.
+
+Tap follow-up: move the cask's uninstall
 `delete:` of LaunchAgents to `zap` only. This PR does not change the tap or qualify
 its earlier stop/delete/replace sequence as an idle-gated update.
 

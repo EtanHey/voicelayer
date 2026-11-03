@@ -1,0 +1,48 @@
+{
+  "module": "FirstInstall",
+  "sourceBaseline": "776982d087c841e04748b2d44e41e7759233059d",
+  "sources": [
+    "src/cli/setup.ts",
+    "src/update-gate-admission.ts",
+    "src/update-gate-storage.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "MutantLive": {
+      "role": "mutant",
+      "target": "BootstrapOnlyQuiescent",
+      "kind": "invariant"
+    },
+    "MutantEvidence": {
+      "role": "mutant",
+      "target": "BootstrapPreservesEvidence",
+      "kind": "invariant"
+    },
+    "MutantReplace": {
+      "role": "mutant",
+      "target": "BootstrapExclusiveCreate",
+      "kind": "invariant"
+    },
+    "MutantGeneration": {
+      "role": "mutant",
+      "target": "BootstrapOpenGenerationZero",
+      "kind": "invariant"
+    },
+    "OldNoBootstrap": {
+      "role": "mutant",
+      "target": "FreshInstallCompletes",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "BootstrapOnlyQuiescent",
+    "BootstrapPreservesEvidence",
+    "BootstrapExclusiveCreate",
+    "BootstrapOpenGenerationZero",
+    "FreshInstallCompletes"
+  ]
+}
