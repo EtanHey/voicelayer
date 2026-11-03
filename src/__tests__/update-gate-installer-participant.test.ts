@@ -358,6 +358,58 @@ test("same-birth defunct participant waits for reaping under the exit deadline",
   expect(observeInstallerExit(proof, { identity: () => "Fri Oct 30 09:10:11 2026 <defunct>", table: () => "" })).toBe("UNKNOWN");
 });
 
+test.each(["empty-ps", "unreaped", "teardown", "defunct"])("healthy quit polls through %s before verified exit", async observation => {
+  const { observeInstallerExit } = await import("../update-gate-installer-participant");
+  const f = fixture(); await f.commit();
+  const birth = "Sat Oct 31 09:10:11 2026";
+  const proof = { identities: f.identities, native: `${birth} /Applications/VoiceBar.app/Contents/MacOS/VoiceBar`, daemon: `${birth} /opt/homebrew/bin/bun` };
+  let samples = 0, sleeps = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.sleep = async () => { sleeps++; };
+  f.deps.participantsExited = () => {
+    const exiting = samples++ < 2;
+    return observeInstallerExit(proof, {
+      identity: pid => {
+        if (!exiting) return null;
+        if (observation === "empty-ps") throw Error("UNKNOWN: participant process identity unavailable");
+        if (observation === "defunct") return `${birth} <defunct>`;
+        return `${birth} (${pid === 101 ? "VoiceBar" : "bun"})`;
+      },
+      table: () => "123 /usr/bin/other\n",
+    });
+  };
+  await f.participant.quit(f.lease);
+  expect(sleeps).toBe(1);
+  expect(samples).toBe(4);
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+});
+
+test("every exit poll rechecks the held COMMITTED lease before accepting gone", async () => {
+  const f = fixture(); await f.commit();
+  let polls = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.participantsExited = () => ++polls <= 2 ? "UNKNOWN" : true;
+  f.deps.sleep = async () => {
+    const state = JSON.parse(readFileSync(f.gate, "utf8"));
+    state.kind = "OPEN"; state.generation = 1; state.released = f.lease;
+    delete state.lease; delete state.native; delete state.daemon;
+    writeFileSync(f.gate, JSON.stringify(state));
+  };
+  await expect(f.participant.quit(f.lease)).rejects.toThrow("held lease");
+  expect(polls).toBe(4);
+});
+
+test("uncertain exit exhausts its deadline and names availability recovery", async () => {
+  const f = fixture(); await f.commit();
+  let sleeps = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.participantsExited = () => "UNKNOWN";
+  f.deps.sleep = async () => { sleeps++; f.advance(); };
+  await expect(f.participant.quit(f.lease)).rejects.toThrow("voicelayer setup --cask-postflight");
+  expect(sleeps).toBe(3);
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+});
+
 test("stale receipt never pins identities for a later fresh drain", async () => {
   const f = fixture(), request = f.deps.request;
   f.deps.request = async (action, lease) => { const reply = await request(action, lease); f.advance(); return reply; };
