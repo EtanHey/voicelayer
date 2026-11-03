@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
+import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, UnsafeSuccessorError, type InstallerParticipant } from "./update-gate-installer-participant";
 import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -107,7 +107,8 @@ function recoveryReceipt(lease: UpdateGateLease, reason: string, installerPid?: 
   } catch (error) { console.error(`[update-gate] RECOVERY_RECEIPT_WRITE_FAILED: ${error}; durable lease remains at ${gate}`); }
 }
 type InstalledTarget = { sha: string; unchanged(): boolean };
-type CompletionEvidence = { participant: InstallerParticipant; installed(): InstalledTarget };
+type CompletionEvidence = { participant: InstallerParticipant; installed(): InstalledTarget;
+  clock?: { now(): number; sleep(ms: number): Promise<void> } };
 /** Parse the installed bytes outside G1; compare those exact bytes inside G1. */
 export function readInstalledTarget(path = "/Applications/VoiceBar.app/Contents/Info.plist"): InstalledTarget {
   if (path !== "/Applications/VoiceBar.app/Contents/Info.plist" && process.env.VOICELAYER_TEST_ISOLATED !== "1")
@@ -153,9 +154,25 @@ export async function completeGatedInstall(lease: UpdateGateLease, exitCode: num
     const installed = evidence.installed();
     if (installed.sha !== lease.targetSha) throw Error("installed GitCommit does not match lease.targetSha");
     const successor = evidence.participant;
-    const proof = await successor.refresh(lease);
-    if (!proof.ready || !proof.native || !proof.daemon || !sameLease(proof.native.lease, lease) || !sameLease(proof.daemon.lease, lease))
-      throw Error("new participants not verified");
+    const clock = harness?.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
+    const deadline = clock.now() + 15_000;
+    for (let attempt = 1, backoff = 100; ; attempt++, backoff = Math.min(backoff * 2, 1000)) {
+      try {
+        // refresh invalidates cached evidence and authenticates a new round trip.
+        const proof = await successor.refresh(lease);
+        if (!proof.ready || !proof.native || !proof.daemon || !sameLease(proof.native.lease, lease) || !sameLease(proof.daemon.lease, lease))
+          throw Error(`new participants not verified: ${proof.phase}`);
+        if (clock.now() >= deadline) throw Error("successor readiness deadline passed");
+        break;
+      } catch (error) {
+        console.error(`[update-gate] Successor readiness attempt ${attempt} failed: ${error}`);
+        if (error instanceof UnsafeSuccessorError) throw error;
+        const remaining = deadline - clock.now();
+        if (remaining <= 0) throw Error(`successor readiness deadline passed: ${error}`);
+        await clock.sleep(Math.min(backoff, remaining));
+        if (clock.now() >= deadline) throw Error(`successor readiness deadline passed: ${error}`);
+      }
+    }
     const apply = () => updateVoiceGate({ kind: "COMPLETE", lease, installerExitCode: 0,
       installedSha: installed.sha, participantsVerified: true }, state => safeParticipantProof(() => {
         const controller = readInstallerController(updateGateFilePath());

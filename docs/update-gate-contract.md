@@ -97,6 +97,11 @@ obtains a fresh authenticated G3 drain round trip from the NEW native/daemon pai
 A new receipt cache rejects the retired incarnations and unchanged PID/birth
 identities, verifies the native executable is the canonical installed VoiceBar,
 and verifies the daemon's parent. Old drain receipts cannot complete an update.
+Successor readiness retries fresh authenticated round trips for up to 15 seconds,
+backing off from 100 ms to a one-second cap. Every failed attempt logs its reason.
+Not-ready, disconnected or stale evidence retries; positively observed retired
+identities/incarnations or a non-installed native executable refuse immediately.
+Deadline refusal preserves COMMITTED and writes the same recovery receipt.
 Before acquiring G1 it samples process identity; the callback rechecks the
 receipt's one-second freshness, unchanged installed plist bytes, the exact
 COMMITTED lease, empty readable admissions, clean diagnostics, and this process's

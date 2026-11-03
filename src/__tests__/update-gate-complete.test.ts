@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, spyOn } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { transitionUpdateGate } from "../update-gate";
@@ -68,8 +68,10 @@ test.each(["exit", "sha", "dead", "changed-plist", "foreign-controller", "foreig
   if (fault === "foreign-identity" || fault === "caller-identity") f.controller.identity = "another birth";
   writeFileSync(f.gate + ".controller", JSON.stringify(f.controller));
   const before = readFileSync(f.gate + ".controller", "utf8");
+  let virtualNow = 0;
   expect(await installer.completeGatedInstall(lease, fault === "exit" ? 7 : 0, fault === "caller-identity" ? "another birth" : f.identity, {
     participant: f.participant,
+    clock: { now: () => virtualNow, sleep: async ms => { virtualNow += ms; } },
     installed: () => ({ sha: fault === "sha" ? "b".repeat(40) : lease.targetSha, unchanged: () => fault !== "changed-plist" }),
   })).toBe(false);
   expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(committed);
@@ -98,7 +100,7 @@ test.each(["verified", "exit", "sha", "dead"])("G5 controller child lifecycle: %
   expect(existsSync(f.gate + `.recovery-${releasedLease.operationId}.json`)).toBe(fault !== "verified");
   if (fault === "verified") expect(error).toContain("admission OPEN");
   else expect(error).toContain("voicelayer setup --cask-postflight");
-});
+}, 20_000);
 
 test("G5 parses installed Info.plist bytes and detects replacement before COMPLETE", () => {
   const f = fixture(), plist = f.gate + ".plist";
@@ -133,4 +135,80 @@ test("G5 COMPLETE cannot mistake the next owner's REQUEST for its own failed com
   })).toBe(true);
   expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual({ version: 1, kind: "DRAINING", lease: next });
   expect(existsSync(f.receipt)).toBe(false);
+});
+
+// A real participant verifier with a synthetic RPC/process table and virtual time.
+async function readinessFixture(outcome: string) {
+  const f = fixture();
+  const { createInstallerParticipant } = await import("../update-gate-installer-participant");
+  let now = 0, attempts = 0, successorStarted = false;
+  const sleeps: number[] = [];
+  const old = { native: { pid: 101, incarnation: crypto.randomUUID() }, daemon: { pid: 102, incarnation: crypto.randomUUID() } };
+  const fresh = { native: { pid: 201, incarnation: crypto.randomUUID() }, daemon: { pid: 202, incarnation: crypto.randomUUID() } };
+  let identities = old;
+  const clock = { now: () => now, sleep: async (ms: number) => { sleeps.push(ms); now += ms; } };
+  const previous = createInstallerParticipant({
+    ...clock,
+    request: async () => {
+      if (successorStarted) {
+        attempts++;
+        if (outcome === "never" || attempts < (outcome === "ready" ? 3 : 2)) return { kind: "UNKNOWN" };
+        identities = structuredClone(fresh);
+        if (outcome === "old-native") identities.native.incarnation = old.native.incarnation;
+        if (outcome === "old-daemon") identities.daemon.incarnation = old.daemon.incarnation;
+        if (outcome === "old-birth") identities.native.pid = old.native.pid;
+        if (outcome === "stale" && attempts < 3) now += 1100;
+        if (outcome === "disconnected" && attempts < 3) throw Error("connection refused");
+      }
+      return { kind: "ACKNOWLEDGED", native: ack, daemon: ack, identities };
+    },
+    processIdentity: pid => "Tue Nov  3 15:54:30 2026 " + (pid === identities.native.pid
+      ? outcome === "wrong-bundle" && successorStarted ? "/tmp/Other.app/Contents/MacOS/Other" : "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar"
+      : "/opt/homebrew/bin/bun"),
+    processParent: () => identities.native.pid, participantsExited: () => true,
+  });
+  await previous.refresh(lease);
+  const participant = previous.successor!(); successorStarted = true;
+  const run = () => installer.completeGatedInstall(lease, 0, f.identity, {
+    participant, installed: () => ({ sha: lease.targetSha, unchanged: () => true }), clock,
+  });
+  return { ...f, run, sleeps, attempts: () => attempts, now: () => now };
+}
+
+test.each(["ready", "stale", "disconnected"])("G5 readiness retries fresh authenticated attempts: %s", async outcome => {
+  const f = await readinessFixture(outcome);
+  expect(await f.run()).toBe(true);
+  expect(f.attempts()).toBe(3);
+  expect(f.sleeps).toEqual([100, 200]);
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(released);
+  expect(existsSync(f.gate + ".controller")).toBe(false);
+  expect(existsSync(f.receipt)).toBe(false);
+});
+
+test("G5 readiness deadline retains COMMITTED and writes recovery without real sleeps", async () => {
+  const f = await readinessFixture("never");
+  const log = spyOn(console, "error");
+  try {
+    expect(await f.run()).toBe(false);
+    const failures = log.mock.calls.map(args => String(args[0])).filter(line => line.includes("readiness attempt"));
+    expect(failures).toHaveLength(18);
+    expect(failures.every((line, index) => line.includes(`attempt ${index + 1} failed:`) && line.includes("not verified"))).toBe(true);
+  } finally { log.mockRestore(); }
+  expect(f.now()).toBe(15_000);
+  expect(f.attempts()).toBe(18);
+  expect(f.sleeps.slice(0, 5)).toEqual([100, 200, 400, 800, 1000]);
+  expect(f.sleeps.at(-1)).toBe(500);
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(committed);
+  expect(existsSync(f.gate + ".controller")).toBe(true);
+  expect(JSON.parse(readFileSync(f.receipt, "utf8")).reason).toContain("deadline");
+});
+
+test.each(["old-native", "old-daemon", "old-birth", "wrong-bundle"])("G5 readiness immediately refuses unsafe second attempt: %s", async outcome => {
+  const f = await readinessFixture(outcome);
+  expect(await f.run()).toBe(false);
+  expect(f.attempts()).toBe(2);
+  expect(f.sleeps).toEqual([100]);
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(committed);
+  expect(existsSync(f.gate + ".controller")).toBe(true);
+  expect(existsSync(f.receipt)).toBe(true);
 });

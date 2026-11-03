@@ -16,6 +16,7 @@ const receiptSchema = z.strictObject({ kind: z.literal("ACKNOWLEDGED"), native: 
 type Receipt = z.infer<typeof receiptSchema>;
 type Identities = Receipt["identities"];
 type ProcessProof = { identities: Identities; native: string; daemon: string };
+export class UnsafeSuccessorError extends Error {}
 export type InstallerExitObservation = boolean | "UNKNOWN" | "UNSAFE";
 export type InstallerEvidence = { phase: string; ready: boolean; native?: Receipt["native"]; daemon?: Receipt["daemon"] };
 export interface InstallerParticipant {
@@ -195,8 +196,18 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
   let evidence: Receipt | undefined, observedAt = 0, pinned: ProcessProof | undefined;
   const fresh = () => deps.now() - observedAt >= 0 && deps.now() - observedAt <= 1000;
   const processProof = (identities: Identities): ProcessProof => {
-    const native = deps.processIdentity(identities.native.pid), daemon = deps.processIdentity(identities.daemon.pid);
+    if (retired && (["native", "daemon"] as const).some(role =>
+      identities[role].incarnation === retired.identities[role].incarnation))
+      throw new UnsafeSuccessorError("UNKNOWN: successor reused retired participant identity");
+    const native = deps.processIdentity(identities.native.pid);
     const nativeExecutable = native?.replace(/^.{24}\s+/, ""); // Strip ps lstart, retaining the full comm.
+    if (retired !== undefined && native && nativeExecutable !== "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
+      throw new UnsafeSuccessorError("UNKNOWN: successor is not the installed VoiceBar");
+    if (retired && identities.native.pid === retired.identities.native.pid && native === retired.native)
+      throw new UnsafeSuccessorError("UNKNOWN: successor reused retired participant identity");
+    const daemon = deps.processIdentity(identities.daemon.pid);
+    if (retired && identities.daemon.pid === retired.identities.daemon.pid && daemon === retired.daemon)
+      throw new UnsafeSuccessorError("UNKNOWN: successor reused retired participant identity");
     if (!native || !daemon || !/(?:^|\/)VoiceBar$/.test(nativeExecutable ?? "") || /\s<defunct>$/.test(daemon) ||
       deps.processParent(identities.daemon.pid) !== identities.native.pid)
       throw Error("UNKNOWN: participant process identity or role unavailable");
@@ -257,14 +268,9 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
       if (!parsed.success || !sameLease(parsed.data.native.lease, lease) || !sameLease(parsed.data.daemon.lease, lease) ||
         parsed.data.identities.native.pid === parsed.data.identities.daemon.pid)
         throw Error("UNKNOWN: malformed or mismatched participant acknowledgements");
-      if (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000) throw Error("UNKNOWN: stale participant round trip");
+      if (retired === undefined && (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000))
+        throw Error("UNKNOWN: stale participant round trip");
       const proof = processProof(parsed.data.identities);
-      if (retired && (["native", "daemon"] as const).some(role =>
-        proof.identities[role].incarnation === retired.identities[role].incarnation ||
-        (proof.identities[role].pid === retired.identities[role].pid && proof[role] === retired[role])))
-        throw Error("UNKNOWN: successor reused retired participant identity");
-      if (retired !== undefined && proof.native.replace(/^.{24}\s+/, "") !== "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
-        throw Error("UNKNOWN: successor is not the installed VoiceBar");
       if (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000) throw Error("UNKNOWN: stale participant round trip");
       if (pinned && JSON.stringify(proof) !== JSON.stringify(pinned)) throw Error("UNKNOWN: participant identity changed during drain");
       pinned = proof; // Only a fresh, role-checked round trip may pin identities.

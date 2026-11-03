@@ -103,6 +103,16 @@
       "role": "mutant",
       "target": "NeverReopenUnverified",
       "kind": "invariant"
+    },
+    "CompleteSlowFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "CompleteSlowOneShot": {
+      "role": "mutant",
+      "target": "LeasedUpdateReopensAdmission",
+      "kind": "temporal"
     }
   },
   "acceptance": [

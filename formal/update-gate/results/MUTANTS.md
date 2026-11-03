@@ -6,7 +6,7 @@
 | BootstrapPreservesEvidence | MutantEvidence |
 | FreshInstallCompletes | OldNoBootstrap |
 | HealthyQuitCompletes | QuitOld |
-| LeasedUpdateReopensAdmission | CompleteOld |
+| LeasedUpdateReopensAdmission | CompleteOld, CompleteSlowOneShot |
 | NeverProceedOnReusedOrCompetitor | QuitMutantReuse |
 | NeverProceedWithoutHeldLease | QuitMutantHeld |
 | NeverReopenUnverified | CompleteMutantSha, CompleteMutantOwner |

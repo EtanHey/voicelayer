@@ -155,13 +155,14 @@ NeverProceedWithoutHeldLease == phase = "proceed" => (gate = "COMMITTED" /\ mute
    proof. Failures retain COMMITTED. This bounded ordering model assumes a
    healthy child/pair makes progress; it does not prove OS or IPC availability. *)
 CompletionLease == [generation |-> 1, operationId |-> "op", ownerId |-> "owner", targetSha |-> "target"]
-CompletionInit ==
-  /\ scenario \in {"success", "exitFailure", "shaMismatch", "deadSuccessor", "nonOwner"}
+CompletionInitFor(cases, step) ==
+  /\ scenario \in cases
   /\ gate = [kind |-> "COMMITTED", generation |-> 1, released |-> "none"]
   /\ phase = "install" /\ available = FALSE /\ mutex = FALSE
   /\ evidence = [exitZero |-> FALSE, sha |-> FALSE, new |-> FALSE, owner |-> FALSE]
   /\ creation = [exitZero |-> FALSE, sha |-> FALSE, new |-> FALSE, owner |-> FALSE, held |-> FALSE]
-  /\ participants = FALSE /\ created = FALSE
+  /\ participants = FALSE /\ created = step
+CompletionInit == CompletionInitFor({"success", "exitFailure", "shaMismatch", "deadSuccessor", "nonOwner"}, FALSE)
 CompletionObserve ==
   /\ phase = "install" /\ phase' = "verified"
   /\ evidence' = [exitZero |-> scenario # "exitFailure", sha |-> scenario # "shaMismatch",
@@ -191,6 +192,36 @@ NeverReopenUnverified == gate.kind = "OPEN" =>
   (creation.exitZero /\ creation.sha /\ creation.new /\ creation.owner /\ creation.held /\
    gate.generation = CompletionLease.generation /\ gate.released = CompletionLease)
 LeasedUpdateReopensAdmission ==
-  (phase = "verified" /\ evidence.exitZero /\ evidence.sha /\ evidence.new /\ evidence.owner)
+  ((phase = "verified" /\ evidence.exitZero /\ evidence.sha /\ evidence.new /\ evidence.owner) \/
+   (scenario = "slow" /\ evidence.exitZero /\ evidence.sha /\ evidence.owner))
     ~> (gate.kind = "OPEN" /\ gate.released = CompletionLease /\ available)
+
+(* G5 round 2: each Sample is a fresh authenticated round trip with the same
+   identity/executable fences. The healthy successor is ready on sample k=3,
+   within the five-sample abstract deadline. Never-ready expires, while a
+   positively unsafe second sample refuses immediately. No cached proof can
+   advance CompletionPublish. OneShot is the previous single-refresh caller. *)
+SlowCompletionInit == CompletionInitFor({"slow", "never", "unsafe"}, 0)
+SlowCompletionObserve ==
+  /\ phase = "install" /\ phase' = "poll"
+  /\ evidence' = [exitZero |-> TRUE, sha |-> TRUE, new |-> FALSE, owner |-> TRUE]
+  /\ UNCHANGED <<gate, available, mutex, creation, participants, created, scenario>>
+SlowCompletionSample ==
+  /\ phase = "poll" /\ phase' = "sampled"
+  /\ created' = created + 1
+  /\ evidence' = [evidence EXCEPT !.new = (scenario = "slow" /\ created + 1 >= 3)]
+  /\ UNCHANGED <<gate, available, mutex, creation, participants, scenario>>
+SlowCompletionDecide(oneShot) ==
+  /\ phase = "sampled"
+  /\ phase' = IF evidence.new THEN "verified"
+               ELSE IF oneShot \/ created = 5 \/ (scenario = "unsafe" /\ created = 2)
+                    THEN "refused" ELSE "poll"
+  /\ UNCHANGED <<gate, available, mutex, evidence, creation, participants, created, scenario>>
+SlowCompletionNext(oneShot) == SlowCompletionObserve \/ SlowCompletionSample \/ SlowCompletionDecide(oneShot)
+  \/ CompletionAcquire \/ CompletionPublish \/ CompletionAdmit
+SlowCompletionSpecFor(oneShot) == SlowCompletionInit /\ [][SlowCompletionNext(oneShot)]_vars
+  /\ WF_vars(SlowCompletionObserve) /\ WF_vars(SlowCompletionSample) /\ WF_vars(SlowCompletionDecide(oneShot))
+  /\ WF_vars(CompletionAcquire) /\ WF_vars(CompletionPublish) /\ WF_vars(CompletionAdmit)
+SlowCompletionSpec == SlowCompletionSpecFor(FALSE)
+OneShotCompletionSpec == SlowCompletionSpecFor(TRUE)
 =============================================================================

@@ -95,3 +95,25 @@ verified predicates, not proof of real macOS permissions or IPC availability.
 The same native admission object rereads OPEN on its next acquire without a
 restart (NativeUpdateGateTests.testCommittedSuccessorAdmitsAfterCompleteWithoutRestart).
 No successor startup finalizer, automatic relaunch, or recovery tool is added.
+
+## Slow successor readiness (G5 round 2)
+
+`SlowCompletionSpec` models fresh successor samples, ready only at k=3, with a
+five-sample abstract deadline. Never-ready and positively unsafe sample-two
+scenarios retain COMMITTED. `OneShotCompletionSpec` uses the identical schedule
+and checks, but refuses after one failed sample. Both check
+`NeverReopenUnverified`; only the retrying caller satisfies
+`LeasedUpdateReopensAdmission` for the slow healthy scenario. The liveness
+premise includes that scenario before readiness, so one-shot refusal cannot
+make the property vacuous. The existing completion scenarios retain their
+original premises and expected outcomes.
+
+| Config | Expected | Exact property |
+| --- | --- | --- |
+| CompleteSlowOneShot | FAIL: successor not ready on the first sample | LeasedUpdateReopensAdmission |
+| CompleteSlowFixed | PASS | LeasedUpdateReopensAdmission + NeverReopenUnverified |
+
+The bounded schedule assumes readiness within the retry budget. The model does
+not predict startup time or prove real IPC; source guards separately use a
+virtual 15-second clock, 100 ms exponential backoff capped at one second, and
+the production participant verifier with synthetic authenticated-RPC responses.

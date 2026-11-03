@@ -2,8 +2,8 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/update-gate/FirstInstall.tla": "5fd40c54b964793fd348f9b97f349f399b4ff8529ad9b1169fd8cd36de2c7fac",
-    "formal/update-gate/checks.json": "4a6146847e5f7ffa5702c866447f1eb2087ef1d5aa3959940b9280f91287a30a",
+    "formal/update-gate/FirstInstall.tla": "98161ca1b5ba0cf7de293aca0f33c2088e0ab9bc949653bd944140702c9c7391",
+    "formal/update-gate/checks.json": "7a3675db14d0d739959eb557c5af4cfdb30876d2ef79e491622be8a4edc68632",
     "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/update-gate/QuitMutantReuse.cfg": "c588f7108cc70e0fc570aa6f3aab8fb19f20102851e578f30d5af0eeae34d4e1",
@@ -20,7 +20,9 @@
     "formal/update-gate/UpgradeFixed.cfg": "afd215f3d072e49362e1064999a12f1ea2ee85da55d63373d0639ec16c72e67b",
     "formal/update-gate/MutantReplace.cfg": "5256c8816f9c6bf14dbdad5a77fc73bf9c7af95ee37beae82526624f6112b89b",
     "formal/update-gate/QuitMutantHeld.cfg": "1e6821cd627cfac016226ae8c0368acc5e1bec2bab31bc653cb480f20999761a",
+    "formal/update-gate/CompleteSlowFixed.cfg": "52b0d829188bcbe48429a8c767db415f135061dc7c01d1d774bc9e69b92d7933",
     "formal/update-gate/MutantUpgradeController.cfg": "3bfb879231c45babc70fa443d8d8fec69b1c31de9513aab2397c3afd4138f800",
+    "formal/update-gate/CompleteSlowOneShot.cfg": "aa4ed39b74c94265245c49a9ecd02787cf684ab6c19554812d97b18045dd7ab3",
     "formal/update-gate/MutantMissingTarget.cfg": "572006f0bf813476d6053d57381e982c6f14ed4f8d990b8076fb81db1a83b872",
     "formal/update-gate/OldNoBootstrap.cfg": "1c4ec823d0815d73234dc3ea07ab644462b2fbdfd46b2b1311d9b5e53ba5d8e0",
     "formal/update-gate/Fixed.cfg": "fa31127d1d9fd50b63cdb75a8a56ad38e0160082856aedff1df2f1e2f50d0704",
@@ -31,9 +33,9 @@
     "scripts/voicelayer-dedupe-voicebar.sh": "ebd6239db4c66e2b922afa941e4102618631910641fef6a73de81031b55b34e3",
     "scripts/install-voicebar-autostart.sh": "58a4649aa3707a6382e521c626e7c58a480f64113ef4bdd2a3e084c61be62e7c",
     "scripts/promote-voicebar-release.sh": "0bbf4a2c3c357a6c743386422c02e968e3bed4d4331204cfeec1408c6836cd61",
-    "src/update-gate-installer-participant.ts": "4c178af4c9ae06d3411d6d2e476d781730c27f88b1d13a2ea5e7d161bd3d08d5",
+    "src/update-gate-installer-participant.ts": "254f1e555a4bf56678ef33dd5d247bb0ef93eb282898ef9ef65e0bd50d96f736",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
-    "src/update-gate-installer.ts": "42a53f7c435af2b94ab803b5c9b301770e36420eadd5532da23ec1423b64d429"
+    "src/update-gate-installer.ts": "40d017444510880d653fc44a30299da62a57f4fd1636832d3a28896d253bf4e2"
   },
   "mutants": {
     "BootstrapOnlyQuiescent": [
@@ -72,7 +74,8 @@
       "CompleteMutantOwner"
     ],
     "LeasedUpdateReopensAdmission": [
-      "CompleteOld"
+      "CompleteOld",
+      "CompleteSlowOneShot"
     ]
   },
   "graphHashes": {
@@ -222,6 +225,22 @@
       "status": "EXPECTED_FAIL",
       "generated": 18,
       "distinct": 17
+    },
+    "CompleteSlowFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 29,
+      "distinct": 29
+    },
+    "CompleteSlowOneShot": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "LeasedUpdateReopensAdmission",
+      "status": "EXPECTED_FAIL",
+      "generated": 12,
+      "distinct": 12
     }
   }
 }
