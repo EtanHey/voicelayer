@@ -2,7 +2,8 @@
 EXTENDS Naturals, FiniteSets
 CONSTANTS AllowLive, IgnoreEvidence, BadRecord, SkipBootstrap, ReplaceExisting,
           SandboxedPostflight, LegacyAvailability, IgnoreUpgradeController,
-          AbortTransitionalQuit, ReuseMeansGone, SkipQuitHeldCheck
+          AbortTransitionalQuit, ReuseMeansGone, SkipQuitHeldCheck,
+          SkipComplete, IgnoreCompleteSha, IgnoreCompleteOwner
 VARIABLES gate, participants, evidence, mutex, phase, created, creation,
           scenario, available
 vars == <<gate, participants, evidence, mutex, phase, created, creation,
@@ -148,4 +149,79 @@ QuitSpec == QuitInit /\ [][QuitNext]_vars /\ WF_vars(QuitSample) /\ WF_vars(Quit
 HealthyQuitCompletes == (scenario = "healthy") ~> (phase = "proceed")
 NeverProceedOnReusedOrCompetitor == phase = "proceed" => ~evidence
 NeverProceedWithoutHeldLease == phase = "proceed" => (gate = "COMMITTED" /\ mutex)
+(* G5: a leased controller has already committed and retired the old pair.
+   Installed bytes and an authenticated NEW pair are sampled outside G1. Under
+   the lock the owner rechecks the same generation, unchanged bytes and fresh
+   proof. Failures retain COMMITTED. This bounded ordering model assumes a
+   healthy child/pair makes progress; it does not prove OS or IPC availability. *)
+CompletionLease == [generation |-> 1, operationId |-> "op", ownerId |-> "owner", targetSha |-> "target"]
+CompletionInitFor(cases, step) ==
+  /\ scenario \in cases
+  /\ gate = [kind |-> "COMMITTED", generation |-> 1, released |-> "none"]
+  /\ phase = "install" /\ available = FALSE /\ mutex = FALSE
+  /\ evidence = [exitZero |-> FALSE, sha |-> FALSE, new |-> FALSE, owner |-> FALSE]
+  /\ creation = [exitZero |-> FALSE, sha |-> FALSE, new |-> FALSE, owner |-> FALSE, held |-> FALSE]
+  /\ participants = FALSE /\ created = step
+CompletionInit == CompletionInitFor({"success", "exitFailure", "shaMismatch", "deadSuccessor", "nonOwner"}, FALSE)
+CompletionObserve ==
+  /\ phase = "install" /\ phase' = "verified"
+  /\ evidence' = [exitZero |-> scenario # "exitFailure", sha |-> scenario # "shaMismatch",
+                   new |-> scenario # "deadSuccessor", owner |-> scenario # "nonOwner"]
+  /\ UNCHANGED <<gate, available, mutex, creation, participants, created, scenario>>
+CompletionAcquire ==
+  /\ phase = "verified" /\ phase' = "locked" /\ mutex' = TRUE
+  /\ UNCHANGED <<gate, available, evidence, creation, participants, created, scenario>>
+CompletionPublish ==
+  /\ phase = "locked" /\ gate.kind = "COMMITTED" /\ ~SkipComplete
+  /\ evidence.exitZero /\ evidence.new
+  /\ (evidence.sha \/ IgnoreCompleteSha) /\ (evidence.owner \/ IgnoreCompleteOwner)
+  /\ gate' = [kind |-> "OPEN", generation |-> CompletionLease.generation, released |-> CompletionLease]
+  /\ creation' = [exitZero |-> evidence.exitZero, sha |-> evidence.sha, new |-> evidence.new,
+                   owner |-> evidence.owner, held |-> mutex]
+  /\ phase' = "completed" /\ mutex' = FALSE
+  /\ UNCHANGED <<available, evidence, participants, created, scenario>>
+CompletionAdmit ==
+  /\ phase = "completed" /\ gate.kind = "OPEN"
+  /\ available' = TRUE /\ phase' = "done"
+  /\ UNCHANGED <<gate, mutex, evidence, creation, participants, created, scenario>>
+CompletionNext == CompletionObserve \/ CompletionAcquire \/ CompletionPublish \/ CompletionAdmit
+CompletionSpec == CompletionInit /\ [][CompletionNext]_vars
+  /\ WF_vars(CompletionObserve) /\ WF_vars(CompletionAcquire)
+  /\ WF_vars(CompletionPublish) /\ WF_vars(CompletionAdmit)
+NeverReopenUnverified == gate.kind = "OPEN" =>
+  (creation.exitZero /\ creation.sha /\ creation.new /\ creation.owner /\ creation.held /\
+   gate.generation = CompletionLease.generation /\ gate.released = CompletionLease)
+LeasedUpdateReopensAdmission ==
+  ((phase = "verified" /\ evidence.exitZero /\ evidence.sha /\ evidence.new /\ evidence.owner) \/
+   (scenario = "slow" /\ evidence.exitZero /\ evidence.sha /\ evidence.owner))
+    ~> (gate.kind = "OPEN" /\ gate.released = CompletionLease /\ available)
+
+(* G5 round 2: each Sample is a fresh authenticated round trip with the same
+   identity/executable fences. The healthy successor is ready on sample k=3,
+   within the five-sample abstract deadline. Never-ready expires, while a
+   positively unsafe second sample refuses immediately. No cached proof can
+   advance CompletionPublish. OneShot is the previous single-refresh caller. *)
+SlowCompletionInit == CompletionInitFor({"slow", "never", "unsafe"}, 0)
+SlowCompletionObserve ==
+  /\ phase = "install" /\ phase' = "poll"
+  /\ evidence' = [exitZero |-> TRUE, sha |-> TRUE, new |-> FALSE, owner |-> TRUE]
+  /\ UNCHANGED <<gate, available, mutex, creation, participants, created, scenario>>
+SlowCompletionSample ==
+  /\ phase = "poll" /\ phase' = "sampled"
+  /\ created' = created + 1
+  /\ evidence' = [evidence EXCEPT !.new = (scenario = "slow" /\ created + 1 >= 3)]
+  /\ UNCHANGED <<gate, available, mutex, creation, participants, scenario>>
+SlowCompletionDecide(oneShot) ==
+  /\ phase = "sampled"
+  /\ phase' = IF evidence.new THEN "verified"
+               ELSE IF oneShot \/ created = 5 \/ (scenario = "unsafe" /\ created = 2)
+                    THEN "refused" ELSE "poll"
+  /\ UNCHANGED <<gate, available, mutex, evidence, creation, participants, created, scenario>>
+SlowCompletionNext(oneShot) == SlowCompletionObserve \/ SlowCompletionSample \/ SlowCompletionDecide(oneShot)
+  \/ CompletionAcquire \/ CompletionPublish \/ CompletionAdmit
+SlowCompletionSpecFor(oneShot) == SlowCompletionInit /\ [][SlowCompletionNext(oneShot)]_vars
+  /\ WF_vars(SlowCompletionObserve) /\ WF_vars(SlowCompletionSample) /\ WF_vars(SlowCompletionDecide(oneShot))
+  /\ WF_vars(CompletionAcquire) /\ WF_vars(CompletionPublish) /\ WF_vars(CompletionAdmit)
+SlowCompletionSpec == SlowCompletionSpecFor(FALSE)
+OneShotCompletionSpec == SlowCompletionSpecFor(TRUE)
 =============================================================================

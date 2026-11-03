@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NeverProceedWithoutHeldLease",
+  "status": "EXPECTED_FAIL",
+  "generated": 15,
+  "distinct": 15,
+  "trace": [
+    "/\\ phase = \"poll\"\n/\\ available = 1\n/\\ scenario = \"lostLease\"\n/\\ creation = \"none\"\n/\\ gate = \"LOST\"\n/\\ created = FALSE\n/\\ participants = \"gone\"\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"decide\"\n/\\ available = 1\n/\\ scenario = \"lostLease\"\n/\\ creation = \"gone\"\n/\\ gate = \"LOST\"\n/\\ created = FALSE\n/\\ participants = \"gone\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"proceed\"\n/\\ available = 2\n/\\ scenario = \"lostLease\"\n/\\ creation = \"gone\"\n/\\ gate = \"LOST\"\n/\\ created = FALSE\n/\\ participants = \"gone\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE"
+  ]
+}

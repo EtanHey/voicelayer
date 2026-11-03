@@ -139,6 +139,7 @@ export function persistInstallerController(path: string, value: Controller): boo
   return true;
 }
 export function persistUpdateGateState(path: string, state: UpdateGateState, exclusive = false): void {
+  persistGateRecord(path, path, "state.json", state, exclusive);
   if (state.kind === "OPEN" && state.released) {
     const controller = readInstallerController(path);
     if (controller && sameControllerLease(controller.lease, state.released)) {
@@ -147,7 +148,6 @@ export function persistUpdateGateState(path: string, state: UpdateGateState, exc
       try { fsyncSync(directory); } finally { closeSync(directory); }
     }
   }
-  persistGateRecord(path, path, "state.json", state, exclusive);
 }
 
 /** Compatibility entrypoint: all commands now use the admission-aware commit path. */

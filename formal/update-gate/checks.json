@@ -9,7 +9,9 @@
     "scripts/voicelayer-dedupe-voicebar.sh",
     "scripts/install-voicebar-autostart.sh",
     "scripts/promote-voicebar-release.sh",
-    "src/update-gate-installer-participant.ts"
+    "src/update-gate-installer-participant.ts",
+    "src/update-gate.ts",
+    "src/update-gate-installer.ts"
   ],
   "checks": {
     "Fixed": {
@@ -81,6 +83,36 @@
       "role": "mutant",
       "target": "NeverProceedWithoutHeldLease",
       "kind": "invariant"
+    },
+    "CompleteFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "CompleteOld": {
+      "role": "mutant",
+      "target": "LeasedUpdateReopensAdmission",
+      "kind": "temporal"
+    },
+    "CompleteMutantSha": {
+      "role": "mutant",
+      "target": "NeverReopenUnverified",
+      "kind": "invariant"
+    },
+    "CompleteMutantOwner": {
+      "role": "mutant",
+      "target": "NeverReopenUnverified",
+      "kind": "invariant"
+    },
+    "CompleteSlowFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "CompleteSlowOneShot": {
+      "role": "mutant",
+      "target": "LeasedUpdateReopensAdmission",
+      "kind": "temporal"
     }
   },
   "acceptance": [
@@ -93,6 +125,8 @@
     "UpgradeControllerOwnsStartup",
     "HealthyQuitCompletes",
     "NeverProceedOnReusedOrCompetitor",
-    "NeverProceedWithoutHeldLease"
+    "NeverProceedWithoutHeldLease",
+    "NeverReopenUnverified",
+    "LeasedUpdateReopensAdmission"
   ]
 }

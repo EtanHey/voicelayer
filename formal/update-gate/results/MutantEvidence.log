@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "BootstrapPreservesEvidence",
+  "status": "EXPECTED_FAIL",
+  "generated": 28,
+  "distinct": 25,
+  "trace": [
+    "/\\ phase = \"check\"\n/\\ available = FALSE\n/\\ scenario = \"lock\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = TRUE\n/\\ mutex = FALSE",
+    "/\\ phase = \"locked\"\n/\\ available = FALSE\n/\\ scenario = \"lock\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = TRUE\n/\\ mutex = TRUE",
+    "/\\ phase = \"restoring\"\n/\\ available = FALSE\n/\\ scenario = \"lock\"\n/\\ creation = [ absent |-> TRUE,\n  stopped |-> TRUE,\n  clean |-> FALSE,\n  held |-> TRUE,\n  generation |-> 0 ]\n/\\ gate = \"OPEN\"\n/\\ created = TRUE\n/\\ participants = FALSE\n/\\ evidence = TRUE\n/\\ mutex = TRUE"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NeverReopenUnverified",
+  "status": "EXPECTED_FAIL",
+  "generated": 18,
+  "distinct": 17,
+  "trace": [
+    "/\\ phase = \"install\"\n/\\ available = FALSE\n/\\ scenario = \"shaMismatch\"\n/\\ creation = [ held |-> FALSE,\n  exitZero |-> FALSE,\n  sha |-> FALSE,\n  new |-> FALSE,\n  owner |-> FALSE ]\n/\\ gate = [generation |-> 1, kind |-> \"COMMITTED\", released |-> \"none\"]\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = [exitZero |-> FALSE, sha |-> FALSE, new |-> FALSE, owner |-> FALSE]\n/\\ mutex = FALSE",
+    "/\\ phase = \"verified\"\n/\\ available = FALSE\n/\\ scenario = \"shaMismatch\"\n/\\ creation = [ held |-> FALSE,\n  exitZero |-> FALSE,\n  sha |-> FALSE,\n  new |-> FALSE,\n  owner |-> FALSE ]\n/\\ gate = [generation |-> 1, kind |-> \"COMMITTED\", released |-> \"none\"]\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = [exitZero |-> TRUE, sha |-> FALSE, new |-> TRUE, owner |-> TRUE]\n/\\ mutex = FALSE",
+    "/\\ phase = \"locked\"\n/\\ available = FALSE\n/\\ scenario = \"shaMismatch\"\n/\\ creation = [ held |-> FALSE,\n  exitZero |-> FALSE,\n  sha |-> FALSE,\n  new |-> FALSE,\n  owner |-> FALSE ]\n/\\ gate = [generation |-> 1, kind |-> \"COMMITTED\", released |-> \"none\"]\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = [exitZero |-> TRUE, sha |-> FALSE, new |-> TRUE, owner |-> TRUE]\n/\\ mutex = TRUE",
+    "/\\ phase = \"completed\"\n/\\ available = FALSE\n/\\ scenario = \"shaMismatch\"\n/\\ creation = [held |-> TRUE, exitZero |-> TRUE, sha |-> FALSE, new |-> TRUE, owner |-> TRUE]\n/\\ gate = [ generation |-> 1,\n  kind |-> \"OPEN\",\n  released |->\n      [ generation |-> 1,\n        operationId |-> \"op\",\n        ownerId |-> \"owner\",\n        targetSha |-> \"target\" ] ]\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = [exitZero |-> TRUE, sha |-> FALSE, new |-> TRUE, owner |-> TRUE]\n/\\ mutex = FALSE"
+  ]
+}

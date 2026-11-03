@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "BootstrapOnlyQuiescent",
+  "status": "EXPECTED_FAIL",
+  "generated": 23,
+  "distinct": 21,
+  "trace": [
+    "/\\ phase = \"check\"\n/\\ available = FALSE\n/\\ scenario = \"live\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = TRUE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"locked\"\n/\\ available = FALSE\n/\\ scenario = \"live\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = TRUE\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"restoring\"\n/\\ available = FALSE\n/\\ scenario = \"live\"\n/\\ creation = [ absent |-> TRUE,\n  stopped |-> FALSE,\n  clean |-> TRUE,\n  held |-> TRUE,\n  generation |-> 0 ]\n/\\ gate = \"OPEN\"\n/\\ created = TRUE\n/\\ participants = TRUE\n/\\ evidence = FALSE\n/\\ mutex = TRUE"
+  ]
+}

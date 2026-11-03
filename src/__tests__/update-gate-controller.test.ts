@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ test("durable controller passes; copied env with another live PID and matching i
     await Bun.write(${JSON.stringify(validated)},'yes');
     await Bun.write(${JSON.stringify(record)},process.env.VOICELAYER_INSTALL_OPERATION);
   `], { env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe" });
-  expect({ exit: await child.exited, error: await new Response(child.stderr).text() }).toMatchObject({ exit: 0 });
+  expect({ exit: await child.exited, error: await new Response(child.stderr).text() }).toMatchObject({ exit: 1 });
   expect(existsSync(validated)).toBe(true);
   const owner = JSON.parse(readFileSync(record, "utf8"));
   expect(JSON.parse(readFileSync(f.gate + ".controller", "utf8"))).toEqual({ version: 1,

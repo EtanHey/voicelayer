@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -29,6 +30,6 @@ test("R2: G1 holder right after durable COMMIT", async () => {
     VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_SUPERVISED_BOOTSTRAP: "", VOICELAYER_UPDATE_TARGET_SHA: "a".repeat(40) }, stdout: "pipe", stderr: "pipe", timeout: 8000 });
   const exit = await child.exited, err = await new Response(child.stderr).text();
   const state = JSON.parse(readFileSync(gate, "utf8"));
-  expect({ exit, state: state.kind, install: readFileSync(log, "utf8").trim(), err }).toMatchObject({ exit: 0, state: "COMMITTED", install: "install" });
-  expect(readdirSync(root).filter(x => x.includes("recovery"))).toEqual([]);
+  expect({ exit, state: state.kind, install: readFileSync(log, "utf8").trim(), err }).toMatchObject({ exit: 1, state: "COMMITTED", install: "install" });
+  expect(readdirSync(root).filter(x => x.includes("recovery"))).toHaveLength(1);
 });

@@ -69,3 +69,51 @@ This is an observation/order model, not a macOS scheduler or installed-app proof
 | QuitFixed | PASS | All three quit properties |
 | QuitMutantReuse | FAIL when reuse is treated as gone | NeverProceedOnReusedOrCompetitor |
 | QuitMutantHeld | FAIL without locked lease verification | NeverProceedWithoutHeldLease |
+
+## Verified leased completion (G5)
+
+`CompletionSpec` starts at COMMITTED after the old participants have exited.
+The controller waits for child exit, reads the installed GitCommit, and obtains
+fresh authenticated replacement native/daemon identities. Only its matching
+lease/controller custody can publish OPEN with that generation and released
+lease under G1; the matching controller receipt is removed after publication.
+The existing startup-only upgrade model above intentionally retains COMMITTED:
+starting the app alone is not completion. G5 supplies the separate final phase.
+
+| Config | Expected | Exact property |
+| --- | --- | --- |
+| CompleteOld | FAIL: omit COMPLETE | LeasedUpdateReopensAdmission |
+| CompleteFixed | PASS | LeasedUpdateReopensAdmission + NeverReopenUnverified |
+| CompleteMutantSha | FAIL: omit installed target match | NeverReopenUnverified |
+| CompleteMutantOwner | FAIL: allow a different controller owner | NeverReopenUnverified |
+
+The liveness premise is verified successful installation by the owner. Weak
+fairness assumes controller and next admission acquire execute. A nonzero child,
+SHA mismatch, dead/old successor, or foreign owner retains COMMITTED; those are
+not liveness promises. The model abstracts fresh round trips/unchanged bytes as
+verified predicates, not proof of real macOS permissions or IPC availability.
+The same native admission object rereads OPEN on its next acquire without a
+restart (NativeUpdateGateTests.testCommittedSuccessorAdmitsAfterCompleteWithoutRestart).
+No successor startup finalizer, automatic relaunch, or recovery tool is added.
+
+## Slow successor readiness (G5 round 2)
+
+`SlowCompletionSpec` models fresh successor samples, ready only at k=3, with a
+five-sample abstract deadline. Never-ready and positively unsafe sample-two
+scenarios retain COMMITTED. `OneShotCompletionSpec` uses the identical schedule
+and checks, but refuses after one failed sample. Both check
+`NeverReopenUnverified`; only the retrying caller satisfies
+`LeasedUpdateReopensAdmission` for the slow healthy scenario. The liveness
+premise includes that scenario before readiness, so one-shot refusal cannot
+make the property vacuous. The existing completion scenarios retain their
+original premises and expected outcomes.
+
+| Config | Expected | Exact property |
+| --- | --- | --- |
+| CompleteSlowOneShot | FAIL: successor not ready on the first sample | LeasedUpdateReopensAdmission |
+| CompleteSlowFixed | PASS | LeasedUpdateReopensAdmission + NeverReopenUnverified |
+
+The bounded schedule assumes readiness within the retry budget. The model does
+not predict startup time or prove real IPC; source guards separately use a
+virtual 15-second clock, 100 ms exponential backoff capped at one second, and
+the production participant verifier with synthetic authenticated-RPC responses.

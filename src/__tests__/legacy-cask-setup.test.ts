@@ -217,7 +217,13 @@ main "$@"
   const r = Bun.spawnSync(["/bin/bash", join(f.root, "updater-runner.sh")], {
     env: { ...process.env, ...f.env, VOICELAYER_UPDATE_TARGET_SHA: "a".repeat(40) }, stdout: "pipe", stderr: "pipe", timeout: 25000,
   });
-  expect({ exit: r.exitCode, err: r.stderr.toString() }).toMatchObject({ exit: 0 });
+  // G5: the child succeeds, but this fixture has no installed/new-pair proof.
+  expect(r.exitCode).toBe(1);
+  expect(r.stderr.toString()).toContain("missing qualified harness completion proof");
+  const state = JSON.parse(readFileSync(f.gate, "utf8"));
+  expect(state.kind).toBe("COMMITTED");
+  expect(existsSync(f.gate + ".controller")).toBe(true);
+  expect(existsSync(f.gate + `.recovery-${state.lease.operationId}.json`)).toBe(true);
   const calls = readFileSync(join(f.root, "calls"), "utf8");
   expect(calls.indexOf("mutations-done")).toBeGreaterThan(calls.indexOf("postflight"));
   expect(calls).not.toContain("EARLY_START");
