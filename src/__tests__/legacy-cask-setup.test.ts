@@ -337,5 +337,7 @@ for (const target of ["", "a".repeat(40)]) caskTest(`legacy repair scope refuses
   });
   expect(r.exitCode).not.toBe(0);
   expect(r.stderr.toString()).not.toContain("Legacy formula repair");
-  expect(readFileSync(join(f.root, "calls"), "utf8")).toBe("");
+  // Normal admission captures the observed launchd owner before refusing.
+  // Permit that read only; no bootout, startup or bundle effect is allowed.
+  expect(readFileSync(join(f.root, "calls"), "utf8")).toBe("list com.voicelayer.voicebar\n");
 });
