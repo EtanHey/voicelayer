@@ -39,7 +39,7 @@ final class NativeFixPickerFollowupTests: XCTestCase {
             let raw = RecognizerBindingTests.event(desired: "parakeet", effective: "whisper", fallback: reason)["recognizer_status"] as! [String: Any]
             let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: raw)))
             XCTAssertEqual(state.selected, .parakeet)
-            XCTAssertEqual(state.explanation, "Using Whisper for this recording.", "Legacy reason codes describe only the reported effective provider")
+            XCTAssertEqual(state.explanation, "Using Whisper for your last recording.", "Legacy reason codes describe only the reported effective provider")
             let current = RecognizerBindingTests.event(desired: "parakeet", effective: "parakeet", parakeet: "ready", fallback: reason)["recognizer_status"] as! [String: Any]
             XCTAssertNil(RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: current))).explanation)
         }

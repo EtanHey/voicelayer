@@ -441,6 +441,7 @@ public struct SettingsView: View {
     public let recognizerStatus: () -> RecognizerPickerState
     public let onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)?
     public let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
+    public let onSetUnloadWhenIdle: ((Bool) -> Void)?
     public let speechControls: () -> SpeechControlsState?
     public let speechConnected: () -> Bool
     public let speechBusyReason: () -> String?
@@ -603,6 +604,7 @@ public struct SettingsView: View {
         recognizerStatus: @escaping () -> RecognizerPickerState = { .unavailable },
         onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil,
         onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)? = nil,
+        onSetUnloadWhenIdle: ((Bool) -> Void)? = nil,
         speechControls: @escaping () -> SpeechControlsState? = { nil },
         speechConnected: @escaping () -> Bool = { false },
         speechBusyReason: @escaping () -> String? = { nil },
@@ -725,6 +727,7 @@ public struct SettingsView: View {
         self.recognizerStatus = recognizerStatus
         self.onManageRecognizer = onManageRecognizer
         self.onSelectRecognizer = onSelectRecognizer
+        self.onSetUnloadWhenIdle = onSetUnloadWhenIdle
         self.speechControls = speechControls
         self.speechConnected = speechConnected
         self.speechBusyReason = speechBusyReason
@@ -1323,7 +1326,8 @@ public struct SettingsView: View {
                 processingNotice: processingNotice(),
                 onToggleProcessing: onToggleProcessing,
                 recognizerState: recognizerStatus(),
-                onSelectRecognizer: onSelectRecognizer, onManageRecognizer: onManageRecognizer
+                onSelectRecognizer: onSelectRecognizer, onManageRecognizer: onManageRecognizer,
+                onSetUnloadWhenIdle: onSetUnloadWhenIdle
             )
             VStack(alignment: .leading, spacing: 4) {
                 if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {

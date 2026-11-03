@@ -125,14 +125,14 @@ final class RecognizerRowsTests: XCTestCase {
 
     // MARK: Stale fallback line
 
-    /// The "Using Whisper because Parakeet couldn't…" line follows the latest snapshot: a later Parakeet success
+    /// The fallback line follows the latest snapshot: a later Parakeet success
     /// clears it, including when the daemon restarted and its revision counter went back to zero.
     func testFallbackLineClearsAfterALaterParakeetSuccess() throws {
         let voice = RecognizerBindingTests.voice(); var sent: [[String: Any]] = []; voice.sendCommand = { sent.append($0) }
         voice.setConnectionStatus(true)
         voice.handleEvent(RecognizerBindingTests.event(40, desired: "parakeet", effective: "whisper",
                                                        parakeet: "sleeping", whisper: "ready", fallback: "parakeet-empty"))
-        XCTAssertEqual(voice.recognizerPickerState.explanation, "Using Whisper because Parakeet couldn't transcribe this recording.")
+        XCTAssertEqual(voice.recognizerPickerState.explanation, "Whisper transcribed your last recording instead of Parakeet.")
         voice.handleEvent(RecognizerBindingTests.event(41, desired: "parakeet", effective: "parakeet",
                                                        parakeet: "ready", whisper: "sleeping"))
         XCTAssertNil(voice.recognizerPickerState.explanation)

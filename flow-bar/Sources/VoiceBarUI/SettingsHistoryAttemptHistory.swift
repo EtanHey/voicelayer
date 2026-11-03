@@ -289,7 +289,7 @@ struct SettingsHistoryDiagnosticsCopy {
         if let language = snapshot?.languageSetting { facts.append(.init(title: "Language setting", value: language)) }
         let attempts = attemptHistory?.attempts ?? []
         if attempts.isEmpty {
-            if let engine = engineName(snapshot?.backend) { facts.append(.init(title: "Engine", value: engine)) }
+            facts += engineFacts(snapshot?.backend)
             facts += SettingsHistoryDiagnosticsPanel.legacyRecognitionFacts(entry, hasAttempts: false)
                 .map { SettingsHistoryFact(title: $0.0, value: $0.1) }
             // The shipping app has no attempt reader. A later transcript write survives restarts;
@@ -305,7 +305,7 @@ struct SettingsHistoryDiagnosticsCopy {
         } else {
             // An attempt's own facts only; archive-level settings never stand in for them.
             let attempt = attempts.first { $0.id == selectedAttemptID } ?? attempts.last
-            if let engine = engineName(attempt?.engine) { facts.append(.init(title: "Engine", value: engine)) }
+            facts += engineFacts(attempt?.engine)
             if let model = attempt?.model { facts.append(.init(title: "Model", value: model)) }
             if let effort = attempt?.effort { facts.append(.init(title: "Recognition preset", value: effort)) }
             // Only a completed retry proves the recording was transcribed again.
@@ -317,14 +317,20 @@ struct SettingsHistoryDiagnosticsCopy {
         return facts
     }
 
-    /// Display name for a recorded backend id (`parakeet-resident`, `whisper-server+outro`, `whisper.cpp`,
-    /// `wispr-flow`). Unrecognised ids return nil rather than surfacing an internal name.
+    /// Display name for the engine that WROTE the text of a recorded backend chain (`parakeet-resident`,
+    /// `whisper-server+outro`, `whisper.cpp`, `wispr-flow`, or a fallback chain such as
+    /// `parakeet-resident+fallback-uncovered-tail->whisper.cpp+qualified-fallback`, which Whisper wrote).
+    /// Unrecognised ids return nil rather than surfacing an internal name.
     static func engineName(_ backend: String?) -> String? {
-        guard let id = backend?.lowercased(), !id.isEmpty else { return nil }
-        if id.contains("parakeet") { return "Parakeet" }
-        if id.contains("wispr") { return "Wispr Flow" }
-        if id.contains("whisper") { return "Whisper" }
-        return nil
+        RecognizerProvenance(backend: backend)?.writer?.name
+    }
+
+    /// "Engine" names the writer; a hand-off between engines adds one plain sentence saying what happened.
+    static func engineFacts(_ backend: String?) -> [SettingsHistoryFact] {
+        guard let provenance = RecognizerProvenance(backend: backend), let writer = provenance.writer else { return [] }
+        var facts = [SettingsHistoryFact(title: "Engine", value: writer.name)]
+        if let notice = provenance.notice { facts.append(.init(title: "How it was transcribed", value: notice)) }
+        return facts
     }
 
     static func processingLabel(_ milliseconds: Int) -> String {

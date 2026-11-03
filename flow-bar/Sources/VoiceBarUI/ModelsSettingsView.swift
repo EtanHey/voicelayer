@@ -13,6 +13,7 @@ public struct ModelsSettingsView: View {
     private let recognizerState: RecognizerPickerState
     private let onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)?
     private let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
+    private let onSetUnloadWhenIdle: ((Bool) -> Void)?
 
     public init(
         state: ModelsSettingsState,
@@ -26,8 +27,10 @@ public struct ModelsSettingsView: View {
         onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil,
         recognizerState: RecognizerPickerState = .unavailable,
         onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil,
-        onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)? = nil
+        onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)? = nil,
+        onSetUnloadWhenIdle: ((Bool) -> Void)? = nil
     ) {
+        self.onSetUnloadWhenIdle = onSetUnloadWhenIdle
         self.onManageRecognizer = onManageRecognizer
         self.recognizerState = recognizerState
         self.onSelectRecognizer = onSelectRecognizer
@@ -59,6 +62,9 @@ public struct ModelsSettingsView: View {
             Section("Recognizer") {
                 RecognizerPickerView(state: recognizerState, onSelect: onSelectRecognizer, onManage: onManageRecognizer,
                     suppressDisabledExplanation: state.availability == .available && state.isBusy && recognizerState.selected != nil)
+                if let row = Self.unloadWhenIdleRow(for: recognizerState, canChange: onSetUnloadWhenIdle != nil) {
+                    unloadWhenIdleToggle(row)
+                }
                 // One shared reason above the controls it disables. The picker keeps
                 // command/fallback notices, but omits its duplicate disabled explanation.
                 if state.availability == .available, let reason = Self.effortDisabledReason(for: state) {
@@ -223,6 +229,60 @@ public struct ModelsSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// Row 2 (Etan ruling: Parakeet stays resident). OFF by default; nil while the daemon does not report it.
+    struct UnloadWhenIdleRow: Equatable {
+        let title: String
+        let isOn: Bool
+        let line: String
+        let lockedReason: String?
+        let disabled: Bool
+
+        /// Same rule as the Processing rows: the explanation always shows, a lock adds its reason below.
+        var captionLines: [String] { [line] + (lockedReason.map { [$0] } ?? []) }
+    }
+
+    static func unloadWhenIdleRow(for recognizer: RecognizerPickerState, canChange: Bool = true) -> UnloadWhenIdleRow? {
+        guard let setting = recognizer.unloadWhenIdle else { return nil }
+        let engine = recognizer.selected ?? .parakeet
+        let size = recognizer.assetsPresent(for: engine) ? recognizer.diskBytes[engine].flatMap(approximateSize) : nil
+        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) idle" } ?? "when idle"
+        return UnloadWhenIdleRow(
+            title: "Unload when idle" + (size.map { " (saves ~\($0))" } ?? ""),
+            isOn: recognizer.unloadWhenIdlePending ?? setting.effective,
+            line: "Off keeps \(engine.shortName) loaded so dictation starts right away. On frees its memory \(idle).",
+            lockedReason: setting.lockedReason,
+            disabled: setting.lockedReason != nil || recognizer.unloadWhenIdlePending != nil
+                || recognizer.selected == nil || !canChange)
+    }
+
+    /// "~3 GB", not "2.51 GB": the saving is approximate (memory, measured by the model's size on disk).
+    static func approximateSize(_ bytes: Int) -> String? {
+        guard bytes > 0 else { return nil }
+        let gigabytes = Double(bytes) / 1_000_000_000
+        if gigabytes >= 1 {
+            let rounded = (gigabytes * 2).rounded() / 2
+            return (rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)) + " GB"
+        }
+        return "\(max(1, Int((Double(bytes) / 1_000_000).rounded()))) MB"
+    }
+
+    private func unloadWhenIdleToggle(_ row: UnloadWhenIdleRow) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(row.title, isOn: Binding(get: { row.isOn }, set: { onSetUnloadWhenIdle?($0) }))
+                .disabled(row.disabled)
+                // Matches the Processing rows: a locked switch is muted whole, keeping its real value.
+                .opacity(row.lockedReason != nil ? 0.45 : 1)
+                .accessibilityIdentifier("recognizer-unload-when-idle")
+            ForEach(row.captionLines, id: \.self) { caption in
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.top, 4)
     }
 
     /// One Processing toggle: what it does, and why it cannot be changed here, if it cannot.
