@@ -97,6 +97,63 @@ final class RecognizerKUICopyTests: XCTestCase {
         XCTAssertNil(whisperOnly.explanation)
     }
 
+    // MARK: Row 1, review round 2: status fields alone never prove a delivered transcript
+
+    /// parakeet-backend.ts publishes effective=whisper + the reason BEFORE awaiting Whisper (Codex probe, adapted).
+    func testLoadingFallbackMustNotClaimACompletedTranscript() throws {
+        let event = RecognizerBindingTests.event(2, desired: "parakeet", effective: "whisper", phase: "loading",
+            parakeet: "sleeping", whisper: "loading", fallback: "uncovered-tail", allowed: false, refusal: "request-active")
+        let voice = RecognizerBindingTests.voice(); voice.setConnectionStatus(true); voice.handleEvent(event)
+        let state = voice.recognizerPickerState
+        let line = try XCTUnwrap(state.explanation)
+        XCTAssertFalse(line.contains("transcribed your last recording"), "Whisper has not returned any transcript")
+        XCTAssertFalse(line.contains("last recording"), "the current operation is never pinned on the previous recording")
+        XCTAssertEqual(line, "Transcribing this recording with Whisper…")
+        XCTAssertFalse(state.explanationIsWarning, "work in progress is a normal status line")
+    }
+
+    /// observeRecognizerBackend (stt.ts) marks the effective engine error after the fallback throws; effective and the
+    /// reason remain (Codex probe, adapted).
+    func testFailedFallbackMustNotClaimACompletedTranscript() throws {
+        let event = RecognizerBindingTests.event(3, desired: "parakeet", effective: "whisper", phase: "error",
+            parakeet: "sleeping", whisper: "error", fallback: "uncovered-tail")
+        let voice = RecognizerBindingTests.voice(); voice.setConnectionStatus(true); voice.handleEvent(event)
+        let state = voice.recognizerPickerState
+        let line = try XCTUnwrap(state.explanation)
+        XCTAssertFalse(line.contains("transcribed your last recording"), "Whisper failed without delivering a transcript")
+        XCTAssertFalse(line.contains("last recording"), "the failure is never pinned on the previous recording")
+        XCTAssertEqual(line, "Whisper couldn't finish this recording.")
+        XCTAssertTrue(state.explanationIsWarning)
+    }
+
+    /// The whole sequence the daemon publishes: fallback starts, fails, the next take's fallback is delivered by the
+    /// server (ready) or the CLI (sleeping). Only the delivered states claim a transcript.
+    func testCompletedClaimAppearsOnlyAfterTheFallbackDelivered() throws {
+        let voice = RecognizerBindingTests.voice(); voice.setConnectionStatus(true)
+        let completed = "Whisper transcribed your last recording: Parakeet's text stopped before the ending."
+        let sequence: [(Int, String, String?)] = [
+            (1, "loading", "Transcribing this recording with Whisper…"),
+            (2, "error", "Whisper couldn't finish this recording."),
+            (3, "loading", "Transcribing this recording with Whisper…"),
+            (4, "ready", completed),
+            (5, "sleeping", completed),
+        ]
+        for (revision, whisper, expected) in sequence {
+            voice.handleEvent(RecognizerBindingTests.event(revision, desired: "parakeet", effective: "whisper",
+                                                           phase: whisper, parakeet: "sleeping", whisper: whisper,
+                                                           fallback: "uncovered-tail"))
+            XCTAssertEqual(voice.recognizerPickerState.explanation, expected, "whisper=\(whisper)")
+        }
+        // A later Parakeet success clears it.
+        voice.handleEvent(RecognizerBindingTests.event(6, desired: "parakeet", effective: "parakeet", parakeet: "ready", whisper: "sleeping"))
+        XCTAssertNil(voice.recognizerPickerState.explanation)
+        // Whisper selected and loading through its own server -> CLI step: no hand-off, so no Parakeet wording.
+        let own = try Self.state(Self.payload(desired: "whisper", effective: "whisper", parakeet: "sleeping",
+                                              whisper: "loading", fallback: "timeout"))
+        XCTAssertFalse(own.explanation?.contains("Parakeet") ?? false)
+        XCTAssertFalse(own.explanation?.contains("Transcribing this recording") ?? false)
+    }
+
     // MARK: Row 2: Unload when idle (K2 contract), OFF by default
 
     func testRealK2DefaultStatusDecodesToAnOffUnlockedRow() throws {

@@ -59,7 +59,7 @@ public struct RecognizerPickerView: View {
             .accessibilityIdentifier("recognizer-picker")
             if let explanation = displayedExplanation {
                 Text(explanation).font(.caption)
-                    .foregroundStyle(state.fallbackReason != nil || state.parakeet == .error ? Color.orange : Color.secondary)
+                    .foregroundStyle(state.explanationIsWarning ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("recognizer-picker-explanation")
             }
             if let engine = state.retryEngine {

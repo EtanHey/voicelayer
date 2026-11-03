@@ -364,15 +364,32 @@ public struct RecognizerPickerState: Equatable, Sendable {
         if selected == .whisper, whisper == .error { return "Whisper is unavailable; try again later." }
         return isSelectionDisabled ? "Recognizer status unavailable" : nil
     }
-    /// Row 1: what really happened to the last recording, naming the engine that wrote the text. The selected engine
-    /// was asked first; the effective one wrote the text.
+    /// Row 1: what really happened, naming the engine that wrote the text. The selected engine was asked first; the
+    /// effective one took over. The daemon publishes `effective` + `fallback_reason` BEFORE the fallback engine runs
+    /// (parakeet-backend.ts) and leaves them in place when it fails (stt.ts marks only the phase), so these fields alone
+    /// never prove a transcript was delivered. Only a ready or sleeping fallback engine has delivered one
+    /// (K-ui review round 2). Loading describes the current operation; error says it didn't finish.
     var provenanceNotice: String? {
         guard let fallbackReason, let effective else { return nil }
         let first = RecognizerProvenance.Engine(selected ?? effective.other)
-        return RecognizerProvenance(firstEngine: first, writer: RecognizerProvenance.Engine(effective),
-                                    fallbackReason: fallbackReason).notice(about: Self.pickerSubject)
+        let provenance = RecognizerProvenance(firstEngine: first, writer: RecognizerProvenance.Engine(effective),
+                                              fallbackReason: fallbackReason)
+        guard first != provenance.writer else { return nil }
+        switch residency(for: effective) {
+        case .loaded, .unloaded: return provenance.notice(about: Self.pickerSubject)
+        // The whole recording goes to the fallback engine, not only its ending.
+        case .loading: return "Transcribing this recording with \(effective.shortName)…"
+        case .error: return "\(effective.shortName) couldn't finish this recording."
+        case .unknown: return nil
+        }
     }
     static let pickerSubject = "your last recording"
+    /// Orange only for a hand-off that happened or failed; work in progress reads as a normal status line.
+    public var explanationIsWarning: Bool {
+        if let effective, fallbackReason != nil, residency(for: effective) == .loading,
+           commandNotice == nil, explanation == provenanceNotice { return false }
+        return fallbackReason != nil || parakeet == .error
+    }
 
     public static func message(for reason: String?) -> String {
         switch reason {
