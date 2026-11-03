@@ -30,6 +30,41 @@ final class RecordingJobOwnershipTests: XCTestCase {
             "recording_jobs": jobs.map { ["take_id": $0.0, "kind": $0.1, "phase": $0.2] }])
     }
 
+    func testOwnedLiveFinalKeepsPolishMetadataWithoutHistoryPartialOrDuplicateOverwrite() {
+        let state = makeState()
+        state.sendCommand = { _ in }
+        func final(_ id: String, extra: [String: Any] = [:]) {
+            var event: [String: Any] = ["type": "transcription", "take_id": id,
+                "job_kind": "live", "delivery_id": id, "text": "Synthetic owned final"]
+            event.merge(extra) { _, new in new }
+            state.handleEvent(event)
+        }
+        // A reconnect final has no original cursor target, but still carries its outcome.
+        final("applied", extra: ["polished": true])
+        XCTAssertEqual(state.lastTranscriptionPolished, true)
+        XCTAssertNil(state.lastTranscriptionPolishReason)
+
+        state.handleEvent(["type": "transcription", "take_id": "history", "job_kind": "history",
+            "text": "Synthetic History final", "polished": false, "polish_reason": "history"])
+        state.handleEvent(["type": "transcription", "take_id": "partial", "job_kind": "live",
+            "partial": true, "text": "Synthetic partial", "polished": false, "polish_reason": "partial"])
+        final("applied", extra: ["polished": false, "polish_reason": "duplicate"])
+        XCTAssertEqual(state.lastTranscriptionPolished, true)
+        XCTAssertNil(state.lastTranscriptionPolishReason)
+
+        final("fallback", extra: ["polished": false, "polish_reason": "Polish budget expired"])
+        XCTAssertEqual(state.lastTranscriptionPolished, false)
+        XCTAssertEqual(state.lastTranscriptionPolishReason, "Polish budget expired")
+
+        final("applied-again", extra: ["polished": true])
+        XCTAssertEqual(state.lastTranscriptionPolished, true)
+        XCTAssertNil(state.lastTranscriptionPolishReason)
+
+        final("legacy-without-metadata")
+        XCTAssertNil(state.lastTranscriptionPolished)
+        XCTAssertNil(state.lastTranscriptionPolishReason)
+    }
+
     func testF5StartsNewCaptureDuringHistoryAndNeverSendsHistoryCancel() throws {
         let state = makeState()
         var commands: [[String: Any]] = []
