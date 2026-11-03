@@ -204,6 +204,8 @@ if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
     bundle_search_roots+=("$TMPDIR")
 fi
 while IFS= read -r bundle; do
+    # Both discovery sources include retained test runs; exclude only that component.
+    [[ "$bundle" == */.test-tmp/* ]] && continue
     [[ -d "$bundle" ]] || continue
     if voicebar_bundle_identity "$bundle"; then
         bundles+=("$bundle")
