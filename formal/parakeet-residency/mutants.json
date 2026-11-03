@@ -156,5 +156,38 @@
     "module": "ArchiveGateEvidence.tla",
     "property": "NoFailureDetailOnTranscript",
     "replace": []
+  },
+  {
+    "name": "PressureNeverUnloadsBusy",
+    "module": "MemoryPressure.tla",
+    "property": "PressureNeverUnloadsBusy",
+    "replace": [
+      [
+        "Pressure == /\\ resident /\\ stage = \"ready\" /\\ busy = \"idle\"",
+        "Pressure == /\\ resident /\\ stage = \"ready\""
+      ]
+    ]
+  },
+  {
+    "name": "DefaultNeverIdleEvicts",
+    "module": "MemoryPressure.tla",
+    "property": "DefaultNeverIdleEvicts",
+    "replace": [
+      [
+        "IdleExpiry == /\\ resident /\\ stage = \"ready\" /\\ busy = \"idle\" /\\ idleEnabled",
+        "IdleExpiry == /\\ resident /\\ stage = \"ready\" /\\ busy = \"idle\""
+      ]
+    ]
+  },
+  {
+    "name": "BootCaptureAllowed",
+    "module": "MemoryPressure.tla",
+    "property": "BootCaptureAllowed",
+    "replace": [
+      [
+        "CaptureStart == /\\ busy = \"idle\"",
+        "CaptureStart == /\\ busy = \"idle\" /\\ stage = \"ready\""
+      ]
+    ]
   }
 ]

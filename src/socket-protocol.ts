@@ -356,6 +356,8 @@ export type AckCommand =
   | "delete_recognizer"
   | "download_recognizer"
   | "set_recognizer_residency"
+  | "set_model_unload_when_idle"
+  | "memory_pressure"
   | "cancel_recognizer_download"
   | "set_tts_setting"
   | "preview_tts_profile";
@@ -587,6 +589,8 @@ export interface SetRecognizerResidencyCommand extends SocketCommandBase { cmd: 
 export interface DownloadRecognizerCommand extends SocketCommandBase { cmd: "download_recognizer" | "cancel_recognizer_download"; engine: import("./recognizer-state").Recognizer; }
 export interface DeleteRecognizerCommand extends SocketCommandBase { cmd: "delete_recognizer"; engine: import("./recognizer-state").Recognizer; }
 export interface GetRecognizerStatusCommand extends SocketCommandBase { cmd: "get_recognizer_status"; }
+export interface SetModelUnloadWhenIdleCommand extends SocketCommandBase { cmd: "set_model_unload_when_idle"; value: boolean; }
+export interface MemoryPressureCommand extends SocketCommandBase { cmd: "memory_pressure"; level: "warning" | "critical"; }
 
 export interface SetRecordingHoldCommand extends SocketCommandBase {
   cmd: "set_recording_hold";
@@ -642,6 +646,8 @@ export type SocketCommand =
   | DeleteRecognizerCommand
   | DownloadRecognizerCommand
   | SetRecognizerResidencyCommand
+  | SetModelUnloadWhenIdleCommand
+  | MemoryPressureCommand
   | GetRecognizerStatusCommand;
 
 export interface HealthResponse extends RecordingJobsSnapshot {
@@ -1081,6 +1087,14 @@ export function parseCommand(line: string): SocketCommand | null {
       case "set_recognizer": {
         if (parsed.recognizer !== "parakeet" && parsed.recognizer !== "whisper") return null;
         return withCommandId<SetRecognizerCommand>({ cmd: "set_recognizer", recognizer: parsed.recognizer }, id);
+      }
+      case "set_model_unload_when_idle": {
+        if (typeof parsed.value !== "boolean") return null;
+        return withCommandId<SetModelUnloadWhenIdleCommand>({ cmd: "set_model_unload_when_idle", value: parsed.value }, id);
+      }
+      case "memory_pressure": {
+        if (parsed.level !== "warning" && parsed.level !== "critical") return null;
+        return withCommandId<MemoryPressureCommand>({ cmd: "memory_pressure", level: parsed.level }, id);
       }
       case "set_recognizer_residency": {
         if (parsed.engine !== "parakeet" && parsed.engine !== "whisper" || parsed.action !== "load" && parsed.action !== "unload") return null;

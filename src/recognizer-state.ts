@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, unlinkSync } from "fs";
 import { dirname, join } from "path";
 import { getStateDir, safeWriteFileSync } from "./paths";
 import { readRecognizerAssets } from "./recognizer-assets";
-import { modelIdleSeconds } from "./model-residency";
+import { modelIdleSeconds, modelIdlePolicy } from "./model-residency";
 export type Recognizer = "parakeet" | "whisper";
 export type RecognizerPhase = "loading" | "ready" | "sleeping" | "error";
 export interface RecognizerDownloadStatus { state: "idle" | "downloading" | "verifying" | "runtime" | "complete" | "cancelled" | "error"; received_bytes: number; total_bytes: number; error: string | null }
@@ -12,6 +12,7 @@ export interface RecognizerStatus {
   engines: Record<Recognizer, { assets_present: boolean; disk_bytes: number; download: RecognizerDownloadStatus; phase: RecognizerPhase; available: boolean | null; error: string | null }>;
   fallback_reason: string | null; switch_allowed: boolean; switch_refusal_reason: string | null;
   idle_unload_seconds: number; source: "settings" | "env" | "default";
+  unload_when_idle: boolean; unload_when_idle_locked: boolean; unload_when_idle_env_var: string | null;
 }
 export function recognizerSettingsPath(): string { return join(getStateDir(), "stt-settings.json"); }
 export function recognizerPreference(): { recognizer: Recognizer; source: RecognizerStatus["source"] } {
@@ -93,12 +94,13 @@ export function readRecognizerStatus(): RecognizerStatus {
   return { revision, desired: preference.recognizer, effective, phase,
     engines: { parakeet: { ...engines.parakeet, ...readRecognizerAssets("parakeet") }, whisper: { ...engines.whisper, ...readRecognizerAssets("whisper") } },
     fallback_reason: fallbackReason, switch_allowed: reason === null, switch_refusal_reason: reason,
-    idle_unload_seconds: modelIdleSeconds(), source: preference.source };
+    idle_unload_seconds: modelIdleSeconds(), ...modelIdlePolicy(), source: preference.source };
 }
 function publish(): void {
   revision++;
   for (const listener of listeners) { try { listener(readRecognizerStatus()); } catch { /* UI observation cannot replace provider errors. */ } }
 }
+export function publishRecognizerStatus(): void { publish(); }
 export function onRecognizerStatusChange(listener: (status: RecognizerStatus) => void): () => void { listeners.add(listener); return () => listeners.delete(listener); }
 export function noteRecognizerEngine(engine: Recognizer, value: Partial<RecognizerStatus["engines"][Recognizer]>): void {
   if (recognizerOwnerClosed() && (value.phase === "ready" || value.phase === "loading")) return;
