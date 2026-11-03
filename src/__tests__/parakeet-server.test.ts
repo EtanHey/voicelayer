@@ -13,6 +13,7 @@ const rl=createInterface({input:process.stdin});
 for await (const line of rl) {
  const r=JSON.parse(line),p=r.audio_path; let out={id:r.id,ok:true};
  if(r.op==='health'){
+  if(process.argv[2]==='slow-start')await new Promise(r=>setTimeout(r,80));
   out={...out,ready:true,protocol:1,pid:process.pid};
   if(process.argv[2]==='startup-cleanup'){
    Bun.spawn([process.execPath,'-e','await Bun.sleep(350)'],{env:process.env,stdout:'inherit',stderr:'inherit'});out.ready=false;
@@ -52,6 +53,14 @@ for await (const line of rl) {
   });
   test("concurrent requests preserve command identities", async () => {
     const s = make(); const rs = await Promise.all([s.transcribe("delay"), s.transcribe("normal"), s.transcribe("normal")]); expect(rs.length).toBe(3);
+  });
+  test("dictation during boot warm-up shares the child and pressure cannot evict it", async () => {
+    let loads = 0;
+    const s = make({ command: [process.execPath, fixture, "slow-start"], onState: phase => { if (phase === "loading") loads++; } });
+    const boot = s.start();
+    const dictation = s.transcribe("normal");
+    expect(await s.unloadForMemoryPressure()).toBe(false);
+    await boot; expect((await dictation).complete).toBe(true); expect(loads).toBe(1);
   });
   test.each(["crash", "partial", "wrong-id", "bad-frames", "provider-error"])("%s destroys owned service; a later request can start cleanly", async bad => {
     const s = make(); await expect(s.transcribe(bad)).rejects.toThrow(); expect(await s.health()).toBe(false);

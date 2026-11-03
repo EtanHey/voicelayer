@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { initializeVoiceGate } from "./update-gate-admission";
+import { initializeVoiceGate, withFreshAsyncVoiceAdmission } from "./update-gate-admission";
 import { createNativeDrainParticipant, createVoiceDrainControl } from "./update-gate-native-participant";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { stopPlayback } from "./tts";
@@ -252,7 +252,7 @@ async function main() {
   });
 
   // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
-  void warmSelectedRecognizer().catch(() => {
+  void withFreshAsyncVoiceAdmission(() => warmSelectedRecognizer()).catch(() => {
     console.error("[voicelayer-daemon] Boot recognizer warm-up failed; dictation can retry");
   });
   void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
