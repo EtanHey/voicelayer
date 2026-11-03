@@ -95,7 +95,8 @@ drops), the controller verifies the outcome rather than reporting a plain
 install failure: both pinned processes must be absent, no
 VoiceBar executable may remain in the process table, and G2 must still observe
 the exact COMMITTED lease with no diagnostic or admission records. It observes
-exit with a five-second polling budget. Sampling must finish before that deadline.
+exit with a five-second polling budget. Confirmed absence can finish the final poll
+just past the deadline; otherwise expiry refuses.
 Same-start-time `<defunct>`/`(basename)` participants, empty ps while a PID exists,
 and unreadable process evidence keep polling without authorizing installation.
 A reused PID or competing VoiceBar refuses immediately. Deadline exhaustion,

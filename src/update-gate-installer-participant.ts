@@ -298,8 +298,8 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
         const after = deps.participantsExited(pinned);
         if (!held) throw refusal("held lease unverifiable");
         if (before === "UNSAFE" || after === "UNSAFE") throw refusal("PID reused or competing VoiceBar observed");
-        if (deps.now() >= deadline) throw refusal("participants did not verifiably exit before the deadline");
         if (before === true && after === true) return;
+        if (deps.now() >= deadline) throw refusal("participants did not verifiably exit before the deadline");
         await deps.sleep();
       }
     },

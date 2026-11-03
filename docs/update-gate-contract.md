@@ -106,7 +106,8 @@ Both process samples must prove absence, bracketing the exact COMMITTED lease,
 empty admission ledger and clean diagnostics checked under G1 on **every poll**.
 A positively different birth/executable or competing VoiceBar refuses immediately;
 unknown process-table evidence waits until the deadline and cannot authorize a swap.
-The deadline is checked after sampling and before success. No process is killed.
+Only confirmed absence can finish the final poll just past the deadline; uncertainty
+at that point refuses. No process is killed.
 
 The updater prints `RECOVERY_REQUIRED`, the gate and receipt paths, and a refusal
 saying VoiceBar may be stopped. It gives this exact availability repair command,

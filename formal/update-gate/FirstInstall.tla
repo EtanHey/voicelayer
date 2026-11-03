@@ -127,7 +127,7 @@ QuitInit ==
 QuitSample ==
   /\ phase = "poll"
   /\ mutex' = (gate = "COMMITTED" \/ SkipQuitHeldCheck)
-  /\ evidence' = participants \in QuitUnsafe
+  /\ evidence' = (participants \in QuitUnsafe)
   /\ creation' = participants
   /\ phase' = "decide"
   /\ UNCHANGED <<gate, participants, scenario, available, created>>
