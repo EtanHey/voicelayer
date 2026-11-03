@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { afterEach, test, expect } from "bun:test";
 import { mkdirSync, writeFileSync, readFileSync, mkdtempSync, unlinkSync, rmdirSync, existsSync, readdirSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
@@ -61,7 +62,7 @@ test("busy direct CLI waits without mutations; Ctrl-C restores admission", async
 }, INSTALLER_PROCESS_TIMEOUT_MS);
 test("idle direct CLI commits once and nested helpers validate the same lease", async () => {
   const f = fixture("idle"), child = f.start();
-  expect(await child.exited).toBe(0);
+  expect(await child.exited).toBe(1);
   const state = JSON.parse(readFileSync(f.gate, "utf8"));
   expect(state.kind).toBe("COMMITTED"); expect(state.lease.generation).toBe(1);
   expect(readFileSync(f.log, "utf8").trim().split("\n")).toEqual(["brew upgrade --formula fake", "osascript quit", "launchctl bootout fake", "mv old.app new.app"]);
@@ -88,7 +89,7 @@ test("busy fake daemon later becomes idle and commits the original generation", 
     await waitFor(() => JSON.parse(readFileSync(f.gate, "utf8")).kind === "DRAINING");
     expect(readFileSync(f.log, "utf8")).toBe("");
     writeFileSync(f.proof, JSON.stringify({ phase: "idle", ready: true }));
-    expect(await child.exited).toBe(0);
+    expect(await child.exited).toBe(1);
     expect(JSON.parse(readFileSync(f.gate, "utf8")).lease.generation).toBe(1);
   } finally { if (child.exitCode === null) { child.kill(); await child.exited; } }
 }, INSTALLER_PROCESS_TIMEOUT_MS);
@@ -137,7 +138,7 @@ test("admitted work drains through G2 even when the fake participant reports idl
     await waitFor(() => JSON.parse(readFileSync(f.gate, "utf8")).kind === "DRAINING");
     expect(readFileSync(f.log, "utf8")).toBe("");
     finish(); await work;
-    expect(await child.exited).toBe(0);
+    expect(await child.exited).toBe(1);
   } finally { finish(); await work; if (child.exitCode === null) { child.kill(); await child.exited; } }
 }, INSTALLER_PROCESS_TIMEOUT_MS);
 test("release artifacts and promotion do not take a resident gate", async () => {
@@ -209,7 +210,7 @@ test.each(["SIGINT", "SIGTERM"] as const)("R3 postcommit %s preserves the contro
     expect(child.exitCode).toBeNull();
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
     writeFileSync(finish, "finish"); await waitFor(() => existsSync(done));
-    expect(await child.exited).toBe(0);
+    expect(await child.exited).toBe(1);
     expect(await new Response(child.stderr).text()).toContain("Cancel unavailable after COMMIT");
   } finally { writeFileSync(finish, "finish"); if (child.exitCode === null) await child.exited; }
 }, INSTALLER_PROCESS_TIMEOUT_MS);

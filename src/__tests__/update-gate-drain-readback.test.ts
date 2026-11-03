@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { test, expect } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -201,7 +202,7 @@ async function scenario(mode: Mode) {
       expect(d.events.find(e => e.event === "holder-acquired")).toMatchObject({ lock: true, gate: "DRAINING" });
       // Both outcome and the failed real mkdir are required: green cannot skip.
       expect(String(error)).toBe("undefined");
-      expect(result).toBe(0);
+      expect(result).toBe(1);
       expect(d.events.filter(e => e.event === "atomic-acquisition-failed").length).toBeGreaterThan(0);
       expect(d.events.filter(e => e.event === "atomic-acquisition-failed").every(e => e.error === "Error: UPDATE_GATE_LOCKED")).toBe(true);
       if (mode === "collision") expect(d.events.find(e => e.event === "atomic-read")?.kind).toBe("DRAINING");

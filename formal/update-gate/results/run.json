@@ -1,0 +1,227 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/update-gate/FirstInstall.tla": "5fd40c54b964793fd348f9b97f349f399b4ff8529ad9b1169fd8cd36de2c7fac",
+    "formal/update-gate/checks.json": "4a6146847e5f7ffa5702c866447f1eb2087ef1d5aa3959940b9280f91287a30a",
+    "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/update-gate/QuitMutantReuse.cfg": "c588f7108cc70e0fc570aa6f3aab8fb19f20102851e578f30d5af0eeae34d4e1",
+    "formal/update-gate/UpgradeOld.cfg": "11ad0ece993cf96794beb5b990144a152b9e4f9b79ac219c7d4ba063a8c96abe",
+    "formal/update-gate/MutantLive.cfg": "fb8d6256aef099bb9f771ef77eb4a8e441f783382b7a1f7af3af23d0e682dedf",
+    "formal/update-gate/CompleteOld.cfg": "43ae7c3f3c782a4a037395dfdf2f7e0be36bfd803df181c8718ffa71e8435f05",
+    "formal/update-gate/QuitOld.cfg": "678f0103c569654842568c0b64d6513bc8d76d13607f423110d0d3d6f0501e76",
+    "formal/update-gate/QuitFixed.cfg": "337fb47483788cfe44e144fd2754449e60e3850457758e5aaf6806b26b37c888",
+    "formal/update-gate/CompleteMutantOwner.cfg": "02698124abe7a06134a05f97a4a771a604ac0a6f4fb7511bca12568b57afa918",
+    "formal/update-gate/CompleteMutantSha.cfg": "7c5f1c775261ff4f9f286d4c08401ee5180cdfa9608477a5646e66c4675d2d47",
+    "formal/update-gate/CompleteFixed.cfg": "8797f42e341d0d257f95b8081f685a7af89f2e2c2d68d738851e15423d219b33",
+    "formal/update-gate/MutantEvidence.cfg": "73593ce1f6ae0bd0ced94be72eea2fb8a259ceff27bf73b705b163c3042dd554",
+    "formal/update-gate/MutantGeneration.cfg": "7b7f9b18a4b0bce40811be40062e6e7b0418e681458263d2b154a8b9f71390b4",
+    "formal/update-gate/UpgradeFixed.cfg": "afd215f3d072e49362e1064999a12f1ea2ee85da55d63373d0639ec16c72e67b",
+    "formal/update-gate/MutantReplace.cfg": "5256c8816f9c6bf14dbdad5a77fc73bf9c7af95ee37beae82526624f6112b89b",
+    "formal/update-gate/QuitMutantHeld.cfg": "1e6821cd627cfac016226ae8c0368acc5e1bec2bab31bc653cb480f20999761a",
+    "formal/update-gate/MutantUpgradeController.cfg": "3bfb879231c45babc70fa443d8d8fec69b1c31de9513aab2397c3afd4138f800",
+    "formal/update-gate/MutantMissingTarget.cfg": "572006f0bf813476d6053d57381e982c6f14ed4f8d990b8076fb81db1a83b872",
+    "formal/update-gate/OldNoBootstrap.cfg": "1c4ec823d0815d73234dc3ea07ab644462b2fbdfd46b2b1311d9b5e53ba5d8e0",
+    "formal/update-gate/Fixed.cfg": "fa31127d1d9fd50b63cdb75a8a56ad38e0160082856aedff1df2f1e2f50d0704",
+    "src/cli/setup.ts": "f45eee3baf6989070638cfd0bc22dbeb6a73cbbcdaef5aab0902bb0abbacbce9",
+    "src/update-gate-admission.ts": "675cdd7a8e9dc69c243cd58a97f8afde881cfbbcb3bc5d9304e3a304ce78262d",
+    "src/update-gate-storage.ts": "c33977d31799636a3a9292f4977827c52b6ab784f249512437f67b2553210476",
+    "scripts/lib/update-gate.sh": "e30af5fdebc72200d55630795d8be1e2cc51a3c6848d8c1985f60fdd3334805d",
+    "scripts/voicelayer-dedupe-voicebar.sh": "ebd6239db4c66e2b922afa941e4102618631910641fef6a73de81031b55b34e3",
+    "scripts/install-voicebar-autostart.sh": "58a4649aa3707a6382e521c626e7c58a480f64113ef4bdd2a3e084c61be62e7c",
+    "scripts/promote-voicebar-release.sh": "0bbf4a2c3c357a6c743386422c02e968e3bed4d4331204cfeec1408c6836cd61",
+    "src/update-gate-installer-participant.ts": "4c178af4c9ae06d3411d6d2e476d781730c27f88b1d13a2ea5e7d161bd3d08d5",
+    "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
+    "src/update-gate-installer.ts": "42a53f7c435af2b94ab803b5c9b301770e36420eadd5532da23ec1423b64d429"
+  },
+  "mutants": {
+    "BootstrapOnlyQuiescent": [
+      "MutantLive"
+    ],
+    "BootstrapPreservesEvidence": [
+      "MutantEvidence"
+    ],
+    "BootstrapExclusiveCreate": [
+      "MutantReplace"
+    ],
+    "BootstrapOpenGenerationZero": [
+      "MutantGeneration"
+    ],
+    "FreshInstallCompletes": [
+      "OldNoBootstrap"
+    ],
+    "VoiceBarRunningAfterUpgrade": [
+      "UpgradeOld",
+      "MutantMissingTarget"
+    ],
+    "UpgradeControllerOwnsStartup": [
+      "MutantUpgradeController"
+    ],
+    "HealthyQuitCompletes": [
+      "QuitOld"
+    ],
+    "NeverProceedOnReusedOrCompetitor": [
+      "QuitMutantReuse"
+    ],
+    "NeverProceedWithoutHeldLease": [
+      "QuitMutantHeld"
+    ],
+    "NeverReopenUnverified": [
+      "CompleteMutantSha",
+      "CompleteMutantOwner"
+    ],
+    "LeasedUpdateReopensAdmission": [
+      "CompleteOld"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "b8069d1cfab320a76697ad7b4caa482aa596c77a3b6d9add81c1f144fd18933e"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 39,
+      "distinct": 39
+    },
+    "MutantLive": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "BootstrapOnlyQuiescent",
+      "status": "EXPECTED_FAIL",
+      "generated": 23,
+      "distinct": 21
+    },
+    "MutantEvidence": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "BootstrapPreservesEvidence",
+      "status": "EXPECTED_FAIL",
+      "generated": 28,
+      "distinct": 25
+    },
+    "MutantReplace": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "BootstrapExclusiveCreate",
+      "status": "EXPECTED_FAIL",
+      "generated": 27,
+      "distinct": 24
+    },
+    "MutantGeneration": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "BootstrapOpenGenerationZero",
+      "status": "EXPECTED_FAIL",
+      "generated": 19,
+      "distinct": 19
+    },
+    "OldNoBootstrap": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "FreshInstallCompletes",
+      "status": "EXPECTED_FAIL",
+      "generated": 46,
+      "distinct": 39
+    },
+    "UpgradeFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 13,
+      "distinct": 12
+    },
+    "UpgradeOld": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "VoiceBarRunningAfterUpgrade",
+      "status": "EXPECTED_FAIL",
+      "generated": 13,
+      "distinct": 13
+    },
+    "MutantMissingTarget": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "VoiceBarRunningAfterUpgrade",
+      "status": "EXPECTED_FAIL",
+      "generated": 12,
+      "distinct": 11
+    },
+    "MutantUpgradeController": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "UpgradeControllerOwnsStartup",
+      "status": "EXPECTED_FAIL",
+      "generated": 14,
+      "distinct": 11
+    },
+    "QuitFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 41,
+      "distinct": 41
+    },
+    "QuitOld": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "HealthyQuitCompletes",
+      "status": "EXPECTED_FAIL",
+      "generated": 31,
+      "distinct": 31
+    },
+    "QuitMutantReuse": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverProceedOnReusedOrCompetitor",
+      "status": "EXPECTED_FAIL",
+      "generated": 11,
+      "distinct": 11
+    },
+    "QuitMutantHeld": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverProceedWithoutHeldLease",
+      "status": "EXPECTED_FAIL",
+      "generated": 15,
+      "distinct": 15
+    },
+    "CompleteFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 17,
+      "distinct": 17
+    },
+    "CompleteOld": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "LeasedUpdateReopensAdmission",
+      "status": "EXPECTED_FAIL",
+      "generated": 15,
+      "distinct": 15
+    },
+    "CompleteMutantSha": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverReopenUnverified",
+      "status": "EXPECTED_FAIL",
+      "generated": 18,
+      "distinct": 17
+    },
+    "CompleteMutantOwner": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverReopenUnverified",
+      "status": "EXPECTED_FAIL",
+      "generated": 18,
+      "distinct": 17
+    }
+  }
+}

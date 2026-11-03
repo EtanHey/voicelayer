@@ -69,3 +69,29 @@ This is an observation/order model, not a macOS scheduler or installed-app proof
 | QuitFixed | PASS | All three quit properties |
 | QuitMutantReuse | FAIL when reuse is treated as gone | NeverProceedOnReusedOrCompetitor |
 | QuitMutantHeld | FAIL without locked lease verification | NeverProceedWithoutHeldLease |
+
+## Verified leased completion (G5)
+
+`CompletionSpec` starts at COMMITTED after the old participants have exited.
+The controller waits for child exit, reads the installed GitCommit, and obtains
+fresh authenticated replacement native/daemon identities. Only its matching
+lease/controller custody can publish OPEN with that generation and released
+lease under G1; the matching controller receipt is removed after publication.
+The existing startup-only upgrade model above intentionally retains COMMITTED:
+starting the app alone is not completion. G5 supplies the separate final phase.
+
+| Config | Expected | Exact property |
+| --- | --- | --- |
+| CompleteOld | FAIL: omit COMPLETE | LeasedUpdateReopensAdmission |
+| CompleteFixed | PASS | LeasedUpdateReopensAdmission + NeverReopenUnverified |
+| CompleteMutantSha | FAIL: omit installed target match | NeverReopenUnverified |
+| CompleteMutantOwner | FAIL: allow a different controller owner | NeverReopenUnverified |
+
+The liveness premise is verified successful installation by the owner. Weak
+fairness assumes controller and next admission acquire execute. A nonzero child,
+SHA mismatch, dead/old successor, or foreign owner retains COMMITTED; those are
+not liveness promises. The model abstracts fresh round trips/unchanged bytes as
+verified predicates, not proof of real macOS permissions or IPC availability.
+The same native admission object rereads OPEN on its next acquire without a
+restart (NativeUpdateGateTests.testCommittedSuccessorAdmitsAfterCompleteWithoutRestart).
+No successor startup finalizer, automatic relaunch, or recovery tool is added.

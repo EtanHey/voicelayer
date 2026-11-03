@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -145,7 +146,7 @@ test("entry retries a required real G1 collision after release before the conten
   expect(trace.filter(e => e.kind === "error").map(e => e.value)).toEqual(["UPDATE_GATE_LOCKED"]);
   expect(trace.filter(e => e.kind === "probe")).toEqual([]);
   expect(trace.filter(e => e.kind === "read").map(e => (e.value as { kind: string }).kind)).toEqual(["OPEN"]);
-  expect(failure).toBeUndefined(); expect(result).toBe(0);
+  expect(failure).toBeUndefined(); expect(result).toBe(1);
   const current = readInstallerGateState(), lease = JSON.parse(readFileSync(f.installed, "utf8"));
   expect(current.kind).toBe("COMMITTED");
   expect(current.kind !== "UNKNOWN" && current.kind !== "OPEN" && sameLease(current.lease, lease)).toBe(true);

@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
@@ -166,7 +167,7 @@ test.each([
     const command = [process.execPath, "-e", `await Bun.write(${JSON.stringify(marker)}, 'installed')`];
     // Injected participants require the same live preload capability and proof.
     const run = runGatedInstall(command, participant);
-    if (verified) expect(await run).toBe(0); else await expect(run).rejects.toThrow("UNKNOWN");
+    if (verified) expect(await run).toBe(1); else await expect(run).rejects.toThrow("UNKNOWN");
     expect(existsSync(marker)).toBe(verified);
     expect(actions).toEqual(["drain", "drain", "drain", "quit"]);
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
@@ -295,7 +296,7 @@ test("post-COMMIT drain UNKNOWN is retried before one quit and installation", as
       verify: () => ready,
       async quit() { quits++; if (!ready) throw Error("UNKNOWN: not refreshed"); },
     });
-    expect(result).toBe(0); expect(existsSync(marker)).toBe(true);
+    expect(result).toBe(1); expect(existsSync(marker)).toBe(true);
     expect(committedRefreshes).toBe(3); expect(quits).toBe(1);
   } finally { process.env.VOICELAYER_TEST_INSTALL_PROOF = savedProof; process.env.VOICELAYER_UPDATE_TARGET_SHA = savedTarget; }
 });
@@ -512,4 +513,44 @@ test("R2 participant COMMIT readback retries a 700ms holder without a post-sampl
   });
   expect(result.kind).toBe("APPLIED");
   expect(existsSync(f.gate + ".lock")).toBe(false);
+});
+
+test.each(["new", "old-native", "old-daemon", "old-birth", "wrong-bundle", "dead", "stale"])("G5 successor proof: %s", async fault => {
+  const f = fixture(); await f.commit();
+  const successor = f.participant.successor!();
+  const identities = { native: { pid: 201, incarnation: crypto.randomUUID() }, daemon: { pid: 202, incarnation: crypto.randomUUID() } };
+  if (fault === "old-native") identities.native.incarnation = f.identities.native.incarnation;
+  if (fault === "old-daemon") identities.daemon.incarnation = f.identities.daemon.incarnation;
+  if (fault === "old-birth") { identities.native.pid = 101; identities.native.incarnation = crypto.randomUUID(); }
+  f.reply({ kind: "ACKNOWLEDGED", native: f.ack, daemon: f.ack, identities });
+  f.deps.processParent = () => identities.native.pid;
+  f.deps.processIdentity = pid => fault === "dead" ? null : pid === identities.native.pid
+    ? `${fault === "old-birth" ? "birth" : "Tue Nov  3 15:54:30 2026"} /${fault === "wrong-bundle" ? "tmp/Copy.app" : "Applications/VoiceBar.app"}/Contents/MacOS/VoiceBar` : "birth /opt/homebrew/bin/bun";
+  if (fault === "stale") { const request = f.deps.request; f.deps.request = async (action, lease) => { const reply = await request(action, lease); f.advance(); return reply; }; }
+  if (fault === "new") {
+    expect((await successor.refresh(f.lease)).ready).toBe(true);
+    expect(successor.verify(JSON.parse(readFileSync(f.gate, "utf8")))).toBe(true);
+    f.advance(); expect(successor.verify(JSON.parse(readFileSync(f.gate, "utf8")))).toBe(false);
+  } else {
+    await expect(successor.refresh(f.lease)).rejects.toThrow("UNKNOWN");
+    expect(successor.verify(JSON.parse(readFileSync(f.gate, "utf8")))).toBe(false);
+  }
+});
+
+test("G5 completion samples identities before publication and never after OPEN", async () => {
+  const f = fixture(); await f.commit();
+  const successor = f.participant.successor!();
+  const identities = { native: { pid: 201, incarnation: crypto.randomUUID() }, daemon: { pid: 202, incarnation: crypto.randomUUID() } };
+  f.reply({ kind: "ACKNOWLEDGED", native: f.ack, daemon: f.ack, identities });
+  f.deps.processParent = () => 201;
+  f.deps.processIdentity = pid => {
+    if (JSON.parse(readFileSync(f.gate, "utf8")).kind === "OPEN") throw Error("post-COMPLETE identity sample forbidden");
+    expect(existsSync(f.gate + ".lock")).toBe(false);
+    return "Tue Nov  3 15:54:30 2026 " + (pid === 201 ? "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar" : "/opt/homebrew/bin/bun");
+  };
+  await successor.refresh(f.lease);
+  const result = await successor.withCompletionProof!(() => updateVoiceGate({ kind: "COMPLETE", lease: f.lease,
+    installerExitCode: 0, installedSha: f.lease.targetSha, participantsVerified: true }, successor.verify));
+  expect(result.kind).toBe("APPLIED");
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
 });

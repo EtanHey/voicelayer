@@ -302,7 +302,8 @@ export function updateVoiceGate(command: unknown, verify?: ParticipantProof, env
     const current = snapshot(path);
     if (!current) return { kind: "REFUSED", reason: "UNKNOWN" };
     const result = transitionUpdateGate(current.state, command);
-    if (result.kind === "APPLIED" && (result.state.kind === "PREPARED" || result.state.kind === "COMMITTED") &&
+    if (result.kind === "APPLIED" && (result.state.kind === "PREPARED" || result.state.kind === "COMMITTED" ||
+      (current.state.kind === "COMMITTED" && result.state.kind === "OPEN")) &&
       (current.active.length !== 0 || verify?.(current.state) !== true)) return { kind: "REFUSED", reason: "UNKNOWN" };
     if (result.kind === "APPLIED") persistUpdateGateState(path, result.state);
     return result;

@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "UpgradeControllerOwnsStartup",
+  "status": "EXPECTED_FAIL",
+  "generated": 14,
+  "distinct": 11,
+  "trace": [
+    "/\\ phase = \"formula\"\n/\\ available = FALSE\n/\\ scenario = \"leaseOwner\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"cask\"\n/\\ available = FALSE\n/\\ scenario = \"leaseOwner\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"postflight\"\n/\\ available = FALSE\n/\\ scenario = \"leaseOwner\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"dedupe\"\n/\\ available = TRUE\n/\\ scenario = \"leaseOwner\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = TRUE"
+  ]
+}

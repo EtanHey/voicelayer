@@ -1,0 +1,16 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "HealthyQuitCompletes",
+  "status": "EXPECTED_FAIL",
+  "generated": 31,
+  "distinct": 31,
+  "trace": [
+    "/\\ phase = \"poll\"\n/\\ available = 1\n/\\ scenario = \"healthy\"\n/\\ creation = \"none\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"alive\"\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"decide\"\n/\\ available = 1\n/\\ scenario = \"healthy\"\n/\\ creation = \"alive\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"alive\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"poll\"\n/\\ available = 2\n/\\ scenario = \"healthy\"\n/\\ creation = \"alive\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"exiting\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"decide\"\n/\\ available = 2\n/\\ scenario = \"healthy\"\n/\\ creation = \"exiting\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"exiting\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"refused\"\n/\\ available = 3\n/\\ scenario = \"healthy\"\n/\\ creation = \"exiting\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"unreaped\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "Finished checking temporal properties in 00s at 2026-11-03 16:15:33"
+  ]
+}

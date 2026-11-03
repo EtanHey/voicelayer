@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { afterEach, test, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmdirSync, cpSync } from "node:fs";
 import { join } from "node:path";
@@ -52,12 +53,12 @@ test("terminal group interrupt cannot reach committed installer; nested owner re
   try {
     await waitFor(() => existsSync(started)); process.kill(-child.pid, "SIGINT"); await Bun.sleep(150);
     expect(child.exitCode).toBeNull(); writeFileSync(finish, "finish");
-    expect(await child.exited).toBe(0); expect(existsSync(done)).toBe(true);
+    expect(await child.exited).toBe(1); expect(existsSync(done)).toBe(true);
     expect(await new Response(child.stderr).text()).toContain("Ctrl-C will not stop the installer");
   } finally { writeFileSync(finish, "finish"); if (child.exitCode === null) await child.exited; }
 }, timeout);
 test("nested validation waits through transient lock presence", async () => {
-  const f = fixture("idle"), child = f.start(); expect(await child.exited).toBe(0);
+  const f = fixture("idle"), child = f.start(); expect(await child.exited).toBe(1);
   const lease = JSON.parse(readFileSync(f.gate, "utf8")).lease;
   // This fixture's live process owns both the environment and durable receipt.
   writeFileSync(f.gate + ".controller", JSON.stringify({ version: 1,
@@ -136,7 +137,7 @@ test("copied committed operation with an arbitrary live PID cannot validate", as
     `await Bun.write(${JSON.stringify(record)}, process.env.VOICELAYER_INSTALL_OPERATION!)`], {
     env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe",
   });
-  expect(await child.exited).toBe(0);
+  expect(await child.exited).toBe(1);
   const owner = JSON.parse(readFileSync(record, "utf8")), identity = installerProcessIdentity(process.pid)!;
   expect(owner.identity).toBeString();
   const forgeries = [

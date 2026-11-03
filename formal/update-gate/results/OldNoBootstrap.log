@@ -1,0 +1,15 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "FreshInstallCompletes",
+  "status": "EXPECTED_FAIL",
+  "generated": 46,
+  "distinct": 39,
+  "trace": [
+    "/\\ phase = \"check\"\n/\\ available = FALSE\n/\\ scenario = \"fresh\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"locked\"\n/\\ available = FALSE\n/\\ scenario = \"fresh\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"restoring\"\n/\\ available = FALSE\n/\\ scenario = \"fresh\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
+    "/\\ phase = \"done\"\n/\\ available = TRUE\n/\\ scenario = \"fresh\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "Finished checking temporal properties in 00s at 2026-11-03 16:15:31"
+  ]
+}

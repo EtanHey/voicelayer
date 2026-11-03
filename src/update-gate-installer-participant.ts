@@ -24,7 +24,11 @@ export interface InstallerParticipant {
   /** Process-table reads bracket a locked operation; verify itself is memory-only. */
   withProcessProof?<T>(read: () => T): T;
   withAcquisitionProof?<T>(read: () => T): Promise<T>;
+  /** COMPLETE is durable on return; never re-read a gate the next updater may own. */
+  withCompletionProof?<T>(read: () => T): Promise<T>;
   quit(lease: UpdateGateLease): Promise<void>;
+  /** New receipt cache, fenced against BOTH retired participant incarnations. */
+  successor?(): InstallerParticipant;
 }
 export interface InstallerParticipantDependencies {
   request(action: "drain" | "quit", lease: UpdateGateLease): Promise<unknown>;
@@ -187,7 +191,7 @@ export function observeInstallerExit(proof: ProcessProof, probes = { identity: i
 export function createInstallerParticipant(deps: InstallerParticipantDependencies = {
   request: requestInstallerControl, processIdentity: installerProcessIdentity, processParent, participantsExited: observeInstallerExit,
   now: () => performance.now(), sleep: (ms = 100) => Bun.sleep(ms),
-}): InstallerParticipant {
+}, retired?: ProcessProof | null): InstallerParticipant {
   let evidence: Receipt | undefined, observedAt = 0, pinned: ProcessProof | undefined;
   const fresh = () => deps.now() - observedAt >= 0 && deps.now() - observedAt <= 1000;
   const processProof = (identities: Identities): ProcessProof => {
@@ -233,6 +237,16 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
   };
   return {
     verify, withProcessProof, withAcquisitionProof,
+    async withCompletionProof(read) {
+      try {
+        sampleProcessProof();
+        return await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
+      } catch (error) { evidence = undefined; throw error; }
+    },
+    successor() {
+      if (!pinned) throw Error("UNKNOWN: retired participants unavailable");
+      return createInstallerParticipant(deps, pinned);
+    },
     async refresh(lease) {
       evidence = undefined; // A failed/new request invalidates the preceding receipt.
       const requestedAt = deps.now();
@@ -245,6 +259,12 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
         throw Error("UNKNOWN: malformed or mismatched participant acknowledgements");
       if (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000) throw Error("UNKNOWN: stale participant round trip");
       const proof = processProof(parsed.data.identities);
+      if (retired && (["native", "daemon"] as const).some(role =>
+        proof.identities[role].incarnation === retired.identities[role].incarnation ||
+        (proof.identities[role].pid === retired.identities[role].pid && proof[role] === retired[role])))
+        throw Error("UNKNOWN: successor reused retired participant identity");
+      if (retired !== undefined && proof.native.replace(/^.{24}\s+/, "") !== "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
+        throw Error("UNKNOWN: successor is not the installed VoiceBar");
       if (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000) throw Error("UNKNOWN: stale participant round trip");
       if (pinned && JSON.stringify(proof) !== JSON.stringify(pinned)) throw Error("UNKNOWN: participant identity changed during drain");
       pinned = proof; // Only a fresh, role-checked round trip may pin identities.

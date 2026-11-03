@@ -59,6 +59,9 @@ export const updateGateCommandSchema = z.discriminatedUnion("kind", [
     native: updateGateAckSchema, daemon: updateGateAckSchema }),
   z.strictObject({ kind: z.literal("COMMIT"), lease: updateGateLeaseSchema }),
   z.strictObject({ kind: z.literal("CANCEL"), lease: updateGateLeaseSchema }),
+  z.strictObject({ kind: z.literal("COMPLETE"), lease: updateGateLeaseSchema,
+    installerExitCode: z.literal(0), installedSha: z.string().regex(/^[0-9a-f]{40}$/),
+    participantsVerified: z.literal(true) }),
 ]);
 export type UpdateGateCommand = z.infer<typeof updateGateCommandSchema>;
 export type UpdateGateTransition =
@@ -77,7 +80,7 @@ export function transitionUpdateGate(value: unknown, input: unknown): UpdateGate
   if (!parsed.success) return { kind: "REFUSED", reason: "INVALID_COMMAND" };
   const command = parsed.data;
   if (state.kind === "OPEN") {
-    if (command.kind === "CANCEL" && state.released && sameLease(state.released, command.lease)) {
+    if ((command.kind === "CANCEL" || (command.kind === "COMPLETE" && command.installedSha === command.lease.targetSha)) && state.released && sameLease(state.released, command.lease)) {
       return { kind: "UNCHANGED", state };
     }
     if (command.kind !== "REQUEST") return { kind: "REFUSED", reason: "PHASE" };
@@ -98,6 +101,11 @@ export function transitionUpdateGate(value: unknown, input: unknown): UpdateGate
       if (state.kind === "COMMITTED") return { kind: "UNCHANGED", state };
       if (state.kind !== "PREPARED") return { kind: "REFUSED", reason: "PHASE" };
       return { kind: "APPLIED", state: { ...state, kind: "COMMITTED" } };
+    case "COMPLETE":
+      if (state.kind !== "COMMITTED") return { kind: "REFUSED", reason: "PHASE" };
+      if (command.installedSha !== state.lease.targetSha) return { kind: "REFUSED", reason: "ACKNOWLEDGEMENTS" };
+      return { kind: "APPLIED", state: { version: 1, kind: "OPEN", generation: state.lease.generation,
+        released: state.lease } };
     case "CANCEL":
       if (state.kind === "COMMITTED") return { kind: "REFUSED", reason: "PHASE" };
       return { kind: "APPLIED", state: { version: 1, kind: "OPEN", generation: state.lease.generation,

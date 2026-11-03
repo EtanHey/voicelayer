@@ -2,7 +2,8 @@
 EXTENDS Naturals, FiniteSets
 CONSTANTS AllowLive, IgnoreEvidence, BadRecord, SkipBootstrap, ReplaceExisting,
           SandboxedPostflight, LegacyAvailability, IgnoreUpgradeController,
-          AbortTransitionalQuit, ReuseMeansGone, SkipQuitHeldCheck
+          AbortTransitionalQuit, ReuseMeansGone, SkipQuitHeldCheck,
+          SkipComplete, IgnoreCompleteSha, IgnoreCompleteOwner
 VARIABLES gate, participants, evidence, mutex, phase, created, creation,
           scenario, available
 vars == <<gate, participants, evidence, mutex, phase, created, creation,
@@ -148,4 +149,48 @@ QuitSpec == QuitInit /\ [][QuitNext]_vars /\ WF_vars(QuitSample) /\ WF_vars(Quit
 HealthyQuitCompletes == (scenario = "healthy") ~> (phase = "proceed")
 NeverProceedOnReusedOrCompetitor == phase = "proceed" => ~evidence
 NeverProceedWithoutHeldLease == phase = "proceed" => (gate = "COMMITTED" /\ mutex)
+(* G5: a leased controller has already committed and retired the old pair.
+   Installed bytes and an authenticated NEW pair are sampled outside G1. Under
+   the lock the owner rechecks the same generation, unchanged bytes and fresh
+   proof. Failures retain COMMITTED. This bounded ordering model assumes a
+   healthy child/pair makes progress; it does not prove OS or IPC availability. *)
+CompletionLease == [generation |-> 1, operationId |-> "op", ownerId |-> "owner", targetSha |-> "target"]
+CompletionInit ==
+  /\ scenario \in {"success", "exitFailure", "shaMismatch", "deadSuccessor", "nonOwner"}
+  /\ gate = [kind |-> "COMMITTED", generation |-> 1, released |-> "none"]
+  /\ phase = "install" /\ available = FALSE /\ mutex = FALSE
+  /\ evidence = [exitZero |-> FALSE, sha |-> FALSE, new |-> FALSE, owner |-> FALSE]
+  /\ creation = [exitZero |-> FALSE, sha |-> FALSE, new |-> FALSE, owner |-> FALSE, held |-> FALSE]
+  /\ participants = FALSE /\ created = FALSE
+CompletionObserve ==
+  /\ phase = "install" /\ phase' = "verified"
+  /\ evidence' = [exitZero |-> scenario # "exitFailure", sha |-> scenario # "shaMismatch",
+                   new |-> scenario # "deadSuccessor", owner |-> scenario # "nonOwner"]
+  /\ UNCHANGED <<gate, available, mutex, creation, participants, created, scenario>>
+CompletionAcquire ==
+  /\ phase = "verified" /\ phase' = "locked" /\ mutex' = TRUE
+  /\ UNCHANGED <<gate, available, evidence, creation, participants, created, scenario>>
+CompletionPublish ==
+  /\ phase = "locked" /\ gate.kind = "COMMITTED" /\ ~SkipComplete
+  /\ evidence.exitZero /\ evidence.new
+  /\ (evidence.sha \/ IgnoreCompleteSha) /\ (evidence.owner \/ IgnoreCompleteOwner)
+  /\ gate' = [kind |-> "OPEN", generation |-> CompletionLease.generation, released |-> CompletionLease]
+  /\ creation' = [exitZero |-> evidence.exitZero, sha |-> evidence.sha, new |-> evidence.new,
+                   owner |-> evidence.owner, held |-> mutex]
+  /\ phase' = "completed" /\ mutex' = FALSE
+  /\ UNCHANGED <<available, evidence, participants, created, scenario>>
+CompletionAdmit ==
+  /\ phase = "completed" /\ gate.kind = "OPEN"
+  /\ available' = TRUE /\ phase' = "done"
+  /\ UNCHANGED <<gate, mutex, evidence, creation, participants, created, scenario>>
+CompletionNext == CompletionObserve \/ CompletionAcquire \/ CompletionPublish \/ CompletionAdmit
+CompletionSpec == CompletionInit /\ [][CompletionNext]_vars
+  /\ WF_vars(CompletionObserve) /\ WF_vars(CompletionAcquire)
+  /\ WF_vars(CompletionPublish) /\ WF_vars(CompletionAdmit)
+NeverReopenUnverified == gate.kind = "OPEN" =>
+  (creation.exitZero /\ creation.sha /\ creation.new /\ creation.owner /\ creation.held /\
+   gate.generation = CompletionLease.generation /\ gate.released = CompletionLease)
+LeasedUpdateReopensAdmission ==
+  (phase = "verified" /\ evidence.exitZero /\ evidence.sha /\ evidence.new /\ evidence.owner)
+    ~> (gate.kind = "OPEN" /\ gate.released = CompletionLease /\ available)
 =============================================================================

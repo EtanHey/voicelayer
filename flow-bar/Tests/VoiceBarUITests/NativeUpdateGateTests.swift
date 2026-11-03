@@ -195,6 +195,35 @@ import XCTest
         XCTAssertEqual(sent.first, "stop")
     }
 
+    func testCommittedSuccessorAdmitsAfterCompleteWithoutRestart() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("gate").path
+        let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
+            "ownerId": UUID().uuidString, "targetSha": String(repeating: "a", count: 40)]
+        let ack: [String: Any] = ["lease": lease, "activeOperations": 0, "openArchives": 0]
+        try JSONSerialization.data(withJSONObject: ["version": 1, "kind": "COMMITTED", "lease": lease,
+            "native": ack, "daemon": ack]).write(to: URL(fileURLWithPath: path))
+        try FileManager.default.createDirectory(atPath: path + ".admissions", withIntermediateDirectories: false)
+        let successor = NativeUpdateGate(path: path)
+        XCTAssertThrowsError(try successor.acquire()) { error in
+            guard case NativeUpdateGate.Fault.busy = error else { return XCTFail("expected busy: \(error)") }
+        }
+        let completed: [String: Any] = ["version": 1, "kind": "OPEN", "generation": 1, "released": lease]
+        XCTAssertNotNil(NativeUpdateGate.validState(completed))
+        try JSONSerialization.data(withJSONObject: completed).write(to: URL(fileURLWithPath: path))
+        let release = try successor.acquire()
+        let files = try FileManager.default.contentsOfDirectory(atPath: path + ".admissions")
+        XCTAssertEqual(files.count, 1)
+        let record = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath:
+            path + ".admissions/" + XCTUnwrap(files.first)))) as? [String: Any]
+        XCTAssertEqual(record?["generation"] as? Int, 1)
+        release()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: path + ".admissions"), [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".voice-diag.json"))
+    }
+
     func testStrictStateRejectsUnknownFieldsBooleansAndMismatchedAcks() {
         let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
             "ownerId": UUID().uuidString, "targetSha": String(repeating: "b", count: 40)]
