@@ -2948,6 +2948,9 @@ public final class VoiceState {
                 return true
             }
             if ownedPasteOperations.values.contains(where: { $0.deliveryID == deliveryID }) { return true }
+            // Owned finals return before the legacy transcription handler below.
+            lastTranscriptionPolished = event["polished"] as? Bool
+            lastTranscriptionPolishReason = event["polish_reason"] as? String
             rememberRecentTranscription(text, recordingPath: path, dictationReceipt: DictationReceipt.parse(event["dictation_receipt"]),
                 recordingCreatedAt: createdAt, recordingIsLatest: latest)
             if let path { onHistoryArchiveChange?(path) }
