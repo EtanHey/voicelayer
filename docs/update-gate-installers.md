@@ -46,16 +46,15 @@ OPEN, closed/live, malformed, locked and orphaned states, nested failure, intern
 mode refusal, isolation and mutex signal cleanup. These are isolated proofs, not
 real cask, launchd or installed-app qualification.
 
-Promotion renders a declarative `postflight_steps` block with a literal `run`
-for `setup --cask-postflight`, `must_succeed: false`, declared writable setup
-directories and a visible terminal repair message. No deprecated Ruby
-`postflight do` block is emitted. An old formula rejecting the option, or a new setup unable
-to start the app, prints an explicit formula/cask mismatch and repair message;
-Homebrew retains the installed bundle. The steps sandbox can prohibit
-LaunchServices/launchd startup even with writable directories; a terminal setup
-after brew is required in that case. This is an availability failure, never a
-claim of runtime health. Old cask + new formula uses the no-flag compatibility
-path above. Neither pairing requires a target SHA for availability.
+Promotion renders a legacy `postflight do` with
+`system_command ... must_succeed: false` and a visible terminal repair message.
+Homebrew 7's declarative `postflight_steps` sandbox blocks launchd and
+LaunchServices; its legacy flight block runs unsandboxed. Nonzero setup status
+must retain the bundle. See [G1 compatibility and the Homebrew follow-up ledger](update-gate-first-install.md#g1-old-updater-new-formula-scripts).
+Lease-less 2.2.58 Cellar dedupe/autostart repair calls use availability only;
+lease-holding callers retain exact validation and controller-owned restoration.
+Old cask + new formula keeps no-flag setup compatibility. Neither availability
+pairing requires a target SHA. Real installed qualification is separate.
 
 Tap follow-up: move the cask's uninstall
 `delete:` of LaunchAgents to `zap` only. This PR does not change the tap or qualify

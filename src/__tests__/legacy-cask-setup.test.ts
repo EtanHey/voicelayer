@@ -17,8 +17,9 @@ const lease = { generation: 1, operationId: "11111111-1111-4111-8111-11111111111
 // Real shell/TS chain with relocated host paths and a fixture-only PATH. Brew's
 // env -i strips the operation and test flags. Only the fixture Bun launcher
 // reinstates host simulation/isolation keys, NEVER the stripped operation.
-function fixture(fault = "") {
-  const root = mkdtempSync(join(bundleFixtureRoot(), "cask-"));
+function fixture(fault = "", formula = false) {
+  const fixtureRoot = mkdtempSync(join(bundleFixtureRoot(), "cask-"));
+  const root = formula ? join(fixtureRoot, "opt/homebrew/Cellar/voicelayer/2.2.61/libexec/lib/node_modules/voicelayer-mcp") : fixtureRoot;
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "Applications/VoiceBar.app");
   const agents = join(home, "Library/LaunchAgents"), gate = join(root, "gate");
   for (const dir of [bin, app, agents, join(root, "src/cli"), join(root, "scripts/lib"), join(root, "launchd")]) mkdirSync(dir, { recursive: true });
@@ -27,9 +28,14 @@ function fixture(fault = "") {
   for (const file of ["src/update-gate-installer.ts", "src/update-gate-admission.ts", "src/update-gate-storage.ts", "src/paths.ts"])
     symlinkSync(join(process.cwd(), file), join(root, file));
   for (const file of ["src/cli/voicelayer.sh", "src/cli/setup.ts", "scripts/lib/update-gate.sh",
+    "scripts/voicelayer-dedupe-voicebar.sh", "scripts/lib/voicebar-launchagent.sh", "scripts/lib/voicebar-bundle-identity.sh",
     "scripts/install-voicebar-autostart.sh", "scripts/install-voicebar-f5-hidutil.sh", "scripts/apply-voicebar-f5-hidutil.sh",
     "launchd/com.voicelayer.voicebar.plist", "launchd/com.voicelayer.f5-to-f18-hidutil.plist"])
-    writeFileSync(join(root, file), readFileSync(file, "utf8").replaceAll("/Applications", join(root, "Applications")), { mode: 0o755 });
+    writeFileSync(join(root, file), readFileSync(file, "utf8")
+      .replaceAll("/Applications", join(root, "Applications"))
+      // Relocate the Cellar boundary together with the host filesystem. No
+      // production environment flag can turn an arbitrary root into a keg.
+      .replaceAll("^/(opt/homebrew|usr/local)/Cellar/", `^${fixtureRoot}/(opt/homebrew|usr/local)/Cellar/`), { mode: 0o755 });
   const proof = join(root, "proof"); writeFileSync(proof, JSON.stringify({ phase: "idle", ready: true }));
   process.env.VOICELAYER_UPDATE_GATE_PATH = gate; process.env.VOICELAYER_TEST_INSTALL_PROOF = proof;
   const simulation = { ROOT: root, APP: app, FAULT: fault, VOICEBAR_LEGACY_LOG_DIR: join(root, "legacy"),
@@ -277,4 +283,59 @@ fi
   const r = f.setup({}, "--cask-postflight");
   expect(r.exitCode).toBe(0); expect(r.stderr.toString()).toContain("participant started");
   expect(existsSync(f.gate)).toBe(false); expect(existsSync(f.gate + ".bootstrap-lock")).toBe(false);
+});
+
+caskTest("2.2.58 updater calls new Cellar dedupe then autostart without a lease or target", () => {
+  const f = fixture("open", true);
+  expect(f.root).toContain("/Cellar/voicelayer/2.2.61/libexec/lib/node_modules/voicelayer-mcp");
+  const before = readFileSync(f.gate, "utf8");
+  expect(f.run({ HOMEBREW_TEST_POSTFLIGHT_FLAG: "--cask-postflight" }).exitCode).toBe(0);
+  for (const [script, args] of [
+    ["voicelayer-dedupe-voicebar.sh", ["--apply", "--no-relaunch"]],
+    ["install-voicebar-f5-hidutil.sh", []],
+    ["install-voicebar-autostart.sh", ["--reload"]],
+  ] satisfies [string, string[]][]) {
+    const r = Bun.spawnSync(["/bin/bash", join(f.root, "scripts", script), ...args], {
+      env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe", timeout: 25000,
+    });
+    expect({ code: r.exitCode, err: r.stderr.toString() }).toMatchObject({ code: 0 });
+    expect(r.stderr.toString()).not.toContain("UNKNOWN");
+  }
+  restored(f);
+  expect(readFileSync(f.gate, "utf8")).toBe(before);
+  const calls = readFileSync(join(f.root, "calls"), "utf8").split("postflight\n")[1];
+  expect(calls).not.toMatch(/bootout|quit|revert/);
+  expect(existsSync(join(f.home, ".voicelayer/voicebar-dedupe-backup"))).toBe(false);
+});
+
+for (const entry of ["dedupe", "autostart"]) for (const operation of ["", "invalid"]) caskTest(`Cellar ${entry} cannot restore over a live controller, operation=${operation || "absent"}`, () => {
+  const f = fixture("open", true), ack = { lease, activeOperations: 0, openArchives: 0 };
+  writeFileSync(f.gate, JSON.stringify({ version: 1, kind: "COMMITTED", lease, native: ack, daemon: ack }));
+  writeFileSync(f.gate + ".controller", JSON.stringify({ version: 1, lease: { generation: 1, operationId: lease.operationId },
+    pid: process.pid, identity: installerProcessIdentity(process.pid) }));
+  writeFileSync(join(f.root, "running"), "");
+  writeFileSync(join(f.root, "lease-active"), "");
+  const before = readFileSync(f.gate, "utf8");
+  const args = entry === "dedupe" ? ["voicelayer-dedupe-voicebar.sh", "--apply", "--no-relaunch"] : ["install-voicebar-autostart.sh", "--reload"];
+  const r = Bun.spawnSync(["/bin/bash", join(f.root, "scripts", args[0]), ...args.slice(1)], {
+    env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: operation }, stdout: "pipe", stderr: "pipe", timeout: 25000,
+  });
+  expect(r.exitCode).toBe(operation ? 1 : 0); // Availability only writes plists; invalid leases refuse.
+  expect(readFileSync(join(f.root, "running"), "utf8")).toBe("");
+  expect(readFileSync(join(f.root, "calls"), "utf8")).not.toMatch(/enable|bootstrap|kickstart|open |bootout/);
+  expect(readFileSync(f.gate, "utf8")).toBe(before);
+  if (operation) expect(r.stderr.toString()).not.toContain("Legacy formula repair");
+});
+
+for (const target of ["", "a".repeat(40)]) caskTest(`legacy repair scope refuses checkout/missing target without mutation (target=${Boolean(target)})`, () => {
+  const f = fixture("open", Boolean(target));
+  // With a target this is a regular gated call: a missing participant proof
+  // must still refuse, never select the legacy availability exception.
+  rmSync(join(f.root, "proof"));
+  const r = Bun.spawnSync(["/bin/bash", join(f.root, "scripts/voicelayer-dedupe-voicebar.sh"), "--apply", "--no-relaunch"], {
+    env: { ...process.env, ...f.env, VOICELAYER_UPDATE_TARGET_SHA: target }, stdout: "pipe", stderr: "pipe", timeout: 25000,
+  });
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stderr.toString()).not.toContain("Legacy formula repair");
+  expect(readFileSync(join(f.root, "calls"), "utf8")).toBe("");
 });

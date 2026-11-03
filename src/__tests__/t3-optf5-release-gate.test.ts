@@ -489,10 +489,11 @@ exit 2
     expect(cask).toContain(`sha256 "${zipSha}"`);
     expect(cask).toContain('["setup", "--cask-postflight"]');
     expect(cask).toContain('must_succeed: false');
-    expect(cask).toContain('postflight_steps do');
-    expect(cask).not.toMatch(/\bpostflight\s+do\b/);
-    expect(cask).toContain('run "{{HOMEBREW_PREFIX}}/bin/voicelayer"');
-    expect(cask).toContain('writable_paths:');
+    // Homebrew 7 sandboxes postflight_steps: launchd and LaunchServices cannot
+    // start VoiceBar there. Keep the unsandboxed legacy block until replaced.
+    expect(cask).toContain('postflight do');
+    expect(cask).not.toContain('postflight_steps do');
+    expect(cask).toContain('system_command "#{HOMEBREW_PREFIX}/bin/voicelayer"');
     const formula = readFileSync(join(tap, "Formula", "voicelayer.rb"), "utf8");
     expect(formula).toContain(`voicelayer-mcp-${version}.tgz`);
     expect(formula).toContain(`sha256 "${FORMULA_SHA}"`);
@@ -511,12 +512,15 @@ exit 2
     // Execute the rendered Ruby postflight DSL. The old formula rejects the flag;
     // a raising system_command would reproduce Homebrew rollback here.
     const harness = join(dir, "postflight.rb");
-    writeFileSync(harness, `def cask(_name, &block); instance_eval(&block); end
+    const bundle = join(dir, "installed.noindex/VoiceBar.app");
+    mkdirSync(bundle, { recursive: true });
+    writeFileSync(harness, `HOMEBREW_PREFIX = "/fixture"
+def cask(_name, &block); instance_eval(&block); end
 def version(*); end
 def sha256(*); end
-def postflight_steps(&block); instance_eval(&block); end
-def run(path, args:, must_succeed: true, **)
-  if path == "{{HOMEBREW_PREFIX}}/bin/voicelayer"
+def postflight(&block); instance_eval(&block); end
+def system_command(path, args:, must_succeed: true, **)
+  if path == "#{HOMEBREW_PREFIX}/bin/voicelayer"
     raise "postflight flag lost" unless args == ["setup", "--cask-postflight"]
     warn "setup accepts no options (old formula)"
     raise "Homebrew rollback: app deleted" if must_succeed
@@ -526,15 +530,28 @@ def run(path, args:, must_succeed: true, **)
     raise "unexpected step"
   end
 end
-load ARGV.fetch(0)
+begin
+  load ARGV.fetch(0)
+rescue
+  require "fileutils"
+  FileUtils.rm_rf(ARGV.fetch(1))
+  raise
+end
 puts "bundle retained"
 `);
-    const r = Bun.spawnSync(["ruby", harness, join(tap, "Casks/voicebar.rb")], { env: process.env, stdout: "pipe", stderr: "pipe" });
+    const r = Bun.spawnSync(["ruby", harness, join(tap, "Casks/voicebar.rb"), bundle], { env: process.env, stdout: "pipe", stderr: "pipe" });
     expect(r.exitCode).toBe(0);
+    expect(existsSync(bundle)).toBe(true);
     expect(r.stdout.toString()).toContain("bundle retained");
     expect(r.stdout.toString()).toContain("formula/cask version mismatch");
     expect(r.stdout.toString()).toContain("update etanhey/layers/voicelayer and etanhey/layers/voicebar together");
     expect(r.stderr.toString()).not.toContain("Homebrew rollback");
+    // Prove the rollback harness detects a raising setup contract.
+    const mutant = join(dir, "raising-cask.rb");
+    writeFileSync(mutant, readFileSync(join(tap, "Casks/voicebar.rb"), "utf8").replaceAll("must_succeed: false", "must_succeed: true"));
+    const failed = Bun.spawnSync(["ruby", harness, mutant, bundle], { env: process.env, stdout: "pipe", stderr: "pipe" });
+    expect(failed.exitCode).not.toBe(0);
+    expect(existsSync(bundle)).toBe(false);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a rejected tap push retries the existing release commit without uploading again", () => {
