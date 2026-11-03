@@ -47,7 +47,7 @@ if (f.formulae[0]?.versions.stable !== "2.2.61" || c.casks[0]?.version !== "2.2.
 "$BREW" reinstall --formula etanhey/layers/voicelayer
 /opt/homebrew/bin/voicelayer --version
 # A failed previous install normally left no cask registration. Cover either ledger state.
-if "$BREW" list --cask --versions voicebar >/dev/null 2>&1; then
+if "$BREW" list --cask --versions voicebar 2>/dev/null | /usr/bin/grep -q '^voicebar '; then
   "$BREW" reinstall --cask etanhey/layers/voicebar
 else
   "$BREW" install --cask etanhey/layers/voicebar
