@@ -9,6 +9,7 @@ import { createHash, randomUUID } from "crypto";
 import { getStateDir } from "./paths";
 import { noteRecognizerEngine, noteRecognizerEffective } from "./recognizer-state";
 import { probeParakeetSpeech, PARAKEET_EMPTY_SPEECH_THRESHOLD, type ParakeetSpeechEvidence } from "./parakeet-vad";
+import { VAD_CHUNK_SAMPLES } from "./vad-constants";
 import { probeParakeetLanguage, PARAKEET_LID_MIN_CONFIDENCE, type ParakeetLanguageInput, type ParakeetLanguageEvidence } from "./parakeet-lid";
 
 export class STTQualificationError extends Error {
@@ -60,7 +61,7 @@ export function parakeetWavInfo(bytes: Uint8Array): WavInfo {
   return { frames: dataBytes / 2, sampleRate, lastActiveSeconds: last, allZero, dataOffset };
 }
 
-export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo): string | null {
+export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, lastSpeechSeconds?: number): string | null {
   if (!result || typeof result.text !== "string") return "invalid-response";
   const evidence = result.attemptEvidence;
   if (evidence?.status && !["RETURNED", "EMPTY_RESPONSE"].includes(evidence.status)) return "provider-" + evidence.status.toLowerCase();
@@ -76,8 +77,19 @@ export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo): str
   // never trim real tails or merge a guessed transcript into the result.
   if (duration >= 8 && result.text.trim().split(/\s+/u).length < Math.max(2, duration / 10)) return "sparse-response";
   if (result.last_token_end_s !== null && (result.last_token_end_s < 0 || result.last_token_end_s > duration)) return "invalid-timing";
-  if (duration >= 8 && result.last_token_end_s !== null && info.lastActiveSeconds - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))) return "uncovered-tail";
+  if (duration >= 8 && result.last_token_end_s !== null && lastSpeechSeconds !== undefined && lastSpeechSeconds - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))) return "uncovered-tail";
   return null;
+}
+
+/** Only complete, input-bound Silero windows may establish unheard speech. */
+function lastSileroSpeech(evidence: ParakeetSpeechEvidence, info: WavInfo, sha256: string | null): number | undefined {
+  const probabilities = evidence.probabilities;
+  if (evidence.status !== "COMPLETE" || evidence.threshold !== PARAKEET_EMPTY_SPEECH_THRESHOLD ||
+      evidence.inputSha256 !== sha256 || evidence.frames !== info.frames || evidence.analyzedFrames !== info.frames ||
+      !probabilities || probabilities.length !== Math.ceil(info.frames / VAD_CHUNK_SAMPLES) ||
+      probabilities.some(p => !Number.isFinite(p) || p < 0 || p > 1)) return undefined;
+  const last = probabilities.findLastIndex(p => p >= PARAKEET_EMPTY_SPEECH_THRESHOLD);
+  return last < 0 ? 0 : Math.min((last + 1) * VAD_CHUNK_SAMPLES, info.frames) / info.sampleRate;
 }
 
 export interface ParakeetBackendDeps {
@@ -192,13 +204,14 @@ export class ParakeetBackend implements STTBackend {
         if (typeof result.text !== "string" || evidence?.status === "PARTIAL" || evidence?.status === "INVALID" ||
             evidence?.decodeCoverage === "PARTIAL" || evidence?.tail === "KNOWN_MISSING") throw new STTQualificationError("UNRESOLVED_FALLBACK_INCOMPLETE", result);
         const firstWasEmpty = parakeet !== null && typeof parakeet === "object" && "text" in parakeet && typeof parakeet.text === "string" && !parakeet.text.trim() && !parakeetErrorStatus;
-        if (!result.text.trim() && !info?.allZero) throw new STTQualificationError(firstWasEmpty ? "UNRESOLVED_BOTH_EMPTY" : "UNRESOLVED_FALLBACK_EMPTY", result);
+        const gateEmptied = !result.text.trim() && evidence?.gateRemoval !== undefined && evidence.gateRemoval.removedSpans > 0;
+        if (!result.text.trim() && !info?.allZero && !gateEmptied) throw new STTQualificationError(firstWasEmpty ? "UNRESOLVED_BOTH_EMPTY" : "UNRESOLVED_FALLBACK_EMPTY", result);
         // Exact integer zeros contain no captured signal. Still perform the
         // required Whisper retry and retain its raw words, but never deliver a
         // hallucinated word from mathematically zero PCM. No RMS/VAD threshold,
         // cropping or removal of quiet/nonzero samples is involved.
         const text = info?.allZero ? "" : result.text;
-        const outcome: STTOutcome = info?.allZero ? "VERIFIED_ZERO_PCM" : captureTruncated ? "FALLBACK_NONEMPTY_CAPTURE_TRUNCATED" :
+        const outcome: STTOutcome = info?.allZero ? "VERIFIED_ZERO_PCM" : gateEmptied ? "ACOUSTIC_GATE_EMPTY" : captureTruncated ? "FALLBACK_NONEMPTY_CAPTURE_TRUNCATED" :
           evidence?.timesValid === false ? "FALLBACK_NONEMPTY_INVALID_TIMESTAMPS" : evidence?.tail === "VERIFIED_BY_EXTERNAL_EVIDENCE" ? "FALLBACK_NONEMPTY_TAIL_VERIFIED" : "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN";
         const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet, parakeetErrorStatus, parakeetCleanupFailure, speechEvidence, whisper: result, errorType: null, deliveryText: text, outcome, previousAttemptPath, stage: "fallback-terminal" });
         return { ...result, text, outcome, backend: `${this.name}+fallback-${reason}->${result.backend}${info?.allZero ? "+zero-pcm-empty" : "+qualified-fallback"}`, durationMs: Date.now() - started, fallbackEvidencePath, languageWarning, languageEvidence };
@@ -224,7 +237,16 @@ export class ParakeetBackend implements STTBackend {
       await finishLanguage();
       if ((result.attemptEvidence?.inputSha256 && result.attemptEvidence.inputSha256 !== inputSha256) ||
           (result.attemptEvidence?.inputPath && result.attemptEvidence.inputPath !== inputPath)) return fallback("input-identity", result);
-      const reason = parakeetOutputRisk(result, info);
+      let reason = parakeetOutputRisk(result, info);
+      const duration = info.frames / info.sampleRate;
+      if (!reason && duration >= 8 && result.last_token_end_s !== null &&
+          duration - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))) {
+        try { speechEvidence = await (this.deps.speechProbe ?? probeParakeetSpeech)(inputPath); }
+        catch (error) { speechEvidence = { status: "UNKNOWN", threshold: PARAKEET_EMPTY_SPEECH_THRESHOLD, errorType: error instanceof Error ? error.name : "unknown" }; }
+        const lastSpeechSeconds = lastSileroSpeech(speechEvidence, info, inputSha256);
+        if (lastSpeechSeconds === undefined) console.error("[voicelayer] Parakeet tail speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
+        reason = parakeetOutputRisk(result, info, lastSpeechSeconds);
+      }
       if (reason === "empty-response") {
         nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result, whisper: null, errorType: null, stage: "native-or-input-boundary" });
         try { speechEvidence = await (this.deps.speechProbe ?? probeParakeetSpeech)(inputPath); }

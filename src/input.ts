@@ -3498,7 +3498,7 @@ export async function waitForInput(
     const chunkBackendLabels = new Set<string>();
     let gateRemoval: STTAttemptEvidence["gateRemoval"];
     const noteGateRemoval = (evidence: STTAttemptEvidence | undefined) => {
-      if (evidence?.gateRemoval) gateRemoval = { gate: "cjk-outro",
+      if (evidence?.gateRemoval) gateRemoval = { gate: evidence.gateRemoval.gate,
         removedSpans: (gateRemoval?.removedSpans ?? 0) + evidence.gateRemoval.removedSpans,
         rawCharacters: (gateRemoval?.rawCharacters ?? 0) + evidence.gateRemoval.rawCharacters };
     };
@@ -3959,7 +3959,7 @@ export type ArchivedNotTranscribedReason =
 /** Phrase-free gate facts survive even when History keeps an older saved transcript. */
 function recordArchivedGateRemoval(audioPath: string | null, removal: STTAttemptEvidence["gateRemoval"]): string | undefined {
   if (!audioPath || !removal) return undefined;
-  const detail = `Whisper CJK closing-phrase filter removed ${removal.removedSpans} span(s) from ${removal.rawCharacters} decoded characters.`;
+  const detail = `Whisper ${removal.gate === "cjk-outro" ? "CJK " : ""}closing-phrase filter removed ${removal.removedSpans} span(s) from ${removal.rawCharacters} decoded characters.`;
   updateArchivedRecordingMetadata(audioPath, metadata => {
     metadata.last_stt_gate_removal = removal;
     if (metadata.transcription_status === "transcribed") {

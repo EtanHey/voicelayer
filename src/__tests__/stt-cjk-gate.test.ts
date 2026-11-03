@@ -102,7 +102,14 @@ describe("CJK hallucination candidates retain acoustic safety", () => {
     const keys = ["QA_VOICE_WHISPER_LANG", "VOICELAYER_STT_OUTRO_GATE", "LANE_D_CLI_ARGS_PATH"] as const;
     const saved = keys.map(key => process.env[key]);
     mkdirSync(root, { recursive: true });
-    writeFileSync(binary, '#!/bin/sh\nprintf "%s\\n" "$@" > "$LANE_D_CLI_ARGS_PATH"\nprintf "%s\\n" "これは別の文章です。"\n'); chmodSync(binary, 0o700);
+    writeFileSync(binary, `#!${process.execPath}
+import { writeFileSync } from "node:fs";
+const args = process.argv.slice(2); writeFileSync(process.env.LANE_D_CLI_ARGS_PATH, args.join("\\n"));
+writeFileSync(args[args.indexOf("-of") + 1] + ".json", JSON.stringify({ transcription: [
+  { text: "これは別の文章です。", offsets: { from: 0, to: 3000 } }
+] }));
+console.log("これは別の文章です。");
+`); chmodSync(binary, 0o700);
     try {
       process.env.LANE_D_CLI_ARGS_PATH = argsPath; process.env.VOICELAYER_STT_OUTRO_GATE = "1";
       const backend = new WhisperCppBackend();
