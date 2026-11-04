@@ -224,7 +224,7 @@ final class F5PauseConformanceTests: XCTestCase {
             state.frontmostAppProvider = { nil }
             var commands: [[String: Any]] = []
             state.sendCommand = { commands.append($0) }
-            state.selectionTextCaptureHandler = { $0(.completed("One two")) }
+            state.selectionTextCaptureHandler = { $0(.completed(row["text"] as? String ?? "One two")) }
             state.speakSelection()
             let requestID = try XCTUnwrap(commands.last?["id"] as? String)
             state.handleEvent(["type": "ack", "command": "speak_text", "id": requestID, "outcome": "accept"])
