@@ -129,3 +129,48 @@ SIGKILL isolation and both Resume-edge projections have focused Python guards.
 An indivisible first token over 100 characters remains atomic by design. The
 pre-existing second-chunk 400-character mid-token fallback is a follow-up; an
 installed acoustic check must still measure the chunk-1 to chunk-2 gap.
+
+
+## F-resume-clone: nonfinal chunk boundaries
+
+A native cursor at a chunk's duration is an end-of-read sentinel only for the final
+chunk (or an ordinary single-file job). For a nonfinal chunk whose player is still
+owned, Pause keeps the containing last word's tail. Resume therefore starts that
+same parked playback id at the next generation and publishes its speaking/resumed
+pair before the runner advances. Completing the parked chunk silently would make
+native playback-outcome handling retire the selection, dropping the next chunk's
+fresh identity. No wire or native view change is needed.
+
+The paired gate additionally runs 32 owned-Qwen scenarios: short ben-c1 and long
+theo-c4s; interior and boundary cursors after chunks 0-4 are synthesized; ordinary
+settlement, slow physical exit, manual pause, Stop, refused resume, both N6 settlement
+orders, and two waiting selections. Actual serialized daemon frames feed VoiceState,
+checking 20 resumes at their paused word and scoped identity, persistent manual pause,
+and terminal Stop/refusal. A scratch runtime mutant restores the unconditional
+chunk-end sentinel and must fail both the daemon word/identity guard and native
+speaking projection. Tests and gates for this lane run on M4 under the captain lock;
+installed interaction acceptance remains with the captain.
+
+
+The intermittent between-player window is separate from the chunk-end sentinel.
+`completeJob` registers the next pending chunk synchronously before publishing natural
+completion. That admission can be preparing, paused (with its owner), or resuming;
+it persists through synthesis and transfers the parked identity/generation into the
+next queue job. A take that settles before synthesis completes still produces exactly
+one speaking/resumed pair when that player starts. Initial preparation keeps its
+legacy read-id pause and first-chunk adoption. Retained readback drops admission hooks
+so Replay never reuses an old pause loan.
+
+Another 16 paired cases hold chunk5 synthesis after chunks0-4 played, and cover release
+before/after capture settlement plus an already-ready chunk with its decoder held.
+Both clone profiles also cover Stop, user pause, refused resume, and both N6 orders in
+the gap. Removing next-chunk registration must reproduce zero pause/resume and a fresh
+generation1, and fail both daemon and native guards. Together the clone projection
+contains 48 cases / 30 expected resumes; model-derived R2-01 projection stays intact.
+
+
+Native ownership also adopts a paused next-chunk decoder before its speaking edge,
+but only for a pending local pause epoch, the same displayed long-read id, a positive
+generation, and the immediately following chunk index. Foreign, preceding, skipped,
+unscoped-generation and unsolicited pauses remain rejected. Removing this adoption
+must fail both decoder-neighbour native projections, while daemon frames remain green.
