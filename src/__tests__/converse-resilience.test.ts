@@ -390,6 +390,42 @@ describe("handleConverse resilience — P0-2", () => {
     }
   });
 
+  it("returns every word when a 342-second take needs more than 120 seconds of STT", async () => {
+    jest.useFakeTimers();
+    const captured = Promise.withResolvers<input.WaitForInputOptions>();
+    const decoded = Promise.withResolvers<string>();
+    let pending: ReturnType<typeof handleVoiceAsk> | undefined;
+    const transcript = "Synthetic answer: fu… no, full answer, including the final words.";
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      waitSpy = spyOn(input, "waitForInput").mockImplementation((_t, _s, _p, options) => {
+        if (!options) throw new Error("Expected capture options");
+        options.onCaptureStart?.();
+        options.onSpeechStart?.();
+        captured.resolve(options);
+        options.signal?.addEventListener("abort", () => decoded.reject(options.signal?.reason), { once: true });
+        return decoded.promise;
+      });
+      pending = handleVoiceAsk({ message: "Synthetic long-take question" });
+      const options = await captured.promise;
+      // Installed incident: 939 seconds retained; D3 sends only 342 seconds to STT.
+      jest.advanceTimersByTime(939_000);
+      options.onArchiveCreated?.("/isolated/long-take");
+      options.onCaptureEnd?.(342_000);
+      options.onPhaseChange?.("transcribing");
+      jest.advanceTimersByTime(300_000);
+      decoded.resolve(transcript);
+      const result = await pending;
+      expect(result.content[0].text).toContain(transcript);
+      expect(result.content[0].text).not.toContain("transcription did not complete");
+      expect(options.signal?.aborted).toBe(false);
+    } finally {
+      decoded.resolve(transcript);
+      await pending;
+      jest.useRealTimers();
+    }
+  });
+
   it("returns error result when speak() throws, not unhandled rejection", async () => {
     speakSpy = spyOn(tts, "speak").mockRejectedValue(
       new Error("edge-tts crashed"),
