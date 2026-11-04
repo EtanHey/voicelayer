@@ -44,12 +44,19 @@ final class HistoryScrollRestoreTests: XCTestCase {
         nonisolated(unsafe) var firstPage: SettingsHistoryPage?
         Task { firstPage = await index.dictationPage(from: archive, limit: 100); loaded.fulfill() }
         wait(for: [loaded], timeout: 10)
+        let reload = HistoryReloadGate()
+        defer { reload.release() }
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
             availableDevices: { [] }, selectedDeviceID: { nil },
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
-            historyPage: { limit in await index.dictationPage(from: archive, limit: limit) },
+            historyPage: { limit in
+                await reload.wait()
+                let page = await index.dictationPage(from: archive, limit: limit)
+                await reload.returningPage()
+                return page
+            },
             initialHistoryPage: firstPage,
             askHistoryPage: { limit in await index.askPage(from: archive, limit: limit) },
             searchPrewarm: {},
@@ -94,11 +101,16 @@ final class HistoryScrollRestoreTests: XCTestCase {
         table.selectRowIndexes([history], byExtendingSelection: false)
 
         XCTAssertTrue(settle { historyScrollViews(in: host).list != nil && historyScrollViews(in: host).detail != nil })
+        XCTAssertTrue(settle { reload.started }, "re-entry starts its asynchronous archive reload")
+        // Force the reload to finish AFTER the rebuilt keepers restore. The old fixed delay could
+        // inspect either side of this layout boundary, depending on the runner's scheduling.
+        XCTAssertTrue(settle { historyKeepers(in: host).count == 2 && historyKeepers(in: host).allSatisfy(\.hasRestored) })
+        reload.release()
         XCTAssertTrue(settle {
             host.layoutSubtreeIfNeeded()
             let keepers = historyKeepers(in: host)
             let scrolls = historyScrollViews(in: host)
-            return keepers.count == 2 && keepers.allSatisfy(\.hasRestored)
+            return reload.returned && keepers.count == 2 && keepers.allSatisfy(\.hasRestored)
                 && abs((scrolls.list?.contentView.bounds.origin.y ?? -1) - 400) <= 2
                 && abs((scrolls.detail?.contentView.bounds.origin.y ?? -1) - 260) <= 2
         }, "re-entry layout and both restores finish: \(scrollDiagnostics(in: host))")
@@ -111,6 +123,26 @@ final class HistoryScrollRestoreTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    @MainActor private final class HistoryReloadGate {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var released = false
+        private(set) var started = false
+        private(set) var returned = false
+
+        func wait() async {
+            started = true
+            if !released { await withCheckedContinuation { continuation = $0 } }
+        }
+
+        func returningPage() { returned = true }
+
+        func release() {
+            released = true
+            continuation?.resume()
+            continuation = nil
+        }
+    }
 
     private func historyKeepers(in view: NSView) -> [SettingsHistoryScrollKeeper.KeeperView] {
         if let keeper = view as? SettingsHistoryScrollKeeper.KeeperView { return [keeper] }
