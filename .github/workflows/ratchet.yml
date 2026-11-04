@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [main, integration/2.2.61]
 concurrency:
   group: ratchet-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
