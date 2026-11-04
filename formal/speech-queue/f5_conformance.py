@@ -93,6 +93,7 @@ def check_f5_runtime(run, runner):
     root = Path(__file__).resolve().parents[2]
     cases = capture_cases(run)
     env = {**os.environ, "VOICELAYER_F5_CASES": str(cases), "VOICELAYER_F5_WIRE": str(run / "f5-wire.json")}
+    daemon_wire = run / "f5-daemon-wire.json"
     commands = [
         (["swift", "test", "--package-path", "flow-bar", "--scratch-path", ".build.noindex/swift", "--filter", "F5PauseConformanceTests|VoiceBarCommandRouterTests.testRealGestureStartsN6AfterALockedTakeBeginsTranscribing|PlaybackPauseTests.testPreparingPauseOwnerIsControllableBeforeAFirstChunkExists"], "f5-swift.log"),
         (["bun", "test", "src/__tests__/tts-long-read-runtime.test.ts"], "f5-daemon.log"),
@@ -100,7 +101,7 @@ def check_f5_runtime(run, runner):
         (["bun", "test", "src/__tests__/socket-handlers-idempotency.test.ts", "src/__tests__/socket-residency.test.ts", "src/__tests__/whisper-residency.test.ts", "src/__tests__/update-gate-round1.test.ts", "src/__tests__/error-recovery.test.ts", "src/__tests__/click2-groundwork.test.ts", "src/__tests__/recording-review-regressions.test.ts", "src/__tests__/test-safety-lifecycle.test.ts", "src/__tests__/mcp-handler.test.ts", "src/__tests__/pause-ask.test.ts", "src/__tests__/update-gate-installer-participant.test.ts", "src/__tests__/update-gate-installer-short-holder.test.ts"], "f5-socket-idempotency.log"),
     ]
     for command, name in commands:
-        status = runner.run(["nice", "-n", "19", *command], run / name, 900, cwd=root, env=env)
+        status = runner.run(["nice", "-n", "19", *command], run / name, 900, cwd=root, env={**env, **({"VOICELAYER_F5_DAEMON_WIRE": str(daemon_wire)} if name == "f5-daemon.log" else {})})
         print((run / name).read_text(), end="", flush=True)
         assert status == 0, f"F5 runtime divergence: {name}"
         output = (run / name).read_text()
@@ -110,3 +111,37 @@ def check_f5_runtime(run, runner):
             assert f"Replayed {len(json.loads(cases.read_text()))} TLC F5 native command scenarios" in output, "Daemon replay skipped"
         else:
             assert " 0 fail" in output and " 0 pass" not in output, "Settlement guards skipped"
+
+    paired_env = {**env, "VOICELAYER_F5_DAEMON_WIRE": str(daemon_wire)}
+    native_test = "F5PauseConformanceTests.testRealDaemonSettlementFramesProjectResumedReadToSpeaking"
+    native_command = ["nice", "-n", "19", "swift", "test", "--package-path", "flow-bar",
+                      "--scratch-path", ".build.noindex/swift", "--filter", native_test]
+    status = runner.run(native_command, run / "f5-native-projection.log", 900, cwd=root, env=paired_env)
+    output = (run / "f5-native-projection.log").read_text()
+    print(output, end="", flush=True)
+    assert status == 0 and f"Projected {len(json.loads(cases.read_text()))} real daemon F5 scenarios" in output, "Native daemon projection skipped or diverged"
+
+    # Restore the exact old identity-retirement guard in a private package, never the checked sources.
+    import shutil
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="f5-resume-mutant-", dir=root / ".build.noindex") as directory:
+        package = Path(directory) / "flow-bar"
+        package.mkdir()
+        shutil.copy2(root / "flow-bar/Package.swift", package / "Package.swift")
+        for name in ("Sources", "Tests"):
+            shutil.copytree(root / "flow-bar" / name, package / name)
+        source = package / "Sources/VoiceBarUI/VoiceState.swift"
+        current = source.read_text()
+        guard = "} else if mode != .speaking, !keepsSelectionReadThroughCapture {"
+        assert current.count(guard) == 1, "Resume identity mutant no longer matches its guard"
+        source.write_text(current.replace(guard, "} else if mode != .speaking {"))
+        mutant_command = ["nice", "-n", "19", "swift", "test", "--package-path", str(package),
+                          "--scratch-path", str(Path(directory) / "swift"), "--filter", native_test]
+        status = runner.run(mutant_command, run / "f5-native-resume-mutant.log", 900, cwd=root, env=paired_env)
+        output = (run / "f5-native-resume-mutant.log").read_text()
+        assert status != 0 and "XCTAssertEqual failed" in output and "native daemon resumed projection row" in output, "Old-drop mutant must fail native speaking projection"
+        failures = output.count("native daemon resumed projection row")
+        (run / "f5-native-mutant.json").write_text(json.dumps({"property": "NativeResumedReadIsSpeaking",
+            "mutant": "old mode != speaking identity retirement", "expected": "FAIL", "actual": "FAIL",
+            "native_projection_failures": failures}, indent=2) + "\n")
+        print(f"NativeResumedReadIsSpeaking mutant: expected FAIL, actual FAIL; {failures} resumed projections rejected", flush=True)

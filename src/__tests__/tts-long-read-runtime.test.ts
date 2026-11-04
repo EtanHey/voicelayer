@@ -134,7 +134,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
-  const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+  const start = (engine: "edge" | "clone" = "edge", readText = text, identity: Parameters<typeof speakLongRead>[3] = {}) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }, Date.now(), identity); handles.push(h); return h; };
   it("F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots", async () => {
     const wire: { expected: number; events: unknown[] }[] = [];
     const rows = process.env.VOICELAYER_SPEECH_CASES
@@ -257,6 +257,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(native).toHaveLength(rows.length);
     modelReplay = true;
     let replayed = 0;
+    const daemonWire: { requestID: string; resumes: boolean; events: unknown[] }[] = [];
     for (const [index, row] of rows.entries()) {
       resetSelectionReadQueueForTests();
       const firstPlayer = players.length, firstEvent = events.length;
@@ -275,7 +276,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
           return outcome.text;
         });
       });
-      const speakText = spyOn(tts, "speakText").mockImplementation(text => start("edge", text));
+      const speakText = spyOn(tts, "speakText").mockImplementation((text, _kind, identity) => start("edge", text, identity));
       try {
         await handleSocketCommand({ cmd: "speak_text", text: "One two", source: "selection", id: `owner-${index}` });
         const original = handles.at(-1)!;
@@ -332,6 +333,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
           if (!row.stopped && !manual) await original.done; // End-of-read sentinel: complete without a player.
         }
         expect(acknowledgeDictationDelivery("stale-take", "stale-take")).toBe(false);
+        daemonWire.push({ requestID: `owner-${index}`,
+          resumes: !row.stopped && !manual && (row.initial === "preparing" || row.press < 4),
+          events: events.slice(firstEvent).map(event => JSON.parse(serializeEvent(event))) });
         stopPlayback();
         for (const player of players) player.exit.resolve(0);
         await original.done;
@@ -344,6 +348,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       }
     }
     expect(replayed).toBe(rows.length);
+    if (process.env.VOICELAYER_F5_DAEMON_WIRE) writeFileSync(process.env.VOICELAYER_F5_DAEMON_WIRE, JSON.stringify(daemonWire));
     console.log(`Replayed ${replayed} TLC F5 native command scenarios through real daemon, PlaybackQueueManager and Lane I take settlement`);
   }, 120_000);
 

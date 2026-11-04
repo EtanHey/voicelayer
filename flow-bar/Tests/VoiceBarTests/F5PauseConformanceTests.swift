@@ -25,8 +25,13 @@ final class F5PauseConformanceTests: XCTestCase {
             var commands: [[String: Any]] = []
             state.sendCommand = { commands.append($0) }
             let router = VoiceBarCommandRouter(voiceState: state)
+            state.selectionTextCaptureHandler = { $0(.completed("One two")) }
+            state.speakSelection()
+            let requestID = try XCTUnwrap(commands.last?["id"] as? String)
+            state.handleEvent(["type": "ack", "command": "speak_text", "id": requestID, "outcome": "accept"])
+            commands.removeAll()
             let speech: [String: Any] = ["type": "state", "state": "speaking", "text": "One two",
-                                        "playback_id": "read", "generation": 1, "duration_ms": 4000]
+                                        "playback_id": "read", "generation": 1, "duration_ms": 4000, "request_id": requestID]
             state.handleEvent(speech)
             router.handleHotkeyHoldStart()
             let a = try XCTUnwrap(commands.last?["take_id"] as? String)
@@ -88,16 +93,23 @@ final class F5PauseConformanceTests: XCTestCase {
             var commands: [[String: Any]] = []
             state.sendCommand = { commands.append($0) }
             let router = VoiceBarCommandRouter(voiceState: state)
+            state.selectionTextCaptureHandler = { $0(.completed("One two")) }
+            state.speakSelection()
+            let requestID = try XCTUnwrap(commands.last?["id"] as? String)
+            state.handleEvent(["type": "ack", "command": "speak_text", "id": requestID, "outcome": "accept"])
+            commands.removeAll()
             let manualBefore = row.initial == "paused" || row.manualBefore == true
             let press = row.initial == "preparing" ? 0 : min(row.press * 1000, 4000)
             let offset = min(press / 2000 * 2000, 4000)
             let speaking: [String: Any] = ["type": "state", "state": "speaking", "text": "One two",
-                                           "duration_ms": 4000, "playback_id": "model-read", "generation": 1]
+                                           "duration_ms": 4000, "playback_id": "model-read", "generation": 1,
+                                           "request_id": requestID]
             if row.initial == "preparing" {
-                state.handleEvent(["type": "state", "state": "speaking", "text": "One two",
+                state.handleEvent(["type": "state", "state": "speaking", "text": "One two", "request_id": requestID,
                                    "long_read": ["id": "model-read", "chunk_index": 0, "chunk_count": 1,
                                                  "chunk_start_ms": 0, "preparing": true, "text": "One two"]])
             } else { state.handleEvent(speaking) }
+            state.handleEvent(["type": "read_queue", "count": row.queued, "current_request_id": requestID])
             clock += Double(press) / 1000
             var paused: [String: Any] = ["type": "playback_state", "state": "paused", "playback_id": "model-read",
                                          "generation": 2, "offset_ms": offset, "chunk_offset_ms": offset,
@@ -170,6 +182,8 @@ final class F5PauseConformanceTests: XCTestCase {
                 resumed["generation"] = 3
                 resumed["playback_offset_ms"] = offset
                 state.handleEvent(resumed)
+                state.handleEvent(["type": "playback_state", "state": "resumed", "playback_id": "model-read", "generation": 3])
+                XCTAssertEqual(state.mode, .speaking, "native resumed projection row \(index)")
             }
             let count = commands.count
             // Every outcome, including timeout/failure/cancel, can settle while F5 is still down.
@@ -185,6 +199,48 @@ final class F5PauseConformanceTests: XCTestCase {
         }
         try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]).write(to: URL(fileURLWithPath: wire))
         print("Replayed \(rows.count) TLC F5 scenarios through real VoiceBarCommandRouter/VoiceState; wrote native commands")
+    }
+
+    func testRealDaemonSettlementFramesProjectResumedReadToSpeaking() async throws {
+        guard let path = ProcessInfo.processInfo.environment["VOICELAYER_F5_DAEMON_WIRE"] else {
+            throw XCTSkip("Run formal/speech-queue/check.sh for paired daemon frames")
+        }
+        let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [[String: Any]])
+        var resumedCount = 0
+        for (index, row) in rows.enumerated() {
+            let state = VoiceState(playbackAmplitudeClock: { 100 })
+            state.isConnected = true
+            state.frontmostAppProvider = { nil }
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.selectionTextCaptureHandler = { $0(.completed("One two")) }
+            state.speakSelection()
+            let requestID = try XCTUnwrap(commands.last?["id"] as? String)
+            state.handleEvent(["type": "ack", "command": "speak_text", "id": requestID, "outcome": "accept"])
+            let frames = try XCTUnwrap(row["events"] as? [[String: Any]])
+            for var event in frames {
+                // Bind the daemon's symbolic selection to this native submission, as in the command leg.
+                if event["request_id"] as? String == row["requestID"] as? String { event["request_id"] = requestID }
+                if event["current_request_id"] as? String == row["requestID"] as? String { event["current_request_id"] = requestID }
+                if ["state", "read_queue", "playback_state", "playback_outcome", "subtitle"].contains(event["type"] as? String ?? "") {
+                    state.handleEvent(event)
+                }
+            }
+            await drainMainQueue()
+            if row["resumes"] as? Bool == true {
+                XCTAssertEqual(state.mode, .speaking, "native daemon resumed projection row \(index)")
+                XCTAssertFalse(state.isPlaybackPaused, "row \(index)")
+                XCTAssertEqual(state.teleprompterText, "One two", "row \(index)")
+                let resumed = try XCTUnwrap(frames.last { $0["state"] as? String == "resumed" })
+                XCTAssertEqual(state.playbackElapsedMilliseconds(), resumed["offset_ms"] as? Int, "row \(index)")
+                state.togglePlaybackPause()
+                XCTAssertEqual(commands.last?["playback_id"] as? String, resumed["playback_id"] as? String)
+                XCTAssertEqual(commands.last?["generation"] as? Int, resumed["generation"] as? Int)
+                resumedCount += 1
+            }
+        }
+        XCTAssertGreaterThan(resumedCount, 0)
+        print("Projected \(rows.count) real daemon F5 scenarios into native state; \(resumedCount) resumed reads speaking")
     }
 
     /// Wait for the already-enqueued restore, independent of timer resolution or host load.

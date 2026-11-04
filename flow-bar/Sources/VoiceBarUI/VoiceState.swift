@@ -419,7 +419,7 @@ public final class VoiceState {
             if mode == .disconnected {
                 invalidateSelectionSpeechIdentity()
                 clearReadQueue()
-            } else if mode != .speaking {
+            } else if mode != .speaking, !keepsSelectionReadThroughCapture {
                 clearCurrentSelectionReadIdentity(advanceEpoch: false)
             }
             synchronizeParkedRead(from: oldValue)
@@ -1304,6 +1304,12 @@ public final class VoiceState {
         selectionReadIsPreparing = false
     }
 
+    /// F5 lends capture the surface, not the read's identity. The pause can arrive after mic-open.
+    private var keepsSelectionReadThroughCapture: Bool {
+        guard mode == .recording || mode == .transcribing || mode == .idle else { return false }
+        return parkedRead != nil || (barInitiatedRecording && pendingPauseEpoch != nil)
+    }
+
     /// Explicit user stop/cancel and disconnect end all pending own requests as well.
     private func invalidateSelectionSpeechIdentity() {
         let ids = selectionSubmissions.sorted { $0.value.order < $1.value.order }.map(\.key)
@@ -2077,7 +2083,7 @@ public final class VoiceState {
             clearCurrentSelectionReadIdentity(advanceEpoch: true)
         }
         sendIntent(command: .stop, payload: payload,
-                   retiresSelections: !retainsReadQueue && !keepsWaitingReadsThroughCapture)
+                   retiresSelections: !retainsReadQueue && !keepsWaitingReadsThroughCapture && !keepsSelectionReadThroughCapture)
         if shouldShowTranscribing {
             enterTranscribingMode()
         } else if shouldExitInterruptedPlayback {
@@ -2189,7 +2195,7 @@ public final class VoiceState {
         hotkeyPhase = .idle
         statusText = ""
         // QUEUE1c: an idle Cancel ends the waiting chain; the mirror clears as the identities retire.
-        let keepsWaitingReads = keepsWaitingReadsThroughCapture
+        let keepsWaitingReads = keepsWaitingReadsThroughCapture || keepsSelectionReadThroughCapture
         sendIntent(command: .cancel, payload: ["cmd": "cancel"], retiresSelections: !keepsWaitingReads)
         if !keepsWaitingReads { clearReadQueue() }
         if mode == .recording || mode == .transcribing || mode == .speaking {
@@ -2405,6 +2411,7 @@ public final class VoiceState {
     public func stopSpeechDuringCapture() {
         guard isCaptureSettlementPending, parkedRead != nil else { return }
         sendCommand?(["cmd": "stop", "scope": "speech", "id": UUID().uuidString])
+        clearCurrentSelectionReadIdentity()
         parkedRead = nil
         departedRead = nil
         clearReadQueue()
@@ -3319,6 +3326,7 @@ public final class VoiceState {
                     if mode == .speaking { enterIdleState(clearQueue: false) }
                     showSelectionBusyNote(message: "Speech stopped")
                 }
+                clearCurrentSelectionReadIdentity()
                 retireParkedRead()
             }
 
