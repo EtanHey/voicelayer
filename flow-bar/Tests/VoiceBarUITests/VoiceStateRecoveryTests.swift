@@ -70,6 +70,40 @@ final class VoiceStateRecoveryTests: XCTestCase {
                        "Transcription timed out while waiting for the result.")
     }
 
+    func testTranscriptionWaitOutlastsDaemonReturnDeadline() {
+        // Daemon: max(120 s, 4x decoded audio) + 15 s grace; decoded <= captured.
+        XCTAssertEqual(VoiceState.transcriptionWait(base: .seconds(900), captureDurationMs: nil), .seconds(900))
+        XCTAssertEqual(VoiceState.transcriptionWait(base: .seconds(900), captureDurationMs: 30_000), .seconds(900))
+        for capturedMs in [342_000, 600_000, 939_040] {
+            let daemonDeadline = Duration.milliseconds(max(120_000, capturedMs * 4)) + .seconds(15)
+            XCTAssertGreaterThan(
+                VoiceState.transcriptionWait(base: .seconds(900), captureDurationMs: capturedMs),
+                daemonDeadline,
+                "the notch must not give up on a \(capturedMs) ms take before the daemon does"
+            )
+        }
+    }
+
+    @MainActor
+    func testLongCaptureScalesTheLiveTranscriptionWait() async throws {
+        let state = VoiceState()
+        var now: TimeInterval = 1_000
+        state.recordingTimingClock = { now }
+        state.transcriptionTimeout = .milliseconds(20)
+        state.setConnectionStatus(true)
+        defer { state.setConnectionStatus(false) }
+        state.handleEvent([
+            "type": "state", "state": "recording", "mode": "ptt", "bar_owned": false,
+        ])
+        now += 300 // a five-minute capture
+        state.handleEvent(["type": "state", "state": "transcribing"])
+
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(state.mode, .transcribing, "a long capture must not fall back to the short base wait")
+        XCTAssertNil(state.errorMessage)
+    }
+
     func testMCPTranscribingDisconnectEndsWaitImmediately() {
         let state = VoiceState()
         state.setConnectionStatus(true)
