@@ -205,6 +205,17 @@ final class F5PauseConformanceTests: XCTestCase {
         guard let path = ProcessInfo.processInfo.environment["VOICELAYER_F5_DAEMON_WIRE"] else {
             throw XCTSkip("Run formal/speech-queue/check.sh for paired daemon frames")
         }
+        try await projectDaemonFrames(path: path)
+    }
+
+    func testCloneShortChunkedDaemonFramesResumeAtPausedWord() async throws {
+        guard let path = ProcessInfo.processInfo.environment["VOICELAYER_F5_CLONE_WIRE"] else {
+            throw XCTSkip("Run the F-resume-clone runtime to generate owned clone frames")
+        }
+        try await projectDaemonFrames(path: path)
+    }
+
+    private func projectDaemonFrames(path: String) async throws {
         let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [[String: Any]])
         var resumedCount = 0
         for (index, row) in rows.enumerated() {
@@ -238,13 +249,20 @@ final class F5PauseConformanceTests: XCTestCase {
             if row["resumes"] as? Bool == true {
                 XCTAssertEqual(state.mode, .speaking, "native daemon resumed projection row \(index)")
                 XCTAssertFalse(state.isPlaybackPaused, "row \(index)")
-                XCTAssertEqual(state.teleprompterText, "One two", "row \(index)")
+                XCTAssertEqual(state.teleprompterText, row["text"] as? String ?? "One two", "row \(index)")
                 let resumed = try XCTUnwrap(frames.last { $0["state"] as? String == "resumed" })
                 XCTAssertEqual(state.playbackElapsedMilliseconds(), resumed["offset_ms"] as? Int, "row \(index)")
                 state.togglePlaybackPause()
                 XCTAssertEqual(commands.last?["playback_id"] as? String, resumed["playback_id"] as? String)
                 XCTAssertEqual(commands.last?["generation"] as? Int, resumed["generation"] as? Int)
                 resumedCount += 1
+            } else if let ending = row["ending"] as? String {
+                if ending == "manual" {
+                    XCTAssertEqual(state.mode, .speaking, "clone user pause returns its surface")
+                    XCTAssertTrue(state.isPlaybackPaused, "clone user pause must persist")
+                } else {
+                    XCTAssertNotEqual(state.mode, .speaking, "clone Stop/refusal cannot resurrect a read")
+                }
             }
         }
         XCTAssertGreaterThan(resumedCount, 0)

@@ -246,6 +246,106 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     stopPlayback(); await h.done;
   });
 
+  for (const kind of ["short", "long"] as const) for (const localPress of [2000, 4000])
+  for (const ending of ["auto", "slow-exit", "manual", "stop", "refused", "n6-A", "n6-B", "queued"] as const)
+  it(`F-resume-clone ${kind} chunked F5 ${localPress}/${ending}`, async () => {
+    modelReplay = true;
+    const cloneReady = fixtureBarrier<string>(), opened = fixtureBarrier<void>();
+    const results = [deferred<string | null>(), deferred<string | null>()];
+    let captures = 0;
+    const realSpeakText = tts.speakText, voice = kind === "short" ? "ben-c1" : "theo-c4s";
+    spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
+      kind, engine: "clone", voice, rate: "+0%", engineSource: "settings", rateSource: "settings",
+    }), spyOn(qwen, "loadProfile").mockReturnValue({ name: voice, engine: "qwen3-tts", model_path: "",
+      reference_clips: [], reference_clip: "", fallback: "jenny", created: "" }),
+    spyOn(qwen, "synthesizeCloned").mockImplementation(async part => {
+      cloneReady.push(part); return Buffer.from("owned clone audio");
+    }), spyOn(tts, "speakText").mockImplementation((...args) => {
+      const read = realSpeakText(...args); handles.push(read); return read;
+    }), spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+      const index = captures++;
+      options?.onCaptureStart?.(); opened.push(); return finishSyntheticCapture(() => results[index].promise);
+    }));
+    resetSelectionReadQueueForTests();
+    try {
+      expect(await handleSocketCommand({ cmd: "speak_text", id: "clone-owner", text,
+        profile: kind, source: "selection" })).toMatchObject({ outcome: "accept" });
+      await playerBarrier.at(0);
+      for (let index = 0; index < 2; index++) {
+        clockMs += 4000; players[index].exit.resolve(0); await playerBarrier.at(index + 1);
+      }
+      await cloneReady.at(4); await fixtureCheckpoint();
+      const playing = events.findLast(event => event.state === "speaking" && !event.long_read?.preparing);
+      expect(playing.long_read.chunk_index).toBe(2);
+      expect(cloneReady.values).toHaveLength(5);
+      expect(readTTSControlsStatus().profiles[kind].last_first_audio)
+        .toEqual({ engine: "qwen3-tts", origin: "speak", fallback: false });
+      // The native cursor can reach a chunk boundary before its owned player exits.
+      // Its physical process is still alive in both rows; no completion is delivered here.
+      clockMs += 2000;
+      holdPlayerExit = ending === "slow-exit";
+      expect(handleSocketCommand({ cmd: "record", take_id: crypto.randomUUID(), press_to_talk: true,
+        playback_elapsed_ms: playing.long_read.chunk_start_ms + localPress })).toMatchObject({ outcome: "accept" });
+      if (holdPlayerExit) {
+        await fixtureCheckpoint(); expect(captures).toBe(0);
+        players[2].exit.resolve(143);
+      }
+      await opened.at(0); await fixtureCheckpoint();
+      const paused = events.findLast(event => event.type === "playback_state" && event.state === "paused");
+      expect(paused).toMatchObject({ playback_id: playing.playback_id, generation: playing.generation + 1, pause_owner: "f5" });
+      const pressWord = playing.initial_timing.aligned_words.findLast((word: { offset_ms: number }) => word.offset_ms <= localPress);
+      expect(players).toHaveLength(3);
+      if (ending === "manual") expect(await handleSocketCommand({ cmd: "pause", playback_id: paused.playback_id,
+        generation: paused.generation })).toMatchObject({ outcome: "accept" });
+      if (ending === "stop") expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
+      if (ending === "refused") effectiveStateSpy.mockReturnValue("recording");
+      if (ending === "queued") for (let index = 0; index < 2; index++) {
+        expect(await handleSocketCommand({ cmd: "speak_text", id: `clone-waiting-${index}`, text: `Waiting ${index}.`,
+          profile: kind, source: "selection", queue: true })).toMatchObject({ outcome: "accept", reason: "queued" });
+      }
+      if (ending.startsWith("n6-")) {
+        expect(handleSocketCommand({ cmd: "record", take_id: crypto.randomUUID(), press_to_talk: true })).toMatchObject({ outcome: "accept" });
+        await opened.at(1);
+        results[ending === "n6-A" ? 0 : 1].resolve(null); await fixtureCheckpoint();
+        expect(events.filter(event => event.state === "resumed")).toHaveLength(0);
+      }
+      for (const result of results) result.resolve(null);
+      await settleRecordingJobs(tts.hasF5Capture); await fixtureCheckpoint();
+      const resumes = !["manual", "stop", "refused"].includes(ending);
+      if (resumes) { await playerBarrier.at(3); await fixtureCheckpoint(); }
+      const resumed = events.filter(event => event.type === "playback_state" && event.state === "resumed");
+      const wire = { requestID: "clone-owner", text, resumes, ending, events: events.map(event => JSON.parse(serializeEvent(event))) };
+      if (process.env.VOICELAYER_F5_CLONE_WIRE) {
+        const path = process.env.VOICELAYER_F5_CLONE_WIRE;
+        const rows = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : [];
+        writeFileSync(path, JSON.stringify([...rows, wire]));
+      }
+      expect(Math.abs(paused.chunk_offset_ms - pressWord.offset_ms), "ClonePauseKeepsPressWord").toBeLessThanOrEqual(1);
+      expect(resumed, "CloneResumeKeepsParkedIdentity").toHaveLength(resumes ? 1 : 0);
+      if (resumes) {
+        expect(resumed[0]).toMatchObject({ playback_id: paused.playback_id, generation: paused.generation + 1,
+          offset_ms: paused.offset_ms });
+        const fresh = events.findLast(event => event.state === "speaking" && !event.long_read?.preparing);
+        expect(fresh).toMatchObject({ playback_id: paused.playback_id, generation: paused.generation + 1,
+          playback_offset_ms: paused.offset_ms, long_read: { chunk_index: 2 } });
+        expect(tts.playbackTelemetrySnapshot()).toEqual({ phase: "playing", generation: paused.generation + 1 });
+      } else {
+        expect(isPlaybackPaused()).toBe(ending === "manual");
+        if (ending === "refused") expect(events.some(event => event.reason === "resume-refused")).toBe(true);
+      }
+      expect(cloneReady.values.filter(part => !part.startsWith("Waiting "))).toHaveLength(5);
+      if (ending === "queued") expect(events.findLast(event => event.type === "read_queue"))
+        .toEqual({ type: "read_queue", count: 2, current_request_id: "clone-owner" });
+      expect(players).toHaveLength(resumes ? 4 : 3);
+    } finally {
+      effectiveStateSpy.mockReturnValue("idle"); holdPlayerExit = false;
+      for (const result of results) result.resolve(null);
+      for (const player of players) player.exit.resolve(143);
+      await settleRecordingJobs(tts.hasF5Capture);
+      stopPlayback(); await awaitCurrentPlayback(); resetSelectionReadQueueForTests();
+    }
+  });
+
   it.skipIf(!process.env.VOICELAYER_F5_CASES)("TLC F5 native command projection conforms to real daemon/player/take handlers", async () => {
     const schema = z.array(z.object({ initial: z.enum(["playing", "preparing", "paused"]), press: z.number().int(),
       manual: z.boolean(), stopped: z.boolean(), outcome: z.enum(["pasted", "empty", "failed", "cancelled", "timeout"]),

@@ -8,7 +8,7 @@ import re
 import sys
 import time
 from admission_source import check_admission
-from f5_conformance import check_f5_runtime
+from f5_conformance import check_f5_runtime, check_clone_resume_runtime
 from speech_data_conformance import check_speech_data_runtime
 from f5_checks import EXPECTED as F5_EXPECTED, check_mutant_coverage, check_reachability, valid_result, render_receipt, cross_kill, check_temporal_controls
 from supervision import Supervisor
@@ -186,6 +186,7 @@ def check_run(runner, RUN, f5_only=False, receipt=False):
         raise SystemExit(status)
     check_admission(RUN, runner)
     check_f5_runtime(RUN, runner)
+    check_clone_resume_runtime(RUN, runner)
     check_speech_data_runtime(RUN, runner)
     assert all(hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest
                for path, digest in hashes.items()), "Sources changed during runtime conformance"

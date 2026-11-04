@@ -145,3 +145,45 @@ def check_f5_runtime(run, runner):
             "mutant": "old mode != speaking identity retirement", "expected": "FAIL", "actual": "FAIL",
             "native_projection_failures": failures}, indent=2) + "\n")
         print(f"NativeResumedReadIsSpeaking mutant: expected FAIL, actual FAIL; {failures} resumed projections rejected", flush=True)
+
+
+def check_clone_resume_runtime(run, runner):
+    """Same owned clone frames go through the actual native state, including the restored bug."""
+    import os
+    from speech_data_conformance import mutant_copy
+    root = Path(__file__).resolve().parents[2]
+    wire = run / "f5-clone-wire.json"
+    env = {**os.environ, "VOICELAYER_F5_CLONE_WIRE": str(wire)}
+    bun = ["nice", "-n", "19", "bun", "test", "src/__tests__/tts-long-read-runtime.test.ts", "-t", "F-resume-clone"]
+    native = ["nice", "-n", "19", "swift", "test", "--package-path", "flow-bar",
+              "--scratch-path", ".build.noindex/swift", "--filter",
+              "F5PauseConformanceTests.testCloneShortChunkedDaemonFramesResumeAtPausedWord"]
+    for command, name in [(bun, "f5-clone-daemon.log"), (native, "f5-clone-native.log")]:
+        status = runner.run(command, run / name, 900, cwd=root, env=env)
+        output = (run / name).read_text()
+        print(output, end="", flush=True)
+        assert status == 0, f"Clone resume conformance diverged: {name}"
+    rows = json.loads(wire.read_text())
+    assert len(rows) == 32 and sum(row["resumes"] for row in rows) == 20, "Clone replay was skipped or incomplete"
+    assert "Projected 32 real daemon F5 scenarios" in (run / "f5-clone-native.log").read_text(), "Clone native projection skipped"
+    fixed = (root / "src/tts.ts").read_text()
+    guard = "const isLastChunk = !longRead || longRead.chunk_index === longRead.chunk_count - 1;"
+    assert fixed.count(guard) == 1, "Chunk-end mutant no longer matches its guard"
+    mutant_wire = run / "f5-clone-mutant-wire.json"
+    mutant_env = {**env, "VOICELAYER_F5_CLONE_WIRE": str(mutant_wire)}
+    with mutant_copy(root, run) as scratch:
+        (scratch / "src/tts.ts").write_text(fixed.replace(guard, "const isLastChunk = true;"))
+        command = [*bun[:-1], "F-resume-clone short chunked F5 4000/auto"]
+        status = runner.run(command, run / "f5-clone-mutant.log", 900, cwd=scratch, env=mutant_env)
+        output = (run / "f5-clone-mutant.log").read_text()
+        assert status != 0 and "error: ClonePauseKeepsPressWord" in output and " 1 fail" in output, "Chunk-end mutant survived daemon guard"
+    status = runner.run(native, run / "f5-clone-native-mutant.log", 900, cwd=root, env=mutant_env)
+    output = (run / "f5-clone-native-mutant.log").read_text()
+    assert status != 0 and "native daemon resumed projection row" in output and "XCTAssertEqual failed" in output, "Chunk-end mutant survived native projection"
+    assert (root / "src/tts.ts").read_text() == fixed, "Tracked source changed during clone mutant"
+    (run / "f5-clone-mutant.json").write_text(json.dumps(dict(
+        property="ClonePauseKeepsPressWord / NativeResumedReadIsSpeaking",
+        mutant="treat every chunk end as whole-read end", expected="FAIL", actual="FAIL",
+        clone_scenarios=len(rows), expected_resumes=sum(row["resumes"] for row in rows),
+        native_projection_failures=output.count("native daemon resumed projection row")), indent=2) + "\n")
+    print("PASS: 32 clone short/long boundary/interior scenarios; 20 native resumes; restored chunk-end mutant FAILS daemon AND native", flush=True)

@@ -129,3 +129,24 @@ SIGKILL isolation and both Resume-edge projections have focused Python guards.
 An indivisible first token over 100 characters remains atomic by design. The
 pre-existing second-chunk 400-character mid-token fallback is a follow-up; an
 installed acoustic check must still measure the chunk-1 to chunk-2 gap.
+
+
+## F-resume-clone: nonfinal chunk boundaries
+
+A native cursor at a chunk's duration is an end-of-read sentinel only for the final
+chunk (or an ordinary single-file job). For a nonfinal chunk whose player is still
+owned, Pause keeps the containing last word's tail. Resume therefore starts that
+same parked playback id at the next generation and publishes its speaking/resumed
+pair before the runner advances. Completing the parked chunk silently would make
+native playback-outcome handling retire the selection, dropping the next chunk's
+fresh identity. No wire or native view change is needed.
+
+The paired gate additionally runs 32 owned-Qwen scenarios: short ben-c1 and long
+theo-c4s; interior and boundary cursors after chunks 0-4 are synthesized; ordinary
+settlement, slow physical exit, manual pause, Stop, refused resume, both N6 settlement
+orders, and two waiting selections. Actual serialized daemon frames feed VoiceState,
+checking 20 resumes at their paused word and scoped identity, persistent manual pause,
+and terminal Stop/refusal. A scratch runtime mutant restores the unconditional
+chunk-end sentinel and must fail both the daemon word/identity guard and native
+speaking projection. Tests and gates for this lane run on M4 under the captain lock;
+installed interaction acceptance remains with the captain.

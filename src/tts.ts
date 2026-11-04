@@ -1402,7 +1402,11 @@ class PlaybackQueueManager {
           offset_ms: i * (job.metadata!.durationMs ?? 0) / tokens.length }));
     const word = words.findLast(boundary => boundary.offset_ms !== null && boundary.offset_ms <= cursor);
     job.pausedWordIndex = word?.word_index ?? 0;
-    const offset = cursor === job.metadata.durationMs ? cursor : Math.round(word?.offset_ms ?? 0);
+    // A chunk boundary is not the end of its read. Keep the containing word's
+    // tail when the UI clock reaches that boundary before the player exits.
+    const longRead = job.metadata.longRead;
+    const isLastChunk = !longRead || longRead.chunk_index === longRead.chunk_count - 1;
+    const offset = cursor === job.metadata.durationMs && isLastChunk ? cursor : Math.round(word?.offset_ms ?? 0);
     this.cancelSeekPreparation();
     if (active) { this.current = null; this.terminate(active); }
     if (this.preparing?.job === job) { const preparing = this.preparing; this.preparing = null; preparing.cancel(); }
