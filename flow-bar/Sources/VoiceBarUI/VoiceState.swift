@@ -556,6 +556,9 @@ public final class VoiceState {
     private var transcribingWaveformReplayStartedAt: TimeInterval?
     private var recordCommandUptimeMs: Int?
     private var recordingStateUptimeMs: Int?
+    // Length of the capture that just ended; scales the transcription wait so the
+    // notch never gives up before the daemon's own decode deadline (4x audio).
+    private var lastCaptureDurationMs: Int?
     private var didLogFirstRecordingAudioLevel = false
     // AIDEV-NOTE: capture-truth sub-state inside `.recording`. The mode flips
     // optimistically at hold-start (record(pressToTalk:)) 543–1281 ms — median
@@ -3251,6 +3254,7 @@ public final class VoiceState {
                 resetPlaybackAmplitude()
                 if recordingStateUptimeMs == nil {
                     recordingStateUptimeMs = currentRecordingUptimeMs()
+                    lastCaptureDurationMs = nil
                     didLogFirstRecordingAudioLevel = false
                     captureLive = false
                 }
@@ -4132,12 +4136,22 @@ public final class VoiceState {
     private func startTranscriptionTimeout() {
         transcriptionTimeoutTask?.cancel()
         let usesExtendedTimeout = barInitiatedRecording || historyRetranscriptionRequest.isPending
-        let timeout = usesExtendedTimeout ? barInitiatedTranscriptionTimeout : transcriptionTimeout
+        let baseTimeout = usesExtendedTimeout ? barInitiatedTranscriptionTimeout : transcriptionTimeout
+        let timeout = Self.transcriptionWait(base: baseTimeout, captureDurationMs: lastCaptureDurationMs)
         transcriptionTimeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
             guard let self, !Task.isCancelled, mode == .transcribing else { return }
             failTranscription(message: "Transcription timed out while waiting for the result.")
         }
+    }
+
+    /// The daemon allows max(120 s, 4x decoded audio) plus a 15 s abort grace; the
+    /// captured take is never shorter than the decoded slice, so 4x capture + 60 s
+    /// always outlasts it. Short takes keep the base budget.
+    static func transcriptionWait(base: Duration, captureDurationMs: Int?) -> Duration {
+        guard let captureDurationMs, captureDurationMs > 0 else { return base }
+        let scaled = Duration.milliseconds(captureDurationMs) * 4 + .seconds(60)
+        return max(base, scaled)
     }
 
     private func enterIdleState(clearQueue: Bool) {
@@ -4301,6 +4315,7 @@ public final class VoiceState {
             // the new capture exists.
             captureLive = false
             didLogFirstRecordingAudioLevel = false
+            lastCaptureDurationMs = recordingStateUptimeMs.map { max(0, currentRecordingUptimeMs() - $0) }
             recordingStateUptimeMs = nil
             // A recording re-entered from here has no press of its own, so the
             // press delta must be absent rather than measured across the whole
