@@ -1,5 +1,9 @@
 import type { STTBackend, STTResult, STTTranscribeOptions } from "./stt";
-import { parakeetServer, ParakeetServiceError, type ParakeetResponse } from "./parakeet-server";
+import { parakeetServer, ParakeetServiceError, PARAKEET_REQUEST_BUDGET_MS, type ParakeetResponse, type ParakeetTranscribeOptions } from "./parakeet-server";
+import {
+  chooseRetryGeometry, scanInternalWindowGaps, uncoveredGaps, PARAKEET_COVERAGE_MAX_RETRIES, PARAKEET_COVERAGE_RETRY_MIN_BUDGET_MS,
+  PARAKEET_PRIMARY_GEOMETRY, type ParakeetCoverageAttempt, type ParakeetCoverageGap, type ParakeetInternalCoverage, type ParakeetWindowGeometry,
+} from "./parakeet-coverage";
 import type { STTOutcome } from "./soundlayer/contracts";
 import { requestedLanguageCode } from "./language-config";
 import { retainParakeetFallback, type ParakeetFallbackAttempt } from "./parakeet-attempts";
@@ -82,19 +86,27 @@ export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, last
 }
 
 /** Only complete, input-bound Silero windows may establish unheard speech. */
-function lastSileroSpeech(evidence: ParakeetSpeechEvidence, info: WavInfo, sha256: string | null): number | undefined {
-  const probabilities = evidence.probabilities;
-  if (evidence.status !== "COMPLETE" || evidence.threshold !== PARAKEET_EMPTY_SPEECH_THRESHOLD ||
+function validSileroProbabilities(evidence: ParakeetSpeechEvidence | undefined, info: WavInfo, sha256: string | null): number[] | undefined {
+  const probabilities = evidence?.probabilities;
+  if (!evidence || evidence.status !== "COMPLETE" || evidence.threshold !== PARAKEET_EMPTY_SPEECH_THRESHOLD ||
       evidence.inputSha256 !== sha256 || evidence.frames !== info.frames || evidence.analyzedFrames !== info.frames ||
       !probabilities || probabilities.length !== Math.ceil(info.frames / VAD_CHUNK_SAMPLES) ||
       probabilities.some(p => !Number.isFinite(p) || p < 0 || p > 1)) return undefined;
+  return probabilities;
+}
+
+function lastSileroSpeech(evidence: ParakeetSpeechEvidence, info: WavInfo, sha256: string | null): number | undefined {
+  const probabilities = validSileroProbabilities(evidence, info, sha256);
+  if (!probabilities) return undefined;
   const last = probabilities.findLastIndex(p => p >= PARAKEET_EMPTY_SPEECH_THRESHOLD);
   return last < 0 ? 0 : Math.min((last + 1) * VAD_CHUNK_SAMPLES, info.frames) / info.sampleRate;
 }
 
 export interface ParakeetBackendDeps {
   fallbackBackend: STTBackend;
-  transcribe?: (path: string) => Promise<ParakeetResponse>;
+  transcribe?: (path: string, options?: ParakeetTranscribeOptions) => Promise<ParakeetResponse>;
+  /** Monotonic-enough clock for the shared request budget; injectable for deterministic tests. */
+  now?: () => number;
   isAvailable?: () => boolean;
   unload?: () => Promise<void>;
   env?: () => NodeJS.ProcessEnv;
@@ -232,8 +244,104 @@ export class ParakeetBackend implements STTBackend {
         .catch(error => ({ status: "UNKNOWN" as const, inputSha256: inputSha256!, errorType: error instanceof Error ? error.name : "unknown" }));
     }
     let returned: ParakeetResponse | null = null;
+    const now = this.deps.now ?? Date.now;
+    const decode = this.deps.transcribe ?? ((path: string, decodeOptions?: ParakeetTranscribeOptions) => parakeetServer.transcribe(path, decodeOptions));
+    const probeSpeech = async (): Promise<ParakeetSpeechEvidence> => {
+      try { return await (this.deps.speechProbe ?? probeParakeetSpeech)(inputPath); }
+      catch (error) { return { status: "UNKNOWN", threshold: PARAKEET_EMPTY_SPEECH_THRESHOLD, errorType: error instanceof Error ? error.name : "unknown" }; }
+    };
+    const decodeStarted = now();
+    /**
+     * V34 internal-window coverage. Runs only after the primary result already
+     * qualified (including the unchanged final-tail check). Never edits text:
+     * it delivers the primary hypothesis or ONE full-input wider-context retry,
+     * and records every attempt's windows, token times and raw hypothesis.
+     */
+    const coverInternalWindows = async (primary: ParakeetResponse): Promise<STTResult> => {
+      const native = (text: string, attemptEvidence: ParakeetResponse["attemptEvidence"], internalCoverage: ParakeetInternalCoverage,
+        extra: Partial<STTResult> = {}): STTResult => ({ text, backend: this.name, durationMs: Date.now() - started,
+        outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", languageWarning, languageEvidence, attemptEvidence, internalCoverage, ...extra });
+      const attemptRecord = (attempt: number, geometry: ParakeetWindowGeometry, response: ParakeetResponse | null, status: ParakeetCoverageAttempt["status"],
+        gaps: ParakeetCoverageGap[] = [], reason?: string): ParakeetCoverageAttempt =>
+        ({ attempt, geometry, windowEndFrames: Array.isArray(response?.window_end_frames) ? response.window_end_frames : null, status, gaps, ...(reason ? { reason } : {}) });
+      const duration = info.frames / info.sampleRate;
+      if (duration <= PARAKEET_PRIMARY_GEOMETRY.chunkSeconds) {
+        return native(primary.text, primary.attemptEvidence, { status: "NO_INTERNAL_WINDOW", retries: 0, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES, attempts: [] });
+      }
+      const scan = scanInternalWindowGaps(primary, PARAKEET_PRIMARY_GEOMETRY);
+      if (scan.status === "UNKNOWN") {
+        console.error(`[voicelayer] Parakeet internal-window coverage unknown (${scan.reason}); keeping Parakeet text, completeness unverified`);
+        return native(primary.text, primary.attemptEvidence, { status: "UNKNOWN", reason: scan.reason, retries: 0, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES,
+          attempts: [attemptRecord(1, PARAKEET_PRIMARY_GEOMETRY, primary, "UNKNOWN", [], scan.reason)] });
+      }
+      if (!scan.candidates.length) {
+        return native(primary.text, primary.attemptEvidence, { status: "COVERED", retries: 0, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES,
+          attempts: [attemptRecord(1, PARAKEET_PRIMARY_GEOMETRY, primary, "COVERED")] });
+      }
+      speechEvidence ??= await probeSpeech();
+      const probabilities = validSileroProbabilities(speechEvidence, info, inputSha256);
+      if (!probabilities) {
+        console.error("[voicelayer] Parakeet internal-window speech evidence unavailable or invalid; keeping Parakeet text, completeness unverified");
+        return native(primary.text, primary.attemptEvidence, { status: "UNKNOWN", reason: "speech-evidence-unavailable", retries: 0, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES,
+          attempts: [attemptRecord(1, PARAKEET_PRIMARY_GEOMETRY, primary, "UNKNOWN", scan.candidates, "speech-evidence-unavailable")] });
+      }
+      const gaps = uncoveredGaps(scan.candidates, probabilities, PARAKEET_EMPTY_SPEECH_THRESHOLD, info.sampleRate);
+      if (!gaps.length) {
+        return native(primary.text, primary.attemptEvidence, { status: "COVERED", retries: 0, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES,
+          attempts: [attemptRecord(1, PARAKEET_PRIMARY_GEOMETRY, primary, "COVERED")] });
+      }
+      const primaryRecord = attemptRecord(1, PARAKEET_PRIMARY_GEOMETRY, primary, "UNCOVERED", gaps);
+      // Commit the raw primary observation BEFORE any retry can run or fail.
+      const boundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason: "internal-window-uncovered", parakeet: primary, whisper: null,
+        whisperStatus: "NOT_RUN", speechEvidence, errorType: null, stage: "internal-coverage-boundary",
+        internalCoverage: { status: "UNCOVERED_RETRY_PENDING", retries: 0, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES, attempts: [primaryRecord] } });
+      const uncertain = (coverage: ParakeetInternalCoverage, retryAttempt: unknown): STTResult => {
+        const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason: "internal-window-uncovered", parakeet: primary,
+          retryAttempt, whisper: null, whisperStatus: "NOT_RUN", speechEvidence, errorType: null, deliveryText: primary.text,
+          outcome: "NATIVE_NONEMPTY_INTERNAL_SPEECH_UNCOVERED", previousAttemptPath: boundaryPath, stage: "internal-coverage-terminal", internalCoverage: coverage }) ?? boundaryPath;
+        console.error(`[voicelayer] Parakeet internal-window speech uncovered (${coverage.status}); delivering the unedited primary hypothesis, completeness NOT verified`);
+        return native(primary.text, primary.attemptEvidence, coverage, { outcome: "NATIVE_NONEMPTY_INTERNAL_SPEECH_UNCOVERED",
+          backend: `${this.name}+internal-coverage-uncertain`, fallbackEvidencePath });
+      };
+      const elapsedMs = now() - decodeStarted, remainingMs = PARAKEET_REQUEST_BUDGET_MS - elapsedMs;
+      // The retry decodes the whole input again with wider windows, so it needs
+      // roughly the primary's own time. It shares the request budget; never resets it.
+      const requiredMs = Math.max(PARAKEET_COVERAGE_RETRY_MIN_BUDGET_MS, Math.ceil(elapsedMs * 1.5));
+      const budget = { budgetMs: PARAKEET_REQUEST_BUDGET_MS, elapsedMsAtRetry: elapsedMs, requiredMs };
+      if (remainingMs < requiredMs) {
+        return uncertain({ status: "UNCOVERED_BUDGET_EXHAUSTED", retries: 0, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES, ...budget, attempts: [primaryRecord] }, null);
+      }
+      const geometry = chooseRetryGeometry(gaps, info.frames, info.sampleRate);
+      let retry: ParakeetResponse;
+      try { retry = await decode(inputPath, { geometry, timeoutMs: remainingMs }); }
+      catch (error) {
+        const status = error instanceof ParakeetServiceError ? error.status : "ERROR";
+        return uncertain({ status: "UNCOVERED_RETRY_FAILED", reason: status, retries: 1, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES, ...budget,
+          attempts: [primaryRecord, attemptRecord(2, geometry, null, "FAILED", [], status)] }, error instanceof ParakeetServiceError ? error.attempt : null);
+      }
+      const partial = (reason: string, retryGaps: ParakeetCoverageGap[] = []) => uncertain({ status: "UNCOVERED_RETRY_PARTIAL", reason, retries: 1,
+        maxRetries: PARAKEET_COVERAGE_MAX_RETRIES, ...budget, attempts: [primaryRecord, attemptRecord(2, geometry, retry, "UNCOVERED", retryGaps, reason)] }, retry);
+      if ((retry.attemptEvidence?.inputSha256 && retry.attemptEvidence.inputSha256 !== inputSha256) ||
+          (retry.attemptEvidence?.inputPath && retry.attemptEvidence.inputPath !== inputPath)) return partial("input-identity");
+      if (retry.window_geometry && (retry.window_geometry.chunk_seconds !== geometry.chunkSeconds || retry.window_geometry.overlap_seconds !== geometry.overlapSeconds)) return partial("geometry-mismatch");
+      const retryRisk = parakeetOutputRisk(retry, info, lastSileroSpeech(speechEvidence, info, inputSha256));
+      if (retryRisk) return partial(retryRisk);
+      // The retry must hear speech in the primary's flagged gaps AND leave no gap
+      // at its own internal window ends.
+      const retryScan = scanInternalWindowGaps(retry, geometry, gaps.map(gap => ({ from: gap.afterTokenEndS, to: gap.beforeTokenStartS })));
+      if (retryScan.status === "UNKNOWN") return partial(retryScan.reason);
+      const retryGaps = uncoveredGaps(retryScan.candidates, probabilities, PARAKEET_EMPTY_SPEECH_THRESHOLD, info.sampleRate);
+      if (retryGaps.length) return partial("retry-still-uncovered", retryGaps);
+      const coverage: ParakeetInternalCoverage = { status: "RETRY_COVERED", retries: 1, maxRetries: PARAKEET_COVERAGE_MAX_RETRIES, ...budget,
+        attempts: [primaryRecord, attemptRecord(2, geometry, retry, "COVERED")] };
+      const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason: "internal-window-uncovered", parakeet: primary,
+        retryAttempt: retry, whisper: null, whisperStatus: "NOT_RUN", speechEvidence, errorType: null, deliveryText: retry.text,
+        outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", previousAttemptPath: boundaryPath, stage: "internal-coverage-terminal", internalCoverage: coverage }) ?? boundaryPath;
+      // Delivered exactly as the retry decoded it: no splice with the primary text.
+      return native(retry.text, retry.attemptEvidence, coverage, { backend: `${this.name}+internal-coverage-retry`, fallbackEvidencePath });
+    };
     try {
-      const result = returned = await (this.deps.transcribe ?? (path => parakeetServer.transcribe(path)))(inputPath);
+      const result = returned = await decode(inputPath);
       await finishLanguage();
       if ((result.attemptEvidence?.inputSha256 && result.attemptEvidence.inputSha256 !== inputSha256) ||
           (result.attemptEvidence?.inputPath && result.attemptEvidence.inputPath !== inputPath)) return fallback("input-identity", result);
@@ -264,7 +372,7 @@ export class ParakeetBackend implements STTBackend {
           speechEvidence, errorType: null, previousAttemptPath: nativeBoundaryPath, stage: "vad-boundary" }) ?? nativeBoundaryPath;
       }
       if (reason) return fallback(reason, result);
-      return { text: result.text, backend: this.name, durationMs: Date.now() - started, outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", languageWarning, languageEvidence, attemptEvidence: result.attemptEvidence };
+      return await coverInternalWindows(result);
     } catch (error) {
       noteRecognizerEngine("parakeet", { phase: "error", error: error instanceof ParakeetServiceError && error.cleanupFailure ? "cleanup-unconfirmed" : "parakeet-provider-error" });
       // No retry of Parakeet after a provider/protocol error; owned child cleanup

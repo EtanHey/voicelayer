@@ -20,7 +20,11 @@ export interface ParakeetFallbackAttempt {
   languageEvidence?: import("./parakeet-lid").ParakeetLanguageEvidence;
   whisperStatus?: "NOT_RUN";
   whisperErrorAttempt?: unknown;
-  stage?: "native-or-input-boundary" | "fallback-terminal" | "native-terminal" | "vad-boundary";
+  stage?: "native-or-input-boundary" | "fallback-terminal" | "native-terminal" | "vad-boundary"
+    | "internal-coverage-boundary" | "internal-coverage-terminal";
+  /** Raw wider-context retry response (or its retained partial/error attempt). */
+  retryAttempt?: unknown;
+  internalCoverage?: import("./parakeet-coverage").ParakeetInternalCoverage;
   previousAttemptPath?: string;
   submittedPath?: string;
 }

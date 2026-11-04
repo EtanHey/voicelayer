@@ -68,6 +68,8 @@ export interface STTResult extends TranscriptionResult {
   languageEvidence?: import("./parakeet-lid").ParakeetLanguageEvidence;
   /** Private alternate-attempt diagnostic when Parakeet retries via Whisper. */
   fallbackEvidencePath?: string;
+  /** Parakeet internal-window speech-coverage provenance (V34). */
+  internalCoverage?: import("./parakeet-coverage").ParakeetInternalCoverage;
   /**
    * Whisper segment timestamps on the source recording's absolute timeline.
    * Present when the outro gate requests verbose responses. On the chunked path, overlap words keep the earlier chunk's

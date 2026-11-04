@@ -30,6 +30,8 @@ export interface STTAttemptEvidence {
 
 export type STTOutcome =
   | "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN"
+  /** Parakeet text delivered unedited, but VAD heard speech in a token gap at an internal window end that one bounded retry could not cover. */
+  | "NATIVE_NONEMPTY_INTERNAL_SPEECH_UNCOVERED"
   | "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN"
   | "FALLBACK_NONEMPTY_CAPTURE_TRUNCATED"
   | "FALLBACK_NONEMPTY_TAIL_VERIFIED"

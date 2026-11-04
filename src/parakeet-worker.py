@@ -40,7 +40,26 @@ def read_pcm(path):
     return pcm, frames
 
 
-def decode(model, mx, np, path):
+# (chunk, overlap) seconds. The first is every primary decode; the rest mirror
+# PARAKEET_COVERAGE_RETRY_GEOMETRIES in parakeet-coverage.ts. Nothing else is
+# accepted, so the protocol cannot request arbitrary decode geometry.
+PRIMARY_GEOMETRY = (30.0, 2.0)
+ALLOWED_GEOMETRIES = {PRIMARY_GEOMETRY, (45.0, 10.0), (50.0, 12.0), (60.0, 15.0)}
+
+
+def request_geometry(request):
+    chunk = request.get("chunk_seconds", PRIMARY_GEOMETRY[0])
+    overlap = request.get("overlap_seconds", PRIMARY_GEOMETRY[1])
+    if any(type(value) not in (int, float) or isinstance(value, bool) for value in (chunk, overlap)):
+        raise ValueError("Invalid decode geometry")
+    geometry = (float(chunk), float(overlap))
+    if geometry not in ALLOWED_GEOMETRIES:
+        raise ValueError("Unsupported decode geometry")
+    return geometry
+
+
+def decode(model, mx, np, path, geometry=PRIMARY_GEOMETRY):
+    chunk_seconds, overlap_seconds = geometry
     pcm, frames = read_pcm(path)
     audio = mx.array(np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0)
     progress = []
@@ -52,11 +71,15 @@ def decode(model, mx, np, path):
 
     mx.synchronize()
     start = time.monotonic()
-    result = model.generate(audio, chunk_duration=30.0, overlap_duration=2.0,
+    result = model.generate(audio, chunk_duration=chunk_seconds, overlap_duration=overlap_seconds,
                             stream=False, verbose=False, chunk_callback=chunk)
     mx.synchronize()
     # Callback is before decode; only a returned final result makes it complete.
-    covered = progress[-1] if progress else (frames if frames <= 30 * 16000 else 0)
+    single_window = not progress and frames <= chunk_seconds * 16000
+    covered = progress[-1] if progress else (frames if single_window else 0)
+    # Source windows as the provider reported them, in order. A single-window
+    # decode never calls back; its one window ends at the input end.
+    window_ends = list(progress) if progress else ([frames] if single_window else [])
     ends = []
     raw_times = []
     times_valid = True
@@ -84,6 +107,8 @@ def decode(model, mx, np, path):
             "last_token_end_s": max(ends) if ends else None,
             "inference_s": time.monotonic() - start,
             "language": None, "raw_token_times": raw_times,
+            "window_end_frames": window_ends,
+            "window_geometry": {"chunk_seconds": chunk_seconds, "overlap_seconds": overlap_seconds},
             "attemptEvidence": {"status": ("RETURNED" if text.strip() else "EMPTY_RESPONSE") if complete else "PARTIAL",
                                 "inputPath": str(path), "decodeCoverage": "FULL_INPUT" if covered == frames else "PARTIAL", "tail": "UNKNOWN", "timesValid": times_valid}}
     if not complete:
@@ -109,7 +134,8 @@ def serve(model, mx, np, source, output):
                 value = {"ready": True, "protocol": 1, "pid": os.getpid()}
             elif op == "transcribe":
                 with contextlib.redirect_stdout(sys.stderr):
-                    value = decode(model, mx, np, Path(request["audio_path"]).resolve(strict=True))
+                    value = decode(model, mx, np, Path(request["audio_path"]).resolve(strict=True),
+                                   request_geometry(request))
             elif op == "shutdown":
                 output.write(json.dumps({"id": request_id, "ok": True}) + "\n")
                 output.flush()
