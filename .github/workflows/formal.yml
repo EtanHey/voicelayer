@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
   pull_request:
-    branches: [main]
+    branches: [main, integration/2.2.61]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
 
 permissions:
