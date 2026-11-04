@@ -9,6 +9,7 @@ final class CloneEngineControllerTests: XCTestCase {
         defer { fixture.cleanup() }
         fixture.controller.open()
         XCTAssertTrue(fixture.wait { fixture.process?.isRunning == true })
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
         fixture.tick()
         XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .running })
         XCTAssertEqual(fixture.controller.snapshot.pid, Int(fixture.process!.processIdentifier))
@@ -29,7 +30,7 @@ final class CloneEngineControllerTests: XCTestCase {
         XCTAssertEqual(fixture.launchCount, 1)
         for action in ["stop", "restart"] {
             let ack = fixture.controller.handle(["cmd": "clone_engine", "action": action, "id": "foreign"])
-            XCTAssertEqual(ack["ok"] as? Bool, false)
+            XCTAssertEqual(ack["outcome"] as? String, "reject")
             XCTAssertEqual(ack["reason"] as? String, "foreign_engine")
             XCTAssertTrue(foreign.isRunning)
         }
@@ -66,6 +67,45 @@ final class CloneEngineControllerTests: XCTestCase {
         XCTAssertTrue(fixture.wait { fixture.process?.isRunning == true })
     }
 
+    func testCrashRestartsOwnedChildAndRepeatedStartDoesNotDuplicateIt() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        fixture.controller.open()
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        let original = try XCTUnwrap(fixture.process)
+        _ = fixture.controller.handle(["cmd": "clone_engine", "action": "start"])
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .running })
+        XCTAssertEqual(fixture.launchCount, 1)
+        original.terminate(); original.waitUntilExit()
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .restarting })
+        fixture.tick()
+        XCTAssertTrue(fixture.wait { fixture.launchCount == 2 && fixture.port != nil })
+        fixture.tick()
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .running })
+        XCTAssertNotEqual(fixture.controller.snapshot.pid, Int(original.processIdentifier))
+        let replacement = try XCTUnwrap(fixture.process)
+        replacement.terminate(); replacement.waitUntilExit()
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .restarting })
+        XCTAssertEqual(fixture.delays.last, 2, "An early crash must increase backoff")
+    }
+
+    func testExplicitRestartReplacesOnlyTheOwnedChildAndInvalidCommandsAreRejected() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        fixture.controller.open()
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        let old = try XCTUnwrap(fixture.process)
+        let ack = fixture.controller.handle(["cmd": "clone_engine", "action": "restart"])
+        XCTAssertEqual(ack["outcome"] as? String, "accept")
+        XCTAssertFalse(old.isRunning)
+        XCTAssertTrue(fixture.wait { fixture.launchCount == 2 })
+        let invalidPayloads: [[String: Any]] = [["cmd": "clone_engine", "action": "set_autostart", "value": 1],
+            ["cmd": "clone_engine", "action": "start", "value": true], ["cmd": "clone_engine", "action": "kill"]]
+        for payload in invalidPayloads {
+            XCTAssertEqual(fixture.controller.handle(payload)["outcome"] as? String, "reject")
+        }
+    }
+
     func testStopWinsAgainstInFlightAbsentProbe() throws {
         var pending: ((CloneEngineObservation) -> Void)?
         var spawns = 0
@@ -99,7 +139,7 @@ final class CloneEngineControllerTests: XCTestCase {
         var port: Int? { (try? String(contentsOf: directory.appendingPathComponent("port"))).flatMap(Int.init) }
         lazy var controller = CloneEngineController(autostart: autostart, saveAutostart: { self.saved = $0 },
             probe: { completion in
-                guard let port = self.port else { completion(.absent); return }
+                guard self.process?.isRunning == true, let port = self.port else { completion(.absent); return }
                 CloneEngineProbe.inspect(url: URL(string: "http://127.0.0.1:\(port)/health")!,
                     tokenFile: self.directory.appendingPathComponent("secret").path, completion: completion)
             }, makeProcess: { self.process = try self.launchFake(); return self.process! },
@@ -116,7 +156,7 @@ final class CloneEngineControllerTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent("port"))
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            process.arguments = [Bundle.module.url(forResource: "clone-engine-fake", withExtension: "py", subdirectory: "Fixtures")!.path,
+            process.arguments = [Bundle.module.url(forResource: "clone-engine-fake", withExtension: "py")!.path,
                                  directory.appendingPathComponent("port").path]
             process.environment = ["PATH": "/usr/bin:/bin", "HOME": directory.path]
             process.standardOutput = FileHandle.nullDevice

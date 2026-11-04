@@ -13,6 +13,10 @@ describe("clone engine app-owned wire contract", () => {
       expect(parseCommand(JSON.stringify({cmd: "clone_engine", ...extra}))).toBeNull();
     }
   });
+  it("uses the existing correlated acknowledgement shape", () => {
+    const ack: SocketEvent = {type: "ack", command: "clone_engine", outcome: "reject", id: "engine-1", reason: "foreign_engine"};
+    expect(JSON.parse(serializeEvent(ack))).toEqual(ack);
+  });
   it("preserves nullable identity and the default-on preference", () => {
     const event = {type: "clone_engine", state: "starting", since: "2026-11-05T00:00:00Z", reason: null, pid: null, start_with_voicebar: true};
     expect(JSON.parse(serializeEvent(event as SocketEvent))).toEqual(event);
