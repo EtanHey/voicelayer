@@ -15,11 +15,12 @@ final class ReadyTimePasteTests: XCTestCase {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in })
         var front: NSRunningApplication? = App("test.start", 10001)
-        var field = "start", secure = false, editable = true
+        var field = "start", secure = false, editable = true, secureInput = false
         var writes: [String] = [], typed: [String] = [], commands: [[String: Any]] = []
         var afterWrite: (() -> Void)?
         init() {
             state.isConnected = true
+            state.secureInputEnabledProvider = { [unowned self] in secureInput }
             state.frontmostAppProvider = { [unowned self] in front }
             state.sendCommand = { [unowned self] in commands.append($0) }
             state.targetAppActivator = { _ in XCTFail("Automatic delivery must not steal focus") }
@@ -114,4 +115,54 @@ final class ReadyTimePasteTests: XCTestCase {
         XCTAssertEqual(kit.writes, ["start:whole fu… שלום"])
         XCTAssertEqual(kit.typed, [])
     }
+    func testSecureEventInputBlocksRichHostBeforeTyping() throws {
+        let kit = Kit(), id = try kit.start()
+        kit.front = App("com.t3tools.t3code", 10003); kit.secureInput = true
+        kit.final(id); kit.final(id)
+        XCTAssertEqual(kit.writes, []); XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.state.latestDictationInsertionStatus, .notInserted)
+    }
+    func testLocalFieldEditorInsertsAtSelectionWithoutAXOrClipboard() {
+        let editor = NSTextView()
+        editor.string = "before after"; editor.setSelectedRange(NSRange(location: 7, length: 0))
+        var results: [DictationInsertionResult] = []
+        XCTAssertTrue(LocalDictationTarget.insertion(for: editor)("whole fu… ", { results.append($0) }))
+        XCTAssertEqual(editor.string, "before whole fu… after")
+        XCTAssertEqual(results, [.verified])
+    }
+    private final class SecureField: NSSecureTextField, NSTextViewDelegate {}
+    func testLocalSecureEditorIsNeverWritten() {
+        let editor = NSTextView(), field = SecureField()
+        editor.delegate = field
+        XCTAssertTrue(LocalDictationTarget.eligibility(for: editor).isSecure)
+        XCTAssertFalse(LocalDictationTarget.insertion(for: editor)("secret", { _ in XCTFail("No write") }))
+        XCTAssertEqual(editor.string, "")
+    }
+
+    func testAppWithoutFocusedInputKeepsWordsWithoutWriting() throws {
+        let kit = Kit(), id = try kit.start()
+        kit.state.focusedTargetEligibilityProvider = { nil }
+        kit.final(id)
+        XCTAssertEqual(kit.writes, []); XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; copied/kept")
+    }
+    func testSecureInputEnabledAtPostingBoundaryRefuses() throws {
+        let kit = Kit(), id = try kit.start()
+        kit.front = App("com.t3tools.t3code", 10003)
+        kit.state.ownedTextTypingHandler = { _, _, matches in
+            kit.secureInput = true
+            XCTAssertFalse(matches())
+            return .focusChanged
+        }
+        kit.final(id)
+        XCTAssertEqual(kit.writes, []); XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.state.latestDictationInsertionStatus, .notInserted)
+    }
+    func testReentrantFinalDuringWriteCannotDispatchAgain() throws {
+        let kit = Kit(), id = try kit.start()
+        kit.afterWrite = { kit.final(id) }
+        kit.final(id)
+        XCTAssertEqual(kit.writes, ["start:whole fu… שלום"])
+    }
+
 }
