@@ -51,7 +51,7 @@ def check_run(runner, RUN, f5_only=False, receipt=False):
     sources = [SPEC / "F5Pause.tla", SPEC / "check.py", SPEC / "f5_checks.py", SPEC / "cross_tlc.py",
                ROOT / "formal/tlc.lock.json", ROOT / "formal/tlc_support.py", *configs]
     sources += [SPEC / "f5_conformance.py", SPEC / "speech_data_conformance.py", SPEC / "test_speech_data_conformance.py", *[ROOT / path for path in (
-        "src/tts.ts", "src/tts/long-read.ts", "src/__tests__/tts-chunking.test.ts", "src/tts/prosody.ts", "src/tts/playback-timing.ts", "src/__tests__/playback-timing.test.ts",
+        "src/tts.ts", "src/tts/retained-readback.ts", "src/tts/long-read.ts", "src/__tests__/tts-chunking.test.ts", "src/tts/prosody.ts", "src/tts/playback-timing.ts", "src/__tests__/playback-timing.test.ts",
         "flow-bar/Tests/VoiceBarUITests/SpeechDataConformanceTests.swift", "src/f5-capture.ts", "src/socket-handlers.ts", "src/socket-protocol.ts", "src/selection-read-queue.ts",
         "src/recording-jobs.ts", "src/recording-take-queue.ts", "src/recording-state.ts", "formal/corpus_support.py",
         "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift", "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",

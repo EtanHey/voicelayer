@@ -231,7 +231,9 @@ final class F5PauseConformanceTests: XCTestCase {
             let frames = try XCTUnwrap(row["events"] as? [[String: Any]])
             var beganPause = false
             for var event in frames {
-                if !beganPause, event["type"] as? String == "playback_state", event["state"] as? String == "paused" {
+                if !beganPause,
+                   (event["type"] as? String == "playback_state" && event["state"] as? String == "paused") ||
+                   (event["type"] as? String == "state" && event["source"] as? String == "recording" && event["state"] as? String == "recording") {
                     // The first command leg supplies this local intent before its daemon pause reply.
                     // Preparing has no playback ID yet; pendingPauseEpoch is its ownership proof.
                     if event["pause_owner"] as? String == "user" { state.togglePlaybackPause() }

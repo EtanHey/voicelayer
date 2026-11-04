@@ -150,3 +150,20 @@ and terminal Stop/refusal. A scratch runtime mutant restores the unconditional
 chunk-end sentinel and must fail both the daemon word/identity guard and native
 speaking projection. Tests and gates for this lane run on M4 under the captain lock;
 installed interaction acceptance remains with the captain.
+
+
+The intermittent between-player window is separate from the chunk-end sentinel.
+`completeJob` registers the next pending chunk synchronously before publishing natural
+completion. That admission can be preparing, paused (with its owner), or resuming;
+it persists through synthesis and transfers the parked identity/generation into the
+next queue job. A take that settles before synthesis completes still produces exactly
+one speaking/resumed pair when that player starts. Initial preparation keeps its
+legacy read-id pause and first-chunk adoption. Retained readback drops admission hooks
+so Replay never reuses an old pause loan.
+
+Another 16 paired cases hold chunk5 synthesis after chunks0-4 played, and cover release
+before/after capture settlement plus an already-ready chunk with its decoder held.
+Both clone profiles also cover Stop, user pause, refused resume, and both N6 orders in
+the gap. Removing next-chunk registration must reproduce zero pause/resume and a fresh
+generation1, and fail both daemon and native guards. Together the clone projection
+contains 48 cases / 30 expected resumes; model-derived R2-01 projection stays intact.
