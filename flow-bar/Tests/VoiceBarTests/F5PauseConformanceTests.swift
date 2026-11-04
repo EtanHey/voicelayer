@@ -218,11 +218,19 @@ final class F5PauseConformanceTests: XCTestCase {
             let requestID = try XCTUnwrap(commands.last?["id"] as? String)
             state.handleEvent(["type": "ack", "command": "speak_text", "id": requestID, "outcome": "accept"])
             let frames = try XCTUnwrap(row["events"] as? [[String: Any]])
+            var beganPause = false
             for var event in frames {
+                if !beganPause, event["type"] as? String == "playback_state", event["state"] as? String == "paused" {
+                    // The first command leg supplies this local intent before its daemon pause reply.
+                    // Preparing has no playback ID yet; pendingPauseEpoch is its ownership proof.
+                    if event["pause_owner"] as? String == "user" { state.togglePlaybackPause() }
+                    else { state.record(pressToTalk: true); state.pendingIntent = nil }
+                    beganPause = true
+                }
                 // Bind the daemon's symbolic selection to this native submission, as in the command leg.
                 if event["request_id"] as? String == row["requestID"] as? String { event["request_id"] = requestID }
                 if event["current_request_id"] as? String == row["requestID"] as? String { event["current_request_id"] = requestID }
-                if ["state", "read_queue", "playback_state", "playback_outcome", "subtitle"].contains(event["type"] as? String ?? "") {
+                if ["state", "read_queue", "playback_state", "playback_outcome", "subtitle", "error"].contains(event["type"] as? String ?? "") {
                     state.handleEvent(event)
                 }
             }
@@ -240,7 +248,7 @@ final class F5PauseConformanceTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(resumedCount, 0)
-        print("Projected \(rows.count) real daemon F5 scenarios into native state; \(resumedCount) resumed reads speaking")
+        print("Projected \(rows.count) real daemon F5 scenarios into native state; \(resumedCount) expected resumes checked")
     }
 
     /// Wait for the already-enqueued restore, independent of timer resolution or host load.

@@ -1306,8 +1306,8 @@ public final class VoiceState {
 
     /// F5 lends capture the surface, not the read's identity. The pause can arrive after mic-open.
     private var keepsSelectionReadThroughCapture: Bool {
-        guard mode == .recording || mode == .transcribing || mode == .idle else { return false }
-        return parkedRead != nil || (barInitiatedRecording && pendingPauseEpoch != nil)
+        guard mode == .recording || mode == .transcribing || mode == .idle || mode == .error else { return false }
+        return parkedRead?.owner == .f5 || (barInitiatedRecording && pendingPauseEpoch != nil)
     }
 
     /// Explicit user stop/cancel and disconnect end all pending own requests as well.

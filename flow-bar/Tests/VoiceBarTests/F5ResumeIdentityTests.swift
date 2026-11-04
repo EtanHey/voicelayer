@@ -7,6 +7,7 @@ final class F5ResumeIdentityTests: XCTestCase {
     func testSingleTakeResumesAcknowledgedSelection() throws { try replay(takes: 1, queued: 0) }
     func testN6ResumesAcknowledgedSelectionAfterBothTakesSettle() throws { try replay(takes: 2, queued: 0) }
     func testN6ResumesAcknowledgedSelectionWithTwoWaitingReads() throws { try replay(takes: 2, queued: 2) }
+    func testCaptureFailureStillShowsTheDaemonResumedRead() throws { try replay(takes: 1, queued: 0, failed: true) }
 
     func testStoppedRefusedAndEmptyQueueSelectionsNeverResurrect() throws {
         for ending in ["stop", "resume-refused", "empty-queue"] {
@@ -41,7 +42,7 @@ final class F5ResumeIdentityTests: XCTestCase {
         }
     }
 
-    private func replay(takes: Int, queued: Int) throws {
+    private func replay(takes: Int, queued: Int, failed: Bool = false) throws {
         let state = VoiceState(playbackAmplitudeClock: { 100 })
         state.isConnected = true
         state.frontmostAppProvider = { nil }
@@ -96,8 +97,12 @@ final class F5ResumeIdentityTests: XCTestCase {
             XCTAssertEqual(state.mode, .transcribing)
             jobs([(b, "delivering")])
         }
+        if failed {
+            state.handleEvent(["type": "error", "take_id": a, "job_kind": "live", "message": "fixture capture failure"])
+            XCTAssertEqual(state.mode, .error)
+        }
         jobs([])
-        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(state.mode, failed ? .error : .idle)
         var resumed = speaking
         resumed["generation"] = 3
         resumed["playback_offset_ms"] = 2000
