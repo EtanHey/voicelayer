@@ -36,6 +36,14 @@ final class HistoryScrollRestoreTests: XCTestCase {
     }
 
     func testLeavingAndReturningRestoresListAndDetailScrollPositionsNotTheSelection() throws {
+        try assertLeavingAndReturningRestoresScrollPositions(releaseReloadImmediately: false)
+    }
+
+    func testImmediateReloadAlsoRestoresListAndDetailScrollPositions() throws {
+        try assertLeavingAndReturningRestoresScrollPositions(releaseReloadImmediately: true)
+    }
+
+    private func assertLeavingAndReturningRestoresScrollPositions(releaseReloadImmediately: Bool) throws {
         let archive = root!
         let index = SettingsArchiveIndex()
         // Opened with its first page already in hand, as on re-entry: no programmatic scroll-to-newest is
@@ -99,13 +107,17 @@ final class HistoryScrollRestoreTests: XCTestCase {
         pause()
         XCTAssertNil(historyScrollViews(in: host).list, "History really left the hierarchy")
         table.selectRowIndexes([history], byExtendingSelection: false)
+        // Exercise the opposite ordering without waiting for keeper attachment or restoration.
+        if releaseReloadImmediately { reload.release() }
 
         XCTAssertTrue(settle { historyScrollViews(in: host).list != nil && historyScrollViews(in: host).detail != nil })
         XCTAssertTrue(settle { reload.started }, "re-entry starts its asynchronous archive reload")
-        // Force the reload to finish AFTER the rebuilt keepers restore. The old fixed delay could
-        // inspect either side of this layout boundary, depending on the runner's scheduling.
-        XCTAssertTrue(settle { historyKeepers(in: host).count == 2 && historyKeepers(in: host).allSatisfy(\.hasRestored) })
-        reload.release()
+        if !releaseReloadImmediately {
+            // Force the reload to finish AFTER the rebuilt keepers restore. The old fixed delay could
+            // inspect either side of this layout boundary, depending on the runner's scheduling.
+            XCTAssertTrue(settle { historyKeepers(in: host).count == 2 && historyKeepers(in: host).allSatisfy(\.hasRestored) })
+            reload.release()
+        }
         XCTAssertTrue(settle {
             host.layoutSubtreeIfNeeded()
             let keepers = historyKeepers(in: host)
