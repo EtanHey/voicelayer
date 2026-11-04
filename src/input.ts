@@ -764,7 +764,8 @@ export interface WaitForInputOptions {
   onSpeechStart?: () => void;
   onRecordingHoldChange?: (engaged: boolean) => void;
   onArchiveCreated?: (archivePath: string) => void;
-  onCaptureEnd?: () => void;
+  /** Decoded PCM duration, excluding silence omitted by the existing STT input rule. */
+  onCaptureEnd?: (transcribedDurationMs?: number) => void;
   onPhaseChange?: (phase: "transcribing") => void;
   onNoSpeech?: () => void;
   onNoAnswer?: (unclassified: boolean) => void;
@@ -3280,7 +3281,7 @@ export async function waitForInput(
     }
   }
   try {
-    options.onCaptureEnd?.();
+    options.onCaptureEnd?.(sttTrim.transcribedDurationMs);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     appendControlLayerEvent("capture.completion_callback_failed", {

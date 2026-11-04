@@ -1516,10 +1516,12 @@ describe("input recording durability", () => {
     const clock = installRecordingClock([120_000, 600_000]);
     const abort = new AbortController();
     let archivePath = "";
+    let returnBudgetAudioMs: number | undefined;
     vadProbabilityForCall = call => call > 40 && call <= 65 ? 0.95 : 0;
     const recording = waitForInput(120_000, "thoughtful", false, {
       archiveSource: "voice_ask", voiceAskArtifacts: timeoutPromptArtifacts, signal: abort.signal,
       onArchiveCreated: path => { archivePath = path; },
+      onCaptureEnd: durationMs => { returnBudgetAudioMs = durationMs; },
     });
     try {
       await recorder.waitForSpawn(); setRecordingHold(true); clock.advance(0);
@@ -1532,6 +1534,7 @@ describe("input recording durability", () => {
       const expected = pcm.subarray(0, lastSpeechByte + 3 * 16_000 * 2);
       expect(expected.byteLength).toBeLessThan(pcm.byteLength);
       expect(backendTranscribedWav?.subarray(44)).toEqual(expected);
+      expect(returnBudgetAudioMs).toBe(Math.round(expected.byteLength / 32));
       expectValidRetainedWav(join(archivePath, "audio.wav"));
     } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
   });
