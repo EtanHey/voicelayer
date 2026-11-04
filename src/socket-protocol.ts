@@ -62,6 +62,8 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   generation?: number;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
+  /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
+  stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
   readback_duration_ms?: number;
   /** Chunk-local playback clock; additive global position for future seek clients. */

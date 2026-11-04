@@ -3456,7 +3456,9 @@ export async function waitForInput(
       : undefined,
   );
   setRecordingState("transcribing");
-  broadcast({ type: "state", state: "transcribing" });
+  // stt_audio_ms lets VoiceBar size its wait to the voice_ask return deadline
+  // (4x decoded audio) even if it missed this take's recording-start event.
+  broadcast({ type: "state", state: "transcribing", stt_audio_ms: sttTrim.transcribedDurationMs });
   broadcast({
     type: "transcription_status",
     status: "warming",

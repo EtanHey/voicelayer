@@ -559,6 +559,9 @@ public final class VoiceState {
     // Length of the capture that just ended; scales the transcription wait so the
     // notch never gives up before the daemon's own decode deadline (4x audio).
     private var lastCaptureDurationMs: Int?
+    // Daemon-reported decoded audio for the current take (state transcribing, stt_audio_ms);
+    // covers a missed recording-start event, when lastCaptureDurationMs is nil.
+    private var daemonSttAudioMs: Int?
     private var didLogFirstRecordingAudioLevel = false
     // AIDEV-NOTE: capture-truth sub-state inside `.recording`. The mode flips
     // optimistically at hold-start (record(pressToTalk:)) 543–1281 ms — median
@@ -3255,6 +3258,7 @@ public final class VoiceState {
                 if recordingStateUptimeMs == nil {
                     recordingStateUptimeMs = currentRecordingUptimeMs()
                     lastCaptureDurationMs = nil
+                    daemonSttAudioMs = nil
                     didLogFirstRecordingAudioLevel = false
                     captureLive = false
                 }
@@ -3278,6 +3282,9 @@ public final class VoiceState {
                 onModeChange?(.recording)
                 expandFromCollapse()
             case "transcribing":
+                if let sttAudioMs = (event["stt_audio_ms"] as? NSNumber)?.intValue, sttAudioMs > 0 {
+                    daemonSttAudioMs = sttAudioMs
+                }
                 if deferredRecordingTakeID == nil { enterTranscribingMode() }
             default:
                 break
@@ -4137,7 +4144,8 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         let usesExtendedTimeout = barInitiatedRecording || historyRetranscriptionRequest.isPending
         let baseTimeout = usesExtendedTimeout ? barInitiatedTranscriptionTimeout : transcriptionTimeout
-        let timeout = Self.transcriptionWait(base: baseTimeout, captureDurationMs: lastCaptureDurationMs)
+        let knownAudioMs = [lastCaptureDurationMs, daemonSttAudioMs].compactMap { $0 }.max()
+        let timeout = Self.transcriptionWait(base: baseTimeout, captureDurationMs: knownAudioMs)
         transcriptionTimeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
             guard let self, !Task.isCancelled, mode == .transcribing else { return }

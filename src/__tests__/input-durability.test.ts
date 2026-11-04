@@ -1535,6 +1535,9 @@ describe("input recording durability", () => {
       expect(expected.byteLength).toBeLessThan(pcm.byteLength);
       expect(backendTranscribedWav?.subarray(44)).toEqual(expected);
       expect(returnBudgetAudioMs).toBe(Math.round(expected.byteLength / 32));
+      // V17 r3: VoiceBar sizes its wait from this even if it missed recording-start.
+      expect(broadcasts.find(b => b.type === "state" && b.state === "transcribing")?.stt_audio_ms)
+        .toBe(Math.round(expected.byteLength / 32));
       expectValidRetainedWav(join(archivePath, "audio.wav"));
     } finally { abort.abort(); await recording.catch(() => null); clock.restore(); }
   });
