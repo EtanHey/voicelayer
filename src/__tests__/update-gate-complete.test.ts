@@ -102,7 +102,8 @@ test.each(["verified", "exit", "sha", "dead"])("G5 controller child lifecycle: %
   else expect(error).toContain("voicelayer setup --cask-postflight");
 }, 20_000);
 
-test("G5 parses installed Info.plist bytes and detects replacement before COMPLETE", () => {
+// readInstalledTarget shells out to /usr/bin/plutil (macOS-only); the installer itself only runs on macOS.
+test.skipIf(process.platform !== "darwin")("G5 parses installed Info.plist bytes and detects replacement before COMPLETE", () => {
   const f = fixture(), plist = f.gate + ".plist";
   writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>GitCommit</key><string>${lease.targetSha}</string></dict></plist>`);
   const installed = installer.readInstalledTarget(plist);
