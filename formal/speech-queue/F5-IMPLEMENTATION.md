@@ -167,3 +167,10 @@ Both clone profiles also cover Stop, user pause, refused resume, and both N6 ord
 the gap. Removing next-chunk registration must reproduce zero pause/resume and a fresh
 generation1, and fail both daemon and native guards. Together the clone projection
 contains 48 cases / 30 expected resumes; model-derived R2-01 projection stays intact.
+
+
+Native ownership also adopts a paused next-chunk decoder before its speaking edge,
+but only for a pending local pause epoch, the same displayed long-read id, a positive
+generation, and the immediately following chunk index. Foreign, preceding, skipped,
+unscoped-generation and unsolicited pauses remain rejected. Removing this adoption
+must fail both decoder-neighbour native projections, while daemon frames remain green.

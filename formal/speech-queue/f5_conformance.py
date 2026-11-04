@@ -190,6 +190,28 @@ def check_clone_resume_runtime(run, runner):
         results.append(dict(property=prop + " / NativeResumedReadIsSpeaking", mutant=name,
                             expected="FAIL", actual="FAIL", native_projection_failures=output.count("native daemon resumed projection row")))
         assert (root / "src/tts.ts").read_text() == fixed, "Tracked source changed during clone mutant"
+    import shutil
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="f5-next-player-mutant-", dir=root / ".build.noindex") as directory:
+        package = Path(directory) / "flow-bar"
+        package.mkdir()
+        shutil.copy2(root / "flow-bar/Package.swift", package / "Package.swift")
+        for name in ("Sources", "Tests"):
+            shutil.copytree(root / "flow-bar" / name, package / name)
+        source = package / "Sources/VoiceBarUI/VoiceState.swift"
+        current = source.read_text()
+        guard = "pendingPauseEpoch == playbackEpoch, let generation, generation > 0,"
+        assert current.count(guard) == 1, "Next-player mutant no longer matches ownership guard"
+        source.write_text(current.replace(guard, "false, let generation, generation > 0,"))
+        command = ["nice", "-n", "19", "swift", "test", "--package-path", str(package),
+                   "--scratch-path", str(Path(directory) / "swift"), "--filter",
+                   "F5PauseConformanceTests.testCloneShortChunkedDaemonFramesResumeAtPausedWord"]
+        status = runner.run(command, run / "f5-next-player-native-mutant.log", 900, cwd=root, env=env)
+        output = (run / "f5-next-player-native-mutant.log").read_text()
+        failures = output.count("native daemon resumed projection row")
+        assert status != 0 and "XCTAssertEqual failed" in output and failures == 2, "Next-player ownership mutant must fail both decoder neighbours"
+        results.append(dict(property="NextChunkPauseOwnedBeforeSpeaking", mutant="drop-next-player-pause",
+                            expected="FAIL", actual="FAIL", native_projection_failures=failures))
     (run / "f5-clone-mutants.json").write_text(json.dumps(dict(clone_scenarios=len(rows),
         expected_resumes=sum(row["resumes"] for row in rows), mutants=results), indent=2) + "\n")
-    print("PASS: 48 clone scenarios (16 gap/window, 32 interior/boundary); 30 native resumes; both restored mutants FAIL daemon AND native", flush=True)
+    print("PASS: 48 clone scenarios (16 gap/window, 32 interior/boundary); 30 native resumes; two daemon/native mutants and next-player native mutant FAIL", flush=True)

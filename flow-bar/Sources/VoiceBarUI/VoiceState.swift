@@ -2518,6 +2518,14 @@ public final class VoiceState {
             return event["state"] as? String == "paused" ? pendingPauseEpoch == playbackEpoch
                 : playbackID != nil && playbackID == parkedRead?.playbackID
         }
+        // F5 can pause the next chunk's decoder before that player has a speaking frame.
+        let shownRead: ReadSnapshot? = mode == .speaking ? currentReadSnapshot() : departedRead
+        if event["state"] as? String == "paused", let playbackID, playbackID != currentPlayback.id,
+           pendingPauseEpoch == playbackEpoch, let generation, generation > 0,
+           let info = event["long_read"] as? [String: Any], let shownRead,
+           let readID = shownRead.longReadID, info["id"] as? String == readID,
+           let currentIndex = shownRead.document.chunkIndex,
+           info["chunk_index"] as? Int == currentIndex + 1 { return true }
         // Preparing uses the read identity before a player exists; its first parked chunk adopts the player.
         if event["state"] as? String == "paused", playbackID != currentPlayback.id, let parkedRead,
            currentPlayback.id == parkedRead.read.longReadID,

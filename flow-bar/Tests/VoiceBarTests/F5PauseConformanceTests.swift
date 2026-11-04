@@ -201,6 +201,38 @@ final class F5PauseConformanceTests: XCTestCase {
         print("Replayed \(rows.count) TLC F5 scenarios through real VoiceBarCommandRouter/VoiceState; wrote native commands")
     }
 
+    func testNextChunkPauseAdoptionRequiresCurrentReadAndLocalIntent() throws {
+        for variant in ["valid", "no-intent", "foreign-read", "old-chunk", "skipped-chunk", "no-generation"] {
+            let state = VoiceState(playbackAmplitudeClock: { 100 })
+            state.isConnected = true
+            state.frontmostAppProvider = { nil }
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.selectionTextCaptureHandler = { $0(.completed("one two three four five six")) }
+            state.speakSelection()
+            let requestID = try XCTUnwrap(commands.last?["id"] as? String)
+            state.handleEvent(["type": "ack", "command": "speak_text", "id": requestID, "outcome": "accept"])
+            let read: [String: Any] = ["id": "read", "chunk_index": 0, "chunk_count": 6,
+                "chunk_start_ms": 0, "preparing": true, "text": "one two three four five six",
+                "chunk_word_starts": [0, 1, 2, 3, 4, 5]]
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": requestID,
+                               "text": "Preparing speech…", "long_read": read])
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": requestID,
+                               "text": "five", "playback_id": "chunk4", "generation": 1, "playback_offset_ms": 16000,
+                               "long_read": ["id": "read", "chunk_index": 4, "chunk_count": 6, "chunk_start_ms": 16000]])
+            if variant != "no-intent" { state.record(pressToTalk: true); state.pendingIntent = nil }
+            var paused: [String: Any] = ["type": "playback_state", "state": "paused", "playback_id": "chunk5",
+                "generation": 2, "offset_ms": 20000, "pause_owner": "f5",
+                "long_read": ["id": variant == "foreign-read" ? "foreign" : "read",
+                              "chunk_index": variant == "old-chunk" ? 4 : variant == "skipped-chunk" ? 6 : 5,
+                              "chunk_count": 6, "chunk_start_ms": 20000]]
+            if variant == "no-generation" { paused.removeValue(forKey: "generation") }
+            state.handleEvent(paused)
+            XCTAssertEqual(state.isF5SpeechPausedDuringCapture, variant == "valid", variant)
+            XCTAssertFalse(state.isPlaybackPaused, "capture or unowned event: \(variant)")
+        }
+    }
+
     func testRealDaemonSettlementFramesProjectResumedReadToSpeaking() async throws {
         guard let path = ProcessInfo.processInfo.environment["VOICELAYER_F5_DAEMON_WIRE"] else {
             throw XCTSkip("Run formal/speech-queue/check.sh for paired daemon frames")
@@ -254,6 +286,12 @@ final class F5PauseConformanceTests: XCTestCase {
                 XCTAssertEqual(state.teleprompterText, row["text"] as? String ?? "One two", "row \(index)")
                 let resumed = try XCTUnwrap(frames.last { $0["state"] as? String == "resumed" })
                 XCTAssertEqual(state.playbackElapsedMilliseconds(), resumed["offset_ms"] as? Int, "row \(index)")
+                if row["text"] != nil {
+                    let offset = try XCTUnwrap(resumed["offset_ms"] as? Int)
+                    XCTAssertTrue(state.wordBoundaries.contains { word in
+                        word.offsetMs.map { abs($0 - offset) <= 1 } ?? false
+                    }, "clone paused word remains on the global native timeline row \(index)")
+                }
                 state.togglePlaybackPause()
                 XCTAssertEqual(commands.last?["playback_id"] as? String, resumed["playback_id"] as? String)
                 XCTAssertEqual(commands.last?["generation"] as? Int, resumed["generation"] as? Int)
