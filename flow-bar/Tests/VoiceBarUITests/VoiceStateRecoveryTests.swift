@@ -45,6 +45,9 @@ final class VoiceStateRecoveryTests: XCTestCase {
 
     func testMCPTranscribingStillTimesOutWithoutAResult() async {
         let state = VoiceState()
+        // Pin the capture clock: a real clock measures >= 1 ms on a loaded host, and any
+        // measured capture scales the wait to >= 60 s (4x capture + 60 s), hiding the base timeout.
+        state.recordingTimingClock = { 1_000 }
         state.setConnectionStatus(true)
         state.transcriptionTimeout = .milliseconds(20)
         state.handleEvent([

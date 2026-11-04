@@ -1656,7 +1656,7 @@ final class VoiceStatePasteTests: XCTestCase {
     }
 
     func testFailedTranscriptionClearsRemoteOwnershipBeforeNextPttPaste() async {
-        let state = makeRemoteOwnedRecordingState()
+        let state = makeRemoteOwnedRecordingState(pinRecordingClock: true)
         state.transcriptionTimeout = .milliseconds(20)
 
         state.handleEvent(["type": "state", "state": "transcribing"])
@@ -1798,10 +1798,14 @@ final class VoiceStatePasteTests: XCTestCase {
     }
 
     private func makeRemoteOwnedRecordingState(
+        pinRecordingClock: Bool = false,
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> VoiceState {
         let state = VoiceState()
+        // A measured capture scales the transcription wait to >= 60 s (V17), so tests that
+        // inject a short timeout pin the clock BEFORE the recording event (capture length 0).
+        if pinRecordingClock { state.recordingTimingClock = { 1_000 } }
         state.setConnectionStatus(true)
         state.pasteConfirmationDelay = 0
         state.sendCommand = { _ in }
