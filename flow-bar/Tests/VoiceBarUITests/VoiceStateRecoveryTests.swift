@@ -2,6 +2,29 @@
 import XCTest
 
 final class VoiceStateRecoveryTests: XCTestCase {
+    @MainActor
+    func testLiveMCPTranscriptionSurvivesThirtySeconds() async throws {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        defer { state.setConnectionStatus(false) }
+        state.handleEvent([
+            "type": "state", "state": "recording", "mode": "ptt", "bar_owned": false,
+        ])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription_status", "status": "transcribing", "message": "Transcribing",
+        ])
+
+        // Exercise the production deadline, including the daemon's 30-second keepalive cadence.
+        try await Task.sleep(for: .seconds(30))
+        state.handleEvent(["type": "ping"])
+        try await Task.sleep(for: .seconds(1))
+
+        XCTAssertTrue(state.isConnected)
+        XCTAssertEqual(state.mode, .transcribing, "A live MCP take must outlast the old 30-second deadline")
+        XCTAssertNil(state.errorMessage)
+    }
+
     func testBarInitiatedEmptyTranscriptionShowsFailure() {
         let state = VoiceState()
 
