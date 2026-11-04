@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -16,6 +17,18 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_whisper_fixture_supports_stdout_and_requested_segment_json(self):
+        fixture = Path(__file__).with_name("fixture-whisper.py")
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = str(Path(directory) / "decode")
+            for args in ([], ["-oj", "-of", prefix]):
+                result = subprocess.run([sys.executable, str(fixture), *args],
+                                        check=True, capture_output=True, text=True)
+                self.assertEqual(result.stdout, "Recovered synthetic answer.\n")
+            self.assertEqual(json.loads(Path(prefix + ".json").read_text()), {
+                "transcription": [{"text": "Recovered synthetic answer.",
+                                   "offsets": {"from": 0, "to": 1000}}]})
+
     def test_recents_row_pins_first_parent_and_counts_order_age_and_missing_rows(self):
         self.assertEqual(harness.ROWS["recents-newest-after-retranscribe"], ("2f2de18c^1", "2f2de18c"))
         expected = [{"path": "/synthetic/new.wav", "created_at": "2026-08-21T10:00:00.000Z"},
