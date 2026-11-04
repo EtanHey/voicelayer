@@ -2,6 +2,29 @@
 import XCTest
 
 final class VoiceStateRecoveryTests: XCTestCase {
+    @MainActor
+    func testLiveMCPTranscriptionSurvivesThirtySeconds() async throws {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        defer { state.setConnectionStatus(false) }
+        state.handleEvent([
+            "type": "state", "state": "recording", "mode": "ptt", "bar_owned": false,
+        ])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription_status", "status": "transcribing", "message": "Transcribing",
+        ])
+
+        // Exercise the production deadline, including the daemon's 30-second keepalive cadence.
+        try await Task.sleep(for: .seconds(30))
+        state.handleEvent(["type": "ping"])
+        try await Task.sleep(for: .seconds(1))
+
+        XCTAssertTrue(state.isConnected)
+        XCTAssertEqual(state.mode, .transcribing, "A live MCP take must outlast the old 30-second deadline")
+        XCTAssertNil(state.errorMessage)
+    }
+
     func testBarInitiatedEmptyTranscriptionShowsFailure() {
         let state = VoiceState()
 
@@ -20,15 +43,22 @@ final class VoiceStateRecoveryTests: XCTestCase {
         XCTAssertEqual(state.errorMessage, "Transcription failed")
     }
 
-    func testTranscribingTimesOutAfterThirtySeconds() async {
+    func testMCPTranscribingStillTimesOutWithoutAResult() async {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.transcriptionTimeout = .milliseconds(20)
+        state.handleEvent([
+            "type": "state", "state": "recording", "mode": "ptt", "bar_owned": false,
+        ])
 
         state.handleEvent([
             "type": "state",
             "state": "transcribing",
         ])
+        state.handleEvent([
+            "type": "transcription_status", "status": "transcribing", "message": "Transcribing",
+        ])
+        state.handleEvent(["type": "ping"])
 
         do { let settled = await settle { state.mode == .error }
             XCTAssertTrue(settled)
@@ -38,6 +68,20 @@ final class VoiceStateRecoveryTests: XCTestCase {
         XCTAssertEqual(state.errorMessage, "Transcription timed out while waiting for the result.")
         XCTAssertEqual(VoiceBarFooterPresentation.resolve(state: state).errorDetails,
                        "Transcription timed out while waiting for the result.")
+    }
+
+    func testMCPTranscribingDisconnectEndsWaitImmediately() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.handleEvent([
+            "type": "state", "state": "recording", "mode": "ptt", "bar_owned": false,
+        ])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+
+        state.setConnectionStatus(false)
+
+        XCTAssertFalse(state.isConnected)
+        XCTAssertEqual(state.mode, .disconnected)
     }
 
     func testBarInitiatedTranscribingUsesLongerTimeout() async {

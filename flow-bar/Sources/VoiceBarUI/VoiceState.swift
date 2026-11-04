@@ -1564,7 +1564,8 @@ public final class VoiceState {
         ControlLayerJournal.append(type: "voicebar.\(event)", payload: details)
     }
 
-    public var transcriptionTimeout: Duration = .seconds(30)
+    // MCP/Ask takes can need minutes of chunked STT, just like bar and History takes.
+    public var transcriptionTimeout: Duration = .seconds(900)
     public var barInitiatedTranscriptionTimeout: Duration = .seconds(900)
     public var barInitiatedSafetyTimeout: Duration = .seconds(3660)
     public var recordStartAckTimeout: Duration = .seconds(2)
