@@ -56,6 +56,7 @@ final class HistoryScrollRestoreTests: XCTestCase {
             initialTab: .history
         )
         let host = NSHostingView(rootView: view)
+        host.frame = NSRect(x: 0, y: 0, width: 1100, height: 620)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 620),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
@@ -68,11 +69,20 @@ final class HistoryScrollRestoreTests: XCTestCase {
         XCTAssertTrue(settle { historyScrollViews(in: host).detail.map(scrollableHeight) ?? 0 > 300 },
                       "the selected long dictation's detail pane can scroll")
 
+        host.layoutSubtreeIfNeeded()
+        XCTAssertTrue(settle { historyKeepers(in: host).count == 2 && historyKeepers(in: host).allSatisfy(\.hasRestored) },
+                      "both scroll keepers attach before simulating the user's scroll")
+
         var (list, detail) = historyScrollViews(in: host)
         scroll(try XCTUnwrap(list), to: 400)
         scroll(try XCTUnwrap(detail), to: 260)
         pause()
         XCTAssertEqual(try XCTUnwrap(list).contentView.bounds.origin.y, 400, accuracy: 1)
+        for keeper in historyKeepers(in: host) {
+            let expected: CGFloat = keeper.key == .list ? 400 : 260
+            XCTAssertEqual(try XCTUnwrap(keeper.memory.offset(for: keeper.key)), expected, accuracy: 1,
+                           "the user scroll is recorded before leaving History")
+        }
 
         // Away to General (the History subtree unmounts) and back.
         let table = try XCTUnwrap(firstTable(in: host))
@@ -84,7 +94,15 @@ final class HistoryScrollRestoreTests: XCTestCase {
         table.selectRowIndexes([history], byExtendingSelection: false)
 
         XCTAssertTrue(settle { historyScrollViews(in: host).list != nil && historyScrollViews(in: host).detail != nil })
-        pause(0.8) // the re-entry page load lands and lays out
+        XCTAssertTrue(settle {
+            host.layoutSubtreeIfNeeded()
+            let keepers = historyKeepers(in: host)
+            let scrolls = historyScrollViews(in: host)
+            return keepers.count == 2 && keepers.allSatisfy(\.hasRestored)
+                && abs((scrolls.list?.contentView.bounds.origin.y ?? -1) - 400) <= 2
+                && abs((scrolls.detail?.contentView.bounds.origin.y ?? -1) - 260) <= 2
+        }, "re-entry layout and both restores finish: \(scrollDiagnostics(in: host))")
+        pause() // allow a subsequent lazy layout to invalidate an unstable restore
         (list, detail) = historyScrollViews(in: host)
         XCTAssertEqual(try XCTUnwrap(list).contentView.bounds.origin.y, 400, accuracy: 2,
                        "the list returns where it was left, not at the selected (newest) row")
@@ -93,6 +111,18 @@ final class HistoryScrollRestoreTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    private func historyKeepers(in view: NSView) -> [SettingsHistoryScrollKeeper.KeeperView] {
+        if let keeper = view as? SettingsHistoryScrollKeeper.KeeperView { return [keeper] }
+        return view.subviews.flatMap(historyKeepers)
+    }
+
+    private func scrollDiagnostics(in host: NSView) -> String {
+        historyKeepers(in: host).map { keeper in
+            let scroll = keeper.enclosingScrollView
+            return "\(keeper.key): restored=\(keeper.hasRestored), remembered=\(String(describing: keeper.memory.offset(for: keeper.key))), origin=\(scroll?.contentView.bounds.origin.y ?? -1), document=\(scroll?.documentView?.frame.height ?? -1), viewport=\(scroll?.contentView.bounds.height ?? -1)"
+        }.joined(separator: "; ")
+    }
 
     /// The two History scroll views: the list (left) and the selected dictation's detail (right).
     /// The Settings sidebar's table scroll view is excluded.
