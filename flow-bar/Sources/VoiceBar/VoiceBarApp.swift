@@ -2372,6 +2372,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isIsolatedCapture: Bool? = nil
     ) {
         guard let panel else { return }
+        // 2.3 lane U4: a History pull holds the panel's mouse events until it is released.
+        if notchPresentationModel.isHistoryPullActive {
+            panel.ignoresMouseEvents = false
+            return
+        }
         let gate = currentPanelHitGate()
         let point = localPoint ?? panel.convertPoint(fromScreen: NSEvent.mouseLocation)
         Self.applyPanelMouseEventPassthrough(

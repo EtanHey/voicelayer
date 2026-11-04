@@ -1,8 +1,11 @@
 import SwiftUI
 
-/// Spec §4: the History panel that drops out of the notch in the teleprompter's shell. Rows are
-/// time · length over the first words; Copy / Paste / Re-transcribe appear on hover. It draws on the
-/// notch's own contrast palette, like the teleprompter, and adds no material of its own.
+/// 2.3 lane U4 (approved mock 5-history): the History panel that grows out of the notch. Rows are two lines,
+/// seven visible (Etan, 2026-11-03: "2 lines, 7 visible"): the dictation on the first line, when and how long on
+/// the second. Tight insets, no footer prose, a thin scroll indicator only while scrolling, and a row highlight
+/// that follows the pointer on the same frame from ONE container hover tracker (no per-row `.onHover`).
+/// Hovering a row shows Copy / Paste / Transcribe again on its right. It draws on the notch's own contrast
+/// palette and adds no material of its own.
 struct NotchHistoryPanel: View {
     let entries: [RecentTranscriptionEntry]
     let activeRetranscriptionPath: String?
@@ -11,94 +14,145 @@ struct NotchHistoryPanel: View {
     let onCopy: (RecentTranscriptionEntry) -> Bool
     let onPaste: (RecentTranscriptionEntry) -> Void
     let onRetranscribe: (String) -> Void
-    let onOpenHistory: () -> Void
     /// Shots only: render one row as hovered without a pointer.
     var forcedHoverIndex: Int?
+    /// Shots only: render the scroll indicator as if mid-scroll, at this content offset.
+    var forcedScrollOffset: CGFloat?
 
-    @State private var hoveredID: String?
+    @State private var hoveredIndex: Int?
     @State private var copyFeedback = CopyFeedback()
+    @State private var scrollOffset: CGFloat = 0
+    @State private var isScrollIndicatorVisible = false
+    @State private var scrollIndicatorHideTask: Task<Void, Never>?
+
+    private static let scrollSpace = "NotchHistoryPanel.scroll"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    let ids = NotchHistoryPresentation.rowIDs(for: entries)
-                    ForEach(Array(zip(entries.indices, ids)), id: \.1) { index, id in
-                        row(entries[index], index: index, id: id)
+        let ids = NotchHistoryPresentation.rowIDs(for: entries)
+        ScrollView(.vertical) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(zip(entries.indices, ids)), id: \.1) { index, id in
+                    row(entries[index], index: index, id: id)
+                }
+            }
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: NotchHistoryScrollOffsetKey.self,
+                        value: -proxy.frame(in: .named(Self.scrollSpace)).minY
+                    )
+                }
+            )
+            // ONE hover tracker for the whole list: the row under the pointer is its y over the row height,
+            // so the highlight moves on the same frame as the pointer (R0856-06).
+            .onContinuousHover(coordinateSpace: .local) { phase in
+                var instant = Transaction()
+                instant.disablesAnimations = true
+                withTransaction(instant) {
+                    switch phase {
+                    case let .active(location):
+                        hoveredIndex = NotchHistoryPresentation.rowIndex(atY: location.y, rowCount: entries.count)
+                    case .ended:
+                        hoveredIndex = nil
                     }
                 }
             }
-            .scrollIndicators(.hidden)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .coordinateSpace(name: Self.scrollSpace)
+        .scrollIndicators(.never)
+        .onPreferenceChange(NotchHistoryScrollOffsetKey.self) { offset in
+            scrolled(to: offset)
+        }
+        .frame(height: NotchHistoryMorph.listHeight)
+        .overlay(alignment: .topTrailing) {
+            scrollIndicator
+        }
+        .onDisappear { scrollIndicatorHideTask?.cancel() }
+    }
 
-            Rectangle()
-                .fill(palette.tertiary.color.opacity(0.35))
-                .frame(height: 1)
-            HStack(alignment: .firstTextBaseline, spacing: NotchHistoryPresentation.footerSpacing) {
-                Text(NotchHistoryPresentation.pasteHint)
-                    .font(.system(
-                        size: NotchHistoryPresentation.footerHintFontSize, weight: .medium, design: .rounded
-                    ))
-                    .foregroundStyle(palette.secondary.color)
-                    .lineLimit(2)
-                Spacer(minLength: NotchHistoryPresentation.footerMinimumGap)
-                Button(NotchHistoryPresentation.openHistoryTitle, action: onOpenHistory)
-                    .buttonStyle(.plain)
-                    .font(.system(
-                        size: NotchHistoryPresentation.footerButtonFontSize, weight: .semibold, design: .rounded
-                    ))
-                    .foregroundStyle(palette.primary.color)
-                    .accessibilityHint("Opens Settings on History")
+    // MARK: Scroll indicator
+
+    @ViewBuilder
+    private var scrollIndicator: some View {
+        let offset = forcedScrollOffset ?? scrollOffset
+        if let thumb = NotchHistoryPresentation.scrollThumb(
+            offset: offset,
+            visibleHeight: NotchHistoryMorph.listHeight,
+            contentHeight: NotchHistoryMorph.rowHeight * CGFloat(entries.count)
+        ) {
+            RoundedRectangle(cornerRadius: NotchHistoryPresentation.scrollIndicatorWidth / 2, style: .continuous)
+                .fill(palette.primary.color.opacity(0.4))
+                .frame(width: NotchHistoryPresentation.scrollIndicatorWidth, height: thumb.height)
+                .offset(
+                    x: NotchHistoryPresentation.scrollIndicatorGap + NotchHistoryPresentation.scrollIndicatorWidth,
+                    y: thumb.minY
+                )
+                .opacity(forcedScrollOffset != nil || isScrollIndicatorVisible ? 1 : 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// Shown the moment the list moves (80 ms in), hidden 700 ms after it stops (300 ms out), as in the mock.
+    private func scrolled(to offset: CGFloat) {
+        guard abs(offset - scrollOffset) > 0.25 else { return }
+        scrollOffset = offset
+        withAnimation(.easeOut(duration: NotchHistoryPresentation.scrollIndicatorFadeIn)) {
+            isScrollIndicatorVisible = true
+        }
+        scrollIndicatorHideTask?.cancel()
+        scrollIndicatorHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(NotchHistoryPresentation.scrollIndicatorLinger))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: NotchHistoryPresentation.scrollIndicatorFadeOut)) {
+                isScrollIndicatorVisible = false
             }
         }
     }
 
+    // MARK: Rows
+
     private func row(_ entry: RecentTranscriptionEntry, index: Int, id: String) -> some View {
         let isRetranscribing = entry.recordingPath != nil && entry.recordingPath == activeRetranscriptionPath
         let isCopied = copyFeedback.isCopied(key: id, at: Date())
-        let showsActions = forcedHoverIndex == index || hoveredID == id || isCopied
-        return VStack(alignment: .leading, spacing: 2) {
-            // One fixed-height lane for the header and the 24 pt actions, so they share a center line
-            // (#161 review: the header sat ~5 pt above the buttons).
-            HStack(alignment: .center, spacing: 4) {
-                Text(NotchHistoryPresentation.rowHeader(for: entry) ?? "")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(palette.secondary.color)
-                Spacer(minLength: 4)
-                if isRetranscribing {
-                    HistoryRetranscribingBadge(fontSize: 10, color: palette.secondary.color)
-                } else {
-                    // UXP-3: the Copy glyph itself turns into the tick; no second "Copied ✓" beside it.
-                    actionButtons(entry, id: id)
-                        .opacity(showsActions ? 1 : 0)
-                }
+        let isHovered = (forcedHoverIndex ?? hoveredIndex) == index
+        let showsActions = isHovered || isCopied
+        return HStack(alignment: .center, spacing: NotchHistoryPresentation.rowColumnSpacing) {
+            VStack(alignment: .leading, spacing: NotchHistoryPresentation.rowLineSpacing) {
+                Text(NotchHistoryPresentation.firstWords(entry.text))
+                    .font(.system(size: NotchHistoryPresentation.rowTextFontSize))
+                    .foregroundStyle(palette.primary.color)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(NotchHistoryPresentation.rowHeader(for: entry) ?? " ")
+                    .font(.system(size: NotchHistoryPresentation.rowMetaFontSize))
+                    .monospacedDigit()
+                    .foregroundStyle(palette.tertiary.color)
+                    .lineLimit(1)
             }
-            .frame(height: NotchHistoryPresentation.rowActionSize)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(NotchHistoryPresentation.firstWords(entry.text))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(palette.primary.color)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if isRetranscribing {
+                HistoryRetranscribingBadge(
+                    fontSize: NotchHistoryPresentation.rowMetaFontSize, color: palette.secondary.color
+                )
+            } else if showsActions {
+                // UXP-3: the Copy glyph itself turns into the tick; no second "Copied ✓" beside it.
+                actionButtons(entry, id: id)
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 6)
+        .padding(.leading, NotchHistoryPresentation.rowLeadingPadding)
+        .padding(.trailing, NotchHistoryPresentation.rowTrailingPadding)
+        .frame(height: NotchHistoryMorph.rowHeight)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(palette.primary.color.opacity(showsActions ? 0.08 : 0))
+            RoundedRectangle(cornerRadius: NotchHistoryPresentation.rowCornerRadius, style: .continuous)
+                .fill(palette.primary.color.opacity(isHovered ? NotchHistoryPresentation.rowHoverOpacity : 0))
         )
         .contentShape(Rectangle())
-        .onHover { hovering in
-            if hovering {
-                hoveredID = id
-            } else if hoveredID == id {
-                hoveredID = nil
-            }
-        }
         .opacity(isRetranscribing ? 0.62 : 1)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            [NotchHistoryPresentation.rowHeader(for: entry), NotchHistoryPresentation.firstWords(entry.text)]
+            [NotchHistoryPresentation.firstWords(entry.text), NotchHistoryPresentation.rowHeader(for: entry)]
                 .compactMap { $0 }
                 .joined(separator: ", ")
         )
@@ -112,7 +166,7 @@ struct NotchHistoryPanel: View {
     }
 
     private func actionButtons(_ entry: RecentTranscriptionEntry, id: String) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             ForEach(NotchHistoryPresentation.rowActions, id: \.symbol) { action in
                 if action.kind == .copy {
                     CopyFeedbackButton(
@@ -135,13 +189,14 @@ struct NotchHistoryPanel: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    // R0856-09: the notch panel is non-activating; SwiftUI `.help` never showed here (no tooltip
-                    // on Paste over 10 s of hover). The wing buttons' native registration does (fc126263).
+                    // R0856-09: the notch panel is non-activating; SwiftUI `.help` never showed here. The wing
+                    // buttons' native registration does (fc126263).
                     .background(PillControlTooltip(text: action.label))
                     .accessibilityLabel(action.label)
                 }
             }
         }
+        .frame(minWidth: NotchHistoryPresentation.rowActionsMinimumWidth, alignment: .trailing)
     }
 
     /// The row's actions for VoiceOver: the same calls the hover buttons make. A copy made this way gets the same
@@ -162,5 +217,12 @@ struct NotchHistoryPanel: View {
         case .retranscribe:
             if let path = entry.recordingPath { onRetranscribe(path) }
         }
+    }
+}
+
+private struct NotchHistoryScrollOffsetKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }

@@ -340,8 +340,21 @@ public struct BarView: View {
     private var historyForcedHoverIndex: Int?
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
-    @State private var isMorphHistoryContentPresented = false
+    /// The user's intent: History should be open. The panel animates toward it (2.3 lane U4, morph B).
     @State private var isHistoryPresented = false
+    /// The History panel is on screen (open, opening, closing or being pulled). The window keeps the panel's size
+    /// until the close spring has settled, so a close is never cut off by AppKit shrinking the panel under it.
+    @State private var isHistoryMounted = false
+    /// Morph B's single progress: 0 = launcher, 1 = open panel. Shell, radii and rows all read it.
+    @State private var historyProgress: CGFloat = 0
+    @State private var historyMorphGeneration = 0
+    @State private var historyPull = NotchHistoryPull()
+    @State private var pendingHistoryReleaseVelocity: Double = 0
+    @GestureState private var isHistoryPullGestureActive = false
+    /// Visual shots only: show the panel frozen at this progress.
+    private var historyFrozenProgress: CGFloat?
+    /// Visual shots only: the scroll indicator as if mid-scroll.
+    private var historyForcedScrollOffset: CGFloat?
     @State private var settledLeadingWingWidth: CGFloat = 0
     @State private var preparingHandoff = TeleprompterPreparingHandoffGate()
     @State private var historyDismissal: NotchHistoryDismissal?
@@ -407,6 +420,7 @@ public struct BarView: View {
             appearance: notchAppearance,
             morphVariant: morphSelection?.variant ?? .p1Matched,
             canvasGeometry: includesPanelOutsets ? canvas.canvasGeometry : nil,
+            historyMorph: historyMorphInput,
             onHoverChanged: { hovering in
                 guard !includesPanelOutsets else { return }
                 state.setHovering(hovering)
@@ -431,10 +445,22 @@ public struct BarView: View {
         .onChange(of: notchPresentation.visualState) { _, visualState in
             scheduleMorphTeleprompterContent(for: visualState)
         }
+        .coordinateSpace(name: Self.notchCanvasSpace)
+        .gesture(historyPullGesture)
+        .onChange(of: isHistoryPullGestureActive) { _, isActive in
+            // A pull the system cancelled (no `onEnded`) still settles, at the nearer end.
+            if !isActive, historyPull.isDragging { endHistoryPull(cancelled: true) }
+        }
         .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
-            presentationModel?.setHistoryPanelOpen(isOpen)
             synchronizeHistoryDismissal(isOpen: isOpen)
+            let velocity = pendingHistoryReleaseVelocity
+            pendingHistoryReleaseVelocity = 0
+            animateHistory(toOpen: isOpen, velocity: velocity)
+        }
+        .onChange(of: isHistoryMounted) { _, isMounted in
+            synchronizeLauncherRetention()
+            presentationModel?.setHistoryPanelOpen(isMounted)
         }
         .onDisappear {
             historyDismissal?.stop()
@@ -448,7 +474,11 @@ public struct BarView: View {
             synchronizeLauncherRetention()
             presentationModel?.setReducedMotion(accessibilityReduceMotion)
             isMorphTeleprompterContentPresented = notchPresentation.visualState == .teleprompter
-            isMorphHistoryContentPresented = notchPresentation.visualState == .history
+            if isHistoryPresented, !isHistoryMounted {
+                isHistoryMounted = true
+                historyProgress = historyFrozenProgress ?? 1
+                presentationModel?.setHistoryPanelOpen(true)
+            }
         }
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
@@ -483,13 +513,118 @@ public struct BarView: View {
             visibleCoreOcclusionInset: 0,
             transientNote: state.selectionFeedbackNote
         )
-        input.isHistoryPanelOpen = isHistoryPresented
+        input.isHistoryPanelOpen = isHistoryMounted
         input.transientNoteOffersHistory = state.selectionFeedbackNoteOffersHistory
         return VoiceBarPresentation.notchPresentation(from: input)
     }
 
     private var keepsLauncherMounted: Bool {
-        isHistoryPresented
+        isHistoryPresented || isHistoryMounted
+    }
+
+    // MARK: - History morph B (2.3 lane U4)
+
+    static let notchCanvasSpace = "VoiceBarNotchCanvas"
+
+    /// The shell input while History is on screen; nil in every other state, which then draws exactly as before.
+    private var historyMorphInput: VoiceBarNotchHistoryMorphInput? {
+        let presentation = notchPresentation
+        guard presentation.visualState == .history else { return nil }
+        return VoiceBarNotchHistoryMorphInput(
+            progress: historyFrozenProgress ?? historyProgress,
+            closed: VoiceBarNotchContract.geometry(
+                for: .hoverLauncher,
+                coreWidth: presentation.geometry.coreWidth,
+                visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+            ),
+            open: presentation.geometry
+        )
+    }
+
+    /// Springs History toward open or closed from wherever it is (retargeting keeps the running velocity).
+    /// Closing unmounts only once the spring has fully settled, and only if nothing reopened it meanwhile.
+    private func animateHistory(toOpen: Bool, velocity: Double = 0) {
+        historyMorphGeneration &+= 1
+        let generation = historyMorphGeneration
+        if toOpen, !isHistoryMounted {
+            isHistoryMounted = true
+            presentationModel?.setHistoryPanelOpen(true)
+        }
+        guard !accessibilityReduceMotion else {
+            // Reduced motion swaps every morph for an instant change (the mock's note).
+            historyProgress = toOpen ? 1 : 0
+            if !toOpen { isHistoryMounted = false }
+            return
+        }
+        withAnimation(
+            NotchHistoryMorph.animation(opening: toOpen, from: historyProgress, velocity: velocity),
+            completionCriteria: .removed
+        ) {
+            historyProgress = toOpen ? 1 : 0
+        } completion: {
+            guard generation == historyMorphGeneration, !toOpen, !isHistoryPresented, !historyPull.isDragging
+            else { return }
+            isHistoryMounted = false
+        }
+    }
+
+    /// Pull History down from the notch (or push it back up by the open panel's bottom edge). A press that never
+    /// moves `dragSlop` is a click and leaves the panel alone; a drag follows the pointer and settles with a spring
+    /// at its release speed (formal/history-pull).
+    private var historyPullGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.notchCanvasSpace))
+            .updating($isHistoryPullGestureActive) { _, active, _ in active = true }
+            .onChanged { value in
+                let openHeight = notchPresentationOpenHistoryHeight
+                if case .idle = historyPull.phase {
+                    guard canPullHistory,
+                          NotchHistoryPull.accepts(
+                              y: value.startLocation.y, progress: historyProgress, openHeight: openHeight
+                          )
+                    else { return }
+                    historyPull.press(y: value.startLocation.y, progress: historyProgress, time: value.time.timeIntervalSinceReferenceDate)
+                }
+                guard let progress = historyPull.move(
+                    y: value.location.y,
+                    time: value.time.timeIntervalSinceReferenceDate,
+                    range: openHeight - VoiceBarNotchContract.topHeight
+                ) else { return }
+                if !isHistoryMounted {
+                    historyMorphGeneration &+= 1
+                    isHistoryMounted = true
+                    presentationModel?.setHistoryPanelOpen(true)
+                }
+                presentationModel?.setHistoryPullActive(true)
+                var follow = Transaction()
+                follow.disablesAnimations = true
+                withTransaction(follow) { historyProgress = progress }
+            }
+            .onEnded { _ in endHistoryPull(cancelled: false) }
+    }
+
+    private func endHistoryPull(cancelled: Bool) {
+        presentationModel?.setHistoryPullActive(false)
+        switch historyPull.release(progress: historyProgress, cancelled: cancelled) {
+        case let .settle(open, velocity):
+            if open == isHistoryPresented {
+                animateHistory(toOpen: open, velocity: velocity)
+            } else {
+                pendingHistoryReleaseVelocity = velocity
+                isHistoryPresented = open
+            }
+        case .click, .none:
+            break
+        }
+    }
+
+    /// History opens only from the launcher or itself, and never while there's nothing to show.
+    private var canPullHistory: Bool {
+        let state = notchPresentation.visualState
+        return (state == .hoverLauncher || state == .history) && !self.state.recentTranscriptionEntries.isEmpty
+    }
+
+    private var notchPresentationOpenHistoryHeight: CGFloat {
+        VoiceBarNotchContract.topHeight + VoiceBarNotchContract.historyLowerSurfaceHeight
     }
 
     /// Click-away and Esc close the History panel, as the transient popover did (#166 review).
@@ -756,15 +891,13 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLowerPanelContent: some View {
-        if isMorphHistoryContentPresented {
+        if notchPresentation.visualState == .history {
             historyPanelContent()
-                .padding(
-                    .horizontal,
-                    VoiceBarNotchContract.material.teleprompterBodyHorizontalInset
-                )
-                .padding(.top, 12)
-                .padding(.bottom, 12)
-                .transition(.opacity)
+                .padding(.horizontal, NotchHistoryMorph.listHorizontalInset)
+                .padding(.top, NotchHistoryMorph.listTopInset)
+                .padding(.bottom, NotchHistoryMorph.listBottomInset)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress))
         } else if isMorphTeleprompterContentPresented {
             VStack(spacing: 7) {
                 notchTeleprompterTimeline
@@ -911,13 +1044,7 @@ public struct BarView: View {
     private func scheduleMorphTeleprompterContent(
         for visualState: VoiceBarNotchVisualState
     ) {
-        // The History panel's rows fade in after the shell has dropped, exactly like the teleprompter's.
-        withAnimation(
-            .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
-                .delay(visualState == .history ? VoiceBarNotchContract.motion.panelDelay : 0)
-        ) {
-            isMorphHistoryContentPresented = visualState == .history
-        }
+        // History's rows ride morph B's progress (`NotchHistoryRowsMorph`), not a fade of their own.
         guard visualState == .teleprompter else {
             withAnimation(
                 .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
@@ -1091,6 +1218,22 @@ public struct BarView: View {
     func presentingHistoryForTesting() -> BarView {
         var copy = self
         copy._isHistoryPresented = State(initialValue: true)
+        copy._isHistoryMounted = State(initialValue: true)
+        copy._historyProgress = State(initialValue: 1)
+        return copy
+    }
+
+    /// Visual shots only: the History morph frozen mid-flight at `progress` (0 = launcher, 1 = open).
+    func freezingHistoryMorph(at progress: CGFloat) -> BarView {
+        var copy = presentingHistoryForTesting()
+        copy.historyFrozenProgress = progress
+        return copy
+    }
+
+    /// Visual shots only: the scroll indicator shown as if mid-scroll at this offset.
+    func forcingHistoryScrollIndicator(offset: CGFloat) -> BarView {
+        var copy = self
+        copy.historyForcedScrollOffset = offset
         return copy
     }
 
@@ -1103,9 +1246,7 @@ public struct BarView: View {
 
     /// Visual shots only: mount with the History panel open, so its button renders selected.
     func presentingHistoryForShots() -> BarView {
-        var copy = self
-        copy._isHistoryPresented = State(initialValue: true)
-        return copy
+        presentingHistoryForTesting()
     }
 
     /// Spec §4: the History panel inside the notch's lower surface.
@@ -1120,11 +1261,8 @@ public struct BarView: View {
                 state.repasteTranscript(entry.text, source: "bar_history")
             },
             onRetranscribe: { commandRouter.handleRetranscribeHistoryEntry(recordingPath: $0) },
-            onOpenHistory: {
-                isHistoryPresented = false
-                onOpenHistory()
-            },
-            forcedHoverIndex: historyForcedHoverIndex
+            forcedHoverIndex: historyForcedHoverIndex,
+            forcedScrollOffset: historyForcedScrollOffset
         )
     }
 

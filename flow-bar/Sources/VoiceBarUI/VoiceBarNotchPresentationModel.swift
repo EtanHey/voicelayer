@@ -102,6 +102,15 @@ public final class VoiceBarNotchPresentationModel {
         resolvePresentation()
     }
 
+    /// 2.3 lane U4: a History pull owns the pointer. The panel must keep taking mouse events for the whole drag,
+    /// even when the pointer rubber-bands past the panel's edge, or the drag would lose its events mid-pull.
+    public private(set) var isHistoryPullActive = false
+
+    public func setHistoryPullActive(_ isActive: Bool) {
+        guard isHistoryPullActive != isActive else { return }
+        isHistoryPullActive = isActive
+    }
+
     public func setReducedMotion(_ isEnabled: Bool) {
         isReducedMotionEnabled = isEnabled
     }

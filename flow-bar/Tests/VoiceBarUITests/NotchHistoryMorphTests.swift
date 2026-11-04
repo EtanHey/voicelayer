@@ -1,0 +1,268 @@
+import CoreGraphics
+import SwiftUI
+@testable import VoiceBarUI
+import XCTest
+
+/// 2.3 lane U4 guards: History morph B exactly as in the approved mocks (2-morph.html, 5-history.html), the 2-line
+/// rows, and pulling History down from the notch. The order-of-events half (drag versus click, a close never cut
+/// off, every morph reversible) is model-checked in formal/history-pull (Old and three mutants FAIL, Fixed PASS).
+final class NotchHistoryMorphTests: XCTestCase {
+    // MARK: Morph B values
+
+    func testTheSpringsAndRadiiAreMorphBs() {
+        XCTAssertEqual(NotchHistoryMorph.openResponse, 0.42)
+        XCTAssertEqual(NotchHistoryMorph.openDampingFraction, 0.8)
+        XCTAssertEqual(NotchHistoryMorph.closeResponse, 0.45)
+        XCTAssertEqual(NotchHistoryMorph.closeDampingFraction, 1.0)
+        XCTAssertEqual(NotchHistoryMorph.openTopRadius, 19)
+        XCTAssertEqual(NotchHistoryMorph.openBottomRadius, 24)
+        XCTAssertEqual(VoiceBarNotchContract.material.compactOuterCornerRadius(for: .history), 24)
+    }
+
+    /// The mock's `springParams`: k = (2π / response)², c = 4π ζ / response.
+    func testSpringCoefficientsMatchTheMocksMapping() {
+        let open = NotchHistoryMorph.springCoefficients(response: 0.42, dampingFraction: 0.8)
+        XCTAssertEqual(open.stiffness, pow(2 * .pi / 0.42, 2), accuracy: 1e-9)
+        XCTAssertEqual(open.damping, 4 * .pi * 0.8 / 0.42, accuracy: 1e-9)
+        let close = NotchHistoryMorph.springCoefficients(response: 0.45, dampingFraction: 1)
+        XCTAssertEqual(close.damping, 2 * sqrt(close.stiffness), accuracy: 1e-9, "close is critically damped")
+    }
+
+    func testRowsGrowOutOfTheNotch() {
+        XCTAssertEqual(NotchHistoryMorph.rowsScale(progress: 0), 0.8)
+        XCTAssertEqual(NotchHistoryMorph.rowsScale(progress: 1), 1)
+        XCTAssertEqual(NotchHistoryMorph.rowsScale(progress: 1.06), 1, "scale is clamped through the overshoot")
+        XCTAssertEqual(NotchHistoryMorph.rowsBlur(progress: 0), 20)
+        XCTAssertEqual(NotchHistoryMorph.rowsBlur(progress: 0.5), 10, accuracy: 1e-9)
+        XCTAssertEqual(NotchHistoryMorph.rowsBlur(progress: 1), 0, "no blur pass at all once open")
+        XCTAssertEqual(NotchHistoryMorph.rowsOpacity(progress: 0.3), 0, "invisible for the first 30 %")
+        XCTAssertEqual(NotchHistoryMorph.rowsOpacity(progress: 0.65), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(NotchHistoryMorph.rowsOpacity(progress: 1), 1)
+    }
+
+    func testRadiiFollowProgressClamped() {
+        XCTAssertEqual(NotchHistoryMorph.topRadius(progress: 0, closed: 0), 0)
+        XCTAssertEqual(NotchHistoryMorph.topRadius(progress: 1.08, closed: 0), 19)
+        XCTAssertEqual(NotchHistoryMorph.bottomRadius(progress: 0.5, closed: 15), 19.5, accuracy: 1e-9)
+    }
+
+    func testGeometryRunsFromTheLauncherToThePanelAndOvershootsUnclamped() {
+        let closed = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        let open = VoiceBarNotchContract.geometry(for: .history)
+        XCTAssertEqual(NotchHistoryMorph.geometry(progress: 0, closed: closed, open: open), closed)
+        XCTAssertEqual(NotchHistoryMorph.geometry(progress: 1, closed: closed, open: open), open)
+        let over = NotchHistoryMorph.geometry(progress: 1.05, closed: closed, open: open)
+        XCTAssertGreaterThan(over.lowerSurfaceHeight, open.lowerSurfaceHeight, "the open spring's overshoot shows")
+        XCTAssertGreaterThan(over.bodyWidth, open.bodyWidth)
+        XCTAssertEqual(NotchHistoryMorph.geometry(progress: -0.2, closed: closed, open: open).lowerSurfaceHeight, 0)
+    }
+
+    /// SwiftUI's initial velocity is relative to the distance left; a flick's progress-per-second is converted.
+    func testReleaseVelocityIsConvertedToTheSpringsRelativeUnits() {
+        XCTAssertEqual(
+            NotchHistoryMorph.animation(opening: true, from: 0.5, velocity: 2),
+            .interpolatingSpring(
+                mass: 1,
+                stiffness: pow(2 * .pi / 0.42, 2),
+                damping: 4 * .pi * 0.8 / 0.42,
+                initialVelocity: 4
+            )
+        )
+    }
+
+    // MARK: Shape
+
+    private func shapeBounds(progress: CGFloat, core: CGFloat = 185) -> (CGRect, VoiceBarNotchGeometry) {
+        let input = VoiceBarNotchHistoryMorphInput(
+            progress: progress,
+            closed: VoiceBarNotchContract.geometry(for: .hoverLauncher, coreWidth: core),
+            open: VoiceBarNotchContract.geometry(for: .history, coreWidth: core)
+        )
+        let geometry = input.geometry(at: progress)
+        let path = VoiceBarNotchHistoryMorphShape(morph: input, coreAnchorX: nil)
+            .path(in: CGRect(x: 0, y: 0, width: 600, height: 600))
+        return (path.boundingRect, geometry)
+    }
+
+    func testTheOpenPanelFlaresIntoTheMenuBarByTheTopRadius() {
+        let (bounds, geometry) = shapeBounds(progress: 1)
+        XCTAssertEqual(bounds.minX, geometry.topOriginX - 19, accuracy: 0.01)
+        XCTAssertEqual(bounds.maxX, geometry.topOriginX + geometry.topWidth + 19, accuracy: 0.01)
+        XCTAssertEqual(bounds.height, 372, accuracy: 0.01)
+    }
+
+    func testAtZeroTheMorphIsExactlyTheLauncher() {
+        let launcher = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        let (bounds, _) = shapeBounds(progress: 0)
+        let expected = VoiceBarNotchContinuousShape(
+            geometry: launcher,
+            compactOuterCornerRadius: VoiceBarNotchContract.material.compactOuterCornerRadius(for: .hoverLauncher)
+        ).path(in: CGRect(x: 0, y: 0, width: 600, height: 600)).boundingRect
+        XCTAssertEqual(bounds, expected)
+    }
+
+    func testOtherStatesDrawNoFlare() {
+        let teleprompter = VoiceBarNotchContract.geometry(for: .teleprompter)
+        let path = VoiceBarNotchContinuousShape(geometry: teleprompter, compactOuterCornerRadius: 18)
+            .path(in: CGRect(x: 0, y: 0, width: teleprompter.totalWidth, height: teleprompter.totalHeight))
+        XCTAssertEqual(path.boundingRect.minX, 0, accuracy: 0.001)
+    }
+
+    func testTheMorphCanvasHoldsTheFlaredPanelOnANarrowNotch() {
+        for core in [CGFloat(150), 168, 185, 220] {
+            let presentation = VoiceBarNotchPresentation.resolve(
+                hasTeleprompter: false, isRecording: false, hasCompactStatus: false,
+                hasHistoryPanel: true, isHovered: true, isKeyboardFocused: false, coreWidth: core
+            )
+            let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation).canvasGeometry
+            XCTAssertGreaterThanOrEqual(
+                canvas.bodyLeadingExtent,
+                presentation.geometry.bodyLeadingExtent + NotchHistoryMorph.openTopRadius,
+                "@\(core)"
+            )
+        }
+    }
+
+    func testOnlyLauncherAndHistoryHandOffWithoutASecondSpring() {
+        typealias View = VoiceBarNotchView<EmptyView, EmptyView, EmptyView>
+        XCTAssertTrue(View.isHistoryPair(.hoverLauncher, .history))
+        XCTAssertTrue(View.isHistoryPair(.history, .hoverLauncher))
+        XCTAssertFalse(View.isHistoryPair(.history, .recording), "recording still morphs from History as before")
+        XCTAssertFalse(View.isHistoryPair(.history, .history))
+        XCTAssertFalse(View.isHistoryPair(nil, .history))
+    }
+
+    // MARK: Rows, scroll indicator, hover
+
+    func testSevenTwoLineRowsAndTheMocksInsets() {
+        XCTAssertEqual(NotchHistoryMorph.rowHeight, 46)
+        XCTAssertEqual(NotchHistoryMorph.visibleRows, 7)
+        XCTAssertEqual(NotchHistoryMorph.listTopInset, 8)
+        XCTAssertEqual(NotchHistoryMorph.listBottomInset, 10)
+        XCTAssertEqual(NotchHistoryPresentation.rowLeadingPadding, 10)
+        XCTAssertEqual(NotchHistoryPresentation.rowTrailingPadding, 6)
+        XCTAssertEqual(NotchHistoryPresentation.rowCornerRadius, 8)
+        XCTAssertEqual(NotchHistoryPresentation.rowTextFontSize, 13)
+        XCTAssertEqual(NotchHistoryPresentation.rowMetaFontSize, 11.5)
+        XCTAssertEqual(NotchHistoryPresentation.rowLineSpacing, 2)
+    }
+
+    func testTheScrollThumbFollowsTheOffsetAndIsAbsentWhenEverythingFits() {
+        let visible = NotchHistoryMorph.listHeight
+        XCTAssertNil(NotchHistoryPresentation.scrollThumb(offset: 0, visibleHeight: visible, contentHeight: visible))
+        let content = NotchHistoryMorph.rowHeight * 12
+        let top = try? XCTUnwrap(NotchHistoryPresentation.scrollThumb(
+            offset: 0, visibleHeight: visible, contentHeight: content
+        ))
+        XCTAssertEqual(top?.minY, 0)
+        XCTAssertEqual(top?.height ?? 0, visible / content * visible, accuracy: 1e-9)
+        let bottom = NotchHistoryPresentation.scrollThumb(
+            offset: content - visible, visibleHeight: visible, contentHeight: content
+        )
+        XCTAssertEqual((bottom?.minY ?? 0) + (bottom?.height ?? 0), visible, accuracy: 1e-9)
+        let tiny = NotchHistoryPresentation.scrollThumb(offset: 0, visibleHeight: visible, contentHeight: 50000)
+        XCTAssertEqual(tiny?.height, 24, "never thinner than the mock's 24 pt minimum")
+        XCTAssertEqual(NotchHistoryPresentation.scrollIndicatorLinger, 0.7)
+        XCTAssertEqual(NotchHistoryPresentation.scrollIndicatorFadeIn, 0.08)
+        XCTAssertEqual(NotchHistoryPresentation.scrollIndicatorFadeOut, 0.3)
+    }
+
+    func testTheHoverTrackerMapsTheyPointerToOneRow() {
+        XCTAssertEqual(NotchHistoryPresentation.rowIndex(atY: 0, rowCount: 3), 0)
+        XCTAssertEqual(NotchHistoryPresentation.rowIndex(atY: 45.9, rowCount: 3), 0)
+        XCTAssertEqual(NotchHistoryPresentation.rowIndex(atY: 46, rowCount: 3), 1)
+        XCTAssertNil(NotchHistoryPresentation.rowIndex(atY: 46 * 3, rowCount: 3))
+        XCTAssertNil(NotchHistoryPresentation.rowIndex(atY: -1, rowCount: 3))
+    }
+
+    /// R0856-06: ONE container hover tracker, never a per-row `.onHover`, and no footer prose (R0856-08).
+    func testThePanelUsesOneContainerHoverTrackerAndNoFooter() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/NotchHistoryPanel.swift"),
+            encoding: .utf8
+        )
+        XCTAssertEqual(source.components(separatedBy: ".onContinuousHover(").count - 1, 1)
+        XCTAssertFalse(source.contains(".onHover {"))
+        XCTAssertFalse(source.contains(".onHover("))
+        XCTAssertFalse(source.contains("onOpenHistory"))
+    }
+
+    // MARK: Pull-down
+
+    func testRubberBandStretchesPastTheEndAndNeverAboveTheNotch() {
+        XCTAssertEqual(NotchHistoryMorph.rubberBand(0.4), 0.4)
+        XCTAssertEqual(NotchHistoryMorph.rubberBand(-0.3), 0)
+        let past = NotchHistoryMorph.rubberBand(1.5)
+        XCTAssertGreaterThan(past, 1)
+        XCTAssertLessThan(past, 1.1, "resisted, not followed 1:1")
+        XCTAssertLessThan(NotchHistoryMorph.rubberBand(10), 1.35, "bounded")
+        XCTAssertGreaterThan(NotchHistoryMorph.rubberBand(2), NotchHistoryMorph.rubberBand(1.5), "monotonic")
+    }
+
+    func testAReleaseSettlesByFlickThenByPosition() {
+        XCTAssertTrue(NotchHistoryMorph.releaseTarget(progress: 0.1, velocity: 0.6), "a downward flick opens")
+        XCTAssertFalse(NotchHistoryMorph.releaseTarget(progress: 0.9, velocity: -0.6), "an upward flick closes")
+        XCTAssertTrue(NotchHistoryMorph.releaseTarget(progress: 0.51, velocity: 0.2))
+        XCTAssertFalse(NotchHistoryMorph.releaseTarget(progress: 0.49, velocity: -0.2))
+    }
+
+    func testAPressThatNeverLeavesTheSlopIsAClickAndMovesNothing() {
+        var pull = NotchHistoryPull()
+        pull.press(y: 10, progress: 0, time: 0)
+        XCTAssertNil(pull.move(y: 12.5, time: 0.02, range: 340), "inside the 3 pt slop")
+        XCTAssertFalse(pull.isDragging)
+        XCTAssertEqual(pull.release(progress: 0), .click)
+        XCTAssertEqual(pull.phase, .idle)
+    }
+
+    func testADragFollowsThePointerAndSettlesAtItsReleaseSpeed() throws {
+        var pull = NotchHistoryPull()
+        pull.press(y: 10, progress: 0, time: 0)
+        let p1 = try XCTUnwrap(pull.move(y: 44, time: 0.016, range: 340))
+        XCTAssertEqual(p1, 0.1, accuracy: 1e-9, "34 pt of a 340 pt range")
+        XCTAssertTrue(pull.isDragging)
+        let p2 = try XCTUnwrap(pull.move(y: 112, time: 0.032, range: 340))
+        XCTAssertEqual(p2, 0.3, accuracy: 1e-9)
+        guard case let .settle(open, velocity) = pull.release(progress: p2) else {
+            return XCTFail("a drag always settles")
+        }
+        XCTAssertTrue(open, "a fast pull down opens even at 30 %")
+        XCTAssertLessThanOrEqual(velocity, NotchHistoryMorph.maximumReleaseVelocity)
+        XCTAssertEqual(pull.release(progress: 0), .none, "it ends exactly once")
+    }
+
+    func testACancelledDragStillSettlesAtTheNearerEnd() {
+        var pull = NotchHistoryPull()
+        pull.press(y: 10, progress: 1, time: 0)
+        _ = pull.move(y: -200, time: 0.01, range: 340)
+        XCTAssertEqual(pull.release(progress: 0.3, cancelled: true), .settle(open: false, velocity: 0))
+    }
+
+    func testOnePointerOwnsThePull() {
+        var pull = NotchHistoryPull()
+        pull.press(y: 10, progress: 0, time: 0)
+        _ = pull.move(y: 50, time: 0.01, range: 340)
+        pull.press(y: 300, progress: 0.5, time: 0.02)
+        XCTAssertTrue(pull.isDragging, "a second press doesn't restart the drag")
+    }
+
+    func testAPullStartsOnTheBandOrTheOpenPanelsBottomEdgeOnly() {
+        let height: CGFloat = 372
+        XCTAssertTrue(NotchHistoryPull.accepts(y: 20, progress: 0, openHeight: height))
+        XCTAssertFalse(NotchHistoryPull.accepts(y: 200, progress: 0, openHeight: height))
+        XCTAssertFalse(NotchHistoryPull.accepts(y: 200, progress: 1, openHeight: height), "rows keep their clicks")
+        XCTAssertTrue(NotchHistoryPull.accepts(y: 360, progress: 1, openHeight: height), "bottom edge pushes it up")
+    }
+
+    func testAPullHoldsThePanelsMouseEvents() {
+        let model = VoiceBarNotchPresentationModel()
+        XCTAssertFalse(model.isHistoryPullActive)
+        model.setHistoryPullActive(true)
+        XCTAssertTrue(model.isHistoryPullActive)
+        let before = model.presentation
+        model.setHistoryPullActive(false)
+        XCTAssertEqual(model.presentation, before, "holding the pointer never changes the shell")
+    }
+}

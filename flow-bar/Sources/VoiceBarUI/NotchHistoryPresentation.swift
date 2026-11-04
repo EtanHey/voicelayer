@@ -2,32 +2,51 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-/// Copy, timing and actions for the notch History panel (R4 UI pass #13; spec §4: rows are
-/// "time · length" over the first words, Copy / Paste / Re-transcribe on hover, footer "Open History…").
+/// Copy, metrics and actions for the notch History panel. 2.3 lane U4 (approved mock 5-history): two-line rows,
+/// seven visible, the dictation over "when · length"; Copy / Paste / Transcribe again on hover; no footer.
 public enum NotchHistoryPresentation {
-    public static let openHistoryTitle = "Open History…"
-    /// Paste from the popover types into the app behind it, which is easy to miss, so it's said once.
-    public static let pasteHint = "Paste types into the app you were using."
-    public static let footerHintFontSize: CGFloat = 10
-    public static let footerButtonFontSize: CGFloat = 11
-    public static let footerSpacing: CGFloat = 8
-    public static let footerMinimumGap: CGFloat = 6
+    // Row metrics (mock.css `.row.two`).
+    public static let rowLeadingPadding: CGFloat = 10
+    public static let rowTrailingPadding: CGFloat = 6
+    public static let rowCornerRadius: CGFloat = 8
+    public static let rowColumnSpacing: CGFloat = 10
+    public static let rowLineSpacing: CGFloat = 2
+    public static let rowTextFontSize: CGFloat = 13
+    public static let rowMetaFontSize: CGFloat = 11.5
+    /// The hover highlight (`--vb-hover`, white at 9 %), drawn in the palette's primary label colour.
+    public static let rowHoverOpacity: Double = 0.09
+    /// The action column's minimum width (`.row .acts { min-width: 66px }`).
+    public static let rowActionsMinimumWidth: CGFloat = 66
 
-    /// The narrowest footer that keeps the paste hint on one line beside "Open History…".
-    public static var footerOneLineWidth: CGFloat {
-        func width(_ text: String, size: CGFloat, weight: NSFont.Weight) -> CGFloat {
-            let system = NSFont.systemFont(ofSize: size, weight: weight)
-            let font = system.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) }
-            return ceil((text as NSString).size(withAttributes: [.font: font ?? system]).width)
-        }
-        return width(pasteHint, size: footerHintFontSize, weight: .medium)
-            + 2 * footerSpacing + footerMinimumGap
-            + width(openHistoryTitle, size: footerButtonFontSize, weight: .semibold)
+    // Scroll indicator (5-history `.sb`): 4 pt wide, 1 pt outside the list's right edge, only while scrolling.
+    public static let scrollIndicatorWidth: CGFloat = 4
+    public static let scrollIndicatorGap: CGFloat = 1
+    public static let scrollIndicatorMinimumHeight: CGFloat = 24
+    public static let scrollIndicatorFadeIn: TimeInterval = 0.08
+    public static let scrollIndicatorFadeOut: TimeInterval = 0.3
+    public static let scrollIndicatorLinger: TimeInterval = 0.7
+
+    /// The thumb's top and height inside the visible list, or nil when the content fits (no indicator at all).
+    public static func scrollThumb(
+        offset: CGFloat, visibleHeight: CGFloat, contentHeight: CGFloat
+    ) -> (minY: CGFloat, height: CGFloat)? {
+        guard contentHeight > visibleHeight + 0.5, visibleHeight > 0 else { return nil }
+        let height = max(scrollIndicatorMinimumHeight, visibleHeight / contentHeight * visibleHeight)
+        let travel = contentHeight - visibleHeight
+        let fraction = min(1, max(0, offset / travel))
+        return (fraction * (visibleHeight - height), height)
+    }
+
+    /// The row under a point `y` from the top of the list content (the one container hover tracker).
+    public static func rowIndex(atY y: CGFloat, rowCount: Int) -> Int? {
+        guard y >= 0, rowCount > 0 else { return nil }
+        let index = Int(y / NotchHistoryMorph.rowHeight)
+        return index < rowCount ? index : nil
     }
 
     public static let firstWordsLimit = 90
-    /// Spec §4: 24 pt hit targets (R4 UI pass #19 found 10–12 pt ones in Settings).
-    public static let rowActionSize: CGFloat = 24
+    /// Spec §4: 24 pt hit targets (R4 UI pass #19 found 10–12 pt ones in Settings), the shared Copy button's size.
+    public static let rowActionSize: CGFloat = CopyFeedbackButton.hitTarget
 
     public struct RowAction: Equatable {
         public enum Kind: Equatable { case copy, paste, retranscribe }
@@ -40,7 +59,7 @@ public enum NotchHistoryPresentation {
     public static let rowActions: [RowAction] = [
         RowAction(kind: .copy, symbol: VoiceBarActionSymbol.copy, label: "Copy"),
         RowAction(kind: .paste, symbol: VoiceBarActionSymbol.paste, label: "Paste into the app you were using"),
-        RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Re-transcribe"),
+        RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Transcribe again"),
     ]
 
     /// The row's actions for VoiceOver and keyboard users, who never hover (UXP-3, UX pass #7): the hover buttons
@@ -72,7 +91,7 @@ public enum NotchHistoryPresentation {
         return String(flattened.prefix(firstWordsLimit - 1)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    /// "2 min ago · 0:13"; the length only when the dictation's receipt has it. Nil for an entry saved
+    /// The row's second line, "2 min ago · 0:13"; the length only when the dictation's receipt has it. Nil for an entry saved
     /// before times were recorded.
     public static func rowHeader(for entry: RecentTranscriptionEntry, now: Date = Date()) -> String? {
         guard let time = VoiceBarRelativeTime.label(entry.createdAt, now: now) else { return nil }

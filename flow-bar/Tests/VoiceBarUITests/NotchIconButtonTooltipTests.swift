@@ -109,7 +109,7 @@ final class NotchIconButtonTooltipTests: XCTestCase {
     }
 
     /// The dropdown open: the wing buttons keep their tooltips and every row action (Copy, Paste,
-    /// Re-transcribe) has one too (R0856-09).
+    /// Transcribe again) has one too (R0856-09).
     func testHistoryDropdownButtons() throws {
         let s = state { state in
             state.isHovering = true
@@ -118,8 +118,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         let mounted = try mount(bar(s).presentingHistoryForTesting().forcingHistoryHover(0))
         assertEveryControlHasATooltip("history", mounted, expecting: [
             "Start voice recording", "Close history", "Settings",
-            "Copy", "Paste into the app you were using", "Re-transcribe",
-        ], textButtons: 1) // the "Open History…" footer is its own label
+            "Copy", "Paste into the app you were using", "Transcribe again",
+        ]) // 2.3 lane U4: no footer, so no text button
     }
 
     func testRecordingButtons() throws {

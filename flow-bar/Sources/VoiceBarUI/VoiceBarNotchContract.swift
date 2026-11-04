@@ -187,8 +187,11 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         switch visualState {
         case .hoverLauncher, .recording, .compactStatus:
             15
-        case .teleprompter, .history:
+        case .teleprompter:
             18
+        case .history:
+            // 2.3 lane U4, morph B: the open panel's convex bottom corners.
+            NotchHistoryMorph.openBottomRadius
         case .idle:
             11
         }
@@ -507,9 +510,9 @@ public enum VoiceBarNotchContract {
         2 * VoiceBarNotchFeedback.maximumTextHeight + 16 + 34 + 10 + transientNoteClearance
     public static let transientNoteHorizontalInset: CGFloat = 16
     /// Spec §4 / Etan: the History panel is the teleprompter's shell, "narrower and taller" (the teleprompter
-    /// body is 465 × 196 pt).
-    public static let historyBodyWidth: CGFloat = 320
-    public static let historyLowerSurfaceHeight: CGFloat = 360
+    /// body is 465 × 196 pt). 2.3 lane U4 (approved mock 5-history): 420 pt wide, seven 46 pt two-line rows.
+    public static let historyBodyWidth: CGFloat = NotchHistoryMorph.bodyWidth
+    public static let historyLowerSurfaceHeight: CGFloat = NotchHistoryMorph.lowerSurfaceHeight
     public static let teleprompterLeadingContentWidth: CGFloat = 50
     public static let teleprompterTrailingContentWidth = WaveformLayout.viewportWidth
 
@@ -621,6 +624,8 @@ public enum VoiceBarNotchContract {
                 lowerSurfaceHeight: 196
             )
         case .history:
+            // The wings (controls, hit targets) stay the launcher's. 2.3 lane U4: the morph shape draws the top row
+            // flush with the 420 pt panel (`VoiceBarNotchHistoryMorphInput.flushTop`), as in the mock.
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
@@ -677,11 +682,10 @@ public enum VoiceBarNotchContract {
         return ownBodyHeight > 0 ? min(geometry.bodyWidth, max(tab, noteMinimumWidth)) : tab
     }
 
-    /// The History body is centred on the core and as wide as it was with two equal wings (332 pt at a 185 pt
-    /// core). It continues straight down from the History + Settings wing (UXP-2: no shoulder there) and steps
-    /// out past the mic's fitted wing. It keeps the spec's minimum width if a narrow core would leave it narrower.
+    /// The History panel is centred on the core and `historyBodyWidth` wide (2.3 mock: 420 pt), top row and body
+    /// alike. It never gets narrower than the launcher's wings on a wide core.
     static func historyBodyExtent(coreWidth: CGFloat) -> CGFloat {
-        max((historyBodyWidth - coreWidth) / 2, hoverLauncherTrailingWingWidth)
+        max((historyBodyWidth - coreWidth) / 2, hoverLauncherTrailingWingWidth, compactIndicatorLaneWidth)
     }
 
     private static func geometry(
