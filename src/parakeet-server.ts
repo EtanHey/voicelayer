@@ -85,6 +85,7 @@ export class ParakeetServer {
           !(options.unloadWhenIdle?.() ?? modelIdlePolicy().unload_when_idle)) return false;
       try { await this.stopChild(); }
       catch (error) { this.notify("error", "cleanup-unconfirmed"); throw error; }
+      return true; // only `false` re-arms the idle timer (ModelResidency); success = unloaded
     }),
       options.idleSeconds ?? modelIdleSeconds, options.isBusy ?? residencyBusy,
       options.unloadWhenIdle ?? (() => modelIdlePolicy().unload_when_idle));
