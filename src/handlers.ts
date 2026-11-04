@@ -120,7 +120,17 @@ const THINK_FILE =
   process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
 
 const DEFAULT_CONVERSE_SILENCE_MODE: SilenceMode = "thoughtful";
-const VOICE_ASK_RETURN_TIMEOUT_MS = 120_000;
+const VOICE_ASK_RETURN_TIMEOUT_MIN_MS = 120_000;
+
+function voiceAskReturnTimeoutMs(transcribedDurationMs = 0): number {
+  // Long WAVs decode sequentially with overlap and possible witness retries.
+  // Allow 4x decoded audio time, retaining the short-take floor. Heartbeats
+  // alone must never renew this safety net for a stuck decoder.
+  return Math.min(
+    2_147_483_647, // Maximum setTimeout delay; larger values otherwise fire immediately.
+    Math.max(VOICE_ASK_RETURN_TIMEOUT_MIN_MS, Math.ceil(transcribedDurationMs * 4)),
+  );
+}
 const VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS = 15;
 const VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS = 180_000;
 const VOICE_ASK_PROMPT_TIMEOUT_FLOOR_MS = 180_000;
@@ -983,10 +993,10 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         onArchiveCreated: (archivePath) => {
           captureArchivePath = archivePath;
         },
-        onCaptureEnd: () => {
+        onCaptureEnd: (transcribedDurationMs) => {
           captureActive = false;
           captureHeld = false;
-          armTimeout(VOICE_ASK_RETURN_TIMEOUT_MS, "return");
+          armTimeout(voiceAskReturnTimeoutMs(transcribedDurationMs), "return");
         },
         onPhaseChange: (phase) => {
           progressHeartbeat?.setStage(phase);
