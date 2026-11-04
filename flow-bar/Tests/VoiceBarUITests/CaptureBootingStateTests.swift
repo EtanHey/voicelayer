@@ -168,8 +168,15 @@ final class CaptureBootingStateTests: XCTestCase {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.sendCommand = { _ in }
-        var clockValues = [10.0, 10.1, 10.7, 20.0, 20.6]
-        state.recordingTimingClock = { clockValues.removeFirst() }
+        // Command, recording, first audio, transcribing, next recording, next first audio.
+        var clockValues = [10.0, 10.1, 10.7, 15.0, 20.0, 20.6]
+        state.recordingTimingClock = {
+            guard !clockValues.isEmpty else {
+                XCTFail("Unexpected recording timing clock read")
+                return 0
+            }
+            return clockValues.removeFirst()
+        }
         var firstAudioEvents: [[String: String]] = []
         state.diagnosticLogger = { event, details in
             if event == "recording_first_audio_level" {
@@ -200,8 +207,15 @@ final class CaptureBootingStateTests: XCTestCase {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.sendCommand = { _ in }
-        var clockValues = [10.0, 10.1, 10.7, 20.0, 20.6]
-        state.recordingTimingClock = { clockValues.removeFirst() }
+        // Command, recording, first audio, transcribing, next recording, next first audio.
+        var clockValues = [10.0, 10.1, 10.7, 15.0, 20.0, 20.6]
+        state.recordingTimingClock = {
+            guard !clockValues.isEmpty else {
+                XCTFail("Unexpected recording timing clock read")
+                return 0
+            }
+            return clockValues.removeFirst()
+        }
         var firstAudioEvents: [[String: String]] = []
         state.diagnosticLogger = { event, details in
             if event == "recording_first_audio_level" {
