@@ -2468,7 +2468,11 @@ public final class VoiceState {
     /// the paused read comes back. Never resumes audio by itself.
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
-        if mode == .disconnected || (oldValue == .speaking && mode == .idle) { retireParkedRead(); return }
+        if mode == .disconnected || (oldValue == .speaking && mode == .idle) {
+            clearCurrentSelectionReadIdentity(advanceEpoch: false)
+            retireParkedRead()
+            return
+        }
         if mode == .recording || mode == .transcribing, oldValue != .recording, oldValue != .transcribing {
             isCaptureSettlementPending = true
             if oldValue == .speaking { departedRead = currentReadSnapshot() }
