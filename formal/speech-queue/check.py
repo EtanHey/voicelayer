@@ -63,7 +63,7 @@ def check_run(runner, RUN, f5_only=False, receipt=False):
         "src/__tests__/recording-review-regressions.test.ts", "src/__tests__/test-safety-lifecycle.test.ts", "src/__tests__/mcp-handler.test.ts",
         "src/__tests__/pause-ask.test.ts",
         "src/__tests__/update-gate-installer-participant.test.ts", "src/__tests__/update-gate-installer-short-holder.test.ts",
-        "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift",
+        "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift", "flow-bar/Tests/VoiceBarTests/F5ResumeIdentityTests.swift",
         "formal/speech-queue/F5-IMPLEMENTATION.md")]]
     sources += [SPEC / "check.sh", ROOT / "formal/setup-tlc.py",
                 ROOT / "formal/graph_retention.py", SPEC / "test_graph_retention.py"]
