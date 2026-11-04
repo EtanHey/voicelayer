@@ -135,6 +135,29 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+
+  it.each(["edge", "clone"] as const)("U5 %s publishes global word indices and seeks across synthesized chunks", async engine => {
+    if (engine === "clone") spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("silent clone fixture")));
+    const timings = fixtureBarrier<import("../socket-protocol").SpeechWordsEvent>();
+    spies.push(spyOn(socket, "broadcast").mockImplementation(event => {
+      events.push(event); if (event.type === "speech_words") timings.push(event);
+    }));
+    const h = start(engine);
+    await playerBarrier.at(0);
+    const first = await timings.at(0);
+    let next = first, index = 0;
+    while (next.wordOffset === 0) next = await timings.at(++index);
+    expect(first).toMatchObject({ utteranceId: h.id, wordOffset: 0, approximate: engine === "clone" });
+    expect(next.utteranceId).toBe(h.id);
+    expect(next.wordOffset).toBe(first.words.length);
+    expect(next.words[0].startMs).toBeGreaterThanOrEqual(first.words.at(-1)!.endMs);
+    expect(tts.seekSpeechWord(h.id, next.wordOffset, "cross-chunk"))
+      .toMatchObject({ outcome: "accept", offset_ms: next.words[0].startMs });
+    await playerBarrier.at(1);
+    expect(events.filter(event => event.state === "speaking").at(-1).utteranceId).toBe(h.id);
+    stopPlayback(); await h.done;
+    expect(tts.seekSpeechWord(h.id, 0)).toMatchObject({ outcome: "reject", reason: "stale utterance" });
+  });
   it("F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots", async () => {
     const wire: { expected: number; events: unknown[] }[] = [];
     const rows = process.env.VOICELAYER_SPEECH_CASES
