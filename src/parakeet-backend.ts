@@ -10,6 +10,7 @@ import { getStateDir } from "./paths";
 import { noteRecognizerEngine, noteRecognizerEffective } from "./recognizer-state";
 import { probeParakeetSpeech, PARAKEET_EMPTY_SPEECH_THRESHOLD, type ParakeetSpeechEvidence } from "./parakeet-vad";
 import { VAD_CHUNK_SAMPLES } from "./vad-constants";
+import { z } from "zod";
 import { probeParakeetLanguage, PARAKEET_LID_MIN_CONFIDENCE, type ParakeetLanguageInput, type ParakeetLanguageEvidence } from "./parakeet-lid";
 
 export class STTQualificationError extends Error {
@@ -82,14 +83,55 @@ export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, last
 }
 
 /** Only complete, input-bound Silero windows may establish unheard speech. */
-function lastSileroSpeech(evidence: ParakeetSpeechEvidence, info: WavInfo, sha256: string | null): number | undefined {
+function sileroProbabilities(evidence: ParakeetSpeechEvidence, info: WavInfo, sha256: string | null): number[] | undefined {
   const probabilities = evidence.probabilities;
   if (evidence.status !== "COMPLETE" || evidence.threshold !== PARAKEET_EMPTY_SPEECH_THRESHOLD ||
       evidence.inputSha256 !== sha256 || evidence.frames !== info.frames || evidence.analyzedFrames !== info.frames ||
       !probabilities || probabilities.length !== Math.ceil(info.frames / VAD_CHUNK_SAMPLES) ||
       probabilities.some(p => !Number.isFinite(p) || p < 0 || p > 1)) return undefined;
+  return probabilities;
+}
+
+function lastSileroSpeech(evidence: ParakeetSpeechEvidence, info: WavInfo, sha256: string | null): number | undefined {
+  const probabilities = sileroProbabilities(evidence, info, sha256);
+  if (!probabilities) return undefined;
   const last = probabilities.findLastIndex(p => p >= PARAKEET_EMPTY_SPEECH_THRESHOLD);
   return last < 0 ? 0 : Math.min((last + 1) * VAD_CHUNK_SAMPLES, info.frames) / info.sampleRate;
+}
+
+// Decoder token times are external data, not proof that every input frame was
+// heard. Keep only validated spans; never infer word positions from text length.
+const tokenTimeSchema = z.array(z.object({ start: z.number().finite().nonnegative(), end: z.number().finite().nonnegative() })
+  .refine(t => t.end >= t.start));
+const INTERNAL_TOKEN_MARGIN_S = 0.25;
+const INTERNAL_SPEECH_MIN_S = 0.5;
+
+function internalTokenGaps(result: ParakeetResponse, duration: number): { start: number; end: number }[] {
+  const parsed = tokenTimeSchema.safeParse(result.raw_token_times);
+  if (!parsed.success || parsed.data.some(t => t.end > duration)) return [];
+  const spans = parsed.data.sort((a, b) => a.start - b.start);
+  const gaps: { start: number; end: number }[] = [];
+  let end = spans[0]?.end;
+  for (const span of spans.slice(1)) {
+    if (end !== undefined && span.start - end >= INTERNAL_SPEECH_MIN_S + 2 * INTERNAL_TOKEN_MARGIN_S) {
+      gaps.push({ start: end + INTERNAL_TOKEN_MARGIN_S, end: span.start - INTERNAL_TOKEN_MARGIN_S });
+    }
+    end = Math.max(end ?? 0, span.end);
+  }
+  return gaps;
+}
+
+function hasUncoveredInternalSpeech(gaps: { start: number; end: number }[], probabilities: number[], info: WavInfo): boolean {
+  for (const gap of gaps) {
+    let speechFrames = 0;
+    // Count only complete VAD windows strictly inside the token-free interval.
+    for (let i = Math.ceil(gap.start * info.sampleRate / VAD_CHUNK_SAMPLES);
+      (i + 1) * VAD_CHUNK_SAMPLES <= gap.end * info.sampleRate; i++) {
+      speechFrames = probabilities[i]! >= PARAKEET_EMPTY_SPEECH_THRESHOLD ? speechFrames + VAD_CHUNK_SAMPLES : 0;
+      if (speechFrames / info.sampleRate >= INTERNAL_SPEECH_MIN_S) return true;
+    }
+  }
+  return false;
 }
 
 export interface ParakeetBackendDeps {
@@ -239,13 +281,16 @@ export class ParakeetBackend implements STTBackend {
           (result.attemptEvidence?.inputPath && result.attemptEvidence.inputPath !== inputPath)) return fallback("input-identity", result);
       let reason = parakeetOutputRisk(result, info);
       const duration = info.frames / info.sampleRate;
-      if (!reason && duration >= 8 && result.last_token_end_s !== null &&
-          duration - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))) {
+      const gaps = internalTokenGaps(result, duration);
+      if (!reason && duration >= 8 && (gaps.length > 0 || (result.last_token_end_s !== null &&
+          duration - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))))) {
         try { speechEvidence = await (this.deps.speechProbe ?? probeParakeetSpeech)(inputPath); }
         catch (error) { speechEvidence = { status: "UNKNOWN", threshold: PARAKEET_EMPTY_SPEECH_THRESHOLD, errorType: error instanceof Error ? error.name : "unknown" }; }
         const lastSpeechSeconds = lastSileroSpeech(speechEvidence, info, inputSha256);
-        if (lastSpeechSeconds === undefined) console.error("[voicelayer] Parakeet tail speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
+        if (lastSpeechSeconds === undefined) console.error("[voicelayer] Parakeet speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
         reason = parakeetOutputRisk(result, info, lastSpeechSeconds);
+        const probabilities = sileroProbabilities(speechEvidence, info, inputSha256);
+        if (!reason && probabilities && hasUncoveredInternalSpeech(gaps, probabilities, info)) reason = "uncovered-internal";
       }
       if (reason === "empty-response") {
         nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result, whisper: null, errorType: null, stage: "native-or-input-boundary" });
