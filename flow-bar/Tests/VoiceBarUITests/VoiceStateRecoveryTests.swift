@@ -104,6 +104,21 @@ final class VoiceStateRecoveryTests: XCTestCase {
         XCTAssertNil(state.errorMessage)
     }
 
+    @MainActor
+    func testDaemonSttAudioScalesTheWaitWhenRecordingStartWasMissed() async throws {
+        let state = VoiceState()
+        state.transcriptionTimeout = .milliseconds(20)
+        state.setConnectionStatus(true)
+        defer { state.setConnectionStatus(false) }
+        // No recording event reached VoiceBar (e.g. it reconnected mid-capture).
+        state.handleEvent(["type": "state", "state": "transcribing", "stt_audio_ms": 600_000])
+
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(state.mode, .transcribing, "the daemon's decoded length must scale the wait")
+        XCTAssertNil(state.errorMessage)
+    }
+
     func testMCPTranscribingDisconnectEndsWaitImmediately() {
         let state = VoiceState()
         state.setConnectionStatus(true)
