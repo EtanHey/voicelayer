@@ -634,6 +634,12 @@ function retractionContentLoss(
     if (count === 0) return "deleted";
     available.set(fragment, count - 1);
   }
+  // Pauses between complete words are content too, even without a cutoff fragment.
+  // Normalize ellipsis spelling while retaining every occurrence of each marker.
+  for (const marker of [/—/gu, /\.{3}/gu]) {
+    if (countMatches(candidate.normalize("NFKC"), marker) <
+        countMatches(cleanedText.normalize("NFKC"), marker)) return "deleted";
+  }
   const markerPositions = falseStartMarkerStreamPositions(cleanedText);
   if (markerPositions.length === 0) return null;
 

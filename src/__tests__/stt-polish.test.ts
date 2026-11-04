@@ -1695,6 +1695,46 @@ describe("stt-polish", () => {
     });
   }
 
+  it("rejects the V29 v22-interruption benchmark control", async () => {
+    const cleanedText = "Send it on Tuesday — no, Wednesday, after lunch.";
+    const candidate = "Send it on Tuesday  no, Wednesday, after lunch.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+    expect(result).toMatchObject({
+      status: "rejected", text: cleanedText, polishedText: candidate,
+      error: "polish response deleted retraction content", changed: false,
+    });
+  });
+
+  for (const marker of ["—", "…", "..."]) {
+    it.each(["dictation", "voice_ask"] as const)(
+      `rejects removal of a standalone ${marker} marker on %s`,
+      async (surface) => {
+        const cleanedText = `Keep this ${marker} before release ${marker} and save every word.`;
+        let candidate = cleanedText.replace(marker, "");
+        server = createMockPolishServer(() => ({ text: candidate }));
+        const env = {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        };
+        const refused = await polishTranscriptionText({ rawText: cleanedText, cleanedText, surface, env });
+        expect(refused).toMatchObject({ status: "rejected", text: cleanedText, changed: false });
+        candidate = cleanedText.replace("before", "Before");
+        const accepted = await polishTranscriptionText({ rawText: cleanedText, cleanedText, surface, env });
+        expect(accepted).toMatchObject({ status: "applied", text: candidate });
+      },
+    );
+  }
+
   it("keeps a spoken retraction and cutoff fragment when polishing punctuation", async () => {
     const cleanedText = "I want the red — no, the blue one fu… before release.";
     server = createMockPolishServer(() => ({ text: cleanedText }));
