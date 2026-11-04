@@ -1,0 +1,42 @@
+{
+  "row": "update-gate-g3-quit-polls-transitional-exit",
+  "measured_sha": "c2df739fc1d8b74f93c352916f239909f9973038",
+  "probe_commit": "c2df739fc1d8b74f93c352916f239909f9973038",
+  "probe_path": "src/__tests__/update-gate-installer-participant.test.ts",
+  "probe_sha256": "c85b9fa6c534a6a173964d7099166dd038773ae2051c54c1d13803002ae7825b",
+  "bun_exit": 1,
+  "elapsed_seconds": 0.215,
+  "semantic_violations": 4,
+  "problems": [],
+  "cases": [
+    {
+      "name": "healthy quit polls through empty-ps before verified exit",
+      "outcome": "semantic-fail",
+      "type": "Error",
+      "message": "UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery"
+    },
+    {
+      "name": "healthy quit polls through unreaped before verified exit",
+      "outcome": "semantic-fail",
+      "type": "Error",
+      "message": "UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery"
+    },
+    {
+      "name": "healthy quit polls through teardown before verified exit",
+      "outcome": "semantic-fail",
+      "type": "Error",
+      "message": "UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery"
+    },
+    {
+      "name": "healthy quit polls through defunct before verified exit",
+      "outcome": "pass"
+    },
+    {
+      "name": "every exit poll rechecks the held COMMITTED lease before accepting gone",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: 4\nReceived: 2\n"
+    }
+  ],
+  "platform": "linux"
+}

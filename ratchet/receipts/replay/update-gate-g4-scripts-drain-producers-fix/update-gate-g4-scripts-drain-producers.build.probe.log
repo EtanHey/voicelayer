@@ -1,0 +1,16 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+app_authority: rc=0
+(pass) update script SIGPIPE guards > app_authority drains a codesign producer larger than the pipe buffer [33.74ms]
+app_teamid: rc=0
+(pass) update script SIGPIPE guards > app_teamid drains a codesign producer larger than the pipe buffer [30.29ms]
+(pass) update script SIGPIPE guards > unsigned copies return empty signature fields without aborting [10.88ms]
+(pass) update script SIGPIPE guards > secure_input_owner consumes large matching health output [81.94ms]
+(pass) update script SIGPIPE guards > launchd_loaded_program consumes large matching health output [60.62ms]
+
+ 5 pass
+ 4 filtered out
+ 0 fail
+ 10 expect() calls
+Ran 5 tests across 1 file. [243.00ms]

@@ -1,0 +1,21 @@
+[
+  {
+    "row": "update-gate-g4-scripts-drain-producers",
+    "kind": "replay",
+    "value": 5,
+    "ceiling": 0,
+    "status": "FAIL",
+    "verdict": "FAIL",
+    "bug_sha": "e5796a2d573b96577ec6670c982288db52324f65",
+    "fix_sha": "db74b9fee3097e19656f2f47d68525734a6075f4",
+    "measured_sha": "e5796a2d573b96577ec6670c982288db52324f65",
+    "error": null,
+    "probe": {
+      "commit": "db74b9fee3097e19656f2f47d68525734a6075f4",
+      "path": "src/__tests__/update-script-sigpipe.test.ts",
+      "cases": 5
+    },
+    "probe_sha256": "3d305eba158b177ae1ec548a337dc0796e08a5e4369f879ce18ba3a77916a910",
+    "platform": "linux"
+  }
+]

@@ -1,0 +1,23 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+165 |           else await playerBarrier.at(playerIndex + 1);
+166 |         }
+167 |       }
+168 |       const snapshots = events.slice(beginning).filter(event => event.type === "queue");
+169 |       expect(snapshots.flatMap(event => event.items).filter(item => item.text === "Current read" && !item.is_current),
+170 |         "QueuedCountExcludesCurrent every published frame").toHaveLength(0);
+                                                                  ^
+error: QueuedCountExcludesCurrent every published frame
+
+Expected length: 0
+Received length: 1
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:170:61)
+(fail) long-read real runtime with owned synth/player fakes > F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots [62.97ms]
+
+ 0 pass
+ 142 filtered out
+ 1 fail
+ 64 expect() calls
+Ran 1 test across 1 file. [238.00ms]

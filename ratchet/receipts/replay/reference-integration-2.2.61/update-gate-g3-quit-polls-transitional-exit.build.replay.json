@@ -1,0 +1,34 @@
+{
+  "row": "update-gate-g3-quit-polls-transitional-exit",
+  "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+  "probe_commit": "c2df739fc1d8b74f93c352916f239909f9973038",
+  "probe_path": "src/__tests__/update-gate-installer-participant.test.ts",
+  "probe_sha256": "c85b9fa6c534a6a173964d7099166dd038773ae2051c54c1d13803002ae7825b",
+  "bun_exit": 0,
+  "elapsed_seconds": 0.166,
+  "semantic_violations": 0,
+  "problems": [],
+  "cases": [
+    {
+      "name": "healthy quit polls through empty-ps before verified exit",
+      "outcome": "pass"
+    },
+    {
+      "name": "healthy quit polls through unreaped before verified exit",
+      "outcome": "pass"
+    },
+    {
+      "name": "healthy quit polls through teardown before verified exit",
+      "outcome": "pass"
+    },
+    {
+      "name": "healthy quit polls through defunct before verified exit",
+      "outcome": "pass"
+    },
+    {
+      "name": "every exit poll rechecks the held COMMITTED lease before accepting gone",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}

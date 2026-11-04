@@ -1,0 +1,44 @@
+{
+  "row": "update-gate-g4-scripts-drain-producers",
+  "measured_sha": "e5796a2d573b96577ec6670c982288db52324f65",
+  "probe_commit": "db74b9fee3097e19656f2f47d68525734a6075f4",
+  "probe_path": "src/__tests__/update-script-sigpipe.test.ts",
+  "probe_sha256": "3d305eba158b177ae1ec548a337dc0796e08a5e4369f879ce18ba3a77916a910",
+  "bun_exit": 1,
+  "elapsed_seconds": 0.165,
+  "semantic_violations": 5,
+  "problems": [],
+  "cases": [
+    {
+      "name": "app_authority drains a codesign producer larger than the pipe buffer",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: 0\nReceived: 141\n"
+    },
+    {
+      "name": "app_teamid drains a codesign producer larger than the pipe buffer",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: 0\nReceived: 141\n"
+    },
+    {
+      "name": "unsigned copies return empty signature fields without aborting",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: 0\nReceived: 1\n"
+    },
+    {
+      "name": "secure_input_owner consumes large matching health output",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: 0\nReceived: 141\n"
+    },
+    {
+      "name": "launchd_loaded_program consumes large matching health output",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: 0\nReceived: 141\n"
+    }
+  ],
+  "platform": "linux"
+}

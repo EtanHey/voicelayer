@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="28" assertions="22" failures="0" skipped="23" time="1.023619302">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="28" assertions="22" failures="0" skipped="23" time="1.017753645" hostname="vm">
+    <testsuite name="chunkTextForTTS" file="src/__tests__/ratchet-replay-probe.test.ts" line="7" tests="5" assertions="0" failures="0" skipped="5" time="0" hostname="vm">
+      <testcase name="returns short text unchanged" classname="chunkTextForTTS" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="8" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a single sentence intact when it fits the limit" classname="chunkTextForTTS" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="13" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="splits many sentences into ordered chunks under the limit" classname="chunkTextForTTS" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="19" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="splits long text without punctuation into capped chunks" classname="chunkTextForTTS" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="35" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="handles unicode and Hebrew text" classname="chunkTextForTTS" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="47" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+    <testcase name="SPEECH-PACING starts at a useful sentence boundary and retains all words" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="60" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="SPEECH-PACING retains every character of an overlong first token" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="70" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="SPEECH-PACING retains tokens across repeated whitespace and paragraphs" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="79" assertions="0">
+      <skipped />
+    </testcase>
+    <testsuite name="SPEECH-PACING natural startup and ramp" file="src/__tests__/ratchet-replay-probe.test.ts" line="86" tests="15" assertions="0" failures="0" skipped="15" time="0" hostname="vm">
+      <testcase name="keeps a natural opening: The complete archive was reviewed today by Dr. Smith who approved the release." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a natural opening: Dr. Smith reviewed the change and approved the complete release today." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a natural opening: Mr. Heyman reviewed the complete release and approved it today." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a natural opening: We moved to the U.S. East region last week and verified the result." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a natural opening: We use examples, e.g. apples and pears, to explain the complete result." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a natural opening: 1. Pick up the blue basket and carry it carefully to the garden gate." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a natural opening: 2. Walk to the garden gate and wait beside the old apple tree." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a natural opening: Ok. We can start the full review of this document today." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps a natural opening: שלום לכולם. אנחנו בודקים את המשפט הראשון ואת כל המילים לפי הסדר." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="99" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="uses a sentence or clause boundary: This first sentence contains enough words to exceed the old startup budget and continues naturally until its final punctuation." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="113" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="uses a sentence or clause boundary: This first clause contains enough words to reach a natural pause; the following clause continues well beyond the old startup budget and ends here." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="113" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="uses a sentence or clause boundary: This first clause contains enough words to reach a natural pause, and the following clause continues well beyond the old startup budget and ends here." classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="113" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="does not end the startup on a quoted title abbreviation" classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="121" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="bounds a pathological first sentence without losing or repeating words" classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="ramps the second synthesis budget before the 400 character body" classname="SPEECH-PACING natural startup and ramp" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="135" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+    <testsuite name="F-speech R2 real clause boundary" file="src/__tests__/ratchet-replay-probe.test.ts" line="148" tests="5" assertions="22" failures="0" skipped="0" time="0.983" hostname="vm">
+      <testcase name="keeps https://example.test/path whole when : is at index 99 (English)" classname="F-speech R2 real clause boundary" time="0.080539" file="src/__tests__/ratchet-replay-probe.test.ts" line="153" assertions="5" />
+      <testcase name="keeps 1,000 whole when , is at index 99 (English)" classname="F-speech R2 real clause boundary" time="0.00082" file="src/__tests__/ratchet-replay-probe.test.ts" line="153" assertions="5" />
+      <testcase name="keeps inside;token whole when ; is at index 99 (English)" classname="F-speech R2 real clause boundary" time="0.000712" file="src/__tests__/ratchet-replay-probe.test.ts" line="153" assertions="5" />
+      <testcase name="keeps מילה،המשך whole when ، is at index 99 (Hebrew)" classname="F-speech R2 real clause boundary" time="0.000966" file="src/__tests__/ratchet-replay-probe.test.ts" line="153" assertions="5" />
+      <testcase name="fuzzes 6000 engine/text pairs with no head token splits or character drops/duplicates" classname="F-speech R2 real clause boundary" time="0.903118" file="src/__tests__/ratchet-replay-probe.test.ts" line="166" assertions="2" />
+    </testsuite>
+  </testsuite>
+</testsuites>

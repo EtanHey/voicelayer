@@ -1,0 +1,41 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+166 |       ? outcome === "wrong-bundle" && successorStarted ? "/tmp/Other.app/Contents/MacOS/Other" : "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar"
+167 |       : "/opt/homebrew/bin/bun"),
+168 |     processParent: () => identities.native.pid, participantsExited: () => true,
+169 |   });
+170 |   await previous.refresh(lease);
+171 |   const participant = previous.successor!(); successorStarted = true;
+                                     ^
+TypeError: previous.successor is not a function. (In 'previous.successor()', 'previous.successor' is undefined)
+      at readinessFixture ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:171:32)
+      at async <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:179:19)
+(fail) G5 readiness retries fresh authenticated attempts: ready [16.71ms]
+166 |       ? outcome === "wrong-bundle" && successorStarted ? "/tmp/Other.app/Contents/MacOS/Other" : "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar"
+167 |       : "/opt/homebrew/bin/bun"),
+168 |     processParent: () => identities.native.pid, participantsExited: () => true,
+169 |   });
+170 |   await previous.refresh(lease);
+171 |   const participant = previous.successor!(); successorStarted = true;
+                                     ^
+TypeError: previous.successor is not a function. (In 'previous.successor()', 'previous.successor' is undefined)
+      at readinessFixture ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:171:32)
+      at async <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:179:19)
+(fail) G5 readiness retries fresh authenticated attempts: stale [11.13ms]
+166 |       ? outcome === "wrong-bundle" && successorStarted ? "/tmp/Other.app/Contents/MacOS/Other" : "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar"
+167 |       : "/opt/homebrew/bin/bun"),
+168 |     processParent: () => identities.native.pid, participantsExited: () => true,
+169 |   });
+170 |   await previous.refresh(lease);
+171 |   const participant = previous.successor!(); successorStarted = true;
+                                     ^
+TypeError: previous.successor is not a function. (In 'previous.successor()', 'previous.successor' is undefined)
+      at readinessFixture ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:171:32)
+      at async <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:179:19)
+(fail) G5 readiness retries fresh authenticated attempts: disconnected [10.92ms]
+
+ 0 pass
+ 34 filtered out
+ 3 fail
+Ran 3 tests across 1 file. [150.00ms]

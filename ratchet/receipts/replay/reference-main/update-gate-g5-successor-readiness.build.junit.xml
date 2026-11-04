@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="37" assertions="0" failures="3" skipped="34" time="0.150609458">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="37" assertions="0" failures="3" skipped="34" time="0.146121378" hostname="vm">
+    <testcase name="G5 COMPLETE releases exactly the committed generation and is idempotent" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="15" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE fences ownerId" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="19" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE fences generation" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="19" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE fences targetSha" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="19" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE fences operationId" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="19" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE never releases DRAINING" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="23" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE never releases PREPARED" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="23" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE refuses unverified evidence {&quot;installerExitCode&quot;:7}" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="27" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE refuses unverified evidence {&quot;installedSha&quot;:&quot;bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&quot;}" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="27" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE refuses unverified evidence {&quot;participantsVerified&quot;:false}" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="27" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 locked COMPLETE needs a trusted proof even with well-formed fields" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="46" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 verified controller reopens and the same admission instance admits without restart" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="51" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller exit retains COMMITTED, controller and recovery receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller sha retains COMMITTED, controller and recovery receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller dead retains COMMITTED, controller and recovery receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller changed-plist retains COMMITTED, controller and recovery receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller foreign-controller retains COMMITTED, controller and recovery receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller foreign-pid retains COMMITTED, controller and recovery receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller foreign-identity retains COMMITTED, controller and recovery receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller caller-identity retains COMMITTED, controller and recovery receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller child lifecycle: verified" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="83" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller child lifecycle: exit" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="83" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller child lifecycle: sha" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="83" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 controller child lifecycle: dead" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="83" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 parses installed Info.plist bytes and detects replacement before COMPLETE" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="105" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 locked COMPLETE refuses active" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="114" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 locked COMPLETE refuses diagnostic" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="114" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 locked COMPLETE refuses stale-proof" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="114" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 COMPLETE cannot mistake the next owner&apos;s REQUEST for its own failed completion" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="126" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 readiness retries fresh authenticated attempts: ready" classname="" time="0.016712" file="src/__tests__/ratchet-replay-probe.test.ts" line="178" assertions="0">
+      <failure type="TypeError" message="previous.successor is not a function. (In &apos;previous.successor()&apos;, &apos;previous.successor&apos; is undefined)">TypeError: previous.successor is not a function. (In &apos;previous.successor()&apos;, &apos;previous.successor&apos; is undefined)&#10;      at readinessFixture (src/__tests__/ratchet-replay-probe.test.ts:171:32)&#10;      at src/__tests__/ratchet-replay-probe.test.ts:179:19&#10;</failure>
+    </testcase>
+    <testcase name="G5 readiness retries fresh authenticated attempts: stale" classname="" time="0.011128" file="src/__tests__/ratchet-replay-probe.test.ts" line="178" assertions="0">
+      <failure type="TypeError" message="previous.successor is not a function. (In &apos;previous.successor()&apos;, &apos;previous.successor&apos; is undefined)">TypeError: previous.successor is not a function. (In &apos;previous.successor()&apos;, &apos;previous.successor&apos; is undefined)&#10;      at readinessFixture (src/__tests__/ratchet-replay-probe.test.ts:171:32)&#10;      at src/__tests__/ratchet-replay-probe.test.ts:179:19&#10;</failure>
+    </testcase>
+    <testcase name="G5 readiness retries fresh authenticated attempts: disconnected" classname="" time="0.010922" file="src/__tests__/ratchet-replay-probe.test.ts" line="178" assertions="0">
+      <failure type="TypeError" message="previous.successor is not a function. (In &apos;previous.successor()&apos;, &apos;previous.successor&apos; is undefined)">TypeError: previous.successor is not a function. (In &apos;previous.successor()&apos;, &apos;previous.successor&apos; is undefined)&#10;      at readinessFixture (src/__tests__/ratchet-replay-probe.test.ts:171:32)&#10;      at src/__tests__/ratchet-replay-probe.test.ts:179:19&#10;</failure>
+    </testcase>
+    <testcase name="G5 readiness deadline retains COMMITTED and writes recovery without real sleeps" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="188" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 readiness immediately refuses unsafe second attempt: old-native" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="206" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 readiness immediately refuses unsafe second attempt: old-daemon" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="206" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 readiness immediately refuses unsafe second attempt: old-birth" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="206" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G5 readiness immediately refuses unsafe second attempt: wrong-bundle" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="206" assertions="0">
+      <skipped />
+    </testcase>
+  </testsuite>
+</testsuites>

@@ -1,0 +1,34 @@
+{
+  "row": "update-gate-g4-scripts-drain-producers",
+  "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+  "probe_commit": "db74b9fee3097e19656f2f47d68525734a6075f4",
+  "probe_path": "src/__tests__/update-script-sigpipe.test.ts",
+  "probe_sha256": "3d305eba158b177ae1ec548a337dc0796e08a5e4369f879ce18ba3a77916a910",
+  "bun_exit": 0,
+  "elapsed_seconds": 0.315,
+  "semantic_violations": 0,
+  "problems": [],
+  "cases": [
+    {
+      "name": "app_authority drains a codesign producer larger than the pipe buffer",
+      "outcome": "pass"
+    },
+    {
+      "name": "app_teamid drains a codesign producer larger than the pipe buffer",
+      "outcome": "pass"
+    },
+    {
+      "name": "unsigned copies return empty signature fields without aborting",
+      "outcome": "pass"
+    },
+    {
+      "name": "secure_input_owner consumes large matching health output",
+      "outcome": "pass"
+    },
+    {
+      "name": "launchd_loaded_program consumes large matching health output",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}

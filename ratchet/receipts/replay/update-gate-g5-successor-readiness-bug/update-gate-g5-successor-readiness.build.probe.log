@@ -1,0 +1,60 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+[update-gate] RECOVERY_REQUIRED: completion failed: Error: new participants not verified; admission remains closed; gate=$ISOLATED_ROOT/source/.test-tmp/11191-64c7/complete-MFn5tT/g; receipt=$ISOLATED_ROOT/source/.test-tmp/11191-64c7/complete-MFn5tT/g.recovery-ca073825-3795-423d-a2b2-4d1f3ed5a859.json
+After this updater exits, restore availability with: voicelayer setup --cask-postflight
+This does not recover a COMMITTED gate; retain all gate/controller/recovery evidence.
+175 |   return { ...f, run, sleeps, attempts: () => attempts, now: () => now };
+176 | }
+177 | 
+178 | test.each(["ready", "stale", "disconnected"])("G5 readiness retries fresh authenticated attempts: %s", async outcome => {
+179 |   const f = await readinessFixture(outcome);
+180 |   expect(await f.run()).toBe(true);
+                              ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:180:25)
+(fail) G5 readiness retries fresh authenticated attempts: ready [23.10ms]
+[update-gate] RECOVERY_REQUIRED: completion failed: Error: new participants not verified; admission remains closed; gate=$ISOLATED_ROOT/source/.test-tmp/11191-64c7/complete-AFoDGV/g; receipt=$ISOLATED_ROOT/source/.test-tmp/11191-64c7/complete-AFoDGV/g.recovery-ca073825-3795-423d-a2b2-4d1f3ed5a859.json
+After this updater exits, restore availability with: voicelayer setup --cask-postflight
+This does not recover a COMMITTED gate; retain all gate/controller/recovery evidence.
+175 |   return { ...f, run, sleeps, attempts: () => attempts, now: () => now };
+176 | }
+177 | 
+178 | test.each(["ready", "stale", "disconnected"])("G5 readiness retries fresh authenticated attempts: %s", async outcome => {
+179 |   const f = await readinessFixture(outcome);
+180 |   expect(await f.run()).toBe(true);
+                              ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:180:25)
+(fail) G5 readiness retries fresh authenticated attempts: stale [14.84ms]
+[update-gate] RECOVERY_REQUIRED: completion failed: Error: new participants not verified; admission remains closed; gate=$ISOLATED_ROOT/source/.test-tmp/11191-64c7/complete-RCj87h/g; receipt=$ISOLATED_ROOT/source/.test-tmp/11191-64c7/complete-RCj87h/g.recovery-ca073825-3795-423d-a2b2-4d1f3ed5a859.json
+After this updater exits, restore availability with: voicelayer setup --cask-postflight
+This does not recover a COMMITTED gate; retain all gate/controller/recovery evidence.
+175 |   return { ...f, run, sleeps, attempts: () => attempts, now: () => now };
+176 | }
+177 | 
+178 | test.each(["ready", "stale", "disconnected"])("G5 readiness retries fresh authenticated attempts: %s", async outcome => {
+179 |   const f = await readinessFixture(outcome);
+180 |   expect(await f.run()).toBe(true);
+                              ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:180:25)
+(fail) G5 readiness retries fresh authenticated attempts: disconnected [15.33ms]
+
+ 0 pass
+ 34 filtered out
+ 3 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [130.00ms]

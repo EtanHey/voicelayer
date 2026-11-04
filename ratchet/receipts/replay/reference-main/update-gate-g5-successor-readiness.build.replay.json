@@ -1,0 +1,34 @@
+{
+  "row": "update-gate-g5-successor-readiness",
+  "measured_sha": "1cb914a23411de94007aeba463cdab1f3b6725c6",
+  "probe_commit": "1479ea77255ffaf80d4f131526040d7c7ed1d624",
+  "probe_path": "src/__tests__/update-gate-complete.test.ts",
+  "probe_sha256": "7823d692f959c476169c33eced613b6b827c1ee58f1a2ba5280a7ff5c0bfc259",
+  "bun_exit": 1,
+  "elapsed_seconds": 0.165,
+  "semantic_violations": 0,
+  "problems": [
+    "non-semantic probe failure: [\"G5 readiness retries fresh authenticated attempts: ready\", \"G5 readiness retries fresh authenticated attempts: stale\", \"G5 readiness retries fresh authenticated attempts: disconnected\"]"
+  ],
+  "cases": [
+    {
+      "name": "G5 readiness retries fresh authenticated attempts: ready",
+      "outcome": "harness-error",
+      "type": "TypeError",
+      "message": "previous.successor is not a function. (In 'previous.successor()', 'previous.successor' is undefined)"
+    },
+    {
+      "name": "G5 readiness retries fresh authenticated attempts: stale",
+      "outcome": "harness-error",
+      "type": "TypeError",
+      "message": "previous.successor is not a function. (In 'previous.successor()', 'previous.successor' is undefined)"
+    },
+    {
+      "name": "G5 readiness retries fresh authenticated attempts: disconnected",
+      "outcome": "harness-error",
+      "type": "TypeError",
+      "message": "previous.successor is not a function. (In 'previous.successor()', 'previous.successor' is undefined)"
+    }
+  ],
+  "platform": "linux"
+}

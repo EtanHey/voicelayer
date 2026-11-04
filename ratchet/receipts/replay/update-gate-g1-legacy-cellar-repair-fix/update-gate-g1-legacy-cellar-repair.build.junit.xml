@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="50" assertions="19" failures="0" skipped="49" time="0.66983273">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="50" assertions="19" failures="0" skipped="49" time="0.665342484" hostname="vm">
+    <testcase name="cask absent gate upgrades with legacy no-flag after env -i" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="118" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="cask absent gate upgrades with --cask-postflight after env -i" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="118" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="cask open gate upgrades with legacy no-flag after env -i" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="118" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="cask open gate upgrades with --cask-postflight after env -i" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="118" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight malformed keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight locked keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight locked-open keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight supervisor keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight bootstrap keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight diagnostic keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight ledger keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight controller keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight closed keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight plist keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight relay keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="postflight persistent keeps the final bundle and preserves gate evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="128" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="DRAINING live controller gets plists only; controller restores after brew" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="136" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="PREPARED live controller gets plists only; controller restores after brew" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="136" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="COMMITTED live controller gets plists only; controller restores after brew" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="136" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="unvalidated HOMEBREW operation on open gate preserves evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="153" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="unvalidated HOMEBREW operation on absent gate preserves evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="153" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="nested validation failure never restores availability" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="160" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="public restore-availability without setup marker refuses before mutations" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="164" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="src/cli/setup.ts isolation refuses outside-run HOME before actions" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="169" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="src/cli/setup.ts isolation refuses outside-run launchctl before actions" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="169" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="scripts/install-voicebar-autostart.sh isolation refuses outside-run HOME before actions" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="169" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="scripts/install-voicebar-autostart.sh isolation refuses outside-run launchctl before actions" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="169" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="scripts/install-voicebar-f5-hidutil.sh isolation refuses outside-run HOME before actions" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="169" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="scripts/install-voicebar-f5-hidutil.sh isolation refuses outside-run launchctl before actions" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="169" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="SIGINT during start wait releases only its bootstrap mutex" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="185" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="real updater exports validated operation through filtered brew; EXIT trap restores last" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="195" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="loaded stopped launchd job is kickstarted, without an open race" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="226" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="failed startup retains plists and real brew revert swaps the bundle" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="234" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="internal marker cannot restore while a live controller owns the host" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="243" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="fresh stopped bundle bootstraps via old cask plain setup without target SHA" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="254" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="fresh stopped bundle bootstraps via --cask-postflight without target SHA" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="254" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="absent gate with live VoiceBar refuses bootstrap, retains availability" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="264" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="absent gate with live bun src/mcp-server-daemon.ts refuses bootstrap, retains availability" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="264" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="absent gate with live bun src/mcp-server.ts refuses bootstrap, retains availability" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="264" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="absent gate with live voicelayer-mcp refuses bootstrap, retains availability" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="264" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="absent gate with live whisper-server refuses bootstrap, retains availability" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="264" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="absent gate with live bun src/cli/ask.ts refuses bootstrap, retains availability" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="264" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="participant born while acquiring bootstrap mutex refuses initialization" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="274" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="2.2.58 updater calls new Cellar dedupe then autostart without a lease or target" classname="" time="0.619157" file="src/__tests__/ratchet-replay-probe.test.ts" line="288" assertions="19" />
+    <testcase name="Cellar dedupe cannot restore over a live controller, operation=absent" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="311" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="Cellar dedupe cannot restore over a live controller, operation=invalid" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="311" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="Cellar autostart cannot restore over a live controller, operation=absent" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="311" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="Cellar autostart cannot restore over a live controller, operation=invalid" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="311" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="legacy repair scope refuses checkout/missing target without mutation (target=false)" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="330" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="legacy repair scope refuses checkout/missing target without mutation (target=true)" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="330" assertions="0">
+      <skipped />
+    </testcase>
+  </testsuite>
+</testsuites>

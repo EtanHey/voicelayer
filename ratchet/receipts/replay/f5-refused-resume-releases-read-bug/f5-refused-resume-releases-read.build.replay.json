@@ -1,0 +1,20 @@
+{
+  "row": "f5-refused-resume-releases-read",
+  "measured_sha": "2185fea654e006df6ef6c70576dcd1ef459a173c",
+  "probe_commit": "2185fea654e006df6ef6c70576dcd1ef459a173c",
+  "probe_path": "src/__tests__/tts-pause.test.ts",
+  "probe_sha256": "0934fe297df35954c36e3be830c8789734c2e91366d8721d61d1f308ad8da093",
+  "bun_exit": 1,
+  "elapsed_seconds": 0.215,
+  "semantic_violations": 1,
+  "problems": [],
+  "cases": [
+    {
+      "name": "R2-01 refused automatic resume releases the read instead of stranding its F5 park",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: false\nReceived: true\n"
+    }
+  ],
+  "platform": "linux"
+}

@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="45" assertions="44" failures="0" skipped="40" time="0.153403869">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="45" assertions="44" failures="0" skipped="40" time="0.148828529" hostname="vm">
+    <testcase name="fresh G3 native and daemon receipts authorize only the matching lease" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="44" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="missing evidence never authorizes preparation" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="51" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="generation evidence never authorizes preparation" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="51" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="operation evidence never authorizes preparation" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="51" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="malformed evidence never authorizes preparation" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="51" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="identity evidence never authorizes preparation" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="51" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="a replacement participant or process birth cannot reuse a prior receipt" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="63" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="COMMITTED lost reply with verified exit continues under the same held lease" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="73" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="lost quit outcome alive stops UNKNOWN and never reopens" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="80" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="lost quit outcome unknown-exit stops UNKNOWN and never reopens" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="80" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="lost quit outcome foreign-lease stops UNKNOWN and never reopens" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="80" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="lost quit outcome diagnostic stops UNKNOWN and never reopens" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="80" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="lost quit outcome ledger stops UNKNOWN and never reopens" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="80" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="lost quit outcome not-issued stops UNKNOWN and never reopens" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="80" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="lost quit outcome explicit-refusal stops UNKNOWN and never reopens" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="80" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="even an acknowledged quit requires observed exit; precommit quit is never issued" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="97" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="authenticated RPC correlates replies and marks a post-write disconnect as issued" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="103" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="a malformed quit reply cannot be reclassified as a lost reply" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="124" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="controller installs only after verified exit ({&quot;verified&quot;:true,&quot;contention&quot;:&quot;none&quot;})" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="133" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="controller installs only after verified exit ({&quot;verified&quot;:false,&quot;contention&quot;:&quot;none&quot;})" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="133" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="controller installs only after verified exit ({&quot;verified&quot;:true,&quot;contention&quot;:&quot;quit-authorization&quot;})" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="133" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="controller installs only after verified exit ({&quot;verified&quot;:true,&quot;contention&quot;:&quot;exit-verification&quot;})" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="133" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="exit observer refuses replacement owners, PID reuse and unavailable process evidence" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="179" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="time in flight counts against receipt freshness" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="196" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="G3 UNKNOWN after its native disconnect requires verified exit, never an idle assumption" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="203" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="installer RPC consumes G3&apos;s authenticated control receipts across an isolated socket" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="213" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="post-COMMIT quit-authorization lock contention waits without repeating quit" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="257" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="post-COMMIT exit-verification lock contention waits without repeating quit" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="257" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="post-COMMIT drain UNKNOWN is retried before one quit and installation" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="278" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="slow process readers stay outside G1 lock and its 2 ms verifier budget" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="303" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="same-birth defunct participant waits for reaping under the exit deadline" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="345" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="healthy quit polls through empty-ps before verified exit" classname="" time="0.01989" file="src/__tests__/ratchet-replay-probe.test.ts" line="361" assertions="9" />
+    <testcase name="healthy quit polls through unreaped before verified exit" classname="" time="0.009938" file="src/__tests__/ratchet-replay-probe.test.ts" line="361" assertions="9" />
+    <testcase name="healthy quit polls through teardown before verified exit" classname="" time="0.009723" file="src/__tests__/ratchet-replay-probe.test.ts" line="361" assertions="9" />
+    <testcase name="healthy quit polls through defunct before verified exit" classname="" time="0.009301" file="src/__tests__/ratchet-replay-probe.test.ts" line="361" assertions="9" />
+    <testcase name="every exit poll rechecks the held COMMITTED lease before accepting gone" classname="" time="0.009592" file="src/__tests__/ratchet-replay-probe.test.ts" line="387" assertions="8" />
+    <testcase name="uncertain exit exhausts its deadline and names availability recovery" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="402" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="stale receipt never pins identities for a later fresh drain" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="413" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="installer rejects native impostors and daemons outside the native process family" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="424" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="production installer refuses MCP socket overrides before opening a connection" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="433" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="installer docs disclose that native receipts rely on the daemon HMAC verification" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="443" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R1 acquisition never samples identities after its durable COMMIT write" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="451" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2 durable COMMIT at +960ms outlives its sample budget" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="465" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2 durable COMMIT at +1200ms outlives its sample budget" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="465" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2 participant COMMIT readback retries a 700ms holder without a post-sample" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="477" assertions="0">
+      <skipped />
+    </testcase>
+  </testsuite>
+</testsuites>

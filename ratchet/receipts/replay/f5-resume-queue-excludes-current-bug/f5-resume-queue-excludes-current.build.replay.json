@@ -1,0 +1,20 @@
+{
+  "row": "f5-resume-queue-excludes-current",
+  "measured_sha": "6b07f56a18225244f22471e4655aac8b40d8a70d",
+  "probe_commit": "73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+  "probe_path": "src/__tests__/tts-long-read-runtime.test.ts",
+  "probe_sha256": "98e89ee70737db04378dab4ca1539f26f78e621774ce79efc5fa8f69c85cb545",
+  "bun_exit": 1,
+  "elapsed_seconds": 0.269,
+  "semantic_violations": 1,
+  "problems": [],
+  "cases": [
+    {
+      "name": "F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots",
+      "outcome": "semantic-fail",
+      "type": "Error",
+      "message": "QueuedCountExcludesCurrent every published frame\n\nExpected length: 0\nReceived length: 1\n"
+    }
+  ],
+  "platform": "linux"
+}

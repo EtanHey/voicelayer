@@ -1,0 +1,26 @@
+{
+  "row": "update-gate-g5-successor-readiness",
+  "measured_sha": "1479ea77255ffaf80d4f131526040d7c7ed1d624",
+  "probe_commit": "1479ea77255ffaf80d4f131526040d7c7ed1d624",
+  "probe_path": "src/__tests__/update-gate-complete.test.ts",
+  "probe_sha256": "7823d692f959c476169c33eced613b6b827c1ee58f1a2ba5280a7ff5c0bfc259",
+  "bun_exit": 0,
+  "elapsed_seconds": 0.165,
+  "semantic_violations": 0,
+  "problems": [],
+  "cases": [
+    {
+      "name": "G5 readiness retries fresh authenticated attempts: ready",
+      "outcome": "pass"
+    },
+    {
+      "name": "G5 readiness retries fresh authenticated attempts: stale",
+      "outcome": "pass"
+    },
+    {
+      "name": "G5 readiness retries fresh authenticated attempts: disconnected",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}

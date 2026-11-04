@@ -1,0 +1,15 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+(pass) F-speech R2 real clause boundary > keeps https://example.test/path whole when : is at index 99 (English) [80.54ms]
+(pass) F-speech R2 real clause boundary > keeps 1,000 whole when , is at index 99 (English) [0.82ms]
+(pass) F-speech R2 real clause boundary > keeps inside;token whole when ; is at index 99 (English) [0.71ms]
+(pass) F-speech R2 real clause boundary > keeps מילה،המשך whole when ، is at index 99 (Hebrew) [0.97ms]
+F-speech R2 fuzz: 6000 pairs; 0 head token splits; 0 character drops/duplicates
+(pass) F-speech R2 real clause boundary > fuzzes 6000 engine/text pairs with no head token splits or character drops/duplicates [903.12ms]
+
+ 5 pass
+ 23 filtered out
+ 0 fail
+ 22 expect() calls
+Ran 5 tests across 1 file. [1023.00ms]

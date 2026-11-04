@@ -1,0 +1,192 @@
+[
+  {
+    "row": "update-gate-g1-legacy-cellar-repair",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "4c20d05534599a9f318dc02622bb625105a923a8",
+    "fix_sha": "d39461f2f28ff62d4346f13b839b873dda4f0bf7",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "569b9f15029c3de475d41bc347e328c16c7e5187",
+      "path": "src/__tests__/legacy-cask-setup.test.ts",
+      "cases": 1
+    },
+    "probe_sha256": "a533bbff5b8a56d50226f28d3ded16b285d55153a9eb74b7d7b9888888dcb888",
+    "platform": "linux"
+  },
+  {
+    "row": "update-gate-g2-health-ignores-test-runs",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "301166b844fdf0301d699645eaf93c7713e4a2e8",
+    "fix_sha": "429ceea9f637fe6bed74c6d82869adfda41e1e20",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "429ceea9f637fe6bed74c6d82869adfda41e1e20",
+      "path": "src/__tests__/voicebar-bundle-discovery.test.ts",
+      "cases": 6
+    },
+    "probe_sha256": "bb3cf41dfc910d9aa1b176959853bc85fa35e3ed8064d09230daad9c3529ea09",
+    "platform": "linux"
+  },
+  {
+    "row": "update-gate-g3-quit-polls-transitional-exit",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "c2df739fc1d8b74f93c352916f239909f9973038",
+    "fix_sha": "c257e19ed40cc7dd4cad5707c9148da573767ead",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "c2df739fc1d8b74f93c352916f239909f9973038",
+      "path": "src/__tests__/update-gate-installer-participant.test.ts",
+      "cases": 5
+    },
+    "probe_sha256": "c85b9fa6c534a6a173964d7099166dd038773ae2051c54c1d13803002ae7825b",
+    "platform": "linux"
+  },
+  {
+    "row": "update-gate-g4-scripts-drain-producers",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "e5796a2d573b96577ec6670c982288db52324f65",
+    "fix_sha": "db74b9fee3097e19656f2f47d68525734a6075f4",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "db74b9fee3097e19656f2f47d68525734a6075f4",
+      "path": "src/__tests__/update-script-sigpipe.test.ts",
+      "cases": 5
+    },
+    "probe_sha256": "3d305eba158b177ae1ec548a337dc0796e08a5e4369f879ce18ba3a77916a910",
+    "platform": "linux"
+  },
+  {
+    "row": "update-gate-g5-leased-update-completes",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "f401ae7b2ba24313f9c0bc1ed113c5081da345fd",
+    "fix_sha": "5640698567a800fd61a60d7620f66360ccd29aa4",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "5640698567a800fd61a60d7620f66360ccd29aa4",
+      "path": "src/__tests__/update-gate-complete.test.ts",
+      "cases": 2
+    },
+    "probe_sha256": "58e1f59e5e583fb129605245d6e50a851fae0632400278591abeb0b61f66a254",
+    "platform": "linux"
+  },
+  {
+    "row": "update-gate-g5-successor-readiness",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "db5c701e06fd64f0b6c0a8d35af619ff2d9c487a",
+    "fix_sha": "1479ea77255ffaf80d4f131526040d7c7ed1d624",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "1479ea77255ffaf80d4f131526040d7c7ed1d624",
+      "path": "src/__tests__/update-gate-complete.test.ts",
+      "cases": 3
+    },
+    "probe_sha256": "7823d692f959c476169c33eced613b6b827c1ee58f1a2ba5280a7ff5c0bfc259",
+    "platform": "linux"
+  },
+  {
+    "row": "f5-refused-resume-releases-read",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "2185fea654e006df6ef6c70576dcd1ef459a173c",
+    "fix_sha": "f82201f266a34b099ccdc9cebf2f39b4add5658a",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "2185fea654e006df6ef6c70576dcd1ef459a173c",
+      "path": "src/__tests__/tts-pause.test.ts",
+      "cases": 1
+    },
+    "probe_sha256": "0934fe297df35954c36e3be830c8789734c2e91366d8721d61d1f308ad8da093",
+    "platform": "linux"
+  },
+  {
+    "row": "f5-resume-queue-excludes-current",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "6b07f56a18225244f22471e4655aac8b40d8a70d",
+    "fix_sha": "73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+      "path": "src/__tests__/tts-long-read-runtime.test.ts",
+      "cases": 1
+    },
+    "probe_sha256": "98e89ee70737db04378dab4ca1539f26f78e621774ce79efc5fa8f69c85cb545",
+    "platform": "linux"
+  },
+  {
+    "row": "speech-clause-boundary-conserves-tokens",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "6b07f56a18225244f22471e4655aac8b40d8a70d",
+    "fix_sha": "73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+      "path": "src/__tests__/tts-chunking.test.ts",
+      "cases": 5
+    },
+    "probe_sha256": "5e3af40d4e638e585051552b47707d4979edea0d19d9edf52b32a779ead5fbd7",
+    "platform": "linux"
+  },
+  {
+    "row": "transcript-seam-no-duplicated-phrase",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "cbe5c3c6056673c606be25f074c07caa3d8d1579",
+    "fix_sha": "b066c84f9421dfa111368fc147ac266eaf218476",
+    "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+    "error": null,
+    "probe": {
+      "commit": "b066c84f9421dfa111368fc147ac266eaf218476",
+      "path": "src/__tests__/stt-marked-overlap.test.ts",
+      "cases": 6
+    },
+    "probe_sha256": "33d291151f1c2f4f799e34e56db4ae3b6a946303e229d0673d321e3c41490427",
+    "platform": "linux"
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "row": "update-gate-g1-legacy-cellar-repair",
+  "measured_sha": "d39461f2f28ff62d4346f13b839b873dda4f0bf7",
+  "probe_commit": "569b9f15029c3de475d41bc347e328c16c7e5187",
+  "probe_path": "src/__tests__/legacy-cask-setup.test.ts",
+  "probe_sha256": "a533bbff5b8a56d50226f28d3ded16b285d55153a9eb74b7d7b9888888dcb888",
+  "bun_exit": 0,
+  "elapsed_seconds": 0.719,
+  "semantic_violations": 0,
+  "problems": [],
+  "cases": [
+    {
+      "name": "2.2.58 updater calls new Cellar dedupe then autostart without a lease or target",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}

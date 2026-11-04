@@ -1,0 +1,21 @@
+[
+  {
+    "row": "update-gate-g2-health-ignores-test-runs",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "301166b844fdf0301d699645eaf93c7713e4a2e8",
+    "fix_sha": "429ceea9f637fe6bed74c6d82869adfda41e1e20",
+    "measured_sha": "429ceea9f637fe6bed74c6d82869adfda41e1e20",
+    "error": null,
+    "probe": {
+      "commit": "429ceea9f637fe6bed74c6d82869adfda41e1e20",
+      "path": "src/__tests__/voicebar-bundle-discovery.test.ts",
+      "cases": 6
+    },
+    "probe_sha256": "bb3cf41dfc910d9aa1b176959853bc85fa35e3ed8064d09230daad9c3529ea09",
+    "platform": "linux"
+  }
+]

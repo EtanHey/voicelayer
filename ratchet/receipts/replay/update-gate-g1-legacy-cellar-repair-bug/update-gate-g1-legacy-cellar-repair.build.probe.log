@@ -1,0 +1,32 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+296 |     ["install-voicebar-autostart.sh", ["--reload"]],
+297 |   ] satisfies [string, string[]][]) {
+298 |     const r = Bun.spawnSync(["/bin/bash", join(f.root, "scripts", script), ...args], {
+299 |       env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe", timeout: 25000,
+300 |     });
+301 |     expect({ code: r.exitCode, err: r.stderr.toString() }).toMatchObject({ code: 0 });
+                                                                 ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "code": 0,
++   "code": 1,
++   "err": 
++ "[update-gate] REFUSED UNKNOWN: verified target SHA required
++ "
++ ,
+  }
+
+- Expected  - 1
++ Received  + 5
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:301:60)
+(fail) 2.2.58 updater calls new Cellar dedupe then autostart without a lease or target [328.06ms]
+
+ 0 pass
+ 49 filtered out
+ 1 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [391.00ms]

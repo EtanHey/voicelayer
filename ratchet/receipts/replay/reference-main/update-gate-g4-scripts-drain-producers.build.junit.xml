@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="9" assertions="5" failures="5" skipped="4" time="0.212160553">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="9" assertions="5" failures="5" skipped="4" time="0.206028585" hostname="vm">
+    <testsuite name="update script SIGPIPE guards" file="src/__tests__/ratchet-replay-probe.test.ts" line="41" tests="9" assertions="5" failures="5" skipped="4" time="0.161" hostname="vm">
+      <testcase name="app_authority drains a codesign producer larger than the pipe buffer" classname="update script SIGPIPE guards" time="0.010946" file="src/__tests__/ratchet-replay-probe.test.ts" line="43" assertions="1">
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 141&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 141&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:58:33&#10;</failure>
+      </testcase>
+      <testcase name="app_teamid drains a codesign producer larger than the pipe buffer" classname="update script SIGPIPE guards" time="0.01416" file="src/__tests__/ratchet-replay-probe.test.ts" line="43" assertions="1">
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 141&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 141&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:58:33&#10;</failure>
+      </testcase>
+      <testcase name="unsigned copies return empty signature fields without aborting" classname="update script SIGPIPE guards" time="0.005897" file="src/__tests__/ratchet-replay-probe.test.ts" line="67" assertions="1">
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 1&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 1&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:76:31&#10;</failure>
+      </testcase>
+      <testcase name="bun package-version reader drains output and keeps the first match" classname="update script SIGPIPE guards" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="84" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="npm package-version reader drains output and keeps the first match" classname="update script SIGPIPE guards" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="84" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="secure_input_owner consumes large matching health output" classname="update script SIGPIPE guards" time="0.067245" file="src/__tests__/ratchet-replay-probe.test.ts" line="118" assertions="1">
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 141&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 141&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:129:33&#10;</failure>
+      </testcase>
+      <testcase name="launchd_loaded_program consumes large matching health output" classname="update script SIGPIPE guards" time="0.065824" file="src/__tests__/ratchet-replay-probe.test.ts" line="118" assertions="1">
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 141&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 141&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:129:33&#10;</failure>
+      </testcase>
+      <testcase name="lint rejects early consumers of streaming producers" classname="update script SIGPIPE guards" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="137" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="update-path scripts have no early consumers of streaming producers" classname="update script SIGPIPE guards" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="155" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+  </testsuite>
+</testsuites>

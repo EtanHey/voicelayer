@@ -1,0 +1,81 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+app_authority: rc=141
+53 | printf '%s\\n' "$value"
+54 | `], {
+55 |           env: { ...process.env, PATH: `${root}:/usr/bin:/bin`, G4_PAYLOAD: join(root, "payload") },
+56 |         });
+57 |         console.info(`${reader}: rc=${result.exitCode}`);
+58 |         expect(result.exitCode).toBe(0);
+                                     ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 141
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:58:33)
+(fail) update script SIGPIPE guards > app_authority drains a codesign producer larger than the pipe buffer [10.95ms]
+app_teamid: rc=141
+53 | printf '%s\\n' "$value"
+54 | `], {
+55 |           env: { ...process.env, PATH: `${root}:/usr/bin:/bin`, G4_PAYLOAD: join(root, "payload") },
+56 |         });
+57 |         console.info(`${reader}: rc=${result.exitCode}`);
+58 |         expect(result.exitCode).toBe(0);
+                                     ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 141
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:58:33)
+(fail) update script SIGPIPE guards > app_teamid drains a codesign producer larger than the pipe buffer [14.16ms]
+71 |       const result = Bun.spawnSync(["/bin/bash", "-c", `${signatureReaders()}
+72 | authority="$(app_authority /fixture/VoiceBar.app)"
+73 | team="$(app_teamid /fixture/VoiceBar.app)"
+74 | printf '<%s><%s>\\n' "$authority" "$team"
+75 | `], { env: { ...process.env, PATH: `${root}:/usr/bin:/bin` } });
+76 |       expect(result.exitCode).toBe(0);
+                                   ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 1
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:76:31)
+(fail) update script SIGPIPE guards > unsigned copies return empty signature fields without aborting [5.90ms]
+124 | input="$(cat "$2")"
+125 | ${reader} "$input"
+126 | `, "_", join(scripts, "verify-voicebar-hotkey-health.sh"), join(root, "payload")], {
+127 |           env: process.env,
+128 |         });
+129 |         expect(result.exitCode).toBe(0);
+                                      ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 141
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:129:33)
+(fail) update script SIGPIPE guards > secure_input_owner consumes large matching health output [67.25ms]
+124 | input="$(cat "$2")"
+125 | ${reader} "$input"
+126 | `, "_", join(scripts, "verify-voicebar-hotkey-health.sh"), join(root, "payload")], {
+127 |           env: process.env,
+128 |         });
+129 |         expect(result.exitCode).toBe(0);
+                                      ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 141
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:129:33)
+(fail) update script SIGPIPE guards > launchd_loaded_program consumes large matching health output [65.82ms]
+
+ 0 pass
+ 4 filtered out
+ 5 fail
+ 5 expect() calls
+Ran 5 tests across 1 file. [212.00ms]

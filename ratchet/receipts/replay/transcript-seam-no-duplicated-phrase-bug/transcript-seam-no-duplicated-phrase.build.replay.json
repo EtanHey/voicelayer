@@ -1,0 +1,42 @@
+{
+  "row": "transcript-seam-no-duplicated-phrase",
+  "measured_sha": "cbe5c3c6056673c606be25f074c07caa3d8d1579",
+  "probe_commit": "b066c84f9421dfa111368fc147ac266eaf218476",
+  "probe_path": "src/__tests__/stt-marked-overlap.test.ts",
+  "probe_sha256": "33d291151f1c2f4f799e34e56db4ae3b6a946303e229d0673d321e3c41490427",
+  "bun_exit": 1,
+  "elapsed_seconds": 0.169,
+  "semantic_violations": 2,
+  "problems": [],
+  "cases": [
+    {
+      "name": "compact nonmatching marked base text",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: \"please use the function name and continue\"\nReceived: \"please use the function functionname\u2026 and continue\"\n"
+    },
+    {
+      "name": "compact nonmatching marked base timed",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toBe(expected)\n\nExpected: \"please use the function name and continue\"\nReceived: \"please use the function functionname\u2026 and continue\"\n"
+    },
+    {
+      "name": "equal marked base survives text",
+      "outcome": "pass"
+    },
+    {
+      "name": "equal marked base survives timed",
+      "outcome": "pass"
+    },
+    {
+      "name": "current marked base survives text",
+      "outcome": "pass"
+    },
+    {
+      "name": "current marked base survives timed",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}

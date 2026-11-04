@@ -28,6 +28,102 @@ ROWS = {
                                          "7677d52e5045970485f0dd5c141f8c069f66e9d9"),
 }
 
+# Historical replay rows (kind "replay"). Each probe is a test blob pinned to the
+# commit that first exposed the bug. The same bytes run unchanged against a
+# fresh worktree of bug_sha and of fix_sha, through that checkout's own Bun
+# preload isolation, with no Swift build. Only the named cases are selected.
+# A case counts as a semantic violation only when it fails with an AssertionError
+# or with a message anchored by the row's `semantic` patterns (a named product
+# refusal, or a labelled property assertion that Bun reports as type Error).
+# Any other outcome is a harness error (BLOCKED), never a historical FAIL: a
+# missing or skipped case, an import error, a timeout, or a nonzero exit with
+# no semantic failure. These rows are opt-in (`--row` or `--replay`). The
+# default CI set, comment validator and base cache stay pinned to ROWS. Most of
+# these fixes exist only on the integration/2.2.61 release line, so they would
+# FAIL on main by design until that line merges.
+REPLAY_ROWS = {
+    "update-gate-g1-legacy-cellar-repair": dict(
+        bug="4c20d05534599a9f318dc02622bb625105a923a8",  # d39461f2^1
+        fix="d39461f2f28ff62d4346f13b839b873dda4f0bf7",
+        # Lane tip: c4322d79 scoped the bootout check to the VoiceBar job; no
+        # non-test source changed after d39461f2 in lane/g1.
+        probe=("569b9f15029c3de475d41bc347e328c16c7e5187", "src/__tests__/legacy-cask-setup.test.ts"),
+        tests=("2.2.58 updater calls new Cellar dedupe then autostart without a lease or target",)),
+    "update-gate-g2-health-ignores-test-runs": dict(
+        bug="301166b844fdf0301d699645eaf93c7713e4a2e8",  # 429ceea9^1
+        fix="429ceea9f637fe6bed74c6d82869adfda41e1e20",
+        probe=("429ceea9f637fe6bed74c6d82869adfda41e1e20", "src/__tests__/voicebar-bundle-discovery.test.ts"),
+        tests=tuple(f"health discovery via {source}: {path}" for source in ("find", "mdfind") for path in (
+            "Gits/repo/.test-tmp/run/VoiceBar.app",  # retained test run: must be ignored
+            "Gits/foo/VoiceBar.app",  # real stray copies: must still be rejected
+            "Gits/foo.test-tmp-bar/VoiceBar.app"))),
+    "update-gate-g3-quit-polls-transitional-exit": dict(
+        bug="c2df739fc1d8b74f93c352916f239909f9973038",  # c257e19e^1: reproducer only
+        fix="c257e19ed40cc7dd4cad5707c9148da573767ead",
+        probe=("c2df739fc1d8b74f93c352916f239909f9973038", "src/__tests__/update-gate-installer-participant.test.ts"),
+        tests=tuple(f"healthy quit polls through {observation} before verified exit"
+                    for observation in ("empty-ps", "unreaped", "teardown", "defunct")) + (
+            "every exit poll rechecks the held COMMITTED lease before accepting gone",),
+        # The bug is the product refusing a healthy quit, thrown from quit().
+        semantic=(r"^UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery$",)),
+    "update-gate-g4-scripts-drain-producers": dict(
+        bug="e5796a2d573b96577ec6670c982288db52324f65",  # db74b9fe^1
+        fix="db74b9fee3097e19656f2f47d68525734a6075f4",
+        probe=("db74b9fee3097e19656f2f47d68525734a6075f4", "src/__tests__/update-script-sigpipe.test.ts"),
+        tests=("app_authority drains a codesign producer larger than the pipe buffer",
+               "app_teamid drains a codesign producer larger than the pipe buffer",
+               "unsigned copies return empty signature fields without aborting",
+               # The package-version cases are excluded: at the bug their fixture
+               # reports the undrained producer as ENOENT from probe code, which is
+               # indistinguishable from a harness failure.
+               "secure_input_owner consumes large matching health output",
+               "launchd_loaded_program consumes large matching health output")),
+    "update-gate-g5-leased-update-completes": dict(
+        bug="f401ae7b2ba24313f9c0bc1ed113c5081da345fd",  # 56406985^1
+        fix="5640698567a800fd61a60d7620f66360ccd29aa4",
+        probe=("5640698567a800fd61a60d7620f66360ccd29aa4", "src/__tests__/update-gate-complete.test.ts"),
+        # A real controller process runs a child installer. "verified" must reopen;
+        # a wrong installed GitCommit must stay COMMITTED and exit 1. Excluded:
+        # "exit" fails at the bug only on recovery-hint text, and "dead" outlives
+        # Bun's 5 s case timeout once 1479ea77 retries readiness for 15 s.
+        tests=("G5 controller child lifecycle: verified", "G5 controller child lifecycle: sha")),
+    "update-gate-g5-successor-readiness": dict(
+        bug="db5c701e06fd64f0b6c0a8d35af619ff2d9c487a",  # 1479ea77^1
+        fix="1479ea77255ffaf80d4f131526040d7c7ed1d624",
+        probe=("1479ea77255ffaf80d4f131526040d7c7ed1d624", "src/__tests__/update-gate-complete.test.ts"),
+        tests=tuple(f"G5 readiness retries fresh authenticated attempts: {outcome}"
+                    for outcome in ("ready", "stale", "disconnected"))),
+    "f5-refused-resume-releases-read": dict(
+        bug="2185fea654e006df6ef6c70576dcd1ef459a173c",  # f82201f2^1: failing test only
+        fix="f82201f266a34b099ccdc9cebf2f39b4add5658a",
+        probe=("2185fea654e006df6ef6c70576dcd1ef459a173c", "src/__tests__/tts-pause.test.ts"),
+        tests=("R2-01 refused automatic resume releases the read instead of stranding its F5 park",)),
+    "f5-resume-queue-excludes-current": dict(
+        bug="6b07f56a18225244f22471e4655aac8b40d8a70d",  # 73d6ad01^1
+        fix="73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+        probe=("73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1", "src/__tests__/tts-long-read-runtime.test.ts"),
+        # Manual and F5 Resume must never publish the current read as a queued item.
+        tests=("F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots",),
+        semantic=(r"^QueuedCountExcludesCurrent ",)),
+    "speech-clause-boundary-conserves-tokens": dict(
+        bug="6b07f56a18225244f22471e4655aac8b40d8a70d",  # 73d6ad01^1
+        fix="73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+        probe=("73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1", "src/__tests__/tts-chunking.test.ts"),
+        tests=tuple(f"keeps {token} whole when {marker} is at index 99 ({language})" for token, marker, language in (
+            ("https://example.test/path", ":", "English"), ("1,000", ",", "English"),
+            ("inside;token", ";", "English"), ("מילה،המשך", "،", "Hebrew"))) + (
+            "fuzzes 6000 engine/text pairs with no head token splits or character drops/duplicates",),
+        semantic=(r"^RealClauseBoundary ",)),
+    "transcript-seam-no-duplicated-phrase": dict(
+        bug="cbe5c3c6056673c606be25f074c07caa3d8d1579",  # b066c84f^1
+        fix="b066c84f9421dfa111368fc147ac266eaf218476",
+        probe=("b066c84f9421dfa111368fc147ac266eaf218476", "src/__tests__/stt-marked-overlap.test.ts"),
+        # Duplication case plus the two cutoff-marker controls (raw-accurate fragments).
+        tests=tuple(f"{name} {mode}" for name in ("compact nonmatching marked base", "equal marked base survives",
+                                                    "current marked base survives") for mode in ("text", "timed"))),
+}
+REPLAY_TIMEOUT_SECONDS = 600
+
 
 def command(args, **kwargs):
     return subprocess.check_output(args, **kwargs).decode().strip()
@@ -802,6 +898,93 @@ def recents_violations(actual, expected):
         found != wanted for found, wanted in zip(actual, expected))
 
 
+def classify_replay(junit_xml, expected, semantic_patterns=(), returncode=0):
+    """Count semantic violations from a Bun JUnit report; anything else is a harness error."""
+    import re
+    import xml.etree.ElementTree as ElementTree
+    cases, executed = {}, []
+    for case in ElementTree.fromstring(junit_xml).iter("testcase"):
+        name = case.get("name", "")
+        if case.find("skipped") is not None:
+            cases.setdefault(name, None)
+            continue
+        executed.append(name)
+        failure = case.find("failure")
+        if failure is None:
+            failure = case.find("error")
+        if failure is None:
+            cases[name] = dict(outcome="pass")
+            continue
+        kind, message = failure.get("type", ""), failure.get("message", "")
+        semantic = kind == "AssertionError" or any(re.search(p, message) for p in semantic_patterns)
+        cases[name] = dict(outcome="semantic-fail" if semantic else "harness-error", type=kind, message=message)
+    problems = []
+    missing = [name for name in expected if not cases.get(name)]
+    if missing:
+        problems.append("probe cases missing or skipped: " + json.dumps(missing))
+    extra = sorted(set(executed) - set(expected))
+    if extra:
+        problems.append("probe selected unexpected cases: " + json.dumps(extra))
+    if len(executed) != len(set(executed)):
+        problems.append("probe case names are ambiguous")
+    harness = [name for name in expected if (cases.get(name) or {}).get("outcome") == "harness-error"]
+    if harness:
+        problems.append("non-semantic probe failure: " + json.dumps(harness))
+    value = sum((cases.get(name) or {}).get("outcome") == "semantic-fail" for name in expected)
+    if returncode != 0 and value == 0 and not problems:
+        problems.append(f"bun exited {returncode} without a semantic failure")
+    if returncode == 0 and value:
+        problems.append("bun exited 0 despite failing cases")
+    return value, [dict(name=name, **(cases.get(name) or dict(outcome="missing"))) for name in expected], problems
+
+
+def replay_row(run, row):
+    """Run the pinned probe bytes against this worktree; never build, patch or retry."""
+    spec = REPLAY_ROWS[row]
+    probe_sha, probe_path = sha(spec["probe"][0]), spec["probe"][1]
+    source = subprocess.check_output(["git", "-C", str(REPO), "show", f"{probe_sha}:{probe_path}"])
+    # Same directory keeps the probe's relative imports bound to this checkout's modules.
+    target = run.source / Path(probe_path).parent / "ratchet-replay-probe.test.ts"
+    if target.exists():
+        raise RuntimeError("probe destination already exists in the target checkout")
+    target.write_bytes(source)
+    run.overlay_hash = hashlib.sha256(source).hexdigest()
+    junit = run.root / "replay.junit.xml"
+    import re
+    pattern = "|".join(re.escape(name) for name in spec["tests"])
+    # Minimal environment: the target checkout's bunfig preload owns every redirect.
+    env = {k: os.environ[k] for k in ("USER", "LOGNAME", "PATH", "LANG") if k in os.environ}
+    env.update(HOME=str(run.root / "home"), TMPDIR=str(run.root / "tmp"), SHELL="/bin/sh")
+    argv = ["bun", "test", str(target.relative_to(run.source)), "-t", pattern,
+            "--reporter=junit", "--reporter-outfile=" + str(junit)]
+    started = time.monotonic()
+    log = run.output.with_suffix(".probe.log")
+    try:
+        with log.open("wb") as stream:
+            completed = subprocess.run(argv, cwd=run.source, env=env, stdout=stream, stderr=subprocess.STDOUT,
+                                       timeout=REPLAY_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"BLOCKED: probe exceeded {REPLAY_TIMEOUT_SECONDS} s harness timeout")
+    finally:
+        # Receipts never carry the physical scratch root.
+        if log.exists():
+            log.write_text(log.read_text(errors="replace").replace(str(run.root), "$ISOLATED_ROOT"))
+    elapsed = time.monotonic() - started
+    if not junit.exists():
+        raise RuntimeError(f"BLOCKED: probe produced no JUnit report (bun exit {completed.returncode})")
+    report = junit.read_text(errors="replace")
+    run.output.with_suffix(".junit.xml").write_text(report.replace(str(run.root), "$ISOLATED_ROOT"))
+    value, cases, problems = classify_replay(report, spec["tests"], spec.get("semantic", ()), completed.returncode)
+    run.output.with_suffix(".replay.json").write_text(json.dumps(dict(
+        row=row, measured_sha=run.ref, probe_commit=probe_sha, probe_path=probe_path,
+        probe_sha256=run.overlay_hash, bun_exit=completed.returncode, elapsed_seconds=round(elapsed, 3),
+        semantic_violations=value, problems=problems, cases=cases,
+        platform=sys.platform), indent=2).replace(str(run.root), "$ISOLATED_ROOT") + "\n")
+    if problems:
+        raise RuntimeError("BLOCKED: " + "; ".join(problems))
+    return value
+
+
 def resident_defaults_fingerprint():
     # Never save or print personal preference contents; preserve only comparison evidence.
     result = subprocess.run(["defaults", "read", "com.voicelayer.voicebar"], capture_output=True)
@@ -817,24 +1000,28 @@ def resident_defaults_fingerprint():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ref", default="HEAD")
-    parser.add_argument("--row", choices=ROWS)
+    parser.add_argument("--row", choices=list(ROWS) + list(REPLAY_ROWS))
+    parser.add_argument("--replay", action="store_true", help="run every historical replay row")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     results = []
-    for row in ([args.row] if args.row else ROWS):
+    for row in ([args.row] if args.row else list(REPLAY_ROWS) if args.replay else ROWS):
         run, value, error, defaults_before = None, 1, None, None
         try:
             run = Run(args.ref, args.output / (row + ".build.log"))
-            if row == "socket-isolation":
-                run.instrument()
-            if row == "recents-newest-after-retranscribe":
-                instrument_recents(run)
-            run.build()
-            if row == "recents-newest-after-retranscribe":
-                defaults_before = resident_defaults_fingerprint()
-            value = (isolation(run) if row == "socket-isolation" else
-                     lock_row(run) if row == "voice-ask-lock-suspends-timeout" else wire_row(run, row))
+            if row in REPLAY_ROWS:
+                value = replay_row(run, row)
+            else:
+                if row == "socket-isolation":
+                    run.instrument()
+                if row == "recents-newest-after-retranscribe":
+                    instrument_recents(run)
+                run.build()
+                if row == "recents-newest-after-retranscribe":
+                    defaults_before = resident_defaults_fingerprint()
+                value = (isolation(run) if row == "socket-isolation" else
+                         lock_row(run) if row == "voice-ask-lock-suspends-timeout" else wire_row(run, row))
         except Exception as failure:
             error = str(failure)
         finally:
@@ -857,11 +1044,20 @@ def main():
                 run.output.with_suffix(".defaults.json").write_text(json.dumps(evidence, indent=2) + "\n")
                 if not unchanged:
                     value, error = 1, "resident bundle defaults changed during the isolated run"
-        result = dict(row=row, kind="behavior", value=value, ceiling=0,
-                      status="PASS" if value == 0 else "FAIL", bug_sha=sha(ROWS[row][0]),
-                      fix_sha=sha(ROWS[row][1]), measured_sha=sha(args.ref), error=error,
-                      overlay_sha256=run.overlay_hash if run else None,
-                      app_binary_sha256=getattr(run, "binary_hash", None))
+        if row in REPLAY_ROWS:
+            spec = REPLAY_ROWS[row]
+            result = dict(row=row, kind="replay", value=value, ceiling=0,
+                          status="PASS" if value == 0 and error is None else "FAIL",
+                          verdict="BLOCKED" if error else "PASS" if value == 0 else "FAIL",
+                          bug_sha=spec["bug"], fix_sha=spec["fix"], measured_sha=sha(args.ref), error=error,
+                          probe=dict(commit=spec["probe"][0], path=spec["probe"][1], cases=len(spec["tests"])),
+                          probe_sha256=run.overlay_hash if run else None, platform=sys.platform)
+        else:
+            result = dict(row=row, kind="behavior", value=value, ceiling=0,
+                          status="PASS" if value == 0 else "FAIL", bug_sha=sha(ROWS[row][0]),
+                          fix_sha=sha(ROWS[row][1]), measured_sha=sha(args.ref), error=error,
+                          overlay_sha256=run.overlay_hash if run else None,
+                          app_binary_sha256=getattr(run, "binary_hash", None))
         print(json.dumps(result), flush=True)
         results.append(result)
         (args.output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
