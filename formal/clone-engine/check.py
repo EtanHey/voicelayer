@@ -10,7 +10,10 @@ root = Path(__file__).resolve().parents[2]
 output = root / '.build.noindex/clone-engine-tlc'
 output.mkdir(parents=True, exist_ok=True)
 jar = tlc_jar()
-java = shutil.which('java') or '/opt/homebrew/opt/openjdk/bin/java'
+brew_java = Path('/opt/homebrew/opt/openjdk/bin/java')
+java = str(brew_java) if brew_java.is_file() else shutil.which('java')
+if not java:
+    sys.exit('Java runtime not found; install a JDK before running TLC')
 expected = {'Fixed': None, 'Old': 'Temporal property EventuallyRunningIfAutostart was violated', 'Mutant': 'Invariant AtMostOneEngine is violated'}
 for name, failure in expected.items():
     result = subprocess.run([java, '-Xmx512m', '-XX:+UseParallelGC', '-cp', str(jar), 'tlc2.TLC',

@@ -43,7 +43,8 @@ extension CloneEngineController {
     /// QA/candidate apps never probe or start the resident engine. Tests inject their own runtime.
     static func production(defaults: UserDefaults, executable: URL,
                            environment: [String: String] = ProcessInfo.processInfo.environment) -> CloneEngineController? {
-        guard environment[VoiceBarDefaults.suiteEnvironmentVariable] == nil,
+        guard SocketBindingPolicy.allowsEnvironment(environment),
+              environment[VoiceBarDefaults.suiteEnvironmentVariable] == nil,
               environment["VOICELAYER_TEST_ISOLATED"] != "1",
               environment["XCTestConfigurationFilePath"] == nil,
               environment["VOICEBAR_QA_PRESERVE_OVERRIDES"] != "1",

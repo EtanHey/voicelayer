@@ -106,6 +106,26 @@ final class CloneEngineControllerTests: XCTestCase {
         }
     }
 
+    func testMissedHealthAfterReadinessReportsFailureWithoutInterruptingOwnedReply() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        fixture.controller.open()
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        fixture.tick()
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .running })
+        let process = try XCTUnwrap(fixture.process)
+        fixture.observationOverride = .occupied
+        fixture.tick()
+        XCTAssertEqual(fixture.controller.snapshot.state, .failed)
+        XCTAssertEqual(fixture.controller.snapshot.reason, "health_unavailable")
+        XCTAssertEqual(fixture.controller.snapshot.pid, Int(process.processIdentifier))
+        XCTAssertTrue(process.isRunning)
+        XCTAssertEqual(fixture.launchCount, 1)
+        fixture.observationOverride = nil
+        fixture.tick()
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .running })
+    }
+
     func testStopWinsAgainstInFlightAbsentProbe() throws {
         var pending: ((CloneEngineObservation) -> Void)?
         var spawns = 0
@@ -133,12 +153,14 @@ final class CloneEngineControllerTests: XCTestCase {
         var process: Process?
         var launchCount = 0
         var saved: Bool?
+        var observationOverride: CloneEngineObservation?
         var tasks: [() -> Void] = []
         var delays: [TimeInterval] = []
         let autostart: Bool
         var port: Int? { (try? String(contentsOf: directory.appendingPathComponent("port"))).flatMap(Int.init) }
         lazy var controller = CloneEngineController(autostart: autostart, saveAutostart: { self.saved = $0 },
             probe: { completion in
+                if let override = self.observationOverride { completion(override); return }
                 guard self.process?.isRunning == true, let port = self.port else { completion(.absent); return }
                 CloneEngineProbe.inspect(url: URL(string: "http://127.0.0.1:\(port)/health")!,
                     tokenFile: self.directory.appendingPathComponent("secret").path, completion: completion)

@@ -18,11 +18,21 @@ Owner/reviewer: dictation lead. No reviewer was spawned by the worker.
 - No-adopt mutant TLC: 20 generated / 15 distinct, exit 12,
   `AtMostOneEngine` violated (expected adverse receipt).
 
-Full-suite receipts will be filled in after completion. Raw worker logs reside in
+- Full unfiltered Swift via `heavy.sh`, before final production-policy/slow-health hardening:
+  2,559 tests, 73 skipped, 0 failures, exit 0. Compiler warning occurrences: 80,
+  retained in the raw output (Sendable/actor-isolation and existing test warnings).
+- Final focused Swift after that hardening: 11 tests, 0 failures, exit 0.
+- The final hooked push reruns the full suites against the final source tree;
+  its terminal receipt is included in the PR body.
+
+The standalone full Bun run was still executing at this receipt commit; its
+terminal result and the final hooked full-suite result are recorded in the PR body. Raw worker logs reside in
 `.build.noindex/v10-results/`; TLC logs in `.build.noindex/clone-engine-tlc/`.
 An early fixture run crashed on SwiftPM's flattened resource location (corrected).
 Another fake-import test used macOS Python 3.9, which cannot parse the existing
 Python union annotations; it now resolves modern python3 from the test PATH.
+A runner attempt also found macOS /usr/bin/java is an unconfigured stub; the
+runner now prefers the installed Homebrew JDK and has passed all three cases.
 These adverse receipts are retained, not relabelled successful.
 
 ## Surface ledger
@@ -39,7 +49,7 @@ These adverse receipts are retained, not relabelled successful.
 - Contracts: TS command parser, additive status type, Swift snapshot validation,
   local command routing, on-connect replay, and authoritative event protection.
 - Reverse states: Stop cancels queued/in-flight work; manual Start after default
-  OFF; adopted Stop/Restart rejection; crash backoff; owned quit; foreign quit.
+  OFF; adopted Stop/Restart rejection; crash backoff; owned quit; foreign quit; degraded HTTP after readiness leaves an active reply alive.
 - Connection modes: socket connect/reconnect uses the retained snapshot; HTTP
   refuses unknown occupied endpoints; launch failure retries. QA apps skip live
   lifecycle ownership rather than inheriting the resident port.

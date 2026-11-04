@@ -21,6 +21,7 @@ final class CloneEngineController {
     private var generation = 0
     private var failures = 0
     private var launchedAt: Date?
+    private var hasServedHealth = false
 
     init(autostart: Bool, saveAutostart: @escaping (Bool) -> Void, probe: @escaping Probe,
          makeProcess: @escaping () throws -> Process, schedule: @escaping Scheduler = { delay, block in
@@ -97,14 +98,20 @@ final class CloneEngineController {
             switch result {
             case let .healthy(pid):
                 if let child, child.processIdentifier != pid { stopOwned() }
+                if child != nil { hasServedHealth = true }
                 if let launchedAt, Date().timeIntervalSince(launchedAt) >= 60 { failures = 0 }
                 publish(.running, reason: child == nil ? "adopted_existing" : nil, pid: pid)
                 later(3, token: token)
             case .occupied, .absent:
                 if let child, child.isRunning {
-                    if let launchedAt, Date().timeIntervalSince(launchedAt) > 120 {
+                    if !hasServedHealth, let launchedAt, Date().timeIntervalSince(launchedAt) > 120 {
                         stopOwned(); retry("startup_timeout")
-                    } else { later(1, token: token) }
+                    } else {
+                        // A busy/slow health endpoint must not cut off an in-flight reply.
+                        // Process termination, not a missed poll, is the crash signal.
+                        if hasServedHealth { publish(.failed, reason: "health_unavailable", pid: Int(child.processIdentifier)) }
+                        later(1, token: token)
+                    }
                 } else if result == .occupied {
                     publish(.failed, reason: "port_occupied")
                     later(3, token: token)
@@ -113,6 +120,7 @@ final class CloneEngineController {
                     do {
                         let process = try makeProcess()
                         child = process
+                        hasServedHealth = false
                         process.terminationHandler = { [weak self, weak process] _ in
                             DispatchQueue.main.async {
                                 guard let self, let process, self.child === process else { return }
@@ -149,7 +157,7 @@ final class CloneEngineController {
 
     private func stopOwned() {
         guard let process = child else { return }
-        child = nil; launchedAt = nil
+        child = nil; launchedAt = nil; hasServedHealth = false
         process.terminationHandler = nil
         if process.isRunning {
             process.terminate()
