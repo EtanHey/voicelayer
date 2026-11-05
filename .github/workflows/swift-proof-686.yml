@@ -23,7 +23,7 @@ permissions:
 
 concurrency:
   group: swift-proof-686-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   swift:
@@ -126,8 +126,9 @@ jobs:
             [ -f probe.log ] && grep -E 'PROBE |: error: |Test Case .* (passed|failed)' probe.log | head -60
             for f in test-targeted.log test-full.log; do
               [ -f "$f" ] || continue
-              echo "--- $f"
-              grep -E ': error: |Test Case .* failed|Executed [0-9]+ tests|with [0-9]+ failures? ' "$f" | grep -v ' passed ' | sort -u | head -120
+              echo "--- $f (failures first, then the overall totals)"
+              grep -E ': error: |Test Case .* failed' "$f" | head -150
+              grep -E "Test Suite 'All tests' (passed|failed)" -A1 "$f" | tail -2
             done
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
