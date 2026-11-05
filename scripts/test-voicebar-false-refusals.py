@@ -56,14 +56,14 @@ class PureRefusals(unittest.TestCase):
 
 
 class NativeLayerRefusals(unittest.TestCase):
-    def test_real_m1_rows_and_non_system_layer_negative_controls(self):
+    def test_real_m1_rows_and_unallowed_layer_negative_controls(self):
         g = load('test-voicebar-gatecap1')
         probe = g.FAKE_SOURCE + r'''
 extension Fake { func isWindowServer(_ pid: Int32) -> Bool { pid == 412 } }
 func excluded(_ inv: ModalInventory) -> [[String: Any]] {
     Mirror(reflecting: inv).children.first { $0.label == "excluded" }?.value as? [[String: Any]] ?? []
 }
-for level in [24, 25, 102, 1000, -2147483602, -2147483626] {
+for level in [24, 25, 102, -2147483602, -2147483626] {
     let f = Fake()
     f.rows = [CGRow(id: 38, pid: 412, owner: "Window Server", layer: level,
         bounds: CGRect(x: 0, y: 0, width: 1512, height: 33), alpha: 1, title: "")]
@@ -75,7 +75,7 @@ for level in [24, 25, 102, 1000, -2147483602, -2147483626] {
     precondition(rows.count == 1 && rows[0]["layer"] as? Int == level)
     for key in ["owner", "pid", "layer", "bounds", "alpha", "onscreen"] { precondition(rows[0][key] != nil) }
 }
-for level in [0, 3, 8, 19, 42, -1] {
+for level in [0, 3, 8, 19, 42, -1, 1000, 2147483630] {
     let f = Fake(); f.rows = [row(38, 412, "Window Server", layer: level)]
     f.windowsByPid[412] = .absent
     let inv = modalInventory(f, qaPids: [])

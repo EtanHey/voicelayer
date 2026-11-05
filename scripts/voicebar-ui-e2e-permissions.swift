@@ -45,7 +45,7 @@ let systemModalOwners: Set<String> = ["com.apple.coreservices.uiagent", "com.app
 func isSystemModalOwner(_ owner: String) -> Bool { systemModalOwners.contains(owner.lowercased()) }
 struct ModalInventory { var modals: [[String: Any]] = []; var errors: [[String: Any]] = []; var excluded: [[String: Any]] = [] }
 let windowServerSystemLayers = Set([CGWindowLevelKey.mainMenuWindow, .statusWindow, .overlayWindow,
-    .screenSaverWindow, .cursorWindow, .desktopIconWindow, .backstopMenu].map { Int(CGWindowLevelForKey($0)) })
+    .desktopIconWindow, .backstopMenu].map { Int(CGWindowLevelForKey($0)) })
 func windowServerSystemLayer(_ layer: Int) -> Bool {
     // The extra exact desktop row is the captured M1 fixture, not an arbitrary negative range.
     layer <= Int(CGWindowLevelForKey(.desktopWindow)) || windowServerSystemLayers.contains(layer) || layer == -2147483602
