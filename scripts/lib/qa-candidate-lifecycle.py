@@ -15,6 +15,7 @@ import time
 
 B = runpy.run_path(str(Path(__file__).with_name('qa-candidate-2.3.py')))
 APP, RESIDENT, BASE = B['APP'], B['RESIDENT'], B['BASE']
+read_plist = B['read_plist']
 HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 LABEL = f'gui/{os.getuid()}/com.voicelayer.voicebar'
 LIVE = {'VOICELAYER_SOCKET_PATH': '/tmp/voicelayer.sock', 'VOICELAYER_MCP_SOCKET_PATH': '/tmp/voicelayer-mcp.sock'}
@@ -109,7 +110,7 @@ def quit_app(app, env=None, force=False):
 
 def job_info(stopped=False):
     path = HOME / 'Library/LaunchAgents/com.voicelayer.voicebar.plist'
-    config = plistlib.loads(path.read_bytes())
+    config = read_plist(path)
     expected = {'Label': 'com.voicelayer.voicebar', 'ProgramArguments': [str(RESIDENT / 'Contents/MacOS/VoiceBar')],
                 'KeepAlive': {'SuccessfulExit': False}, 'RunAtLoad': True,
                 'StandardOutPath': str(HOME / 'Library/Logs/voicelayer/voicebar.log'),
@@ -150,7 +151,7 @@ def wait_ready(app, env, exclusive=False):
 
 def restore_resident(force=False):
     job_info()  # Prove supervision is available before retiring QA.
-    env = plistlib.loads((APP / 'Contents/Info.plist').read_bytes())['LSEnvironment'] if APP.exists() else B['environment']()
+    env = read_plist(APP / 'Contents/Info.plist')['LSEnvironment'] if APP.exists() else B['environment']()
     quit_app(APP, env, force=force)
     subprocess.run(['/bin/launchctl', 'kickstart', LABEL], check=True)  # No -k: never restart a running resident.
     wait_ready(RESIDENT, LIVE)
@@ -172,7 +173,7 @@ def switch(fixture=None):
     if pids(RESIDENT):
         idle(Path('/tmp'), HOME / '.local/state/voicelayer')
         refuse_activity(processes(), pids(RESIDENT), command_line, qwen_connections)
-    info = plistlib.loads((APP / 'Contents/Info.plist').read_bytes())
+    info = read_plist(APP / 'Contents/Info.plist')
     if info['CFBundleIdentifier'] != B['IDENTITY'] or info['CFBundleShortVersionString'] != '2.3.0' or pids(APP):
         raise RuntimeError('REFUSED: wrong candidate identity/version or QA already running')
     env = info['LSEnvironment']; B['prepare'](env)

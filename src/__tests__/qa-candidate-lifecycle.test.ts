@@ -9,10 +9,23 @@ const helper = join(import.meta.dir, "../../scripts/lib/qa-candidate-lifecycle.p
 const root = join(process.env.VOICELAYER_TEST_RUN_ROOT!, "qa23-safety");
 mkdirSync(root, { recursive: true });
 function python(body: string) {
-  const result = Bun.spawnSync(["python3", "-c", `import runpy,os,json,signal\nfrom pathlib import Path\nfrom types import SimpleNamespace\ng=runpy.run_path(${JSON.stringify(helper)})['main'].__globals__\nroot=Path(${JSON.stringify(root)})\n${body}`],
+  const result = Bun.spawnSync(["python3", "-c", `import runpy,os,json,signal\nfrom pathlib import Path\nfrom types import SimpleNamespace\ng=runpy.run_path(${JSON.stringify(helper)})['main'].__globals__\ng['read_plist']=lambda path:g['plistlib'].loads(path.read_bytes())\nroot=Path(${JSON.stringify(root)})\n${body}`],
     { env: process.env, stdout: "pipe", stderr: "pipe" });
   return { exit: result.exitCode, out: result.stdout.toString(), error: result.stderr.toString() };
 }
+test.skipIf(process.platform !== "darwin")("Apple parser accepts the installed template comment without rewriting it", () => {
+  const result = python(`g['HOME']=root/'apple-plist-home'
+path=g['HOME']/'Library/LaunchAgents/com.voicelayer.voicebar.plist';path.parent.mkdir(parents=True,exist_ok=True)
+raw=(g['B']['ROOT']/'launchd/com.voicelayer.voicebar.plist').read_bytes().replace(b'__VOICEBAR_LOG_DIR__',str(g['HOME']/'Library/Logs/voicelayer').encode())
+assert b'mode 600 -- /tmp' in raw;path.write_bytes(raw)
+if 'read_plist' in g['B']:g['read_plist']=g['B']['read_plist']
+output=chr(10).join(key+' = '+value for key,value in {'path':str(path),'program':str(g['RESIDENT']/'Contents/MacOS/VoiceBar'),'stdout path':str(g['HOME']/'Library/Logs/voicelayer/voicebar.log'),'stderr path':str(g['HOME']/'Library/Logs/voicelayer/voicebar-err.log')}.items())
+run=g['subprocess'].run
+g['subprocess'].run=lambda argv,**kw:run(argv,**kw) if argv[0]=='/usr/bin/plutil' else SimpleNamespace(returncode=0,stdout=output)
+assert g['job_info']() is None
+assert path.read_bytes()==raw`);
+  expect(result.error).toBe(""); expect(result.exit).toBe(0);
+});
 for (const state of ["recording", "transcribing", "unknown", "idle"]) {
   test(`resident ${state} refusal evidence`, () => {
     writeFileSync(join(root, "recording-state.json"), JSON.stringify({ state, pid: process.pid }));
@@ -84,4 +97,9 @@ test("think mode has an explicit isolated log destination", () => {
 test("KeepAlive qualification requires a proven clean stopped exit", () => {
   const result = python("g['HOME']=root/'clean-job';path=g['HOME']/'Library/LaunchAgents/com.voicelayer.voicebar.plist';path.parent.mkdir(parents=True,exist_ok=True)\nconfig={'Label':'com.voicelayer.voicebar','ProgramArguments':[str(g['RESIDENT']/'Contents/MacOS/VoiceBar')],'KeepAlive':{'SuccessfulExit':False},'RunAtLoad':True,'StandardOutPath':str(g['HOME']/'Library/Logs/voicelayer/voicebar.log'),'StandardErrorPath':str(g['HOME']/'Library/Logs/voicelayer/voicebar-err.log')}\npath.write_bytes(g['plistlib'].dumps(config))\noutput='\\n'.join(key+' = '+value for key,value in {'path':str(path),'program':config['ProgramArguments'][0],'stdout path':config['StandardOutPath'],'stderr path':config['StandardErrorPath']}.items())\ng['subprocess'].run=lambda *a,**k:SimpleNamespace(returncode=0,stdout=output+'\\nlast exit code = 1\\n')\ntry:g['job_info'](stopped=True);raise AssertionError('accepted crash')\nexcept RuntimeError:pass\ng['subprocess'].run=lambda *a,**k:SimpleNamespace(returncode=0,stdout=output+'\\nlast exit code = 0\\n')\nassert g['job_info'](stopped=True) is None");
   expect(result.exit).toBe(0); expect(result.error).toBe("");
+});
+
+test.skipIf(process.platform !== "darwin")("Apple parser failure refuses without rewriting the input", () => {
+  const result = python("path=root/'invalid.plist';path.write_bytes(b'<plist><dict>')\ntry:g['B']['read_plist'](path);raise AssertionError('accepted invalid plist')\nexcept g['subprocess'].CalledProcessError:pass\nassert path.read_bytes()==b'<plist><dict>'");
+  expect(result.error).toBe(""); expect(result.exit).toBe(0);
 });
