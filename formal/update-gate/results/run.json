@@ -2,19 +2,22 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/update-gate/FirstInstall.tla": "98161ca1b5ba0cf7de293aca0f33c2088e0ab9bc949653bd944140702c9c7391",
-    "formal/update-gate/checks.json": "7a3675db14d0d739959eb557c5af4cfdb30876d2ef79e491622be8a4edc68632",
+    "formal/update-gate/FirstInstall.tla": "fa7771a1b77acb4f4ef2d0b4fd8f4b221538377462f1f4c26637deb0865be349",
+    "formal/update-gate/checks.json": "8e900778822d6ebcbc0673bb2267772f39141f2a3821263bbb6af89a8eebe4d0",
     "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/update-gate/QuitMutantReuse.cfg": "c588f7108cc70e0fc570aa6f3aab8fb19f20102851e578f30d5af0eeae34d4e1",
     "formal/update-gate/UpgradeOld.cfg": "11ad0ece993cf96794beb5b990144a152b9e4f9b79ac219c7d4ba063a8c96abe",
     "formal/update-gate/MutantLive.cfg": "fb8d6256aef099bb9f771ef77eb4a8e441f783382b7a1f7af3af23d0e682dedf",
     "formal/update-gate/CompleteOld.cfg": "43ae7c3f3c782a4a037395dfdf2f7e0be36bfd803df181c8718ffa71e8435f05",
+    "formal/update-gate/RecoveryMutantTarget.cfg": "2051bc7a7e04712df3b05e21bc1edef18409ec187a9ef6ea865c0f17b5110f49",
     "formal/update-gate/QuitOld.cfg": "678f0103c569654842568c0b64d6513bc8d76d13607f423110d0d3d6f0501e76",
+    "formal/update-gate/RecoveryOld.cfg": "0b21fa13c4565a61c2a128e7e9ebe5d29f768e7d8034e9fa821af9555a687a4c",
     "formal/update-gate/QuitFixed.cfg": "337fb47483788cfe44e144fd2754449e60e3850457758e5aaf6806b26b37c888",
     "formal/update-gate/CompleteMutantOwner.cfg": "02698124abe7a06134a05f97a4a771a604ac0a6f4fb7511bca12568b57afa918",
     "formal/update-gate/CompleteMutantSha.cfg": "7c5f1c775261ff4f9f286d4c08401ee5180cdfa9608477a5646e66c4675d2d47",
     "formal/update-gate/CompleteFixed.cfg": "8797f42e341d0d257f95b8081f685a7af89f2e2c2d68d738851e15423d219b33",
+    "formal/update-gate/RecoveryFixed.cfg": "71ce35d4f33e45698206579eec5ebb2bb3de9a33ccfe11b94507ecd3c3bd55ff",
     "formal/update-gate/MutantEvidence.cfg": "73593ce1f6ae0bd0ced94be72eea2fb8a259ceff27bf73b705b163c3042dd554",
     "formal/update-gate/MutantGeneration.cfg": "7b7f9b18a4b0bce40811be40062e6e7b0418e681458263d2b154a8b9f71390b4",
     "formal/update-gate/UpgradeFixed.cfg": "afd215f3d072e49362e1064999a12f1ea2ee85da55d63373d0639ec16c72e67b",
@@ -26,6 +29,7 @@
     "formal/update-gate/MutantMissingTarget.cfg": "572006f0bf813476d6053d57381e982c6f14ed4f8d990b8076fb81db1a83b872",
     "formal/update-gate/OldNoBootstrap.cfg": "1c4ec823d0815d73234dc3ea07ab644462b2fbdfd46b2b1311d9b5e53ba5d8e0",
     "formal/update-gate/Fixed.cfg": "fa31127d1d9fd50b63cdb75a8a56ad38e0160082856aedff1df2f1e2f50d0704",
+    "formal/update-gate/RecoveryMutantLive.cfg": "aae8a1603365d43f954e3fb326fad28f3f67ceb67a61dffdd8bd513a120c664a",
     "src/cli/setup.ts": "f45eee3baf6989070638cfd0bc22dbeb6a73cbbcdaef5aab0902bb0abbacbce9",
     "src/update-gate-admission.ts": "675cdd7a8e9dc69c243cd58a97f8afde881cfbbcb3bc5d9304e3a304ce78262d",
     "src/update-gate-storage.ts": "c33977d31799636a3a9292f4977827c52b6ab784f249512437f67b2553210476",
@@ -33,9 +37,11 @@
     "scripts/voicelayer-dedupe-voicebar.sh": "ebd6239db4c66e2b922afa941e4102618631910641fef6a73de81031b55b34e3",
     "scripts/install-voicebar-autostart.sh": "58a4649aa3707a6382e521c626e7c58a480f64113ef4bdd2a3e084c61be62e7c",
     "scripts/promote-voicebar-release.sh": "0bbf4a2c3c357a6c743386422c02e968e3bed4d4331204cfeec1408c6836cd61",
-    "src/update-gate-installer-participant.ts": "254f1e555a4bf56678ef33dd5d247bb0ef93eb282898ef9ef65e0bd50d96f736",
+    "src/update-gate-installer-participant.ts": "a354401ee67aa478e0f03c90a1ab53126d012fa180284e6c8e6eae74cd6085f0",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
-    "src/update-gate-installer.ts": "40d017444510880d653fc44a30299da62a57f4fd1636832d3a28896d253bf4e2"
+    "src/update-gate-installer.ts": "3ef3a2cd08d502490106bb87160bf22133e5eea4a993b3ff82315933cae110db",
+    "src/mcp-server-daemon.ts": "39ac69b160f1a01b7de1a5ff5ed1eadbde7fb628754cf7c8a68ae979d1328ab1",
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "284b669743725274124a53511939659954e827b2cfa3aefda436bdedecc59770"
   },
   "mutants": {
     "BootstrapOnlyQuiescent": [
@@ -76,10 +82,19 @@
     "LeasedUpdateReopensAdmission": [
       "CompleteOld",
       "CompleteSlowOneShot"
+    ],
+    "EventuallyOpenAfterAbandonedLease": [
+      "RecoveryOld"
+    ],
+    "NeverRecoverLiveController": [
+      "RecoveryMutantLive"
+    ],
+    "RecoveryOnlyVerified": [
+      "RecoveryMutantTarget"
     ]
   },
   "graphHashes": {
-    "Fixed": "b8069d1cfab320a76697ad7b4caa482aa596c77a3b6d9add81c1f144fd18933e"
+    "Fixed": "a1a4086cb4fa13f509f2f71c767f6f586d823090df3e0c95873839b57dbf0f4a"
   },
   "checks": {
     "Fixed": {
@@ -95,8 +110,8 @@
       "kind": "invariant",
       "target": "BootstrapOnlyQuiescent",
       "status": "EXPECTED_FAIL",
-      "generated": 23,
-      "distinct": 21
+      "generated": 19,
+      "distinct": 19
     },
     "MutantEvidence": {
       "role": "mutant",
@@ -119,8 +134,8 @@
       "kind": "invariant",
       "target": "BootstrapOpenGenerationZero",
       "status": "EXPECTED_FAIL",
-      "generated": 19,
-      "distinct": 19
+      "generated": 20,
+      "distinct": 20
     },
     "OldNoBootstrap": {
       "role": "mutant",
@@ -241,6 +256,38 @@
       "status": "EXPECTED_FAIL",
       "generated": 12,
       "distinct": 12
+    },
+    "RecoveryFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 58,
+      "distinct": 44
+    },
+    "RecoveryOld": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "EventuallyOpenAfterAbandonedLease",
+      "status": "EXPECTED_FAIL",
+      "generated": 56,
+      "distinct": 42
+    },
+    "RecoveryMutantLive": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverRecoverLiveController",
+      "status": "EXPECTED_FAIL",
+      "generated": 85,
+      "distinct": 60
+    },
+    "RecoveryMutantTarget": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "RecoveryOnlyVerified",
+      "status": "EXPECTED_FAIL",
+      "generated": 59,
+      "distinct": 44
     }
   }
 }

@@ -215,11 +215,11 @@ test.each(["old-native", "old-daemon", "old-birth", "wrong-bundle"])("G5 readine
 });
 
 // R6: filesystem/G1 are real; the clock and external process/RPC observations are controlled.
-test.each(["dead", "real-dead", "late-death", "live", "unknown", "wrong-sha", "foreign", "active", "diagnostic", "changed-custody"])(
+test.each(["dead", "real-dead", "late-death", "replaced-dead", "initial-contention", "live-at-completion", "live", "unknown", "wrong-sha", "foreign", "active", "diagnostic", "changed-custody"])(
   "R6 successor recovery: %s", async fault => {
     const f = fixture();
-    let now = 0;
-    const recovers = ["dead", "real-dead", "late-death"].includes(fault);
+    let now = 0, liveAtCompletion = false;
+    const recovers = ["dead", "real-dead", "late-death", "replaced-dead", "initial-contention"].includes(fault);
     if (fault === "real-dead") {
       const child = Bun.spawn(["/usr/bin/true"], { env: process.env });
       await child.exited;
@@ -228,27 +228,40 @@ test.each(["dead", "real-dead", "late-death", "live", "unknown", "wrong-sha", "f
     if (fault === "foreign") f.controller.lease.operationId = crypto.randomUUID();
     writeFileSync(f.gate + ".controller", JSON.stringify(f.controller));
     const custody = readFileSync(f.gate + ".controller", "utf8");
+    if (fault === "initial-contention") mkdirSync(f.gate + ".lock");
     if (fault === "active") writeFileSync(f.gate + ".admissions/active", "retained");
     if (fault === "diagnostic") writeFileSync(f.gate + ".voice-diag.json", "retained");
     f.participant.refresh = async () => {
       expect(now).toBeGreaterThanOrEqual(5000);
+      if (fault === "live-at-completion") liveAtCompletion = true;
       if (fault === "changed-custody") writeFileSync(f.gate + ".controller", custody.replace(f.identity, "foreign"));
       return { phase: "idle", ready: true, native: ack, daemon: ack };
     };
     expect(await installer.recoverAbandonedUpdate(fault === "wrong-sha" ? "b".repeat(40) : lease.targetSha, {
       participant: f.participant, installed: () => ({ sha: lease.targetSha, unchanged: () => true }),
-      clock: { now: () => now, sleep: async ms => { now += ms; } },
+      clock: { now: () => now, sleep: async ms => {
+        now += ms;
+        if (fault === "initial-contention" && now === 1600) {
+          const { rmdirSync } = await import("node:fs");
+          rmdirSync(f.gate + ".lock");
+        }
+        if (fault === "replaced-dead" && now === 4000) {
+          f.controller.pid += 100000;
+          writeFileSync(f.gate + ".controller", JSON.stringify(f.controller));
+        }
+      } },
       controllerIdentity: () => {
+        expect(existsSync(f.gate + ".lock")).toBe(false); // No process-table waits under G1.
         if (fault === "unknown") throw Error("process evidence unavailable");
         if (fault === "real-dead") return installerProcessIdentity(f.controller.pid);
-        return fault === "live" || (fault === "late-death" && now < 1000) ? f.identity : null;
+        return liveAtCompletion || fault === "live" || (fault === "late-death" && now < 1000) ? f.identity : null;
       },
     })).toBe(recovers);
     expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(recovers ? released : committed);
     expect(existsSync(f.gate + ".controller")).toBe(!recovers);
     expect(existsSync(f.gate + ".lock")).toBe(false);
     if (recovers) {
-      expect(now).toBe(fault === "late-death" ? 6000 : 5000);
+      expect(now).toBe(fault === "initial-contention" ? 6600 : fault === "replaced-dead" ? 9000 : fault === "late-death" ? 6000 : 5000);
       expect(withVoiceAdmission(() => "available")).toBe("available");
       expect(await installer.recoverAbandonedUpdate(lease.targetSha)).toBe(false); // Already OPEN.
     }

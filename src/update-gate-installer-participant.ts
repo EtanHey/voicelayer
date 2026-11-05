@@ -291,7 +291,7 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
       if (!authorized || !pinned) throw Error("UNKNOWN: controlled quit not authorized");
       evidence = undefined;
       const refusal = (reason: string) => Error(`UNKNOWN: ${reason}; gate retained closed for recovery. VoiceBar may be stopped.\n` +
-        "The observed bundle is restored on updater exit; a matching successor verifies abandoned COMMITTED recovery automatically.\n" +
+        "On the next VoiceBar launch, a matching successor verifies abandoned COMMITTED recovery automatically.\n" +
         "Retain all gate/controller/recovery evidence if automatic recovery cannot verify the target.");
       let reply: unknown;
       try { reply = await deps.request("quit", lease); }

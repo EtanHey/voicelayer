@@ -139,7 +139,7 @@ function harnessCompletionEvidence(): CompletionEvidence {
 }
 /** Refresh proofs after acquisition timeout; never stretch a receipt across the budget. */
 async function finishWithSuccessor(lease: UpdateGateLease, evidence: CompletionEvidence,
-  custody: ParticipantProof): Promise<void> {
+  custody: ParticipantProof, beforeAcquisition: () => void = () => {}): Promise<void> {
   const installed = evidence.installed(), successor = evidence.participant;
   if (installed.sha !== lease.targetSha) throw Error("installed GitCommit does not match lease.targetSha");
   const clock = evidence.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
@@ -151,6 +151,7 @@ async function finishWithSuccessor(lease: UpdateGateLease, evidence: CompletionE
       if (!proof.ready || !proof.native || !proof.daemon || !sameLease(proof.native.lease, lease) || !sameLease(proof.daemon.lease, lease))
         throw Error(`new participants not verified: ${proof.phase}`);
       if (clock.now() >= deadline) throw Error("successor readiness deadline passed");
+      beforeAcquisition(); // Process sampling stays outside G1.
       const apply = () => updateVoiceGate({ kind: "COMPLETE", lease, installerExitCode: 0,
         installedSha: installed.sha, participantsVerified: true }, state => safeParticipantProof(() => ({
           ready: clock.now() < deadline && state.kind === "COMMITTED" && sameLease(state.lease, lease) &&
@@ -210,17 +211,24 @@ export async function recoverAbandonedUpdate(ownSha = process.env.VOICEBAR_GIT_C
     const identity = harness?.controllerIdentity ?? installerProcessIdentity;
     const deadline = clock.now() + 60_000;
     let abandonedAt: number | undefined;
+    let observedCustody: string | undefined;
     for (;;) {
-      const state = await retryContention(() => readInstallerGateState(), () => false);
+      const state = await retryInstallerAcquisition(() => readInstallerGateState(), deadline, clock, 30_000);
       if (state.kind !== "COMMITTED" || state.lease.targetSha !== ownSha) return false;
       const lease = state.lease, controller = readInstallerController(updateGateFilePath());
       if (!controller || controller.lease.operationId !== lease.operationId || controller.lease.generation !== lease.generation) return false;
       const bytes = JSON.stringify(controller);
+      const custody = JSON.stringify({ lease, controller });
+      if (custody !== observedCustody) abandonedAt = undefined;
+      observedCustody = custody;
       if (identity(controller.pid) !== null) abandonedAt = undefined;
       else abandonedAt ??= clock.now();
       if (abandonedAt !== undefined && clock.now() - abandonedAt >= 5000) {
-        await finishWithSuccessor(lease, evidence, () =>
-          JSON.stringify(readInstallerController(updateGateFilePath())) === bytes && identity(controller.pid) === null);
+        // The observed dead incarnation cannot revive. Sample again outside G1;
+        // only unchanged custody is read inside the short publication section.
+        await finishWithSuccessor(lease, evidence,
+          () => JSON.stringify(readInstallerController(updateGateFilePath())) === bytes,
+          () => { if (identity(controller.pid) !== null) throw new UnsafeSuccessorError("controller absence changed"); });
         console.error("[update-gate] Recovered abandoned COMMITTED lease: verified successor COMPLETE; admission OPEN.");
         return true;
       }

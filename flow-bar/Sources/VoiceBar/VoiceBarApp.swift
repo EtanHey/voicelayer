@@ -170,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var terminationGateForTesting: NativeUpdateGate?
     var terminationOwnsServerForTesting: Bool?
     var terminationCleanupForTesting: (() -> Void)?
+    var terminationSaveSleepForTesting: ((Duration) async -> Void)?
     #endif
 
     private var socketServer: SocketServer?
@@ -1304,7 +1305,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             voiceState.stop()
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                await VoiceBarQuitDeferral.waitWhileSaving { self.voiceState.isSavingDictationForQuit }
+                var sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+                #if VOICEBAR_QA
+                sleep = self.terminationSaveSleepForTesting ?? sleep
+                #endif
+                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, sleep: sleep)
                 self.quitSavePending = false
                 #if VOICEBAR_QA
                 if let cleanup = self.terminationCleanupForTesting { cleanup(); return }

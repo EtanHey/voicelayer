@@ -115,7 +115,11 @@ R5 (missing gate with retained admissions) is outside this backstop.
 User Quit (menu, canonical external Quit, SIGTERM) never depends on gate evidence
 and preserves it. Only dictation capture/save work may delay Quit: show the saving
 notice, issue the existing Stop, and wait up to six seconds before shutdown.
-Authenticated controlled-update Quit retains its separate lease checks.
+A legacy/MCP Stop retains a Quit-only save wait through its optimistic UI change.
+Archive settlement, idle/cancel, errors, connection changes and a new capture retire
+that wait. The incremental recovery WAV is preserved if no History row published;
+use Retranscribe Last in that case. Authenticated controlled-update Quit retains
+its separate lease checks.
 
 The preload forcibly redirects the gate and children into the run's `.test-tmp/`
 tree. The resolver requires the redirect; storage rejects escapes and symlinks.
@@ -138,7 +142,7 @@ unknown process-table evidence waits until the deadline and cannot authorize a s
 Only confirmed absence can finish the final poll just past the deadline; uncertainty
 at that point refuses. No process is killed.
 
-The updater retains a recovery receipt on failure. Its outer script restores the
-observed bundle on exit. A matching successor automatically verifies abandoned
+The updater retains a recovery receipt on failure. An installer child that ran
+its outer script restores the observed bundle on exit. A matching successor verifies abandoned
 COMMITTED completion; otherwise custody stays closed. Never delete a gate or reap
 G1 to retry. Source/model checks do not qualify an installed swap.
