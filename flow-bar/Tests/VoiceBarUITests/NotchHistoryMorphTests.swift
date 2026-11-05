@@ -296,6 +296,21 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertEqual(next, 0.7, accuracy: 1e-9, "then follows the pointer from there; a later seed is ignored")
     }
 
+    /// Codex review R2: a grab during the open spring's overshoot (1.11) or an undershoot (-0.05) must not move the
+    /// panel at the hand-off; `band(seed)` used to compress 1.11 to ~1.027, a ~29 pt jump at 348 pt of travel.
+    func testAGrabDuringOvershootOrUndershootHasZeroDisplacement() throws {
+        for seed: CGFloat in [1.11, -0.05] {
+            var pull = NotchHistoryPull()
+            pull.press(y: 100, progress: 1, time: 0)
+            let handoff = try XCTUnwrap(pull.move(y: 104, time: 0.02, range: 348, seed: seed))
+            XCTAssertEqual(handoff, seed, accuracy: 1e-9, "\(seed): zero displacement at the slop crossing")
+            let still = try XCTUnwrap(pull.move(y: 104, time: 0.03, range: 348))
+            XCTAssertEqual(still, seed, accuracy: 1e-9, "\(seed): a sample at the same pointer stays put")
+            let nudged = try XCTUnwrap(pull.move(y: 104 + 3.48, time: 0.04, range: 348))
+            XCTAssertLessThan(abs(nudged - seed), 0.0101, "\(seed): a 3.48 pt move moves the panel at most 1 % of travel")
+        }
+    }
+
     // MARK: V6 extend handle
 
     func testTheHandleTakesPressesOnlyInItsBandOnTheOpenPanel() {

@@ -23,6 +23,11 @@ is. Order-of-events risks modelled here:
   while still inside the slop ends like a click, so the next gesture never reuses its stale start
   (`NoStalePress`). A press that grabs a moving panel or rows continues from what is drawn
   (`NotchHistorySpringFlight`), never from the spring's target (`NoGrabJump`).
+  Out of model scope: values past either end. The model's springs step monotonically between
+  levels 0..N and never overshoot, so a grab during the open spring's overshoot (or an undershoot)
+  isn't representable here. That hand-off (the drawn, out-of-range value carried as an offset with
+  zero displacement) is proven by `NotchHistoryMorphTests.testAGrabDuringOvershootOrUndershootHasZeroDisplacement`
+  (Codex review R2).
 - **Reversible.** `Animate` never changes the level: a retarget springs from where it is.
   This holds by construction in the spec (and in SwiftUI interpolating springs, which merge
   velocity on retarget).

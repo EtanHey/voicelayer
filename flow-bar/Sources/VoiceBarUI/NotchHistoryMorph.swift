@@ -287,6 +287,9 @@ public struct NotchHistoryPull: Equatable {
     public private(set) var velocity: Double = 0
     private var lastY: CGFloat = 0
     private var lastTime: TimeInterval = 0
+    /// A seed the band can't express (a spring overshooting past 1 or under 0) is carried as an offset on every
+    /// sample, so the grab never moves what is drawn (Codex review R2). 0 for an in-range seed.
+    private var seedOffset: CGFloat = 0
 
     public init() {}
 
@@ -314,6 +317,7 @@ public struct NotchHistoryPull: Equatable {
     public mutating func press(y: CGFloat, progress: CGFloat, time: TimeInterval) {
         guard case .idle = phase else { return }
         phase = .pending(startY: y, startProgress: progress)
+        seedOffset = 0
         velocity = 0
         lastY = y
         lastTime = time
@@ -336,12 +340,13 @@ public struct NotchHistoryPull: Equatable {
                 phase = .dragging(startY: y, startProgress: seed)
                 lastY = y
                 lastTime = time
-                return band(seed)
+                seedOffset = seed - band(seed)
+                return seed
             }
             phase = .dragging(startY: startY, startProgress: startProgress)
             return band(track(y: y, time: time, range: range, startY: startY, startProgress: startProgress))
         case let .dragging(startY, startProgress):
-            return band(track(y: y, time: time, range: range, startY: startY, startProgress: startProgress))
+            return band(track(y: y, time: time, range: range, startY: startY, startProgress: startProgress)) + seedOffset
         }
     }
 
