@@ -645,7 +645,7 @@ allows_uie2e_adhoc_signing() {
 allows_qa23_adhoc_signing() {
     [[ "${VOICEBAR_QA23_BUILD:-0}" == 1 && "$SIGN_IDENTITY" == - \
        && "$APP_DIR" == "$REPO_ROOT/.build.noindex/qa-2.3/VoiceBar-2.3-QA.app" \
-       && "$STOP_RUNNING" == 0 && "$RELAUNCH_APP" == 0 && "${VOICEBAR_QA_BUILD:-0}" != 1 \
+       && "$STOP_RUNNING" == 0 && "$RELAUNCH_APP" == 0 && "${VOICEBAR_QA_BUILD:-0}" == 1 \
        && "$VOICEBAR_REQUIRE_NOTARIZATION" == 0 && -z "$VOICEBAR_RELEASE_ZIP" && ! -L "$APP_DIR" ]]
 }
 
