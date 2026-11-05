@@ -47,6 +47,8 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let model: UIE2EModel
     var settings: NSWindow!
     var pill: FloatingPillPanel!
+    /// 2.3 U4: the notch History panel (open state, extend-handle rows) for hit testing and the pill's size.
+    var notchModel: VoiceBarNotchPresentationModel!
     let menu = PillContextMenuController()
     var statusItem: NSStatusItem?
     var statusController: MenuBarStatusItemController?
@@ -149,25 +151,27 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             UIE2ESettings(model: model)
         })
+        notchModel = VoiceBarNotchPresentationModel(onLayoutInvalidated: { [weak self] in self?.updatePillLayout() })
         let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
             onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 },
+            presentationModel: notchModel,
             includesPanelOutsets: true))
         bar.activeHitTestProvider = { [weak self] point in
             guard let self else { return false }
-            return Self.panelLayout(for: self.model.voice).containsInteractiveContent(point)
+            return self.panelLayout().containsInteractiveContent(point)
         }
         bar.renderedSurfaceHitTestProvider = { [weak self] point in
             guard let self else { return false }
-            return Self.panelLayout(for: self.model.voice).containsVisibleSurface(point)
+            return self.panelLayout().containsVisibleSurface(point)
         }
         bar.hoverExpansionHitTestProvider = { [weak self] point in
             guard let self else { return false }
-            return Self.panelLayout(for: self.model.voice).containsHoverExpansion(point)
+            return self.panelLayout().containsHoverExpansion(point)
         }
         bar.hoverRetentionHitTestProvider = { [weak self] point in
             guard let self else { return false }
-            return Self.panelLayout(for: self.model.voice).containsHoverRetention(point)
+            return self.panelLayout().containsHoverRetention(point)
         }
         bar.onHoverChanged = { [weak self] hovering in
             self?.model.voice.setHoveringFromDebouncedPointer(hovering)
@@ -181,7 +185,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.voice.onPanelLayoutChange = { [weak self] in
             self?.updatePillLayout()
         }
-        if let screen = NSScreen.main { Self.fitPill(pill, layout: Self.panelLayout(for: model.voice), in: screen.visibleFrame) }
+        if let screen = NSScreen.main { Self.fitPill(pill, layout: panelLayout(), in: screen.visibleFrame) }
         model.onVisibilityChange = { [weak self] hidden in
             if hidden { self?.pill?.orderOut(nil) } else { self?.pill?.orderFront(nil) }
         }
@@ -199,14 +203,21 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
 #endif
 
         model.onRunSetup = { [weak self] in self?.openWizard() }
+        model.seedNotchHistoryIfRequested()
         model.receipt("launch")
     }
 
     /// Same operational input, morph canvas and hit configuration used by the production
     /// host. The QA-only capture placement keeps its core stable and away from Settings.
     /// No AppDelegate is constructed and no production services are started.
-    static func panelLayout(for state: VoiceState) -> VoiceBarPanelLayout {
-        let presentation = VoiceBarPresentation.notchPresentation(from: .init(
+    func panelLayout() -> VoiceBarPanelLayout {
+        Self.panelLayout(for: model.voice, historyOpen: notchModel?.isHistoryPanelOpen ?? false,
+                         historyRows: notchModel?.historyRows ?? NotchHistoryMorph.visibleRows)
+    }
+
+    static func panelLayout(for state: VoiceState, historyOpen: Bool = false,
+                            historyRows: Int = NotchHistoryMorph.visibleRows) -> VoiceBarPanelLayout {
+        var input = VoiceBarNotchOperationalInput(
             mode: state.mode,
             showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
             hasTeleprompterText: state.teleprompterText != nil,
@@ -230,7 +241,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isCollapsed: state.isCollapsed,
             visibleCoreOcclusionInset: 0,
             transientNote: state.selectionFeedbackNote,
-            transientNoteOffersHistory: state.selectionFeedbackNoteOffersHistory))
+            transientNoteOffersHistory: state.selectionFeedbackNoteOffersHistory)
+        input.isHistoryPanelOpen = historyOpen
+        input.historyRows = historyRows
+        let presentation = VoiceBarPresentation.notchPresentation(from: input)
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(presentation: presentation,
             interactionConfiguration: AppDelegate.notchInteractionConfiguration(
@@ -250,7 +264,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         guard let pill, let screen = NSScreen.main else { return }
-        Self.fitPill(pill, layout: Self.panelLayout(for: model.voice), in: screen.visibleFrame)
+        Self.fitPill(pill, layout: panelLayout(), in: screen.visibleFrame)
     }
 
     private func makeContextMenu() -> NSMenu {
@@ -386,6 +400,17 @@ final class UIE2EModel {
     var microphoneOrder = ["a", "b"]
     var recent: RecentTranscriptionEntry { .init(text: Self.transcript, createdAt: Date(timeIntervalSince1970: 1_790_000_000)) }
 
+    /// 2.3 U4 native test only (`VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS=N`): N synthetic dictations in the notch History
+    /// panel, enough for its extend handle to reach 12 rows. Unset (every scenario run), nothing changes.
+    func seedNotchHistoryIfRequested() {
+        guard let raw = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS"],
+              let count = Int(raw), (1 ... 40).contains(count) else { return }
+        voice.recentTranscriptionEntries = (0 ..< count).map { index in
+            RecentTranscriptionEntry(text: "QA notch row \(index + 1)", recordingPath: sandbox.root
+                .appendingPathComponent("notch-\(index).wav").path, createdAt: Date().addingTimeInterval(Double(-60 * index)))
+        }
+    }
+
     init(sandbox: UIE2ESandbox) {
         self.sandbox = sandbox
         func field(_ value: Any) -> [String: Any] { ["source": "settings", "raw": value, "effective": value] }
@@ -416,10 +441,13 @@ final class UIE2EModel {
             createdAt: Date(timeIntervalSince1970: 1_790_000_000), transcript: Self.transcript,
             audioPath: sandbox.root.appendingPathComponent("fixture.wav"), durationMs: 5000,
             modelLabel: "QA recognizer", performanceEffort: .accurate, inputDeviceLabel: "QA microphone A")
-        let older = SettingsHistoryEntry(id: "qa-older", dayKey: entry.dayKey, recordingID: "qa-older",
-            createdAt: entry.createdAt.addingTimeInterval(-120), transcript: "QA older transcript",
+        // V27: the older row is on the day before, so the newest (selected) row is the last of its day, directly
+        // above the next day's header: the row Etan saw clipped.
+        let older = SettingsHistoryEntry(id: "qa-older", dayKey: "2026-10-14", recordingID: "qa-older",
+            createdAt: entry.createdAt.addingTimeInterval(-86_400), transcript: "QA older transcript",
             audioPath: sandbox.root.appendingPathComponent("older.wav"))
-        return .init(groups: [.init(dayKey: entry.dayKey, date: entry.createdAt, entries: [entry, older])], hasMore: true)
+        return .init(groups: [.init(dayKey: entry.dayKey, date: entry.createdAt, entries: [entry]),
+                              .init(dayKey: older.dayKey, date: older.createdAt, entries: [older])], hasMore: true)
     }
     var askHistory: SettingsAskHistoryPage {
         let entry = SettingsAskHistoryEntry(id: "qa-ask", dayKey: "2026-10-15", askID: "qa-ask", createdAt: Date(timeIntervalSince1970: 1_790_000_000),
@@ -428,11 +456,12 @@ final class UIE2EModel {
     }
     func historyPage(limit: Int) -> SettingsHistoryPage {
         receipt("history-page:" + String(limit))
-        guard limit > 100, let group = history.groups.first else { return history }
+        guard limit > 100, let group = history.groups.last else { return history }
         let entry = SettingsHistoryEntry(id: "qa-loaded", dayKey: group.dayKey, recordingID: "qa-loaded",
             createdAt: group.date.addingTimeInterval(-240), transcript: "QA loaded transcript",
             audioPath: sandbox.root.appendingPathComponent("loaded.wav"))
-        return .init(groups: [.init(dayKey: group.dayKey, date: group.date, entries: group.entries + [entry])], hasMore: false)
+        return .init(groups: history.groups.dropLast() + [.init(dayKey: group.dayKey, date: group.date,
+                                                              entries: group.entries + [entry])], hasMore: false)
     }
     func askHistoryPage(limit: Int) -> SettingsAskHistoryPage {
         receipt("ask-history-page:" + String(limit))

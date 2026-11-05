@@ -1,0 +1,126 @@
+{
+ "threshold": 4.5,
+ "method": "palette colour alpha-composited over the rendered panel background pixel",
+ "samples": [
+  {
+   "appearance": "light",
+   "role": "primary text on row background",
+   "bg": [
+    251,
+    251,
+    251
+   ],
+   "fg": [
+    25,
+    27,
+    35
+   ],
+   "ratio": 16.6
+  },
+  {
+   "appearance": "light",
+   "role": "tertiary text on row background",
+   "bg": [
+    251,
+    251,
+    251
+   ],
+   "fg": [
+    81,
+    83,
+    89
+   ],
+   "ratio": 7.43
+  },
+  {
+   "appearance": "light",
+   "role": "primary text on hovered row background",
+   "bg": [
+    230,
+    231,
+    231
+   ],
+   "fg": [
+    24,
+    26,
+    34
+   ],
+   "ratio": 14.01
+  },
+  {
+   "appearance": "light",
+   "role": "tertiary text on hovered row background",
+   "bg": [
+    230,
+    231,
+    231
+   ],
+   "fg": [
+    75,
+    78,
+    83
+   ],
+   "ratio": 6.74
+  },
+  {
+   "appearance": "dark",
+   "role": "primary text on row background",
+   "bg": [
+    28,
+    28,
+    28
+   ],
+   "fg": [
+    246,
+    246,
+    246
+   ],
+   "ratio": 15.77
+  },
+  {
+   "appearance": "dark",
+   "role": "tertiary text on row background",
+   "bg": [
+    28,
+    28,
+    28
+   ],
+   "fg": [
+    191,
+    191,
+    191
+   ],
+   "ratio": 9.27
+  },
+  {
+   "appearance": "dark",
+   "role": "primary text on hovered row background",
+   "bg": [
+    48,
+    48,
+    48
+   ],
+   "fg": [
+    247,
+    247,
+    247
+   ],
+   "ratio": 12.32
+  },
+  {
+   "appearance": "dark",
+   "role": "tertiary text on hovered row background",
+   "bg": [
+    48,
+    48,
+    48
+   ],
+   "fg": [
+    197,
+    197,
+    197
+   ],
+   "ratio": 7.65
+  }
+ ]
+}
