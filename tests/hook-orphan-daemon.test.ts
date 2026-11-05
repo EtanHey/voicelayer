@@ -57,6 +57,19 @@ test.skipIf(!hasCompiler)("independent hook test roots isolate fixtures and reap
   });
 }, NATIVE_PREFLIGHT_TIMEOUT_MS + ORPHAN_FIXTURE_TIMEOUT_MS + 5_000);
 
+// Cross-run children already cover this case in their paired lifecycle matrix.
+test.skipIf(!hasCompiler || !!process.env.HOOK_CROSS_RUN_CHILD)("hook smoke isolates inherited model paths before helpers can join its daemon group", () => {
+  const result = spawnSync("bash", [script, "--lifecycle-only", "model-isolation"], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+    encoding: "utf8", timeout: 60_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
+    status: 0,
+    output: expect.stringContaining("PASS model-isolation: exit=0, daemon/descendants gone, RUN_DIR checked"),
+  });
+}, 65_000);
+
 test("native TERM attribution immediately fails every protected sender without retry", () => {
   const result = spawnSync("bash", [script, "--policy-check"], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8" });
   expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({ status: 0, output: expect.stringContaining("PASS attribution: every protected TERM fails immediately; no retry") });
