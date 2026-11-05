@@ -11,6 +11,8 @@ public enum TeleprompterA {
     public static let topFadeHeight: CGFloat = 16
     public static let footerHeight: CGFloat = 20
     public static let handleSize = CGSize(width: 34, height: 4)
+    /// The handle's hit band under the footer.
+    public static let handleBandHeight: CGFloat = 14
 
     public enum Tier: Equatable {
         case spoken, read, unread
@@ -54,6 +56,12 @@ public enum TeleprompterA {
         if raw < low { return low - band(low - raw) }
         if raw > high { return high + band(raw - high) }
         return raw
+    }
+
+    /// Past either end the panel stays at 3 or 8 lines and the handle itself stretches with the band.
+    public static func handleOvershoot(startLines: Int, translation: CGFloat) -> CGFloat {
+        let height = draggedHeight(startLines: startLines, translation: translation)
+        return height - min(max(height, CGFloat(lineRange.lowerBound) * lineHeight), CGFloat(lineRange.upperBound) * lineHeight)
     }
 
     /// Release snaps to whole lines.

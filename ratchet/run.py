@@ -279,7 +279,7 @@ class Run:
 
     def transport_log(self, name="app"):
         return "\n".join(line for line in self.log(name).splitlines() if name != "app" or any(
-            token in line for token in ("Bad JSON", "Client hello", "Server listening", "SOCKET_ISOLATION_REFUSED", "[ratchet-recents]"))) + "\n"
+            token in line for token in ("Bad JSON", "Client hello", "Server listening", "SOCKET_ISOLATION_REFUSED", "[ratchet-recents]", "No command client registered; dropping command"))) + "\n"
 
     def close(self):
         for cap in self.caps:
@@ -351,6 +351,13 @@ def isolation(run):
     return failures
 
 
+def command_client_registered(log, pid):
+    # SocketServer logs this only AFTER assigning the command-owning client's fields.
+    return any("[VoiceBar] Client hello (" in line
+               and f", role: mcp-daemon, pid: {pid}, acceptsCommands: true)" in line
+               for line in log.splitlines())
+
+
 def wire_row(run, row):
     (run.root / "vocab.json").write_text(json.dumps({"entries": []}))
     fixtures = prepare_recents(run) if row == "recents-newest-after-retranscribe" else None
@@ -418,7 +425,8 @@ def wire_row(run, row):
     thread.start()
     reverse_thread.start()
     try:
-        wait(lambda: (run.root / "m.sock").exists())
+        wait(lambda: (run.root / "m.sock").exists() and (fixtures is None
+             or command_client_registered(run.log(), cap.proc.pid)))
         if row == "ndjson-partial-write":
             try:
                 wait(lambda: all("role: ratchet-" + str(i) + "," in run.log() for i in range(3)), 10)
