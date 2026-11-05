@@ -458,6 +458,12 @@ public final class VoiceState {
             readQueueCurrentRequestID == nil && speechPending["preview"] == nil && speechControls?.previewActive != true &&
             historyPlayback.playingURL == nil && !historyPlayback.isVoiceBusy)
     }
+    /// Only capture/save work can delay user Quit. Playback and update state cannot.
+    @MainActor public var isSavingDictationForQuit: Bool {
+        mode == .recording || captureLive || isRecordingHandoffPending || isRecordingDrainPending ||
+            pendingIntent?.command == .record || deferredRecordingTakeID != nil
+    }
+
     public private(set) var quitRefusalMessage: String? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalMessage) }
     }
@@ -482,8 +488,8 @@ public final class VoiceState {
     }
 
     public func reportQuitRefusal(gateBlocked: Bool = false,
+                                  message: String = "Finish voice work or cancel the update, then quit again.",
                                   isGateStillBlocked: @escaping @MainActor () -> Bool = { false }) {
-        let message = "Finish voice work or cancel the update, then quit again."
         quitRefusalGateBlocked = gateBlocked
         quitRefusalMessage = message
         expandFromCollapse()

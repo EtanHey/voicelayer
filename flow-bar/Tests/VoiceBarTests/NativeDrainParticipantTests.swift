@@ -21,14 +21,14 @@ import VoiceBarUI
             XCTAssertFalse(app.voiceState.isUpdateDrainIdle)
             XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateNow)
             app.voiceState.pendingIntent = PendingIntent(id: UUID().uuidString, command: .record)
-            XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateCancel)
+            XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateLater)
             app.voiceState.pendingIntent = nil
         }
         app.voiceState.mode = .idle
         try Data().write(to: URL(fileURLWithPath: path + ".voice-diag.json"))
         XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateNow)
         app.voiceState.mode = .recording
-        XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateCancel)
+        XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateLater)
         app.voiceState.mode = .idle
         try FileManager.default.removeItem(atPath: path)
         XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateNow)
