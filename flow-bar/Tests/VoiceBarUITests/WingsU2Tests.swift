@@ -3,8 +3,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// 2.3 lane U2 guards: fixed 73.5 + 73.5 pt wings (the 3-wings mock), the controls each state carries and the
-/// setup-attention gear.
+/// 2.3 lane U2 guards: fixed 73.5 + 73.5 pt wings (the 3-wings mock), the controls each state carries, the
+/// microphone list and the mutually exclusive notch surfaces (formal/notch-surfaces).
 @MainActor
 final class WingsU2Tests: XCTestCase {
     private func resolve(
@@ -150,6 +150,46 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(stop?.maxX ?? 0, geometry.topOriginX + geometry.topWidth - 8, accuracy: 0.001)
     }
 
+    // MARK: - Microphone list
+
+    /// D2: the list displays the priority order; every row and "Microphone priority…" opens Settings › Microphone
+    /// priority, and nothing in it writes the macOS default input.
+    func testTheMicrophoneListIsADisplayOfThePriorityListThatLeadsToSettings() {
+        let controller = PillContextMenuController()
+        controller.microphonePickerRowsProvider = {
+            [MicrophonePickerRow(label: "MacBook Pro Microphone", isNextDictation: true),
+             MicrophonePickerRow(label: "USB Audio Interface", isNextDictation: false)]
+        }
+        var changes = 0
+        controller.onChangeMicrophone = { changes += 1 }
+        let menu = controller.makeMicrophonePickerMenu()
+        let titles = menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
+        XCTAssertEqual(titles, ["Microphone", "MacBook Pro Microphone", "USB Audio Interface", "—",
+                                "Microphone priority…"])
+        XCTAssertEqual(menu.items[1].state, .on)
+        XCTAssertEqual(menu.items[2].state, .off)
+        menu.performActionForItem(at: 2)
+        menu.performActionForItem(at: 4)
+        XCTAssertEqual(changes, 2)
+
+        controller.microphonePickerRowsProvider = { [] }
+        XCTAssertEqual(controller.makeMicrophonePickerMenu().items[1].title, "No microphones")
+    }
+
+    func testTheMicrophoneListShowsConnectedVisibleRowsAndChecksTheNextDictation() {
+        let snapshot = MicrophonePrioritySnapshot(rows: [
+            MicrophonePriorityRow(uid: "usb", deviceID: "2", label: "USB Audio Interface", isConnected: true),
+            MicrophonePriorityRow(uid: "gone", deviceID: nil, label: "AirPods Pro", isConnected: false),
+            MicrophonePriorityRow(uid: "agg", deviceID: "9", label: "Aggregate", isConnected: true,
+                                  isVirtualOrAggregateTransport: true),
+            MicrophonePriorityRow(uid: "mbp", deviceID: "1", label: "MacBook Pro Microphone", isConnected: true),
+        ], nextDeviceName: "MacBook Pro Microphone", nextDeviceUID: "mbp", nextDeviceID: "1")
+        XCTAssertEqual(MicrophonePickerRow.rows(from: snapshot), [
+            MicrophonePickerRow(label: "USB Audio Interface", isNextDictation: false),
+            MicrophonePickerRow(label: "MacBook Pro Microphone", isNextDictation: true),
+        ])
+    }
+
     // MARK: - Setup attention
 
     func testTheGearBadgeFollowsTheMissingPermissions() {
@@ -165,5 +205,43 @@ final class WingsU2Tests: XCTestCase {
         state.setSetupMissingPermissions([])
         XCTAssertFalse(state.setupNeedsAttention)
         XCTAssertEqual(SettingsFocus.permissions.rawValue, "settings-general-permissions")
+    }
+
+    // MARK: - Mutually exclusive notch surfaces (formal/notch-surfaces, Fixed)
+
+    func testAMenuAskedForOverHistoryWaitsForHistoryToClose() {
+        var surfaces = VoiceBarNotchSurfaceCoordinator()
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: true), [])
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [.closeHistory], "never shown over the open panel (Old)")
+        XCTAssertEqual(surfaces.surface, .history)
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: false), [.showMenu(.microphone)],
+                       "shown once closed (DropPending)")
+        XCTAssertEqual(surfaces.surface, .menu(.microphone))
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [], "menus never stack")
+        surfaces.menuDidClose()
+        XCTAssertEqual(surfaces.surface, .none)
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [.showMenu(.microphone)])
+    }
+
+    func testHistoryOpeningAgainDropsAWaitingMenu() {
+        var surfaces = VoiceBarNotchSurfaceCoordinator()
+        _ = surfaces.historyDidChange(isOpen: true)
+        _ = surfaces.requestMenu(.microphone)
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: true), [])
+        XCTAssertNil(surfaces.pendingMenu)
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: false), [], "no stale menu later")
+    }
+
+    func testTheModelAsksTheViewToCloseHistoryAndReportsItsState() {
+        let model = VoiceBarNotchPresentationModel()
+        var reports: [Bool] = []
+        model.onHistoryPanelChanged = { reports.append($0) }
+        model.setHistoryPanelOpen(true)
+        model.setHistoryPanelOpen(true)
+        model.setHistoryPanelOpen(false)
+        XCTAssertEqual(reports, [true, false])
+        let before = model.historyCloseRequest
+        model.requestHistoryClose()
+        XCTAssertEqual(model.historyCloseRequest, before + 1)
     }
 }

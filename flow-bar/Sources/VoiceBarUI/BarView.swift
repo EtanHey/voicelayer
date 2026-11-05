@@ -469,6 +469,10 @@ public struct BarView: View {
                 isHistoryPresented = false
             }
         }
+        // 2.3 U2: a notch menu asked for History to close first (VoiceBarNotchSurfaceCoordinator).
+        .onChange(of: presentationModel?.historyCloseRequest ?? 0) { _, _ in
+            isHistoryPresented = false
+        }
     }
 
     private var notchPresentation: VoiceBarNotchPresentation {

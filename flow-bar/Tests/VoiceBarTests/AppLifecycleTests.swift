@@ -1080,6 +1080,19 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
+    /// 2.3 U2: the microphone list hangs 6 pt under the 32 pt top row and ends 4 pt past the left wing's
+    /// notch-side edge (the 3-wings mock's placement).
+    func testTheMicrophoneListOpensWhereTheMockPutsIt() {
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false, isRecording: false, hasCompactStatus: false,
+            isHovered: true, isKeyboardFocused: false
+        )
+        let layout = VoiceBarPanelLayout.make(presentation: presentation)
+        let microphone = AppDelegate.notchMenuOrigin(kind: .microphone, menuWidth: 236, layout: layout)
+        XCTAssertEqual(microphone.x + 236, layout.leadingWingWindowRect.maxX + 4, accuracy: 0.001)
+        XCTAssertEqual(layout.panelSize.height - microphone.y, 38, accuracy: 0.001)
+    }
+
     /// 2.3 U2: the badged gear opens Settings › General › Permissions when the F5 listener lacks permissions.
     @MainActor
     func testTheBadgedGearOpensPermissions() {
