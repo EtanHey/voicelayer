@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
   pull_request:
-    branches: [main]
+    branches: [main, integration/2.2.61]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
 
 permissions:
@@ -31,10 +31,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.4'
+      - name: Read TLC artifact identity
+        id: tlc-pin
+        run: python3 -c 'import json; print("sha256=" + json.load(open("formal/tlc.lock.json"))["sha256"])' >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           path: ~/.cache/tla/v1.8.0
-          key: tlc-${{ hashFiles('formal/tlc.lock.json') }}
+          key: tlc-${{ steps.tlc-pin.outputs.sha256 }}
       - name: Verify checksum-pinned TLC
         run: python3 -B formal/setup-tlc.py
       - uses: actions/cache@v4
