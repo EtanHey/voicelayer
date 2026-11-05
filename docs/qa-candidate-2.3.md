@@ -40,8 +40,8 @@ No speaker playback is needed, but the app must still be tested on the M1 rig.
    It must refuse active capture/session locks, afplay/say/edge-tts/rec/sox or
    unknown descendants, and established Qwen connections (including uncertain
    keep-alive connections). Resolve refusals through the captain, never bypass.
-4. Observe no resident for five seconds before launch and another five seconds
-   after QA is ready. A respawn aborts the switch and attempts normal supervised
+4. Require a proven clean exit (LaunchAgent last exit code 0), then observe no
+   resident for five seconds before launch and another five seconds after QA is ready. A respawn aborts the switch and attempts normal supervised
    restoration. Confirm status shows one QA, zero resident. Grant NEW bundle-id
    mic/accessibility permissions manually on M1. The Swift level meter may open
    the real mic even with the fixture; no mic-free acceptance is claimed.
