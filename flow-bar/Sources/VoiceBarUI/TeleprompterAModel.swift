@@ -89,7 +89,10 @@ public enum TeleprompterA {
     public static func sentence(_ texts: [String], around focus: Int?) -> String {
         guard !texts.isEmpty else { return "" }
         let at = min(max(focus ?? 0, 0), texts.count - 1)
-        let ends = { (index: Int) in texts[index].last.map { ".!?…".contains($0) } == true }
+        // A terminator still ends the sentence behind closing quotes or brackets: `"Hello."`, `(done.)`.
+        let ends = { (index: Int) in
+            texts[index].reversed().drop { "\"'”’)]".contains($0) }.first.map { ".!?…".contains($0) } == true
+        }
         var lower = at
         while lower > 0, !ends(lower - 1) { lower -= 1 }
         var upper = at
@@ -115,14 +118,19 @@ public struct SpeechWordTable: Equatable {
     @discardableResult
     public mutating func apply(_ event: [String: Any]) -> Bool {
         guard event["utteranceId"] as? String == utteranceID,
-              let offset = (event["wordOffset"] as? NSNumber)?.intValue, (0 ... 1_000_000).contains(offset),
+              let offset = (event["wordOffset"] as? NSNumber).flatMap({ Int(exactly: $0.doubleValue) }),
+              (0 ... 1_000_000).contains(offset),
               let rows = event["words"] as? [[String: Any]] else { return false }
+        // Every row converts before anything changes: a time outside Int (1e20) or NaN rejects the payload
+        // instead of trapping, and a skipped row would shift every later word's index.
+        func milliseconds(_ value: Any?) -> Int? {
+            (value as? NSNumber).flatMap { $0.doubleValue.isFinite ? Int(exactly: $0.doubleValue.rounded()) : nil }
+        }
         var parsed: [Word] = []
         for row in rows {
-            guard let text = row["text"] as? String, let start = (row["startMs"] as? NSNumber)?.doubleValue,
-                  let end = (row["endMs"] as? NSNumber)?.doubleValue, start.isFinite, end.isFinite,
-                  start >= 0, end >= start else { return false }
-            parsed.append(Word(text: text, startMs: Int(start.rounded()), endMs: Int(end.rounded())))
+            guard let text = row["text"] as? String, let start = milliseconds(row["startMs"]),
+                  let end = milliseconds(row["endMs"]), start >= 0, end >= start else { return false }
+            parsed.append(Word(text: text, startMs: start, endMs: end))
         }
         if words.count < offset + parsed.count { words += Array(repeating: nil, count: offset + parsed.count - words.count) }
         for (index, word) in parsed.enumerated() { words[offset + index] = word }

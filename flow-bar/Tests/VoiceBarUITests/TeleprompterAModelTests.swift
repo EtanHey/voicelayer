@@ -79,6 +79,14 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual(TeleprompterA.sentence(texts, around: 3), "Three four five.")
         XCTAssertEqual(TeleprompterA.sentence(texts, around: nil), "One two.")
         XCTAssertEqual(TeleprompterA.sentence(texts, around: 5), "Six")
+        let quoted = ["He", "said", "\"Hello.\"", "Next", "sentence."]
+        XCTAssertEqual(TeleprompterA.sentence(quoted, around: 1), "He said \"Hello.\"")
+        XCTAssertEqual(TeleprompterA.sentence(quoted, around: 4), "Next sentence.")
+        let curly = ["She", "asked", "“Why?”", "Then", "left."]
+        XCTAssertEqual(TeleprompterA.sentence(curly, around: 3), "Then left.")
+        XCTAssertEqual(TeleprompterA.sentence(["It", "worked", "(mostly.)", "Then", "stop."], around: 3), "Then stop.")
+        XCTAssertEqual(TeleprompterA.sentence(["A", "[note!]", "B", "c."], around: 0), "A [note!]")
+        XCTAssertEqual(TeleprompterA.sentence(["Say", "'yes.'", "Go"], around: 2), "Go")
     }
 
     func testWordTableUpsertsByGlobalIndexAndRefusesOtherUtterances() {
@@ -88,7 +96,14 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertFalse(table.apply(words("u2", offset: 0, [("Other", 0, 10)])))
         XCTAssertFalse(table.apply(["type": "speech_words", "utteranceId": "u1", "wordOffset": -1, "words": []]))
         XCTAssertFalse(table.apply(words("u1", offset: 0, [("Bad", 300, 100)])))
+        // Times that do not fit Int, or NaN/negative ones, reject the payload without trapping or mutating.
+        for (start, end) in [(1e20, 1e20), (100.0, 1e20), (Double.nan, 300.0), (-5.0, 300.0), (100.0, Double.infinity)] {
+            XCTAssertFalse(table.apply(["utteranceId": "u1", "wordOffset": 0,
+                                        "words": [["text": "Hello", "startMs": start, "endMs": end]]]), "\(start)…\(end)")
+        }
+        XCTAssertFalse(table.apply(["utteranceId": "u1", "wordOffset": 1e20, "words": [] as [[String: Any]]]))
         XCTAssertEqual(table.words.map { $0?.text }, ["Hello", "world", "again"])
+        XCTAssertEqual(table.words[0]?.startMs, 100)
         // A later alignment replaces the same indices.
         XCTAssertTrue(table.apply(words("u1", offset: 2, [("again", 1900, 2300)])))
         XCTAssertEqual(table.words[2]?.startMs, 1900)
