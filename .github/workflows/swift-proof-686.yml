@@ -1,0 +1,126 @@
+name: Swift proof (#686 peer report)
+
+# AIDEV-NOTE: peer-proof harness for draft PR #686 (U3b Dictionary + Speech).
+# ci.yml's Swift job only runs on PRs into main, so a PR stacked on #686's topic
+# branch never compiles Swift. This runs the same build/test commands as ci.yml's
+# `swift` job against three pinned trees and records the result. It does not
+# change production source. Remove it (or drop this PR) once captain has the
+# native result.
+#   base686   b53ba2f  integration/2.3 that #686 was cut from (old behaviour)
+#   head686   00283c0  #686 head (new behaviour)
+#   merge-v10 531a261 + 00283c0  #686 merged onto integration/2.3 with V10 #682 and P1 #683
+
+on:
+  push:
+    branches: [claude/draft-pr-review-oqto4f]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-proof-686-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift:
+    name: Swift ${{ matrix.tree }}
+    runs-on: macos-26
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        tree: [base686, head686, merge-v10]
+    env:
+      BASE686: b53ba2f2d0d5f0df705c0b534a0fc03d613f87f8
+      HEAD686: 00283c00979a6f0d7d745343fd7a37b72f553a1f
+      V10INT: 531a261ede5d11466920e2249dac0b4045c33c64
+      SUITES: 'CloneEngineControlTests|DictionaryPaneTests|SettingsViewTests|SettingsViewContractTests|SpeechSettingsTests'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select tree
+        run: |
+          set -euo pipefail
+          git config user.name proof && git config user.email proof@example.invalid
+          case "${{ matrix.tree }}" in
+            base686) git checkout --detach "$BASE686" ;;
+            head686) git checkout --detach "$HEAD686" ;;
+            merge-v10) git checkout --detach "$V10INT" && git merge --no-edit --no-ff "$HEAD686" ;;
+          esac
+          echo "tree=${{ matrix.tree }} HEAD=$(git rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p "$RUNNER_TEMP/proof"
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build VoiceBar
+        id: build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          swift build --package-path flow-bar --product VoiceBar 2>&1 | tee "$RUNNER_TEMP/proof/build.log"
+
+      - name: Build tests
+        id: buildtests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          swift build --package-path flow-bar --build-tests 2>&1 | tee "$RUNNER_TEMP/proof/build-tests.log"
+
+      - name: Targeted suites (#686 new + updated)
+        id: targeted
+        if: steps.buildtests.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          swift test --skip-build --package-path flow-bar --filter "$SUITES" 2>&1 | tee "$RUNNER_TEMP/proof/test-targeted.log"
+
+      - name: Full swift test
+        id: full
+        if: steps.buildtests.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          swift test --skip-build --package-path flow-bar 2>&1 | tee "$RUNNER_TEMP/proof/test-full.log"
+
+      - name: Summary
+        if: always()
+        run: |
+          cd "$RUNNER_TEMP/proof"
+          {
+            echo "### ${{ matrix.tree }}"
+            echo "build=${{ steps.build.outcome }} build-tests=${{ steps.buildtests.outcome }} targeted=${{ steps.targeted.outcome }} full=${{ steps.full.outcome }}"
+            echo '```'
+            for f in build.log build-tests.log; do [ -f "$f" ] && grep -E ': error: ' "$f" | sort -u | head -60; done
+            for f in test-targeted.log test-full.log; do
+              [ -f "$f" ] || continue
+              echo "--- $f"
+              grep -E ': error: |Test Case .* failed|Executed [0-9]+ tests|with [0-9]+ failures? ' "$f" | grep -v ' passed ' | sort -u | head -120
+            done
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: swift-proof-${{ matrix.tree }}
+          path: ${{ runner.temp }}/proof
+          retention-days: 14
+
+      - name: Verdict
+        if: always()
+        run: |
+          for o in "${{ steps.build.outcome }}" "${{ steps.buildtests.outcome }}" "${{ steps.targeted.outcome }}" "${{ steps.full.outcome }}"; do
+            [ "$o" = success ] || { echo "not green: $o"; exit 1; }
+          done
