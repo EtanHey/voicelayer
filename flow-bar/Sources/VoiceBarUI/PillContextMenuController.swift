@@ -151,6 +151,47 @@ public final class PillContextMenuController: NSObject {
         return menu
     }
 
+    public var updateStatusProvider: () -> String? = { nil }
+    public static func versionLine(version: String, updateStatus: String?) -> String {
+        let title = version.isEmpty ? "VoiceBar" : "VoiceBar \(version)"
+        return updateStatus.map { "\(title) · \($0)" } ?? title
+    }
+
+    static var versionTextColor: NSColor { .labelColor.withAlphaComponent(0.65) }
+
+    /// Static metadata needs readable text even though it is not an enabled command.
+    public static func versionItem(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let label = NSTextField(labelWithString: title)
+        label.font = .menuFont(ofSize: 13)
+        label.textColor = versionTextColor
+        label.frame = NSRect(x: 12, y: 4, width: label.fittingSize.width, height: 18)
+        let row = NSView(frame: NSRect(x: 0, y: 0, width: label.frame.maxX + 12, height: 26))
+        row.addSubview(label)
+        item.view = row
+        item.isEnabled = false
+        return item
+    }
+
+    public func makeDockMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (title, action, enabled) in [
+            ("Copy last transcript", #selector(handleCopyLastTranscript), Self.isPasteEnabled(transcript: transcriptProvider())),
+            ("Paste last transcript", #selector(handlePasteLastTranscript), Self.isPasteEnabled(transcript: transcriptProvider())),
+            ("Settings…", #selector(handleOpenSettings), true),
+            (isSnoozedProvider() ? "Show VoiceBar" : "Hide notch for 1 hour",
+             isSnoozedProvider() ? #selector(handleUnsnooze) : #selector(handleSnooze), true),
+        ] {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled
+        }
+        // macOS appends its own Quit; adding another would duplicate the Dock command.
+        menu.insertItem(.separator(), at: 2)
+        return menu
+    }
+
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
         let entries = recentTranscriptionEntriesProvider()
