@@ -54,18 +54,18 @@ extension CloneEngineController {
               Bundle.main.bundleIdentifier == "com.voicelayer.voicebar" else { return nil }
         let home = NSHomeDirectory()
         let autostart = defaults.object(forKey: preferenceKey) as? Bool ?? true
+        let log = CloneEngineLog(url: URL(fileURLWithPath: home + "/Library/Logs/voicelayer/clone-engine.log"))
         return CloneEngineController(autostart: autostart, saveAutostart: { defaults.set($0, forKey: preferenceKey) },
             probe: { CloneEngineProbe.inspect(url: URL(string: "http://127.0.0.1:8880/health")!,
                                              tokenFile: home + "/.voicelayer/daemon.secret", completion: $0) },
             makeProcess: {
+                let python = home + "/.voicelayer/venv/bin/python"
+                guard FileManager.default.isExecutableFile(atPath: python) else { throw CloneEngineLaunchError.pythonMissing }
                 guard let config = VoiceBarDaemonLaunchConfiguration.configuration(for: executable) else {
-                    throw NSError(domain: "CloneEngine", code: 1)
+                    throw CloneEngineLaunchError.sourceUnavailable
                 }
                 let script = URL(fileURLWithPath: config.workingDirectory).appendingPathComponent("src/tts_daemon.py")
-                let python = home + "/.voicelayer/venv/bin/python"
-                guard FileManager.default.isExecutableFile(atPath: python), FileManager.default.fileExists(atPath: script.path) else {
-                    throw NSError(domain: "CloneEngine", code: 2)
-                }
+                guard FileManager.default.fileExists(atPath: script.path) else { throw CloneEngineLaunchError.scriptMissing }
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: python)
                 process.arguments = [script.path, "--host", "127.0.0.1", "--port", "8880"]
@@ -73,9 +73,8 @@ extension CloneEngineController {
                 // Deliberately no inherited API keys, Python injection, proxy or QA configuration.
                 process.environment = ["HOME": home, "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "LANG": "en_US.UTF-8"]
                 process.standardInput = FileHandle.nullDevice
-                process.standardOutput = FileHandle.nullDevice
-                process.standardError = FileHandle.nullDevice
+                log.attach(to: process)
                 return process
-            })
+            }, diagnostic: { log.appendLine($0) })
     }
 }

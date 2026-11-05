@@ -3,7 +3,18 @@ import XCTest
 @testable import VoiceBar
 
 final class CloneEngineLogTests: XCTestCase {
-    func testAppendPreservesExistingBytesAndRotatesWhileEngineIsStillRunning() throws {
+    func testOversizedLegacyLogIsReducedToABoundedTailOnRotation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let logger = CloneEngineLog(url: root.appendingPathComponent("clone-engine.log"), maxBytes: 64)
+        try Data(repeating: 65, count: 200).write(to: logger.url)
+        logger.append(Data([66])); logger.flush()
+        XCTAssertEqual(try Data(contentsOf: logger.url), Data([66]))
+        XCTAssertEqual(try Data(contentsOf: logger.url.appendingPathExtension("1")), Data(repeating: 65, count: 64))
+    }
+
+    func testAppendPreservesExistingBytesAndRotatesOnEveryWrite() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let logger = CloneEngineLog(url: root.appendingPathComponent("clone-engine.log"), maxBytes: 64)

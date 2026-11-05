@@ -61,3 +61,39 @@ replacing the installed app, touching live sockets/launchd or exercising the
 resident engine. No UI views, capture mechanics, personal profiles, launchd
 entries, Homebrew ledger or installed app were edited. Speaker output was observed
 muted at volume 0; no voice tool or playback command was used.
+
+
+## Round 1 changes requested (3 items)
+
+The pre-review head is `84f6b656`; it is not the reviewed/fixed head. New RED
+coverage starts at `cf0c7318`. The follow-up implementation is identified by the
+PR's Review record, with no force-push.
+
+1. Stop/Restart and inspect retirement now run termination/waits/SIGKILL on a
+   utility worker, then publish on main. The exact retiring Process remains
+   retained and gates replacements; newer intents supersede stale completions.
+   Quit alone waits synchronously, with 3-second graceful and 1-second forced
+   bounds and an observable stop_timeout failure.
+2. Four consecutive preflight/early-exit failures before health latch failed
+   with python_missing, script_missing, script_unresolved, launch_failed(code),
+   exited_early(status), or startup_timeout(status). Verified health resets the
+   budget; Start/Restart or a new app opening releases the latch. An unverified
+   occupied endpoint fails closed until explicit retry.
+3. The owned child's stdout/stderr and timestamped exit/preflight causes append
+   to a private 1 MiB log plus one 1 MiB rotated file, including continuous
+   output and oversized legacy files. Log I/O and pipe drains run off-main.
+
+Focused coverage includes a SIGTERM-ignoring fake child with main-loop progress,
+Start/Stop during retirement, late-adoption fencing, failed-retirement custody,
+four-attempt missing-runtime/exit-code exhaustion and manual recovery, real
+stdout/stderr capture, append preservation and rotation. All engines are fake;
+all ports/state/logs remain isolated. No native/live qualification was added.
+
+The model now retains owned engines through asynchronous Reap. Fixed exhausts
+134 generated / 48 distinct states with all original properties plus
+RetireRetainsOwner and EventuallyStopped. Old still fails autostart liveness
+(55/26, exit 13), no-adopt still fails AtMostOneEngine (20/15, exit 12), and the
+new unreaped mutant fails EventuallyStopped (126/48, exit 13). These failures are
+expected adverse witnesses, not positive model runs. The model assumes an
+eligible runtime and fair OS reap; permanent setup failures and bounded-stop
+failure are handled by the focused tests and the explicit failed state.
