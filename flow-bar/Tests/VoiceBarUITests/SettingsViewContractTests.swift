@@ -538,6 +538,8 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
         XCTAssertTrue(source.contains("private var setupSection: some View"))
+        // 2.3 U2's gear badge target now carries Setup (its first broken step).
+        XCTAssertTrue(source.contains("Text(setup.header)\n                .id(SettingsFocus.permissions)"))
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))
         XCTAssertEqual(SettingsGeneralCopy.relayTitle, "F5 key helper")

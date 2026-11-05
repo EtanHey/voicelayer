@@ -24,6 +24,7 @@ final class MicrophonePrioritySettingsTests: XCTestCase {
         let section = try prioritySection()
 
         XCTAssertTrue(section.contains("if isUsed {"))
+        XCTAssertFalse(section.contains("} else if row.canPrioritize"), "the pill never replaces Make default")
         XCTAssertTrue(section.contains("SettingsPill(text: \"Used for dictation\")"))
         XCTAssertFalse(section.contains("Text(\"Default\")"))
     }

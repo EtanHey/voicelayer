@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import math
 import os
 import pathlib
 import plistlib
@@ -30,7 +31,7 @@ _guard_spec.loader.exec_module(device_guard)
 
 # Full PASS recorded 1488.545 s (earlier run 1504 s); keep 40 min for both broad suites.
 # gate2246 run-01 reached 250 s of recording, before xcodebuild/recorder overhead.
-SCENARIO_BUDGET_SECONDS = {'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300}
+SCENARIO_BUDGET_SECONDS = {'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300, 'wings-u2': 300}
 # Whole owned-process cleanup (runner SIGINT 45 s + TERM/KILL legs + late children), bounded.
 CLEANUP_BUDGET_SECONDS = 180
 # Held back from the drain for the final scan and termination proof.
@@ -70,11 +71,15 @@ SUPERVISOR_LOCK_PATH = pathlib.Path('/tmp/voicebar-ui-e2e-supervisor-%d.lock' % 
 # into QA fields (unmodified printable keys). Matching is by keycode AND full modifier set (R5).
 TEXT_ENTRY = ('text', None, ())
 SCENARIO_KEYSTROKES = {'full': (('a', 0, ('command',)), (None, 51, ()), (None, 36, ()), (None, 53, ()), TEXT_ENTRY),
-                       'focused-338': (), 'hide1': (), 'gate2246': ()}
+                       'focused-338': (), 'hide1': (), 'gate2246': (), 'wings-u2': ()}
 # NSEvent/CGEvent modifier bits as stored in com.apple.symbolichotkeys parameters[2].
 HOTKEY_MODIFIERS = {'shift': 1 << 17, 'control': 1 << 18, 'option': 1 << 19, 'command': 1 << 20, 'function': 1 << 23}
 HOTKEY_CAPS_LOCK = 1 << 16  # Ignored for matching; any other unknown bit is NOT_PROVEN.
 HOTKEY_SENTINEL = 65535
+# Apple documents Control+Left/Right for Spaces. M1 CopySymbolicHotKeys also
+# confirms the Shift variants and the arrow-family secondary-Fn bit (08:44Z receipt).
+BARE_SPACE_DEFAULTS = {'79': (123, ('control',)), '80': (124, ('control',)),
+                       '81': (123, ('control', 'shift')), '82': (124, ('control', 'shift'))}
 # ANSI printable keys (letters, digits, punctuation, space); excludes Return (36) and Tab (48).
 PRINTABLE_KEYCODES = frozenset(range(0, 51)) - {36, 48}
 # Persistent host settings a stray keystroke can flip (⌥⌘D Dock hiding, ⌃F7 keyboard access,
@@ -245,7 +250,10 @@ def permission_receipt(permission):
             retained.append(dict(owner=owner,
                                  kind=kind, labels=[redacted(x) for x in labels]))
         prompts = retained
-    return dict(axTrusted=permission.get('axTrusted') is True, prompts=prompts, modals=modal_receipt(permission))
+    receipt = dict(axTrusted=permission.get('axTrusted') is True, prompts=prompts, modals=modal_receipt(permission))
+    if 'excludedModalRows' in permission:
+        receipt['excludedModalRows'] = modal_entries(permission['excludedModalRows'])
+    return receipt
 
 
 def safe_owner(owner):
@@ -259,13 +267,23 @@ def modal_entries(entries, source=None):
             raise ForeignModal('Foreign modal entry unreadable; modal inventory NOT_PROVEN', [])
         kind = source or entry.get('source')
         pid = entry.get('pid')
-        retained.append(dict(owner=safe_owner(entry.get('owner') or 'unknown'),
+        geometry = {}
+        numeric = lambda value: type(value) in (int, float) and math.isfinite(value)
+        for key in ('layer', 'bounds', 'alpha', 'onscreen'):
+            if key not in entry:
+                continue
+            value = entry[key]
+            valid = (type(value) is int if key == 'layer' else type(value) is bool if key == 'onscreen'
+                     else numeric(value) if key == 'alpha' else isinstance(value, dict)
+                     and set(value) == {'X', 'Y', 'Width', 'Height'} and all(numeric(v) for v in value.values()))
+            geometry[key] = value if valid else None
+        retained.append(dict(geometry, owner=safe_owner(entry.get('owner') or 'unknown'),
                              pid=pid if isinstance(pid, int) else None,
                              source=kind if kind in SYSTEM_MODAL_SOURCES else 'unknown',
                              title=redacted(entry.get('title', '')),
                              reason=safe_owner(str(entry.get('kind', '')) + ':' + str(entry.get('reason', '')))
                              if source == 'not-proven' else None))
-    return [{k: v for k, v in r.items() if v is not None} for r in retained]
+    return [{k: v for k, v in r.items() if v is not None or k in ('layer', 'bounds', 'alpha', 'onscreen')} for r in retained]
 
 
 def modal_receipt(permission):
@@ -295,10 +313,17 @@ def symbolic_hotkey_collisions(exported, keystrokes):
     wanted = [(key, code, sum(HOTKEY_MODIFIERS[m] for m in modifiers)) for key, code, modifiers in keystrokes]
     hits, unproven = [], []
     for number, entry in table.items():
-        if not isinstance(entry, dict) or entry.get('enabled') is False or entry.get('enabled') == 0:
+        if not isinstance(entry, dict):
+            unproven.append(str(number)); continue
+        if entry.get('enabled') is False or entry.get('enabled') == 0:
             continue
         try:
-            parameters = entry['value']['parameters']
+            bare = 'value' not in entry and str(number) in BARE_SPACE_DEFAULTS
+            if bare:
+                code, modifiers = BARE_SPACE_DEFAULTS[str(number)]
+                parameters = (HOTKEY_SENTINEL, code, sum(HOTKEY_MODIFIERS[m] for m in modifiers))
+            else:
+                parameters = entry['value']['parameters']
             ascii_code, keycode, mask = (int(x) for x in parameters)
             if len(parameters) != 3 or mask & ~known or mask < 0:
                 raise ValueError
@@ -320,6 +345,10 @@ def symbolic_hotkey_collisions(exported, keystrokes):
         mods = mask & ~HOTKEY_CAPS_LOCK
         char = chr(ascii_code).lower() if ascii_code != HOTKEY_SENTINEL else None
         for key, code, want in wanted:
+            # An arrow's secondary-Fn flag may be implicit. For bare defaults,
+            # either representation is a potential collision; custom bindings stay exact.
+            if bare:
+                want &= ~HOTKEY_MODIFIERS['function']
             if (key, code) == TEXT_ENTRY[:2]:
                 printable = keycode in PRINTABLE_KEYCODES or (keycode == HOTKEY_SENTINEL and char is not None and char.isprintable())
                 matched = not mods & command_like and printable
@@ -628,6 +657,8 @@ class NativeHost:
             return None
         try:
             record = json.loads(path.read_text())
+            if record.get('excludedModalRows'):
+                self.preflight.setdefault('latchedExcludedModalRows', []).extend(modal_entries(record['excludedModalRows']))
             entries = modal_entries(record.get('modals') or []) + modal_entries(record.get('errors') or [], 'not-proven')
         except Exception:
             entries = []
@@ -1464,7 +1495,7 @@ class NativeHost:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=pathlib.Path)
-    parser.add_argument('--scenario', default='full', choices=['full', 'hide1', 'gate2246', 'focused-338'])
+    parser.add_argument('--scenario', default='full', choices=['full', 'hide1', 'gate2246', 'focused-338', 'wings-u2'])
     args = parser.parse_args(argv)
     try:
         # Acquire before host construction or reading/changing workstation mute;

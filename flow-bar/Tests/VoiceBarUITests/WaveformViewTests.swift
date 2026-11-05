@@ -35,23 +35,14 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(WaveformLayout.leadingX(coreMaxX: 220), 244)
     }
 
-    func testWaveformHostsUseTheSameCoreRelativePlacementInEveryState() {
-        let material = VoiceBarNotchContract.material
+    /// 2.3 U2 (3-wings mock): the transcribing and reading-aloud right wings are the fixed 73.5 pt wing and hold
+    /// History + Settings or the time + Stop, not a waveform; their content sits between equal 8 pt insets whatever
+    /// the hardware calibration. Only recording draws level bars (six, in the same fixed wing).
+    func testTranscribingAndReadingRightWingsAreTheFixedWingAtEveryCalibration() {
         let processing = VoiceBarPresentation.notchPresentation(
-            from: VoiceBarNotchOperationalInput(
-                mode: .transcribing,
-                statusText: "Transcribing"
-            )
+            from: VoiceBarNotchOperationalInput(mode: .transcribing, statusText: "Transcribing")
         )
-        let expectedProcessingWidth = WaveformLayout.coreGap +
-            material.waveformSlotWidth + material.compactControlSpacing +
-            material.compactControlSize + WaveformLayout.outerInset
-
-        XCTAssertEqual(
-            processing.geometry.trailingWingWidth,
-            expectedProcessingWidth,
-            "the cancel control follows the shared waveform without an invisible leading reserve"
-        )
+        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
 
         let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
         let speaking = VoiceBarPresentation.notchPresentation(
@@ -62,18 +53,19 @@ final class WaveformViewTests: XCTestCase {
                 visibleCoreOcclusionInset: calibratedInset
             )
         )
-        let speakingSlot = material.wingContentLayout(
+        let speakingSlot = VoiceBarNotchContract.material.wingContentLayout(
             for: .trailing,
             state: .teleprompter,
             visibleCoreOcclusionInset: calibratedInset
         )
-
-        XCTAssertEqual(speakingSlot.coreInset, WaveformLayout.coreGap)
-        XCTAssertEqual(speakingSlot.outerInset, WaveformLayout.outerInset)
-        XCTAssertEqual(
-            speaking.geometry.trailingWingWidth,
-            speakingSlot.coreInset + material.waveformSlotWidth + speakingSlot.outerInset,
-            "the live speaking waveform keeps the shared core gap when calibration changes"
+        XCTAssertEqual(speakingSlot.coreInset, VoiceBarNotchContract.fixedWingContentInset)
+        XCTAssertEqual(speakingSlot.outerInset, VoiceBarNotchContract.fixedWingContentInset)
+        XCTAssertEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth,
+                       "the reading wing keeps the fixed width when calibration changes")
+        XCTAssertLessThanOrEqual(
+            WaveformBarStyle.wingLevels.viewportWidth,
+            VoiceBarNotchContract.fixedWingWidth - 2 * VoiceBarNotchContract.fixedWingContentInset,
+            "the recording level bars fit the fixed wing's content lane"
         )
     }
 
@@ -94,11 +86,15 @@ final class WaveformViewTests: XCTestCase {
             .components(separatedBy: "private var notchWaveform")[0]
         XCTAssertTrue(compact.contains("case .speaking:\n            notchSpeakingTrailingContent"))
         XCTAssertTrue(speaking.contains("return HStack("))
-        XCTAssertEqual(speaking.components(separatedBy: "\n            notchWaveform\n").count - 1, 1)
+        // 2.3 U2: the reading wing shows the time, not a waveform.
+        XCTAssertEqual(speaking.components(separatedBy: "notchWaveform").count - 1, 0)
+        XCTAssertTrue(speaking.contains("VoiceBarReadingTimeLabel("))
     }
 
     @MainActor
-    func testRenderedProcessingAndSpeakingWaveformsShareTheCoreGap() throws {
+    func testRenderedTranscribingAndReadingRightWingsDrawNoWaveform() throws {
+        // 2.3 U2: History + Settings (transcribing) and the time + Stop (reading) replace the blue waveform; the
+        // right wing never carries a third element.
         let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
 
         let processingState = VoiceState()
@@ -137,7 +133,6 @@ final class WaveformViewTests: XCTestCase {
             )
         )
 
-        var renderedCoreGaps: [Int] = []
         for (state, presentation, label) in [
             (processingState, processingPresentation, "processing"),
             (speakingState, speakingPresentation, "speaking"),
@@ -155,23 +150,13 @@ final class WaveformViewTests: XCTestCase {
                 ((presentation.geometry.coreOriginX + presentation.geometry.coreWidth +
                         presentation.geometry.trailingWingWidth) * scale).rounded()
             )
-            let blueBounds = try XCTUnwrap(
-                blueHorizontalBounds(
-                    in: image,
-                    xRange: wingMinX ..< min(wingMaxX, image.width)
-                ),
-                "expected blue waveform pixels in the \(label) trailing wing"
-            )
-            let leadingPadding = blueBounds.lowerBound - wingMinX
-            renderedCoreGaps.append(leadingPadding)
-            XCTAssertEqual(
-                leadingPadding,
-                Int((WaveformLayout.coreGap * scale).rounded()),
-                accuracy: max(2, Int((2 * scale).rounded())),
-                "\(label) waveform must begin at the shared core-relative gap"
+            // The top row only: a teleprompter body below the wing is not the wing.
+            let topRow = Int((presentation.geometry.topHeight * scale).rounded())
+            XCTAssertNil(
+                blueHorizontalBounds(in: image, xRange: wingMinX ..< min(wingMaxX, image.width), rowLimit: topRow),
+                "no blue waveform pixels in the \(label) trailing wing"
             )
         }
-        XCTAssertEqual(renderedCoreGaps[0], renderedCoreGaps[1], accuracy: 2)
     }
 
     func testEnvelopeFollowerUsesLightAttackAndA200MillisecondRelease() {
@@ -407,7 +392,7 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertFalse(source.contains("centerOutHistory"))
     }
 
-    func testTranscribingKeepsOneGoldWaveformInTheRecordingWingAndMorphsTheIndicator() throws {
+    func testTranscribingShowsTheSpinnerLeftAndHistorySettingsRight() throws {
         let source = try barViewSource()
         let leading = try XCTUnwrap(source.components(separatedBy: "private var notchLeadingContent").dropFirst().first)
             .components(separatedBy: "private var playbackPauseControl")[0]
@@ -419,14 +404,16 @@ final class WaveformViewTests: XCTestCase {
         let compact = try XCTUnwrap(source.components(separatedBy: "private var notchCompactStatusContent").dropFirst().first)
             .components(separatedBy: "private var notchSpeakingTrailingContent")[0]
 
-        XCTAssertTrue(leadingCompactStatusBranch.contains("if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {\n                ProcessingSpinner()"))
+        XCTAssertTrue(leadingCompactStatusBranch.contains("if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {"))
         XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner()"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))
         XCTAssertTrue(trailingBranch.contains("notchWaveform"))
-        XCTAssertTrue(trailingBranch.contains("case .recording:\n            notchWaveform"))
+        // 2.3 U2: the recording wing's six level bars; transcribing keeps History + Settings, no waveform.
+        XCTAssertTrue(trailingBranch.contains("notchWaveform(style: .wingLevels)"))
         XCTAssertTrue(trailingBranch.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent"))
-        XCTAssertTrue(compact.contains("case .transcribing:\n            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {\n                notchWaveform"))
+        XCTAssertTrue(compact.contains("historyButton\n                settingsButton"))
+        XCTAssertFalse(compact.contains("notchWaveform"))
         XCTAssertTrue(source.contains("private var notchWaveform"))
         XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))
     }
@@ -434,8 +421,11 @@ final class WaveformViewTests: XCTestCase {
     func testEveryWaveformModeUsesTheSharedFixedViewport() throws {
         let source = try waveformViewSource()
 
-        XCTAssertTrue(source.contains(".frame(width: WaveformLayout.viewportWidth"))
-        XCTAssertTrue(source.contains("height: WaveformLayout.viewportHeight"))
+        // 2.3 U2: the viewport comes from the bar style (`.standard` is the 46 × 24 pt meter, `.wingLevels` the
+        // recording wing's six bars), still one fixed frame per style.
+        XCTAssertTrue(source.contains(".frame(width: style.viewportWidth, height: maxHeight)"))
+        XCTAssertTrue(source.contains("case .standard: WaveformLayout.viewportWidth"))
+        XCTAssertTrue(source.contains("case .standard: WaveformLayout.viewportHeight"))
         XCTAssertTrue(source.contains(".fixedSize(horizontal: true, vertical: true)"))
         XCTAssertFalse(
             source
@@ -729,11 +719,12 @@ final class WaveformViewTests: XCTestCase {
 
     private func blueHorizontalBounds(
         in image: VoiceBarRGBImage,
-        xRange: Range<Int>
+        xRange: Range<Int>,
+        rowLimit: Int? = nil
     ) -> Range<Int>? {
         var minX = Int.max
         var maxX = Int.min
-        for y in 0 ..< image.height {
+        for y in 0 ..< min(image.height, rowLimit ?? image.height) {
             for x in xRange {
                 let pixel = image.pixels[y * image.width + x]
                 if pixel.blue > 0.50,

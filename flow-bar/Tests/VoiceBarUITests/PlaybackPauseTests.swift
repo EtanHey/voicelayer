@@ -146,11 +146,9 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(pausedEvent())
         let paused = presentation(for: state)
         XCTAssertEqual(paused.visualState, .compactStatus)
-        // Paused shows play + stop only; the eye button belongs to a hidden-but-playing read.
-        XCTAssertEqual(
-            paused.geometry.trailingWingWidth,
-            VoiceBarNotchContract.compactStatusDefaultTrailingWingWidth
-        )
+        // Paused shows the time + Stop (2.3 U2: in the fixed 73.5 pt wing); the eye belongs to a hidden-but-playing
+        // read and takes the time's place, so the wing never widens for it.
+        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
 
         resume(state, offset: 2500)
         XCTAssertFalse(state.isPlaybackPaused)

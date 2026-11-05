@@ -43,6 +43,26 @@ final class SettingsGeneralPaneShotsTests: XCTestCase {
         ]
     }
 
+    /// Review R1 #736: disconnected AirPods first, the connected built-in mic second and in use. The built-in carries
+    /// the pill AND can still be made default, so it stays first when the AirPods reconnect.
+    func testTheMicInUseCanStillBeMadeDefaultBelowADisconnectedOne() {
+        let airpods = MicrophonePriorityRow(uid: "air", deviceID: nil, label: "AirPods Pro", isConnected: false)
+        let builtIn = MicrophonePriorityRow(uid: "mbp", deviceID: "2", label: "MacBook Pro Microphone", isConnected: true)
+        let snapshot = MicrophonePrioritySnapshot(rows: [airpods, builtIn], nextDeviceName: builtIn.label,
+                                                  nextDeviceUID: "mbp")
+        XCTAssertTrue(SettingsMicrophoneRowPresentation.isUsedForDictation(builtIn, snapshot: snapshot))
+        XCTAssertTrue(SettingsMicrophoneRowPresentation.offersMakeDefault(builtIn, at: 1))
+        XCTAssertEqual(snapshot.makingDefaultUIDs(at: 1), ["mbp", "air"], "the write still goes through the reorder")
+        XCTAssertFalse(SettingsMicrophoneRowPresentation.offersMakeDefault(airpods, at: 0))
+        XCTAssertFalse(SettingsMicrophoneRowPresentation.offersMakeDefault(builtIn, at: 0), "already first")
+    }
+
+    /// U1 (#727) gives the installed app a Dock icon whose click brings a hidden notch back.
+    func testHideTheNotchSaysHowToBringItBack() {
+        XCTAssertEqual(SettingsGeneralCopy.hideDescription,
+                       "VoiceBar keeps working. Click its Dock icon to bring the notch back.")
+    }
+
     func testGeneralRowsNeverClipBeforeTheSecondLine() {
         SettingsRowClippingGuard.check(rowCases)
     }

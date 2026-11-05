@@ -236,8 +236,9 @@ final class AppLifecycleTests: XCTestCase {
 
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .hoverLauncher),
+            // 2.3 U2: the mic and its chevron.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: 2,
                 trailingControlCountFromCore: 2
             )
         )
@@ -257,10 +258,8 @@ final class AppLifecycleTests: XCTestCase {
         state.mode = .transcribing
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
-            VoiceBarNotchInteractionConfiguration(
-                trailingControlCountFromOuter: 1,
-                trailingOuterInset: WaveformLayout.outerInset
-            )
+            // 2.3 U2: History and Settings stay live while transcribing.
+            VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
         )
 
         state.mode = .speaking
@@ -282,7 +281,7 @@ final class AppLifecycleTests: XCTestCase {
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 1,
                 trailingControlCountFromOuter: 2,
-                trailingOuterInset: WaveformLayout.outerInset
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
             )
         )
     }
@@ -1093,6 +1092,30 @@ final class AppLifecycleTests: XCTestCase {
             source.contains("MenuBarStatusItemController(button: button, presenter: presenter)"),
             "the status item is created at launch"
         )
+    }
+
+    /// 2.3 U2: the microphone list hangs 6 pt under the 32 pt top row and ends 4 pt past the left wing's
+    /// notch-side edge (the 3-wings mock's placement).
+    func testTheMicrophoneListOpensWhereTheMockPutsIt() {
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false, isRecording: false, hasCompactStatus: false,
+            isHovered: true, isKeyboardFocused: false
+        )
+        let layout = VoiceBarPanelLayout.make(presentation: presentation)
+        let microphone = AppDelegate.notchMenuOrigin(kind: .microphone, menuWidth: 236, layout: layout)
+        XCTAssertEqual(microphone.x + 236, layout.leadingWingWindowRect.maxX + 4, accuracy: 0.001)
+        XCTAssertEqual(layout.panelSize.height - microphone.y, 38, accuracy: 0.001)
+    }
+
+    /// 2.3 U2: the badged gear opens Settings › General › Permissions when the F5 listener lacks permissions.
+    @MainActor
+    func testTheBadgedGearOpensPermissions() {
+        let app = AppDelegate()
+        app.voiceState.setSetupMissingPermissions([.accessibility])
+        app.openSetupAttentionSettings()
+        defer { app.settingsWindowForTesting?.close() }
+        XCTAssertEqual(app.settingsTabRequestForTesting?.tab, .general)
+        XCTAssertEqual(app.settingsTabRequestForTesting?.focus, .permissions)
     }
 
     /// R4 UI pass #12: "Open Settings…" left the menu-bar popover open over Settings.

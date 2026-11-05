@@ -16,6 +16,56 @@ public enum WaveformLayout {
     }
 }
 
+/// 2.3 U2 (3-wings mock): the bars a waveform draws. `.standard` is the 7 × 4 pt meter (46 pt); `.wingLevels` is
+/// the recording wing's level meter, six 3 pt bars with 3 pt gaps, 16 pt tall (`.levels i` in the mock: a 6 pt
+/// bar scaled 0.6×–2.5×), so it fits the fixed 73.5 pt right wing.
+public enum WaveformBarStyle: Equatable, Sendable {
+    case standard
+    case wingLevels
+
+    public var barCount: Int {
+        switch self {
+        case .standard: WaveformLayout.barCount
+        case .wingLevels: 6
+        }
+    }
+
+    public var barWidth: CGFloat {
+        switch self {
+        case .standard: WaveformLayout.barWidth
+        case .wingLevels: 3
+        }
+    }
+
+    public var barSpacing: CGFloat {
+        switch self {
+        case .standard: WaveformLayout.barSpacing
+        case .wingLevels: 3
+        }
+    }
+
+    public var maxHeight: CGFloat {
+        switch self {
+        case .standard: WaveformLayout.viewportHeight
+        case .wingLevels: 16
+        }
+    }
+
+    public var minHeight: CGFloat {
+        switch self {
+        case .standard: 3
+        case .wingLevels: 4
+        }
+    }
+
+    public var viewportWidth: CGFloat {
+        switch self {
+        case .standard: WaveformLayout.viewportWidth
+        case .wingLevels: CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * barSpacing
+        }
+    }
+}
+
 public struct WaveformEnvelopeFollower {
     public private(set) var level = 0.0
     private var lastSampleTime: Double?
@@ -133,11 +183,12 @@ public struct WaveformView: View {
     private let isPaused: Bool
     @StateObject private var envelopeStore = WaveformEnvelopeStore()
 
-    private let barCount = WaveformLayout.barCount
-    private let barWidth = WaveformLayout.barWidth
-    private let barSpacing = WaveformLayout.barSpacing
-    private let maxHeight = WaveformLayout.viewportHeight
-    private let minHeight: CGFloat = 3
+    private let style: WaveformBarStyle
+    private var barCount: Int { style.barCount }
+    private var barWidth: CGFloat { style.barWidth }
+    private var barSpacing: CGFloat { style.barSpacing }
+    private var maxHeight: CGFloat { style.maxHeight }
+    private var minHeight: CGFloat { style.minHeight }
 
     public init(
         color: Color,
@@ -145,8 +196,10 @@ public struct WaveformView: View {
         isProcessing: Bool = false,
         isBooting: Bool = false,
         isPaused: Bool = false,
+        style: WaveformBarStyle = .standard,
         currentLevel: @escaping () -> Double?
     ) {
+        self.style = style
         self.color = color
         self.isListening = isListening
         self.isPaused = isPaused
@@ -163,6 +216,7 @@ public struct WaveformView: View {
     }
 
     public init(processingColor color: Color) {
+        style = .standard
         self.color = color
         isListening = false
         isPaused = false
@@ -189,7 +243,7 @@ public struct WaveformView: View {
                 minHeight: minHeight
             )
         }
-        .frame(width: WaveformLayout.viewportWidth, height: WaveformLayout.viewportHeight)
+        .frame(width: style.viewportWidth, height: maxHeight)
         .fixedSize(horizontal: true, vertical: true)
         .layoutPriority(1)
     }
@@ -270,6 +324,7 @@ public struct VoiceBarNotchWaveform: View {
     private let playbackLevel: () -> Double?
     /// An ended readback keeps the teleprompter wing filled with a still, dimmed bed.
     public let isPlaybackEnded: Bool
+    public let style: WaveformBarStyle
 
     public init(
         mode: VoiceMode,
@@ -277,8 +332,10 @@ public struct VoiceBarNotchWaveform: View {
         isCaptureLive: Bool,
         recordingLevel: @escaping () -> Double?,
         playbackLevel: @escaping () -> Double?,
-        isPlaybackEnded: Bool = false
+        isPlaybackEnded: Bool = false,
+        style: WaveformBarStyle = .standard
     ) {
+        self.style = style
         self.isPlaybackEnded = isPlaybackEnded
         self.mode = mode
         self.isListening = isListening
@@ -294,6 +351,7 @@ public struct VoiceBarNotchWaveform: View {
             isProcessing: mode == .transcribing,
             isBooting: isBooting,
             isPaused: isPlaybackEnded,
+            style: style,
             currentLevel: currentLevel
         )
     }

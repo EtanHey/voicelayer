@@ -26,53 +26,113 @@ enum SettingsRowClippingGuard {
     /// The grouped Form's section inset plus the row's own padding, on each side.
     static let formInset: CGFloat = 30
 
-    private static func height(_ view: some View, width: CGFloat) -> CGFloat {
-        NSHostingView(rootView: view.frame(width: width).fixedSize(horizontal: false, vertical: true)).fittingSize.height
-    }
+    /// Content width a row gets inside the pane's grouped Form at that window width.
+    static func rowWidth(window: CGFloat) -> CGFloat { paneWidth(window: window) - 2 * formInset }
 
-    private static func textHeight(_ text: String, _ font: Font, width: CGFloat, lines: Int?) -> CGFloat {
-        height(Text(text).font(font).lineLimit(lines).truncationMode(.tail)
-            .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading), width: width)
-    }
-
-    /// Every row shows its title and description on up to two lines each: never fewer than the text needs (no
-    /// one-line clip, no ellipsis before line 2) and never more (the ellipsis comes after line 2). Trailing controls
-    /// never squeeze the text column below its minimum; they wrap under it.
-    static func check(_ rows: [SettingsRowCase], file: StaticString = #filePath, line: UInt = #line) {
-        let leadWidth = NSHostingView(rootView: SettingsSetupMark(isDone: false)).fittingSize.width + 8
+    /// Renders `row` (the real consumer layout) at both window widths and checks every visible row text against the
+    /// pixels actually drawn. See `violations(in:width:)`.
+    static func check(_ name: String, file: StaticString = #filePath, line: UInt = #line,
+                      _ row: @escaping (CGFloat) -> some View) {
         for window in windowWidths {
-            let width = paneWidth(window: window) - 2 * formInset
-            for row in rows {
-                let where_ = "\(row.title) @\(Int(window))"
-                let controls = NSHostingView(rootView: HStack(spacing: 6) { row.controls }.fixedSize()).fittingSize
-                let wraps = SettingsRowLayout.wrapsControls(width: width, controlsWidth: controls.width, spacing: 8,
-                                                            textMinWidth: SettingsRowLabel.textMinWidth)
-                let text = wraps ? width : width - controls.width - 8
-                XCTAssertGreaterThanOrEqual(text, SettingsRowLabel.textMinWidth, "\(where_): text squeezed",
-                                            file: file, line: line)
-                let column = text - (row.hasLead ? leadWidth : 0)
-                var expected = textHeight(row.title, SettingsRowLabel.titleFont, width: column, lines: 2)
-                for (string, font) in [(row.title, SettingsRowLabel.titleFont)]
-                    + (row.description.map { [($0, SettingsRowLabel.descriptionFont)] } ?? []) {
-                    let one = textHeight(string, font, width: column, lines: 1)
-                    let full = textHeight(string, font, width: column, lines: nil)
-                    let two = textHeight(string, font, width: column, lines: 2)
-                    if full > one + 0.5 {
-                        XCTAssertGreaterThan(two, one + 0.5, "\(where_): ellipsis before line 2", file: file, line: line)
-                    }
-                }
-                if let description = row.description {
-                    expected += 2 + textHeight(description, SettingsRowLabel.descriptionFont, width: column, lines: 2)
-                }
-                let lead = row.hasLead ? AnyView(SettingsSetupMark(isDone: false)) : AnyView(EmptyView())
-                let rendered = height(SettingsRow(title: row.title, description: row.description, lead: { lead }) {
-                    row.controls
-                }, width: width) - 4
-                let floor = wraps ? expected + 4 + controls.height : max(expected, controls.height)
-                XCTAssertGreaterThanOrEqual(rendered, floor - 1.5, "\(where_): clipped below two lines",
-                                            file: file, line: line)
-                XCTAssertLessThanOrEqual(rendered, floor + 1.5, "\(where_): grew past two lines", file: file, line: line)
+            let found = violations(in: row(rowWidth(window: window)), width: rowWidth(window: window))
+            XCTAssertEqual(found, [], "\(name) @\(Int(window))", file: file, line: line)
+        }
+    }
+
+    static func check(_ rows: [SettingsRowCase], file: StaticString = #filePath, line: UInt = #line) {
+        for row in rows {
+            let lead = row.hasLead ? AnyView(SettingsSetupMark(isDone: false)) : AnyView(EmptyView())
+            check(row.title, file: file, line: line) { _ in
+                SettingsRow(title: row.title, description: row.description, lead: { lead }) { row.controls }
             }
+        }
+    }
+
+    /// V12, checked on rendered pixels: each text that publishes `SettingsTextAuditKey` is cropped out of the real
+    /// render at its laid-out frame and compared with `Text(…).lineLimit(2).truncationMode(.tail)` drawn alone at the
+    /// same width. A one-line clip, an ellipsis before line 2, head truncation, a third line, or a horizontal crop by
+    /// an ancestor all change the ink, so they are reported; an empty array means every text matched.
+    static func violations(in view: some View, width: CGFloat) -> [String] {
+        let box = AuditBox()
+        let root = view.frame(width: width).fixedSize(horizontal: false, vertical: true)
+            .onPreferenceChange(SettingsTextAuditKey.self) { box.entries = $0 }
+        let size = CGSize(width: width, height: ceil(NSHostingView(rootView: root).fittingSize.height))
+        guard let actual = try? render(root, size: size, appearance: NSAppearance(named: .aqua)!) else {
+            return ["render failed"]
+        }
+        guard !box.entries.isEmpty else { return ["no audited text found"] }
+        let scale = CGFloat(actual.pixelsWide) / size.width
+        return box.entries.compactMap { entry in
+            let label = "\"\(entry.text.prefix(40))\""
+            guard CGRect(origin: .zero, size: size).insetBy(dx: -0.5, dy: -0.5).contains(entry.frame) else {
+                return "\(label) lies outside the row (\(entry.frame))"
+            }
+            let reference = Text(entry.text).font(entry.font).lineLimit(2).truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: entry.frame.width, alignment: .topLeading)
+                .foregroundStyle(Color.black)
+            let referenceHeight = NSHostingView(rootView: reference).fittingSize.height
+            if abs(referenceHeight - entry.frame.height) > 1.5 {
+                return "\(label) is \(Int(entry.frame.height)) pt tall; two unclipped lines need \(Int(referenceHeight)) pt"
+            }
+            guard let drawn = try? render(reference, size: entry.frame.size, appearance: NSAppearance(named: .aqua)!)
+            else { return "\(label) reference render failed" }
+            let mine = InkMask(actual, frame: entry.frame, scale: scale)
+            let theirs = InkMask(drawn, frame: CGRect(origin: .zero, size: entry.frame.size),
+                                 scale: CGFloat(drawn.pixelsWide) / entry.frame.width)
+            guard mine.inked > 0 else { return "\(label) draws no text in its frame" }
+            let unmatched = mine.unmatched(against: theirs) + theirs.unmatched(against: mine)
+            let allowed = max(12, theirs.inked / 12)
+            return unmatched > allowed
+                ? "\(label) rendering differs from two-line tail truncation (\(unmatched) px, allowed \(allowed))" : nil
+        }
+    }
+
+    private final class AuditBox { var entries: [SettingsTextAuditEntry] = [] }
+
+    /// Which pixels in a crop are text: far from the crop's own background (its most common colour), relative to
+    /// the strongest ink in the crop, so light-on-dark and grey helper text binarize like black on white.
+    struct InkMask {
+        let width: Int, height: Int
+        let ink: [Bool]
+        var inked: Int { ink.lazy.filter { $0 }.count }
+
+        init(_ bitmap: NSBitmapImageRep, frame: CGRect, scale: CGFloat) {
+            let x0 = Int((frame.minX * scale).rounded()), y0 = Int((frame.minY * scale).rounded())
+            width = max(0, min(Int((frame.width * scale).rounded()), bitmap.pixelsWide - x0))
+            height = max(0, min(Int((frame.height * scale).rounded()), bitmap.pixelsHigh - y0))
+            var pixels: [(Int, Int, Int)] = []
+            pixels.reserveCapacity(width * height)
+            var sample = [Int](repeating: 0, count: max(4, bitmap.samplesPerPixel))
+            for y in 0 ..< height {
+                for x in 0 ..< width {
+                    bitmap.getPixel(&sample, atX: x0 + x, y: y0 + y)
+                    let shift = bitmap.bitsPerSample > 8 ? 8 : 0
+                    pixels.append((sample[0] >> shift, sample[1] >> shift, sample[2] >> shift))
+                }
+            }
+            var counts: [Int: Int] = [:]
+            for p in pixels { counts[(p.0 / 8) << 10 | (p.1 / 8) << 5 | p.2 / 8, default: 0] += 1 }
+            let key = counts.max { $0.value < $1.value }?.key ?? 0
+            let bg = ((key >> 10) * 8 + 4, (key >> 5 & 31) * 8 + 4, (key & 31) * 8 + 4)
+            let distance = pixels.map { abs($0.0 - bg.0) + abs($0.1 - bg.1) + abs($0.2 - bg.2) }
+            let strongest = distance.max() ?? 0
+            ink = strongest < 30 ? Array(repeating: false, count: pixels.count) : distance.map { $0 * 10 > strongest * 4 }
+        }
+
+        /// Ink here with no ink in `other` within one pixel.
+        func unmatched(against other: InkMask) -> Int {
+            var count = 0
+            for y in 0 ..< height {
+                for x in 0 ..< width where ink[y * width + x] {
+                    let near = (-1 ... 1).contains { dy in (-1 ... 1).contains { dx in
+                        let (nx, ny) = (x + dx, y + dy)
+                        return nx >= 0 && ny >= 0 && nx < other.width && ny < other.height && other.ink[ny * other.width + nx]
+                    } }
+                    if !near { count += 1 }
+                }
+            }
+            return count
         }
     }
 
