@@ -74,7 +74,9 @@ public struct VoiceBarNotchFeedback: Equatable {
         let eligible = presentation.visualState == .compactStatus || isNotice ||
             (input.mode == .recording && (input.commandModeState != nil || input.activeClipMarker != nil)) ||
             (presentation.visualState == .history && (input.commandModeState != nil || input.activeClipMarker != nil))
-        let status = !text.isEmpty && eligible && (overflow || isNotice) ? text : nil
+        // 2.3 U2: reading aloud has no wing label (the time and Stop carry it), so its status never overflows
+        // into a tab under the notch; a note still shows.
+        let status = !text.isEmpty && eligible && (overflow || isNotice) && input.mode != .speaking ? text : nil
         let note = input.transientNote.flatMap { $0.isEmpty ? nil : $0 }
         let noteOpensHistory = note.map { input.transientNoteOffersHistory ?? VoiceBarPresentation.isSelectionBusyNote($0) } == true
         // N1: every note is the compact tab under the notch, never a band across the wings.

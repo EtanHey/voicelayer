@@ -124,6 +124,16 @@ public enum VoiceBarVersionStatus: Equatable, Sendable {
         return .latest
     }
 
+    public var menuMessage: String {
+        switch self {
+        case .latest: "up to date"
+        case .checking: "checking…"
+        case .ahead: "ahead of release"
+        case .available(let version): "update to \(version)"
+        case .couldNotCheck: "check failed"
+        }
+    }
+
     public var message: String {
         switch self {
         case .checking: "Checking for updates…"
