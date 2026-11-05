@@ -88,10 +88,10 @@ all eight declared invariants have a mutant that fails that exact invariant.
 Run individual cases from this directory (TLC 2.19 accepts these options):
 
 ```sh
-nice -n 19 java -XX:+UseParallelGC -cp ~/.cache/tla/tla2tools.jar tlc2.TLC \
+../tlc.sh \
   -workers 1 -seed 1 -fp 0 \
   -metadir ../../.build.noindex/tlc-native-autopaste/current -config Current.cfg NativeAutoPaste.tla
-nice -n 19 java -XX:+UseParallelGC -cp ~/.cache/tla/tla2tools.jar tlc2.TLC \
+../tlc.sh \
   -workers 1 -seed 1 -fp 0 \
   -metadir ../../.build.noindex/tlc-native-autopaste/fixed -config Fixed.cfg NativeAutoPaste.tla
 ```
