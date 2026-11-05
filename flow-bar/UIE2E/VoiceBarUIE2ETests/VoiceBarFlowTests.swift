@@ -111,7 +111,7 @@ final class VoiceBarFlowTests: XCTestCase {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
         scenario = env["VOICEBAR_UIE2E_SCENARIO"] ?? "full"
-        guard ["full", "focused-338", "hide1", "gate2246"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
+        guard ["full", "focused-338", "hide1", "gate2246", "wings-u2"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
         if scenario == "focused-338" {
             limitations = ["Gallery variants use real production BarView/DictationCard in arbitrary page positions; they do not prove notch placement. One actual production-geometry notch render per family is checked separately.",
                 "Static confirmation holds are synthetic presentations of actual production outcomes; synchronized lifetime uses fresh production timers. No real microphone, audio, global hotkey, external insertion or installed-app acceptance is claimed.",
@@ -1092,6 +1092,12 @@ extension VoiceBarFlowTests {
     func historyFlow() {
         walk("History")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch, "select fixture history row")
+        step("assert the last row of a day is not covered by the next day's header (V27)") {
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch
+            XCTAssertTrue(row.isSelected, "the selection tint is what the check measures")
+            let shortfall = uie2eSelectionTintShortfall(row.screenshot().image, rowHeight: row.frame.height)
+            XCTAssertLessThanOrEqual(shortfall, 6, "the selected row shows its whole frame; \(shortfall) pt are painted over")
+        }
         assertHistoryCopy(equals: "QA fixture transcript שלום 👋")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch, "select specific older row")
         assertHistoryCopy(equals: "QA older transcript")
@@ -1103,6 +1109,17 @@ extension VoiceBarFlowTests {
         click(historyControl("Open stored audio in Finder"))
         receipt("history-finder")
         assertHistoryCopy("Copy recording details", contains: "Model: QA recognizer\nEffort: accurate")
+        // Etan, 2026-11-05: "can't close" the open Recording details. A visible close button, and Esc.
+        let closeDetails = app.buttons["Close recording details"]
+        if !closeDetails.exists { click(app.buttons["Recording details"], "open Recording details") }
+        step("assert open Recording details show a close button") { XCTAssertTrue(closeDetails.waitForExistence(timeout: 3)) }
+        step("close Recording details with Escape") { try mutate { app.typeKey(.escape, modifierFlags: []) } }
+        step("assert Escape closed Recording details") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: closeDetails)], timeout: 3), .completed) }
+        click(app.buttons["Recording details"], "reopen Recording details")
+        click(closeDetails, "close Recording details with its close button")
+        step("assert the close button closed Recording details") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: closeDetails)], timeout: 3), .completed) }
         click(app.buttons["Load more"])
         step("assert Dictations pagination visibly adds its next row") {
             let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA loaded transcript'")).firstMatch
@@ -1625,3 +1642,25 @@ extension VoiceBarFlowTests {
         return opened
     }
 }
+
+/// V27: how many points of a selected History row its selection tint does NOT reach. The tint (accent at 13 %
+/// over the window) is bluer than red, unlike any grey surface, text or header cover. Columns near the row's
+/// leading edge, past its 7 pt corner radius and before its icon, are scanned for their longest tinted run.
+func uie2eSelectionTintShortfall(_ image: NSImage, rowHeight: CGFloat) -> CGFloat {
+    guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return rowHeight }
+    let bitmap = NSBitmapImageRep(cgImage: cg)
+    let scale = CGFloat(bitmap.pixelsHigh) / max(1, image.size.height)
+    var longest = 0
+    for x in Int(3 * scale) ..< min(bitmap.pixelsWide, Int(8 * scale)) {
+        var run = 0
+        for y in 0 ..< bitmap.pixelsHigh {
+            if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+               (color.blueComponent - color.redComponent) * 255 > 12 {
+                run += 1
+                longest = max(longest, run)
+            } else { run = 0 }
+        }
+    }
+    return max(0, rowHeight - CGFloat(longest) / scale)
+}
+

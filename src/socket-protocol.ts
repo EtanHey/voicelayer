@@ -44,6 +44,8 @@ export interface RecordingJobsSnapshot {
 
 export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot {
   type: "state";
+  /** Word-seek identity; stable across this utterance's chunks and seeks. */
+  utteranceId?: string;
   state: VoiceLayerState;
   /** Present when state is "speaking" — the text being spoken. */
   text?: string;
@@ -204,6 +206,16 @@ export interface WordBoundary {
   text: string;
 }
 
+/** Upsert words at wordOffset; times are absolute milliseconds in this utterance.
+ * Only synthesized chunks are published. Later alignment replaces the same indices. */
+export interface SpeechWordsEvent {
+  type: "speech_words";
+  utteranceId: string;
+  wordOffset: number;
+  words: { text: string; startMs: number; endMs: number }[];
+  approximate: boolean;
+}
+
 /** Display-token identity is assigned before visual wrapping. Unknown timing
  * stays explicitly null; neither row order nor array compaction is identity. */
 export interface AlignedWordBoundary {
@@ -332,6 +344,7 @@ export interface ClipMarkerEvent {
 export type IntentOutcome = "accept" | "noop" | "reject" | "loading";
 
 export type AckCommand =
+  | "speech_seek"
   | "clone_engine"
   | "seek"
   | "pause"
@@ -423,6 +436,7 @@ export type SocketEvent = RecordingJobIdentity & (
   | ReadQueueEvent
   | StateEvent
   | SpeechEvent
+  | SpeechWordsEvent
   | TranscriptionEvent
   | ArchiveMetadataUpdatedEvent
   | TranscriptionStatusEvent
@@ -622,6 +636,12 @@ export interface SeekCommand extends SocketCommandBase {
   readback_id?: string;
 }
 
+export interface SpeechSeekCommand extends SocketCommandBase {
+  cmd: "speech_seek";
+  utteranceId: string;
+  wordIndex: number;
+}
+
 /** Pause/Resume are idempotent; an identity, when sent, must match the parked item. */
 export interface PlaybackControlCommand extends SocketCommandBase {
   cmd: "pause" | "resume";
@@ -632,6 +652,7 @@ export interface PlaybackControlCommand extends SocketCommandBase {
 }
 
 export type SocketCommand =
+  | SpeechSeekCommand
   | CloneEngineCommand
   | SeekCommand
   | PlaybackControlCommand
@@ -864,6 +885,10 @@ export function parseCommand(line: string): SocketCommand | null {
           return withCommandId<CloneEngineCommand>({cmd: "clone_engine", action: parsed.action}, id);
         }
         return null;
+      case "speech_seek":
+        if (typeof parsed.utteranceId !== "string" || !parsed.utteranceId.trim() || parsed.utteranceId.length > 256 ||
+            !Number.isSafeInteger(parsed.wordIndex) || parsed.wordIndex < 0) return null;
+        return withCommandId<SpeechSeekCommand>({ cmd: "speech_seek", utteranceId: parsed.utteranceId, wordIndex: parsed.wordIndex }, id);
       case "seek":
         if (typeof parsed.offset_ms !== "number" || !Number.isFinite(parsed.offset_ms) || parsed.offset_ms < 0 ||
             (parsed.scope !== undefined && parsed.scope !== "current" && parsed.scope !== "readback")) return null;

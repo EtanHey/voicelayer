@@ -34,6 +34,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
   let result = text;
 
   const disabled = config?.disabledStages;
+  const appliedAliasTerms = new Set<string>();
 
   // Stage 1: Filler removal (highest priority — clean noise first)
   if (!disabled?.has("fillers")) {
@@ -58,26 +59,30 @@ export function applyRules(text: string, config?: RulesConfig): string {
       config.hebrewLatinAliasSources,
       config.shouldApplyAlias,
       config.possessiveAliasSources,
+      { onApplied: (term) => appliedAliasTerms.add(term) },
     );
   }
 
-  // Stage 5: Tech vocabulary
-  if (!disabled?.has("techVocab")) {
-    result = applyTechVocab(result);
-  }
-
-  if (!disabled?.has("codeTokens")) {
-    result = preserveCodeTokens(result);
-  }
-
-  // Stage 3: Case formatting commands (before punctuation — "camel case foo bar" must be detected as phrase)
-  if (!disabled?.has("caseFormatting")) {
-    result = applyCaseFormatting(result);
-  }
+  result = applyPreNumberFormatting(result, disabled);
 
   // Stage 4: Number formatting
   if (!disabled?.has("numbers")) {
-    result = applyNumberFormatting(result);
+    const numberFormatted = applyNumberFormatting(result);
+    // Dictionary variants describe the displayed transcript. A decoder's
+    // "six point one" becomes "6 point 1" here, after the first alias pass.
+    // Retry only digit variants when formatting changed, shielding canonical
+    // terms emitted earlier so a source-like target cannot expand twice.
+    result = numberFormatted !== result && !disabled?.has("aliases") && config?.aliases
+      ? applyAliases(
+          numberFormatted,
+          Object.fromEntries(Object.entries(config.aliases).filter(([from]) => /\d/u.test(from))),
+          config.hebrewLatinAliasSources,
+          config.shouldApplyAlias,
+          config.possessiveAliasSources,
+          { protectedTerms: [...appliedAliasTerms].map(term =>
+            applyNumberFormatting(applyPreNumberFormatting(term, disabled))) },
+        )
+      : numberFormatted;
   }
 
   // Stage 2: Spoken punctuation
@@ -109,6 +114,16 @@ export function applyRules(text: string, config?: RulesConfig): string {
   result = result.replace(/[^\S\n]*\n[^\S\n]*/g, "\n");
   result = result.trim();
 
+  return result;
+}
+
+function applyPreNumberFormatting(text: string, disabled?: Set<string>): string {
+  let result = text;
+  // Stage 5: Tech vocabulary
+  if (!disabled?.has("techVocab")) result = applyTechVocab(result);
+  if (!disabled?.has("codeTokens")) result = preserveCodeTokens(result);
+  // Stage 3: Case formatting commands precede punctuation and numbers.
+  if (!disabled?.has("caseFormatting")) result = applyCaseFormatting(result);
   return result;
 }
 
@@ -1279,6 +1294,7 @@ function applyAliases(
   hebrewLatinAliasSources: ReadonlySet<string> = new Set(),
   shouldApplyAlias?: (source: string, text: string) => boolean,
   possessiveAliasSources: ReadonlySet<string> = new Set(),
+  options: { protectedTerms?: string[]; onApplied?: (term: string) => void } = {},
 ): string {
   let result = text;
   const prefixKey = JSON.stringify([[...hebrewLatinAliasSources].sort(), [...possessiveAliasSources].sort()]);
@@ -1323,6 +1339,14 @@ function applyAliases(
   // Once a spoken span has been rewritten, later (shorter) aliases must not
   // rewrite words in its replacement. Offsets refer to the current result.
   const rewrittenSpans: Array<[number, number]> = [];
+  for (const term of options.protectedTerms ?? []) {
+    const pattern = dictionarySurfacePattern(term, term, { clitics: true });
+    for (const match of result.matchAll(pattern)) {
+      const start = match.index;
+      // Shield emitted terms even behind an attached Hebrew prefix (ל-Term).
+      rewrittenSpans.push([start, start + match[0].length]);
+    }
+  }
   for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
     // Gate on what the speaker said as well as the rewritten text: an
@@ -1355,6 +1379,7 @@ function applyAliases(
         }
       }
       rewrittenSpans.push([start, start + replacement.length]);
+      options.onApplied?.(to);
     }
   }
   return result;

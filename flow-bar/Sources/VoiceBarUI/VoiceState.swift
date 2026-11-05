@@ -458,6 +458,14 @@ public final class VoiceState {
             readQueueCurrentRequestID == nil && speechPending["preview"] == nil && speechControls?.previewActive != true &&
             historyPlayback.playingURL == nil && !historyPlayback.isVoiceBusy)
     }
+    @ObservationIgnored private var quitAwaitingLegacyArchive = false
+
+    /// Only capture/save work can delay user Quit. Playback and update state cannot.
+    @MainActor public var isSavingDictationForQuit: Bool {
+        quitAwaitingLegacyArchive || mode == .recording || captureLive || isRecordingHandoffPending || isRecordingDrainPending ||
+            pendingIntent?.command == .record || deferredRecordingTakeID != nil
+    }
+
     public private(set) var quitRefusalMessage: String? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalMessage) }
     }
@@ -482,8 +490,8 @@ public final class VoiceState {
     }
 
     public func reportQuitRefusal(gateBlocked: Bool = false,
+                                  message: String = "Finish voice work or cancel the update, then quit again.",
                                   isGateStillBlocked: @escaping @MainActor () -> Bool = { false }) {
-        let message = "Finish voice work or cancel the update, then quit again."
         quitRefusalGateBlocked = gateBlocked
         quitRefusalMessage = message
         expandFromCollapse()
@@ -926,6 +934,9 @@ public final class VoiceState {
 
     /// Global hotkey availability and live gesture hint state.
     public var hotkeyEnabled: Bool = false
+    /// 2.3 U2: the permissions whose absence made the F5 listener fail. Non-empty badges the notch gear and names the
+    /// problem in its tooltip. Distinct from `hotkeyEnabled`, which is also false before the listener has started.
+    public private(set) var setupMissingPermissions: [HotkeyPermission] = []
     public var hotkeyPhase: HotkeyPhase = .idle {
         didSet {
             clearSelectionBusyNoteIfSessionEnded()
@@ -2074,6 +2085,9 @@ public final class VoiceState {
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
         let shouldShowTranscribing = mode == .recording
+        // Legacy/MCP Stop changes presentation immediately, before the daemon saves.
+        // Owned takes already retain isRecordingDrainPending until archive settlement.
+        if shouldShowTranscribing, activeCaptureTakeID == nil { quitAwaitingLegacyArchive = true }
         let shouldExitInterruptedPlayback = mode == .speaking
         let retainsReadQueue = stopRetainsReadQueue && shouldExitInterruptedPlayback && readQueueCount > 0
         var payload: [String: Any] = ["cmd": "stop"]
@@ -2276,7 +2290,9 @@ public final class VoiceState {
         guard !trimmedPath.isEmpty else { return }
         let id = UUID().uuidString
         guard historyRetranscriptionRequest.begin(path: trimmedPath, intentID: id) else { return }
-        historyRunLog.begin(id: id, path: trimmedPath)
+        // History feedback only: the text this request starts from, so the Log can say "No change: same text".
+        historyRunLog.begin(id: id, path: trimmedPath,
+                            priorText: recentTranscriptionEntries.first { $0.recordingPath == trimmedPath }?.text)
         sendCommand?([
             "cmd": "retranscribe_recording",
             "audio_path": trimmedPath,
@@ -2388,6 +2404,16 @@ public final class VoiceState {
         )
     }
 
+    /// U5: the daemon's word table for the utterance on screen (nil from a daemon without word timing).
+    public private(set) var speechWords: SpeechWordTable?
+
+    /// Playback-only: a word click names the utterance it was drawn from, never the latest one.
+    public func seekSpeechWord(utteranceID: String, wordIndex: Int) {
+        guard mode == .speaking, !isPlaybackPaused, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
+        sendCommand?(["cmd": "speech_seek", "utteranceId": utteranceID, "wordIndex": wordIndex,
+                      "id": UUID().uuidString])
+    }
+
     public func seek(offsetMs: Int) {
         guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0 else { return }
         var command: [String: Any] = ["cmd": "seek", "offset_ms": offsetMs]
@@ -2474,7 +2500,11 @@ public final class VoiceState {
     /// the paused read comes back. Never resumes audio by itself.
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
-        if mode == .disconnected || (oldValue == .speaking && mode == .idle) { retireParkedRead(); return }
+        if mode == .disconnected || (oldValue == .speaking && mode == .idle) {
+            clearCurrentSelectionReadIdentity(advanceEpoch: false)
+            retireParkedRead()
+            return
+        }
         if mode == .recording || mode == .transcribing, oldValue != .recording, oldValue != .transcribing {
             isCaptureSettlementPending = true
             if oldValue == .speaking { departedRead = currentReadSnapshot() }
@@ -2799,6 +2829,7 @@ public final class VoiceState {
         let queuesBehindDrain = isRecordingDrainPending
         guard queuesBehindDrain || mode == .idle || mode == .error || mode == .speaking || isPlaybackPaused || (mode == .transcribing && canRecordDuringProcessing) else { return }
         guard queuesBehindDrain || pendingIntent?.command != .record else { return }
+        quitAwaitingLegacyArchive = false
         let pressedAt = mode == .speaking ? playbackElapsedMilliseconds() : nil
         if mode == .speaking { pendingPauseEpoch = playbackEpoch }
         clearRetainedTeleprompter()
@@ -3041,6 +3072,13 @@ public final class VoiceState {
         playbackAmplitude: PlaybackAmplitudeEnvelope? = nil
     ) {
         guard let type = event["type"] as? String else { return }
+        // A stopped legacy capture no longer delays Quit after settlement, failure,
+        // or replacement. Failure/disconnect is not archive proof; the raw WAV remains.
+        if type == "error" || (type == "state" &&
+            (["idle", "recording"].contains(event["state"] as? String ?? "") ||
+             (event["state"] as? String == "transcribing" && event["stt_audio_ms"] != nil))) {
+            quitAwaitingLegacyArchive = false
+        }
         defer { finishDeferredRecordingOpen(event) }
         if !historyRunLog.runs.isEmpty, ["ack", "transcription", "error", "state"].contains(type) {
             historyRunLog.observe(event)
@@ -3220,6 +3258,9 @@ public final class VoiceState {
                     (event["generation"] as? NSNumber).map { (id, $0.intValue) }
                 }
                 statusText = event["text"] as? String ?? ""
+                // U5: a new utterance replaces the word table; its chunks and seeks keep it.
+                let utteranceID = event["utteranceId"] as? String
+                if speechWords?.utteranceID != utteranceID { speechWords = utteranceID.map(SpeechWordTable.init) }
                 // Consume startup timing before announcing speaking to observers.
                 if var timing = event["initial_timing"] as? [String: Any], timing["type"] as? String == "subtitle" {
                     if let number = timing["estimated_duration_ms"] as? NSNumber, number.doubleValue.isFinite,
@@ -3471,6 +3512,9 @@ public final class VoiceState {
             playbackDurationMilliseconds = max(current, duration)
             if event["final"] as? Bool == true { isPlaybackDurationGrowing = false }
 
+        case "speech_words":
+            if var table = speechWords, table.apply(event) { speechWords = table }
+
         case "subtitle":
             // Old daemons' missing/mistyped words are a no-op. Indexed payloads
             // still replace the timeline even when malformed, so they fail closed.
@@ -3718,6 +3762,7 @@ public final class VoiceState {
     }
 
     public func setConnectionStatus(_ connected: Bool) {
+        quitAwaitingLegacyArchive = false
         let previous = isConnected
         if !connected || !previous { resetRecordingJobConnectionState() }
         isConnected = connected
@@ -3933,6 +3978,17 @@ public final class VoiceState {
         } else {
             expandFromCollapse()
         }
+    }
+
+    /// 2.3 U2: the notch gear's orange dot (a setup problem). The polish alert stays on the menu-bar item until
+    /// lane U1 removes that item and folds it in here.
+    public var setupNeedsAttention: Bool {
+        !setupMissingPermissions.isEmpty
+    }
+
+    public func setSetupMissingPermissions(_ missing: [HotkeyPermission]) {
+        guard setupMissingPermissions != missing else { return }
+        setupMissingPermissions = missing
     }
 
     public func setHotkeyEnabled(_ enabled: Bool) {
@@ -5418,6 +5474,10 @@ public final class VoiceState {
     private func handleAckEvent(_ event: [String: Any]) {
         if let command = event["command"] as? String, command == "pause" || command == "resume" {
             handlePlaybackPauseAck(event, command: command)
+            return
+        }
+        if event["command"] as? String == "speech_seek" {
+            if event["reason"] as? String == "word timing unavailable" { reportWordTimingUnavailable() }
             return
         }
         if event["command"] as? String == "seek" {

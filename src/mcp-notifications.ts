@@ -15,6 +15,7 @@ export interface PlaybackOutcomeToolEvent {
 }
 
 export type VoiceToolEvent =
+  | { kind: "voice_ask_text_prompt"; question: string }
   | VoiceAskProgressEvent
   | PlaybackOutcomeToolEvent;
 
@@ -79,6 +80,10 @@ export function voiceToolEventToMcpNotification(
   event: VoiceToolEvent,
   progressToken?: ProgressToken,
 ): McpNotification {
+  if (event.kind === "voice_ask_text_prompt") {
+    return { method: "notifications/message", params: { level: "warning", logger: "voicelayer.voice_ask",
+      data: { kind: event.kind, question: event.question, message: `Speech unavailable. Please answer: ${event.question}` } } };
+  }
   if (event.kind === "playback_outcome") {
     return {
       method: "notifications/message",

@@ -41,6 +41,9 @@ precondition(current.count == historical.count)
 for (now, old) in zip(current, historical) {
     precondition(now["title"] as? String == redact(""), "current receipts use this process's keyed digest")
     var shape = now; shape["title"] = old["title"]
+    for key in ["layer", "bounds", "alpha", "onscreen"] {
+        precondition(shape.removeValue(forKey: key) != nil, "CG evidence is retained")
+    }
     precondition(shape as NSDictionary == old as NSDictionary, "preserve RC57 ownership/duplicate shape")
 }
 var identities: [Int32: QAIdentityRead] = [qa.pid: .live(qa), 60: .live(runner), 61: .live(xctest)]

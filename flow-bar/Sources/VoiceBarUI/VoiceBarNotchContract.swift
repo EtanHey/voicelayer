@@ -166,15 +166,20 @@ public struct VoiceBarNotchMaterialContract: Equatable {
     ) -> VoiceBarNotchWingContentLayout {
         // P16: every leading wing, the teleprompter's pause/play included, uses the idle-hover mic's lane
         // (Etan: "centered like the idle hover state has the microphone").
-        let isWaveformTrailing = side == .trailing && [
+        // 2.3 U2 (3-wings mock): the right wing is a fixed 73.5 pt in every state, so its content sits centred
+        // between the shared fixed-wing insets instead of the old waveform lane (24 pt from the core). That room
+        // is what fits the reading time beside Stop without widening the wing.
+        let isFixedTrailing = side == .trailing && [
             VoiceBarNotchVisualState.recording,
             .compactStatus,
             .teleprompter,
         ].contains(state)
         return VoiceBarNotchWingContentLayout(
             side: side,
-            coreInset: isWaveformTrailing ? WaveformLayout.coreGap : VoiceBarNotchContract.compactCoreContentInset,
-            outerInset: isWaveformTrailing ? WaveformLayout.outerInset : compactContentInset,
+            coreInset: isFixedTrailing
+                ? VoiceBarNotchContract.fixedWingContentInset
+                : VoiceBarNotchContract.compactCoreContentInset,
+            outerInset: isFixedTrailing ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
             alignment: .center
         )
     }
@@ -187,8 +192,11 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         switch visualState {
         case .hoverLauncher, .recording, .compactStatus:
             15
-        case .teleprompter, .history:
+        case .teleprompter:
             18
+        case .history:
+            // 2.3 lane U4, morph B: the open panel's convex bottom corners.
+            NotchHistoryMorph.openBottomRadius
         case .idle:
             11
         }
@@ -322,6 +330,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         isRecording: Bool,
         hasCompactStatus: Bool,
         hasHistoryPanel: Bool = false,
+        historyRows: Int = NotchHistoryMorph.visibleRows,
         compactStatusLeadingWingWidth: CGFloat? = nil,
         compactStatusTrailingWingWidth: CGFloat? = nil,
         recordingLeadingWingWidth: CGFloat? = nil,
@@ -382,6 +391,17 @@ public struct VoiceBarNotchPresentation: Equatable {
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
+            )
+        } else if visualState == .history, historyRows != NotchHistoryMorph.visibleRows {
+            // V6: the extended panel's hit region is the rows the handle settled on.
+            VoiceBarNotchGeometry(
+                coreWidth: baseGeometry.coreWidth,
+                topHeight: baseGeometry.topHeight,
+                leadingWingWidth: baseGeometry.leadingWingWidth,
+                trailingWingWidth: baseGeometry.trailingWingWidth,
+                bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
+                bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
+                lowerSurfaceHeight: NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(historyRows))
             )
         } else if visualState == .teleprompter, let teleprompterLeadingWingWidth {
             VoiceBarNotchGeometry(
@@ -462,9 +482,19 @@ public enum VoiceBarNotchContract {
         contentWidth: material.compactControlSize
     )
 
-    public static let hoverLauncherTrailingWingWidth = compactContentFitWingWidth(
+    /// 2.3 U2 (Etan, 2026-11-03, the 3-wings mock): both wings are one fixed width in every state the mock draws
+    /// (idle launcher, History, recording, transcribing, setup error, reading aloud), so the outline never moves
+    /// between them (R0856-05). It is today's two-control wing (the launcher's History + Settings and the
+    /// recording Stop + Cancel), which the mock measured as 73 pt; it fits mic + chevron or Stop + Cancel.
+    public static let fixedWingWidth = compactContentFitWingWidth(
         contentWidth: 2 * material.compactControlSize + material.compactControlSpacing
     )
+
+    /// The inset a fixed trailing wing keeps on both sides of its centred content (the reading time + Stop row
+    /// fills the remaining 57.5 pt exactly).
+    public static let fixedWingContentInset: CGFloat = 8
+
+    public static let hoverLauncherTrailingWingWidth = fixedWingWidth
 
     public static let waveformWingWidth = WaveformLayout.coreGap +
         material.waveformSlotWidth + WaveformLayout.outerInset
@@ -478,9 +508,7 @@ public enum VoiceBarNotchContract {
         material.compactControlSpacing +
         material.compactControlSize
 
-    public static let recordingLeadingWingWidth = compactContentFitWingWidth(
-        contentWidth: 2 * material.compactControlSize + material.compactControlSpacing
-    )
+    public static let recordingLeadingWingWidth = fixedWingWidth
 
     public static let recordingLeadingWingWidthWithHoldControl: CGFloat =
         recordingLeadingWingWidth + material.compactControlSpacing + material.compactControlSize
@@ -507,9 +535,9 @@ public enum VoiceBarNotchContract {
         2 * VoiceBarNotchFeedback.maximumTextHeight + 16 + 34 + 10 + transientNoteClearance
     public static let transientNoteHorizontalInset: CGFloat = 16
     /// Spec §4 / Etan: the History panel is the teleprompter's shell, "narrower and taller" (the teleprompter
-    /// body is 465 × 196 pt).
-    public static let historyBodyWidth: CGFloat = 320
-    public static let historyLowerSurfaceHeight: CGFloat = 360
+    /// body is 465 × 196 pt). 2.3 lane U4 (approved mock 5-history): 420 pt wide, seven 46 pt two-line rows.
+    public static let historyBodyWidth: CGFloat = NotchHistoryMorph.bodyWidth
+    public static let historyLowerSurfaceHeight: CGFloat = NotchHistoryMorph.lowerSurfaceHeight
     public static let teleprompterLeadingContentWidth: CGFloat = 50
     public static let teleprompterTrailingContentWidth = WaveformLayout.viewportWidth
 
@@ -517,9 +545,7 @@ public enum VoiceBarNotchContract {
         contentWidth: teleprompterLeadingContentWidth
     )
 
-    public static let teleprompterTrailingWingWidth = teleprompterWaveformWingWidth(
-        visibleCoreOcclusionInset: 0
-    )
+    public static let teleprompterTrailingWingWidth = fixedWingWidth
 
     public static let material = VoiceBarNotchMaterialContract(
         blackToGlassFadeWidth: 16,
@@ -561,10 +587,11 @@ public enum VoiceBarNotchContract {
             material.fadeToContentGap + contentWidth + material.outerContentInset
     }
 
+    /// 2.3 U2: the reading-aloud right wing is the fixed wing (time + Stop), like every other state.
     public static func teleprompterWaveformWingWidth(
         visibleCoreOcclusionInset _: CGFloat
     ) -> CGFloat {
-        WaveformLayout.coreGap + material.waveformSlotWidth + WaveformLayout.outerInset
+        fixedWingWidth
     }
 
     public static func geometry(
@@ -589,17 +616,17 @@ public enum VoiceBarNotchContract {
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: compactIndicatorLaneWidth,
-                trailingWingWidth: hoverLauncherTrailingWingWidth,
-                bodyLeadingExtent: compactIndicatorLaneWidth,
-                bodyTrailingExtent: hoverLauncherTrailingWingWidth
+                leadingWingWidth: fixedWingWidth,
+                trailingWingWidth: fixedWingWidth,
+                bodyLeadingExtent: fixedWingWidth,
+                bodyTrailingExtent: fixedWingWidth
             )
         case .recording:
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: recordingLeadingWingWidth,
-                trailingWingWidth: waveformWingWidth
+                leadingWingWidth: fixedWingWidth,
+                trailingWingWidth: fixedWingWidth
             )
         case .compactStatus:
             geometry(
@@ -613,19 +640,19 @@ public enum VoiceBarNotchContract {
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
                 leadingWingWidth: 0,
-                trailingWingWidth: teleprompterWaveformWingWidth(
-                    visibleCoreOcclusionInset: visibleCoreOcclusionInset
-                ),
+                trailingWingWidth: fixedWingWidth,
                 bodyLeadingExtent: 140,
                 bodyTrailingExtent: 140,
                 lowerSurfaceHeight: 196
             )
         case .history:
+            // The wings (controls, hit targets) stay the launcher's. 2.3 lane U4: the morph shape draws the top row
+            // flush with the 420 pt panel (`VoiceBarNotchHistoryMorphInput.flushTop`), as in the mock.
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: compactIndicatorLaneWidth,
-                trailingWingWidth: hoverLauncherTrailingWingWidth,
+                leadingWingWidth: fixedWingWidth,
+                trailingWingWidth: fixedWingWidth,
                 bodyLeadingExtent: historyBodyExtent(coreWidth: coreWidth),
                 bodyTrailingExtent: historyBodyExtent(coreWidth: coreWidth),
                 lowerSurfaceHeight: historyLowerSurfaceHeight
@@ -677,11 +704,10 @@ public enum VoiceBarNotchContract {
         return ownBodyHeight > 0 ? min(geometry.bodyWidth, max(tab, noteMinimumWidth)) : tab
     }
 
-    /// The History body is centred on the core and as wide as it was with two equal wings (332 pt at a 185 pt
-    /// core). It continues straight down from the History + Settings wing (UXP-2: no shoulder there) and steps
-    /// out past the mic's fitted wing. It keeps the spec's minimum width if a narrow core would leave it narrower.
+    /// The History panel is centred on the core and `historyBodyWidth` wide (2.3 mock: 420 pt), top row and body
+    /// alike. It never gets narrower than the launcher's wings on a wide core.
     static func historyBodyExtent(coreWidth: CGFloat) -> CGFloat {
-        max((historyBodyWidth - coreWidth) / 2, hoverLauncherTrailingWingWidth)
+        max((historyBodyWidth - coreWidth) / 2, hoverLauncherTrailingWingWidth, compactIndicatorLaneWidth)
     }
 
     private static func geometry(

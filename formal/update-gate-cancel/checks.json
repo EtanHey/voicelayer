@@ -1,0 +1,25 @@
+{
+  "module": "CancelRetry",
+  "sourceBaseline": "b53ba2f2d0d5f0df705c0b534a0fc03d613f87f8",
+  "sources": [
+    "src/update-gate-installer.ts",
+    "src/update-gate-installer-participant.ts",
+    "src/update-gate-admission.ts",
+    "src/__tests__/update-gate-drain-readback.test.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OldSplitProbe": {
+      "role": "mutant",
+      "target": "RecoverableCancelReopens",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "RecoverableCancelReopens"
+  ]
+}

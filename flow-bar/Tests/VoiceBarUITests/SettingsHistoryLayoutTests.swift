@@ -56,9 +56,10 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         let scopeEnd = try XCTUnwrap(source.range(of: "private var selectedHistoryEntry:", range: scopeStart.upperBound..<source.endIndex))
         let scope = String(source[scopeStart.lowerBound..<scopeEnd.lowerBound])
         let listStart = try XCTUnwrap(scope.range(of: "ScrollView(.vertical) {"))
-        let listEnd = try XCTUnwrap(scope.range(of: "}.clipped()", range: listStart.upperBound..<scope.endIndex))
+        // V27: the list's top inset now sits outside the scroll view, right after it closes.
+        let listEnd = try XCTUnwrap(scope.range(of: "// V27: the top inset sits outside the scroll view", range: listStart.upperBound..<scope.endIndex))
         let list = String(scope[listStart.upperBound..<listEnd.lowerBound])
-        let groupsEnd = try XCTUnwrap(list.range(of: "} header: { historyDayHeader(group.dayTitle()) }"))
+        let groupsEnd = try XCTUnwrap(list.range(of: "} header: { historyDayHeader(group.dayTitle(), coversAbove: 0) }"))
         let pagination = try XCTUnwrap(list.range(of: "if historyHasMore {"))
         XCTAssertLessThan(groupsEnd.upperBound, pagination.lowerBound, "pagination follows the day groups")
         XCTAssertEqual(list[groupsEnd.upperBound..<pagination.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines), "}",
