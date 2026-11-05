@@ -30,6 +30,16 @@ public struct SettingsHistoryRunLog: Equatable, Sendable {
         public var recordingObservations: [String] = []
         public var omittedObservationCount = 0
         public var recordingObservation: String? { recordingObservations.last }
+        /// The recording's text when this request started, and the first final text seen after it, as in-process
+        /// digests (never the words). Equal digests mean the re-transcription produced the same text.
+        public var priorTextDigest: Int?
+        public var resultTextDigest: Int?
+    }
+
+    /// A process-local digest of `text` with whitespace collapsed, so a re-decode that only moved a line break
+    /// still counts as the same text.
+    public static func textDigest(_ text: String) -> Int {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ").hashValue
     }
 
     public private(set) var runs: [Run] = []
@@ -40,9 +50,11 @@ public struct SettingsHistoryRunLog: Equatable, Sendable {
 
     public func runs(for path: String) -> [Run] { runs.filter { $0.path == path } }
 
-    public mutating func begin(id: String, path: String, at: Date = Date()) {
+    public mutating func begin(id: String, path: String, at: Date = Date(), priorText: String? = nil) {
         guard !runs.contains(where: { $0.id == id }) else { return }
-        runs.insert(Run(id: id, path: path, startedAt: at, observedAt: at, outcome: .requested), at: 0)
+        var run = Run(id: id, path: path, startedAt: at, observedAt: at, outcome: .requested)
+        run.priorTextDigest = priorText.map(Self.textDigest)
+        runs.insert(run, at: 0)
         if runs.count > Self.capacity {
             omittedCount += runs.count - Self.capacity
             runs.removeLast(runs.count - Self.capacity)
@@ -75,7 +87,14 @@ public struct SettingsHistoryRunLog: Equatable, Sendable {
             let observation = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Empty final result observed for this recording. It cannot be attributed to this request."
                 : "Final result observed for this recording. It cannot be attributed to this request or prove an archive write."
-            for index in unresolved(for: path) { note(index, observation, at: at) }
+            let digest = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : Self.textDigest(text)
+            for index in unresolved(for: path) {
+                // Only the first final text after a request is its result; later ones belong to later requests.
+                if runs[index].resultTextDigest == nil, runs[index].recordingObservations.isEmpty {
+                    runs[index].resultTextDigest = digest
+                }
+                note(index, observation, at: at)
+            }
         case "error":
             let message = event["message"] as? String ?? "Error detail unavailable"
             for index in runs.indices where runs[index].acknowledgement != .rejected {

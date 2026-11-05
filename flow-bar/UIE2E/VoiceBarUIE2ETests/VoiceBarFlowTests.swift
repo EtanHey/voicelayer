@@ -1103,6 +1103,17 @@ extension VoiceBarFlowTests {
         click(historyControl("Open stored audio in Finder"))
         receipt("history-finder")
         assertHistoryCopy("Copy recording details", contains: "Model: QA recognizer\nEffort: accurate")
+        // Etan, 2026-11-05: "can't close" the open Recording details. A visible close button, and Esc.
+        let closeDetails = app.buttons["Close recording details"]
+        if !closeDetails.exists { click(app.buttons["Recording details"], "open Recording details") }
+        step("assert open Recording details show a close button") { XCTAssertTrue(closeDetails.waitForExistence(timeout: 3)) }
+        step("close Recording details with Escape") { try mutate { app.typeKey(.escape, modifierFlags: []) } }
+        step("assert Escape closed Recording details") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: closeDetails)], timeout: 3), .completed) }
+        click(app.buttons["Recording details"], "reopen Recording details")
+        click(closeDetails, "close Recording details with its close button")
+        step("assert the close button closed Recording details") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: closeDetails)], timeout: 3), .completed) }
         click(app.buttons["Load more"])
         step("assert Dictations pagination visibly adds its next row") {
             let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA loaded transcript'")).firstMatch
