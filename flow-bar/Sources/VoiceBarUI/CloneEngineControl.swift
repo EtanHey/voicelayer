@@ -5,7 +5,7 @@ import Observation
 //
 // AIDEV-NOTE: VoiceBar owns the engine lifecycle (V10). Nothing in this file supervises, launches, signals,
 // parses socket frames or imports runtime code. The integration adapter maps V10's `VoiceState.cloneEngine`
-// event into `CloneEngineSnapshot`, routes `clone_engine` acknowledgements into `receive(ack:)`, and hands
+// (`CloneEngineSnapshot`, a V10 type this file deliberately does not name) into `CloneEngineStatus`, routes `clone_engine` acknowledgements into `receive(ack:)`, and hands
 // `CloneEngineCommand.wireObject` to `VoiceState.sendCommand`. An acknowledgement only means VoiceBar accepted
 // the request; what the row shows always comes from the next lifecycle snapshot.
 
@@ -36,7 +36,7 @@ public enum CloneEngineReason: Equatable, Sendable {
 }
 
 /// One `clone_engine` lifecycle event. `nil` where Settings holds no snapshot means "not reported", never "stopped".
-public struct CloneEngineSnapshot: Equatable, Sendable {
+public struct CloneEngineStatus: Equatable, Sendable {
     public var state: CloneEngineLifecycle
     public var since: Date?
     public var reason: CloneEngineReason?
@@ -50,6 +50,16 @@ public struct CloneEngineSnapshot: Equatable, Sendable {
         self.reason = reason
         self.pid = pid.flatMap { $0 > 0 ? $0 : nil }
         self.startWithVoiceBar = startWithVoiceBar
+    }
+
+    /// From the raw V10 fields, so integration maps `VoiceState.cloneEngine` (V10's `CloneEngineSnapshot`) in one
+    /// line: `CloneEngineStatus(state: s.state.rawValue, since: s.since, reason: s.reason, pid: s.pid,
+    /// startWithVoiceBar: s.startWithVoiceBar)`. An unknown state is nil (unavailable); an unreadable `since` is
+    /// kept as unknown rather than replaced with a guess.
+    public init?(state: String, since: String?, reason: String?, pid: Int?, startWithVoiceBar: Bool) {
+        guard let lifecycle = CloneEngineLifecycle(rawValue: state) else { return nil }
+        self.init(state: lifecycle, since: since.flatMap { ISO8601DateFormatter().date(from: $0) },
+                  reason: reason.map(CloneEngineReason.init(code:)), pid: pid, startWithVoiceBar: startWithVoiceBar)
     }
 
     /// An adopted engine stays foreign: VoiceBar may not stop or restart it (V10).
@@ -178,7 +188,7 @@ public struct CloneEngineControlModel: Equatable {
         let sentAt: Date
     }
 
-    public private(set) var snapshot: CloneEngineSnapshot?
+    public private(set) var snapshot: CloneEngineStatus?
     private(set) var inFlight: InFlight?
     /// Accepted lifecycle request still waiting for its first lifecycle change.
     private(set) var accepted: CloneEngineAction?
@@ -187,7 +197,7 @@ public struct CloneEngineControlModel: Equatable {
     private(set) var foreignPID: Int?
     private(set) var pendingAutostart: Bool?
 
-    public init(snapshot: CloneEngineSnapshot? = nil) {
+    public init(snapshot: CloneEngineStatus? = nil) {
         self.snapshot = snapshot
     }
 
@@ -196,7 +206,7 @@ public struct CloneEngineControlModel: Equatable {
         return snapshot.isForeign || (foreignPID != nil && foreignPID == snapshot.pid)
     }
 
-    public mutating func receive(snapshot new: CloneEngineSnapshot?) {
+    public mutating func receive(snapshot new: CloneEngineStatus?) {
         let old = snapshot
         snapshot = new
         guard let new else {
@@ -349,7 +359,7 @@ public struct CloneEngineControlModel: Equatable {
         }
     }
 
-    static func description(_ snapshot: CloneEngineSnapshot, now: Date, timeZone: TimeZone, locale: Locale) -> String {
+    static func description(_ snapshot: CloneEngineStatus, now: Date, timeZone: TimeZone, locale: Locale) -> String {
         switch snapshot.state {
         case .running:
             // `running` means the health endpoint answers; it says nothing about how fast the first sound is.
@@ -427,7 +437,7 @@ public final class CloneEngineControlViewModel {
     private let now: () -> Date
 
     public init(
-        snapshot: CloneEngineSnapshot? = nil,
+        snapshot: CloneEngineStatus? = nil,
         send: @escaping (CloneEngineCommand) -> Bool,
         makeID: @escaping () -> String = { "settings-clone-engine-\(UUID().uuidString)" },
         now: @escaping () -> Date = Date.init
@@ -438,7 +448,7 @@ public final class CloneEngineControlViewModel {
         self.now = now
     }
 
-    public func receive(snapshot: CloneEngineSnapshot?) { model.receive(snapshot: snapshot) }
+    public func receive(snapshot: CloneEngineStatus?) { model.receive(snapshot: snapshot) }
     public func receive(ack: CloneEngineAck) { model.receive(ack: ack) }
     public func expireUnanswered() { model.expireUnanswered(now: now()) }
     public var ackDeadline: Date? { model.ackDeadline }

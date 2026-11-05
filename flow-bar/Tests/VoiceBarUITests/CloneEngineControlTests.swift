@@ -10,8 +10,8 @@ final class CloneEngineControlTests: XCTestCase {
     private let since = ISO8601DateFormatter().date(from: "2026-11-05T09:14:00Z")!
 
     private func snapshot(_ state: CloneEngineLifecycle, reason: String? = nil, pid: Int? = 123,
-                          autostart: Bool = true) -> CloneEngineSnapshot {
-        CloneEngineSnapshot(state: state, since: since, reason: reason.map(CloneEngineReason.init(code:)), pid: pid,
+                          autostart: Bool = true) -> CloneEngineStatus {
+        CloneEngineStatus(state: state, since: since, reason: reason.map(CloneEngineReason.init(code:)), pid: pid,
                             startWithVoiceBar: autostart)
     }
 
@@ -232,8 +232,22 @@ final class CloneEngineControlTests: XCTestCase {
         XCTAssertEqual(CloneEngineReason(code: "adopted_existing"), .adoptedExisting)
         XCTAssertEqual(CloneEngineReason(code: "voicebar_quit"), .voicebarQuit)
         XCTAssertEqual(CloneEngineReason(code: "nope"), .unrecognized("nope"))
-        XCTAssertNil(CloneEngineSnapshot(state: .stopped, since: nil, reason: nil, pid: 0, startWithVoiceBar: true).pid,
+        XCTAssertNil(CloneEngineStatus(state: .stopped, since: nil, reason: nil, pid: 0, startWithVoiceBar: true).pid,
                      "only a positive PID is an identity")
+    }
+
+    func testRawV10FieldsMapWithoutGuessing() throws {
+        let status = try XCTUnwrap(CloneEngineStatus(state: "running", since: "2026-11-05T00:00:00Z",
+                                                     reason: "adopted_existing", pid: 123, startWithVoiceBar: true))
+        XCTAssertEqual(status.state, .running)
+        XCTAssertEqual(status.since, ISO8601DateFormatter().date(from: "2026-11-05T00:00:00Z"))
+        XCTAssertTrue(status.isForeign)
+        XCTAssertNil(CloneEngineStatus(state: "warming", since: nil, reason: nil, pid: nil, startWithVoiceBar: true),
+                     "an unknown state is unavailable, not a guessed one")
+        let undated = try XCTUnwrap(CloneEngineStatus(state: "running", since: "not a date", reason: nil, pid: 9,
+                                                      startWithVoiceBar: false))
+        XCTAssertNil(undated.since)
+        XCTAssertEqual(present(CloneEngineControlModel(snapshot: undated)).description, "Ready.")
     }
 
     // MARK: - View model with a fake sender
