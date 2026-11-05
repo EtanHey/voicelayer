@@ -204,16 +204,16 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ForEach(["idle", "transcribing", "confirmation", "paste-failed", "error", "disconnected"], id: \.self) { name in
                     Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                 }
-            }.padding(6).fixtureFrame("baseline")
+            }.controlSize(.small).padding(2).fixtureFrame("baseline")
 #if VOICEBAR_UIE2E_GATE2245
-            gate2245Controls.fixtureFrame("gate")
+            gate2245Controls.controlSize(.small).fixtureFrame("gate")
 #endif
             if pasteFeedback ?? (Bundle.main.object(forInfoDictionaryKey: "UIE2EPasteFeedback") as? Bool == true) {
                 HStack {
                     ForEach(["paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"], id: \.self) { name in
                         Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                     }
-                }.padding(6).fixtureFrame("paste")
+                }.controlSize(.small).padding(2).fixtureFrame("paste")
             }
             HStack {
                 ForEach(["speaking", "readback", "finish", "preparing", "selection-replace"], id: \.self) { name in
@@ -223,7 +223,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.makeContextMenu().popUp(positioning: nil, at: NSPoint(x: 20, y: 20), in: self.settings.contentView)
                 }.accessibilityIdentifier("qa-fixture-hidden-menu")
             }
-            .fixtureFrame("silent")
+            .controlSize(.small).fixtureFrame("silent")
             // 2.3 U2 wings (scenario wings-u2): each wing state of the 3-wings mock, silently.
             HStack {
                 ForEach(["launcher", "recording", "setup-error", "speaking-collapsed"], id: \.self) { name in
@@ -233,13 +233,14 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     .accessibilityIdentifier("qa-fixture-hold-menu-queue")
                 Button("Release menu queue") { self.releaseMenuQueue() }
                     .accessibilityIdentifier("qa-fixture-release-menu-queue")
-            }.padding(6).fixtureFrame("wings")
-            // Settings has a 620-point minimum. Let it scroll within the remaining
-            // height rather than forcing the fixture rows above the window.
+            }.controlSize(.small).padding(2).fixtureFrame("wings")
+            // Preserve Settings' real minimum viewport for its inner scrollers;
+            // only the small overflow below the fixture rows scrolls here.
             ScrollView(.vertical) {
-                UIE2ESettings(model: model)
+                UIE2ESettings(model: model).frame(height: 620).fixtureFrame("settings")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .fixtureFrame("settings-viewport")
         }
         .onPreferenceChange(UIE2EFixtureFrames.self, perform: onFixtureFrames)
     }
