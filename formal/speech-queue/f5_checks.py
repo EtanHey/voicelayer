@@ -4,6 +4,10 @@ import os
 import sys
 import re
 
+# M4 baseline max 50.074s; hosted completed rows were up to 3.6x slower.
+# 50.074 * 3.6 * 1.5 margin = 270.4s, rounded up to 300s per case.
+CROSS_CASE_SECONDS = 300
+
 # name: (property, single semantic knob removed)
 MUTANTS = {
     "F5PauseInvalidOwner": ("TypeOK", "Fault=InvalidOwner: corrupt pause-owner domain"),
@@ -172,7 +176,7 @@ def cross_kill(run, runner, command, directory):
         log = run / f"{name}-all.log"
         status = runner.run([sys.executable, "-B", str(directory / "cross_tlc.py"), *command,
                              "-continue", "-lncheck", "final", "-metadir", str(run / f"cross-meta-{name}"),
-                             "-config", str(config), str(module)], log, 90,
+                             "-config", str(config), str(module)], log, CROSS_CASE_SECONDS,
                             cwd=directory.parents[1], env=os.environ)
         output = log.read_text()
         killed = set(re.findall(r"Invariant (\w+) is violated", output))

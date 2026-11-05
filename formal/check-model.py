@@ -9,6 +9,10 @@ import subprocess
 from graph_retention import graph_run
 from tlc_support import tlc_jar
 
+# Fresh-HOME M4 maxima * hosted slowdown 3.6 * margin 1.5, rounded up.
+# RecordWhileProcessing: 43.645s -> 235.7s; RuntimeOwnership: 57.605s -> 311.1s.
+TLC_CASE_SECONDS = {"record-while-processing": 240, "record-while-processing-runtime": 330}
+
 parser = argparse.ArgumentParser()
 parser.add_argument("directory", type=Path)
 parser.add_argument("--record", action="store_true", help="Refresh normalized committed evidence")
@@ -56,7 +60,7 @@ with graph_run(cache, prefix="tlc-", keep_runs=0) as run:
         if name in {"Current", "Fixed"}: command += ["-dump", "dot,actionlabels", str(run / f"{name}.dot")]
         command += [f'{manifest["module"]}.tla']
         result = subprocess.run(command, cwd=directory, env=os.environ, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, timeout=180)
+                                stderr=subprocess.STDOUT, text=True, timeout=TLC_CASE_SECONDS.get(directory.name, 180))
         output = result.stdout
         (cache / f"{name}.log").write_text(output)
         if kind == "invariant":
