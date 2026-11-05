@@ -235,7 +235,8 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertTrue(source.contains("Section(\"Fast\""))
         XCTAssertTrue(source.contains("Section(\"Cloned\""))
         XCTAssertTrue(source.contains("onSelectEngine?(kind, selected.engine, selected.voice)"))
-        XCTAssertTrue(source.contains("fast voice (fallback)"), "clone-down status must label fallback before a preview")
+        XCTAssertTrue(source.contains("Label(Self.fastVoiceFallbackLine"), "clone-down status must label fallback before a preview")
+        XCTAssertEqual(SpeechSettingsView.fastVoiceFallbackLine, "Uses the fast voice while the engine is stopped.")
     }
 
     func testGroupedSelectionLocksBothFieldsAndFiltersLegacyCatalog() throws {
@@ -279,12 +280,14 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertTrue(display.cloneWarning)
         XCTAssertTrue(controls.profiles[.short]?.latencyLabel.contains("Fast voice (fallback)") == true)
     }
-    func testSpeechCopyUsesTheShownCommandAndFullVisibleError() throws {
+    func testSpeechHasNoCopyCommandFallbackAndCopiesFullVisibleError() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SpeechSettingsView.swift"), encoding: .utf8)
-        XCTAssertTrue(source.contains("Text(Self.daemonCommand)"), "The copied command must also be displayed verbatim")
-        XCTAssertTrue(source.contains("SettingsCopyButton(text: Self.daemonCommand, label: \"daemon command\")"))
+        // Spec V10: the "Start it with: voicelayer daemon" copy-a-command fallback is removed; the engine row starts it.
+        XCTAssertFalse(source.contains("daemonCommand"))
+        XCTAssertFalse(source.contains("voicelayer daemon"))
+        XCTAssertTrue(source.contains("CloneEngineSection(viewModel: cloneEngine)"))
         let noticeStart = try XCTUnwrap(source.range(of: "if let notice, pending[\"preview\"] == nil"))
         let footer = source[noticeStart.lowerBound...]
         XCTAssertTrue(footer.contains("Text(notice)"))
