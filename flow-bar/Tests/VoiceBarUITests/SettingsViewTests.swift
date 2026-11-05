@@ -110,31 +110,16 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertLessThan(editable.lowerBound, pencil.lowerBound)
     }
 
-    func testDictionaryTextActionsUseStyledButtons() throws {
+    /// U3 spec: the trash deletes at once and offers a 4 s Undo; there is no "Delete?" confirm step any more.
+    func testTrashDeletesWithUndoInsteadOfAConfirmStep() throws {
         let source = try settingsViewSource()
         let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
 
-        XCTAssertTrue(deleteButtonSource.contains("Button(\"Cancel\") {"))
-        XCTAssertTrue(deleteButtonSource.contains(".buttonStyle(.bordered)"))
-        XCTAssertTrue(deleteButtonSource
-            .contains(
-                "Button(\"Delete?\", role: .destructive) {\n                SettingsDictionaryMutations.confirmDeleteTerm("
-            ))
-        XCTAssertTrue(deleteButtonSource.contains(".buttonStyle(.borderedProminent)"))
-        XCTAssertTrue(deleteButtonSource.contains(".tint(.red)"))
-    }
-
-    func testDeleteConfirmationHeaderHidesEditButton() throws {
-        let source = try settingsViewSource()
-        let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
-        let deleteConfirmBranch = try XCTUnwrap(headerSource.range(of: "if pendingDeleteCanonical == entry.canonical"))
-        let editButton = headerSource.range(of: "termSheet = DictionaryTermEdit(original: entry)")
-
-        XCTAssertNotNil(editButton)
-        XCTAssertTrue(
-            try XCTUnwrap(editButton?.lowerBound) > deleteConfirmBranch.upperBound,
-            "the edit pencil must only render outside the delete-confirm branch"
-        )
+        XCTAssertTrue(deleteButtonSource.contains("deleteTerm(canonical, rowID: rowID)"))
+        XCTAssertFalse(source.contains("Button(\"Delete?\""))
+        XCTAssertFalse(source.contains("pendingDeleteCanonical"))
+        XCTAssertTrue(source.contains("Button(\"Undo\") { undoDeletion() }"))
+        XCTAssertTrue(source.contains(".onDeleteCommand { deleteSelectedTerm() }"))
     }
 
     func testDictionaryDoesNotRenderOldSplitSections() throws {
@@ -297,30 +282,27 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
-    func testDeleteTermRequiresConfirmationBeforeMutating() {
+    /// U3 spec: Delete hides the term at once, but the daemon removal waits for the 4 s Undo window to close.
+    func testDeleteHidesTermAndCommitsOnlyAfterTheUndoWindow() {
         var localEntries = [
             STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"]),
         ]
-        var pendingDelete: String?
+        var pending: DictionaryPendingDeletion?
         var removedTerms: [String] = []
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
 
-        SettingsDictionaryMutations.requestDeleteTerm(
-            "VoiceLayer",
-            pendingDeleteCanonical: &pendingDelete
-        )
+        DictionaryDeletion.begin("VoiceLayer", localEntries: &localEntries, pending: &pending, now: start,
+                                 commit: { removedTerms.append($0.canonical) })
 
-        XCTAssertEqual(pendingDelete, "VoiceLayer")
-        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"])])
-        XCTAssertTrue(removedTerms.isEmpty)
+        XCTAssertEqual(localEntries, [])
+        XCTAssertEqual(pending?.deadline, start.addingTimeInterval(4))
+        XCTAssertTrue(removedTerms.isEmpty, "nothing reaches the daemon inside the Undo window")
 
-        SettingsDictionaryMutations.confirmDeleteTerm(
-            "VoiceLayer",
-            pendingDeleteCanonical: &pendingDelete,
-            localEntries: &localEntries,
-            onRemovePromptTerm: { removedTerms.append($0) }
-        )
-
-        XCTAssertNil(pendingDelete)
+        XCTAssertFalse(DictionaryDeletion.commitIfExpired(now: start.addingTimeInterval(3.9), pending: &pending,
+                                                          commit: { removedTerms.append($0.canonical) }))
+        XCTAssertTrue(DictionaryDeletion.commitIfExpired(now: start.addingTimeInterval(4), pending: &pending,
+                                                         commit: { removedTerms.append($0.canonical) }))
+        XCTAssertNil(pending)
         XCTAssertEqual(removedTerms, ["VoiceLayer"])
         XCTAssertEqual(localEntries, [])
     }
