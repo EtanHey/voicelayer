@@ -1092,11 +1092,24 @@ extension VoiceBarFlowTests {
     func historyFlow() {
         walk("History")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch, "select fixture history row")
-        step("assert the last row of a day is not covered by the next day's header (V27)") {
+        // V27: the selected row is the last of its day, directly above the next day's header. Each day header's
+        // accessibility element is its opaque cover (`history.dayHeader.cover`), so its frame includes the cover's
+        // `coversAbove` reach: restoring the old 18 pt cover puts its top above this row's bottom and fails here.
+        // No pixels (the gatecap1 privacy guard); the step's own PROVEN window still is the visual record. JSON
+        // carries frames and the identifier only, never a label.
+        step("assert the next day's header cover starts below the last row of the day (V27)") {
             let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch
-            XCTAssertTrue(row.isSelected, "the selection tint is what the check measures")
-            let shortfall = uie2eSelectionTintShortfall(row.screenshot().image, rowHeight: row.frame.height)
-            XCTAssertLessThanOrEqual(shortfall, 6, "the selected row shows its whole frame; \(shortfall) pt are painted over")
+            XCTAssertTrue(row.isSelected, "the newest row, last of its day, is selected")
+            let covers = app.descendants(matching: .any).matching(identifier: "history.dayHeader.cover").allElementsBoundByIndex
+            let below = covers.filter { $0.frame.midY > row.frame.maxY }.min { $0.frame.minY < $1.frame.minY }
+            let cover = try XCTUnwrap(below, "a day header cover follows the row (\(covers.count) covers found)")
+            XCTAssertGreaterThanOrEqual(cover.frame.minY, row.frame.maxY - 0.5,
+                                        "the header cover reaches \(row.frame.maxY - cover.frame.minY) pt over the row")
+            attachJSON("UIE2E-V27-DAY-BOUNDARY", [
+                "identifier": "history.dayHeader.cover",
+                "row": ["minY": row.frame.minY, "maxY": row.frame.maxY],
+                "cover": ["minY": cover.frame.minY, "maxY": cover.frame.maxY],
+            ])
         }
         assertHistoryCopy(equals: "QA fixture transcript שלום 👋")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch, "select specific older row")
@@ -1642,25 +1655,3 @@ extension VoiceBarFlowTests {
         return opened
     }
 }
-
-/// V27: how many points of a selected History row its selection tint does NOT reach. The tint (accent at 13 %
-/// over the window) is bluer than red, unlike any grey surface, text or header cover. Columns near the row's
-/// leading edge, past its 7 pt corner radius and before its icon, are scanned for their longest tinted run.
-func uie2eSelectionTintShortfall(_ image: NSImage, rowHeight: CGFloat) -> CGFloat {
-    guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return rowHeight }
-    let bitmap = NSBitmapImageRep(cgImage: cg)
-    let scale = CGFloat(bitmap.pixelsHigh) / max(1, image.size.height)
-    var longest = 0
-    for x in Int(3 * scale) ..< min(bitmap.pixelsWide, Int(8 * scale)) {
-        var run = 0
-        for y in 0 ..< bitmap.pixelsHigh {
-            if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
-               (color.blueComponent - color.redComponent) * 255 > 12 {
-                run += 1
-                longest = max(longest, run)
-            } else { run = 0 }
-        }
-    }
-    return max(0, rowHeight - CGFloat(longest) / scale)
-}
-

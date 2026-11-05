@@ -1966,14 +1966,22 @@ public struct SettingsView: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 4)
-            .accessibilityAddTraits(.isHeader)
+            .accessibilityHidden(true) // the cover below is the header's one accessibility element
             .background(
                 Rectangle()
                     .fill(Color(nsColor: .windowBackgroundColor))
                     .padding(.horizontal, -18)
                     .padding(.top, -coversAbove)
+                    // The header's accessibility element is the cover itself, so its frame is the painted area
+                    // including `coversAbove`: UI tests can prove it never reaches over the row above (V27).
+                    .accessibilityElement()
+                    .accessibilityLabel(title)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier(Self.historyDayHeaderCoverIdentifier)
             )
     }
+
+    static let historyDayHeaderCoverIdentifier = "history.dayHeader.cover"
 
     private func historyEntryRow(_ row: SettingsHistoryRowModel) -> some View {
         HStack(alignment: .top, spacing: 12) {
