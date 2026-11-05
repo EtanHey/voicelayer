@@ -456,6 +456,8 @@ public struct SettingsView: View {
     public let onChangeSpeech: ((String, SpeechValue) -> Void)?
     public let onSelectSpeechEngine: ((SpeechProfile, String, String) -> Void)?
     public let onPreviewSpeech: ((SpeechProfile) -> Void)?
+    /// V10 clone-engine row (Speech). The app feeds it `clone_engine` events and acks; nil reads "Unavailable".
+    public let cloneEngineControl: CloneEngineControlViewModel?
     public let onReadClipboard: (() -> Void)?
     public let processingPending: () -> [ProcessingKey: Bool]
     public let processingNotice: () -> String?
@@ -621,6 +623,7 @@ public struct SettingsView: View {
         onChangeSpeech: ((String, SpeechValue) -> Void)? = nil,
         onSelectSpeechEngine: ((SpeechProfile, String, String) -> Void)? = nil,
         onPreviewSpeech: ((SpeechProfile) -> Void)? = nil,
+        cloneEngineControl: CloneEngineControlViewModel? = nil,
         onReadClipboard: (() -> Void)? = nil,
         processingPending: @escaping () -> [ProcessingKey: Bool] = { [:] },
         processingNotice: @escaping () -> String? = { nil },
@@ -744,6 +747,7 @@ public struct SettingsView: View {
         self.onChangeSpeech = onChangeSpeech
         self.onSelectSpeechEngine = onSelectSpeechEngine
         self.onPreviewSpeech = onPreviewSpeech
+        self.cloneEngineControl = cloneEngineControl
         self.onReadClipboard = onReadClipboard
         self.processingPending = processingPending
         self.processingNotice = processingNotice
@@ -867,7 +871,8 @@ public struct SettingsView: View {
                 settingsPage(title: "Speech") {
                     SpeechSettingsView(controls: speechControls(), connected: speechConnected(),
                                        busy: speechBusyReason() != nil, busyReason: speechBusyReason(), pending: speechPending(), notice: speechNotice(),
-                                       onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech)
+                                       onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech,
+                                       cloneEngine: cloneEngineControl)
                         .onAppear { onRefreshModelsStatus() }
                 }
             case .transcription:

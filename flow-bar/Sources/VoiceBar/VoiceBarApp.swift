@@ -166,6 +166,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var cloneEngineController = CloneEngineController.production(
         defaults: defaults, executable: Bundle.main.executableURL!
     )
+    /// Settings › Speech engine row (U3b). Created once and held here: `makeSettingsView()` runs on every rebuild.
+    private lazy var cloneEngineControl = CloneEngineControlViewModel(
+        snapshot: voiceState.cloneEngine,
+        send: { [weak self] command in
+            guard let send = self?.voiceState.sendCommand else { return false }
+            send(command.wireObject)
+            return true
+        }
+    )
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
     private var controlledUpdateLease: [String: Any]?
@@ -296,6 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         super.init()
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
+            // One closure for every ack: clone_engine replies are chained here, never assigned over it.
+            self?.cloneEngineControl.receive(ack: ack)
         }
         voiceState.onRecognizerStatusChange = { [weak self] in
             self?.refreshSettingsWindowAnchorState()
@@ -725,10 +736,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         cloneEngineController?.onChange = { [weak server, weak self] event in
             self?.voiceState.handleEvent(event)
+            self?.cloneEngineControl.receive(snapshot: self?.voiceState.cloneEngine)
             server?.publishCloneEngine(event)
         }
         if let controller = cloneEngineController {
             voiceState.handleEvent(controller.snapshot.payload)
+            cloneEngineControl.receive(snapshot: voiceState.cloneEngine)
             server.publishCloneEngine(controller.snapshot.payload)
             controller.open()
         }
@@ -3222,6 +3235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.voiceState.previewTTSProfile(profile)
                 self?.refreshSettingsWindowAnchorState()
             },
+            cloneEngineControl: cloneEngineControl,
             onReadClipboard: { [weak self] in self?.voiceState.readClipboard() },
             processingPending: { [weak self] in self?.voiceState.processingPending ?? [:] },
             processingNotice: { [weak self] in self?.voiceState.processingNotice },
