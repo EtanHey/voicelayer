@@ -1,3 +1,4 @@
+import { edgeVoiceForText } from "./tts-language";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withAsyncVoiceAdmission, withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
@@ -524,6 +525,8 @@ interface SynthesizedChunk {
   durationMs: number;
 }
 
+class EdgeSynthesisUnavailableError extends Error {}
+
 async function synthesizeEdgeChunk(
   text: string,
   voice: string,
@@ -546,7 +549,7 @@ async function synthesizeEdgeChunk(
   );
 
   if (!result.success) {
-    throw new Error(result.error || "edge-tts synthesis failed after retries");
+    throw new EdgeSynthesisUnavailableError(result.error || "edge-tts synthesis failed after retries");
   }
 
   const durationMs = Math.max(
@@ -3039,7 +3042,7 @@ async function speakAdmitted(
         catch { console.error("[speech] terminal archive write failed"); }
         finally { onCompleted?.(outcome); }
       } }, controller.signal);
-    if (!result.engine && !result.playbackId) archive.finish("failed", "REJECTED");
+    if (!result.engine && !result.playbackId) archive.finish("failed", result.textOnly ? "SYNTH_FAILED" : "REJECTED");
     return result;
   } catch (error) {
     // Stop before audio is cancellation, consistently with long-read preparation.
@@ -3296,6 +3299,10 @@ async function prepareSpeech(
   }
 
   // Tier 2: Preset/default → edge-tts
+  if (!requestedClone && options?.mode === "converse") {
+    resolved.voice = edgeVoiceForText(displayText, resolved.voice);
+    audioVoice = resolved.voice;
+  }
   return speakWithEdgeTTS(
     edgeProjection.speechText,
     resolved.voice,
@@ -3368,7 +3375,9 @@ async function speakWithEdgeTTS(
       wordBoundaries = mergeWordBoundaryChunks(synthesizedChunks);
     }
   } catch (error) {
-    if (!signal?.aborted) broadcast({
+    const textOnlyAllowed = error instanceof EdgeSynthesisUnavailableError && options?.textOnlyOnSynthesisFailure &&
+      !options.textOnlyOnSynthesisFailure.aborted && !signal?.aborted;
+    if (!signal?.aborted && !textOnlyAllowed) broadcast({
       type: "error",
       message: "TTS synthesis failed (edge-tts)",
       recoverable: true,
@@ -3385,6 +3394,10 @@ async function speakWithEdgeTTS(
     try {
       unlinkSpeechAudio(ttsFile);
     } catch {}
+    if (textOnlyAllowed) {
+      console.error("[voicelayer] Ask synthesis unavailable; continuing with a text-only prompt");
+      return { textOnly: true, displayText, warning: "Speech unavailable; question shown as text." };
+    }
     throw error;
   }
 

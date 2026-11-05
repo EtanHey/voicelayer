@@ -255,17 +255,22 @@ public struct VoiceBarNotchContinuousShape: Shape {
     /// The convex corner where a lower body steps out past its wing (`bodyShoulderCornerRadius(for:)`).
     public var bodyShoulderCornerRadius: CGFloat
     public var coreAnchorX: CGFloat?
+    /// 2.3 lane U4: the concave flare where an open History panel meets the menu bar (the mock's top radius).
+    /// The outline steps out this far at y = 0 and curves down into the side. 0 (every other state) draws no flare.
+    public var topFlareRadius: CGFloat
 
     public init(
         geometry: VoiceBarNotchGeometry,
         compactOuterCornerRadius: CGFloat = 11,
         bodyShoulderCornerRadius: CGFloat = VoiceBarNotchContract.material.inverseJoinRadius,
-        coreAnchorX: CGFloat? = nil
+        coreAnchorX: CGFloat? = nil,
+        topFlareRadius: CGFloat = 0
     ) {
         self.geometry = geometry
         self.compactOuterCornerRadius = compactOuterCornerRadius
         self.bodyShoulderCornerRadius = bodyShoulderCornerRadius
         self.coreAnchorX = coreAnchorX
+        self.topFlareRadius = topFlareRadius
     }
 
     /// The radii are animated with the geometry (Lane C follow-up): as plain stored values they jumped to the
@@ -352,11 +357,23 @@ public struct VoiceBarNotchContinuousShape: Shape {
             layout: layout, wingWidth: trailingWing.width, step: body.maxX - trailingWing.maxX
         )
         var path = Path()
+        // The flare only exists on a side flush with its body (History), and never reaches past the top row or
+        // into the side's first segment.
+        let firstDrop = { (segments: [SideSegment]) -> CGFloat in segments.first.map { $0.end.y } ?? 0 }
+        let leadingFlare = leadingWing.minX <= body.minX + 0.001
+            ? max(0, min(topFlareRadius, layout.geometry.topHeight, firstDrop(leading))) : 0
+        let trailingFlare = trailingWing.maxX >= body.maxX - 0.001
+            ? max(0, min(topFlareRadius, layout.geometry.topHeight, firstDrop(trailing))) : 0
 
         // One closed outline: down the leading side, along the bottom, back up the trailing side, then around
         // the housing cut-out. `d` is how far a point sits outside its wing's outer side.
         path.move(to: CGPoint(x: core.minX, y: 0))
-        path.addLine(to: CGPoint(x: leadingWing.minX, y: 0))
+        if leadingFlare > 0 {
+            path.addLine(to: CGPoint(x: leadingWing.minX - leadingFlare, y: 0))
+            Self.addFlare(to: &path, sideX: leadingWing.minX, radius: leadingFlare, outward: -1, downward: true)
+        } else {
+            path.addLine(to: CGPoint(x: leadingWing.minX, y: 0))
+        }
         for segment in leading {
             let end = CGPoint(x: leadingWing.minX - segment.end.x, y: segment.end.y)
             if let control = segment.control {
@@ -365,7 +382,7 @@ public struct VoiceBarNotchContinuousShape: Shape {
                 path.addLine(to: end)
             }
         }
-        var ends = [CGPoint(x: 0, y: 0)] + trailing.map(\.end)
+        var ends = [CGPoint(x: 0, y: trailingFlare)] + trailing.map(\.end)
         ends.removeLast()
         path.addLine(to: CGPoint(x: trailingWing.maxX + (trailing.last?.end.x ?? 0), y: body.maxY))
         for (segment, start) in zip(trailing, ends).reversed() {
@@ -376,11 +393,35 @@ public struct VoiceBarNotchContinuousShape: Shape {
                 path.addLine(to: end)
             }
         }
+        if trailingFlare > 0 {
+            Self.addFlare(to: &path, sideX: trailingWing.maxX, radius: trailingFlare, outward: 1, downward: false)
+        }
         path.addLine(to: CGPoint(x: core.maxX, y: 0))
         path.addLine(to: CGPoint(x: core.maxX, y: body.minY))
         path.addLine(to: CGPoint(x: core.minX, y: body.minY))
         path.closeSubpath()
         return path
+    }
+
+    /// The concave top flare as a true quarter circle (the mock's SVG arc), drawn as two 45° quad segments, so the
+    /// outline stays free of cubic curves. Its centre sits `radius` outside the side and `radius` below the top.
+    /// `outward` is -1 on the leading side and +1 on the trailing side; `downward` draws it from the menu bar down
+    /// into the side (leading), else from the side up to the menu bar (trailing).
+    static func addFlare(to path: inout Path, sideX: CGFloat, radius: CGFloat, outward: CGFloat, downward: Bool) {
+        let centre = CGPoint(x: sideX + outward * radius, y: radius)
+        // Angle 0 points straight up from the centre (the menu-bar end); 90° points at the side.
+        func point(_ degrees: CGFloat, scale: CGFloat = 1) -> CGPoint {
+            let theta = degrees * .pi / 180
+            return CGPoint(x: centre.x - outward * radius * scale * sin(theta), y: centre.y - radius * scale * cos(theta))
+        }
+        let reach = 1 / cos(22.5 * CGFloat.pi / 180)
+        if downward {
+            path.addQuadCurve(to: point(45), control: point(22.5, scale: reach))
+            path.addQuadCurve(to: point(90), control: point(67.5, scale: reach))
+        } else {
+            path.addQuadCurve(to: point(45), control: point(67.5, scale: reach))
+            path.addQuadCurve(to: point(0), control: point(22.5, scale: reach))
+        }
     }
 
     /// One outer side of the shell, top to bottom, as (d, y) points: d = 0 is the wing's outer side and d = `step`
