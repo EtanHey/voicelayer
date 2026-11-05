@@ -10,7 +10,7 @@ mkdir -p "$logs" "$scratch"
 check() {
     local config=$1 expected=$2 property=$3 rc=0
     local log="$logs/${config%.cfg}.log"
-    tlc -workers 1 -metadir "$scratch/${config%.cfg}" -config "$model_dir/$config" \
+    "${TLC:-$repo_root/formal/tlc.sh}" -workers 1 -metadir "$scratch/${config%.cfg}" -config "$model_dir/$config" \
         "$model_dir/HistoryRowRefresh.tla" > "$log" 2>&1 || rc=$?
     if [[ "$expected" == PASS ]]; then
         if [[ "$rc" != 0 ]] || ! grep -Fq 'Model checking completed. No error has been found.' "$log"; then
