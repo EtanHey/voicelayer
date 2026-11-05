@@ -50,11 +50,15 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
 public struct SettingsTabRequest: Equatable {
     public let tab: SettingsTab
     public let focus: SettingsFocus?
+    /// History only: the dictation to select, by its audio path (a notch History row click, 2.3 U4). When it isn't
+    /// on the loaded page the list keeps its usual selection.
+    public let historyRecordingID: String?
     public let id: Int
 
-    public init(tab: SettingsTab, focus: SettingsFocus? = nil, id: Int) {
+    public init(tab: SettingsTab, focus: SettingsFocus? = nil, historyRecordingID: String? = nil, id: Int) {
         self.tab = tab
         self.focus = focus
+        self.historyRecordingID = historyRecordingID
         self.id = id
     }
 }
@@ -826,8 +830,13 @@ public struct SettingsView: View {
         let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
         _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
         _historyLoadedEntryCount = State(initialValue: initialHistoryPage?.loadedEntryCount ?? 0)
-        _historyMemory = State(initialValue: SettingsHistoryRecordingMemory(
-            initialPage: initialHistoryPage.map { $0.groups.flatMap(\.entries).map(\.id) }))
+        var historyMemory = SettingsHistoryRecordingMemory(
+            initialPage: initialHistoryPage.map { $0.groups.flatMap(\.entries).map(\.id) })
+        if tabRequest?.tab == .history, let recording = tabRequest?.historyRecordingID {
+            historyMemory.request(recording)
+            _selectedHistoryScope = State(initialValue: .recording)
+        }
+        _historyMemory = State(initialValue: historyMemory)
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
@@ -873,6 +882,11 @@ public struct SettingsView: View {
         )
         .onChange(of: tabRequest) { _, request in
             if let request { selectedTab = request.tab }
+            if request?.tab == .history, let recording = request?.historyRecordingID {
+                selectedHistoryScope = .recording
+                historyMemory.request(recording)
+                historyMemory.applyPage(historyDayGroups.flatMap(\.entries).map(\.id))
+            }
         }
         // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
         .onAppear { onSelectedTabChange(selectedTab) }
