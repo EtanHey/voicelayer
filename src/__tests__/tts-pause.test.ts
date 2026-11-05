@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { runBarCaptureWithPausedRead } from "../f5-capture";
 import { registerBarRecorderExit } from "../recording-jobs";
 import { setRecordingState, getRecordingState, getEffectiveRecordingState } from "../recording-state";
@@ -81,6 +82,58 @@ async function pauseAt4200() {
   trim.exit.resolve(0); await fixtureCheckpoint();
   return { ...started, paused, trim };
 }
+
+describe("playback transition journal", () => {
+  it.each(["user", "f5", "f5-to-user"] as const)("records every owned %s pause/resume without text", async (variant) => {
+    const lines: string[] = [];
+    const log = spyOn(console, "error").mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(" ")); });
+    restore.push(() => log.mockRestore());
+    const secret = "One two three four five six seven eight nine ten";
+    const handle = tts.playAudioNonBlocking(`${TEST_TMP}/journal-source.mp3`, {
+      text: secret, voice: "test", durationMs: 10_000, wordBoundaries: words,
+      longRead: { id: "journal-read", chunk_index: 2, chunk_count: 3, chunk_start_ms: 10_000 },
+    });
+    await players.at(0);
+    at(4200);
+    expect(tts.pausePlayback({}, 14_200, variant === "user" ? "user" : "f5").outcome).toBe("accept");
+    const trim = await trims.at(0);
+    trim.exit.resolve(0); await fixtureCheckpoint();
+    if (variant === "f5-to-user") expect(tts.pausePlayback({}, undefined, "user").outcome).toBe("accept");
+    expect(tts.resumePlayback().outcome).toBe("accept");
+    const resumed = await players.at(1); await fixtureCheckpoint();
+    const path = join(process.env.VOICELAYER_CONTROL_LAYER_BASE!, "fleet-journal.db");
+    const rows: unknown[] = [];
+    if (existsSync(path)) {
+      const db = new Database(path, { readonly: true });
+      try {
+        for (const row of db.query<{ payload_json: string }, []>("SELECT payload_json FROM events WHERE type = 'playback_state' ORDER BY seq").all()) {
+          const record = JSON.parse(row.payload_json);
+          if (record.playback_id === handle.id) rows.push(record);
+        }
+      } finally { db.close(); }
+    }
+    const transitions = events.filter(e => e.type === "playback_state");
+    expect(transitions.length).toBe(variant === "f5-to-user" ? 3 : 2);
+    expect(rows).toEqual(transitions.map((event, index) => ({
+      component: "voicelayer", pid: process.pid,
+      state: event.state, playback_id: handle.id, generation: event.generation,
+      chunk_index: 2, offset_ms: 14_000,
+      owner: variant === "user" || (variant === "f5-to-user" && index > 0) ? "user" : "f5",
+    })));
+    const records = lines.filter(line => line.startsWith("[voicelayer] {"))
+      .map(line => JSON.parse(line.slice("[voicelayer] ".length)))
+      .filter(record => record.event === "playback_state" && record.playback_id === handle.id);
+    expect(records).toHaveLength(transitions.length);
+    for (const [index, record] of records.entries()) {
+      expect(record).toMatchObject(rows[index]);
+      expect(Number.isFinite(Date.parse(record.timestamp))).toBe(true);
+    }
+    expect(JSON.stringify(rows)).not.toContain(secret);
+    expect(lines.join("\n")).not.toContain(secret);
+    resumed.exit.resolve(0);
+    await handle.exited;
+  });
+});
 
 describe("P10 queue pause/resume", () => {
   it("R1C pause at duration resumes to a durable completed receipt without another player", async () => {
