@@ -67,7 +67,8 @@ public struct SettingsTabRequest: Equatable {
 public enum SettingsFocus: String, Equatable, Hashable {
     /// General › Microphone priority, where the default microphone is chosen (D2 "Change…").
     case microphonePriority = "settings-general-microphone-priority"
-    /// General › Permissions, where the notch gear's setup badge leads (2.3 U2).
+    /// General › Setup, at its first broken step: where the notch gear's setup badge leads (2.3 U2). Permissions
+    /// are Setup steps since U3a (R2), so the case keeps U2's name and raw value.
     case permissions = "settings-general-permissions"
 }
 
@@ -514,10 +515,19 @@ public struct SettingsView: View {
     public let footerPresentation: () -> VoiceBarFooterPresentation
     /// Opens the setup wizard (F3): General › Setup › Run setup again.
     public let onRunSetup: () -> Void
+    /// Setup's "Speaking voice" step; nil (not wired yet) leaves the step out.
+    public let speakingVoiceStatus: () -> SettingsSetupVoiceStatus?
+    /// Nil until the app exposes these: the rows then carry no switch.
+    public let openAtLogin: SettingsToggleInput?
+    public let mouseSideButtons: SettingsToggleInput?
+    /// Transcription › Language and the K-ui last-dictation note; nil (not wired yet) hides them.
+    public let transcriptionLanguage: SettingsChoiceInput?
+    public let lastDictationNote: () -> SettingsLastDictationNote?
     /// Sidebar footer: the running bundle's version and release commit.
     public let installedVersion: VoiceBarInstalledVersion
     /// Nil (tests, the UI E2E host) means no network check; the row then shows the version only.
     public let versionCheck: VoiceBarVersionCheck?
+    public let onVersionStatusChange: (VoiceBarVersionStatus) -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -591,6 +601,10 @@ public struct SettingsView: View {
     @State private var shortcutCheckRunning = false
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
+    @State private var showsSetupSteps = false
+    @State private var hoveredMicrophoneIndex: Int?
+    @State private var setupHighlight = SettingsArrivalHighlight()
+    @FocusState private var focusedSetupFix: SettingsSetupStepID?
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @State private var microphoneDrag: MicrophoneDragState
     /// Nil until Settings first appears with a checker; then checking, then the result.
@@ -699,6 +713,11 @@ public struct SettingsView: View {
             )
         },
         onRunSetup: @escaping () -> Void = {},
+        speakingVoiceStatus: @escaping () -> SettingsSetupVoiceStatus? = { nil },
+        openAtLogin: SettingsToggleInput? = nil,
+        mouseSideButtons: SettingsToggleInput? = nil,
+        transcriptionLanguage: SettingsChoiceInput? = nil,
+        lastDictationNote: @escaping () -> SettingsLastDictationNote? = { nil },
         initialTab: SettingsTab = .general,
         tabRequest: SettingsTabRequest? = nil,
         initialHistoryScope: SettingsHistoryScope = .recording,
@@ -720,7 +739,8 @@ public struct SettingsView: View {
         onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in },
         historyPlayback: SettingsAudioPlayback? = nil,
         installedVersion: VoiceBarInstalledVersion = .current(),
-        versionCheck: VoiceBarVersionCheck? = nil
+        versionCheck: VoiceBarVersionCheck? = nil,
+        onVersionStatusChange: @escaping (VoiceBarVersionStatus) -> Void = { _ in }
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -810,8 +830,14 @@ public struct SettingsView: View {
         self.onRevealHistoryFile = onRevealHistoryFile
         self.footerPresentation = footerPresentation
         self.onRunSetup = onRunSetup
+        self.speakingVoiceStatus = speakingVoiceStatus
+        self.openAtLogin = openAtLogin
+        self.mouseSideButtons = mouseSideButtons
+        self.transcriptionLanguage = transcriptionLanguage
+        self.lastDictationNote = lastDictationNote
         self.installedVersion = installedVersion
         self.versionCheck = versionCheck
+        self.onVersionStatusChange = onVersionStatusChange
         self.tabRequest = tabRequest
         self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
@@ -823,6 +849,8 @@ public struct SettingsView: View {
         _hotkeyListenerRestartLine = State(initialValue: initialHotkeyListenerRestart
             .map(HotkeyListenerRestartLine.init))
         _microphoneDrag = State(initialValue: initialMicrophoneDrag)
+        // The list is there on the first frame instead of flashing "No known input devices" until onAppear.
+        _microphoneSnapshot = State(initialValue: prioritySnapshot())
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
         _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
         _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
@@ -905,7 +933,9 @@ public struct SettingsView: View {
         .task {
             guard let versionCheck, versionStatus == nil else { return }
             versionStatus = .checking
-            versionStatus = await versionCheck.status(installed: installedVersion.version)
+            let status = await versionCheck.status(installed: installedVersion.version)
+            versionStatus = status
+            onVersionStatusChange(status)
         }
         .task(id: selectedTab) {
             guard selectedTab == .dictionary else { return }
@@ -968,6 +998,11 @@ public struct SettingsView: View {
 
     // MARK: - General Tab
 
+    /// The General pane alone, for the V12 row-width snapshots at 720 and 390 pt (the window has a 780 pt minimum).
+    var generalPaneForSnapshots: some View {
+        settingsPage(title: "General") { generalTab }
+    }
+
     private var generalTab: some View {
         ScrollViewReader { proxy in
             generalForm
@@ -980,6 +1015,7 @@ public struct SettingsView: View {
     private func scrollToRequestedFocus(_ proxy: ScrollViewProxy, animated: Bool) {
         guard let focus = tabRequest?.focus, tabRequest?.tab == .general else { return }
         DispatchQueue.main.async {
+            if focus == .permissions, generalSetup.firstBroken != nil { return arriveAtSetup(proxy) }
             if animated {
                 withAnimation { proxy.scrollTo(focus, anchor: .top) }
             } else {
@@ -988,97 +1024,32 @@ public struct SettingsView: View {
         }
     }
 
+    private var generalSetup: SettingsGeneralSetup {
+        // Reading the tick re-reads the providers once the microphone prompt is answered.
+        let _ = permissionsRefreshTick
+        return SettingsGeneralSetup(
+            permissions: permissionRowModels,
+            hotkeyListenerActive: hotkeyEnabled,
+            f5CheckedAt: shortcutCheckFeedback?.message == SettingsShortcutCheck.readyMessage
+                ? shortcutCheckFeedback?.checkedAt : nil,
+            voice: speakingVoiceStatus()
+        )
+    }
+
     private var generalForm: some View {
         Form {
-            Section("Shortcut") {
-                LabeledContent("Shortcut") {
-                    HStack(spacing: 6) {
-                        Image(systemName: "keyboard")
-                            .foregroundStyle(.secondary)
-                        Text(VoiceBarHotkeyContract.shortcutChainLabel(remapDetected: isHotkeyRemapActive()))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                // C14: the status sits in the same trailing column as the shortcut above it (and every other
-                // General value); Check shortcut is its own row below, like Visibility's Hide button.
-                LabeledContent("Status") {
-                    statusBadge(hotkeyStatusText, isReady: hotkeyEnabled)
-                }
-                if !hotkeyEnabled {
-                    Text(
-                        "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
-                    )
-                    .font(.caption).foregroundStyle(.secondary)
-                }
-                // Permissions granted after launch leave the listener off until it starts again.
-                if showsHotkeyListenerRestart {
-                    Button("Restart F5 listener") {
-                        hotkeyListenerRestartLine = HotkeyListenerRestartLine(outcome: onRestartHotkeyListener())
-                    }
-                }
-                if let hotkeyListenerRestartLine {
-                    HStack(alignment: .top) {
-                        HotkeyListenerRestartLineView(line: hotkeyListenerRestartLine)
-                        if !hotkeyListenerRestartLine.succeeded {
-                            SettingsCopyButton(text: hotkeyListenerRestartLine.text, label: "F5 listener error")
-                        }
-                    }
-                }
-                Button("Check shortcut") {
-                    shortcutCheckRunning = true
-                    onCheckShortcut { result in
-                        shortcutCheckFeedback = (result, Date())
-                        shortcutCheckRunning = false
-                    }
-                }
-                .disabled(shortcutCheckRunning)
-                if let shortcutCheckFeedback {
-                    SettingsShortcutCheckLine(
-                        message: shortcutCheckFeedback.message,
-                        checkedAt: shortcutCheckFeedback.checkedAt
-                    )
-                    if shortcutCheckFeedback.message != SettingsShortcutCheck.readyMessage {
-                        SettingsCopyButton(text: shortcutCheckFeedback.message, label: "shortcut check result")
-                    }
-                }
-            }
-
-            // Always flat, even when everything is granted (Etan's 2.2.24 review #4; BrainBar #920).
-            Section {
-                permissionRows
-            } header: {
-                // 2.3 U2: the badged notch gear scrolls here.
-                Text("Permissions")
-                    .id(SettingsFocus.permissions)
-            }
-
-            Section("Setup") {
-                Button("Run setup again") {
-                    onRunSetup()
-                }
-                Text("Walks through permissions, the F5 key, your microphone and a test dictation.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            visibilitySection
+            setupSection
             microphonePrioritySection
+            dictationSection
+            voiceBarSection
 
             SettingsDisclosureRow("Advanced", isExpanded: $isAdvancedExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("F5 key helper") {
-                        HStack(spacing: 8) {
-                            if isHotkeyRemapActive() {
-                                statusBadge("Installed", isReady: true)
-                            } else if hotkeyEnabled {
-                                Text("Not installed").foregroundStyle(.secondary)
-                            } else {
-                                statusBadge("Needs setup", isReady: false)
-                            }
-                            Button(isHotkeyRemapActive() ? "Reinstall" : "Set up") {
-                                runRelaySetup()
-                            }
-                            .disabled(relaySetupRunning)
+                    SettingsRow(title: SettingsGeneralCopy.relayTitle, description: relayHelperDescription) {
+                        Button(isHotkeyRemapActive() ? "Reinstall" : "Set up") {
+                            runRelaySetup()
                         }
+                        .disabled(relaySetupRunning)
                     }
                     .help(VoiceBarHotkeyContract.remapExplanation)
                     // C13: the last Set up / Reinstall sits right under its button, with a check or a warning.
@@ -1105,23 +1076,23 @@ public struct SettingsView: View {
                             .font(.callout)
                         }
                     }
-                    Text("Lets F5 start dictation even if your Mac remaps the dictation key.")
-                        .font(.caption).foregroundStyle(.secondary)
                     if isHotkeyRemapActive() {
                         Text(VoiceBarHotkeyContract.remapPlainSummary)
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(SettingsPanePalette.helper)
                     }
                     Divider()
+                    SettingsRow(title: SettingsGeneralCopy.setupAssistantTitle,
+                                description: SettingsGeneralCopy.setupAssistantDescription) {
+                        Button("Run setup again") { onRunSetup() }
+                    }
                     // S1: the version lives once, in the sidebar footer. This row only copies the diagnostic summary.
-                    LabeledContent("Diagnostic summary") {
+                    SettingsRow(title: "Diagnostic summary") {
                         SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
                                            label: "build and diagnostic summary")
                     }
                     Divider()
-                    Text("Gestures").font(.headline)
+                    Text("Gestures")
                     LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
-                    LabeledContent("Hold", value: VoiceBarHotkeyContract.holdDescription)
-                    LabeledContent("Double-tap", value: VoiceBarHotkeyContract.doubleTapDescription)
                     LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel,
                                    value: VoiceBarHotkeyContract.repasteDescription)
                     LabeledContent(VoiceBarHotkeyContract.speakSelectionShortcutLabel,
@@ -1129,27 +1100,8 @@ public struct SettingsView: View {
                     Button(VoiceBarHotkeyContract.readClipboardActionLabel) { onReadClipboard?() }
                         .disabled(onReadClipboard == nil)
                         .help(VoiceBarHotkeyContract.readClipboardDescription)
-                    Text(VoiceBarHotkeyContract.readClipboardDescription)
-                        .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(.top, 6)
-            }
-
-            Section("Last dictation") {
-                if let entry = lastDictationEntry() {
-                    DictationCard(
-                        entry: entry,
-                        insertionStatus: lastDictationInsertionStatus(),
-                        onCopy: onCopyLastDictation
-                    )
-                    Button("View history →") {
-                        selectedTab = .history
-                    }
-                    .buttonStyle(.link)
-                } else {
-                    Text("No dictation yet")
-                        .foregroundStyle(.secondary)
-                }
             }
         }
         .formStyle(.grouped)
@@ -1159,35 +1111,151 @@ public struct SettingsView: View {
         }
     }
 
-    private var visibilitySection: some View {
-        Section("Visibility") {
-            LabeledContent("VoiceBar") {
-                statusBadge(
-                    localVoiceBarHidden ? SettingsVisibility.hiddenStatus(until: voiceBarHiddenUntil()) : "Visible",
-                    tone: SettingsVisibility.tone(isHidden: localVoiceBarHidden)
-                )
-            }
+    private var relayHelperDescription: String {
+        SettingsGeneralCopy.relayDescription(installed: isHotkeyRemapActive(), listenerActive: hotkeyEnabled)
+    }
 
-            if localVoiceBarHidden {
-                Button {
-                    onShowVoiceBar()
-                    localVoiceBarHidden = isVoiceBarHidden()
-                } label: {
-                    Label("Show VoiceBar", systemImage: "eye")
+    // MARK: - General setup (R2)
+
+    private var setupSection: some View {
+        let setup = generalSetup
+        return Section {
+            if setup.isReady && !showsSetupSteps {
+                SettingsRow(title: SettingsGeneralSetup.readyTitle, description: setup.readyDescription,
+                            lead: { SettingsSetupMark(isDone: true) }) {
+                    Button("Show steps") { showsSetupSteps = true }
                 }
-                .buttonStyle(.borderedProminent)
-                .help("Show VoiceBar")
-                .accessibilityLabel("Show VoiceBar")
             } else {
-                Button {
-                    onHideVoiceBar()
-                    localVoiceBarHidden = isVoiceBarHidden()
-                } label: {
-                    Label("Hide for 1 hour", systemImage: "eye.slash")
+                ForEach(setup.steps, id: \.id) { step in
+                    setupStepRow(step)
                 }
-                .buttonStyle(.bordered)
-                .help("Hide VoiceBar for 1 hour")
-                .accessibilityLabel("Hide VoiceBar for 1 hour")
+                if setup.isReady {
+                    Button("Hide steps") { showsSetupSteps = false }
+                }
+            }
+            if let hotkeyListenerRestartLine {
+                HStack(alignment: .top) {
+                    HotkeyListenerRestartLineView(line: hotkeyListenerRestartLine)
+                    if !hotkeyListenerRestartLine.succeeded {
+                        SettingsCopyButton(text: hotkeyListenerRestartLine.text, label: "F5 listener error")
+                    }
+                }
+            }
+            if let shortcutCheckFeedback, shortcutCheckFeedback.message != SettingsShortcutCheck.readyMessage {
+                HStack(alignment: .top) {
+                    SettingsShortcutCheckLine(message: shortcutCheckFeedback.message,
+                                              checkedAt: shortcutCheckFeedback.checkedAt)
+                    SettingsCopyButton(text: shortcutCheckFeedback.message, label: "shortcut check result")
+                }
+            }
+        } header: {
+            Text(setup.header)
+                .id(SettingsFocus.permissions)
+        }
+    }
+
+    private func setupStepRow(_ step: SettingsSetupStep) -> some View {
+        SettingsRow(title: step.title, description: step.description, lead: { SettingsSetupMark(kind: step.markKind) }) {
+            if let fix = step.fix {
+                Button(fix.title) { perform(fix) }
+                    .buttonStyle(.bordered)
+                    .disabled(fix == .checkF5 && shortcutCheckRunning)
+                    .focused($focusedSetupFix, equals: step.id)
+                    .accessibilityLabel("\(fix.title): \(step.title)")
+            }
+        }
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(SettingsArrivalHighlight.color.opacity(setupHighlight.step == step.id ? 0.35 : 0))
+                .allowsHitTesting(false)
+        )
+        .id(step.id)
+    }
+
+    private func perform(_ fix: SettingsSetupFix) {
+        switch fix {
+        case let .permission(action):
+            SettingsPermissionActions.perform(
+                action,
+                openURL: onOpenPermissionURL,
+                requestMicrophone: onRequestMicrophone,
+                refresh: { permissionsRefreshTick &+= 1 }
+            )
+        case .checkF5:
+            shortcutCheckRunning = true
+            onCheckShortcut { result in
+                shortcutCheckFeedback = (result, Date())
+                shortcutCheckRunning = false
+            }
+        case .restartF5Listener:
+            hotkeyListenerRestartLine = HotkeyListenerRestartLine(outcome: onRestartHotkeyListener())
+        case .manageVoice, .startVoiceEngine:
+            selectedTab = .speech
+        }
+    }
+
+    /// Arriving at Setup (the notch's orange dot) scrolls to the first broken step, flashes it amber for 1.6 s
+    /// (not under Reduce Motion) and moves focus to its fix.
+    private func arriveAtSetup(_ proxy: ScrollViewProxy) {
+        guard let step = generalSetup.firstBroken else { return }
+        proxy.scrollTo(step, anchor: .center)
+        focusedSetupFix = step
+        setupHighlight.arrive(at: step, reduceMotion: reduceMotion)
+        guard setupHighlight.step == step else { return }
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: SettingsArrivalHighlight.duration)) { setupHighlight.expire(step) }
+        }
+    }
+
+    // MARK: - General dictation and VoiceBar
+
+    private var dictationSection: some View {
+        Section("Dictation") {
+            SettingsRow(title: SettingsGeneralCopy.dictationKeyTitle,
+                        description: SettingsGeneralCopy.dictationKeyDescription) {
+                // The key itself; how macOS remaps it lives under Advanced › F5 key helper.
+                let key = "F5"
+                Text(key)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.tertiary))
+                    .accessibilityLabel("Dictation key: \(key)")
+            }
+            SettingsRow(title: SettingsGeneralCopy.mouseTitle, description: SettingsGeneralCopy.mouseDescription) {
+                if let mouseSideButtons {
+                    Toggle("Mouse side buttons", isOn: Binding(get: mouseSideButtons.isOn, set: mouseSideButtons.set))
+                        .labelsHidden().toggleStyle(.switch)
+                }
+            }
+        }
+    }
+
+    private var voiceBarSection: some View {
+        Section("VoiceBar") {
+            if let openAtLogin {
+                SettingsRow(title: SettingsGeneralCopy.openAtLoginTitle) {
+                    Toggle("Open at login", isOn: Binding(get: openAtLogin.isOn, set: openAtLogin.set))
+                        .labelsHidden().toggleStyle(.switch)
+                }
+            }
+            SettingsRow(title: SettingsGeneralCopy.hideTitle,
+                        description: localVoiceBarHidden
+                            ? SettingsVisibility.hiddenStatus(until: voiceBarHiddenUntil()) + ". VoiceBar keeps working."
+                            : SettingsGeneralCopy.hideDescription) {
+                if localVoiceBarHidden {
+                    Button("Show VoiceBar") {
+                        onShowVoiceBar()
+                        localVoiceBarHidden = isVoiceBarHidden()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button("Hide for 1 hour") {
+                        onHideVoiceBar()
+                        localVoiceBarHidden = isVoiceBarHidden()
+                    }
+                    .help("Hide VoiceBar for 1 hour")
+                }
             }
         }
         .onAppear {
@@ -1199,16 +1267,15 @@ public struct SettingsView: View {
 
     private var microphonePrioritySection: some View {
         Section {
-            LabeledContent("Next dictation") {
-                Text(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")
-                    .foregroundStyle(.secondary)
-            }
             if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {
-                Button("Use visible microphones first") {
-                    onReorderPriority(visibleFirst)
-                    refreshMicrophoneSnapshot()
+                SettingsRow(title: "Next dictation: \(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")",
+                            description: "A hidden system or virtual device would be used next.") {
+                    Button("Use visible microphones first") {
+                        onReorderPriority(visibleFirst)
+                        refreshMicrophoneSnapshot()
+                    }
+                    .help("This puts your microphones ahead of it.")
                 }
-                .help("A hidden system or virtual device would be used next. This puts your microphones ahead of it.")
             }
 
             if microphoneSnapshot.visibleRows.isEmpty {
@@ -1219,9 +1286,9 @@ public struct SettingsView: View {
             ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
                 microphonePriorityRow(row, at: index, visibleCount: visibleRows.count)
             }
-            Text("Make a microphone the default, or drag to reorder. Disconnected microphones keep their place.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Label(SettingsGeneralCopy.microphoneNote, systemImage: "info.circle")
+                .font(.system(size: 11.5))
+                .foregroundStyle(SettingsPanePalette.helper)
         } header: {
             Text("Microphone priority")
                 .id(SettingsFocus.microphonePriority)
@@ -1232,35 +1299,30 @@ public struct SettingsView: View {
     /// arrows are gone; VoiceOver keeps Make default / Move up / Move down as named actions.
     @ViewBuilder
     private func microphonePriorityRow(_ row: MicrophonePriorityRow, at index: Int, visibleCount: Int) -> some View {
-        let content = HStack(spacing: 10) {
+        let isUsed = SettingsMicrophoneRowPresentation.isUsedForDictation(row, snapshot: microphoneSnapshot)
+        let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row), lead: {
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.tertiary)
                 .opacity(row.canPrioritize ? 1 : 0)
                 .accessibilityHidden(true)
-            Image(systemName: "mic")
-                .foregroundStyle(.secondary)
-            Text(row.label)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            Text(row.isConnected ? "Connected" : "Disconnected")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if !row.canPrioritize {
-                Text("UID unavailable")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if index == 0 {
-                Text("Default")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.18)))
-            } else {
+        }) {
+            // Review R1 #736: the pill and Make default are independent. The mic in use can still sit below a
+            // disconnected one, and promoting it keeps it first when that one reconnects.
+            if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
+                // Hover reveals it; VoiceOver and the keyboard keep the named action below.
                 Button("Make default") {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
+                .opacity(hoveredMicrophoneIndex == index ? 1 : 0)
             }
+            if isUsed {
+                SettingsPill(text: "Used for dictation")
+            }
+        }
+        .opacity(row.isConnected ? 1 : 0.55)
+        .onHover { hovering in
+            if hovering { hoveredMicrophoneIndex = index } else if hoveredMicrophoneIndex == index { hoveredMicrophoneIndex = nil }
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -1356,7 +1418,9 @@ public struct SettingsView: View {
                 onToggleProcessing: onToggleProcessing,
                 recognizerState: recognizerStatus(),
                 onSelectRecognizer: onSelectRecognizer, onManageRecognizer: onManageRecognizer,
-                onSetUnloadWhenIdle: onSetUnloadWhenIdle
+                onSetUnloadWhenIdle: onSetUnloadWhenIdle,
+                language: transcriptionLanguage,
+                lastDictationNote: lastDictationNote()
             )
             VStack(alignment: .leading, spacing: 4) {
                 if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {
@@ -1961,14 +2025,22 @@ public struct SettingsView: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 4)
-            .accessibilityAddTraits(.isHeader)
+            .accessibilityHidden(true) // the cover below is the header's one accessibility element
             .background(
                 Rectangle()
                     .fill(Color(nsColor: .windowBackgroundColor))
                     .padding(.horizontal, -18)
                     .padding(.top, -coversAbove)
+                    // The header's accessibility element is the cover itself, so its frame is the painted area
+                    // including `coversAbove`: UI tests can prove it never reaches over the row above (V27).
+                    .accessibilityElement()
+                    .accessibilityLabel(title)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier(Self.historyDayHeaderCoverIdentifier)
             )
     }
+
+    static let historyDayHeaderCoverIdentifier = "history.dayHeader.cover"
 
     private func historyEntryRow(_ row: SettingsHistoryRowModel) -> some View {
         HStack(alignment: .top, spacing: 12) {
@@ -2947,37 +3019,6 @@ public struct SettingsView: View {
         HotkeyListenerRestartLine.showsRestart(listenerActive: hotkeyEnabled)
     }
 
-    private var hotkeyStatusText: String {
-        if hotkeyEnabled { return "Active" }
-        let names = missingPermissions.map {
-            switch $0 {
-            case .inputMonitoring: "Input Monitoring"
-            case .accessibility: "Accessibility"
-            case .microphone: "Microphone"
-            }
-        }
-        return "Missing: \(names.joined(separator: ", "))"
-    }
-
-    private func permissionRow(_ row: SetupPermissionRow) -> some View {
-        LabeledContent(row.label) {
-            HStack(spacing: 8) {
-                statusBadge(row.status, isReady: row.isGranted)
-                if let action = row.action {
-                    Button(action.title) {
-                        SettingsPermissionActions.perform(
-                            action,
-                            openURL: onOpenPermissionURL,
-                            requestMicrophone: onRequestMicrophone,
-                            refresh: { permissionsRefreshTick &+= 1 }
-                        )
-                    }
-                    .accessibilityLabel("\(action.title) \(row.label)")
-                }
-            }
-        }
-    }
-
     var permissionRowModels: [SetupPermissionRow] {
         // The wizard's rows (F3 step 1): a never-asked microphone offers "Allow…", a denied one "Open".
         SetupPermissionsStep(snapshot: SetupPermissionSnapshot(
@@ -2986,28 +3027,6 @@ public struct SettingsView: View {
             inputMonitoringGranted: !missingPermissions.contains(.inputMonitoring),
             hotkeyListenerActive: hotkeyEnabled
         )).rows
-    }
-
-    private var permissionRows: some View {
-        // Reading the tick re-reads the providers once the microphone prompt is answered.
-        let _ = permissionsRefreshTick
-        return ForEach(permissionRowModels, id: \.permission) { row in
-            permissionRow(row)
-        }
-    }
-
-    private func statusBadge(_ text: String, isReady: Bool) -> some View {
-        statusBadge(text, tone: isReady ? .ready : .attention)
-    }
-
-    private func statusBadge(_ text: String, tone: SettingsStatusTone) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(tone == .ready ? Color.green : tone == .attention ? Color.red : Color.gray)
-                .frame(width: 8, height: 8)
-            Text(text)
-                .foregroundStyle(.secondary)
-        }
     }
 
     private func runRelaySetup() {

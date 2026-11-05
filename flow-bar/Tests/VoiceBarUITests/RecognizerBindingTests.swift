@@ -337,13 +337,13 @@ final class RecognizerBindingTests: XCTestCase {
         XCTAssertEqual(a.count, 3); XCTAssertEqual(Array(a.prefix(2)), Array(b.prefix(2)))
         let enabled = try XCTUnwrap(a.first { $0.key == .smartChunks })
         let disabled = try XCTUnwrap(b.first { $0.key == .smartChunks })
-        XCTAssertNil(enabled.lockedReason); XCTAssertEqual(disabled.lockedReason, "Only used with Whisper")
+        XCTAssertNil(enabled.lockedReason); XCTAssertEqual(disabled.lockedReason, "Unavailable with Parakeet")
         XCTAssertEqual(disabled.line, "Splits long Whisper recordings at pauses.")
         XCTAssertTrue(enabled.isOn && disabled.isOn && controls.smartChunks.effective)
         // Desired-engine UI applicability does not overwrite the saved backend value.
         let fallback = RecognizerPickerState(selected: .parakeet, effective: .whisper, parakeet: .error, whisper: .loaded)
         let fallbackRow = try XCTUnwrap(ModelsSettingsView.processingRows(for: controls, recognizer: fallback).first { $0.key == .smartChunks })
-        XCTAssertEqual(fallbackRow.lockedReason, "Only used with Whisper")
+        XCTAssertEqual(fallbackRow.lockedReason, "Unavailable with Parakeet")
         XCTAssertEqual(controls.smartChunks.source, .settings)
         XCTAssertTrue(fallbackRow.isOn && controls.smartChunks.effective, "Whisper fallback retains the saved chunking value")
     }

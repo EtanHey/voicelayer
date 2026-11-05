@@ -68,7 +68,8 @@ final class SettingsTabRequestTests: XCTestCase {
         let focused = try scrolledOffset(SettingsTabRequest(tab: .general, focus: .microphonePriority, id: 1))
 
         XCTAssertLessThanOrEqual(unfocused, 1, "a plain General request opens at the top")
-        XCTAssertGreaterThan(focused, 100, "Change… scrolls down to Microphone priority")
+        // U3a: Setup is one row when all is well, so Microphone priority starts higher than it used to.
+        XCTAssertGreaterThan(focused, 20, "Change… scrolls down to Microphone priority")
     }
 
     private func tallestScrollView(in view: NSView) -> NSScrollView? {

@@ -2,20 +2,23 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/notch-surfaces/NotchSurfaces.tla": "9065b2bafe68ad769070c0e49e2daa75afa2bbb92e4f8cc9d71602e162139613",
-    "formal/notch-surfaces/checks.json": "8f10328eeb560b102450cb0424ce876be16ea76a075add4f551f4118764a6f76",
+    "formal/notch-surfaces/NotchSurfaces.tla": "08d8521f57f76d3a2444b8c1a327d871eb64197ccef181c82ea618669258b96d",
+    "formal/notch-surfaces/checks.json": "4c2fea7b82a89f86fac4142a388c0aa2ddcce693999d23007b3e6e19bc64ae91",
     "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/notch-surfaces/MutantForgetReading.cfg": "4e657b9dc436dc21b5b4dc8432c9f65bf938e29624fa5756dc8a6e1f787a50f0",
     "formal/notch-surfaces/Old.cfg": "8f57cf4c904cc5bac30fb78ab643847ff85c970d95d17a09812e89624a5f2c36",
     "formal/notch-surfaces/MutantNoClose.cfg": "139ba14b7a96bb15823332b0758e80be36c1596332b567ace350a49ec7e8bbe3",
     "formal/notch-surfaces/MutantDropPending.cfg": "f8900e07c5c034cbbf4a8c0befbca8e5301e168b983ee4679e0e519fcc930b08",
     "formal/notch-surfaces/MutantNoReopenCancel.cfg": "ecf170488a511d95b0fedd3d2814d99a8911c0538e614dd9449f7ad15bde2638",
     "formal/notch-surfaces/MutantPresentStale.cfg": "c4e392d37fff16d053e401fa0ffa8d0f8e2c2dd0f81a6e09f082c005f1b88c01",
-    "formal/notch-surfaces/Fixed.cfg": "d3e8253fc0055a9120169838c3a120847e6377326c8c9159ecd82c4e3e46d34f",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "7381b25f7ae39c8447a57804e757a7f87ce6f44100b27766fd7cabbba872e28f",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "cecda840159e3c36b0681aeababa056591f1e9812218ce5fa29f5c7ade6e7143",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "0a3a9a203c3dea2dbdc659b893e69bd85850f832770bbbb4ddc5c921d0c0b6b2",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift": "16d3056735452426e533b4307ceaf2c10ab54893b4a65577a1b6d382dbf8e4db"
+    "formal/notch-surfaces/Fixed.cfg": "faa99d7f69bc7b7e700b969498156b12b15360fc558d7d78bc4565682bce8f22",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "17bb4ac2fb3a2fe84e1cd0156678a2f9bc168f63f3e8aaec017df0bda60052ee",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "b1b478e1cf1fbbd320f5ffd55e00376daa6bab4ffa8ca80e633b65be631b18e3",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "d4ad24da5f2ad4cbd2da5fa75119d45f35b4e0cc73d5e408aeb28f2bc64e2c12",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift": "d37e537343919a323d7d06b9e00d1f777f72ef0b433376724e780f94b66719ca",
+    "flow-bar/Sources/VoiceBarUI/BareNotchMenuControl.swift": "a7dc2ca4c1e4afe7b3d1477e40307a7c8c4647ef047d2604d5bc9141813432ac",
+    "flow-bar/Sources/VoiceBar/UIE2EHost.swift": "555a7f7c8c02e4a833dd6bb7cc35ebb8b8b70805a982e66751b8ec2a8fced3a1"
   },
   "mutants": {
     "ExclusiveSurfaces": [
@@ -28,10 +31,13 @@
     ],
     "PendingMenuShows": [
       "MutantDropPending"
+    ],
+    "ReadingRestored": [
+      "MutantForgetReading"
     ]
   },
   "graphHashes": {
-    "Fixed": "b7e0413bebece76f0dfb7eefcc7dd25bfc2ac47556fdfbad9964a2c2ddeb53d3"
+    "Fixed": "6e1e4a187eaf224b733bfb665b3a3d66353443b5c9b50ebce664a50398be9d7c"
   },
   "checks": {
     "Fixed": {
@@ -39,8 +45,8 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 129,
-      "distinct": 62
+      "generated": 159,
+      "distinct": 66
     },
     "Old": {
       "role": "mutant",
@@ -63,24 +69,32 @@
       "kind": "temporal",
       "target": "PendingMenuShows",
       "status": "EXPECTED_FAIL",
-      "generated": 153,
-      "distinct": 72
+      "generated": 183,
+      "distinct": 76
     },
     "MutantPresentStale": {
       "role": "mutant",
       "kind": "invariant",
       "target": "ExclusiveSurfaces",
       "status": "EXPECTED_FAIL",
-      "generated": 19,
-      "distinct": 19
+      "generated": 23,
+      "distinct": 20
     },
     "MutantNoReopenCancel": {
       "role": "mutant",
       "kind": "invariant",
       "target": "NoStaleMenu",
       "status": "EXPECTED_FAIL",
-      "generated": 154,
-      "distinct": 79
+      "generated": 199,
+      "distinct": 86
+    },
+    "MutantForgetReading": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReadingRestored",
+      "status": "EXPECTED_FAIL",
+      "generated": 25,
+      "distinct": 21
     }
   }
 }

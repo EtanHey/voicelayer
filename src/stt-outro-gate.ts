@@ -1,3 +1,4 @@
+import { measureTakeStage } from "./take-stage-timings";
 /**
  * The hallucinated-closer gate.
  *
@@ -830,7 +831,7 @@ function excise(text: string, startIndex: number, endIndex: number): string {
  * `wavData` is the audio the transcript was decoded from. Every path that
  * cannot prove the phrase's own audio is silence returns the text unchanged.
  */
-export function stripHallucinatedOutro(
+function stripHallucinatedOutroUntimed(
   text: string,
   wavData: Uint8Array,
   options: OutroGateOptions = {},
@@ -986,4 +987,8 @@ export function stripHallucinatedOutro(
     reason,
     evaluations,
   };
+}
+
+export function stripHallucinatedOutro(...args: Parameters<typeof stripHallucinatedOutroUntimed>): ReturnType<typeof stripHallucinatedOutroUntimed> {
+  return measureTakeStage("gates", () => stripHallucinatedOutroUntimed(...args));
 }

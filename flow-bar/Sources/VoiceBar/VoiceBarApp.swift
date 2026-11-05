@@ -1,7 +1,7 @@
 // VoiceBarApp.swift — Entry point for Voice Bar.
 //
 // Wires together: VoiceState, SocketServer, FloatingPillPanel, BarView.
-// No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
+// Regular resident app: Dock, app menus and the notch; status item only for alerts.
 // Tracks mouse across screens — pill follows the cursor.
 //
 // AIDEV-NOTE: Architecture inversion (Phase 0) — VoiceBar is the persistent
@@ -251,13 +251,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
     private let gestureStateMachine = GestureStateMachine()
     private var stoppingFromPhysicalPress = false
+    var appliedActivationPolicy: NSApplication.ActivationPolicy = .accessory
+    private var menuUpdateStatus: VoiceBarVersionStatus = .latest
     private var menuBarStatusItem: NSStatusItem?
     private var menuBarStatusItemController: MenuBarStatusItemController?
     /// 2.3 U2: History and the microphone list never show together (lane U1 adds the notch menu). The QA host
     /// drives the same handoff.
     private let notchHistoryBridge = VoiceBarNotchHistoryBridge()
     private lazy var notchSurfaceHandoff: VoiceBarNotchSurfaceHandoff = {
-        let handoff = VoiceBarNotchSurfaceHandoff(bridge: notchHistoryBridge) { [weak self] kind in
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: notchHistoryBridge, presentationModel: notchPresentationModel) { [weak self] kind in
             self?.presentNotchMenu(kind)
         }
         handoff.onOutcome = { [weak self] outcome in
@@ -366,9 +368,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         closeStraySettingsScenes(trigger: "reopen")
-        // Reopening the menu-bar app must not show a restored placeholder.
-        // Explicit Settings requests still open the owned AppKit window.
+        let plan = VoiceBarAppPresence.dockReopenPlan(policy: appliedActivationPolicy, isSnoozed: isSnoozed || voiceState.isHidden)
+        if plan.unsnooze { unsnoozeNow() }
+        if let tab = plan.settingsTab { openSettingsWindow(tab: tab) }
         return false
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard appliedActivationPolicy == .regular else { return nil }
+        return pillContextMenuController.makeDockMenu()
     }
 
     @objc func showSettingsWindow(_ sender: Any?) {
@@ -633,8 +641,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard enforceCanonicalSingleInstance() else { return }
 
-        // No Dock icon (LSUIElement equivalent)
-        NSApp.setActivationPolicy(.accessory)
+        appliedActivationPolicy = VoiceBarAppPresence.activationPolicy(
+            enforcesSingletonInstance: VoiceLayerPaths.enforcesSingletonInstance
+        )
+        NSApp.setActivationPolicy(appliedActivationPolicy)
         setupMenuBarStatusItem()
 
         // Register with Launch Services so voicebar:// URL scheme works
@@ -788,7 +798,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.notchSurfaceHandoff.requestMenu(.microphone)
             },
             onOpenSetupSettings: { [weak self] in self?.openSetupAttentionSettings() },
-            historyBridge: notchHistoryBridge
+            historyBridge: notchHistoryBridge,
+            onOpenNotchMenu: { [weak self] in self?.notchSurfaceHandoff.requestMenu(.notch) },
+            onCancelNotchMenu: { [weak self] in self?.notchSurfaceHandoff.cancelQueuedMenu() }
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
@@ -964,6 +976,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configurePillContextMenu() {
+        pillContextMenuController.updateStatusProvider = { [weak self] in self?.menuUpdateStatus.menuMessage }
         pillContextMenuController.transcriptProvider = { [weak self] in
             self?.voiceState.latestReusableTranscript ?? ""
         }
@@ -2984,6 +2997,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    @objc func hideNotchForOneHour(_: Any?) {
+        snoozeForOneHour()
+    }
+
+    @objc func showVoiceBarHelp(_: Any?) {
+        NSWorkspace.shared.open(URL(string: "https://github.com/EtanHey/voicelayer#readme")!)
+    }
+
     @objc func quitFromMenuBar() {
         requestTermination(.menuBar)
     }
@@ -3074,6 +3095,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             menuBarStatusItem = statusItem
             let controller = MenuBarStatusItemController(button: button, presenter: presenter)
             menuBarStatusItemController = controller
+            controller.onVisibilityChange = { [weak statusItem] in statusItem?.isVisible = $0 }
+            controller.alertOnly = VoiceBarAppPresence.statusItemIsAlertOnly(appliedActivationPolicy)
             // The polish warning replaces the waveform, as the MenuBarExtra label did.
             let voiceState = voiceState
             controller.trackAlert { voiceState.polishMenuSignalPending }
@@ -3093,9 +3116,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let panel, let contentView = panel.contentView else { return }
         let menu = switch kind {
         case .microphone: pillContextMenuController.makeMicrophonePickerMenu()
+        case .notch: pillContextMenuController.makeNotchMenu()
         }
+        if kind == .notch { menu.minimumWidth = currentPanelLayout().presentation.geometry.topWidth }
+        contentView.layoutSubtreeIfNeeded()
+        contentView.displayIfNeeded()
         let origin = Self.notchMenuOrigin(kind: kind, menuWidth: menu.size.width, layout: currentPanelLayout())
-        logDiagnostic(event: "notch_microphone_list_opened")
+        logDiagnostic(event: kind == .notch ? "notch_menu_opened" : "notch_microphone_list_opened")
         menu.popUp(positioning: nil, at: contentView.convert(origin, from: nil), in: contentView)
     }
 
@@ -3104,6 +3131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     static func notchMenuOrigin(kind: VoiceBarNotchMenuKind, menuWidth: CGFloat, layout: VoiceBarPanelLayout) -> CGPoint {
         let top = layout.panelSize.height - (layout.presentation.geometry.topHeight + 6)
         switch kind {
+        case .notch:
+            return CGPoint(x: layout.visibleContentRect.midX - menuWidth / 2, y: top)
         case .microphone:
             return CGPoint(x: layout.leadingWingWindowRect.maxX + 4 - menuWidth, y: top)
         }
@@ -3445,7 +3474,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if tab == .transcription { self?.voiceState.refreshRecognizerStatus() }
             },
             historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback },
-            versionCheck: .live
+            versionCheck: .live,
+            onVersionStatusChange: { [weak self] in self?.menuUpdateStatus = $0 }
         )
     }
 

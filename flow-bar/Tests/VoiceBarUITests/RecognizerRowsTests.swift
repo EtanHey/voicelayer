@@ -39,16 +39,19 @@ final class RecognizerRowsTests: XCTestCase {
         XCTAssertEqual(s.assetActions(for: .parakeet), [.download, .delete])
         XCTAssertTrue(s.canManage(.parakeet, action: .delete))
         XCTAssertEqual(RecognizerPickerView.deleteMessage(s, .parakeet),
-                       "Remove its incomplete model files from disk? You can download it again later.")
+                       "Delete Parakeet TDT 0.6B v3's incomplete model files from this Mac?")
     }
 
     func testDeleteConfirmationShowsSizeAndUnloadsAResidentModelFirst() {
         let s = state()
         let size = ByteCountFormatter.string(fromByteCount: 2_509_000_000, countStyle: .file)
         XCTAssertEqual(RecognizerPickerView.deleteMessage(s, .parakeet),
-                       "Unload it and remove \(size) from disk? You can download it again later.")
-        XCTAssertNil(s.deleteBlockReason(for: .parakeet), "a loaded model is unloaded, not refused")
-        XCTAssertTrue(RecognizerPickerView.deleteMessage(s, .whisper).hasPrefix("Remove "))
+                       "Delete Parakeet TDT 0.6B v3 from this Mac? This frees \(size). You can download it again later.")
+        // S3 (SPEC 2.3): the recognizer in use is refused; a loaded one that isn't chosen is unloaded first.
+        XCTAssertNotNil(s.deleteBlockReason(for: .parakeet), "the recognizer in use can't be deleted")
+        let handingOver = state(selected: .whisper, parakeet: .loaded, whisper: .loaded)
+        XCTAssertNil(handingOver.deleteBlockReason(for: .parakeet), "a loaded model is unloaded, not refused")
+        XCTAssertTrue(RecognizerPickerView.deleteMessage(s, .whisper).hasPrefix("Delete Whisper large-v3-turbo"))
     }
 
     /// "Why does delete not work here?" — the trash explains instead of sitting greyed out.
@@ -115,8 +118,8 @@ final class RecognizerRowsTests: XCTestCase {
     func testRowSubtitleIsStatusAndSize() {
         let s = state()
         let size = ByteCountFormatter.string(fromByteCount: 2_509_000_000, countStyle: .file)
-        XCTAssertEqual(RecognizerPickerView.subtitle(s, .parakeet), "Ready · \(size)")
-        XCTAssertTrue(RecognizerPickerView.subtitle(s, .whisper).hasPrefix("Sleeping · "))
+        XCTAssertEqual(RecognizerPickerView.subtitle(s, .parakeet), "Loaded · \(size)")
+        XCTAssertTrue(RecognizerPickerView.subtitle(s, .whisper).hasPrefix("On disk · "))
         let fresh = state(selected: .whisper, parakeet: .unloaded, whisper: .loaded, parakeetPresent: false, parakeetBytes: 0)
         XCTAssertEqual(RecognizerPickerView.subtitle(fresh, .parakeet), "Not set up")
         XCTAssertTrue(fresh.canSelect(.whisper) == false, "Whisper is already selected")

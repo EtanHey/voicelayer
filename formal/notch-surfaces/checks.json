@@ -1,11 +1,13 @@
 {
   "module": "NotchSurfaces",
-  "sourceBaseline": "531a261ed",
+  "sourceBaseline": "1b934f20d4be73559db3f882945442089f68663b",
   "sources": [
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
     "flow-bar/Sources/VoiceBarUI/BarView.swift",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift"
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift",
+    "flow-bar/Sources/VoiceBarUI/BareNotchMenuControl.swift",
+    "flow-bar/Sources/VoiceBar/UIE2EHost.swift"
   ],
   "checks": {
     "Fixed": {
@@ -37,11 +39,17 @@
       "role": "mutant",
       "target": "NoStaleMenu",
       "kind": "invariant"
+    },
+    "MutantForgetReading": {
+      "role": "mutant",
+      "target": "ReadingRestored",
+      "kind": "invariant"
     }
   },
   "acceptance": [
     "ExclusiveSurfaces",
     "NoStaleMenu",
-    "PendingMenuShows"
+    "PendingMenuShows",
+    "ReadingRestored"
   ]
 }
