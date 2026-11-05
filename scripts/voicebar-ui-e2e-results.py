@@ -411,7 +411,7 @@ def export(output, sandbox, scenario=None):
     if scenario == 'wings-u2':
         required = {'WINGS-U2 ' + name for name in
                     ['launcher', 'chevron-list', 'setup-error', 'recording', 'transcribing', 'speaking-collapsed',
-                     'first-click', 'first-click-chevron']}
+                     'first-click', 'first-click-chevron', 'queued-cancel']}
         if not required.issubset({step['name'] for step in steps}):
             issues.append('FAIL wings-u2 missing required wing-state evidence')
         if any(step.get('skipped') or expected_packet(step) is not None for step in steps):

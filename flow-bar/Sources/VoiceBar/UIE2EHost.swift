@@ -53,6 +53,12 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var popoverPresenter: MenuBarPopoverPresenter?
     var wizard: NSWindow?
     var contextMenuTracking = false
+    /// 2.3 U2: the same History bridge + surface handoff the app uses (U2 review R1: no separate QA menu path).
+    let historyBridge = VoiceBarNotchHistoryBridge()
+    lazy var surfaceHandoff: VoiceBarNotchSurfaceHandoff = makeSurfaceHandoff()
+    /// QA-only: hold scheduled menu presentations so a test can open History in the gap (wings-u2 queued-cancel).
+    var holdsMenuQueue = false
+    var heldMenuPresentations: [() -> Void] = []
 #if VOICEBAR_UIE2E_GATE2245
     var gate2245: UIE2EGate2245?
 #endif
@@ -152,6 +158,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ForEach(["launcher", "recording", "setup-error", "speaking-collapsed"], id: \.self) { name in
                     Button("Wing " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                 }
+                Button("Hold menu queue") { self.holdsMenuQueue = true; self.model.receipt("menu-queue-held") }
+                    .accessibilityIdentifier("qa-fixture-hold-menu-queue")
+                Button("Release menu queue") { self.releaseMenuQueue() }
+                    .accessibilityIdentifier("qa-fixture-release-menu-queue")
             }.padding(6)
             UIE2ESettings(model: model)
         })
@@ -159,8 +169,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
             onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 },
             includesPanelOutsets: true,
-            onOpenMicrophonePicker: { [weak self] in DispatchQueue.main.async { self?.openMicrophoneList() } },
-            onOpenSetupSettings: { [weak self] in self?.openSetupSettings() }))
+            onOpenMicrophonePicker: { [weak self] in self?.surfaceHandoff.requestMenu(.microphone) },
+            onOpenSetupSettings: { [weak self] in self?.openSetupSettings() },
+            historyBridge: historyBridge))
         bar.activeHitTestProvider = { [weak self] point in
             guard let self else { return false }
             return Self.panelLayout(for: self.model.voice).containsInteractiveContent(point)
@@ -265,8 +276,36 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Self.fitPill(pill, layout: Self.panelLayout(for: model.voice), in: screen.visibleFrame)
     }
 
-    /// 2.3 U2: the chevron's microphone list, from the production controller, under the left wing.
-    func openMicrophoneList() {
+    /// 2.3 U2: the production handoff; only the scheduler can be held (QA) and the outcomes become receipts.
+    private func makeSurfaceHandoff() -> VoiceBarNotchSurfaceHandoff {
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: historyBridge) { [weak self] _ in
+            self?.presentMicrophoneList()
+        }
+        handoff.schedule = { [weak self] block in
+            guard let self, holdsMenuQueue else { return DispatchQueue.main.async(execute: block) }
+            heldMenuPresentations.append(block)
+            model.receipt("microphone-list-queued")
+        }
+        handoff.onOutcome = { [weak self] outcome in
+            switch outcome {
+            case .presented: self?.model.receipt("microphone-list-open")
+            case .cancelled: self?.model.receipt("microphone-list-cancelled")
+            }
+        }
+        return handoff
+    }
+
+    private func releaseMenuQueue() {
+        holdsMenuQueue = false
+        let held = heldMenuPresentations
+        heldMenuPresentations.removeAll()
+        model.receipt("menu-queue-released")
+        // Run after the release button's own click, as the app's scheduled block would.
+        for block in held { DispatchQueue.main.async(execute: block) }
+    }
+
+    /// 2.3 U2: the handoff's presenter: the production controller's list under the left wing (modal).
+    private func presentMicrophoneList() {
         guard let pill, let content = pill.contentView else { return }
         menu.microphonePickerRowsProvider = { [model] in MicrophonePickerRow.rows(from: model.microphone) }
         let list = menu.makeMicrophonePickerMenu()
@@ -274,7 +313,6 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         list.delegate = self
         let origin = AppDelegate.notchMenuOrigin(kind: .microphone, menuWidth: list.size.width,
                                                  layout: Self.panelLayout(for: model.voice))
-        model.receipt("microphone-list-open")
         list.popUp(positioning: nil, at: content.convert(origin, from: nil), in: content)
     }
 

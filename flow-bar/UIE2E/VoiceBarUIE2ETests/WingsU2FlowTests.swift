@@ -10,7 +10,7 @@ import XCTest
 /// Run: bash scripts/voicebar-ui-e2e.sh --scenario wings-u2 --output "$PWD/.build.noindex/ui-e2e-wings-u2-$(date +%s)"
 extension VoiceBarFlowTests {
     static let wingsU2Required = ["launcher", "chevron-list", "setup-error", "recording", "transcribing",
-                                  "speaking-collapsed", "first-click", "first-click-chevron"].map { "WINGS-U2 " + $0 }
+                                  "speaking-collapsed", "first-click", "first-click-chevron", "queued-cancel"].map { "WINGS-U2 " + $0 }
 
     var qaPill: XCUIElement { app.dialogs["VoiceBar QA Pill"] }
 
@@ -131,9 +131,10 @@ extension VoiceBarFlowTests {
             XCTAssertFalse(fixtureEvents().dropFirst(beforeFirst).contains("pill-became-key"),
                            "the first click did not make the pill key")
         }
-        // The chevron's first click, again from Finder: the list opens without activating VoiceBar or keying the pill.
-        click(qaPill.buttons["Close history"], "close History")
-        step("re-activate Finder before the chevron's first click") {
+        // The chevron's first click, from Finder, with History still open (U2 review R1: History is NOT closed by
+        // the test). The production handoff closes History first, then shows the list once the view reports it.
+        step("re-activate Finder before the chevron's first click, History open") {
+            XCTAssertTrue(qaPill.buttons["Close history"].exists, "History is open")
             try mutate { finder.activate() }
             XCTAssertTrue(finder.wait(for: .runningForeground, timeout: 5))
         }
@@ -144,11 +145,32 @@ extension VoiceBarFlowTests {
             try mutate { chevron.click() }
             waitUntil { self.fixtureEvents().dropFirst(beforeChevron).contains("microphone-list-open") }
             XCTAssertTrue(app.menuItems["Microphone priority…"].waitForExistence(timeout: 3), "the first click acted")
+            XCTAssertFalse(qaPill.buttons["Close history"].exists, "History closed before the list showed")
             XCTAssertEqual(finder.state, .runningForeground, "opening the list left Finder frontmost")
             XCTAssertFalse(fixtureEvents().dropFirst(beforeChevron).contains("pill-became-key"),
                            "the first click did not make the pill key")
         }
         click(app.menuItems["Microphone priority…"], "close the list through its footer")
+
+        // Queued-presentation cancellation through the production handoff: the scheduled presentation is held,
+        // the user opens History in the gap, and the released block must show nothing.
+        click(app.buttons["qa-fixture-launcher"])
+        click(app.buttons["qa-fixture-hold-menu-queue"], "hold scheduled menu presentations")
+        let beforeQueue = fixtureEvents().count
+        click(qaPill.buttons["Choose microphone"], "request the list (presentation held)")
+        step("assert the list is queued, not shown") {
+            waitUntil { self.fixtureEvents().dropFirst(beforeQueue).contains("microphone-list-queued") }
+            XCTAssertFalse(app.menuItems["Microphone priority…"].exists)
+        }
+        click(qaPill.buttons["History"], "open History in the gap")
+        click(app.buttons["qa-fixture-release-menu-queue"], "release the held presentation")
+        step("WINGS-U2 queued-cancel") {
+            waitUntil { self.fixtureEvents().dropFirst(beforeQueue).contains("microphone-list-cancelled") }
+            XCTAssertFalse(fixtureEvents().dropFirst(beforeQueue).contains("microphone-list-open"), "nothing showed")
+            XCTAssertFalse(app.menuItems["Microphone priority…"].exists, "no list over History")
+            XCTAssertTrue(qaPill.buttons["Close history"].exists, "History stayed open")
+        }
+        click(qaPill.buttons["Close history"], "close History")
         click(app.buttons["qa-fixture-idle"])
     }
 }
