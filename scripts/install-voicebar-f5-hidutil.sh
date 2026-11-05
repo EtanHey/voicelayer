@@ -6,10 +6,16 @@ if [[ "${VOICELAYER_QA_HEALTH:-}" == 1 || "${VOICEBAR_QA_PRESERVE_OVERRIDES:-}" 
       "${QA_VOICEBAR_PRESERVE_TEST_OVERRIDES:-}" == 1 || -n "${VOICEBAR_USER_DEFAULTS_SUITE:-}" ]]; then
   echo 'REFUSED: QA app cannot install the system F5 relay' >&2; exit 1
 fi
-if [[ "${VOICELAYER_TEST_ISOLATED:-}" != 1 ]]; then
-  real_home="$(/usr/bin/dscl . -read "/Users/$(/usr/bin/id -un)" NFSHomeDirectory)" || exit 1
+if [[ "${VOICELAYER_TEST_ISOLATED:-}" != 1 || -n "${VOICELAYER_TEST_RELAY_HOME_LOOKUP:-}" ]]; then
+  home_lookup=/usr/bin/dscl
+  if [[ "${VOICELAYER_TEST_ISOLATED:-}" == 1 && -n "${VOICELAYER_TEST_RELAY_HOME_LOOKUP:-}" ]]; then
+    home_lookup="$VOICELAYER_TEST_RELAY_HOME_LOOKUP"
+  fi
+  real_home="$("$home_lookup" . -read "/Users/$(/usr/bin/id -un)" NFSHomeDirectory 2>/dev/null)" || {
+    echo 'REFUSED: relay installer requires the real HOME' >&2; exit 1;
+  }
   real_home="${real_home#NFSHomeDirectory: }"
-  [[ "$HOME" == "$real_home" && "${CFFIXED_USER_HOME:-$HOME}" == "$real_home" ]] || {
+  [[ -n "$real_home" && "$HOME" == "$real_home" && "${CFFIXED_USER_HOME:-$HOME}" == "$real_home" ]] || {
     echo 'REFUSED: relay installer requires the real HOME' >&2; exit 1;
   }
 fi
