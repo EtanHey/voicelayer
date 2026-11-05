@@ -755,6 +755,7 @@ public final class VoiceState {
     private var pendingEffortReloadID: String?
     private var pendingEffortReloadTimeout: Task<Void, Never>?
     /// Speech controls are owned and reported by the daemon.
+    public private(set) var cloneEngine: CloneEngineSnapshot?
     public private(set) var speechControls: SpeechControlsState?
     public private(set) var speechPending: [String: SpeechValue] = [:]
     public private(set) var speechNotice: String?
@@ -3036,6 +3037,8 @@ public final class VoiceState {
         if handleOwnedRecordingEvent(event, type: type) { return }
 
         switch type {
+        case "clone_engine":
+            if let snapshot = CloneEngineSnapshot(payload: event) { cloneEngine = snapshot }
         case "history_playback_gate":
             if let id = event["id"] as? String, let busy = event["busy"] as? Bool {
                 MainActor.assumeIsolated { historyPlayback.setVoiceOwner(
