@@ -3,17 +3,16 @@
   "kind": "temporal",
   "target": "PendingMenuShows",
   "status": "EXPECTED_FAIL",
-  "generated": 80,
-  "distinct": 45,
+  "generated": 102,
+  "distinct": 57,
   "trace": [
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ wanted = \"none\"\n/\\ closeAsked = FALSE\n/\\ events = 0\n/\\ viewHistory = FALSE",
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ wanted = \"history\"\n/\\ closeAsked = FALSE\n/\\ events = 1\n/\\ viewHistory = TRUE",
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ wanted = \"none\"\n/\\ closeAsked = FALSE\n/\\ events = 2\n/\\ viewHistory = FALSE",
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ wanted = \"history\"\n/\\ closeAsked = FALSE\n/\\ events = 3\n/\\ viewHistory = TRUE",
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ wanted = \"none\"\n/\\ closeAsked = FALSE\n/\\ events = 4\n/\\ viewHistory = FALSE",
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ wanted = \"history\"\n/\\ closeAsked = FALSE\n/\\ events = 5\n/\\ viewHistory = TRUE",
-    "/\\ pending = \"notch\"\n/\\ shown = \"none\"\n/\\ wanted = \"notch\"\n/\\ closeAsked = TRUE\n/\\ events = 6\n/\\ viewHistory = TRUE",
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ wanted = \"notch\"\n/\\ closeAsked = FALSE\n/\\ events = 6\n/\\ viewHistory = FALSE",
-    "Finished checking temporal properties in 00s at 2026-11-05 05:13:41"
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"none\"\n/\\ closeAsked = FALSE\n/\\ events = 0\n/\\ viewHistory = FALSE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"notch\"\n/\\ wanted = \"notch\"\n/\\ closeAsked = FALSE\n/\\ events = 1\n/\\ viewHistory = FALSE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"history\"\n/\\ closeAsked = FALSE\n/\\ events = 2\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"none\"\n/\\ closeAsked = FALSE\n/\\ events = 3\n/\\ viewHistory = FALSE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"history\"\n/\\ closeAsked = FALSE\n/\\ events = 4\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"notch\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"notch\"\n/\\ closeAsked = TRUE\n/\\ events = 5\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"notch\"\n/\\ closeAsked = FALSE\n/\\ events = 5\n/\\ viewHistory = FALSE",
+    "Finished checking temporal properties in 00s at 2026-11-05 06:06:18"
   ]
 }

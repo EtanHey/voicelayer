@@ -1,4 +1,4 @@
 | Property | Exact-property failing mutant configs |
 | --- | --- |
-| ExclusiveSurfaces | Old, MutantNoClose |
+| ExclusiveSurfaces | Old, MutantNoClose, MutantPresentStale |
 | PendingMenuShows | MutantDropPending |

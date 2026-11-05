@@ -2,29 +2,32 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/notch-surfaces/NotchSurfaces.tla": "4a26b0bf472c2b4477418097a63ce23555b8069d6bab7c55e116a1f083b3a473",
-    "formal/notch-surfaces/checks.json": "5db3f1345b29c76f44f839d305e020ad91cef52ea7c28e8e1dd653d0fa6b802e",
+    "formal/notch-surfaces/NotchSurfaces.tla": "c352614a799e5dcf689a048ac67abe9c7be6824979b3c8aaae07b61a5055da7b",
+    "formal/notch-surfaces/checks.json": "5572e7fe4b2af30832f21895f97de74d68ba02a05d0bd2d10a05af54ca1bbfb0",
     "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/notch-surfaces/Old.cfg": "8f57cf4c904cc5bac30fb78ab643847ff85c970d95d17a09812e89624a5f2c36",
     "formal/notch-surfaces/MutantNoClose.cfg": "139ba14b7a96bb15823332b0758e80be36c1596332b567ace350a49ec7e8bbe3",
     "formal/notch-surfaces/MutantDropPending.cfg": "f8900e07c5c034cbbf4a8c0befbca8e5301e168b983ee4679e0e519fcc930b08",
+    "formal/notch-surfaces/MutantPresentStale.cfg": "c4e392d37fff16d053e401fa0ffa8d0f8e2c2dd0f81a6e09f082c005f1b88c01",
     "formal/notch-surfaces/Fixed.cfg": "dc9f35747504c6ddafff4f1c6297c2a308f83fda1f319690d7fcbd5ead2a4a8a",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift": "b84c3d7362ccf1c8579b6aa7b8a147396b1b1be6a6603839398e44f22614993d",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "0686e9fa23bee3a22f819e08b9123c1a8bd1fbc83aab4d26365886a361f0e6b6",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "9507aa4f36b521e8d3f8a041897b3e31069f614b9a9dde0c664cc57daf70bda4"
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "e06074dbd83eceb8b9b4dbfea9edb4c92f77d774c672563416b9b9a85388c57a",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "662ec385aae96fa92e2c81434a064c8583437a315d4d1ba23dbb9fcff5f8e600",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "d65bce6118fa798402a33fc12827c92f78d3ecdac383da3a1ec8875acc625c02",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift": "508c8656e18c8ba424f40341a5a94f2a76cf00e3eb1d4cb43e6b78c3f4f5fa42"
   },
   "mutants": {
     "ExclusiveSurfaces": [
       "Old",
-      "MutantNoClose"
+      "MutantNoClose",
+      "MutantPresentStale"
     ],
     "PendingMenuShows": [
       "MutantDropPending"
     ]
   },
   "graphHashes": {
-    "Fixed": "4f2f41a290c1b1b09b663c5a99a2fee1b1799df9a24945a977c302711cebffbc"
+    "Fixed": "49b57ad3d568ed56a4b929e840308ecedfe1c9b0245d79201ef63c4e75999611"
   },
   "checks": {
     "Fixed": {
@@ -32,8 +35,8 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 56,
-      "distinct": 35
+      "generated": 78,
+      "distinct": 47
     },
     "Old": {
       "role": "mutant",
@@ -56,8 +59,16 @@
       "kind": "temporal",
       "target": "PendingMenuShows",
       "status": "EXPECTED_FAIL",
-      "generated": 80,
-      "distinct": 45
+      "generated": 102,
+      "distinct": 57
+    },
+    "MutantPresentStale": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ExclusiveSurfaces",
+      "status": "EXPECTED_FAIL",
+      "generated": 18,
+      "distinct": 18
     }
   }
 }

@@ -242,8 +242,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var stoppingFromPhysicalPress = false
     private var menuBarStatusItem: NSStatusItem?
     private var menuBarStatusItemController: MenuBarStatusItemController?
-    /// 2.3 U2: History and the microphone list never show together (lane U1 adds the notch menu).
-    private var notchSurfaces = VoiceBarNotchSurfaceCoordinator()
+    /// 2.3 U2: History and the microphone list never show together (lane U1 adds the notch menu). The QA host
+    /// drives the same handoff.
+    private let notchHistoryBridge = VoiceBarNotchHistoryBridge()
+    private lazy var notchSurfaceHandoff: VoiceBarNotchSurfaceHandoff = {
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: notchHistoryBridge) { [weak self] kind in
+            self?.presentNotchMenu(kind)
+        }
+        handoff.onOutcome = { [weak self] outcome in
+            if case .cancelled = outcome { self?.logDiagnostic(event: "notch_microphone_list_cancelled") }
+        }
+        return handoff
+    }()
     private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
         modeProvider: { [weak self] in self?.voiceState.mode ?? .idle },
         restartRecordingAudio: { [weak self] in
@@ -756,10 +766,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true,
             onOpenMicrophonePicker: { [weak self] in
-                // After the chevron's own click finishes; menu tracking is modal.
-                DispatchQueue.main.async { self?.requestNotchMenu(.microphone) }
+                // The handoff schedules the (modal) menu after the chevron's own click finishes.
+                self?.notchSurfaceHandoff.requestMenu(.microphone)
             },
-            onOpenSetupSettings: { [weak self] in self?.openSetupAttentionSettings() }
+            onOpenSetupSettings: { [weak self] in self?.openSetupAttentionSettings() },
+            historyBridge: notchHistoryBridge
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
@@ -817,9 +828,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         pill.contextMenuHitTestProvider = { [weak self] point in
             self?.currentPanelHitGate().containsVisibleSurface(point, now: Self.hitGateClock()) ?? false
-        }
-        notchPresentationModel.onHistoryPanelChanged = { [weak self] isOpen in
-            self?.notchHistoryPanelDidChange(isOpen: isOpen)
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         pill.alphaValue = 0
@@ -3026,27 +3034,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         openSettingsWindow(tab: .general, focus: .permissions)
     }
 
-    func requestNotchMenu(_ kind: VoiceBarNotchMenuKind) {
-        notchSurfaces.historyDidChange(isOpen: notchPresentationModel.isHistoryPanelOpen).forEach(applyNotchSurfaceEffect)
-        notchSurfaces.requestMenu(kind).forEach(applyNotchSurfaceEffect)
-    }
-
-    private func notchHistoryPanelDidChange(isOpen: Bool) {
-        notchSurfaces.historyDidChange(isOpen: isOpen).forEach(applyNotchSurfaceEffect)
-    }
-
-    private func applyNotchSurfaceEffect(_ effect: VoiceBarNotchSurfaceEffect) {
-        switch effect {
-        case .closeHistory:
-            notchPresentationModel.requestHistoryClose()
-        case let .showMenu(kind):
-            // A menu shown from a SwiftUI update or AppKit callback would track inside it; start it cleanly.
-            DispatchQueue.main.async { [weak self] in self?.presentNotchMenu(kind) }
-        }
-    }
-
+    /// The handoff's presenter: runs only after the coordinator re-admitted the queued menu; returns when the
+    /// menu's modal tracking ends.
     private func presentNotchMenu(_ kind: VoiceBarNotchMenuKind) {
-        defer { notchSurfaces.menuDidClose() }
         guard let panel, let contentView = panel.contentView else { return }
         let menu = switch kind {
         case .microphone: pillContextMenuController.makeMicrophonePickerMenu()

@@ -346,6 +346,9 @@ public struct BarView: View {
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
+    /// 2.3 U2: History's open state for the notch surface handoff (History and the microphone list never show
+    /// together); shared by the app and the UIE2E host.
+    private let historyBridge: VoiceBarNotchHistoryBridge?
     /// Visual shots only: render one History row as hovered without a pointer.
     private var historyForcedHoverIndex: Int?
     @State private var errorDismissTask: Task<Void, Never>?
@@ -384,7 +387,8 @@ public struct BarView: View {
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false,
         onOpenMicrophonePicker: @escaping () -> Void = {},
-        onOpenSetupSettings: (() -> Void)? = nil
+        onOpenSetupSettings: (() -> Void)? = nil,
+        historyBridge: VoiceBarNotchHistoryBridge? = nil
     ) {
         _notchAppearance = State(
             initialValue: VoiceBarNotchAppearance(
@@ -400,6 +404,7 @@ public struct BarView: View {
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
+        self.historyBridge = historyBridge
     }
 
     // MARK: - Native notch shell
@@ -448,6 +453,7 @@ public struct BarView: View {
         .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
             presentationModel?.setHistoryPanelOpen(isOpen)
+            historyBridge?.historyDidChange(isOpen: isOpen)
             synchronizeHistoryDismissal(isOpen: isOpen)
         }
         .onDisappear {
@@ -469,8 +475,8 @@ public struct BarView: View {
                 isHistoryPresented = false
             }
         }
-        // 2.3 U2: a notch menu asked for History to close first (VoiceBarNotchSurfaceCoordinator).
-        .onChange(of: presentationModel?.historyCloseRequest ?? 0) { _, _ in
+        // 2.3 U2: a notch menu asked for History to close first (VoiceBarNotchSurfaceHandoff).
+        .onChange(of: historyBridge?.closeRequest ?? 0) { _, _ in
             isHistoryPresented = false
         }
     }

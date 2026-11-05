@@ -215,12 +215,15 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(surfaces.requestMenu(.microphone), [.closeHistory], "never shown over the open panel (Old)")
         XCTAssertEqual(surfaces.surface, .history)
         XCTAssertEqual(surfaces.historyDidChange(isOpen: false), [.showMenu(.microphone)],
-                       "shown once closed (DropPending)")
+                       "scheduled once closed (DropPending)")
+        XCTAssertEqual(surfaces.surface, .none, "queued, not shown, until the scheduled block runs")
+        XCTAssertTrue(surfaces.beginPresenting(.microphone))
         XCTAssertEqual(surfaces.surface, .menu(.microphone))
         XCTAssertEqual(surfaces.requestMenu(.microphone), [], "menus never stack")
         surfaces.menuDidClose()
         XCTAssertEqual(surfaces.surface, .none)
         XCTAssertEqual(surfaces.requestMenu(.microphone), [.showMenu(.microphone)])
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [], "never a second queued presentation")
     }
 
     func testHistoryOpeningAgainDropsAWaitingMenu() {
@@ -232,16 +235,61 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(surfaces.historyDidChange(isOpen: false), [], "no stale menu later")
     }
 
-    func testTheModelAsksTheViewToCloseHistoryAndReportsItsState() {
-        let model = VoiceBarNotchPresentationModel()
+    /// U2 review R1 (B1): the coordinator used to mark the menu shown at request time, before the scheduled popUp
+    /// ran; History opening in that gap left `historyOpen = true` with `shownMenu = microphone`, so the list
+    /// showed over History. Now the request only queues it, History opening cancels it, and the scheduled block
+    /// re-checks (formal/notch-surfaces, MutantPresentStale).
+    func testHistoryOpeningBeforeTheScheduledPresentationCancelsIt() {
+        var surfaces = VoiceBarNotchSurfaceCoordinator()
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [.showMenu(.microphone)])
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: true), [])
+        XCTAssertNil(surfaces.queuedMenu)
+        XCTAssertFalse(surfaces.beginPresenting(.microphone), "the scheduled block shows nothing")
+        XCTAssertEqual(surfaces.surface, .history, "never a menu over History")
+        XCTAssertNil(surfaces.shownMenu)
+    }
+
+    /// The same race through the shared production handoff (AppDelegate and the UIE2E host both use it), with
+    /// the scheduled presentation held until History has opened.
+    func testTheHandoffNeverPresentsOverAHistoryThatOpenedFirst() {
+        let bridge = VoiceBarNotchHistoryBridge()
+        var presented: [VoiceBarNotchMenuKind] = []
+        var outcomes: [VoiceBarNotchSurfaceHandoff.Outcome] = []
+        var held: [() -> Void] = []
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: bridge) { presented.append($0) }
+        handoff.schedule = { held.append($0) }
+        handoff.onOutcome = { outcomes.append($0) }
+
+        handoff.requestMenu(.microphone)
+        XCTAssertEqual(held.count, 1)
+        bridge.historyDidChange(isOpen: true) // the user opens History before the block runs
+        held.removeFirst()()
+        XCTAssertEqual(presented, [])
+        XCTAssertEqual(outcomes, [.cancelled(.microphone)])
+        XCTAssertEqual(handoff.coordinator.surface, .history)
+
+        // History open: a request closes it first, then presents once the view reports it closed.
+        let closeBefore = bridge.closeRequest
+        handoff.requestMenu(.microphone)
+        XCTAssertEqual(bridge.closeRequest, closeBefore + 1)
+        XCTAssertTrue(held.isEmpty, "nothing is scheduled while History is still open")
+        bridge.historyDidChange(isOpen: false)
+        held.removeFirst()()
+        XCTAssertEqual(presented, [.microphone])
+        XCTAssertEqual(outcomes.last, .presented(.microphone))
+        XCTAssertEqual(handoff.coordinator.surface, .none, "tracking ended")
+    }
+
+    func testTheBridgeReportsHistoryOnceAndCountsCloseRequests() {
+        let bridge = VoiceBarNotchHistoryBridge()
         var reports: [Bool] = []
-        model.onHistoryPanelChanged = { reports.append($0) }
-        model.setHistoryPanelOpen(true)
-        model.setHistoryPanelOpen(true)
-        model.setHistoryPanelOpen(false)
+        bridge.onHistoryPanelChanged = { reports.append($0) }
+        bridge.historyDidChange(isOpen: true)
+        bridge.historyDidChange(isOpen: true)
+        bridge.historyDidChange(isOpen: false)
         XCTAssertEqual(reports, [true, false])
-        let before = model.historyCloseRequest
-        model.requestHistoryClose()
-        XCTAssertEqual(model.historyCloseRequest, before + 1)
+        let before = bridge.closeRequest
+        bridge.requestClose()
+        XCTAssertEqual(bridge.closeRequest, before + 1)
     }
 }

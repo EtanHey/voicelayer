@@ -13,10 +13,6 @@ public final class VoiceBarNotchPresentationModel {
     public private(set) var isKeyboardFocused = false
     public private(set) var isHistoryPanelOpen = false
     public private(set) var isReducedMotionEnabled = false
-    /// 2.3 U2: bumped when a notch menu needs History closed first; the notch view closes History on change.
-    public private(set) var historyCloseRequest = 0
-    /// 2.3 U2: the notch view's History open state as it lands (VoiceBarNotchSurfaceCoordinator's input).
-    @ObservationIgnored public var onHistoryPanelChanged: (Bool) -> Void = { _ in }
 
     private var hasTeleprompter = false
     private var isRecording = false
@@ -104,11 +100,6 @@ public final class VoiceBarNotchPresentationModel {
         guard isHistoryPanelOpen != isOpen else { return }
         isHistoryPanelOpen = isOpen
         resolvePresentation()
-        onHistoryPanelChanged(isOpen)
-    }
-
-    public func requestHistoryClose() {
-        historyCloseRequest &+= 1
     }
 
     public func setReducedMotion(_ isEnabled: Bool) {

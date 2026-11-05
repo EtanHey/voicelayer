@@ -10,19 +10,25 @@ still-open History panel for as long as the menu stays open.
 Lane U2 ships History + the microphone list; lane U1 adds the bare-notch menu as a second
 `VoiceBarNotchMenuKind`. The model already carries both menus.
 
+Presentation is scheduled (the next main-queue turn), so a requested menu is only queued until that block
+runs; History opening in that gap cancels it and `beginPresenting` re-checks (U2 review R1).
+
 `VoiceBarNotchSurfaceCoordinator` (VoiceBarUI) holds a menu asked for while History is open
-until the view reports History closed (`VoiceBarNotchPresentationModel.onHistoryPanelChanged`),
-then shows it; `VoiceBarApp.requestNotchMenu` / `notchHistoryPanelDidChange` drive it.
+until the view reports History closed (`VoiceBarNotchHistoryBridge.onHistoryPanelChanged`),
+then queues it; `VoiceBarNotchSurfaceHandoff` (shared by `AppDelegate` and the UIE2E host) drives it through
+`VoiceBarNotchHistoryBridge`.
 Run: `bash formal/notch-surfaces/check.sh`.
 
 | Config | Expected | Meaning |
 | --- | --- | --- |
-| Fixed | PASS | wait for the History-closed report, then show |
+| Fixed | PASS | wait for the History-closed report, queue, re-check when the scheduled block runs |
 | Old | `ExclusiveSurfaces` fails | ask History to close and show the menu at once |
 | MutantNoClose | `ExclusiveSurfaces` fails | show the menu over History without closing it |
 | MutantDropPending | `PendingMenuShows` fails (temporal) | the History-closed report forgets the waiting menu |
+| MutantPresentStale | `ExclusiveSurfaces` fails | a scheduled (queued) menu is neither cancelled by History opening nor re-checked when it runs (the U2 review R1 defect) |
 
 Swift guards: `WingsU2Tests.testAMenuAskedForOverHistoryWaitsForHistoryToClose`,
-`testHistoryOpeningAgainDropsAWaitingMenu`, `testTheModelAsksTheViewToCloseHistoryAndReportsItsState`.
-The view side (`BarView` closing History on `historyCloseRequest`) and the menu placement need
+`testHistoryOpeningAgainDropsAWaitingMenu`, `testHistoryOpeningBeforeTheScheduledPresentationCancelsIt`,
+`testTheHandoffNeverPresentsOverAHistoryThatOpenedFirst`, `testTheBridgeReportsHistoryOnceAndCountsCloseRequests`.
+The view side (`BarView` closing History on the bridge's `closeRequest`) and the menu placement need
 the installed-app check.
