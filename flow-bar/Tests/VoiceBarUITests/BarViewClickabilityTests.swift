@@ -764,7 +764,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let source = try barViewSource()
 
         XCTAssertTrue(source
-            .contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented\n    }"))
+            .contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented || isHistoryMounted\n    }"))
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
     }
 
