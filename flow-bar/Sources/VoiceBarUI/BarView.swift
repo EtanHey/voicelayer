@@ -1081,7 +1081,9 @@ public struct BarView: View {
             VStack(spacing: 7) {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
-                    .frame(height: state.showsTeleprompterScrubber ? Theme.teleprompterViewportHeight : nil)
+                    .frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA
+                        ? TeleprompterA.bodyHeight(lines: TeleprompterA.lineRange.lowerBound)
+                        : Theme.teleprompterViewportHeight : nil)
                 if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
                 }
@@ -1137,6 +1139,24 @@ public struct BarView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     .transition(TeleprompterPreparingHandoff.transition)
+            } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech), showsTeleprompterA {
+                TeleprompterAView(
+                    text: text,
+                    wordBoundaries: state.teleprompterWordBoundaries,
+                    displayBlocks: state.teleprompterDisplayBlocks,
+                    hasCompleteDisplay: state.teleprompterHasCompleteDisplay,
+                    speechWords: state.speechWords,
+                    isPaused: state.isPlaybackPaused,
+                    footerState: TeleprompterA.footerState(isPaused: state.isPlaybackPaused,
+                                                           isPausedForDictation: state.isF5SpeechPausedDuringCapture),
+                    queuedCount: state.queuedSpeakCount,
+                    columnWidth: min(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth(
+                        coreWidth: notchPresentation.geometry.coreWidth)),
+                    playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
+                    onSpeechSeek: { state.seekSpeechWord(utteranceID: $0, wordIndex: $1) },
+                    onSeek: state.seek
+                )
+                .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {
                 TeleprompterView(
                     text: text,
@@ -1165,9 +1185,12 @@ public struct BarView: View {
         }
     }
 
+    /// U5: live reading uses Teleprompter A; an idle-retained readback keeps its scrolling view.
+    private var showsTeleprompterA: Bool { state.mode == .speaking && !state.isTeleprompterReadback }
+
     private var notchTeleprompterControls: some View {
         HStack(spacing: 10) {
-            if state.queuedSpeakCount > 0 {
+            if state.queuedSpeakCount > 0, !showsTeleprompterA {
                 Text("+\(state.queuedSpeakCount) queued")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(notchPalette.secondary.color)

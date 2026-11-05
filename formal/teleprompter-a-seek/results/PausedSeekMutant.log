@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoPausedSeek",
+  "status": "EXPECTED_FAIL",
+  "generated": 61,
+  "distinct": 32,
+  "trace": [
+    "/\\ pending = [u |-> 0, line |-> 0]\n/\\ utt = 1\n/\\ paused = FALSE\n/\\ slideTo = 0\n/\\ sends = 0\n/\\ shown = 0\n/\\ clockLine = 0\n/\\ table = 1\n/\\ sliding = FALSE\n/\\ pausedSend = FALSE",
+    "/\\ pending = [u |-> 0, line |-> 0]\n/\\ utt = 1\n/\\ paused = TRUE\n/\\ slideTo = 0\n/\\ sends = 0\n/\\ shown = 0\n/\\ clockLine = 0\n/\\ table = 1\n/\\ sliding = FALSE\n/\\ pausedSend = FALSE",
+    "/\\ pending = [u |-> 1, line |-> 0]\n/\\ utt = 1\n/\\ paused = TRUE\n/\\ slideTo = 0\n/\\ sends = 1\n/\\ shown = 0\n/\\ clockLine = 0\n/\\ table = 1\n/\\ sliding = FALSE\n/\\ pausedSend = TRUE"
+  ]
+}
