@@ -3372,7 +3372,9 @@ async function speakWithEdgeTTS(
       wordBoundaries = mergeWordBoundaryChunks(synthesizedChunks);
     }
   } catch (error) {
-    if (!signal?.aborted && !options?.textOnlyOnSynthesisFailure) broadcast({
+    const textOnlyAllowed = options?.textOnlyOnSynthesisFailure &&
+      !options.textOnlyOnSynthesisFailure.aborted && !signal?.aborted;
+    if (!signal?.aborted && !textOnlyAllowed) broadcast({
       type: "error",
       message: "TTS synthesis failed (edge-tts)",
       recoverable: true,
@@ -3389,7 +3391,7 @@ async function speakWithEdgeTTS(
     try {
       unlinkSpeechAudio(ttsFile);
     } catch {}
-    if (options?.textOnlyOnSynthesisFailure && !signal?.aborted) {
+    if (textOnlyAllowed) {
       console.error("[voicelayer] Ask synthesis unavailable; continuing with a text-only prompt");
       return { textOnly: true, displayText, warning: "Speech unavailable; question shown as text." };
     }

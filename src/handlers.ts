@@ -899,7 +899,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         waitForPlayback: true,
         voice: voiceName,
         captureAudioArtifact: true,
-        textOnlyOnSynthesisFailure: true,
+        textOnlyOnSynthesisFailure: inputAbortController.signal,
         onPlaybackQueued: handle => {
           promptPlayers.push(handle);
           if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle, onPromptParkedChange)) {

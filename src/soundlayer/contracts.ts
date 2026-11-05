@@ -88,8 +88,8 @@ export interface TextToSpeechOptions {
   requireClonedVoice?: boolean;
   /** Return an immutable copy of the synthesized audio for paired archives. */
   captureAudioArtifact?: boolean;
-  /** Ask may continue recording when Edge synthesis exhausts its retries. */
-  textOnlyOnSynthesisFailure?: boolean;
+  /** Ask may fall back only while this request lifetime remains active. */
+  textOnlyOnSynthesisFailure?: AbortSignal;
 }
 
 export interface TextToSpeechResult {

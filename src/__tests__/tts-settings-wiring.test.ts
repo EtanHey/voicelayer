@@ -285,7 +285,7 @@ test("Hebrew Ask uses Hila under the default Edge voice", async () => {
 test("Hebrew Ask preserves a selected clone and never routes it to Hila", async () => {
  cloneFixture();
  writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!, JSON.stringify({ profiles: { short: { engine: "clone", voice: "fixture" } } }));
- const result = await speak("האם אפשר להמשיך?", { mode: "converse", textOnlyOnSynthesisFailure: true });
+ const result = await speak("האם אפשר להמשיך?", { mode: "converse", textOnlyOnSynthesisFailure: new AbortController().signal });
  await awaitCurrentPlayback();
  expect(qwen.synthesizeCloned).toHaveBeenCalledWith("האם אפשר להמשיך?", "fixture", expect.any(AbortSignal));
  expect(result).toMatchObject({ engine: "qwen3-tts", voice: "fixture" });
