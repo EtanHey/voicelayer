@@ -62,12 +62,12 @@ for (const state of ["recording", "transcribing", "unknown", "idle"]) {
 }
 test.each(["stale", "newer", "equal", "non-idle", "unreadable", "malformed", "wrong-weekday", "wrong-parent", "outside", "multiple", "live"])("resident stale-state rule: %s", (mode) => {
   const result = python(`mode=${JSON.stringify(mode)};d=root/('stale-state-'+mode);d.mkdir(exist_ok=True)
-app=g['RESIDENT']=d/'VoiceBar.app'
+app=g['RESIDENT']=d/'fixtures.noindex/VoiceBar.app'
 rows=[(10,1,str(app/'Contents/MacOS/VoiceBar')),(11,10,'/bin/bun')]
 if mode=='wrong-parent':rows[1]=(11,1,'/bin/bun')
 if mode=='multiple':rows.append((12,10,'/bin/bun'))
 g['processes']=lambda:rows
-g['command_line']=lambda pid:'/bin/bun run '+str((d/'foreign.app' if mode=='outside' else app)/'Contents/Resources/src/mcp-server-daemon.ts')
+g['command_line']=lambda pid:'/bin/bun run '+str((d/'fixtures.noindex/foreign.app' if mode=='outside' else app)/'Contents/Resources/src/mcp-server-daemon.ts')
 probes=[]
 def alive(pid,sig):
  assert sig==0,'must never signal'
