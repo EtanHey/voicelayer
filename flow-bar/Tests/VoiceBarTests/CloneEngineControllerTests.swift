@@ -97,8 +97,7 @@ final class CloneEngineControllerTests: XCTestCase {
         let old = try XCTUnwrap(fixture.process)
         let ack = fixture.controller.handle(["cmd": "clone_engine", "action": "restart"])
         XCTAssertEqual(ack["outcome"] as? String, "accept")
-        XCTAssertFalse(old.isRunning)
-        XCTAssertTrue(fixture.wait { fixture.launchCount == 2 })
+        XCTAssertTrue(fixture.wait { !old.isRunning && fixture.launchCount == 2 })
         let invalidPayloads: [[String: Any]] = [["cmd": "clone_engine", "action": "set_autostart", "value": 1],
             ["cmd": "clone_engine", "action": "start", "value": true], ["cmd": "clone_engine", "action": "kill"]]
         for payload in invalidPayloads {
@@ -148,12 +147,107 @@ final class CloneEngineControllerTests: XCTestCase {
         XCTAssertEqual(spawns, 0)
     }
 
+    func testStopAcknowledgesBeforeRetirementAndStopWinsOverPendingRestart() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        var finishStop: ((Bool) -> Void)?
+        fixture.stopOverride = { _, done in finishStop = done }
+        fixture.controller.open()
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        let original = try XCTUnwrap(fixture.process)
+        _ = fixture.controller.handle(["cmd": "clone_engine", "action": "restart"])
+        XCTAssertNotNil(finishStop)
+        XCTAssertTrue(original.isRunning, "Acknowledgement must not wait for process exit")
+        _ = fixture.controller.handle(["cmd": "clone_engine", "action": "start"])
+        fixture.tick()
+        XCTAssertEqual(fixture.launchCount, 1, "No replacement while the retained child retires")
+        _ = fixture.controller.handle(["cmd": "clone_engine", "action": "stop"])
+        original.terminate(); original.waitUntilExit()
+        finishStop?(true)
+        fixture.tick()
+        XCTAssertEqual(fixture.controller.snapshot.state, .stopped)
+        XCTAssertEqual(fixture.launchCount, 1)
+    }
+
+    func testDefaultStopperKeepsMainQueueResponsiveDuringStubbornChildRetirement() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        fixture.stubborn = true
+        fixture.controller.open()
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        let original = try XCTUnwrap(fixture.process)
+        var mainAdvanced = false
+        DispatchQueue.main.async { mainAdvanced = true }
+        _ = fixture.controller.handle(["cmd": "clone_engine", "action": "stop"])
+        XCTAssertTrue(original.isRunning, "SIGTERM-ignoring child should retire after the command returns")
+        XCTAssertTrue(fixture.wait { mainAdvanced })
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .stopped && !original.isRunning })
+    }
+
+    func testFourPreflightFailuresLatchSpecificCauseUntilExplicitStartOrOpen() {
+        for cause in [CloneEngineLaunchError.pythonMissing, .scriptMissing] {
+            var attempts = 0
+            var timers: [() -> Void] = []
+            let controller = CloneEngineController(autostart: true, saveAutostart: { _ in }, probe: { $0(.absent) },
+                makeProcess: { attempts += 1; throw cause }, schedule: { _, block in timers.append(block) })
+            controller.open()
+            for _ in 0..<3 { let batch = timers; timers = []; batch.forEach { $0() } }
+            XCTAssertEqual(attempts, 4)
+            XCTAssertEqual(controller.snapshot.state, .failed)
+            XCTAssertEqual(controller.snapshot.reason, cause.reason)
+            XCTAssertTrue(timers.isEmpty, "No automatic retry after the fourth startup failure")
+            _ = controller.handle(["cmd": "clone_engine", "action": "start"])
+            XCTAssertEqual(attempts, 5)
+            XCTAssertEqual(controller.snapshot.state, .restarting)
+            controller.quit()
+        }
+    }
+
+    func testEarlyExitCarriesStatusAndLatchesAfterFourThenManualRestartRecovers() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        fixture.exitCode = 23
+        fixture.controller.open()
+        for count in 1...4 {
+            XCTAssertTrue(fixture.wait { fixture.launchCount == count && fixture.controller.snapshot.state == (count == 4 ? .failed : .restarting) })
+            if count < 4 { fixture.tick() }
+        }
+        XCTAssertEqual(fixture.controller.snapshot.reason, "exited_early(23)")
+        fixture.tick()
+        XCTAssertEqual(fixture.launchCount, 4)
+        fixture.exitCode = nil
+        _ = fixture.controller.handle(["cmd": "clone_engine", "action": "restart"])
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        fixture.tick()
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .running })
+        XCTAssertEqual(fixture.launchCount, 5)
+    }
+
+    func testEngineStdoutStderrAndExitStatusReachTheIsolatedLog() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let logger = CloneEngineLog(url: fixture.directory.appendingPathComponent("clone-engine.log"), maxBytes: 4096)
+        fixture.logger = logger
+        fixture.exitCode = 23
+        fixture.controller.open()
+        XCTAssertTrue(fixture.wait {
+            logger.flush()
+            let data = (try? Data(contentsOf: logger.url)) ?? Data()
+            let text = String(decoding: data, as: UTF8.self)
+            return text.contains("fake stdout") && text.contains("fake stderr") && text.contains("exited_early(23)")
+        })
+    }
+
     private final class Fixture {
         let directory: URL
         var process: Process?
         var launchCount = 0
         var saved: Bool?
         var observationOverride: CloneEngineObservation?
+        var stopOverride: CloneEngineController.ProcessStopper?
+        var stubborn = false
+        var exitCode: Int?
+        var logger: CloneEngineLog?
         var tasks: [() -> Void] = []
         var delays: [TimeInterval] = []
         let autostart: Bool
@@ -165,7 +259,11 @@ final class CloneEngineControllerTests: XCTestCase {
                 CloneEngineProbe.inspect(url: URL(string: "http://127.0.0.1:\(port)/health")!,
                     tokenFile: self.directory.appendingPathComponent("secret").path, completion: completion)
             }, makeProcess: { self.process = try self.launchFake(); return self.process! },
-            schedule: { delay, block in self.delays.append(delay); self.tasks.append(block) })
+            schedule: { delay, block in self.delays.append(delay); self.tasks.append(block) },
+            stopProcess: { process, done in
+                if let stop = self.stopOverride { stop(process, done) }
+                else { CloneEngineController.stopAsynchronously(process, completion: done) }
+            }, diagnostic: { self.logger?.appendLine($0) })
         init(autostart: Bool = true) throws {
             self.autostart = autostart
             directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -179,10 +277,14 @@ final class CloneEngineControllerTests: XCTestCase {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
             process.arguments = [Bundle.module.url(forResource: "clone-engine-fake", withExtension: "py")!.path,
-                                 directory.appendingPathComponent("port").path]
+                                 directory.appendingPathComponent("port").path] + (stubborn ? ["--ignore-term"] : [])
+            if let exitCode {
+                process.arguments = ["-c", "import sys; print('fake stdout', flush=True); print('fake stderr', file=sys.stderr, flush=True); sys.exit(\(exitCode))"]
+            }
             process.environment = ["PATH": "/usr/bin:/bin", "HOME": directory.path]
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
+            logger?.attach(to: process)
             // The controller owns run(); foreign fixtures start explicitly below.
             return process
         }

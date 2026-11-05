@@ -4,6 +4,7 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import sys
+import signal
 
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -14,6 +15,8 @@ class Health(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+if "--ignore-term" in sys.argv:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 server = HTTPServer(("127.0.0.1", 0), Health)
 Path(sys.argv[1]).write_text(str(server.server_port))
 server.serve_forever()
