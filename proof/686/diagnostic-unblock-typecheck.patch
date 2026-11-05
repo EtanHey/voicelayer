@@ -1,0 +1,20 @@
+diff --git a/flow-bar/Sources/VoiceBarUI/SettingsRowText.swift b/flow-bar/Sources/VoiceBarUI/SettingsRowText.swift
+index 80904b8..583a1e9 100644
+--- a/flow-bar/Sources/VoiceBarUI/SettingsRowText.swift
++++ b/flow-bar/Sources/VoiceBarUI/SettingsRowText.swift
+@@ -210,9 +210,12 @@ struct DictionaryChipFlow: Layout {
+         let height = rows.reduce(CGFloat(0)) { total, row in
+             total + (row.map { $0.size.height }.max() ?? 0)
+         } + spacing * CGFloat(max(0, rows.count - 1))
+-        let widest = rows.map { row in
+-            row.reduce(CGFloat(0)) { $0 + $1.size.width } + spacing * CGFloat(max(0, row.count - 1))
+-        }.max() ?? 0
++        var widest: CGFloat = 0
++        for row in rows {
++            let gaps: CGFloat = spacing * CGFloat(max(0, row.count - 1))
++            let rowWidth: CGFloat = row.reduce(CGFloat(0)) { $0 + $1.size.width }
++            widest = max(widest, rowWidth + gaps)
++        }
+         return CGSize(width: proposal.width ?? widest, height: height)
+     }
+ 

@@ -9,6 +9,9 @@ name: Swift proof (#686 peer report)
 #   base686   b53ba2f  integration/2.3 that #686 was cut from (old behaviour)
 #   head686   00283c0  #686 head (new behaviour)
 #   merge-v10 531a261 + 00283c0  #686 merged onto integration/2.3 with V10 #682 and P1 #683
+#   *-unblocked  the same tree plus proof/686/diagnostic-unblock-typecheck.patch applied in the
+#                CI workspace only, so the test targets compile past #686's one type-checker
+#                timeout and test failures become visible. Diagnostic only; not a proposed fix.
 
 on:
   push:
@@ -26,11 +29,11 @@ jobs:
   swift:
     name: Swift ${{ matrix.tree }}
     runs-on: macos-26
-    timeout-minutes: 50
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        tree: [base686, head686, merge-v10]
+        tree: [base686, head686, merge-v10, head686-unblocked, merge-v10-unblocked]
     env:
       BASE686: b53ba2f2d0d5f0df705c0b534a0fc03d613f87f8
       HEAD686: 00283c00979a6f0d7d745343fd7a37b72f553a1f
@@ -45,10 +48,15 @@ jobs:
         run: |
           set -euo pipefail
           git config user.name proof && git config user.email proof@example.invalid
+          mkdir -p "$RUNNER_TEMP/probe" && cp proof/686/*.swift proof/686/*.patch "$RUNNER_TEMP/probe/"
           case "${{ matrix.tree }}" in
             base686) git checkout --detach "$BASE686" ;;
-            head686) git checkout --detach "$HEAD686" ;;
-            merge-v10) git checkout --detach "$V10INT" && git merge --no-edit --no-ff "$HEAD686" ;;
+            head686*) git checkout --detach "$HEAD686" ;;
+            merge-v10*) git checkout --detach "$V10INT" && git merge --no-edit --no-ff "$HEAD686" ;;
+          esac
+          case "${{ matrix.tree }}" in
+            *-unblocked) git apply "$RUNNER_TEMP/probe/diagnostic-unblock-typecheck.patch"
+                         echo "diagnostic patch applied (CI workspace only)" | tee -a "$GITHUB_STEP_SUMMARY" ;;
           esac
           echo "tree=${{ matrix.tree }} HEAD=$(git rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
           mkdir -p "$RUNNER_TEMP/proof"
@@ -94,15 +102,28 @@ jobs:
           set -o pipefail
           swift test --skip-build --package-path flow-bar 2>&1 | tee "$RUNNER_TEMP/proof/test-full.log"
 
+      # Informational V10-contract probe (merge-v10 only). Copied in after the real suites so a
+      # probe compile error cannot mask them; excluded from the verdict.
+      - name: V10 contract probe (informational)
+        id: probe
+        if: startsWith(matrix.tree, 'merge-v10') && steps.buildtests.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cp "$RUNNER_TEMP/probe/CloneEngineV10ContractProbeTests.swift" flow-bar/Tests/VoiceBarTests/
+          swift build --package-path flow-bar --build-tests 2>&1 | tee "$RUNNER_TEMP/proof/probe-build.log"
+          swift test --skip-build --package-path flow-bar --filter CloneEngineV10ContractProbeTests 2>&1 | tee "$RUNNER_TEMP/proof/probe.log"
+
       - name: Summary
         if: always()
         run: |
           cd "$RUNNER_TEMP/proof"
           {
             echo "### ${{ matrix.tree }}"
-            echo "build=${{ steps.build.outcome }} build-tests=${{ steps.buildtests.outcome }} targeted=${{ steps.targeted.outcome }} full=${{ steps.full.outcome }}"
+            echo "build=${{ steps.build.outcome }} build-tests=${{ steps.buildtests.outcome }} targeted=${{ steps.targeted.outcome }} full=${{ steps.full.outcome }} probe=${{ steps.probe.outcome }}"
             echo '```'
-            for f in build.log build-tests.log; do [ -f "$f" ] && grep -E ': error: ' "$f" | sort -u | head -60; done
+            for f in build.log build-tests.log probe-build.log; do [ -f "$f" ] && grep -E ': error: ' "$f" | sort -u | head -60; done
+            [ -f probe.log ] && grep -E 'PROBE |: error: |Test Case .* (passed|failed)' probe.log | head -60
             for f in test-targeted.log test-full.log; do
               [ -f "$f" ] || continue
               echo "--- $f"
