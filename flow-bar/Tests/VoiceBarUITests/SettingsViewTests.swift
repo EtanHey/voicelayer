@@ -412,8 +412,9 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(sheet.contains(".keyboardShortcut(.cancelAction)"))
         // The chevron keeps a fixed column even with nothing to open, so the row does not shift (shared drawer).
         XCTAssertTrue(source.contains("isEnabled: includedHeader.showsChevron, hint: \"Built-in terms are read-only\""))
-        XCTAssertTrue(source
-            .contains("VStack(alignment: .leading, spacing: 3) {\n                    Text(\"Dictionary\")"))
+        // U3b: the title block sits beside the header's Add term button now; its 3 pt rhythm is what is pinned.
+        XCTAssertNotNil(source.range(of: #"VStack\(alignment: \.leading, spacing: 3\) \{\s*Text\("Dictionary"\)"#,
+                                     options: .regularExpression))
     }
 
     /// Fold 3 review M3 + A1: the Add-term sheet reads as an editor (chrome on both fields) and names its

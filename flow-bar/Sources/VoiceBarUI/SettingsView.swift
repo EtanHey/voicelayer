@@ -2241,18 +2241,22 @@ public struct SettingsView: View {
     private var dictionaryTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Dictionary").font(.title2.weight(.semibold))
-                    Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Dictionary").font(.title2.weight(.semibold))
+                        Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
+                    }
+                    Spacer(minLength: 12)
+                    Button {
+                        termSheet = DictionaryTermEdit()
+                    } label: {
+                        Label("Add term", systemImage: "plus")
+                    }
+                    .fixedSize()
+                    .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))
+                    .help("Add a term to your dictionary")
                 }
                 searchRow
-                Button {
-                    termSheet = DictionaryTermEdit()
-                } label: {
-                    Label("Add term", systemImage: "plus")
-                }
-                .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))
-                .help("Add a term to your dictionary")
             }
             .padding(.horizontal, 22)
             .padding(.top, 19)
@@ -2264,6 +2268,12 @@ public struct SettingsView: View {
                     let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
                     let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
                     LazyVStack(alignment: .leading, spacing: 0) {
+                        if let query = DictionarySearchPresentation.addSuggestion(
+                            search: dictionarySearch, loaded: hasLoadedDictionaryOnce,
+                            personalMatches: personal.count, includedMatches: included.count
+                        ) {
+                            dictionaryNoMatches(query)
+                        }
                         let yourTermsTitle = Self.dictionarySectionTitle(
                             "Your terms", count: dictionaryDisplayIndex.personalCount,
                             matches: isSearching ? personal.count : nil,
@@ -2313,6 +2323,9 @@ public struct SettingsView: View {
                         }
                         .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
                         .padding(.top, 18)
+                        if includedHeader.showsChevron, !isSearching {
+                            includedTermsSummary(expanded: includedTermsExpanded)
+                        }
                         if includedTermsExpanded || isSearching {
                             ForEach(included, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
@@ -2367,13 +2380,65 @@ public struct SettingsView: View {
         }
     }
 
+    /// Spec: Included terms (closed) shows a sample of the daemon's own rows as chips, and why they can't be edited.
+    private func includedTermsSummary(expanded: Bool) -> some View {
+        let sample = DictionarySearchPresentation.includedSample(
+            dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }.map(\.entry)
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            if !expanded, !sample.isEmpty {
+                DictionaryChipFlow(spacing: 6) {
+                    ForEach(sample, id: \.self) { term in
+                        Text(term)
+                            .font(.system(size: 11.5))
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.primary.opacity(0.07)))
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Included terms include " + sample.joined(separator: ", "))
+            }
+            Text(DictionarySearchPresentation.includedExplanation)
+                .font(.system(size: 11.5))
+                .foregroundStyle(SettingsPanePalette.helper)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 8)
+    }
+
+    private func dictionaryNoMatches(_ query: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No terms match \u{201C}\(query)\u{201D}.")
+                .font(SettingsRowLabel.titleFont)
+                .lineLimit(2)
+            Button {
+                termSheet = DictionaryTermEdit(correct: query)
+            } label: {
+                Label(DictionarySearchPresentation.addSuggestionTitle(query), systemImage: "plus")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .help(DictionarySearchPresentation.addSuggestionTitle(query))
+            .accessibilityIdentifier("dictionary-add-search-query")
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 14)
+    }
+
     private var searchRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
+            // The search is a plain TextField: normal macOS editing, Edit menu ⌘V, and P1's paste integration reach it
+            // through `focusedEditorField == .search`. No paste path of its own.
             TextField("Search terms and variants", text: $dictionarySearch)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .search)
+                .onExitCommand { dictionarySearch = "" }
+                .accessibilityLabel("Search your dictionary")
             // QA-27: the same clear (X) the History search has. It follows the raw field, not the trimmed query:
             // a lone space is not a search, but it is still text the X should clear.
             if dictionarySearch != "" {
