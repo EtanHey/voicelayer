@@ -145,6 +145,104 @@ final class HistoryScrollRestoreTests: XCTestCase {
 /// restores once the content is tall enough.
 @MainActor
 final class SettingsHistoryScrollKeeperTests: XCTestCase {
+    func testPassiveDocumentClampDuringRestoreKeepsAndRestoresTheRememberedPosition() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(400, for: .list)
+        let view = scrollView(height: 1800)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
+        let token = NotificationCenter.default.addObserver(forName: NSScrollView.didLiveScrollNotification,
+                                                           object: view.scroll, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 400, accuracy: 0.5)
+                self.resizeDocument(view.scroll, height: 500)
+            }
+        }
+        view.scroll.documentView?.addSubview(keeper)
+        NotificationCenter.default.removeObserver(token)
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 100, accuracy: 0.5, "AppKit really clamped the origin")
+        XCTAssertEqual(memory.offset(for: .list), 400, "passive layout is not a user scroll")
+        resizeDocument(view.scroll, height: 1800)
+        clock.drain()
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 400, accuracy: 0.5)
+        _ = view.window
+    }
+
+    func testPassiveViewportClampKeepsAndRestoresTheRememberedPosition() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(650, for: .list)
+        let view = scrollView(height: 1800)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
+        view.scroll.documentView?.addSubview(keeper)
+        view.window.setContentSize(NSSize(width: 300, height: 1700))
+        view.scroll.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 100, accuracy: 0.5, "the larger viewport clamped the origin")
+        XCTAssertEqual(memory.offset(for: .list), 650)
+        view.window.setContentSize(NSSize(width: 300, height: 400))
+        clock.drain()
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 650, accuracy: 0.5)
+    }
+
+    func testUserScrollAfterAPassiveClampCancelsTheRestore() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(650, for: .list)
+        let view = scrollView(height: 1800)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
+        view.scroll.documentView?.addSubview(keeper)
+        resizeDocument(view.scroll, height: 900)
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 500, accuracy: 0.5)
+        userScroll(view.scroll, by: -200)
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 300, accuracy: 0.5)
+        resizeDocument(view.scroll, height: 1800)
+        clock.drain()
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 300, accuracy: 0.5)
+        XCTAssertEqual(memory.offset(for: .list), 300, "the user's new position wins")
+        _ = view.window
+    }
+
+    func testAClampDuringLiveUserScrollingKeepsTheUsersNewPosition() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(400, for: .list)
+        let view = scrollView(height: 1800)
+        let clock = ManualRetryClock()
+        view.scroll.documentView?.addSubview(makeKeeper(memory, clock))
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: view.scroll)
+        resizeDocument(view.scroll, height: 500)
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: view.scroll)
+        XCTAssertEqual(memory.offset(for: .list), 100)
+        resizeDocument(view.scroll, height: 1800)
+        clock.drain()
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 100, accuracy: 0.5)
+        _ = view.window
+    }
+
+    func testRepeatedPassiveClampsDoNotRestartTheGiveUpBudget() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(650, for: .list)
+        let view = scrollView(height: 1800)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
+        view.scroll.documentView?.addSubview(keeper)
+        resizeDocument(view.scroll, height: 900)
+        for _ in 0..<15 { clock.step() }
+        resizeDocument(view.scroll, height: 800)
+        XCTAssertEqual(15 + clock.drain(), SettingsHistoryScrollKeeper.KeeperView.restoreAttempts)
+        resizeDocument(view.scroll, height: 700)
+        XCTAssertEqual(clock.pending, 0, "another clamp after give-up cannot restart the wait")
+        resizeDocument(view.scroll, height: 1800)
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 300, accuracy: 0.5, "no late jump after give-up")
+        XCTAssertEqual(memory.offset(for: .list), 650)
+        _ = view.window
+    }
+
+    private func resizeDocument(_ scroll: NSScrollView, height: CGFloat) {
+        scroll.documentView?.setFrameSize(NSSize(width: 300, height: height))
+        scroll.layoutSubtreeIfNeeded()
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
     func testMemoryKeepsTheListAndOnlyTheLatestDetail() {
         let memory = SettingsHistoryScrollMemory()
         memory.record(400, for: .list)
