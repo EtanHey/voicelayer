@@ -9,6 +9,9 @@ import { createServer } from "node:net";
 
 const originalGate = process.env.VOICELAYER_UPDATE_GATE_PATH;
 const PROCESS_READ_MS = 15;
+// M4 baseline/stress8 cases <=3.53s; hosted case timed out at 14.243s.
+// 14.243s * 1.5 margin = 21.365s, rounded up for this process-reader fixture.
+const SLOW_PROCESS_READERS_TEST_TIMEOUT_MS = 30_000;
 afterEach(() => { process.env.VOICELAYER_UPDATE_GATE_PATH = originalGate; });
 function fixture() {
   const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "ip-")), gate = join(root, "g");
@@ -341,7 +344,7 @@ test("slow process readers stay outside G1 lock and its 2 ms verifier budget", a
   await f.participant.quit(f.lease);
   expect(readsUnderLock).toBe(0);
   expect(maximumVerifierMs).toBeLessThan(2);
-});
+}, SLOW_PROCESS_READERS_TEST_TIMEOUT_MS);
 
 test("same-birth defunct participant waits for reaping under the exit deadline", async () => {
   const { observeInstallerExit } = await import("../update-gate-installer-participant");
