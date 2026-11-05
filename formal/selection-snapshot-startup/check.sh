@@ -7,7 +7,7 @@ cd "$root"
 check() {
   config=$1 expected=$2 property=$3
   set +e
-  java -XX:+UseParallelGC -cp "$HOME/.cache/tla/tla2tools.jar" tlc2.TLC \
+  "${TLC:-$root/../tlc.sh}" \
     -workers 1 -seed 1 -fp 0 -metadir "$run/$config" -config "$config" \
     SelectionSnapshotStartup.tla > "$run/$config.log" 2>&1
   actual=$?
