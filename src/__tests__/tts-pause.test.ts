@@ -14,7 +14,7 @@ import { handleSocketCommand } from "../socket-handlers";
 import { parseCommand } from "../socket-protocol";
 import { TEST_TMP } from "./setup/test-tmp";
 import { beginSpeechArchive } from "../speech-archive-live";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
@@ -391,19 +391,40 @@ describe("P10 socket pause/resume", () => {
 });
 
 it("admitted paused playback restarts during drain without new admission", async () => {
-  const { updateVoiceGate } = await import("../update-gate-admission");
+  const { initializeVoiceGate, updateVoiceGate } = await import("../update-gate-admission");
   const { readUpdateGateFile } = await import("../update-gate-storage");
-  await startTenSecondRead();
-  at(4200); tts.pausePlayback();
-  (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
-  const state = readUpdateGateFile();
-  if (state.kind !== "OPEN") throw Error("fixture gate must be open");
-  const lease = { generation: state.generation + 1, operationId: crypto.randomUUID(), ownerId: crypto.randomUUID(), targetSha: "a".repeat(40) };
-  expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+  const runRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
+  if (!runRoot) throw Error("paused gate fixture requires the isolated preload");
+  const originalGate = process.env.VOICELAYER_UPDATE_GATE_PATH;
+  const gate = join(mkdtempSync(join(runRoot, "paused-admission-")), "gate.json");
+  process.env.VOICELAYER_UPDATE_GATE_PATH = gate;
   try {
-    expect(handleSocketCommand({ cmd: "replay" })).toMatchObject({ outcome: "accept" });
-    await players.at(1);
-  } finally { updateVoiceGate({ kind: "CANCEL", lease }); }
+    // This case needs a healthy gate; other cases may retain UNKNOWN evidence.
+    await initializeVoiceGate();
+    await startTenSecondRead();
+    at(4200); tts.pausePlayback();
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    const state = readUpdateGateFile();
+    if (state.kind !== "OPEN") throw Error("fixture gate must be open");
+    const admitted = readdirSync(gate + ".admissions");
+    expect(admitted).toHaveLength(1);
+    const lease = { generation: state.generation + 1, operationId: crypto.randomUUID(), ownerId: crypto.randomUUID(), targetSha: "a".repeat(40) };
+    expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+    try {
+      expect(readUpdateGateFile()).toMatchObject({ kind: "DRAINING", lease });
+      expect(handleSocketCommand({ cmd: "replay" })).toMatchObject({ outcome: "accept" });
+      await players.at(1);
+      expect(readdirSync(gate + ".admissions")).toEqual(admitted);
+    } finally { updateVoiceGate({ kind: "CANCEL", lease }); }
+  } finally {
+    try {
+      tts.stopPlayback();
+      await tts.awaitCurrentPlayback();
+    } finally {
+      if (originalGate === undefined) delete process.env.VOICELAYER_UPDATE_GATE_PATH;
+      else process.env.VOICELAYER_UPDATE_GATE_PATH = originalGate;
+    }
+  }
 });
 
 
