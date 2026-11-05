@@ -134,7 +134,9 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalWidth, 465)
         // NOTCH2: each canvas keeps the transient-note band plus clearance (26 + 6 pt) below its resting body.
         XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32 + VoiceBarNotchContract.transientNoteCanvasReserve)
-        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight, 228 + VoiceBarNotchContract.transientNoteCanvasReserve)
+        // 2.3 U5: the teleprompter canvas holds eight Teleprompter A lines (+5 × 24 pt over the 3-line body).
+        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight,
+                       228 + 5 * TeleprompterA.lineHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertEqual(
             recording.geometry.coreOriginX + recordingCanvas.contentOffsetX,
             recordingCanvas.canvasGeometry.coreOriginX
@@ -201,7 +203,8 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
             + teleprompter.geometry.coreMidX
 
         XCTAssertEqual(recordingLayout.panelSize.height, 49 + VoiceBarNotchContract.transientNoteCanvasReserve)
-        XCTAssertEqual(teleprompterLayout.panelSize.height, 245 + VoiceBarNotchContract.transientNoteCanvasReserve)
+        XCTAssertEqual(teleprompterLayout.panelSize.height,
+                       245 + 5 * TeleprompterA.lineHeight + VoiceBarNotchContract.transientNoteCanvasReserve) // U5 8-line reserve
         XCTAssertNotEqual(recordingFrame, teleprompterFrame)
         XCTAssertEqual(recordingFrame.maxY, teleprompterFrame.maxY)
         XCTAssertEqual(recordingCoreMidX, screen.housingFrame.midX)

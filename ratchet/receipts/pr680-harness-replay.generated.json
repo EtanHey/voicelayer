@@ -1,0 +1,790 @@
+{
+  "collected_at": "2026-11-05T00:22:22+00:00",
+  "harness_commit": "c27e465ccffbc94f73092aaac57c2e6407c4f68b",
+  "harness_files_sha256": {
+    "run.py": "1f657862d0477a750b55c0860eb7c669ec8195991f34ef30ec30a17db0a1806d",
+    "fixture-whisper.py": "9d4b7eb16601f8d8dea864458204133dd96d7c5974c43e16e1453495afe5d4b8",
+    "fixture-rec.py": "42829971bcd5a8e3b35398378f13543526324c628beb26591ebf436e5fa4cec9",
+    "fixture-tts.py": "d370c5772b91490ceec6088fed093c8c30ad84f73d6d17f232417c6be8d977b8",
+    "lock-client.ts": "c05faddde3c4ce9e13007ebba28355d573c449518cb2de6bc86b49bd3b5d647e"
+  },
+  "results": [
+    {
+      "arm": "head",
+      "expected": "PASS",
+      "contract_pass": true,
+      "row": "retranscribe-history-refresh",
+      "kind": "behavior",
+      "value": 0,
+      "ceiling": 0,
+      "status": "PASS",
+      "bug_sha": "49e2333a722e1dec3cb49da4cdf631552fa200b0",
+      "fix_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "measured_sha": "c27e465ccffbc94f73092aaac57c2e6407c4f68b",
+      "error": null,
+      "overlay_sha256": null,
+      "app_binary_sha256": "00dac863155eac6e7625b0de6bd56cd32ea7e1575ffb321222d84a74afa95bb2",
+      "wire_evidence": {
+        "archive_updates": 1,
+        "durable_transcript": true,
+        "durable_metadata": true,
+        "transcription_events": 0,
+        "event_observed": true,
+        "quiet_period_complete": true,
+        "quiet_seconds": 1
+      }
+    },
+    {
+      "arm": "bug",
+      "expected": "FAIL",
+      "contract_pass": true,
+      "row": "retranscribe-history-refresh",
+      "kind": "behavior",
+      "value": 1,
+      "ceiling": 0,
+      "status": "FAIL",
+      "bug_sha": "49e2333a722e1dec3cb49da4cdf631552fa200b0",
+      "fix_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "measured_sha": "49e2333a722e1dec3cb49da4cdf631552fa200b0",
+      "error": null,
+      "overlay_sha256": null,
+      "app_binary_sha256": "cab56b2a7903f2ebf54372c85409dbaf09f56fdf9ba04890b67ab9ee39dd51c0",
+      "wire_evidence": {
+        "archive_updates": 0,
+        "durable_transcript": true,
+        "durable_metadata": true,
+        "transcription_events": 0,
+        "event_observed": false,
+        "quiet_period_complete": false,
+        "quiet_seconds": 1
+      }
+    },
+    {
+      "arm": "fix",
+      "expected": "PASS",
+      "contract_pass": true,
+      "row": "retranscribe-history-refresh",
+      "kind": "behavior",
+      "value": 0,
+      "ceiling": 0,
+      "status": "PASS",
+      "bug_sha": "49e2333a722e1dec3cb49da4cdf631552fa200b0",
+      "fix_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "measured_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "error": null,
+      "overlay_sha256": null,
+      "app_binary_sha256": "ef65cbae1617ef726d75e60b4110e4145d85dfc98d9729218b0614c682876b67",
+      "wire_evidence": {
+        "archive_updates": 1,
+        "durable_transcript": true,
+        "durable_metadata": true,
+        "transcription_events": 0,
+        "event_observed": true,
+        "quiet_period_complete": true,
+        "quiet_seconds": 1
+      }
+    },
+    {
+      "arm": "head",
+      "expected": "PASS",
+      "contract_pass": true,
+      "row": "recents-newest-after-retranscribe",
+      "kind": "behavior",
+      "value": 0,
+      "ceiling": 0,
+      "status": "PASS",
+      "bug_sha": "575ca6ce7950b3e1c5ebe0edd9d97b3958e56c25",
+      "fix_sha": "2f2de18c1c19339379375df7b9475c99704f2eed",
+      "measured_sha": "c27e465ccffbc94f73092aaac57c2e6407c4f68b",
+      "error": null,
+      "overlay_sha256": "5dd3a9e9258162a2e1f47f587e1a3d61dce8d251a151865897821de1b78c004e",
+      "app_binary_sha256": "2fcb0b7e136aa867a5267d0d332455b34b3f8e7a0a6ffd9472fd147f56bcee5e",
+      "recents_evidence": [
+        {
+          "case": "newest-cancelled-recovery",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-21T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 0,
+          "original_transcription_status": "cancelled",
+          "final_recording_created_at": "2026-08-21T10:00:00.000Z",
+          "final_recording_is_latest": true,
+          "durable_transcript": true,
+          "durable_metadata": true
+        },
+        {
+          "case": "older-missing-recovery",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-18T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-21T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-18T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 0,
+          "original_transcription_status": "captured",
+          "final_recording_created_at": "2026-08-18T10:00:00.000Z",
+          "final_recording_is_latest": false,
+          "durable_transcript": true,
+          "durable_metadata": true
+        },
+        {
+          "case": "older-existing-retranscribe",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-18T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-21T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-18T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 0,
+          "original_transcription_status": "transcribed",
+          "final_recording_created_at": "2026-08-19T10:00:00.000Z",
+          "final_recording_is_latest": false,
+          "durable_transcript": true,
+          "durable_metadata": true
+        }
+      ],
+      "defaults_evidence": {
+        "resident_bundle": "com.voicelayer.voicebar",
+        "before": {
+          "exit_code": 0,
+          "sha256": "f3e55704e5d44ae9775362fea0aada142d91084f3c0bc3a3bbf8ca95005f0228"
+        },
+        "after": {
+          "exit_code": 0,
+          "sha256": "f3e55704e5d44ae9775362fea0aada142d91084f3c0bc3a3bbf8ca95005f0228"
+        },
+        "resident_defaults_unchanged": true,
+        "plist_inside_root": true,
+        "seeded_read_verified": true,
+        "app_write_verified": true,
+        "plist_sha256": "b060179fe8a0a403eec283b3c0323c7f01104fd8283917205a4c9551ec6cfe0c"
+      },
+      "seams_evidence": {
+        "decision_code_unchanged": true,
+        "defaults_references_remapped": 4,
+        "daemon_source_unchanged": true,
+        "trigger_method": "VoiceState.retranscribeHistoryEntry"
+      }
+    },
+    {
+      "arm": "bug",
+      "expected": "FAIL",
+      "contract_pass": true,
+      "row": "recents-newest-after-retranscribe",
+      "kind": "behavior",
+      "value": 11,
+      "ceiling": 0,
+      "status": "FAIL",
+      "bug_sha": "575ca6ce7950b3e1c5ebe0edd9d97b3958e56c25",
+      "fix_sha": "2f2de18c1c19339379375df7b9475c99704f2eed",
+      "measured_sha": "575ca6ce7950b3e1c5ebe0edd9d97b3958e56c25",
+      "error": null,
+      "overlay_sha256": "0ccbeb95c3577384b0c64500a8f8b382c63dccf9857eb77857acd75a097f490a",
+      "app_binary_sha256": "32ca43366e76ef244512db46858e5196f6f3c0fcd1ac56655517385be21ecc96",
+      "recents_evidence": [
+        {
+          "case": "newest-cancelled-recovery",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 3,
+          "original_transcription_status": "cancelled",
+          "final_recording_created_at": null,
+          "final_recording_is_latest": null,
+          "durable_transcript": true,
+          "durable_metadata": true
+        },
+        {
+          "case": "older-missing-recovery",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-18T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 4,
+          "original_transcription_status": "captured",
+          "final_recording_created_at": null,
+          "final_recording_is_latest": null,
+          "durable_transcript": true,
+          "durable_metadata": true
+        },
+        {
+          "case": "older-existing-retranscribe",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-18T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 4,
+          "original_transcription_status": "transcribed",
+          "final_recording_created_at": null,
+          "final_recording_is_latest": null,
+          "durable_transcript": true,
+          "durable_metadata": true
+        }
+      ],
+      "defaults_evidence": {
+        "resident_bundle": "com.voicelayer.voicebar",
+        "before": {
+          "exit_code": 0,
+          "sha256": "f3e55704e5d44ae9775362fea0aada142d91084f3c0bc3a3bbf8ca95005f0228"
+        },
+        "after": {
+          "exit_code": 0,
+          "sha256": "f3e55704e5d44ae9775362fea0aada142d91084f3c0bc3a3bbf8ca95005f0228"
+        },
+        "resident_defaults_unchanged": true,
+        "plist_inside_root": true,
+        "seeded_read_verified": true,
+        "app_write_verified": true,
+        "plist_sha256": "45d76200a75891737ca4b68b8e8c98dc8e305baaf27c92aac7e673bdb67965da"
+      },
+      "seams_evidence": {
+        "decision_code_unchanged": true,
+        "defaults_references_remapped": 4,
+        "daemon_source_unchanged": true,
+        "trigger_method": "VoiceState.retranscribeHistoryEntry"
+      }
+    },
+    {
+      "arm": "fix",
+      "expected": "PASS",
+      "contract_pass": true,
+      "row": "recents-newest-after-retranscribe",
+      "kind": "behavior",
+      "value": 0,
+      "ceiling": 0,
+      "status": "PASS",
+      "bug_sha": "575ca6ce7950b3e1c5ebe0edd9d97b3958e56c25",
+      "fix_sha": "2f2de18c1c19339379375df7b9475c99704f2eed",
+      "measured_sha": "2f2de18c1c19339379375df7b9475c99704f2eed",
+      "error": null,
+      "overlay_sha256": "8c7dc373c81b9eb2fae969b1d29a826a56f029a32c987034f3f6acc96ce0f02f",
+      "app_binary_sha256": "5ac89a9132406449ce17f26ad2bd967a4f321c559a90d66d3adf582bcdf81135",
+      "recents_evidence": [
+        {
+          "case": "newest-cancelled-recovery",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-21T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 0,
+          "original_transcription_status": "cancelled",
+          "final_recording_created_at": "2026-08-21T10:00:00.000Z",
+          "final_recording_is_latest": true,
+          "durable_transcript": true,
+          "durable_metadata": true
+        },
+        {
+          "case": "older-missing-recovery",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-18T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-21T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-18T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 0,
+          "original_transcription_status": "captured",
+          "final_recording_created_at": "2026-08-18T10:00:00.000Z",
+          "final_recording_is_latest": false,
+          "durable_transcript": true,
+          "durable_metadata": true
+        },
+        {
+          "case": "older-existing-retranscribe",
+          "expected": [
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-21T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-20T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-19T10:00:00.000Z"
+            },
+            {
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav",
+              "created_at": "2026-08-18T10:00:00.000Z"
+            }
+          ],
+          "actual": [
+            {
+              "created_at": "2026-08-21T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-20T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-19T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+            },
+            {
+              "created_at": "2026-08-18T10:00:00.000Z",
+              "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav"
+            }
+          ],
+          "violations": 0,
+          "original_transcription_status": "transcribed",
+          "final_recording_created_at": "2026-08-19T10:00:00.000Z",
+          "final_recording_is_latest": false,
+          "durable_transcript": true,
+          "durable_metadata": true
+        }
+      ],
+      "defaults_evidence": {
+        "resident_bundle": "com.voicelayer.voicebar",
+        "before": {
+          "exit_code": 0,
+          "sha256": "f3e55704e5d44ae9775362fea0aada142d91084f3c0bc3a3bbf8ca95005f0228"
+        },
+        "after": {
+          "exit_code": 0,
+          "sha256": "f3e55704e5d44ae9775362fea0aada142d91084f3c0bc3a3bbf8ca95005f0228"
+        },
+        "resident_defaults_unchanged": true,
+        "plist_inside_root": true,
+        "seeded_read_verified": true,
+        "app_write_verified": true,
+        "plist_sha256": "77d3c8d4883a8c8c3c38715aa2ecd9133611c72fac2d53ed3d2d63a6396bf689"
+      },
+      "seams_evidence": {
+        "decision_code_unchanged": true,
+        "defaults_references_remapped": 4,
+        "daemon_source_unchanged": true,
+        "trigger_method": "VoiceState.retranscribeHistoryEntry"
+      }
+    },
+    {
+      "arm": "head",
+      "expected": "PASS",
+      "contract_pass": true,
+      "row": "voice-ask-lock-suspends-timeout",
+      "kind": "behavior",
+      "value": 0,
+      "ceiling": 0,
+      "status": "PASS",
+      "bug_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "fix_sha": "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+      "measured_sha": "c27e465ccffbc94f73092aaac57c2e6407c4f68b",
+      "error": null,
+      "overlay_sha256": null,
+      "app_binary_sha256": "88e884b1f04bc5390af676bd185dded896c5c3ae7f2e8e2433567f439fe4fd02",
+      "lock_evidence": [
+        {
+          "ending": "stop",
+          "lock_ack": true,
+          "held_seconds": 21.007636916008778,
+          "ended_before_release": false,
+          "completed": true,
+          "pcm_seconds_before_release": 20.832,
+          "pcm_seconds": 21.088,
+          "recorder_seconds": 21.065157375007402,
+          "ending_ack": true,
+          "accepted_lock": {
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": "lock-stop"
+          },
+          "accepted_ending": {
+            "type": "ack",
+            "command": "stop",
+            "outcome": "accept",
+            "id": "end-stop"
+          },
+          "early_end_seconds": null,
+          "daemon_lifetime_seconds": 23.994955165995634,
+          "daemon_cap_seconds": 45,
+          "daemon_cap_expired": false
+        },
+        {
+          "ending": "unlock",
+          "lock_ack": true,
+          "held_seconds": 21.03765108299558,
+          "ended_before_release": false,
+          "completed": true,
+          "pcm_seconds_before_release": 20.896,
+          "pcm_seconds": 25.856,
+          "recorder_seconds": 25.82544433399744,
+          "ending_ack": true,
+          "accepted_lock": {
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": "lock-unlock"
+          },
+          "accepted_ending": {
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": "end-unlock"
+          },
+          "early_end_seconds": null,
+          "daemon_lifetime_seconds": 27.5510350419936,
+          "daemon_cap_seconds": 45,
+          "daemon_cap_expired": false
+        }
+      ],
+      "fixtures_evidence": {
+        "fixture-rec.py": "42829971bcd5a8e3b35398378f13543526324c628beb26591ebf436e5fa4cec9",
+        "fixture-tts.py": "d370c5772b91490ceec6088fed093c8c30ad84f73d6d17f232417c6be8d977b8",
+        "lock-client.ts": "c05faddde3c4ce9e13007ebba28355d573c449518cb2de6bc86b49bd3b5d647e"
+      }
+    },
+    {
+      "arm": "bug",
+      "expected": "FAIL",
+      "contract_pass": true,
+      "row": "voice-ask-lock-suspends-timeout",
+      "kind": "behavior",
+      "value": 2,
+      "ceiling": 0,
+      "status": "FAIL",
+      "bug_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "fix_sha": "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+      "measured_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "error": null,
+      "overlay_sha256": null,
+      "app_binary_sha256": "a9a8002ea15fb61f3465264554a76b679f8c565b96f75ced655b62f72d878db4",
+      "lock_evidence": [
+        {
+          "ending": "stop",
+          "lock_ack": true,
+          "held_seconds": 21.031383082998218,
+          "ended_before_release": true,
+          "completed": true,
+          "pcm_seconds_before_release": 4.992,
+          "pcm_seconds": 4.992,
+          "recorder_seconds": 4.979371416993672,
+          "ending_ack": false,
+          "accepted_lock": {
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": "lock-stop"
+          },
+          "accepted_ending": null,
+          "early_end_seconds": 4.927663082999061,
+          "daemon_lifetime_seconds": 22.734583500001463,
+          "daemon_cap_seconds": 45,
+          "daemon_cap_expired": false
+        },
+        {
+          "ending": "unlock",
+          "lock_ack": true,
+          "held_seconds": 21.053253749996657,
+          "ended_before_release": true,
+          "completed": true,
+          "pcm_seconds_before_release": 4.992,
+          "pcm_seconds": 4.992,
+          "recorder_seconds": 4.980268250001245,
+          "ending_ack": false,
+          "accepted_lock": {
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": "lock-unlock"
+          },
+          "accepted_ending": null,
+          "early_end_seconds": 4.932068207999691,
+          "daemon_lifetime_seconds": 21.40493079200678,
+          "daemon_cap_seconds": 45,
+          "daemon_cap_expired": false
+        }
+      ],
+      "fixtures_evidence": {
+        "fixture-rec.py": "42829971bcd5a8e3b35398378f13543526324c628beb26591ebf436e5fa4cec9",
+        "fixture-tts.py": "d370c5772b91490ceec6088fed093c8c30ad84f73d6d17f232417c6be8d977b8",
+        "lock-client.ts": "c05faddde3c4ce9e13007ebba28355d573c449518cb2de6bc86b49bd3b5d647e"
+      }
+    },
+    {
+      "arm": "fix",
+      "expected": "PASS",
+      "contract_pass": true,
+      "row": "voice-ask-lock-suspends-timeout",
+      "kind": "behavior",
+      "value": 0,
+      "ceiling": 0,
+      "status": "PASS",
+      "bug_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "fix_sha": "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+      "measured_sha": "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+      "error": null,
+      "overlay_sha256": null,
+      "app_binary_sha256": "518557f28af9fc5049ac1eebe1ebbebea9925f7ce3853f1ef32d7a38ac01c2ce",
+      "lock_evidence": [
+        {
+          "ending": "stop",
+          "lock_ack": true,
+          "held_seconds": 21.044453875001636,
+          "ended_before_release": false,
+          "completed": true,
+          "pcm_seconds_before_release": 20.96,
+          "pcm_seconds": 21.152,
+          "recorder_seconds": 21.12940749998961,
+          "ending_ack": true,
+          "accepted_lock": {
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": "lock-stop"
+          },
+          "accepted_ending": {
+            "type": "ack",
+            "command": "stop",
+            "outcome": "accept",
+            "id": "end-stop"
+          },
+          "early_end_seconds": null,
+          "daemon_lifetime_seconds": 22.749292207998224,
+          "daemon_cap_seconds": 45,
+          "daemon_cap_expired": false
+        },
+        {
+          "ending": "unlock",
+          "lock_ack": true,
+          "held_seconds": 21.036986000006436,
+          "ended_before_release": false,
+          "completed": true,
+          "pcm_seconds_before_release": 21.056,
+          "pcm_seconds": 26.112,
+          "recorder_seconds": 26.09905633299786,
+          "ending_ack": true,
+          "accepted_lock": {
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": "lock-unlock"
+          },
+          "accepted_ending": {
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": "end-unlock"
+          },
+          "early_end_seconds": null,
+          "daemon_lifetime_seconds": 26.471377541995025,
+          "daemon_cap_seconds": 45,
+          "daemon_cap_expired": false
+        }
+      ],
+      "fixtures_evidence": {
+        "fixture-rec.py": "42829971bcd5a8e3b35398378f13543526324c628beb26591ebf436e5fa4cec9",
+        "fixture-tts.py": "d370c5772b91490ceec6088fed093c8c30ad84f73d6d17f232417c6be8d977b8",
+        "lock-client.ts": "c05faddde3c4ce9e13007ebba28355d573c449518cb2de6bc86b49bd3b5d647e"
+      }
+    }
+  ]
+}

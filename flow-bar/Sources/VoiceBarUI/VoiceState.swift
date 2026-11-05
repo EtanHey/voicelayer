@@ -2406,6 +2406,10 @@ public final class VoiceState {
 
     /// U5: the daemon's word table for the utterance on screen (nil from a daemon without word timing).
     public private(set) var speechWords: SpeechWordTable?
+    /// U5: Teleprompter A lines (3–8) from its handle; app session only (SPEC open question 4).
+    public var teleprompterVisibleLines = TeleprompterA.lineRange.lowerBound {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != teleprompterVisibleLines) }
+    }
 
     /// Playback-only: a word click names the utterance it was drawn from, never the latest one.
     public func seekSpeechWord(utteranceID: String, wordIndex: Int) {

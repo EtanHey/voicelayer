@@ -331,6 +331,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         hasCompactStatus: Bool,
         hasHistoryPanel: Bool = false,
         historyRows: Int = NotchHistoryMorph.visibleRows,
+        teleprompterLines: Int = TeleprompterA.lineRange.lowerBound,
         compactStatusLeadingWingWidth: CGFloat? = nil,
         compactStatusTrailingWingWidth: CGFloat? = nil,
         recordingLeadingWingWidth: CGFloat? = nil,
@@ -367,7 +368,7 @@ public struct VoiceBarNotchPresentation: Equatable {
                 ? virtualNotchIdleCoreHeight ?? VoiceBarNotchContract.topHeight
                 : VoiceBarNotchContract.topHeight
         )
-        let geometry = if visualState == .compactStatus,
+        var geometry = if visualState == .compactStatus,
                           compactStatusLeadingWingWidth != nil || compactStatusTrailingWingWidth != nil {
             VoiceBarNotchGeometry(
                 coreWidth: baseGeometry.coreWidth,
@@ -415,6 +416,15 @@ public struct VoiceBarNotchPresentation: Equatable {
             )
         } else {
             baseGeometry
+        }
+        // U5: the teleprompter body follows the lines its handle settled on (hit region and resting shape).
+        let lines = TeleprompterA.clamp(teleprompterLines)
+        if visualState == .teleprompter, lines != TeleprompterA.lineRange.lowerBound {
+            geometry = VoiceBarNotchGeometry(
+                coreWidth: geometry.coreWidth, topHeight: geometry.topHeight,
+                leadingWingWidth: geometry.leadingWingWidth, trailingWingWidth: geometry.trailingWingWidth,
+                bodyLeadingExtent: geometry.bodyLeadingExtent, bodyTrailingExtent: geometry.bodyTrailingExtent,
+                lowerSurfaceHeight: VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: lines))
         }
 
         let resolved = VoiceBarNotchPresentation(
@@ -588,6 +598,11 @@ public enum VoiceBarNotchContract {
     }
 
     /// 2.3 U2: the reading-aloud right wing is the fixed wing (time + Stop), like every other state.
+    /// U5: the teleprompter's lower surface for `lines` Teleprompter A lines (196 pt holds three).
+    public static func teleprompterLowerSurfaceHeight(lines: Int) -> CGFloat {
+        196 + CGFloat(TeleprompterA.clamp(lines) - TeleprompterA.lineRange.lowerBound) * TeleprompterA.lineHeight
+    }
+
     public static func teleprompterWaveformWingWidth(
         visibleCoreOcclusionInset _: CGFloat
     ) -> CGFloat {
@@ -643,7 +658,7 @@ public enum VoiceBarNotchContract {
                 trailingWingWidth: fixedWingWidth,
                 bodyLeadingExtent: 140,
                 bodyTrailingExtent: 140,
-                lowerSurfaceHeight: 196
+                lowerSurfaceHeight: teleprompterLowerSurfaceHeight(lines: TeleprompterA.lineRange.lowerBound)
             )
         case .history:
             // The wings (controls, hit targets) stay the launcher's. 2.3 lane U4: the morph shape draws the top row
