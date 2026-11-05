@@ -416,10 +416,13 @@ final class UIE2EModel {
             createdAt: Date(timeIntervalSince1970: 1_790_000_000), transcript: Self.transcript,
             audioPath: sandbox.root.appendingPathComponent("fixture.wav"), durationMs: 5000,
             modelLabel: "QA recognizer", performanceEffort: .accurate, inputDeviceLabel: "QA microphone A")
-        let older = SettingsHistoryEntry(id: "qa-older", dayKey: entry.dayKey, recordingID: "qa-older",
-            createdAt: entry.createdAt.addingTimeInterval(-120), transcript: "QA older transcript",
+        // V27: the older row is on the day before, so the newest (selected) row is the last of its day, directly
+        // above the next day's header: the row Etan saw clipped.
+        let older = SettingsHistoryEntry(id: "qa-older", dayKey: "2026-10-14", recordingID: "qa-older",
+            createdAt: entry.createdAt.addingTimeInterval(-86_400), transcript: "QA older transcript",
             audioPath: sandbox.root.appendingPathComponent("older.wav"))
-        return .init(groups: [.init(dayKey: entry.dayKey, date: entry.createdAt, entries: [entry, older])], hasMore: true)
+        return .init(groups: [.init(dayKey: entry.dayKey, date: entry.createdAt, entries: [entry]),
+                              .init(dayKey: older.dayKey, date: older.createdAt, entries: [older])], hasMore: true)
     }
     var askHistory: SettingsAskHistoryPage {
         let entry = SettingsAskHistoryEntry(id: "qa-ask", dayKey: "2026-10-15", askID: "qa-ask", createdAt: Date(timeIntervalSince1970: 1_790_000_000),
@@ -428,11 +431,12 @@ final class UIE2EModel {
     }
     func historyPage(limit: Int) -> SettingsHistoryPage {
         receipt("history-page:" + String(limit))
-        guard limit > 100, let group = history.groups.first else { return history }
+        guard limit > 100, let group = history.groups.last else { return history }
         let entry = SettingsHistoryEntry(id: "qa-loaded", dayKey: group.dayKey, recordingID: "qa-loaded",
             createdAt: group.date.addingTimeInterval(-240), transcript: "QA loaded transcript",
             audioPath: sandbox.root.appendingPathComponent("loaded.wav"))
-        return .init(groups: [.init(dayKey: group.dayKey, date: group.date, entries: group.entries + [entry])], hasMore: false)
+        return .init(groups: history.groups.dropLast() + [.init(dayKey: group.dayKey, date: group.date,
+                                                              entries: group.entries + [entry])], hasMore: false)
     }
     func askHistoryPage(limit: Int) -> SettingsAskHistoryPage {
         receipt("ask-history-page:" + String(limit))
