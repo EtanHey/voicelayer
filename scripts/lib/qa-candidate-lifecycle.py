@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit QA owner handover; no installs, unlinking or force kills."""
 import json
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import plistlib
@@ -83,8 +84,36 @@ def require_bundled_daemon(app):
     rows = processes(); owners = [p for p, _, name in rows if name == str(app / 'Contents/MacOS/VoiceBar')]
     children = [p for p, parent, name in rows if parent in owners and Path(name).name == 'bun']
     if len(owners) != 1 or len(children) != 1 or not daemon_in_bundle(children[0], app):
-        raise RuntimeError('REFUSED: QA daemon must run its bundled Resources/src/mcp-server-daemon.ts')
+        raise RuntimeError('REFUSED: app daemon must be its sole bundled bun child')
     os.kill(owners[0], 0); os.kill(children[0], 0)
+    return children[0]
+
+def process_start_ns(pid):
+    try:
+        raw = subprocess.check_output(['/bin/ps', '-o', 'lstart=', '-p', str(pid)], text=True, timeout=2,
+                                      env={**os.environ, 'LC_ALL': 'C', 'TZ': 'UTC'}).strip()
+        if not re.fullmatch(r'(Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} \d{2}:\d{2}:\d{2} \d{4}', raw):
+            raise ValueError('unknown ps start format')
+        started = datetime.strptime(raw, '%a %b %d %H:%M:%S %Y').replace(tzinfo=timezone.utc)
+        stamp = int(started.timestamp()) * 10**9
+        if started.strftime('%a') != raw[:3] or stamp <= 0 or stamp > time.time_ns():
+            raise ValueError('invalid ps start time')
+        return stamp
+    except (OSError, ValueError, subprocess.SubprocessError):
+        raise RuntimeError('REFUSED: resident daemon start time is unavailable') from None
+
+def stale_idle_state(path):
+    try:
+        before = path.stat()
+        daemon = require_bundled_daemon(RESIDENT)
+        started = process_start_ns(daemon)
+        unchanged = require_bundled_daemon(RESIDENT) == daemon and path.stat() == before
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        raise RuntimeError('REFUSED: stale idle state lacks a verified live resident daemon/start time') from None
+    if not unchanged:
+        raise RuntimeError('REFUSED: resident daemon or recording state changed during idle check')
+    if before.st_mtime_ns >= started:
+        raise RuntimeError('REFUSED: dead recording owner state must predate the live resident daemon')
 
 def idle(tmp, state, health=None):
     for directory in [tmp, state]:
@@ -105,7 +134,12 @@ def idle(tmp, state, health=None):
         pid = data.get('pid')
         if type(pid) is not int or pid <= 0:
             raise RuntimeError('REFUSED: unknown recording owner')
-        os.kill(pid, 0)
+        try: os.kill(pid, 0)
+        except ProcessLookupError: pass
+        except OSError:
+            raise RuntimeError('REFUSED: recording owner liveness is unknown') from None
+        else: return
+        stale_idle_state(state / 'recording-state.json')
 
 def qa_health(env):
     token = (Path(env['VOICELAYER_STATE_DIR']) / 'daemon.secret').read_text().strip()

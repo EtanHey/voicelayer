@@ -60,6 +60,40 @@ for (const state of ["recording", "transcribing", "unknown", "idle"]) {
     if (state !== "idle") expect(result.error).toContain("REFUSED");
   });
 }
+test.each(["stale", "newer", "equal", "non-idle", "unreadable", "malformed", "wrong-weekday", "wrong-parent", "outside", "multiple", "live"])("resident stale-state rule: %s", (mode) => {
+  const result = python(`mode=${JSON.stringify(mode)};d=root/('stale-state-'+mode);d.mkdir(exist_ok=True)
+app=g['RESIDENT']=d/'VoiceBar.app'
+rows=[(10,1,str(app/'Contents/MacOS/VoiceBar')),(11,10,'/bin/bun')]
+if mode=='wrong-parent':rows[1]=(11,1,'/bin/bun')
+if mode=='multiple':rows.append((12,10,'/bin/bun'))
+g['processes']=lambda:rows
+g['command_line']=lambda pid:'/bin/bun run '+str((d/'foreign.app' if mode=='outside' else app)/'Contents/Resources/src/mcp-server-daemon.ts')
+probes=[]
+def alive(pid,sig):
+ assert sig==0,'must never signal'
+ probes.append(pid)
+ if pid==99 and mode!='live':raise ProcessLookupError('dead fixture pid')
+g['os'].kill=alive
+starts=[]
+def start(argv,**kw):
+ assert argv==['/bin/ps','-o','lstart=','-p','11']
+ assert kw['env']['LC_ALL']=='C' and kw['env']['TZ']=='UTC'
+ starts.append(11)
+ if mode=='unreadable':raise g['subprocess'].CalledProcessError(1,argv)
+ return 'bad time' if mode=='malformed' else ('Fri' if mode=='wrong-weekday' else 'Thu')+' Jan  1 00:01:40 1970\\n'
+g['subprocess'].check_output=start
+path=d/'recording-state.json';path.write_text(json.dumps({'state':'recording' if mode=='non-idle' else 'idle','pid':99}))
+stamp={'newer':101,'equal':100}.get(mode,99)*10**9;os.utime(path,ns=(stamp,stamp));before=path.read_bytes()
+try:g['idle'](d,d)
+finally:assert path.read_bytes()==before and path.stat().st_mtime_ns==stamp
+if mode=='live':assert probes==[99] and starts==[]
+if mode=='stale':assert starts==[11]`);
+  expect(result.exit).toBe(mode === "stale" || mode === "live" ? 0 : 1);
+  if (mode !== "stale" && mode !== "live") {
+    expect(result.error).toContain("REFUSED:");
+    expect(result.error).not.toContain("ProcessLookupError");
+  }
+});
 test("ask lock refuses idle and a missing file never proves idle", () => {
   const result = python("d=root/'ask';d.mkdir(exist_ok=True);(d/'voicelayer-session-x.lock').touch()\ntry:g['idle'](d,root);raise AssertionError('accepted ask')\nexcept RuntimeError:pass\ntry:g['idle'](root/'missing',root/'missing');raise AssertionError('accepted missing state')\nexcept FileNotFoundError:pass");
   expect(result.exit).toBe(0);
