@@ -11,17 +11,26 @@ import XCTest
 @MainActor
 final class HistoryScrollRestoreTests: XCTestCase {
     private var root: URL!
-    private static let rows = 40
+    private static let rows = 100
+    private static let scrollMargin: CGFloat = 100
 
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("history-scroll-\(UUID().uuidString)", isDirectory: true)
-        let long = Array(repeating: "Synthetic words fill this long dictation so its detail pane must scroll.", count: 60)
+        let long = Array(repeating: "Synthetic words fill this long dictation so its detail pane must scroll.", count: 400)
             .joined(separator: " ")
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        let newest = ISO8601DateFormatter().date(from: "2026-09-27T10:00:00Z")!
+        // Many explicit day sections keep this fixture well beyond the viewport even with compact
+        // row metrics. Range preconditions below also guard every re-entry layout boundary.
         for index in 0..<Self.rows {
-            let minute = String(format: "%02d", index)
-            let entry = "2026-09-27T10-\(minute)-00-000Z-\(index)"
-            let dir = root.appendingPathComponent("2026-09-27").appendingPathComponent(entry)
+            let day = formatter.string(from: newest.addingTimeInterval(-Double(index) * 86400))
+            let entry = "\(day)T10-00-00-000Z-\(index)"
+            let dir = root.appendingPathComponent(day).appendingPathComponent(entry)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try Data(count: 44).write(to: dir.appendingPathComponent("audio.wav"))
             try "Row \(index). \(long)".write(to: dir.appendingPathComponent("voicelayer-transcript.txt"),
@@ -45,6 +54,7 @@ final class HistoryScrollRestoreTests: XCTestCase {
 
     private func assertLeavingAndReturningRestoresScrollPositions(releaseReloadImmediately: Bool) throws {
         let archive = root!
+        let fixtureRows = Self.rows
         let index = SettingsArchiveIndex()
         // Opened with its first page already in hand, as on re-entry: no programmatic scroll-to-newest is
         // pending in the list, so the direct clip-view scrolls below stand in for a user's scroll.
@@ -52,6 +62,8 @@ final class HistoryScrollRestoreTests: XCTestCase {
         nonisolated(unsafe) var firstPage: SettingsHistoryPage?
         Task { firstPage = await index.dictationPage(from: archive, limit: 100); loaded.fulfill() }
         wait(for: [loaded], timeout: 10)
+        XCTAssertEqual(try XCTUnwrap(firstPage).loadedEntryCount, Self.rows)
+        XCTAssertEqual(try XCTUnwrap(firstPage).groups.count, Self.rows)
         let reload = HistoryReloadGate()
         defer { reload.release() }
         let view = SettingsView(
@@ -61,8 +73,8 @@ final class HistoryScrollRestoreTests: XCTestCase {
             vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
             historyPage: { limit in
                 await reload.wait()
-                let page = await index.dictationPage(from: archive, limit: limit)
-                await reload.returningPage()
+                let page = await index.dictationPage(from: archive, limit: max(limit, fixtureRows))
+                await reload.returningPage(entries: page.loadedEntryCount, groups: page.groups.count)
                 return page
             },
             initialHistoryPage: firstPage,
@@ -79,10 +91,7 @@ final class HistoryScrollRestoreTests: XCTestCase {
         VLOrderTestWindow(window)
         defer { window.orderOut(nil); window.contentView = nil }
 
-        XCTAssertTrue(settle { historyScrollViews(in: host).list.map(scrollableHeight) ?? 0 > 400 },
-                      "the 40-row list loads and can scroll")
-        XCTAssertTrue(settle { historyScrollViews(in: host).detail.map(scrollableHeight) ?? 0 > 300 },
-                      "the selected long dictation's detail pane can scroll")
+        try requireFixtureScrollRange(in: host, phase: "initial page")
 
         host.layoutSubtreeIfNeeded()
         XCTAssertTrue(settle { historyKeepers(in: host).count == 2 && historyKeepers(in: host).allSatisfy(\.hasRestored) },
@@ -112,6 +121,7 @@ final class HistoryScrollRestoreTests: XCTestCase {
 
         XCTAssertTrue(settle { historyScrollViews(in: host).list != nil && historyScrollViews(in: host).detail != nil })
         XCTAssertTrue(settle { reload.started }, "re-entry starts its asynchronous archive reload")
+        try requireFixtureScrollRange(in: host, phase: "rebuilt History before restore")
         if !releaseReloadImmediately {
             // Force the reload to finish AFTER the rebuilt keepers restore. The old fixed delay could
             // inspect either side of this layout boundary, depending on the runner's scheduling.
@@ -127,6 +137,9 @@ final class HistoryScrollRestoreTests: XCTestCase {
                 && abs((scrolls.detail?.contentView.bounds.origin.y ?? -1) - 260) <= 2
         }, "re-entry layout and both restores finish: \(scrollDiagnostics(in: host))")
         pause() // allow a subsequent lazy layout to invalidate an unstable restore
+        XCTAssertEqual(reload.entries, Self.rows, "the reload keeps the complete fixture page")
+        XCTAssertEqual(reload.groups, Self.rows, "the reload keeps all explicit day sections")
+        try requireFixtureScrollRange(in: host, phase: "reloaded page after lazy layout")
         (list, detail) = historyScrollViews(in: host)
         XCTAssertEqual(try XCTUnwrap(list).contentView.bounds.origin.y, 400, accuracy: 2,
                        "the list returns where it was left, not at the selected (newest) row")
@@ -141,19 +154,38 @@ final class HistoryScrollRestoreTests: XCTestCase {
         private var released = false
         private(set) var started = false
         private(set) var returned = false
+        private(set) var entries = 0
+        private(set) var groups = 0
 
         func wait() async {
             started = true
             if !released { await withCheckedContinuation { continuation = $0 } }
         }
 
-        func returningPage() { returned = true }
+        func returningPage(entries: Int, groups: Int) {
+            self.entries = entries
+            self.groups = groups
+            returned = true
+        }
 
         func release() {
             released = true
             continuation?.resume()
             continuation = nil
         }
+    }
+
+    private func requireFixtureScrollRange(in host: NSView, phase: String) throws {
+        let reachable = settle {
+            host.layoutSubtreeIfNeeded()
+            let scrolls = historyScrollViews(in: host)
+            return (scrolls.list.map(scrollableHeight) ?? 0) >= 400 + Self.scrollMargin
+                && (scrolls.detail.map(scrollableHeight) ?? 0) >= 260 + Self.scrollMargin
+        }
+        _ = try XCTUnwrap(reachable ? historyScrollViews(in: host).list : nil,
+            "History fixture geometry must make list 400 and detail 260 reachable with a \(Self.scrollMargin)-point margin (\(phase)): \(scrollDiagnostics(in: host))")
+        let scrolls = historyScrollViews(in: host)
+        print("HISTORY_FIXTURE_RANGE \(phase): list=\(scrolls.list.map(scrollableHeight) ?? -1), detail=\(scrolls.detail.map(scrollableHeight) ?? -1)")
     }
 
     private func historyKeepers(in view: NSView) -> [SettingsHistoryScrollKeeper.KeeperView] {
