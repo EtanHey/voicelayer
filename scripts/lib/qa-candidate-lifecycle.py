@@ -72,9 +72,19 @@ def lifetime_booking(lock, app):
         return False
     try: os.kill(pid, 0); os.kill(owners[0], 0)
     except ProcessLookupError as error: raise RuntimeError('REFUSED: lifetime booking owner exited') from error
+    return daemon_in_bundle(pid, app)
+
+def daemon_in_bundle(pid, app):
     args = command_line(pid).split()
     if len(args) != 3 or not Path(args[0]).is_absolute() or Path(args[0]).name != 'bun' or args[1] != 'run': return False
     return Path(args[2]).is_absolute() and Path(args[2]).resolve() == app.resolve() / 'Contents/Resources/src/mcp-server-daemon.ts'
+
+def require_bundled_daemon(app):
+    rows = processes(); owners = [p for p, _, name in rows if name == str(app / 'Contents/MacOS/VoiceBar')]
+    children = [p for p, parent, name in rows if parent in owners and Path(name).name == 'bun']
+    if len(owners) != 1 or len(children) != 1 or not daemon_in_bundle(children[0], app):
+        raise RuntimeError('REFUSED: QA daemon must run its bundled Resources/src/mcp-server-daemon.ts')
+    os.kill(owners[0], 0); os.kill(children[0], 0)
 
 def idle(tmp, state, health=None):
     for directory in [tmp, state]:
@@ -212,7 +222,9 @@ def switch(fixture=None):
         args = [item for key, value in env.items() for item in ['--env', f'{key}={value}']]
         subprocess.run(['/usr/bin/open', '-n', *args, str(APP)], check=True)
         wait_ready(APP, env, exclusive=True)
+        require_bundled_daemon(APP)
         stay_down()  # Observe another five seconds after QA is ready.
+        require_bundled_daemon(APP)
     except Exception as error:
         try:
             restore_resident()  # Never invoke the explicit force escape automatically.
