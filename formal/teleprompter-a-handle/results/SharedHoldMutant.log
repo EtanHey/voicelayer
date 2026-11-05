@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "HistoryHoldKept",
+  "status": "EXPECTED_FAIL",
+  "generated": 25,
+  "distinct": 14,
+  "trace": [
+    "/\\ pendingSync = FALSE\n/\\ historyDragging = FALSE\n/\\ held = FALSE\n/\\ historyHeld = FALSE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = FALSE",
+    "/\\ pendingSync = FALSE\n/\\ historyDragging = FALSE\n/\\ held = TRUE\n/\\ historyHeld = FALSE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = TRUE",
+    "/\\ pendingSync = FALSE\n/\\ historyDragging = TRUE\n/\\ held = TRUE\n/\\ historyHeld = TRUE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = TRUE",
+    "/\\ pendingSync = FALSE\n/\\ historyDragging = TRUE\n/\\ held = FALSE\n/\\ historyHeld = FALSE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = FALSE"
+  ]
+}

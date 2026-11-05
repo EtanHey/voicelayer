@@ -136,6 +136,10 @@ extension VoiceBarNotchMorphCanvasLayout {
     static func restingLowerSurfaceHeight(of presentation: VoiceBarNotchPresentation) -> CGFloat {
         // V6: History's window is the same whatever rows the handle settles on (`historyCanvasLowerSurfaceHeight`),
         // so dragging it never resizes the window under the pointer. The hit region stays the settled rows.
+        // U5: likewise the teleprompter's window holds eight lines, so its handle never resizes the window either.
+        if presentation.visualState == .teleprompter {
+            return VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: TeleprompterA.lineRange.upperBound)
+        }
         guard presentation.visualState == .history else {
             return presentation.geometry.lowerSurfaceHeight - presentation.feedbackHeight
         }

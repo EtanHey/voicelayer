@@ -128,6 +128,26 @@ public final class VoiceBarNotchPresentationModel {
         resolvePresentation()
     }
 
+    /// U5: the Teleprompter A handle's own pointer hold. Separate from History's, so neither releases the other's.
+    public private(set) var isTeleprompterHandlePullActive = false
+
+    public func setTeleprompterHandlePullActive(_ isActive: Bool) {
+        isTeleprompterHandlePullActive = isActive
+    }
+
+    /// Any pull (History or the teleprompter handle) holding the panel's mouse events.
+    public var isPointerHeldByPull: Bool { isHistoryPullActive || isTeleprompterHandlePullActive }
+
+    /// U5: the lines the Teleprompter A handle settled on (app session only; SPEC open question 4).
+    public private(set) var teleprompterLines = TeleprompterA.lineRange.lowerBound
+
+    public func setTeleprompterLines(_ lines: Int) {
+        let lines = TeleprompterA.clamp(lines)
+        guard teleprompterLines != lines else { return }
+        teleprompterLines = lines
+        resolvePresentation()
+    }
+
     public func setReducedMotion(_ isEnabled: Bool) {
         isReducedMotionEnabled = isEnabled
     }
@@ -139,6 +159,7 @@ public final class VoiceBarNotchPresentationModel {
             hasCompactStatus: hasCompactStatus,
             hasHistoryPanel: isHistoryPanelOpen,
             historyRows: historyRows,
+            teleprompterLines: teleprompterLines,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth,
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth,
             recordingLeadingWingWidth: recordingLeadingWingWidth,
