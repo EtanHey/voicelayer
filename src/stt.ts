@@ -1,3 +1,4 @@
+import { measureTakeStageAsync } from "./take-stage-timings";
 /**
  * STT backend abstraction — whisper.cpp (local) or Wispr Flow (cloud fallback).
  *
@@ -2368,7 +2369,7 @@ export class WhisperCppBackend implements STTBackend {
             const probePath = join(outputDir, "outro-probe.wav");
             writeFileSync(probePath, region, { mode: 0o600 });
             try {
-              const evidence = await (this.lifecycle.speechProbe ?? probeParakeetSpeech)(probePath);
+              const evidence = await measureTakeStageAsync("gates", () => (this.lifecycle.speechProbe ?? probeParakeetSpeech)(probePath));
               const probeInfo = parseWavPcmInfo(region);
               const frames = probeInfo ? probeInfo.dataSize / probeInfo.blockAlign : -1;
               noSpeech = evidence.status === "COMPLETE" && evidence.threshold === PARAKEET_EMPTY_SPEECH_THRESHOLD &&

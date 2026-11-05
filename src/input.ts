@@ -1,3 +1,4 @@
+import { TakeStageTimings, withTakeStageTimings, measureTakeStage, measureTakeStageAsync } from "./take-stage-timings";
 import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
@@ -558,10 +559,10 @@ export async function finalizeTranscriptionResultForSurface(
   env: STTFinalizeEnv = processingEnv(),
   boundaryContext?: BoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
-  const cleanedText = finalizeTranscriptionText(rawText, env);
+  const cleanedText = measureTakeStage("dictionary_rules", () => finalizeTranscriptionText(rawText, env));
   // A long unformatted final needs paragraphs regardless of polish state.
   // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
-  const paragraphText = (text: string): string => {
+  const paragraphText = (text: string): string => measureTakeStage("dictionary_rules", () => {
     // Code whitespace is content: abstain before either paragraph stage.
     if (hasParagraphCodeBlock(text)) return text;
     const candidate = !coherentParagraphsEnabled(env) && pauseParagraphsEnabled(env) && boundaryContext
@@ -571,14 +572,14 @@ export async function finalizeTranscriptionResultForSurface(
     const formatted = applyCoherentParagraphFallback(paused);
     const strip = (value: string) => value.replace(/\s/gu, "");
     return strip(formatted) === strip(text) ? formatted : text;
-  };
+  });
   if (!surface) return { text: paragraphText(cleanedText) };
-  const polished = await polishTranscriptionText({
+  const polished = await measureTakeStageAsync("polish", () => polishTranscriptionText({
     rawText,
     cleanedText,
     surface,
     env,
-  });
+  }));
   appendControlLayerEvent(
     "transcription.polish",
     {
@@ -3003,7 +3004,16 @@ export async function waitForInput(
   pushToEnd: boolean = false,
   options: WaitForInputOptions = {},
 ): Promise<string | null> {
-  return withCaptureVoiceAdmission(async () => {
+  const timings = new TakeStageTimings();
+  const archives = new Set<string>();
+  const onArchiveCreated = options.onArchiveCreated;
+  options = { ...options, onArchiveCreated: path => {
+    archives.add(path);
+    onArchiveCreated?.(path);
+  } };
+  return withTakeStageTimings(timings, async () => {
+  try {
+  return await withCaptureVoiceAdmission(async () => {
   throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
   if (currentRecordingState !== "idle" && !ownsBarCapture()) {
@@ -3043,7 +3053,9 @@ export async function waitForInput(
       options.archiveSource !== undefined,
       captureState,
     );
+    timings.captureEnded();
   } catch (err) {
+    timings.captureEnded();
     if (
       err instanceof RecordingFailureWithCapturedPcm &&
       options.archiveSource !== undefined
@@ -3351,7 +3363,7 @@ export async function waitForInput(
     });
   }
 
-  const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
+  const noSpeechGate = measureTakeStage("gates", () => evaluateNoSpeechGate(sttTrim.pcmData));
   const vadNoSpeech = !pushToEnd && captureState.vadSpeechDetected === false;
   const transcriptionAllowed = captureState.pttSilenceTimeout ? !pttNoSpeech : noSpeechGate.allowed && !vadNoSpeech;
   console.error(
@@ -3420,9 +3432,9 @@ export async function waitForInput(
 
   if (pushToEnd && !captureState.pttSilenceTimeout) {
     try {
-      const pushToEndSpeechGate = await evaluatePushToEndSpeechGate(
+      const pushToEndSpeechGate = await measureTakeStageAsync("gates", () => evaluatePushToEndSpeechGate(
         sttTrim.pcmData,
-      );
+      ));
       throwIfWaitForInputAborted(options.signal);
       console.error(
         `[voicelayer] push-to-end speech gate: detected=${pushToEndSpeechGate.detected} ` +
@@ -3489,7 +3501,7 @@ export async function waitForInput(
     writeFileSync(wavPath, sttWavData);
 
     // Transcribe with selected backend
-    const backend = await getBackend();
+    const backend = await measureTakeStageAsync("decode", () => getBackend());
     throwIfWaitForInputAborted(options.signal);
     broadcast({
       type: "transcription_status",
@@ -3522,9 +3534,9 @@ export async function waitForInput(
           try {
             throwIfWaitForInputAborted(options.signal);
             writeFileSync(chunkPath, createWavBuffer(chunk));
-            const result = await backend.transcribe(chunkPath, {
+            const result = await measureTakeStageAsync("decode", () => backend.transcribe(chunkPath, {
               promptOverride: prompt,
-            });
+            }));
             chunkBackendLabels.add(result.backend);
             noteGateRemoval(result.attemptEvidence);
             throwIfWaitForInputAborted(options.signal);
@@ -3547,7 +3559,7 @@ export async function waitForInput(
         sttBackendLabel = `mixed(${[...chunkBackendLabels].join("|")})`;
       }
     } else {
-      const result = await backend.transcribe(wavPath);
+      const result = await measureTakeStageAsync("decode", () => backend.transcribe(wavPath));
       sttBackendLabel = result.backend;
       noteGateRemoval(result.attemptEvidence);
       throwIfWaitForInputAborted(options.signal);
@@ -3556,13 +3568,13 @@ export async function waitForInput(
       // than after it (Macroscope round 1, HIGH).
       const finalizeEnv = processingEnv();
       const boundaryContext = shouldBuildBoundaryContext(result.text, finalizeEnv)
-        ? await buildBoundaryContext(
+        ? await measureTakeStageAsync("dictionary_rules", () => buildBoundaryContext(
             wavPath,
             result.segments,
             result.segmentsAudioSha256,
             finalizeEnv,
             options.signal,
-          )
+          ))
         : undefined;
       throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
@@ -3682,7 +3694,7 @@ export async function waitForInput(
     throwIfWaitForInputAborted(options.signal);
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {
-      await deliverInputTranscription({
+      await measureTakeStageAsync("delivery", () => deliverInputTranscription({
         type: "transcription",
         text,
         ...transcriptionPolishMetadata(finalized),
@@ -3706,7 +3718,7 @@ export async function waitForInput(
           });
           broadcast({ type: "archive_metadata_updated", recording_path: join(archivedRecordingPath, "audio.wav") });
         }
-      });
+      }));
     }
     setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
@@ -3756,6 +3768,18 @@ export async function waitForInput(
     } catch {}
   }
   });
+  });
+  } finally {
+    const stageTimings = timings.snapshot();
+    for (const path of archives) {
+      updateArchivedRecordingMetadata(join(path, "audio.wav"), metadata => {
+        metadata.stage_timings_ms = stageTimings;
+      });
+    }
+    console.error(`[voicelayer] archive_ids=${JSON.stringify([...archives].map(path => basename(path)))} stage_timings_ms=${JSON.stringify(stageTimings)}`);
+    appendControlLayerEvent("transcription.stage_timings", { archive_source: options.archiveSource ?? null,
+      stage_timings_ms: stageTimings }, { topic: "voice.transcription" });
+  }
   });
 }
 

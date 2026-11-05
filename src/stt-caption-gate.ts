@@ -1,3 +1,4 @@
+import { measureTakeStageAsync } from "./take-stage-timings";
 /**
  * Remove a distinctive Whisper caption only when its whole trailing segment run
  * sits over Silero non-speech. The ordinary closer gate deliberately does not
@@ -98,7 +99,7 @@ async function probabilitiesForWav(wav: Uint8Array, dataOffset: number, dataSize
  * A caption match must start at a segment boundary and run to transcript end.
  * Segment and full-text word streams must agree before their offsets are used.
  */
-export async function stripHallucinatedCaption(
+async function stripHallucinatedCaptionUntimed(
   text: string,
   wavData: Uint8Array,
   options: CaptionGateOptions = {},
@@ -223,4 +224,8 @@ export async function stripHallucinatedCaption(
     removed: { class: candidate.class, startS: candidate.startS, endS: candidate.endS },
     reason: "removed",
   };
+}
+
+export function stripHallucinatedCaption(...args: Parameters<typeof stripHallucinatedCaptionUntimed>): ReturnType<typeof stripHallucinatedCaptionUntimed> {
+  return measureTakeStageAsync("gates", () => stripHallucinatedCaptionUntimed(...args));
 }
