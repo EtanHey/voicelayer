@@ -74,22 +74,32 @@ public struct VoiceBarReadingTimeLabel: View {
     let elapsedMilliseconds: () -> Int
     let color: Color
 
+    /// "m:ss" up to 9:59. Two-digit minutes with seconds ("10:00", 33.8 pt) overflow the fixed 31.5 pt lane, so a
+    /// longer read shows whole minutes ("10m" to "99m"), then whole hours ("1h" to "99h"); all fit the lane.
     public static func text(elapsedMilliseconds: Int) -> String {
         let seconds = max(0, elapsedMilliseconds) / 1000
-        return "\(seconds / 60):" + String(format: "%02d", seconds % 60)
+        if seconds < 600 {
+            return "\(seconds / 60):" + String(format: "%02d", seconds % 60)
+        }
+        let minutes = seconds / 60
+        if minutes < 100 { return "\(minutes)m" }
+        return "\(min(99, minutes / 60))h"
     }
 
     public var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            Text(Self.text(elapsedMilliseconds: elapsedMilliseconds()))
+            // U2 review R1 (A2): the accessibility value is computed with the visible text on every tick, so
+            // VoiceOver never reads a stale time.
+            let time = Self.text(elapsedMilliseconds: elapsedMilliseconds())
+            Text(time)
                 .font(.system(size: 12))
                 .monospacedDigit()
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .frame(width: Self.width)
+                .accessibilityElement()
+                .accessibilityLabel("Reading time")
+                .accessibilityValue(time)
         }
-        .accessibilityElement()
-        .accessibilityLabel("Reading time")
-        .accessibilityValue(Self.text(elapsedMilliseconds: elapsedMilliseconds()))
     }
 }

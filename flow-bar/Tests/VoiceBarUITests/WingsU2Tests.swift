@@ -94,8 +94,28 @@ final class WingsU2Tests: XCTestCase {
             + material.compactControlSpacing + material.compactControlSize,
             VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
         XCTAssertEqual(VoiceBarReadingTimeLabel.text(elapsedMilliseconds: 12_400), "0:12")
-        XCTAssertEqual(VoiceBarReadingTimeLabel.text(elapsedMilliseconds: 754_000), "12:34")
+        XCTAssertEqual(VoiceBarReadingTimeLabel.text(elapsedMilliseconds: 599_999), "9:59")
         XCTAssertEqual(VoiceBarReadingTimeLabel.text(elapsedMilliseconds: -5), "0:00")
+    }
+
+    /// U2 review R1 (A1): "10:00" in the 12 pt tabular system font measures 33.8 pt against the fixed 31.5 pt lane,
+    /// so a long read lost part of its time. Past 9:59 the label switches to whole minutes ("10m", "59m"), then
+    /// hours, so every supported value fits the fixed wing, measured with the font the label renders.
+    func testEverySupportedReadingTimeFitsTheFixedLane() {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        let samples: [(Int, String)] = [
+            (0, "0:00"), (599_999, "9:59"), (600_000, "10m"), (3_599_999, "59m"), (5_999_999, "99m"),
+            (6_000_000, "1h"), (359_999_999, "99h"), (900_000_000_000, "99h"),
+        ]
+        for (milliseconds, expected) in samples {
+            let text = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: milliseconds)
+            XCTAssertEqual(text, expected, "\(milliseconds) ms")
+            let width = (text as NSString).size(withAttributes: [.font: font]).width
+            XCTAssertLessThanOrEqual(width, VoiceBarReadingTimeLabel.width, "\(text) is \(width) pt wide")
+        }
+        // The witness for the old format: two-digit minutes with seconds do not fit.
+        XCTAssertGreaterThan(("10:00" as NSString).size(withAttributes: [.font: font]).width,
+                             VoiceBarReadingTimeLabel.width)
     }
 
     // MARK: - Hit regions match the drawn controls
