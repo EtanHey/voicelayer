@@ -95,12 +95,35 @@ final class SettingsGeneralSetupTests: XCTestCase {
         XCTAssertEqual(setup().steps.first { $0.id == .speakingVoice }?.fix?.title, "Manage")
     }
 
-    func testOnlyAStoppedOrFailedCloneEngineCountsAsDown() {
+    /// Review R1 #735: only a running engine is ready; starting and restarting are neither ready nor broken.
+    func testEachCloneEngineStateMapsTruthfully() {
+        XCTAssertEqual(SettingsSetupVoiceStatus(cloneEngine: .running), .ready)
+        XCTAssertEqual(SettingsSetupVoiceStatus(cloneEngine: .starting), .starting)
+        XCTAssertEqual(SettingsSetupVoiceStatus(cloneEngine: .restarting), .restarting)
         XCTAssertEqual(SettingsSetupVoiceStatus(cloneEngine: .stopped), .engineDown)
         XCTAssertEqual(SettingsSetupVoiceStatus(cloneEngine: .failed), .engineDown)
-        for state in [CloneEngineSnapshot.State.running, .starting, .restarting] {
-            XCTAssertEqual(SettingsSetupVoiceStatus(cloneEngine: state), .ready, "\(state)")
+    }
+
+    func testALoadingOrRecoveringVoiceIsNeitherReadyNorBroken() throws {
+        for voice in [SettingsSetupVoiceStatus.starting, .restarting] {
+            let setup = setup(voice: voice)
+            XCTAssertFalse(setup.isReady, "\(voice): the ready row would claim the voice is set up")
+            XCTAssertEqual(setup.header, "Setup", "\(voice): nothing for you to finish")
+            XCTAssertNil(setup.firstBroken, "\(voice): the orange dot never points at a step that fixes itself")
+            let step = try XCTUnwrap(setup.steps.first { $0.id == .speakingVoice })
+            XCTAssertTrue(step.isPending)
+            XCTAssertFalse(step.isDone)
+            XCTAssertFalse(step.isBroken)
+            XCTAssertFalse(step.description.contains("is ready"), step.description)
+            XCTAssertEqual(step.fix?.title, "Manage")
         }
+    }
+
+    func testABrokenStepStillLeadsAPendingOne() {
+        let setup = setup(accessibility: false, voice: .starting)
+        XCTAssertEqual(setup.steps.prefix(2).map(\.id), [.accessibility, .speakingVoice])
+        XCTAssertEqual(setup.firstBroken, .accessibility)
+        XCTAssertEqual(setup.header, "Finish setup")
     }
 
     func testArrivalHighlightsTheBrokenRowUnlessReduceMotion() {
