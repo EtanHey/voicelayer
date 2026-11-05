@@ -18,11 +18,14 @@ final class MicrophonePrioritySettingsTests: XCTestCase {
         XCTAssertTrue(section.contains("Image(systemName: \"line.3.horizontal\")"))
     }
 
-    func testFirstRowIsMarkedDefaultInsteadOfOfferingTheButton() throws {
+    /// U3a (SPEC 2.3 General): the microphone the next dictation uses carries "Used for dictation" instead of the
+    /// button; which row that is, is pinned in SettingsGeneralSetupTests.
+    func testTheUsedMicrophoneIsMarkedInsteadOfOfferingTheButton() throws {
         let section = try prioritySection()
 
-        XCTAssertTrue(section.contains("if index == 0"))
-        XCTAssertTrue(section.contains("Text(\"Default\")"))
+        XCTAssertTrue(section.contains("if isUsed {"))
+        XCTAssertTrue(section.contains("SettingsPill(text: \"Used for dictation\")"))
+        XCTAssertFalse(section.contains("Text(\"Default\")"))
     }
 
     func testReorderingStaysReachableWithoutAPointer() throws {
