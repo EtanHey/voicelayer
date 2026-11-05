@@ -64,15 +64,16 @@ export async function retryInstallerContention<T>(read: () => T, retry: (result:
 }
 
 /** Retry mkdir's acquisition result before resampling identities. Never retry a gate fault.
- * At most 99 sleeps (198 ms), bounded also by elapsed time and receipt expiry. */
+ * Default: at most 99 sleeps (198 ms). COMPLETE opts into the remaining receipt
+ * lifetime and obtains a new receipt after a timeout. */
 export async function retryInstallerAcquisition<T>(read: () => T, deadline = performance.now() + 250,
-  clock = { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) }): Promise<T> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  clock = { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) }, maxAttempts = 100): Promise<T> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (clock.now() >= deadline) throw Error("UNKNOWN: update-gate lock acquisition timed out");
     try { return read(); }
     catch (error) {
       if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
-      if (attempt === 99 || clock.now() + 2 >= deadline)
+      if (attempt === maxAttempts - 1 || clock.now() + 2 >= deadline)
         throw Error("UNKNOWN: update-gate lock acquisition timed out");
     }
     await clock.sleep(2); // Failed acquisition owns no lock.
@@ -251,7 +252,7 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
     async withCompletionProof(read) {
       try {
         sampleProcessProof();
-        return await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
+        return await retryInstallerAcquisition(read, observedAt + 1000 - POST_SAMPLE_RESERVE_MS, deps, 500);
       } catch (error) { evidence = undefined; throw error; }
     },
     successor() {
@@ -290,8 +291,8 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
       if (!authorized || !pinned) throw Error("UNKNOWN: controlled quit not authorized");
       evidence = undefined;
       const refusal = (reason: string) => Error(`UNKNOWN: ${reason}; gate retained closed for recovery. VoiceBar may be stopped.\n` +
-        "After this updater exits, restore availability with: voicelayer setup --cask-postflight\n" +
-        "This restarts the canonical bundle but does not reopen the COMMITTED gate; retain all gate/controller/recovery evidence.");
+        "On the next VoiceBar launch, a matching successor verifies abandoned COMMITTED recovery automatically.\n" +
+        "Retain all gate/controller/recovery evidence if automatic recovery cannot verify the target.");
       let reply: unknown;
       try { reply = await deps.request("quit", lease); }
       catch (error) {

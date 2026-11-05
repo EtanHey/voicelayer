@@ -177,11 +177,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     )
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
+    private var quitSavePending = false
     private var controlledUpdateLease: [String: Any]?
     #if VOICEBAR_QA
     var terminationGateForTesting: NativeUpdateGate?
     var terminationOwnsServerForTesting: Bool?
     var terminationCleanupForTesting: (() -> Void)?
+    var terminationSaveSleepForTesting: ((Duration) async -> Void)?
     #endif
 
     private var socketServer: SocketServer?
@@ -599,7 +601,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             queue: .main
         )
         terminationSignalSource.setEventHandler { [weak self] in
-            self?.requestTermination(.internalFailure)
+            self?.requestTermination(.menuBar)
         }
         terminationSignalSource.resume()
         self.terminationSignalSource = terminationSignalSource
@@ -1329,22 +1331,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
         let reply = terminationPolicy.reply(
             enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance,
-            voiceBusy: voiceState.isQuitBusy && ownsServer,
+            voiceBusy: voiceState.isSavingDictationForQuit && ownsServer,
             gatePermitsQuit: !ownsServer || gate.permitsTermination(controlledLease: controlledUpdateLease)
         )
-        guard reply == .terminateNow else {
-            // The note clears once the same policy would let this quit through (the work stopped).
-            let lease = controlledUpdateLease
-            let refusalOwnsServer = ownsServer
-            let refusalGate = gate
-            // Voice work is read live by VoiceState; only the update gate's part is rechecked here.
-            voiceState.reportQuitRefusal(
-                gateBlocked: refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease),
-                isGateStillBlocked: { refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease) }
-            )
-            NSLog("[VoiceBar] Quit refused: voice/update safety evidence unavailable")
-            return reply
+        if reply == .terminateLater {
+            guard !quitSavePending else { return .terminateLater }
+            quitSavePending = true
+            voiceState.reportQuitRefusal(gateBlocked: true, message: "Saving dictation before quitting…")
+            voiceState.stop()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                var sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+                #if VOICEBAR_QA
+                sleep = self.terminationSaveSleepForTesting ?? sleep
+                #endif
+                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, sleep: sleep)
+                self.quitSavePending = false
+                #if VOICEBAR_QA
+                if let cleanup = self.terminationCleanupForTesting { cleanup(); return }
+                #endif
+                self.performTerminationCleanup()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
         }
+        guard reply == .terminateNow else { return reply }
 
         // Clean shutdown — exit code 0 so launchd KeepAlive.SuccessfulExit:false
         // does NOT respawn. Only crashes (non-zero) trigger restart.

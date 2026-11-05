@@ -483,14 +483,28 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(continuation.contains("requestTermination(.controlledUpdate, lease: request[\"lease\"] as? [String: Any])"))
     }
 
-    func testQuitNeverOverridesCaptureOrClosedGate() {
+    func testUserQuitDefersForSaveAndIgnoresClosedGate() {
         var policy = VoiceBarTerminationPolicy()
         for singleton in [true, false] {
             policy.authorize(.menuBar)
-            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, voiceBusy: true), .terminateCancel)
-            policy.authorize(.internalFailure)
-            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, gatePermitsQuit: false), .terminateCancel)
+            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, voiceBusy: true), .terminateLater)
+            policy.authorize(.menuBar)
+            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, gatePermitsQuit: false), .terminateNow)
         }
+    }
+
+    @MainActor func testQuitSaveDeferralIsBoundedAndEndsWhenSaveEnds() async {
+        var ticks = 0
+        await VoiceBarQuitDeferral.waitWhileSaving({ true }, sleep: { _ in ticks += 1 })
+        XCTAssertEqual(ticks, 60, "Quit proceeds after six seconds even if save evidence never settles")
+        ticks = 0
+        await VoiceBarQuitDeferral.waitWhileSaving({ ticks < 3 }, sleep: { _ in ticks += 1 })
+        XCTAssertEqual(ticks, 3, "Quit proceeds as soon as save work settles")
+        let state = VoiceState()
+        state.mode = .speaking
+        XCTAssertFalse(state.isSavingDictationForQuit, "Playback never strands user Quit")
+        state.mode = .recording
+        XCTAssertTrue(state.isSavingDictationForQuit)
     }
 
     func testCanonicalResidentStillAcceptsExternalSingletonTermination() {
