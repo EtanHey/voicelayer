@@ -31,9 +31,22 @@ final class U4NotchHistoryNativeTests: XCTestCase {
         defer { app.terminate() }
         let pill = app.dialogs["VoiceBar QA Pill"]
         XCTAssertTrue(pill.waitForExistence(timeout: 15))
+        let handle = pill.descendants(matching: .any)["notch-history-extend-handle"]
 
+        // Evidence without pixels (the gatecap1 privacy guard bans screenshots in UIE2E tests): the handle's AX value
+        // and the pill/handle frames at each state, as JSON.
         func shot(_ name: String) {
-            let attachment = XCTAttachment(screenshot: pill.screenshot())
+            func box(_ frame: CGRect) -> [String: Double] {
+                ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
+            }
+            var record: [String: Any] = ["state": name, "pill": box(pill.frame)]
+            if handle.exists {
+                record["handle"] = box(handle.frame)
+                record["rows"] = handle.value as? String ?? ""
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
+            else { return }
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
             attachment.name = "U4-" + name
             attachment.lifetime = .keepAlways
             add(attachment)
@@ -44,7 +57,6 @@ final class U4NotchHistoryNativeTests: XCTestCase {
             XCTAssertTrue(history.waitForExistence(timeout: 4), "the launcher's History button")
             history.click()
         }
-        let handle = pill.descendants(matching: .any)["notch-history-extend-handle"]
         func rows() -> String { handle.value as? String ?? "" }
         func waitForRows(_ expected: String) {
             let deadline = Date().addingTimeInterval(3)
