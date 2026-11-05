@@ -66,6 +66,14 @@ public struct VoiceBarNotchSurfaceCoordinator: Equatable, Sendable {
         return [.showMenu(kind)]
     }
 
+    /// U2×U4 review: the user asked for History again (a click or a pull) while it was still mounted, e.g. while
+    /// its close spring runs after a menu request asked it to close. No mount change fires then, so this cancels
+    /// the waiting or queued menu explicitly: History wins, and a later close never opens a stale list.
+    public mutating func historyOpenRequested() {
+        pendingMenu = nil
+        queuedMenu = nil
+    }
+
     /// The scheduled presentation block calls this first. False means it was cancelled (History opened, or a
     /// different presentation owns the spot): show nothing.
     public mutating func beginPresenting(_ kind: VoiceBarNotchMenuKind) -> Bool {
@@ -89,11 +97,18 @@ public final class VoiceBarNotchHistoryBridge {
     public private(set) var closeRequest = 0
     public private(set) var isHistoryOpen = false
     @ObservationIgnored public var onHistoryPanelChanged: (Bool) -> Void = { _ in }
+    /// Every open intent (a click or a pull), mounted or not. Deliberately not de-duplicated: reopening a History
+    /// that is still mounted (closing) changes no mount state, so `historyDidChange` cannot carry it.
+    @ObservationIgnored public var onHistoryOpenRequested: () -> Void = {}
 
     public init() {}
 
     public func requestClose() {
         closeRequest &+= 1
+    }
+
+    public func historyOpenRequested() {
+        onHistoryOpenRequested()
     }
 
     public func historyDidChange(isOpen: Bool) {
@@ -126,6 +141,9 @@ public final class VoiceBarNotchSurfaceHandoff {
         self.present = present
         bridge.onHistoryPanelChanged = { [weak self] isOpen in
             self?.historyDidChange(isOpen: isOpen)
+        }
+        bridge.onHistoryOpenRequested = { [weak self] in
+            self?.coordinator.historyOpenRequested()
         }
     }
 

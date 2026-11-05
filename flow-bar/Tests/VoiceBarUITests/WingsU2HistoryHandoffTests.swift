@@ -32,7 +32,14 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
         func handleRetranscribeHistoryEntry(recordingPath _: String) {}
     }
 
-    func testAListRequestedOverHistoryWaitsUntilTheClosingPanelHasUnmounted() throws {
+    private struct Rig {
+        let panel: FloatingPillPanel
+        let bridge: VoiceBarNotchHistoryBridge
+        let handoff: VoiceBarNotchSurfaceHandoff
+        let historyPoint: NSPoint
+    }
+
+    private func makeRig(held: @escaping (@escaping () -> Void) -> Void, presented: @escaping () -> Void) -> Rig {
         let state = VoiceState()
         state.isConnected = true
         state.isCollapsed = false
@@ -42,10 +49,8 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
                                      createdAt: Date().addingTimeInterval(-60)),
         ]
         let bridge = VoiceBarNotchHistoryBridge()
-        var held: [() -> Void] = []
-        var presented = 0
-        let handoff = VoiceBarNotchSurfaceHandoff(bridge: bridge) { _ in presented += 1 }
-        handoff.schedule = { held.append($0) }
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: bridge) { _ in presented() }
+        handoff.schedule = held
 
         let configuration = VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, trailingControlCountFromCore: 2)
         let presentation = VoiceBarPresentation.notchPresentation(
@@ -72,28 +77,55 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
         panel.orderBack(nil)
         windows.append(panel)
         host.layoutSubtreeIfNeeded()
-
-        // Click History (right wing, core side: index 2 after the chevron and the mic).
+        // History: right wing, core side (index 2 after the chevron and the mic).
         let rects = VoiceBarNotchHitRegion(geometry: presentation.geometry, configuration: configuration).rects
             .map { $0.offsetBy(dx: layout.visibleContentRect.minX, dy: layout.visibleContentRect.minY) }
-        let history = NSPoint(x: rects[2].midX, y: rects[2].midY)
+        return Rig(panel: panel, bridge: bridge, handoff: handoff,
+                   historyPoint: NSPoint(x: rects[2].midX, y: rects[2].midY))
+    }
+
+    private func clickHistory(_ rig: Rig) throws {
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             let event = try XCTUnwrap(NSEvent.mouseEvent(
-                with: type, location: history, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: panel.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 0
+                with: type, location: rig.historyPoint, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: rig.panel.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 0
             ))
-            panel.sendEvent(event)
+            rig.panel.sendEvent(event)
         }
         drain()
-        XCTAssertTrue(bridge.isHistoryOpen, "History mounted and reported")
+    }
+
+    func testAListRequestedOverHistoryWaitsUntilTheClosingPanelHasUnmounted() throws {
+        var held: [() -> Void] = []
+        var presented = 0
+        let rig = makeRig(held: { held.append($0) }, presented: { presented += 1 })
+        try clickHistory(rig)
+        XCTAssertTrue(rig.bridge.isHistoryOpen, "History mounted and reported")
 
         // The chevron's request asks History to close; the panel now springs closed but is still mounted.
-        handoff.requestMenu(.microphone)
+        rig.handoff.requestMenu(.microphone)
         drain()
-        XCTAssertEqual(handoff.coordinator.pendingMenu, .microphone, "waiting for History to leave the screen")
-        XCTAssertTrue(bridge.isHistoryOpen, "still mounted while the close spring runs")
+        XCTAssertEqual(rig.handoff.coordinator.pendingMenu, .microphone, "waiting for History to leave the screen")
+        XCTAssertTrue(rig.bridge.isHistoryOpen, "still mounted while the close spring runs")
         XCTAssertTrue(held.isEmpty, "nothing is scheduled over the closing panel")
         XCTAssertEqual(presented, 0)
+    }
+
+    /// U2×U4 review (P2): open History, request the list, then click History again before its close spring
+    /// settles. The panel never unmounts, so no mount change fires; the reopen itself must drop the waiting list,
+    /// or a later close opens a stale one (formal/notch-surfaces, MutantNoReopenCancel).
+    func testReopeningAClosingHistoryCancelsTheWaitingList() throws {
+        var held: [() -> Void] = []
+        let rig = makeRig(held: { held.append($0) }, presented: {})
+        try clickHistory(rig)
+        rig.handoff.requestMenu(.microphone)
+        drain()
+        XCTAssertEqual(rig.handoff.coordinator.pendingMenu, .microphone)
+        try clickHistory(rig) // reopen while the close spring runs
+        XCTAssertTrue(rig.bridge.isHistoryOpen, "never unmounted")
+        XCTAssertNil(rig.handoff.coordinator.pendingMenu, "the reopen dropped the waiting list")
+        XCTAssertTrue(held.isEmpty)
     }
 
     private func drain() {

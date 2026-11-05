@@ -280,6 +280,30 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(handoff.coordinator.surface, .none, "tracking ended")
     }
 
+    /// U2×U4 review (P2): a History still mounted (closing) that the user asks for again changes no mount state;
+    /// the explicit open request drops the waiting list so a later close never opens it.
+    func testAnOpenRequestWhileHistoryIsStillMountedDropsTheWaitingMenu() {
+        var surfaces = VoiceBarNotchSurfaceCoordinator()
+        _ = surfaces.historyDidChange(isOpen: true)
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [.closeHistory])
+        surfaces.historyOpenRequested() // reopened during the close spring: still mounted
+        XCTAssertNil(surfaces.pendingMenu)
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: false), [], "the later close opens nothing stale")
+        XCTAssertNil(surfaces.queuedMenu)
+
+        // Through the handoff and the bridge: the open request is not swallowed by the duplicate-true guard.
+        let bridge = VoiceBarNotchHistoryBridge()
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: bridge) { _ in XCTFail("nothing may present") }
+        handoff.schedule = { _ in XCTFail("nothing may be scheduled") }
+        bridge.historyDidChange(isOpen: true)
+        handoff.requestMenu(.microphone)
+        bridge.historyDidChange(isOpen: true) // de-duplicated: carries nothing
+        XCTAssertEqual(handoff.coordinator.pendingMenu, .microphone)
+        bridge.historyOpenRequested()
+        XCTAssertNil(handoff.coordinator.pendingMenu)
+        bridge.historyDidChange(isOpen: false)
+    }
+
     func testTheBridgeReportsHistoryOnceAndCountsCloseRequests() {
         let bridge = VoiceBarNotchHistoryBridge()
         var reports: [Bool] = []

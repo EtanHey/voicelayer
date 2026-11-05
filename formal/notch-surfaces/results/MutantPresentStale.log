@@ -3,12 +3,12 @@
   "kind": "invariant",
   "target": "ExclusiveSurfaces",
   "status": "EXPECTED_FAIL",
-  "generated": 18,
-  "distinct": 18,
+  "generated": 19,
+  "distinct": 19,
   "trace": [
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"none\"\n/\\ closeAsked = FALSE\n/\\ events = 0\n/\\ viewHistory = FALSE",
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"notch\"\n/\\ wanted = \"notch\"\n/\\ closeAsked = FALSE\n/\\ events = 1\n/\\ viewHistory = FALSE",
-    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"notch\"\n/\\ wanted = \"history\"\n/\\ closeAsked = FALSE\n/\\ events = 2\n/\\ viewHistory = TRUE",
-    "/\\ pending = \"none\"\n/\\ shown = \"notch\"\n/\\ queued = \"none\"\n/\\ wanted = \"history\"\n/\\ closeAsked = FALSE\n/\\ events = 2\n/\\ viewHistory = TRUE"
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"none\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 0\n/\\ viewHistory = FALSE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"notch\"\n/\\ wanted = \"notch\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 1\n/\\ viewHistory = FALSE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"notch\"\n/\\ wanted = \"history\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 2\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"none\"\n/\\ shown = \"notch\"\n/\\ queued = \"none\"\n/\\ wanted = \"history\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 2\n/\\ viewHistory = TRUE"
   ]
 }

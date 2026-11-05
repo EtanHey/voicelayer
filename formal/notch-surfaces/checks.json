@@ -32,10 +32,16 @@
       "role": "mutant",
       "target": "ExclusiveSurfaces",
       "kind": "invariant"
+    },
+    "MutantNoReopenCancel": {
+      "role": "mutant",
+      "target": "NoStaleMenu",
+      "kind": "invariant"
     }
   },
   "acceptance": [
     "ExclusiveSurfaces",
+    "NoStaleMenu",
     "PendingMenuShows"
   ]
 }
