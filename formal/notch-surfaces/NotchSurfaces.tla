@@ -33,11 +33,11 @@ CONSTANTS Mode, MaxEvents
 \* U2 ships the microphone list; lane U1 adds the bare-notch menu. Both are
 \* modelled so the proof already covers two menus never stacking.
 Menus == {"notch", "mic"}
-VARIABLES viewHistory, closing, closeAsked, shown, queued, pending, wanted, events
-vars == <<viewHistory, closing, closeAsked, shown, queued, pending, wanted, events>>
+VARIABLES viewHistory, closing, closeAsked, shown, queued, pending, wanted, events, readingCovered
+vars == <<viewHistory, closing, closeAsked, shown, queued, pending, wanted, events, readingCovered>>
 
 Init == /\ viewHistory = FALSE /\ closing = FALSE /\ closeAsked = FALSE /\ shown = "none"
-        /\ queued = "none" /\ pending = "none" /\ wanted = "none" /\ events = 0
+        /\ queued = "none" /\ pending = "none" /\ wanted = "none" /\ events = 0 /\ readingCovered = FALSE
 
 Step == events < MaxEvents /\ events' = events + 1
 
@@ -56,6 +56,7 @@ UserToggleHistory ==
               /\ queued' = IF Mode = "PresentStale" THEN queued ELSE "none"
               /\ UNCHANGED closing
     /\ UNCHANGED <<closeAsked, shown>>
+    /\ UNCHANGED readingCovered
 
 \* The History button (or a pull) while its close spring runs: it reopens
 \* without unmounting, so no mount change fires; Fixed cancels the waiting
@@ -65,6 +66,7 @@ UserReopen ==
     /\ closing' = FALSE /\ wanted' = "history"
     /\ pending' = IF Mode = "NoReopenCancel" THEN pending ELSE "none"
     /\ UNCHANGED <<viewHistory, closeAsked, shown, queued>>
+    /\ UNCHANGED readingCovered
 
 \* A click on the bare notch, or on the mic's chevron.
 RequestMenu(k) ==
@@ -79,6 +81,7 @@ RequestMenu(k) ==
                      pending' = k /\ closeAsked' = ~closing /\ UNCHANGED <<shown, queued>>
          ELSE queued' = k /\ pending' = "none" /\ UNCHANGED <<closeAsked, shown>>
     /\ UNCHANGED <<viewHistory, closing>>
+    /\ UNCHANGED readingCovered
 
 \* The view applies the close request on its next update (never during menu
 \* tracking): the close spring starts; the panel stays mounted.
@@ -87,6 +90,7 @@ ViewAppliesClose ==
     /\ closeAsked' = FALSE /\ closing' = TRUE
     /\ wanted' = IF wanted = "history" THEN "none" ELSE wanted
     /\ UNCHANGED <<viewHistory, shown, queued, pending, events>>
+    /\ UNCHANGED readingCovered
 
 \* The close spring settles: the panel unmounts and the bridge reports it,
 \* which queues a waiting menu.
@@ -97,22 +101,31 @@ CloseSettles ==
          THEN queued' = pending /\ pending' = "none"
          ELSE pending' = "none" /\ UNCHANGED queued
     /\ UNCHANGED <<closeAsked, shown, wanted, events>>
+    /\ UNCHANGED readingCovered
 
 \* The scheduled presentation block runs: beginPresenting re-checks History.
 PresentQueued ==
     /\ queued # "none" /\ shown = "none"
     /\ shown' = IF ~viewHistory \/ Mode = "PresentStale" THEN queued ELSE "none"
     /\ queued' = "none"
+    /\ readingCovered' = (~viewHistory \/ Mode = "PresentStale")
     /\ UNCHANGED <<viewHistory, closing, closeAsked, pending, wanted, events>>
 
 \* The user picks an item or dismisses the menu; tracking ends.
 MenuCloses ==
     /\ shown # "none"
     /\ shown' = "none" /\ wanted' = "none"
+    /\ readingCovered' = IF Mode = "ForgetReading" THEN readingCovered ELSE FALSE
     /\ UNCHANGED <<viewHistory, closing, closeAsked, queued, pending, events>>
 
+\* Escape cancels a request before tracking starts, without interrupting playback.
+CancelQueued ==
+    /\ Step /\ shown = "none" /\ (queued # "none" \/ pending # "none")
+    /\ queued' = "none" /\ pending' = "none" /\ wanted' = "none"
+    /\ UNCHANGED <<viewHistory, closing, closeAsked, shown, readingCovered>>
+
 Next == UserToggleHistory \/ UserReopen \/ (\E k \in Menus : RequestMenu(k)) \/ ViewAppliesClose
-        \/ CloseSettles \/ PresentQueued \/ MenuCloses
+        \/ CloseSettles \/ PresentQueued \/ MenuCloses \/ CancelQueued
 Spec == Init /\ [][Next]_vars /\ WF_vars(ViewAppliesClose) /\ WF_vars(CloseSettles)
         /\ WF_vars(PresentQueued)
 
@@ -123,4 +136,5 @@ ExclusiveSurfaces == ~(viewHistory /\ shown # "none")
 NoStaleMenu == shown # "none" => wanted = shown
 \* A menu the user asked for shows, unless they changed their mind first.
 PendingMenuShows == \A k \in Menus : [](wanted = k => <>(shown = k \/ wanted # k))
+ReadingRestored == (shown = "none" /\ ~viewHistory) => ~readingCovered
 =============================================================================

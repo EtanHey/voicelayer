@@ -192,6 +192,27 @@ public final class PillContextMenuController: NSObject {
         return menu
     }
 
+    public var versionProvider: () -> String = {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    public func makeNotchMenu() -> NSMenu {
+        let menu = makeDockMenu()
+        let again = NSMenuItem(title: "Transcribe latest again", action: #selector(handleRetranscribeLatest), keyEquivalent: "")
+        again.target = self
+        again.isEnabled = canRetranscribeLatestProvider()
+        menu.insertItem(again, at: 2)
+        menu.item(withTitle: "Settings…")?.keyEquivalent = ","
+        menu.item(withTitle: "Hide notch for 1 hour")?.title = "Hide for 1 hour"
+        menu.insertItem(.separator(), at: 6)
+        let version = Self.versionItem(Self.versionLine(version: versionProvider(), updateStatus: updateStatusProvider()))
+        menu.insertItem(version, at: 7)
+        let quit = NSMenuItem(title: "Quit VoiceBar", action: #selector(handleQuit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+        return menu
+    }
+
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
         let entries = recentTranscriptionEntriesProvider()
