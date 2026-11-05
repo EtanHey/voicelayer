@@ -15,6 +15,9 @@ APP = BASE / 'VoiceBar-2.3-QA.app'
 RESIDENT = Path('/Applications/VoiceBar.app')
 IDENTITY = 'com.voicelayer.voicebar.qa23'
 
+def read_plist(path):
+    return plistlib.loads(subprocess.run(['/usr/bin/plutil', '-convert', 'xml1', '-o', '-', str(path)], check=True, capture_output=True, timeout=2).stdout)
+
 def environment(base=BASE, home=Path.home()):
     # Short, private IPC names: Darwin sun_path is limited to 104 bytes.
     ipc = Path('/tmp') / ('vl-qa23-' + hashlib.sha256(str(base).encode()).hexdigest()[:12])
@@ -79,7 +82,7 @@ def stamp(app):
             origin = source / target.name if key in ['QA_VOICE_WHISPER_MODEL', 'VOICELAYER_LID_MODEL'] else source
             subprocess.run(['/bin/cp', '-cR', str(origin), str(target)], check=True)
     path = app / 'Contents/Info.plist'
-    info = plistlib.loads(path.read_bytes())
+    info = read_plist(path)
     info.update(CFBundleIdentifier=IDENTITY, CFBundleName='VoiceBar 2.3 QA',
                 CFBundleDisplayName='VoiceBar 2.3 QA', LSEnvironment=env)
     info.pop('CFBundleURLTypes', None)
