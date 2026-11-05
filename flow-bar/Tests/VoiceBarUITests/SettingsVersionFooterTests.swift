@@ -36,11 +36,11 @@ final class SettingsVersionFooterTests: XCTestCase {
 
     /// S1 (Etan, 2026-11-02): "VoiceBar build is here and down here" — one quiet sidebar line, nowhere else.
     func testSidebarLineReadsLikeAStatusBar() {
-        let installed = VoiceBarInstalledVersion(version: "2.2.61", commit: "abcdef0123")
-        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .latest), "VoiceBar 2.2.61 · Up to date")
+        let installed = VoiceBarInstalledVersion(version: "2.3.0", commit: "abcdef0123")
+        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .latest), "VoiceBar 2.3.0 · Up to date")
         XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .available("2.2.62")),
-                       "VoiceBar 2.2.61 · Update available")
-        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: nil), "VoiceBar 2.2.61")
+                       "VoiceBar 2.3.0 · Update available")
+        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: nil), "VoiceBar 2.3.0")
     }
 
     func testVersionAppearsOnceAcrossSettings() throws {
