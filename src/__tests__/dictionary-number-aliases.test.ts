@@ -47,6 +47,25 @@ describe("Dictionary variants copied from normalized transcripts", () => {
       .toBe("Use 8 point 2 preview and 2 workers");
   });
 
+  it("protects canonical terms after existing tech and number normalization", () => {
+    expect(applyRules("use preview fixture and two workers", { aliases: {
+      "preview fixture": "type script eight point two preview",
+      "8 point 2": "8 point 2 preview",
+    } })).toBe("Use TypeScript 8 point 2 preview and 2 workers");
+  });
+
+  it("matches independent raw and number-word occurrences without chaining targets", () => {
+    expect(cleanupTranscriptionText("use 8 point 2 and eight point two now", env()))
+      .toBe("Use 8 point 2 preview and 8 point 2 preview now");
+  });
+
+  it("shields a canonical target with an attached Hebrew prefix", () => {
+    expect(applyRules("use בפיגמה דמו and two workers", {
+      aliases: { "פיגמה דמו": "v8 preview8", preview8: "preview8 test" },
+      hebrewLatinAliasSources: new Set(["פיגמה דמו"]),
+    })).toBe("Use ב-v8 preview8 and 2 workers");
+  });
+
   it("preserves possessives, code, and unfinished variants on the normalized pass", () => {
     expect(cleanupTranscriptionText("use six point one sol’s and `six point one sol` and six point one sol…", env()))
       .toBe("Use 6.1 Sol’s and`six point 1 sol`and 6 point 1 sol…");
