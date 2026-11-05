@@ -3,8 +3,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// 2.3 lane U2 guards: fixed 73.5 + 73.5 pt wings (the 3-wings mock), the controls each state carries and the
-/// setup-attention gear.
+/// 2.3 lane U2 guards: fixed 73.5 + 73.5 pt wings (the 3-wings mock), the controls each state carries, the
+/// microphone list and the mutually exclusive notch surfaces (formal/notch-surfaces).
 @MainActor
 final class WingsU2Tests: XCTestCase {
     private func resolve(
@@ -150,6 +150,46 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(stop?.maxX ?? 0, geometry.topOriginX + geometry.topWidth - 8, accuracy: 0.001)
     }
 
+    // MARK: - Microphone list
+
+    /// D2: the list displays the priority order; every row and "Microphone priority…" opens Settings › Microphone
+    /// priority, and nothing in it writes the macOS default input.
+    func testTheMicrophoneListIsADisplayOfThePriorityListThatLeadsToSettings() {
+        let controller = PillContextMenuController()
+        controller.microphonePickerRowsProvider = {
+            [MicrophonePickerRow(label: "MacBook Pro Microphone", isNextDictation: true),
+             MicrophonePickerRow(label: "USB Audio Interface", isNextDictation: false)]
+        }
+        var changes = 0
+        controller.onChangeMicrophone = { changes += 1 }
+        let menu = controller.makeMicrophonePickerMenu()
+        let titles = menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
+        XCTAssertEqual(titles, ["Microphone", "MacBook Pro Microphone", "USB Audio Interface", "—",
+                                "Microphone priority…"])
+        XCTAssertEqual(menu.items[1].state, .on)
+        XCTAssertEqual(menu.items[2].state, .off)
+        menu.performActionForItem(at: 2)
+        menu.performActionForItem(at: 4)
+        XCTAssertEqual(changes, 2)
+
+        controller.microphonePickerRowsProvider = { [] }
+        XCTAssertEqual(controller.makeMicrophonePickerMenu().items[1].title, "No microphones")
+    }
+
+    func testTheMicrophoneListShowsConnectedVisibleRowsAndChecksTheNextDictation() {
+        let snapshot = MicrophonePrioritySnapshot(rows: [
+            MicrophonePriorityRow(uid: "usb", deviceID: "2", label: "USB Audio Interface", isConnected: true),
+            MicrophonePriorityRow(uid: "gone", deviceID: nil, label: "AirPods Pro", isConnected: false),
+            MicrophonePriorityRow(uid: "agg", deviceID: "9", label: "Aggregate", isConnected: true,
+                                  isVirtualOrAggregateTransport: true),
+            MicrophonePriorityRow(uid: "mbp", deviceID: "1", label: "MacBook Pro Microphone", isConnected: true),
+        ], nextDeviceName: "MacBook Pro Microphone", nextDeviceUID: "mbp", nextDeviceID: "1")
+        XCTAssertEqual(MicrophonePickerRow.rows(from: snapshot), [
+            MicrophonePickerRow(label: "USB Audio Interface", isNextDictation: false),
+            MicrophonePickerRow(label: "MacBook Pro Microphone", isNextDictation: true),
+        ])
+    }
+
     // MARK: - Setup attention
 
     func testTheGearBadgeFollowsTheMissingPermissions() {
@@ -165,5 +205,116 @@ final class WingsU2Tests: XCTestCase {
         state.setSetupMissingPermissions([])
         XCTAssertFalse(state.setupNeedsAttention)
         XCTAssertEqual(SettingsFocus.permissions.rawValue, "settings-general-permissions")
+    }
+
+    // MARK: - Mutually exclusive notch surfaces (formal/notch-surfaces, Fixed)
+
+    func testAMenuAskedForOverHistoryWaitsForHistoryToClose() {
+        var surfaces = VoiceBarNotchSurfaceCoordinator()
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: true), [])
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [.closeHistory], "never shown over the open panel (Old)")
+        XCTAssertEqual(surfaces.surface, .history)
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: false), [.showMenu(.microphone)],
+                       "scheduled once closed (DropPending)")
+        XCTAssertEqual(surfaces.surface, .none, "queued, not shown, until the scheduled block runs")
+        XCTAssertTrue(surfaces.beginPresenting(.microphone))
+        XCTAssertEqual(surfaces.surface, .menu(.microphone))
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [], "menus never stack")
+        surfaces.menuDidClose()
+        XCTAssertEqual(surfaces.surface, .none)
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [.showMenu(.microphone)])
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [], "never a second queued presentation")
+    }
+
+    func testHistoryOpeningAgainDropsAWaitingMenu() {
+        var surfaces = VoiceBarNotchSurfaceCoordinator()
+        _ = surfaces.historyDidChange(isOpen: true)
+        _ = surfaces.requestMenu(.microphone)
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: true), [])
+        XCTAssertNil(surfaces.pendingMenu)
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: false), [], "no stale menu later")
+    }
+
+    /// U2 review R1 (B1): the coordinator used to mark the menu shown at request time, before the scheduled popUp
+    /// ran; History opening in that gap left `historyOpen = true` with `shownMenu = microphone`, so the list
+    /// showed over History. Now the request only queues it, History opening cancels it, and the scheduled block
+    /// re-checks (formal/notch-surfaces, MutantPresentStale).
+    func testHistoryOpeningBeforeTheScheduledPresentationCancelsIt() {
+        var surfaces = VoiceBarNotchSurfaceCoordinator()
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [.showMenu(.microphone)])
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: true), [])
+        XCTAssertNil(surfaces.queuedMenu)
+        XCTAssertFalse(surfaces.beginPresenting(.microphone), "the scheduled block shows nothing")
+        XCTAssertEqual(surfaces.surface, .history, "never a menu over History")
+        XCTAssertNil(surfaces.shownMenu)
+    }
+
+    /// The same race through the shared production handoff (AppDelegate and the UIE2E host both use it), with
+    /// the scheduled presentation held until History has opened.
+    func testTheHandoffNeverPresentsOverAHistoryThatOpenedFirst() {
+        let bridge = VoiceBarNotchHistoryBridge()
+        var presented: [VoiceBarNotchMenuKind] = []
+        var outcomes: [VoiceBarNotchSurfaceHandoff.Outcome] = []
+        var held: [() -> Void] = []
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: bridge) { presented.append($0) }
+        handoff.schedule = { held.append($0) }
+        handoff.onOutcome = { outcomes.append($0) }
+
+        handoff.requestMenu(.microphone)
+        XCTAssertEqual(held.count, 1)
+        bridge.historyDidChange(isOpen: true) // the user opens History before the block runs
+        held.removeFirst()()
+        XCTAssertEqual(presented, [])
+        XCTAssertEqual(outcomes, [.cancelled(.microphone)])
+        XCTAssertEqual(handoff.coordinator.surface, .history)
+
+        // History open: a request closes it first, then presents once the view reports it closed.
+        let closeBefore = bridge.closeRequest
+        handoff.requestMenu(.microphone)
+        XCTAssertEqual(bridge.closeRequest, closeBefore + 1)
+        XCTAssertTrue(held.isEmpty, "nothing is scheduled while History is still open")
+        bridge.historyDidChange(isOpen: false)
+        held.removeFirst()()
+        XCTAssertEqual(presented, [.microphone])
+        XCTAssertEqual(outcomes.last, .presented(.microphone))
+        XCTAssertEqual(handoff.coordinator.surface, .none, "tracking ended")
+    }
+
+    /// U2×U4 review (P2): open History → request the list (History is asked to close and starts its close spring,
+    /// still mounted) → reopen History before the spring settles. No mount change fires; the explicit open request
+    /// drops the waiting list so a later close never opens it (formal/notch-surfaces, MutantNoReopenCancel).
+    func testAnOpenRequestWhileHistoryIsStillMountedDropsTheWaitingMenu() {
+        var surfaces = VoiceBarNotchSurfaceCoordinator()
+        _ = surfaces.historyDidChange(isOpen: true)
+        XCTAssertEqual(surfaces.requestMenu(.microphone), [.closeHistory])
+        surfaces.historyOpenRequested() // reopened during the close spring: still mounted
+        XCTAssertNil(surfaces.pendingMenu)
+        XCTAssertEqual(surfaces.historyDidChange(isOpen: false), [], "the later close opens nothing stale")
+        XCTAssertNil(surfaces.queuedMenu)
+
+        // Through the handoff and the bridge: the open request is not swallowed by the duplicate-true guard.
+        let bridge = VoiceBarNotchHistoryBridge()
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: bridge) { _ in XCTFail("nothing may present") }
+        handoff.schedule = { _ in XCTFail("nothing may be scheduled") }
+        bridge.historyDidChange(isOpen: true)
+        handoff.requestMenu(.microphone)
+        bridge.historyDidChange(isOpen: true) // de-duplicated: carries nothing
+        XCTAssertEqual(handoff.coordinator.pendingMenu, .microphone)
+        bridge.historyOpenRequested()
+        XCTAssertNil(handoff.coordinator.pendingMenu)
+        bridge.historyDidChange(isOpen: false)
+    }
+
+    func testTheBridgeReportsHistoryOnceAndCountsCloseRequests() {
+        let bridge = VoiceBarNotchHistoryBridge()
+        var reports: [Bool] = []
+        bridge.onHistoryPanelChanged = { reports.append($0) }
+        bridge.historyDidChange(isOpen: true)
+        bridge.historyDidChange(isOpen: true)
+        bridge.historyDidChange(isOpen: false)
+        XCTAssertEqual(reports, [true, false])
+        let before = bridge.closeRequest
+        bridge.requestClose()
+        XCTAssertEqual(bridge.closeRequest, before + 1)
     }
 }

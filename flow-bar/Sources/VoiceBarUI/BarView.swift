@@ -349,6 +349,9 @@ public struct BarView: View {
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
+    /// 2.3 U2: History's open state for the notch surface handoff (History and the microphone list never show
+    /// together); shared by the app and the UIE2E host.
+    private let historyBridge: VoiceBarNotchHistoryBridge?
     /// Visual shots only: render one History row as hovered without a pointer.
     private var historyForcedHoverIndex: Int?
     @State private var errorDismissTask: Task<Void, Never>?
@@ -409,7 +412,8 @@ public struct BarView: View {
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false,
         onOpenMicrophonePicker: @escaping () -> Void = {},
-        onOpenSetupSettings: (() -> Void)? = nil
+        onOpenSetupSettings: (() -> Void)? = nil,
+        historyBridge: VoiceBarNotchHistoryBridge? = nil
     ) {
         _notchAppearance = State(
             initialValue: VoiceBarNotchAppearance(
@@ -426,6 +430,7 @@ public struct BarView: View {
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
+        self.historyBridge = historyBridge
     }
 
     // MARK: - Native notch shell
@@ -481,6 +486,9 @@ public struct BarView: View {
         }
         .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
+            // U2×U4 review: a renewed open intent cancels a waiting notch menu even when the panel is still
+            // mounted (reopened during its close spring), where no mount change reaches the handoff.
+            if isOpen { historyBridge?.historyOpenRequested() }
             synchronizeHistoryDismissal(isOpen: isOpen)
             let velocity = pendingHistoryReleaseVelocity
             pendingHistoryReleaseVelocity = 0
@@ -488,7 +496,7 @@ public struct BarView: View {
         }
         .onChange(of: isHistoryMounted) { _, isMounted in
             synchronizeLauncherRetention()
-            presentationModel?.setHistoryPanelOpen(isMounted)
+            reportHistoryPanelMounted(isMounted)
         }
         .onDisappear {
             historyDismissal?.stop()
@@ -509,7 +517,7 @@ public struct BarView: View {
             if isHistoryPresented, !isHistoryMounted {
                 isHistoryMounted = true
                 historyProgress = historyFrozenProgress ?? 1
-                presentationModel?.setHistoryPanelOpen(true)
+                reportHistoryPanelMounted(true)
             }
         }
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
@@ -517,6 +525,19 @@ public struct BarView: View {
                 isHistoryPresented = false
             }
         }
+        // 2.3 U2: a notch menu asked for History to close first (VoiceBarNotchSurfaceHandoff).
+        .onChange(of: historyBridge?.closeRequest ?? 0) { _, _ in
+            isHistoryPresented = false
+        }
+    }
+
+    /// 2.3 U2 × U4: History counts as open for the layout AND for the notch surface handoff while its panel is
+    /// MOUNTED (open, opening, closing or being pulled), not merely while open is intended. A menu shown on the
+    /// intent change would hang over a panel still springing closed, and SwiftUI does not animate it away while
+    /// the AppKit menu tracks; a pull-down draws the panel before any intent flips.
+    private func reportHistoryPanelMounted(_ isMounted: Bool) {
+        presentationModel?.setHistoryPanelOpen(isMounted)
+        historyBridge?.historyDidChange(isOpen: isMounted)
     }
 
     private var notchPresentation: VoiceBarNotchPresentation {
@@ -586,7 +607,7 @@ public struct BarView: View {
         let generation = historyMorphGeneration
         if toOpen, !isHistoryMounted {
             isHistoryMounted = true
-            presentationModel?.setHistoryPanelOpen(true)
+            reportHistoryPanelMounted(true)
         }
         guard !accessibilityReduceMotion else {
             // Reduced motion swaps every morph for an instant change (the mock's note).
@@ -647,10 +668,11 @@ public struct BarView: View {
                     seed: renderedHistoryProgress(at: time)
                 ) else { return }
                 historyFlight = nil // the pointer owns the value now
+                historyBridge?.historyOpenRequested() // grabbing History cancels a waiting notch menu
                 if !isHistoryMounted {
                     historyMorphGeneration &+= 1
                     isHistoryMounted = true
-                    presentationModel?.setHistoryPanelOpen(true)
+                    reportHistoryPanelMounted(true)
                 }
                 presentationModel?.setHistoryPullActive(true)
                 var follow = Transaction()

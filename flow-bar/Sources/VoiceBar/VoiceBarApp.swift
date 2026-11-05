@@ -253,6 +253,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var stoppingFromPhysicalPress = false
     private var menuBarStatusItem: NSStatusItem?
     private var menuBarStatusItemController: MenuBarStatusItemController?
+    /// 2.3 U2: History and the microphone list never show together (lane U1 adds the notch menu). The QA host
+    /// drives the same handoff.
+    private let notchHistoryBridge = VoiceBarNotchHistoryBridge()
+    private lazy var notchSurfaceHandoff: VoiceBarNotchSurfaceHandoff = {
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: notchHistoryBridge) { [weak self] kind in
+            self?.presentNotchMenu(kind)
+        }
+        handoff.onOutcome = { [weak self] outcome in
+            if case .cancelled = outcome { self?.logDiagnostic(event: "notch_microphone_list_cancelled") }
+        }
+        return handoff
+    }()
     private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
         modeProvider: { [weak self] in self?.voiceState.mode ?? .idle },
         restartRecordingAudio: { [weak self] in
@@ -771,12 +783,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true,
-            // 2.3 U2: until the chevron's own microphone list lands, it opens Settings › Microphone priority, the
-            // D2 "Change…" path.
             onOpenMicrophonePicker: { [weak self] in
-                self?.openSettingsWindow(tab: .general, focus: .microphonePriority)
+                // The handoff schedules the (modal) menu after the chevron's own click finishes.
+                self?.notchSurfaceHandoff.requestMenu(.microphone)
             },
-            onOpenSetupSettings: { [weak self] in self?.openSetupAttentionSettings() }
+            onOpenSetupSettings: { [weak self] in self?.openSetupAttentionSettings() },
+            historyBridge: notchHistoryBridge
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
@@ -960,6 +972,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         pillContextMenuController.defaultMicrophoneNameProvider = { [weak self] in
             self?.defaultMicrophoneName()
+        }
+        pillContextMenuController.microphonePickerRowsProvider = { [weak self] in
+            guard let self else { return [] }
+            return MicrophonePickerRow.rows(
+                from: microphonePrioritySnapshot(devices: MicrophoneDeviceManager.availableInputDevices())
+            )
         }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
@@ -3043,11 +3061,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // MARK: - Setup attention (2.3 U2)
+    // MARK: - Microphone list and setup attention (2.3 U2)
 
     /// The badged gear opens Settings › General › Permissions (the 3-wings mock's "setup spot").
     func openSetupAttentionSettings() {
         openSettingsWindow(tab: .general, focus: .permissions)
+    }
+
+    /// The handoff's presenter: runs only after the coordinator re-admitted the queued menu; returns when the
+    /// menu's modal tracking ends.
+    private func presentNotchMenu(_ kind: VoiceBarNotchMenuKind) {
+        guard let panel, let contentView = panel.contentView else { return }
+        let menu = switch kind {
+        case .microphone: pillContextMenuController.makeMicrophonePickerMenu()
+        }
+        let origin = Self.notchMenuOrigin(kind: kind, menuWidth: menu.size.width, layout: currentPanelLayout())
+        logDiagnostic(event: "notch_microphone_list_opened")
+        menu.popUp(positioning: nil, at: contentView.convert(origin, from: nil), in: contentView)
+    }
+
+    /// The mocks' placement, in window space: the list hangs 6 pt under the 32 pt top row (38 pt from the screen
+    /// top) and ends 4 pt past the left wing's notch-side edge, so it opens beside the mic and away from the notch.
+    static func notchMenuOrigin(kind: VoiceBarNotchMenuKind, menuWidth: CGFloat, layout: VoiceBarPanelLayout) -> CGPoint {
+        let top = layout.panelSize.height - (layout.presentation.geometry.topHeight + 6)
+        switch kind {
+        case .microphone:
+            return CGPoint(x: layout.leadingWingWindowRect.maxX + 4 - menuWidth, y: top)
+        }
     }
 
     var settingsWindowForTesting: NSWindow? {
