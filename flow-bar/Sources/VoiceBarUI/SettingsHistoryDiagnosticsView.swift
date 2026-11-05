@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Read-only recording facts plus a compact Log of real attempts (archive take, this process's retry
@@ -16,6 +17,8 @@ public struct SettingsHistoryDiagnosticsPanel: View {
     private let onSelectAttempt: ((String) -> Void)?
     private let onExpandedChange: ((Bool) -> Void)?
     @State private var disclosure: SettingsHistoryDiagnosticsDisclosure
+    /// Folded "Re-transcribed ×N" rows the user opened, by row id.
+    @State private var openRepeats: Set<String> = []
 
     public init(snapshot: SettingsHistoryDiagnostics?, runs: [SettingsHistoryRunLog.Run], omittedCount: Int = 0, initialDetailsExpanded: Bool = false, initiallyExpanded: Bool? = nil, onExpandedChange: ((Bool) -> Void)? = nil, attemptHistory: SettingsHistoryAttemptHistory? = nil, selectedAttemptID: String? = nil, shownAttemptID: String? = nil, onSelectAttempt: ((String) -> Void)? = nil, recordingID: String? = nil, recordingEntry: SettingsHistoryEntry? = nil) {
         self.snapshot = snapshot
@@ -88,7 +91,40 @@ public struct SettingsHistoryDiagnosticsPanel: View {
                     .accessibilityValue(recordingID)
                 SettingsHistoryCopyIconButton(text: recordingID, label: "recording ID")
             }
+            if disclosure.expanded {
+                Spacer(minLength: 4)
+                closeButton
+            }
         }
+    }
+
+    /// Visual shots only: render these folded rows opened.
+    func openingRepeatsForShots(_ ids: Set<String>) -> Self {
+        var copy = self
+        copy._openRepeats = State(initialValue: ids)
+        return copy
+    }
+
+    /// Etan, 2026-11-05: "can't close" the open Recording details. The chevron alone did not read as a close, so
+    /// the open section carries a visible close button, and Esc closes it from anywhere in the window. No motion on
+    /// the keyboard path (the header's own rule).
+    private var closeButton: some View {
+        Button {
+            withAnimation(NSApp.currentEvent?.type == .keyDown ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.2)) {
+                disclosure.expanded = false
+            }
+        } label: {
+            Image(systemName: "xmark")
+                .font(.caption.weight(.semibold))
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .keyboardShortcut(.cancelAction)
+        .help(SettingsHistoryDiagnosticsCopy.closeDetailsHelp)
+        .accessibilityLabel(SettingsHistoryDiagnosticsCopy.closeDetailsLabel)
+        .accessibilityIdentifier("history-recording-details-close")
     }
 
     static func legacyRecognitionFacts(_ entry: SettingsHistoryEntry?, hasAttempts: Bool) -> [(String, String)] {
@@ -145,7 +181,9 @@ public struct SettingsHistoryDiagnosticsPanel: View {
                 SettingsHistoryCopyIconButton(text: copy.logCopyText, label: "log")
             }
             ForEach(copy.logLines) { line in
-                if let attemptID = line.attemptID {
+                if !line.repeats.isEmpty {
+                    repeatsRow(line)
+                } else if let attemptID = line.attemptID {
                     Button { onSelectAttempt?(attemptID) } label: {
                         logRow(line)
                             .background(selectedAttemptID == attemptID ? Color.accentColor.opacity(0.1) : Color.clear,
@@ -164,6 +202,39 @@ public struct SettingsHistoryDiagnosticsPanel: View {
                         .accessibilityLabel(line.accessibilityText)
                         .accessibilityIdentifier("history-log-\(line.id)")
                 }
+            }
+        }
+    }
+
+    /// A folded run of identical re-transcriptions: one row with a chevron; opened, the individual requests follow
+    /// it, indented, oldest first. Opening is instant (it is a list, used often).
+    @ViewBuilder private func repeatsRow(_ line: SettingsHistoryLogLine) -> some View {
+        let isOpen = openRepeats.contains(line.id)
+        Button {
+            if isOpen { openRepeats.remove(line.id) } else { openRepeats.insert(line.id) }
+        } label: {
+            HStack(spacing: 0) {
+                logRow(line)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    .padding(.trailing, 6)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("history-log-\(line.id)")
+        .accessibilityLabel(line.accessibilityText)
+        .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+        .accessibilityHint(isOpen ? "Hide each request" : "Show each request")
+        if isOpen {
+            ForEach(line.repeats) { request in
+                logRow(request)
+                    .padding(.leading, 20)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(request.accessibilityText)
+                    .accessibilityIdentifier("history-log-\(request.id)")
             }
         }
     }

@@ -50,11 +50,15 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
 public struct SettingsTabRequest: Equatable {
     public let tab: SettingsTab
     public let focus: SettingsFocus?
+    /// History only: the dictation to select, by its audio path (a notch History row click, 2.3 U4). When it isn't
+    /// on the loaded page the list keeps its usual selection.
+    public let historyRecordingID: String?
     public let id: Int
 
-    public init(tab: SettingsTab, focus: SettingsFocus? = nil, id: Int) {
+    public init(tab: SettingsTab, focus: SettingsFocus? = nil, historyRecordingID: String? = nil, id: Int) {
         self.tab = tab
         self.focus = focus
+        self.historyRecordingID = historyRecordingID
         self.id = id
     }
 }
@@ -826,8 +830,13 @@ public struct SettingsView: View {
         let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
         _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
         _historyLoadedEntryCount = State(initialValue: initialHistoryPage?.loadedEntryCount ?? 0)
-        _historyMemory = State(initialValue: SettingsHistoryRecordingMemory(
-            initialPage: initialHistoryPage.map { $0.groups.flatMap(\.entries).map(\.id) }))
+        var historyMemory = SettingsHistoryRecordingMemory(
+            initialPage: initialHistoryPage.map { $0.groups.flatMap(\.entries).map(\.id) })
+        if tabRequest?.tab == .history, let recording = tabRequest?.historyRecordingID {
+            historyMemory.request(recording)
+            _selectedHistoryScope = State(initialValue: .recording)
+        }
+        _historyMemory = State(initialValue: historyMemory)
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
@@ -873,6 +882,11 @@ public struct SettingsView: View {
         )
         .onChange(of: tabRequest) { _, request in
             if let request { selectedTab = request.tab }
+            if request?.tab == .history, let recording = request?.historyRecordingID {
+                selectedHistoryScope = .recording
+                historyMemory.request(recording)
+                historyMemory.applyPage(historyDayGroups.flatMap(\.entries).map(\.id))
+            }
         }
         // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
         .onAppear { onSelectedTabChange(selectedTab) }
@@ -1569,7 +1583,7 @@ public struct SettingsView: View {
                                                     recordingHistoryListRow(entry)
                                                 }.buttonStyle(.plain)
                                             }
-                                        } header: { historyDayHeader(group.dayTitle()) }
+                                        } header: { historyDayHeader(group.dayTitle(), coversAbove: 0) }
                                     }
                                     if historyHasMore {
                                         Button(SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: isHistoryLoading)) { loadOlderHistory() }
@@ -1578,9 +1592,13 @@ public struct SettingsView: View {
                                             .frame(maxWidth: .infinity)
                                             .padding(.top, 8)
                                     }
-                                }.padding(12)
+                                }.padding([.horizontal, .bottom], 12)
                                 .background(SettingsHistoryScrollKeeper(memory: historyScroll, key: .list))
-                            }.clipped()
+                            }
+                            // V27: the top inset sits outside the scroll view, so a pinned day header needs no
+                            // cover above it, and an unpinned one never paints over the previous day's last row.
+                            .padding(.top, 12)
+                            .clipped()
                         } detail: {
                             if let entry = selectedHistoryEntry {
                                 SettingsHistoryAttemptDetailPane(entry: entry, load: historyDiagnostics,
@@ -1678,6 +1696,13 @@ public struct SettingsView: View {
         return VStack(alignment: .leading, spacing: 6) {
             historyMediaPartStats(part)
             historyMediaPartActions(part, isRetranscribing: retranscribing, enablement: enablement)
+            // Etan, 2026-11-05: a Re-transcribe that produced the same words said nothing. Now it says so here.
+            if !retranscribing,
+               let note = SettingsHistoryDiagnosticsCopy.latestRequestNote(runs: historyRunLog().runs(for: entry.audioPath.path)) {
+                Label(note, systemImage: "equal.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("history-retranscribe-unchanged")
+            }
             if historyPlayback.playingURL == part.audioPath {
                 SettingsPlaybackScrubBar(playback: historyPlayback, url: entry.audioPath, accessibilityNoun: part.accessibilityNoun)
             }
@@ -1910,7 +1935,12 @@ public struct SettingsView: View {
 
     // AIDEV-NOTE: both scope stacks pin this same Section header. Its opaque background keeps
     // Recording's existing behavior and prevents tall Ask cards from scrolling through it.
-    private func historyDayHeader(_ title: String) -> some View {
+    /// A pinned day header is opaque so rows scroll under it. `coversAbove` extends that cover over the list's own
+    /// top padding while pinned, and must never exceed the stack spacing above the header: past it, an unpinned
+    /// header paints over the bottom of the previous day's last row (V27, Etan: "only the last in the list in a
+    /// given date… right before the title of the next date"). The Ask list spaces its sections 18 pt apart; the
+    /// Dictations list spaces rows 2 pt apart and keeps its top inset outside the scroll view instead.
+    private func historyDayHeader(_ title: String, coversAbove: CGFloat = 18) -> some View {
         Text(title)
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -1921,7 +1951,7 @@ public struct SettingsView: View {
                 Rectangle()
                     .fill(Color(nsColor: .windowBackgroundColor))
                     .padding(.horizontal, -18)
-                    .padding(.top, -18)
+                    .padding(.top, -coversAbove)
             )
     }
 

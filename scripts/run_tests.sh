@@ -74,8 +74,13 @@ trap 'exit 143' TERM
 
 (
   cd "$ROOT_DIR" || exit 1
-  # Keep HOME-derived logs/caches and all runtime state inside this smoke run.
+  # Keep model discovery private too: inherited host asset overrides can start
+  # brew during boot warm-up. Homebrew's env -i drops the ownership keys, so
+  # the supervisor correctly refuses to signal that mixed-environment group.
   exec env HOME="$RUN_DIR" \
+    XDG_CACHE_HOME="$RUN_DIR/cache" \
+    QA_VOICE_WHISPER_MODEL="$RUN_DIR/models/whisper.bin" \
+    VOICELAYER_PARAKEET_MODEL="$RUN_DIR/models/parakeet" \
     VOICELAYER_STATE_DIR="$RUN_DIR/state" \
     VOICELAYER_TMP_ROOT="$RUN_DIR" \
     VOICELAYER_LOG_ROTATION_DIR="$RUN_DIR" \
