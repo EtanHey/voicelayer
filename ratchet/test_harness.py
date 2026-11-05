@@ -17,6 +17,21 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_recents_readiness_requires_the_owned_daemon_registered_for_commands(self):
+        hello = "[VoiceBar] Client hello (fd: 8, role: mcp-daemon, pid: 42, acceptsCommands: true)"
+        self.assertTrue(harness.command_client_registered(hello, 42))
+        for log in ("Server listening", '{"type":"client_hello","accepts_commands":true}',
+                    hello.replace("true", "false"), hello.replace("mcp-daemon", "observer"),
+                    hello.replace("pid: 42", "pid: 142")):
+            with self.subTest(log=log):
+                self.assertFalse(harness.command_client_registered(log, 42))
+
+    def test_archived_transport_log_preserves_dropped_command_diagnostics(self):
+        run = harness.Run.__new__(harness.Run)
+        dropped = "[VoiceBar] No command client registered; dropping command type=retry id=none bytes=12"
+        with patch.object(run, "log", return_value=dropped + "\nprivate unrelated diagnostic"):
+            self.assertEqual(run.transport_log(), dropped + "\n")
+
     def test_whisper_fixture_supports_stdout_and_requested_segment_json(self):
         fixture = Path(__file__).with_name("fixture-whisper.py")
         with tempfile.TemporaryDirectory() as directory:
