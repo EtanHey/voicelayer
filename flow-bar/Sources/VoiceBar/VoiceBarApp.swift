@@ -585,7 +585,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             queue: .main
         )
         terminationSignalSource.setEventHandler { [weak self] in
-            self?.requestTermination(.internalFailure)
+            self?.requestTermination(.menuBar)
         }
         terminationSignalSource.resume()
         self.terminationSignalSource = terminationSignalSource
