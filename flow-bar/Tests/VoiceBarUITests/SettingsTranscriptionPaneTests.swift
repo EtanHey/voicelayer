@@ -84,7 +84,8 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
     func testProcessingRowsSayWhatEachDoesToYourWords() {
         let rows = ModelsSettingsView.processingRows(for: Self.controls, recognizer: state(selected: .whisper))
         XCTAssertEqual(rows.map(\.key.title), ["Model polish", "Remove made-up closing phrases", "Smart chunks"])
-        XCTAssertTrue(rows[0].line.contains("keeps the raw text"), "polish states its fidelity guard")
+        XCTAssertEqual(rows[0].line, "Fixes punctuation and capitals. If polish would add or drop a word, VoiceBar keeps the raw text instead.",
+                       "polish states its fidelity guard (stt-polish.ts CHANGED_LEXICAL_CONTENT)")
         XCTAssertNil(rows[2].lockedReason)
         XCTAssertTrue(rows[2].experimental)
     }
@@ -128,12 +129,34 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
             SettingsRowCase(title: "Language", description: "Auto detects English and Hebrew per recording.",
                             controls: AnyView(Picker("", selection: .constant("Auto")) { Text("Auto").tag("Auto") }
                                 .labelsHidden().fixedSize())),
-        ] + RecognizerPickerEngine.allCases.map {
-            SettingsRowCase(title: RecognizerPickerView.rowTitle($0),
-                            description: RecognizerPickerView.blurb($0) + " " + RecognizerPickerView.subtitle(picker, $0),
-                            hasLead: true,
-                            controls: AnyView(HStack { Button("Unload") {}; Image(systemName: "trash") }))
-        })
+        ])
+    }
+
+    /// Review R1 #737: the guard runs on the ACTUAL recognizer view (both rows, their real controls), installed and
+    /// mid-download, at 720 and 390 pt, against the rendered pixels.
+    func testTheRealRecognizerRowsNeverClipBeforeTheSecondLine() {
+        let progress = RecognizerDownloadProgress(state: "downloading", received: 340, total: 1000, error: nil)
+        for (name, picker) in [("installed", state()), ("asleep", state(parakeet: .unloaded)),
+                               ("downloading", state(whisperPresent: false, downloads: [.whisper: progress]))] {
+            SettingsRowClippingGuard.check("recognizer \(name)") { _ in
+                RecognizerPickerView(state: picker, onSelect: { _ in }, onManage: { _, _ in })
+            }
+        }
+    }
+
+    /// Review R1 #737: trash Whisper while Parakeet is selected, select Whisper, then confirm. The open confirmation
+    /// is withdrawn, and confirming against the new state sends nothing.
+    func testAStaleDeleteConfirmationSendsNothing() {
+        let asked = RecognizerDeleteConfirmation(engine: .whisper, state: state())
+        XCTAssertEqual(asked.outcome(in: state()), .send(.delete))
+        let whisperChosen = state(selected: .whisper, parakeet: .unloaded, whisper: .loaded)
+        XCTAssertTrue(asked.isStale(in: whisperChosen))
+        guard case .blocked = asked.outcome(in: whisperChosen) else { return XCTFail("a stale confirmation sent a command") }
+        let reloaded = state(parakeet: .loaded, whisper: .loaded)
+        XCTAssertTrue(asked.isStale(in: reloaded), "a residency change withdraws it too")
+        let source = (try? String(contentsOf: Self.source("RecognizerPickerView.swift"), encoding: .utf8)) ?? ""
+        XCTAssertTrue(source.contains("switch confirmation.outcome(in: state)"), "Delete re-checks before sending")
+        XCTAssertTrue(source.contains("confirmation.isStale(in: current) { deleting = nil }"))
     }
 
     func testWriteTranscriptionFramesWhenRequested() throws {

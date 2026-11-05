@@ -391,7 +391,7 @@ public struct ModelsSettingsView: View {
         return [
             ProcessingRow(
                 key: .modelPolish,
-                line: "Fixes punctuation and capitals. If polish loses your words, VoiceBar keeps the raw text instead.",
+                line: "Fixes punctuation and capitals. If polish would add or drop a word, VoiceBar keeps the raw text instead.",
                 experimental: false,
                 isOn: controls.modelPolish.effective == .on,
                 lockedReason: polishLock
