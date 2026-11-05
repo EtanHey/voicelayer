@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, integration/2.2.61]
 
 # Every job only checks out and runs local tooling.
 permissions:
