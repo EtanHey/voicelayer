@@ -642,8 +642,15 @@ allows_uie2e_adhoc_signing() {
        && "$(cat "$parent/.uie2e-sandbox")" == voicebar-ui-e2e-v1 ]]
 }
 
+allows_qa23_adhoc_signing() {
+    [[ "${VOICEBAR_QA23_BUILD:-0}" == 1 && "$SIGN_IDENTITY" == - \
+       && "$APP_DIR" == "$REPO_ROOT/.build.noindex/qa-2.3/VoiceBar-2.3-QA.app" \
+       && "$STOP_RUNNING" == 0 && "$RELAUNCH_APP" == 0 && "${VOICEBAR_QA_BUILD:-0}" != 1 \
+       && "$VOICEBAR_REQUIRE_NOTARIZATION" == 0 && -z "$VOICEBAR_RELEASE_ZIP" && ! -L "$APP_DIR" ]]
+}
+
 validate_signing_identity() {
-    if allows_uie2e_adhoc_signing; then return 0; fi
+    if allows_uie2e_adhoc_signing || allows_qa23_adhoc_signing; then return 0; fi
     if is_resident_app_dir && [[ "$SIGN_IDENTITY" == Apple\ Development:* ]] && [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" != "1" ]; then
         echo "[build-app] ERROR: Refusing Apple Development signing for resident /Applications/VoiceBar.app." >&2
         echo "[build-app] This would change the app identity and can invalidate TCC grants." >&2
@@ -705,7 +712,7 @@ sign_nested_native_dependencies() {
 }
 
 verify_developer_id_signature() {
-    if allows_uie2e_adhoc_signing; then
+    if allows_uie2e_adhoc_signing || allows_qa23_adhoc_signing; then
         codesign --verify --deep --strict --verbose=2 "$APP_DIR"
         return $?
     fi
@@ -834,8 +841,8 @@ unregister_throwaway_bundle() {
 }
 
 notarize_and_staple() {
-    if allows_uie2e_adhoc_signing; then
-        echo "[build-app] UIE2E throwaway QA bundle: ad-hoc signing, no notarization."
+    if allows_uie2e_adhoc_signing || allows_qa23_adhoc_signing; then
+        echo "[build-app] Isolated throwaway QA bundle: ad-hoc signing, no notarization."
         return 0
     fi
     if ! notary_credentials_available; then
@@ -1001,6 +1008,9 @@ if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
 fi
 
 parse_build_app_args "$@"
+if [[ "${VOICEBAR_QA23_BUILD:-0}" == 1 ]]; then
+    allows_qa23_adhoc_signing || { echo '[build-app] REFUSED: unsafe QA23 lifecycle' >&2; exit 1; }
+fi
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
@@ -1022,6 +1032,9 @@ elif [[ "$VOICEBAR_REQUIRE_NOTARIZATION" == 1 || -n "$VOICEBAR_RELEASE_ZIP" ]]; 
         "$APP_DIR" "$VOICEBAR_RELEASE_ZIP" "$SCRIPT_DIR/build-app.sh"
 else
     normalize_app_dir_path
+fi
+if [[ "${VOICEBAR_QA23_BUILD:-0}" == 1 ]]; then
+    allows_qa23_adhoc_signing || { echo '[build-app] REFUSED: resolved QA23 destination changed' >&2; exit 1; }
 fi
 require_non_docslocal_path "$VOICEBAR_BACKUP_DIR"
 if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then require_noindex_path "$VOICEBAR_RELEASE_ZIP"; fi
@@ -1178,6 +1191,10 @@ if allows_uie2e_adhoc_signing; then
     "$PLIST_BUDDY" -c 'Set :CFBundleIdentifier com.voicelayer.voicebar.uie2e' "$APP_DIR/Contents/Info.plist"
     "$PLIST_BUDDY" -c 'Set :CFBundleName VoiceBarQA' "$APP_DIR/Contents/Info.plist"
     "$PLIST_BUDDY" -c 'Delete :CFBundleURLTypes' "$APP_DIR/Contents/Info.plist"
+fi
+if [[ "${VOICEBAR_QA23_BUILD:-0}" == 1 ]]; then
+    allows_qa23_adhoc_signing || { echo '[build-app] REFUSED: unsafe QA23 build configuration' >&2; exit 1; }
+    python3 "$REPO_ROOT/scripts/lib/qa-candidate-2.3.py" stamp "$APP_DIR"
 fi
 echo "[build-app] Stamped Info.plist:"
 echo "  ReleaseVersion=$RELEASE_VERSION"

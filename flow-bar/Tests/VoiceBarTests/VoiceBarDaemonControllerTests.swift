@@ -12,6 +12,15 @@ private let testBundledDaemonPath = "/Applications/VoiceBar.app/Contents/Resourc
 private let testInstalledInfoPlistPath = "/Applications/VoiceBar.app/Contents/Info.plist"
 
 final class VoiceBarDaemonControllerTests: XCTestCase {
+    func testQAHealthRequiresExplicitPreserveMode() {
+        for preserves in [false, true] {
+            var inherited = ["VOICELAYER_QA_HEALTH": "1"]
+            if preserves { inherited["VOICEBAR_QA_PRESERVE_OVERRIDES"] = "1" }
+            let environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(from: inherited, path: "/usr/bin")
+            XCTAssertEqual(environment["VOICELAYER_QA_HEALTH"], preserves ? "1" : nil)
+        }
+    }
+
     func testDefaultSocketsAreRefusedBeforeSpawningFromNonResidentBundle() {
         let keys = ["VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "QA_VOICE_SOCKET_PATH",
                     "QA_VOICE_MCP_SOCKET_PATH", "DISABLE_VOICELAYER", "QA_VOICE_DISABLE_FLAG_PATH"]
@@ -186,6 +195,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             from: [
                 "VOICEBAR_QA_PRESERVE_OVERRIDES": "1",
                 "QA_VOICEBAR_PRESERVE_TEST_OVERRIDES": "1",
+                "QA_VOICE_RECORDINGS_DIR": "/tmp/qa-recordings",
                 "QA_VOICE_SOCKET_PATH": "/tmp/qa-voicebar.sock",
                 "QA_VOICE_MCP_SOCKET_PATH": "/tmp/qa-mcp.sock",
                 "QA_VOICE_MCP_PID_PATH": "/tmp/qa-mcp.pid",
@@ -202,6 +212,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             path: "/tmp/bin"
         )
 
+        XCTAssertEqual(environment["QA_VOICE_RECORDINGS_DIR"], "/tmp/qa-recordings")
         XCTAssertEqual(environment["QA_VOICE_SOCKET_PATH"], "/tmp/qa-voicebar.sock")
         XCTAssertEqual(environment["QA_VOICE_MCP_SOCKET_PATH"], "/tmp/qa-mcp.sock")
         XCTAssertEqual(environment["QA_VOICE_MCP_PID_PATH"], "/tmp/qa-mcp.pid")
