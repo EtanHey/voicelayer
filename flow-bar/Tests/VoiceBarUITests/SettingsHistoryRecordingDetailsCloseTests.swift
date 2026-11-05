@@ -70,9 +70,15 @@ final class SettingsHistoryRecordingDetailsCloseTests: XCTestCase {
     private func trailingHeaderInk(expanded: Bool) throws -> Int {
         let (window, host) = makeHost(expanded: expanded) { _ in }
         defer { window.contentView = nil }
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        // Pin the raster scale: a hosted runner's 1x display otherwise changes the glyph's pixel area.
+        let scale: CGFloat = 2
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(Self.size.width * scale), pixelsHigh: Int(Self.size.height * scale),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        bitmap.size = Self.size
         host.cacheDisplay(in: host.bounds, to: bitmap)
-        let scale = CGFloat(bitmap.pixelsWide) / Self.size.width
         // The card spans x 20...540 pt; its header row is ~y 20...56 pt.
         var ink = 0
         for y in Int(22 * scale) ..< Int(52 * scale) {
