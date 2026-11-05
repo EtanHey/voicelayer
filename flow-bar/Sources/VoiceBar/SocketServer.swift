@@ -135,6 +135,8 @@ final class SocketServer {
     var onUpdateGateDrain: (([String: Any]) -> [String: Any]?)?
     /// Main-thread continuation after the accepted reply's write attempt (even if the peer left).
     var onUpdateGateDrainReplySent: (([String: Any]) -> Void)?
+    var onCloneEngineCommand: (([String: Any]) -> [String: Any])?
+    private var cloneEngineEvent: [String: Any]?
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
     var onCaptureResolved: (() -> Void)?
@@ -311,7 +313,16 @@ final class SocketServer {
         var peerSize = socklen_t(MemoryLayout<Int32>.size)
         let peerKnown = getsockopt(clientFD, SOL_LOCAL, LOCAL_PEERPID, &peerPID, &peerSize) == 0
         clients[clientFD] = ClientConnection(source: readSource, maxLineBytes: maxLineBytes, peerPID: peerKnown ? peerPID : nil)
+        if let cloneEngineEvent { sendCommandToOwnerOnQueue(command: cloneEngineEvent, targetFD: clientFD) }
         updateConnectionState()
+    }
+
+    func publishCloneEngine(_ event: [String: Any]) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            cloneEngineEvent = event
+            for fd in Array(clients.keys) { sendCommandToOwnerOnQueue(command: event, targetFD: fd) }
+        }
     }
 
     // MARK: - Read
@@ -361,6 +372,19 @@ final class SocketServer {
             return
         }
 
+        if dict["cmd"] as? String == "clone_engine" {
+            guard let fd, let connectionID = clients[fd]?.presentationID else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let reply = onCloneEngineCommand?(dict) else { return }
+                queue.async { [weak self] in
+                    guard let self, clients[fd]?.presentationID == connectionID else { return }
+                    sendCommandToOwnerOnQueue(command: reply, targetFD: fd)
+                }
+            }
+            return
+        }
+        // Only VoiceBar may publish authoritative clone lifecycle state.
+        if dict["type"] as? String == "clone_engine" { return }
         if dict["type"] as? String == "update_gate_drain" {
             guard let fd, let client = clients[fd], client.role == "mcp-daemon", client.acceptsCommands,
                   let peer = client.peerPID, peer == dict["pid"] as? Int32,
