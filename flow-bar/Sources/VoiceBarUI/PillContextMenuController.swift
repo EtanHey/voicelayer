@@ -150,6 +150,78 @@ public final class PillContextMenuController: NSObject {
         return menu
     }
 
+    /// The static version row ("VoiceBar 2.3.0 · up to date"). Nil update status shows the version alone, so the
+    /// row never claims an update check that did not happen.
+    public var updateStatusProvider: () -> String? = { nil }
+    public var versionProvider: () -> String = {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    public static func versionLine(version: String, updateStatus: String?) -> String {
+        let name = version.isEmpty ? "VoiceBar" : "VoiceBar \(version)"
+        return updateStatus.map { "\(name) · \($0)" } ?? name
+    }
+
+    /// 2.3 SPEC lane U1, the bare-notch click: Copy · Paste · Transcribe latest again · — · Settings… ⌘, · Hide for
+    /// 1 hour · — · the version (static) · Quit VoiceBar ⌘Q. Recent Transcriptions is History's job now and the
+    /// microphone moved to the left-wing picker, so neither is here. Every action reuses the right-click adapters.
+    public func makeNotchMenu() -> NSMenu {
+        let menu = NSMenu(title: "VoiceBar")
+        menu.autoenablesItems = false
+        addTranscriptItems(to: menu, includeRetranscribe: true)
+        menu.addItem(.separator())
+        menu.addItem(item("Settings…", #selector(handleOpenSettings), key: ","))
+        menu.addItem(snoozeToggleItem(hideTitle: "Hide for 1 hour"))
+        menu.addItem(.separator())
+        let version = NSMenuItem(
+            title: Self.versionLine(version: versionProvider(), updateStatus: updateStatusProvider()),
+            action: nil,
+            keyEquivalent: ""
+        )
+        version.isEnabled = false
+        menu.addItem(version)
+        menu.addItem(item("Quit VoiceBar", #selector(handleQuit), key: "q"))
+        return menu
+    }
+
+    /// SPEC (d): the Dock icon's right-click menu. macOS appends its own Quit to every Dock menu, so none is added.
+    public func makeDockMenu() -> NSMenu {
+        let menu = NSMenu(title: "VoiceBar")
+        menu.autoenablesItems = false
+        addTranscriptItems(to: menu, includeRetranscribe: false)
+        menu.addItem(.separator())
+        menu.addItem(item("Settings…", #selector(handleOpenSettings)))
+        menu.addItem(snoozeToggleItem(hideTitle: "Hide notch for 1 hour"))
+        return menu
+    }
+
+    private func addTranscriptItems(to menu: NSMenu, includeRetranscribe: Bool) {
+        let hasTranscript = Self.isPasteEnabled(transcript: transcriptProvider())
+        let copy = item("Copy last transcript", #selector(handleCopyLastTranscript))
+        copy.isEnabled = hasTranscript
+        menu.addItem(copy)
+        let paste = item("Paste last transcript", #selector(handlePasteLastTranscript))
+        paste.isEnabled = hasTranscript
+        menu.addItem(paste)
+        guard includeRetranscribe else { return }
+        let again = item("Transcribe latest again", #selector(handleRetranscribeLatest))
+        again.isEnabled = canRetranscribeLatestProvider()
+        menu.addItem(again)
+    }
+
+    /// While hidden the same row brings VoiceBar back, as in the right-click menu.
+    private func snoozeToggleItem(hideTitle: String) -> NSMenuItem {
+        isSnoozedProvider()
+            ? item("Show VoiceBar", #selector(handleUnsnooze))
+            : item(hideTitle, #selector(handleSnooze))
+    }
+
+    private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        return item
+    }
+
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
         let entries = recentTranscriptionEntriesProvider()

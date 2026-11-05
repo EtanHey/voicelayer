@@ -1,4 +1,5 @@
 import AppKit
+import VoiceBarUI
 
 /// The native app menu owns Settings; SwiftUI only hosts the window's content.
 @MainActor
@@ -18,9 +19,17 @@ enum VoiceBarMainMenu {
         app.addItem(withTitle: "About VoiceBar",
                     action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                     keyEquivalent: "").target = NSApplication.shared
+        // SPEC (d): the version stays visible without the menu-bar item.
+        let version = app.addItem(withTitle: versionTitle(), action: nil, keyEquivalent: "")
+        version.isEnabled = false
         app.addItem(.separator())
         app.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettingsWindow(_:)),
                     keyEquivalent: ",").target = appDelegate
+        app.addItem(withTitle: "Hide notch for 1 hour", action: #selector(AppDelegate.hideNotchForOneHour(_:)),
+                    keyEquivalent: "").target = appDelegate
+        app.addItem(.separator())
+        app.addItem(withTitle: "Hide VoiceBar", action: #selector(NSApplication.hide(_:)),
+                    keyEquivalent: "h").target = NSApplication.shared
         app.addItem(.separator())
         // Authorize the same termination policy and cleanup as the status-item Quit.
         app.addItem(withTitle: "Quit VoiceBar", action: #selector(AppDelegate.quitFromMenuBar),
@@ -48,5 +57,10 @@ enum VoiceBarMainMenu {
         window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         return main
+    }
+
+    static func versionTitle(bundle: Bundle = .main) -> String {
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        return PillContextMenuController.versionLine(version: version, updateStatus: nil)
     }
 }

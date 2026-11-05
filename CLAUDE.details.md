@@ -45,6 +45,7 @@
 
 ## VoiceBar right-click menu (Etan's approved spec §3)
 Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 min ago · first words") · Paste Last Transcript · Copy Last Transcript · — · Microphone › (the priority default as subtitle; inside, a read-only "Default: <mic>" row and "Change…") · — · Quit VoiceBar. There is no Transcription Tools, Anchor or Morph Prototype menu; a saved anchor or morph prototype resolves to the default.
+- 2.3 lane U1 (draft, open question 3 pending): the resident app is a regular app (Dock, ⌘Tab, Force Quit; isolated socket-override instances stay accessory). Its status item shows only while the polish alert is pending or its popover is open. Dock click unsnoozes and opens Settings › General; the Dock menu and the bare-notch menu (`PillContextMenuController.makeDockMenu` / `makeNotchMenu`) reuse the right-click adapters; the notch panel has `canHide = false`, so ⌘H never hides it.
 - Microphone (Etan's D2, 2026-09-25): picking a mic never silently changes anything. The right-click submenu and the menu-bar popover show the microphone-priority default read-only; "Change…" opens Settings › General scrolled to Microphone priority (`SettingsTabRequest(tab: .general, focus: .microphonePriority, id: n)`), where Make default / drag choose it. The only writer of the macOS default input is `MicrophonePriorityApplyCoordinator` (pinned by `MicrophoneWritePathTests`).
 
 ## Voice Modes

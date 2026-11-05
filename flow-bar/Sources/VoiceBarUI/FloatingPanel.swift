@@ -208,6 +208,9 @@ public final class FloatingPillPanel: NSPanel {
 
         // --- Visibility ---
         hidesOnDeactivate = false // stay visible when app loses focus
+        // U1: as a regular app, Hide VoiceBar (⌘H, the Dock menu's Hide) hides Settings, not the notch. The notch
+        // hides only through "Hide for 1 hour".
+        canHide = false
         isReleasedWhenClosed = false // keep in memory for reuse
         collectionBehavior = [
             .canJoinAllSpaces, // visible on every Space

@@ -242,6 +242,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var stoppingFromPhysicalPress = false
     private var menuBarStatusItem: NSStatusItem?
     private var menuBarStatusItemController: MenuBarStatusItemController?
+    /// What launch applied; `.accessory` until then, so an unlaunched delegate (tests) keeps the pre-Dock behaviour.
+    var appliedActivationPolicy: NSApplication.ActivationPolicy = .accessory
+    /// Created on the first bare-notch click; its `isExpanded` is what the notch mirrors as expanded.
+    private(set) var notchMenuPresenter: BareNotchMenuPresenter?
     private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
         modeProvider: { [weak self] in self?.voiceState.mode ?? .idle },
         restartRecordingAudio: { [weak self] in
@@ -341,9 +345,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         closeStraySettingsScenes(trigger: "reopen")
-        // Reopening the menu-bar app must not show a restored placeholder.
-        // Explicit Settings requests still open the owned AppKit window.
+        // Reopening must never show a restored placeholder; the Dock click opens the owned AppKit window instead.
+        let plan = VoiceBarAppPresence.dockReopenPlan(policy: appliedActivationPolicy, isSnoozed: isSnoozed)
+        if plan.unsnooze {
+            unsnoozeNow()
+        }
+        if let tab = plan.settingsTab {
+            openSettingsWindow(tab: tab)
+        }
         return false
+    }
+
+    /// SPEC (d): the Dock icon's right-click menu, through the same adapters as the notch menu.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard appliedActivationPolicy == .regular else { return nil }
+        return pillContextMenuController.makeDockMenu()
+    }
+
+    /// U1: the bare-notch click. Lane U2/U4's surface coordinator decides click vs drag and calls this for a click
+    /// (or Return on the focused notch). The menu is not wired to a gesture here: that would duplicate U2/U4.
+    func presentNotchMenu(at point: NSPoint, in view: NSView) {
+        // AppKit calls this on main; the delegate just isn't annotated @MainActor.
+        MainActor.assumeIsolated {
+            let presenter = notchMenuPresenter ?? BareNotchMenuPresenter()
+            notchMenuPresenter = presenter
+            _ = presenter.present(pillContextMenuController.makeNotchMenu(), at: point, in: view)
+        }
     }
 
     @objc func showSettingsWindow(_ sender: Any?) {
@@ -608,8 +635,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard enforceCanonicalSingleInstance() else { return }
 
-        // No Dock icon (LSUIElement equivalent)
-        NSApp.setActivationPolicy(.accessory)
+        // M8: Dock, ⌘Tab and Force Quit for the resident app; an isolated QA instance stays an accessory.
+        appliedActivationPolicy = VoiceBarAppPresence.activationPolicy(
+            enforcesSingletonInstance: VoiceLayerPaths.enforcesSingletonInstance
+        )
+        NSApp.setActivationPolicy(appliedActivationPolicy)
         setupMenuBarStatusItem()
 
         // Register with Launch Services so voicebar:// URL scheme works
@@ -2907,6 +2937,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    /// The app menu's "Hide notch for 1 hour": the same snooze as the notch and Dock menus.
+    @objc func hideNotchForOneHour(_: Any?) {
+        snoozeForOneHour()
+    }
+
     @objc func quitFromMenuBar() {
         requestTermination(.menuBar)
     }
@@ -2995,6 +3030,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             menuBarStatusItem = statusItem
             let controller = MenuBarStatusItemController(button: button, presenter: presenter)
             menuBarStatusItemController = controller
+            // U1: the regular app keeps the item only as the polish alert (see `isItemVisible`).
+            controller.onVisibilityChange = { [weak statusItem] visible in statusItem?.isVisible = visible }
+            controller.alertOnly = VoiceBarAppPresence.statusItemIsAlertOnly(appliedActivationPolicy)
             // The polish warning replaces the waveform, as the MenuBarExtra label did.
             let voiceState = voiceState
             controller.trackAlert { voiceState.polishMenuSignalPending }
