@@ -175,7 +175,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             includesPanelOutsets: true,
             onOpenMicrophonePicker: { [weak self] in self?.surfaceHandoff.requestMenu(.microphone) },
             onOpenSetupSettings: { [weak self] in self?.openSetupSettings() },
-            historyBridge: historyBridge))
+            historyBridge: historyBridge,
+            onOpenNotchMenu: { [weak self] in self?.surfaceHandoff.requestMenu(.notch) },
+            onCancelNotchMenu: { [weak self] in self?.surfaceHandoff.cancelQueuedMenu() }))
         bar.activeHitTestProvider = { [weak self] point in
             guard let self else { return false }
             return self.panelLayout().containsInteractiveContent(point)
@@ -306,18 +308,18 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 2.3 U2: the production handoff; only the scheduler can be held (QA) and the outcomes become receipts.
     private func makeSurfaceHandoff() -> VoiceBarNotchSurfaceHandoff {
-        let handoff = VoiceBarNotchSurfaceHandoff(bridge: historyBridge) { [weak self] _ in
-            self?.presentMicrophoneList()
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: historyBridge, presentationModel: notchModel) { [weak self] kind in
+            self?.presentNotchMenu(kind)
         }
         handoff.schedule = { [weak self] block in
             guard let self, holdsMenuQueue else { return DispatchQueue.main.async(execute: block) }
             heldMenuPresentations.append(block)
-            model.receipt("microphone-list-queued")
+            model.receipt(self.surfaceHandoff.coordinator.queuedMenu == .notch ? "notch-menu-queued" : "microphone-list-queued")
         }
         handoff.onOutcome = { [weak self] outcome in
             switch outcome {
-            case .presented: self?.model.receipt("microphone-list-open")
-            case .cancelled: self?.model.receipt("microphone-list-cancelled")
+            case .presented(let kind): self?.model.receipt(kind == .notch ? "notch-menu-open" : "microphone-list-open")
+            case .cancelled(let kind): self?.model.receipt(kind == .notch ? "notch-menu-cancelled" : "microphone-list-cancelled")
             }
         }
         return handoff
@@ -332,15 +334,18 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for block in held { DispatchQueue.main.async(execute: block) }
     }
 
-    /// 2.3 U2: the handoff's presenter: the production controller's list under the left wing (modal).
-    private func presentMicrophoneList() {
+    /// The shared handoff's presenter: the production menu under the core or microphone wing (modal).
+    private func presentNotchMenu(_ kind: VoiceBarNotchMenuKind) {
         guard let pill, let content = pill.contentView else { return }
         menu.microphonePickerRowsProvider = { [model] in MicrophonePickerRow.rows(from: model.microphone) }
-        let list = menu.makeMicrophonePickerMenu()
-        list.items.first?.setAccessibilityIdentifier("uie2e-microphone-list")
+        let list = kind == .notch ? menu.makeNotchMenu() : menu.makeMicrophonePickerMenu()
+        list.items.first?.setAccessibilityIdentifier(kind == .notch ? "uie2e-notch-menu" : "uie2e-microphone-list")
         list.delegate = self
-        let origin = AppDelegate.notchMenuOrigin(kind: .microphone, menuWidth: list.size.width,
-                                                 layout: Self.panelLayout(for: model.voice))
+        if kind == .notch { list.minimumWidth = panelLayout().presentation.geometry.topWidth }
+        let origin = AppDelegate.notchMenuOrigin(kind: kind, menuWidth: list.size.width,
+                                                 layout: panelLayout())
+        content.layoutSubtreeIfNeeded()
+        content.displayIfNeeded()
         list.popUp(positioning: nil, at: content.convert(origin, from: nil), in: content)
     }
 
@@ -444,6 +449,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func configureMenu() {
+        menu.updateStatusProvider = { VoiceBarVersionStatus.latest.menuMessage }
         menu.transcriptProvider = { UIE2EModel.transcript }
         menu.recentTranscriptionEntriesProvider = { [self.model.recent] }
         menu.defaultMicrophoneNameProvider = { "QA microphone A" }

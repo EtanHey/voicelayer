@@ -518,6 +518,7 @@ public struct SettingsView: View {
     public let installedVersion: VoiceBarInstalledVersion
     /// Nil (tests, the UI E2E host) means no network check; the row then shows the version only.
     public let versionCheck: VoiceBarVersionCheck?
+    public let onVersionStatusChange: (VoiceBarVersionStatus) -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -720,7 +721,8 @@ public struct SettingsView: View {
         onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in },
         historyPlayback: SettingsAudioPlayback? = nil,
         installedVersion: VoiceBarInstalledVersion = .current(),
-        versionCheck: VoiceBarVersionCheck? = nil
+        versionCheck: VoiceBarVersionCheck? = nil,
+        onVersionStatusChange: @escaping (VoiceBarVersionStatus) -> Void = { _ in }
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -812,6 +814,7 @@ public struct SettingsView: View {
         self.onRunSetup = onRunSetup
         self.installedVersion = installedVersion
         self.versionCheck = versionCheck
+        self.onVersionStatusChange = onVersionStatusChange
         self.tabRequest = tabRequest
         self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
@@ -905,7 +908,9 @@ public struct SettingsView: View {
         .task {
             guard let versionCheck, versionStatus == nil else { return }
             versionStatus = .checking
-            versionStatus = await versionCheck.status(installed: installedVersion.version)
+            let status = await versionCheck.status(installed: installedVersion.version)
+            versionStatus = status
+            onVersionStatusChange(status)
         }
         .task(id: selectedTab) {
             guard selectedTab == .dictionary else { return }

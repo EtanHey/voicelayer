@@ -151,6 +151,7 @@ final class NotchIconButtonTooltipTests: XCTestCase {
             $0.handleEvent(["type": "state", "state": "speaking", "text": "Synthetic teleprompter text.",
                             "playback_id": "tooltips", "generation": 1])
         }
-        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking"])
+        // U5: each Teleprompter A word is a text-labelled "Jump to:" button, not an icon-only control.
+        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking"], textButtons: 3)
     }
 }

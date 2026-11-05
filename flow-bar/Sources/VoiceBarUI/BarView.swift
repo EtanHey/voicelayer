@@ -341,6 +341,8 @@ public struct BarView: View {
     public var onOpenHistory: () -> Void
     /// 2.3 U2: the chevron beside the mic opens the microphone list under the left wing.
     public var onOpenMicrophonePicker: () -> Void
+    public var onOpenNotchMenu: () -> Void
+    public var onCancelNotchMenu: () -> Void
     /// 2.3 U2: the gear while setup needs attention opens Settings at the setup spot.
     public var onOpenSetupSettings: () -> Void
     /// SPEC open question 1 (recommendation built): a notch History row click opens that recording in the History
@@ -365,6 +367,7 @@ public struct BarView: View {
     @State private var historyProgress: CGFloat = 0
     @State private var historyMorphGeneration = 0
     @State private var historyPull = NotchHistoryPull()
+    @State private var historyPressIsBare = false
     @State private var pendingHistoryReleaseVelocity: Double = 0
     /// V6: the rows the extend handle settled on (7…12; the hit region and the next open use it) and the live,
     /// animated rows the shell and list draw while the handle is dragged or settling.
@@ -413,7 +416,9 @@ public struct BarView: View {
         includesPanelOutsets: Bool = false,
         onOpenMicrophonePicker: @escaping () -> Void = {},
         onOpenSetupSettings: (() -> Void)? = nil,
-        historyBridge: VoiceBarNotchHistoryBridge? = nil
+        historyBridge: VoiceBarNotchHistoryBridge? = nil,
+        onOpenNotchMenu: @escaping () -> Void = {},
+        onCancelNotchMenu: @escaping () -> Void = {}
     ) {
         _notchAppearance = State(
             initialValue: VoiceBarNotchAppearance(
@@ -431,6 +436,8 @@ public struct BarView: View {
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
         self.historyBridge = historyBridge
+        self.onOpenNotchMenu = onOpenNotchMenu
+        self.onCancelNotchMenu = onCancelNotchMenu
     }
 
     // MARK: - Native notch shell
@@ -477,6 +484,8 @@ public struct BarView: View {
         .onChange(of: notchPresentation.visualState) { _, visualState in
             scheduleMorphTeleprompterContent(for: visualState)
         }
+        .overlay(alignment: .topLeading) { bareNotchControl }
+        .transaction { if historyBridge?.presentedMenu != nil { $0.disablesAnimations = true; $0.animation = nil } }
         .coordinateSpace(name: Self.notchCanvasSpace)
         .gesture(historyPullGesture)
         .onChange(of: isHistoryPullGestureActive) { _, isActive in
@@ -647,7 +656,9 @@ public struct BarView: View {
                 let openHeight = notchPresentationOpenHistoryHeight
                 let time = value.time.timeIntervalSinceReferenceDate
                 if case .idle = historyPull.phase, case .idle = historyRowsPull.phase {
-                    guard canPullHistory else { return }
+                    historyPressIsBare = abs(value.startLocation.x - historyPanelCentreX) <= notchPresentation.geometry.coreWidth / 2
+                        && NotchHistoryPull.accepts(y: value.startLocation.y)
+                    guard canPullHistory || historyPressIsBare else { return }
                     if NotchHistoryPull.accepts(y: value.startLocation.y) {
                         historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
                     } else if isHistoryPresented, NotchHistoryPull.acceptsHandle(
@@ -663,6 +674,10 @@ public struct BarView: View {
                     dragHistoryRows(to: value.location.y, time: time)
                     return
                 }
+                if max(abs(value.translation.width), abs(value.translation.height)) > NotchHistoryMorph.dragSlop {
+                    historyPressIsBare = false
+                }
+                guard canPullHistory else { return }
                 guard let progress = historyPull.move(
                     y: value.location.y, time: time, range: openHeight - VoiceBarNotchContract.topHeight,
                     seed: renderedHistoryProgress(at: time)
@@ -730,6 +745,15 @@ public struct BarView: View {
         historyRowsFlight?.value(at: time) ?? historyRowsExtent
     }
 
+    private var bareNotchControl: some View {
+        BareNotchMenuControl(isExpanded: historyBridge?.presentedMenu == .notch,
+            onMenu: onOpenNotchMenu, onHistory: { if canPullHistory { isHistoryPresented = true } },
+            onClose: { isHistoryPresented = false; onCancelNotchMenu() })
+            .frame(width: notchPresentation.geometry.coreWidth, height: VoiceBarNotchContract.topHeight)
+            .help("Click for the menu, pull down for History.")
+            .position(x: historyPanelCentreX, y: VoiceBarNotchContract.topHeight / 2)
+    }
+
     /// The open panel's centre in the canvas: the extend handle sits there.
     private var historyPanelCentreX: CGFloat {
         let presentation = notchPresentation
@@ -743,6 +767,8 @@ public struct BarView: View {
             endHistoryRowsPull(cancelled: cancelled)
             return
         }
+        let wasBare = historyPressIsBare
+        historyPressIsBare = false
         presentationModel?.setHistoryPullActive(false)
         switch historyPull.release(progress: historyProgress, cancelled: cancelled) {
         case let .settle(open, velocity):
@@ -752,7 +778,9 @@ public struct BarView: View {
                 pendingHistoryReleaseVelocity = velocity
                 isHistoryPresented = open
             }
-        case .click, .none:
+        case .click:
+            if wasBare && !cancelled { onOpenNotchMenu() }
+        case .none:
             break
         }
     }
@@ -1081,7 +1109,9 @@ public struct BarView: View {
             VStack(spacing: 7) {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
-                    .frame(height: state.showsTeleprompterScrubber ? Theme.teleprompterViewportHeight : nil)
+                    .frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA
+                        ? TeleprompterA.bodyHeight(lines: TeleprompterA.lineRange.lowerBound)
+                        : Theme.teleprompterViewportHeight : nil)
                 if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
                 }
@@ -1137,6 +1167,24 @@ public struct BarView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     .transition(TeleprompterPreparingHandoff.transition)
+            } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech), showsTeleprompterA {
+                TeleprompterAView(
+                    text: text,
+                    wordBoundaries: state.teleprompterWordBoundaries,
+                    displayBlocks: state.teleprompterDisplayBlocks,
+                    hasCompleteDisplay: state.teleprompterHasCompleteDisplay,
+                    speechWords: state.speechWords,
+                    isPaused: state.isPlaybackPaused,
+                    footerState: TeleprompterA.footerState(isPaused: state.isPlaybackPaused,
+                                                           isPausedForDictation: state.isF5SpeechPausedDuringCapture),
+                    queuedCount: state.queuedSpeakCount,
+                    columnWidth: min(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth(
+                        coreWidth: notchPresentation.geometry.coreWidth)),
+                    playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
+                    onSpeechSeek: { state.seekSpeechWord(utteranceID: $0, wordIndex: $1) },
+                    onSeek: state.seek
+                )
+                .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {
                 TeleprompterView(
                     text: text,
@@ -1165,9 +1213,12 @@ public struct BarView: View {
         }
     }
 
+    /// U5: live reading uses Teleprompter A; an idle-retained readback keeps its scrolling view.
+    private var showsTeleprompterA: Bool { state.mode == .speaking && !state.isTeleprompterReadback }
+
     private var notchTeleprompterControls: some View {
         HStack(spacing: 10) {
-            if state.queuedSpeakCount > 0 {
+            if state.queuedSpeakCount > 0, !showsTeleprompterA {
                 Text("+\(state.queuedSpeakCount) queued")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(notchPalette.secondary.color)
