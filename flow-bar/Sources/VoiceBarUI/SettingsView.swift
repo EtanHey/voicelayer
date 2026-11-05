@@ -1569,7 +1569,7 @@ public struct SettingsView: View {
                                                     recordingHistoryListRow(entry)
                                                 }.buttonStyle(.plain)
                                             }
-                                        } header: { historyDayHeader(group.dayTitle()) }
+                                        } header: { historyDayHeader(group.dayTitle(), coversAbove: 0) }
                                     }
                                     if historyHasMore {
                                         Button(SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: isHistoryLoading)) { loadOlderHistory() }
@@ -1578,9 +1578,13 @@ public struct SettingsView: View {
                                             .frame(maxWidth: .infinity)
                                             .padding(.top, 8)
                                     }
-                                }.padding(12)
+                                }.padding([.horizontal, .bottom], 12)
                                 .background(SettingsHistoryScrollKeeper(memory: historyScroll, key: .list))
-                            }.clipped()
+                            }
+                            // V27: the top inset sits outside the scroll view, so a pinned day header needs no
+                            // cover above it, and an unpinned one never paints over the previous day's last row.
+                            .padding(.top, 12)
+                            .clipped()
                         } detail: {
                             if let entry = selectedHistoryEntry {
                                 SettingsHistoryAttemptDetailPane(entry: entry, load: historyDiagnostics,
@@ -1910,7 +1914,12 @@ public struct SettingsView: View {
 
     // AIDEV-NOTE: both scope stacks pin this same Section header. Its opaque background keeps
     // Recording's existing behavior and prevents tall Ask cards from scrolling through it.
-    private func historyDayHeader(_ title: String) -> some View {
+    /// A pinned day header is opaque so rows scroll under it. `coversAbove` extends that cover over the list's own
+    /// top padding while pinned, and must never exceed the stack spacing above the header: past it, an unpinned
+    /// header paints over the bottom of the previous day's last row (V27, Etan: "only the last in the list in a
+    /// given date… right before the title of the next date"). The Ask list spaces its sections 18 pt apart; the
+    /// Dictations list spaces rows 2 pt apart and keeps its top inset outside the scroll view instead.
+    private func historyDayHeader(_ title: String, coversAbove: CGFloat = 18) -> some View {
         Text(title)
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -1921,7 +1930,7 @@ public struct SettingsView: View {
                 Rectangle()
                     .fill(Color(nsColor: .windowBackgroundColor))
                     .padding(.horizontal, -18)
-                    .padding(.top, -18)
+                    .padding(.top, -coversAbove)
             )
     }
 
