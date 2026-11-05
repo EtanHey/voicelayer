@@ -458,6 +458,14 @@ public final class VoiceState {
             readQueueCurrentRequestID == nil && speechPending["preview"] == nil && speechControls?.previewActive != true &&
             historyPlayback.playingURL == nil && !historyPlayback.isVoiceBusy)
     }
+    @ObservationIgnored private var quitAwaitingLegacyArchive = false
+
+    /// Only capture/save work can delay user Quit. Playback and update state cannot.
+    @MainActor public var isSavingDictationForQuit: Bool {
+        quitAwaitingLegacyArchive || mode == .recording || captureLive || isRecordingHandoffPending || isRecordingDrainPending ||
+            pendingIntent?.command == .record || deferredRecordingTakeID != nil
+    }
+
     public private(set) var quitRefusalMessage: String? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != quitRefusalMessage) }
     }
@@ -482,8 +490,8 @@ public final class VoiceState {
     }
 
     public func reportQuitRefusal(gateBlocked: Bool = false,
+                                  message: String = "Finish voice work or cancel the update, then quit again.",
                                   isGateStillBlocked: @escaping @MainActor () -> Bool = { false }) {
-        let message = "Finish voice work or cancel the update, then quit again."
         quitRefusalGateBlocked = gateBlocked
         quitRefusalMessage = message
         expandFromCollapse()
@@ -2077,6 +2085,9 @@ public final class VoiceState {
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
         let shouldShowTranscribing = mode == .recording
+        // Legacy/MCP Stop changes presentation immediately, before the daemon saves.
+        // Owned takes already retain isRecordingDrainPending until archive settlement.
+        if shouldShowTranscribing, activeCaptureTakeID == nil { quitAwaitingLegacyArchive = true }
         let shouldExitInterruptedPlayback = mode == .speaking
         let retainsReadQueue = stopRetainsReadQueue && shouldExitInterruptedPlayback && readQueueCount > 0
         var payload: [String: Any] = ["cmd": "stop"]
@@ -2479,7 +2490,11 @@ public final class VoiceState {
     /// the paused read comes back. Never resumes audio by itself.
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
-        if mode == .disconnected || (oldValue == .speaking && mode == .idle) { retireParkedRead(); return }
+        if mode == .disconnected || (oldValue == .speaking && mode == .idle) {
+            clearCurrentSelectionReadIdentity(advanceEpoch: false)
+            retireParkedRead()
+            return
+        }
         if mode == .recording || mode == .transcribing, oldValue != .recording, oldValue != .transcribing {
             isCaptureSettlementPending = true
             if oldValue == .speaking { departedRead = currentReadSnapshot() }
@@ -2804,6 +2819,7 @@ public final class VoiceState {
         let queuesBehindDrain = isRecordingDrainPending
         guard queuesBehindDrain || mode == .idle || mode == .error || mode == .speaking || isPlaybackPaused || (mode == .transcribing && canRecordDuringProcessing) else { return }
         guard queuesBehindDrain || pendingIntent?.command != .record else { return }
+        quitAwaitingLegacyArchive = false
         let pressedAt = mode == .speaking ? playbackElapsedMilliseconds() : nil
         if mode == .speaking { pendingPauseEpoch = playbackEpoch }
         clearRetainedTeleprompter()
@@ -3046,6 +3062,13 @@ public final class VoiceState {
         playbackAmplitude: PlaybackAmplitudeEnvelope? = nil
     ) {
         guard let type = event["type"] as? String else { return }
+        // A stopped legacy capture no longer delays Quit after settlement, failure,
+        // or replacement. Failure/disconnect is not archive proof; the raw WAV remains.
+        if type == "error" || (type == "state" &&
+            (["idle", "recording"].contains(event["state"] as? String ?? "") ||
+             (event["state"] as? String == "transcribing" && event["stt_audio_ms"] != nil))) {
+            quitAwaitingLegacyArchive = false
+        }
         defer { finishDeferredRecordingOpen(event) }
         if !historyRunLog.runs.isEmpty, ["ack", "transcription", "error", "state"].contains(type) {
             historyRunLog.observe(event)
@@ -3723,6 +3746,7 @@ public final class VoiceState {
     }
 
     public func setConnectionStatus(_ connected: Bool) {
+        quitAwaitingLegacyArchive = false
         let previous = isConnected
         if !connected || !previous { resetRecordingJobConnectionState() }
         isConnected = connected

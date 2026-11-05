@@ -86,7 +86,6 @@ const DEFAULT_POLISH_TIMEOUT_MS = 18_000;
 const DEFAULT_POLISH_WARMUP_TIMEOUT_MS = 1_500;
 const DEFAULT_POLISH_SOCKET_TIMEOUT_MS = 1_200;
 const DEFAULT_POLISH_MAX_TOKENS = 512;
-const MAX_POLISH_COMPLETION_TOKENS = 4_096;
 const MAX_HTTP_NOOP_POLISH_ATTEMPTS = 3;
 const RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS = 18;
 const SINGLE_NARRATIVE_PUNCTUATION_FLOOR_MIN_WORDS = 40;
@@ -635,6 +634,12 @@ function retractionContentLoss(
     if (count === 0) return "deleted";
     available.set(fragment, count - 1);
   }
+  // Pauses between complete words are content too, even without a cutoff fragment.
+  // Normalize ellipsis spelling while retaining every occurrence of each marker.
+  for (const marker of [/—/gu, /\.{3}/gu]) {
+    if (countMatches(candidate.normalize("NFKC"), marker) <
+        countMatches(cleanedText.normalize("NFKC"), marker)) return "deleted";
+  }
   const markerPositions = falseStartMarkerStreamPositions(cleanedText);
   if (markerPositions.length === 0) return null;
 
@@ -700,10 +705,7 @@ function shouldRetryRejectedPolish(
 
 function getSTTPolishMaxTokens(cleanedText: string): number {
   const wordBudget = Math.ceil(countWords(cleanedText) * 2.2);
-  return Math.min(
-    Math.max(DEFAULT_POLISH_MAX_TOKENS, wordBudget),
-    MAX_POLISH_COMPLETION_TOKENS,
-  );
+  return Math.max(DEFAULT_POLISH_MAX_TOKENS, wordBudget);
 }
 
 interface PunctuationProjectionToken {

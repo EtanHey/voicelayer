@@ -1,0 +1,39 @@
+{
+  "module": "SpeechWordSeek",
+  "sourceBaseline": "33650f878",
+  "sources": [
+    "src/tts.ts",
+    "src/tts/speech-words.ts",
+    "src/__tests__/speech-words.test.ts",
+    "src/socket-protocol.ts",
+    "src/socket-handlers.ts",
+    "src/__tests__/tts-long-read-runtime.test.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OverlapMutant": {
+      "role": "mutant",
+      "target": "SinglePlayer",
+      "kind": "invariant"
+    },
+    "StaleMutant": {
+      "role": "mutant",
+      "target": "FreshSeek",
+      "kind": "invariant"
+    },
+    "StopMutant": {
+      "role": "mutant",
+      "target": "StopWins",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "SinglePlayer",
+    "FreshSeek",
+    "StopWins"
+  ]
+}

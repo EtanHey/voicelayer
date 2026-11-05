@@ -41,6 +41,7 @@ import {
 import { waitForPlayerExit } from "./tts/playback-exit";
 import {
   waitForInput,
+  type WaitForInputOptions,
   clearInput,
   retranscribeVoiceAskArchive,
 } from "./input";
@@ -898,6 +899,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         waitForPlayback: true,
         voice: voiceName,
         captureAudioArtifact: true,
+        textOnlyOnSynthesisFailure: inputAbortController.signal,
         onPlaybackQueued: handle => {
           promptPlayers.push(handle);
           if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle, onPromptParkedChange)) {
@@ -914,7 +916,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         error instanceof SpeechPreparationStoppedError ? null : isSpeakerOutputRefusedError(error) ? "REJECTED" : "OUTPUT_UNAVAILABLE");
       throw error;
     }
-    if (!speech.playbackId && !speech.engine) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
+    if (!speech.playbackId && !speech.engine && !speech.textOnly) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
     }
@@ -934,15 +936,16 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // Bound recorder startup separately from prompt playback. The full capture
     // window is rearmed only by onCaptureStart after the microphone opens.
     armTimeout(outerTimeoutMs, "capture-start");
-    if (
-      !speech.audioArtifact ||
-      !speech.displayText?.trim() ||
-      !speech.engine ||
-      !speech.voice?.trim()
-    ) {
-      throw new Error(
-        "voice_ask could not retain synthesized prompt audio/transcript and actual-used engine/voice; recording was not started",
-      );
+    let voiceAskArtifacts: WaitForInputOptions["voiceAskArtifacts"];
+    if (speech.textOnly && speech.displayText?.trim()) {
+      voiceAskArtifacts = { promptDelivery: "text-only", agentTranscript: speech.displayText };
+      context?.emit({ kind: "voice_ask_text_prompt", question: speech.displayText });
+    } else {
+      if (!speech.audioArtifact || !speech.displayText?.trim() || !speech.engine || !speech.voice?.trim()) {
+        throw new Error("voice_ask could not retain synthesized prompt audio/transcript and actual-used engine/voice; recording was not started");
+      }
+      voiceAskArtifacts = { agentAudioBytes: speech.audioArtifact.bytes, agentAudioFormat: speech.audioArtifact.format,
+        agentTranscript: speech.displayText, agentTtsEngine: speech.engine, agentTtsVoice: speech.voice };
     }
 
     // Record mic audio, then transcribe with selected STT backend
@@ -959,13 +962,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       pushToEnd,
       {
         archiveSource: "voice_ask",
-        voiceAskArtifacts: {
-          agentAudioBytes: speech.audioArtifact.bytes,
-          agentAudioFormat: speech.audioArtifact.format,
-          agentTranscript: speech.displayText,
-          agentTtsEngine: speech.engine,
-          agentTtsVoice: speech.voice,
-        },
+        voiceAskArtifacts,
         onCaptureStart: () => {
           captureActive = true;
           armTimeout(outerTimeoutMs, "capture");

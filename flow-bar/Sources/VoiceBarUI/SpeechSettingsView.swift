@@ -13,6 +13,8 @@ public struct SpeechSettingsView: View {
     public let onChange: ((String, SpeechValue) -> Void)?
     public var onSelectEngine: ((SpeechProfile, String, String) -> Void)? = nil
     public let onPreview: ((SpeechProfile) -> Void)?
+    /// V10 clone-engine status and controls; nil reads "Unavailable".
+    public var cloneEngine: CloneEngineControlViewModel? = nil
 
     public static func fieldDisabled(_ key: String, controls: SpeechControlsState, pending: [String: SpeechValue], callbackAvailable: Bool = true) -> Bool {
         !callbackAvailable || controls.lockReason(for: key) != nil || pending[key] != nil
@@ -20,7 +22,8 @@ public struct SpeechSettingsView: View {
                 || pending[key.replacingOccurrences(of: ".voice", with: ".engine")] != nil))
     }
 
-    static let daemonCommand = "voicelayer daemon"
+    /// Spec V10: shown in orange under a profile that uses the cloned voice while the engine isn't running.
+    static let fastVoiceFallbackLine = "Uses the fast voice while the engine is stopped."
     static let rateRange: ClosedRange<Double> = -30...50
     static let normalRateFraction = (0 - rateRange.lowerBound) / (rateRange.upperBound - rateRange.lowerBound)
     /// The native horizontal knob's width; its centre stops half of it in from each end. A constant on purpose:
@@ -54,6 +57,7 @@ public struct SpeechSettingsView: View {
 
     public var body: some View {
         Form {
+            CloneEngineSection(viewModel: cloneEngine)
             thresholdSection
             if let controls, connected {
                 ForEach(SpeechProfile.allCases, id: \.self) { kind in
@@ -137,22 +141,13 @@ public struct SpeechSettingsView: View {
                                     }
                                 }
                             }
-                            if display.cloneWarning || Self.cloneStatusOwner(controls: controls, pending: pending) == kind {
-                                if display.cloneWarning {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Label("Clone engine isn't running, so this will use the fast voice (fallback). Start it with:",
-                                              systemImage: "exclamationmark.triangle.fill")
-                                            .foregroundStyle(.primary).font(.callout)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                        HStack {
-                                            Text(Self.daemonCommand).font(.system(.callout, design: .monospaced))
-                                            SettingsCopyButton(text: Self.daemonCommand, label: "daemon command")
-                                        }
-                                    }
-                                } else {
-                                    Label("Clone engine is running.", systemImage: "checkmark.circle")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
+                            // V10 removed the copy-a-command fallback; the engine row above starts the engine.
+                            if display.cloneWarning {
+                                Label(Self.fastVoiceFallbackLine, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.callout)
+                                    .foregroundStyle(SettingsPanePalette.warning)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("speech-\(kind.rawValue)-fast-voice-fallback")
                             }
                         } header: {
                             VStack(alignment: .leading, spacing: 4) {
