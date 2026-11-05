@@ -49,6 +49,8 @@ export function verifyConversationPairedCapture(expected: PairedCaptureExpectati
     requireEvidence(!prompt.createdAt || prompt.createdAt.toISOString() === createdAt);
     requireEvidence(expected.source === "voice_ask" && (expected.mode === "vad" || expected.mode === "ptt"));
     requireEvidence(format.sampleRate === 16000 && format.channels === 1 && format.bitsPerSample === 16);
+    // This verifier proves paired AUDIO custody; text-only asks cannot claim that proof.
+    requireEvidence(prompt.promptDelivery !== "text-only");
     requireEvidence(prompt.agentAudioFormat === "mp3" && prompt.agentAudioBytes.byteLength > 0);
     requireEvidence(prompt.agentTranscript.trim() && prompt.agentTtsEngine && prompt.agentTtsVoice.trim());
     const promptAudio = Buffer.from(prompt.agentAudioBytes);

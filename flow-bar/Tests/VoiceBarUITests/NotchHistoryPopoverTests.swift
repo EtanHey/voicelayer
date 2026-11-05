@@ -40,9 +40,17 @@ final class NotchHistoryPopoverTests: XCTestCase {
         XCTAssertEqual(NotchHistoryPresentation.rowHeader(for: entry, now: now), "2 hr ago · 2:15")
     }
 
-    func testPanelCopy() {
-        XCTAssertEqual(NotchHistoryPresentation.openHistoryTitle, "Open History…")
-        XCTAssertEqual(NotchHistoryPresentation.pasteHint, "Paste types into the app you were using.")
+    /// 2.3 lane U4 (mock 5-history, R0856-08): no footer prose. The panel's only text is its rows.
+    func testPanelHasNoFooterCopy() {
+        let source = (try? String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/NotchHistoryPanel.swift"),
+            encoding: .utf8
+        )) ?? ""
+        XCTAssertFalse(source.isEmpty)
+        XCTAssertFalse(source.contains("Open History…"))
+        XCTAssertFalse(source.contains("Paste types into"))
     }
 
     /// CodeRabbit (#161, 4100349296): copying the same row twice within 1.5 s let the first timer clear the tick

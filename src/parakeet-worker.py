@@ -146,6 +146,8 @@ def main():
     with contextlib.redirect_stdout(sys.stderr):
         import mlx.core as mx
         import numpy as np
+        from parakeet_merge_bridge import apply_parakeet_bridge
+        apply_parakeet_bridge()
         from mlx_audio.stt.utils import load_model
         model = load_model(str(model_path))
         if getattr(getattr(model, "preprocessor_config", None), "sample_rate", None) != 16000:

@@ -119,6 +119,23 @@ describe("tts module", () => {
     }
   });
 
+  for (const [text, voice, expectedVoice] of [
+    ["האם אפשר להמשיך?", "en-US-JennyNeural", "he-IL-HilaNeural"],
+    ["Can we continue?", "en-US-JennyNeural", "en-US-JennyNeural"],
+    ["האם אפשר להמשיך?", "he-IL-AvriNeural", "he-IL-AvriNeural"],
+  ]) {
+    it(`fake synthesis succeeds with the language-appropriate Ask voice: ${expectedVoice}`, async () => {
+      const { speak } = await import("../tts");
+      const result = await speak(text, { voice, mode: "converse", captureAudioArtifact: true });
+      expect(result.voice).toBe(expectedVoice);
+      expect(result.textOnly).toBeUndefined();
+      expect(result.audioArtifact?.bytes.byteLength).toBeGreaterThan(0);
+      const synthesis = spawnCalls.filter(call => call.cmd.some(arg => arg.startsWith("--voice=")));
+      expect(synthesis).toHaveLength(1);
+      expect(synthesis[0].cmd).toContain(`--voice=${expectedVoice}`);
+    });
+  }
+
   it("speak() calls edge-tts then audio player (non-blocking)", async () => {
     const { speak } = await import("../tts");
 
