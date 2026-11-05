@@ -33,6 +33,7 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
     }
 
     private struct Rig {
+        let host: NSView
         let panel: FloatingPillPanel
         let bridge: VoiceBarNotchHistoryBridge
         let handoff: VoiceBarNotchSurfaceHandoff
@@ -80,7 +81,7 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
         // History: right wing, core side (index 2 after the chevron and the mic).
         let rects = VoiceBarNotchHitRegion(geometry: presentation.geometry, configuration: configuration).rects
             .map { $0.offsetBy(dx: layout.visibleContentRect.minX, dy: layout.visibleContentRect.minY) }
-        return Rig(panel: panel, bridge: bridge, handoff: handoff,
+        return Rig(host: host, panel: panel, bridge: bridge, handoff: handoff,
                    historyPoint: NSPoint(x: rects[2].midX, y: rects[2].midY))
     }
 
@@ -94,6 +95,20 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
             rig.panel.sendEvent(event)
         }
         drain()
+    }
+
+    /// The History button's tooltip names the open intent: "Close history" while History is meant to be open,
+    /// "History" once a close was applied. Waits (bounded) for the view to show `text`.
+    private func waitForHistoryIntent(_ rig: Rig, tooltip text: String,
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        func has(_ view: NSView) -> Bool { view.toolTip == text || view.subviews.contains(where: has) }
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            rig.host.layoutSubtreeIfNeeded()
+            if has(rig.host) { return }
+            drain()
+        }
+        XCTFail("the History button never showed \"\(text)\"", file: file, line: line)
     }
 
     func testAListRequestedOverHistoryWaitsUntilTheClosingPanelHasUnmounted() throws {
@@ -112,20 +127,22 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
         XCTAssertEqual(presented, 0)
     }
 
-    /// U2×U4 review (P2): open History, request the list, then click History again before its close spring
-    /// settles. The panel never unmounts, so no mount change fires; the reopen itself must drop the waiting list,
-    /// or a later close opens a stale one (formal/notch-surfaces, MutantNoReopenCancel).
-    func testReopeningAClosingHistoryCancelsTheWaitingList() throws {
-        var held: [() -> Void] = []
-        let rig = makeRig(held: { held.append($0) }, presented: {})
+    /// U2×U4 review (P2), view half: every History open intent emits the bridge's open request, unconditionally,
+    /// so a reopen during the close spring (no mount change) still reaches the handoff. The full click-reopen-
+    /// during-spring sequence is timing-dependent offscreen; its handoff half is
+    /// `WingsU2Tests.testAnOpenRequestWhileHistoryIsStillMountedDropsTheWaitingMenu` (the exact sequence on the
+    /// real handoff and bridge), and formal/notch-surfaces `MutantNoReopenCancel` models it.
+    func testEveryHistoryOpenIntentEmitsAnOpenRequest() throws {
+        let rig = makeRig(held: { _ in }, presented: {})
+        var openRequests = 0
+        let forward = rig.bridge.onHistoryOpenRequested
+        rig.bridge.onHistoryOpenRequested = { openRequests += 1; forward() }
         try clickHistory(rig)
-        rig.handoff.requestMenu(.microphone)
-        drain()
-        XCTAssertEqual(rig.handoff.coordinator.pendingMenu, .microphone)
-        try clickHistory(rig) // reopen while the close spring runs
-        XCTAssertTrue(rig.bridge.isHistoryOpen, "never unmounted")
-        XCTAssertNil(rig.handoff.coordinator.pendingMenu, "the reopen dropped the waiting list")
-        XCTAssertTrue(held.isEmpty)
+        waitForHistoryIntent(rig, tooltip: "Close history")
+        XCTAssertEqual(openRequests, 1, "the open intent reached the handoff")
+        rig.bridge.requestClose()
+        waitForHistoryIntent(rig, tooltip: "History")
+        XCTAssertEqual(openRequests, 1, "a close is not an open request")
     }
 
     private func drain() {
