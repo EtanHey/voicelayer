@@ -40,3 +40,15 @@ test("relay installer refuses a foreign HOME even without a QA marker", () => {
   expect(result.exitCode).toBe(1); expect(result.stderr.toString()).toContain("REFUSED: relay installer requires the real HOME");
   expect(existsSync(join(home, "Library"))).toBe(false);
 });
+test.each([[1, 127], [1, 1], [1, 0], [0, 0]])("relay HOME lookup seam: isolated=%i status=%i", (isolated, status) => {
+  const home = join(root, `lookup-home-${isolated}-${status}`), bin = join(home, "bin"), trace = join(home, "lookup");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "dscl"), `#!/bin/sh\nprintf lookup > "$LOOKUP_TRACE"\nexit ${status}\n`, { mode: 0o755 });
+  for (const name of ["launchctl", "plutil", "hidutil"]) writeFileSync(join(bin, name), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+  const result = Bun.spawnSync(["bash", "-c", 'unset VOICELAYER_QA_HEALTH VOICEBAR_QA_PRESERVE_OVERRIDES QA_VOICEBAR_PRESERVE_TEST_OVERRIDES VOICEBAR_USER_DEFAULTS_SUITE; export VOICELAYER_TEST_ISOLATED="$2"; exec bash "$1"', "qa-lookup-check", join(import.meta.dir, "../../scripts/install-voicebar-f5-hidutil.sh"), String(isolated)],
+    { env: { ...process.env, HOME: home, PATH: `${bin}:/usr/bin:/bin`, LOOKUP_TRACE: trace, VOICELAYER_TEST_RELAY_HOME_LOOKUP: join(bin, "dscl") }, stdout: "pipe", stderr: "pipe" });
+  expect(existsSync(trace)).toBe(isolated === 1);
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain("REFUSED: relay installer requires the real HOME");
+  expect(existsSync(join(home, "Library"))).toBe(false);
+});

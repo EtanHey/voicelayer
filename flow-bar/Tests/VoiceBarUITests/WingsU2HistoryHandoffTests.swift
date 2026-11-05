@@ -40,7 +40,7 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
         let historyPoint: NSPoint
     }
 
-    private func makeRig(held: @escaping (@escaping () -> Void) -> Void, presented: @escaping () -> Void) -> Rig {
+    private func makeRig(skipAnimations: Bool = false, held: @escaping (@escaping () -> Void) -> Void, presented: @escaping () -> Void) -> Rig {
         let state = VoiceState()
         state.isConnected = true
         state.isCollapsed = false
@@ -67,7 +67,7 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
             includesPanelOutsets: true,
             onOpenMicrophonePicker: { handoff.requestMenu(.microphone) },
             historyBridge: bridge
-        ))
+        ).transaction { if skipAnimations { $0.disablesAnimations = true; $0.animation = nil } })
         host.frame = NSRect(origin: .zero, size: layout.panelSize)
         host.activeHitTestProvider = { layout.containsInteractiveContent($0) }
         host.renderedSurfaceHitTestProvider = { layout.containsVisibleSurface($0) }
@@ -112,19 +112,48 @@ final class WingsU2HistoryHandoffTests: XCTestCase {
     }
 
     func testAListRequestedOverHistoryWaitsUntilTheClosingPanelHasUnmounted() throws {
-        var held: [() -> Void] = []
-        var presented = 0
-        let rig = makeRig(held: { held.append($0) }, presented: { presented += 1 })
-        try clickHistory(rig)
-        XCTAssertTrue(rig.bridge.isHistoryOpen, "History mounted and reported")
+        for skipAnimations in [false, true] {
+            var held: [() -> Void] = []
+            var presented = 0
+            let rig = makeRig(skipAnimations: skipAnimations, held: { held.append($0) }, presented: { presented += 1 })
+            try clickHistory(rig)
+            XCTAssertTrue(rig.bridge.isHistoryOpen, "History mounted and reported")
 
-        // The chevron's request asks History to close; the panel now springs closed but is still mounted.
-        rig.handoff.requestMenu(.microphone)
-        drain()
-        XCTAssertEqual(rig.handoff.coordinator.pendingMenu, .microphone, "waiting for History to leave the screen")
-        XCTAssertTrue(rig.bridge.isHistoryOpen, "still mounted while the close spring runs")
-        XCTAssertTrue(held.isEmpty, "nothing is scheduled over the closing panel")
-        XCTAssertEqual(presented, 0)
+            var unmounted = false
+            let forward = rig.bridge.onHistoryPanelChanged
+            defer { rig.bridge.onHistoryPanelChanged = forward; rig.handoff.schedule = { _ in } }
+            rig.bridge.onHistoryPanelChanged = { mounted in
+                if !mounted {
+                    XCTAssertEqual(rig.handoff.coordinator.pendingMenu, .microphone)
+                    XCTAssertTrue(held.isEmpty, "nothing scheduled before the unmount report")
+                    unmounted = true
+                }
+                forward(mounted)
+            }
+            rig.handoff.schedule = { work in
+                XCTAssertTrue(unmounted, "scheduling follows the panel's unmount report")
+                XCTAssertFalse(rig.bridge.isHistoryOpen, "never schedule over mounted History")
+                held.append(work)
+            }
+
+            rig.handoff.requestMenu(.microphone)
+            XCTAssertEqual(rig.handoff.coordinator.pendingMenu, .microphone)
+            XCTAssertTrue(rig.bridge.isHistoryOpen, "the close request has not unmounted History")
+            XCTAssertTrue(held.isEmpty)
+            XCTAssertEqual(presented, 0)
+
+            // An offscreen spring may finish immediately when animations are skipped.
+            // Observe the unmount boundary instead of assuming a minimum animation duration.
+            let deadline = Date().addingTimeInterval(3)
+            while !unmounted, Date() < deadline { drain() }
+            XCTAssertTrue(unmounted, "History eventually unmounts (skip animations: \(skipAnimations))")
+            XCTAssertFalse(rig.bridge.isHistoryOpen)
+            XCTAssertNil(rig.handoff.coordinator.pendingMenu)
+            XCTAssertEqual(held.count, 1, "the unmount schedules exactly one menu")
+            XCTAssertEqual(presented, 0, "presentation waits for the scheduled turn")
+            try XCTUnwrap(held.first)()
+            XCTAssertEqual(presented, 1, "the list shows after History has unmounted")
+        }
     }
 
     /// U2×U4 review (P2), view half: every History open intent emits the bridge's open request, unconditionally,

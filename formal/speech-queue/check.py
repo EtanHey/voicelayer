@@ -13,6 +13,11 @@ from speech_data_conformance import check_speech_data_runtime
 from f5_checks import EXPECTED as F5_EXPECTED, check_mutant_coverage, check_reachability, valid_result, render_receipt, cross_kill, check_temporal_controls
 from supervision import Supervisor
 
+# M4 Fixed isolated TLC: 34s * 3.6 * 1.5 = 183.6s; allow process startup.
+ISOLATED_CASE_SECONDS = 210
+# Non-matrix phases: (74.705 + 195.936)s * 3.6 * 1.5 = 1461.5s.
+NON_MATRIX_SECONDS = 1500
+
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = ROOT / "formal/speech-queue"
 sys.path.insert(0, str(ROOT / "formal"))
@@ -83,7 +88,7 @@ def check_run(runner, RUN, f5_only=False, receipt=False):
         if name in graphs:
             cmd += ["-dump", "dot,actionlabels", str(RUN / f"{name}.dot")]
         module = "F5Pause" if name.startswith("F5Pause") else "QueueAdmission" if name.startswith("QueueAdmission") else "Admission" if name.startswith("Admission") else "History" if name in {"History", "MutableTerminal"} else "SpeechQueue"
-        status = runner.run([*cmd, str(SPEC / f"{module}.tla")], RUN / f"{name}.log", 90, cwd=ROOT,
+        status = runner.run([*cmd, str(SPEC / f"{module}.tla")], RUN / f"{name}.log", ISOLATED_CASE_SECONDS, cwd=ROOT,
                             env=os.environ)
         output = (RUN / f"{name}.log").read_text()
         if config == configs[0]:
@@ -108,12 +113,12 @@ def check_run(runner, RUN, f5_only=False, receipt=False):
         print(f"{name}: {actual}; {counts[0]}; depth {measured_depth}", flush=True)
     stage("isolated_tlc", started)
     started = time.monotonic()
-    # M1 allowance: 24 unchanged 90 s case limits plus 240 s of matrix overhead.
-    with Supervisor(2400) as cross_runner:
+    # M4 matrix 451.087s * hosted slowdown 3.6 * margin 1.5 = 2435.9s.
+    with Supervisor(2460) as cross_runner:
         cross = cross_kill(RUN, cross_runner,
             ["nice", "-n", "19", "java", "-Xmx3072m", "-XX:+UseParallelGC", "-cp", str(jar),
              "tlc2.TLC", "-noGenerateSpecTE", "-workers", "4", "-fp", "0", "-seed", "1"], SPEC)
-    # Matrix time belongs to its own budget; preserve the original gate's remaining 880 s.
+    # Matrix time belongs to its own budget; preserve the non-matrix allowance.
     runner.deadline += time.monotonic() - started
     stage("cross_kill", started)
     started = time.monotonic()
@@ -199,5 +204,5 @@ if __name__ == "__main__":
     parser.add_argument("--f5-only", action="store_true", help="Focused F5 TLC, without the existing conformance replays")
     parser.add_argument("--receipt", action="store_true", help="Regenerate TLC tables from this run")
     args = parser.parse_args()
-    with Supervisor(880) as runner:
+    with Supervisor(NON_MATRIX_SECONDS) as runner:
         check(runner, args.f5_only, args.receipt)
