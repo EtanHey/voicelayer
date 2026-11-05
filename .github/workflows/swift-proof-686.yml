@@ -9,6 +9,7 @@ name: Swift proof (#686 peer report)
 #   base686   b53ba2f  integration/2.3 that #686 was cut from (old behaviour)
 #   head686   00283c0  #686 head (new behaviour)
 #   merge-v10 531a261 + 00283c0  #686 merged onto integration/2.3 with V10 #682 and P1 #683
+#             (plain merge-v10 leg dropped after run 41970052949 proved its compile failure)
 #   *-unblocked  the same tree plus proof/686/diagnostic-unblock-typecheck.patch applied in the
 #                CI workspace only, so the test targets compile past #686's one type-checker
 #                timeout and test failures become visible. Diagnostic only; not a proposed fix.
@@ -33,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tree: [base686, head686, merge-v10, head686-unblocked, merge-v10-unblocked]
+        tree: [base686, head686, head686-unblocked, merge-v10-unblocked]
     env:
       BASE686: b53ba2f2d0d5f0df705c0b534a0fc03d613f87f8
       HEAD686: 00283c00979a6f0d7d745343fd7a37b72f553a1f
