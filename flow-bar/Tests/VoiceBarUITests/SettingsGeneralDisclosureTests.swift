@@ -100,7 +100,8 @@ final class SettingsGeneralDisclosureTests: XCTestCase {
         let models = try String(contentsOf: sourceRoot().appendingPathComponent("ModelsSettingsView.swift"),
                                 encoding: .utf8)
         XCTAssertTrue(models.contains("RecognizerPickerView("))
-        XCTAssertFalse(models.contains("SettingsDisclosureRow(\"Recognizer details\""))
+        // SPEC 2.3 Transcription: Recognizer details return, closed, in the shared drawer.
+        XCTAssertTrue(models.contains("SettingsDisclosureRow(\"Recognizer details\", isExpanded: $detailsExpanded)"))
         XCTAssertTrue(settings.contains("SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)"))
         XCTAssertTrue(settings.contains("includedHeader.title, isExpanded: $includedTermsExpanded,"))
         let files = try FileManager.default.contentsOfDirectory(atPath: sourceRoot().path)

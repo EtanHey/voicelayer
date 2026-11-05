@@ -519,6 +519,9 @@ public struct SettingsView: View {
     /// Nil until the app exposes these: the rows then carry no switch.
     public let openAtLogin: SettingsToggleInput?
     public let mouseSideButtons: SettingsToggleInput?
+    /// Transcription › Language and the K-ui last-dictation note; nil (not wired yet) hides them.
+    public let transcriptionLanguage: SettingsChoiceInput?
+    public let lastDictationNote: () -> SettingsLastDictationNote?
     /// Sidebar footer: the running bundle's version and release commit.
     public let installedVersion: VoiceBarInstalledVersion
     /// Nil (tests, the UI E2E host) means no network check; the row then shows the version only.
@@ -711,6 +714,8 @@ public struct SettingsView: View {
         speakingVoiceStatus: @escaping () -> SettingsSetupVoiceStatus? = { nil },
         openAtLogin: SettingsToggleInput? = nil,
         mouseSideButtons: SettingsToggleInput? = nil,
+        transcriptionLanguage: SettingsChoiceInput? = nil,
+        lastDictationNote: @escaping () -> SettingsLastDictationNote? = { nil },
         initialTab: SettingsTab = .general,
         tabRequest: SettingsTabRequest? = nil,
         initialHistoryScope: SettingsHistoryScope = .recording,
@@ -825,6 +830,8 @@ public struct SettingsView: View {
         self.speakingVoiceStatus = speakingVoiceStatus
         self.openAtLogin = openAtLogin
         self.mouseSideButtons = mouseSideButtons
+        self.transcriptionLanguage = transcriptionLanguage
+        self.lastDictationNote = lastDictationNote
         self.installedVersion = installedVersion
         self.versionCheck = versionCheck
         self.tabRequest = tabRequest
@@ -1403,7 +1410,9 @@ public struct SettingsView: View {
                 onToggleProcessing: onToggleProcessing,
                 recognizerState: recognizerStatus(),
                 onSelectRecognizer: onSelectRecognizer, onManageRecognizer: onManageRecognizer,
-                onSetUnloadWhenIdle: onSetUnloadWhenIdle
+                onSetUnloadWhenIdle: onSetUnloadWhenIdle,
+                language: transcriptionLanguage,
+                lastDictationNote: lastDictationNote()
             )
             VStack(alignment: .leading, spacing: 4) {
                 if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {

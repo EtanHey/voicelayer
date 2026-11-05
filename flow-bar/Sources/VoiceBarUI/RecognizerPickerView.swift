@@ -6,6 +6,7 @@ public struct RecognizerPickerView: View {
     public let onManage: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)?
     let suppressDisabledExplanation: Bool
     @FocusState private var focusedEngine: RecognizerPickerEngine?
+    /// S3: delete asks inline under the rows, never in an alert; a blocked delete says why in the same place.
     @State private var deleting: RecognizerPickerEngine?
     @State private var pendingDelete: RecognizerPickerEngine?
     @State private var blockedDelete: BlockedDelete?
@@ -20,14 +21,40 @@ public struct RecognizerPickerView: View {
         if suppressDisabledExplanation, let disabled = state.disabledReason, state.explanation == disabled { return nil }
         return state.explanation ?? (onSelect == nil ? "Recognizer switching unavailable" : nil)
     }
-    /// The secondary line under a recognizer's name: its state, and its size once it's on disk.
+    /// Spec 2.3 row names: Parakeet is short; Whisper keeps its model name.
+    static func rowTitle(_ engine: RecognizerPickerEngine) -> String {
+        engine == .parakeet ? "Parakeet" : engine.title
+    }
+
+    static func blurb(_ engine: RecognizerPickerEngine) -> String {
+        engine == .parakeet ? "Fastest on this Mac. English." : "Slower. Handles Hebrew and mixed languages."
+    }
+
+    /// The row's status: Loaded / On disk / Not downloaded, with the model's size once known, or the live
+    /// download percentage (S4: the other recognizer keeps dictating meanwhile).
     static func subtitle(_ state: RecognizerPickerState, _ engine: RecognizerPickerEngine) -> String {
-        // Row 3: a Sleeping SELECTED engine loads on the next dictation; say so beside "Sleeping".
-        let status = state.residency(for: engine) == .unloaded && state.assetsPresent(for: engine)
-            ? (state.showsSleepingHint(for: engine) ? "Sleeping (\(RecognizerPickerState.sleepingHint))" : "Sleeping")
-            : state.statusText(for: engine)
-        guard state.assetsPresent(for: engine), let bytes = state.diskBytes[engine], bytes > 0 else { return status }
-        return "\(status) · \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))"
+        if let progress = state.downloads[engine], progress.isActive {
+            if progress.state == "runtime" { return "Setting up runtime…" }
+            if progress.state == "verifying" { return "Verifying…" }
+            let percent = progress.total > 0 ? min(100, progress.received * 100 / progress.total) : 0
+            return "Downloading \(percent) %"
+        }
+        let size = (state.diskBytes[engine] ?? 0) > 0
+            ? ByteCountFormatter.string(fromByteCount: Int64(state.diskBytes[engine] ?? 0), countStyle: .file) : nil
+        let status: String
+        if !state.assetsPresent(for: engine) {
+            status = engine == .parakeet ? "Not set up" : "Not downloaded"
+        } else {
+            switch state.residency(for: engine) {
+            case .loaded: status = engine == .parakeet && state.parakeetAvailable != true ? "Unknown" : "Loaded"
+            case .unloaded:
+                if engine == .parakeet, state.parakeetAvailable == false { status = "Unavailable" }
+                else if state.showsSleepingHint(for: engine) { status = "On disk (\(RecognizerPickerState.sleepingHint))" }
+                else { status = "On disk" }
+            case .loading, .error, .unknown: status = state.residency(for: engine).title
+            }
+        }
+        return [status, size].compactMap { $0 }.joined(separator: " · ")
     }
 
     static func deleteMessage(_ state: RecognizerPickerState, _ engine: RecognizerPickerEngine) -> String {
@@ -35,8 +62,8 @@ public struct RecognizerPickerView: View {
         let what = bytes > 0
             ? ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
             : "its incomplete model files"
-        let unload = state.residencyAction(for: engine) == .unload ? "Unload it and remove" : "Remove"
-        return "\(unload) \(what) from disk? You can download it again later."
+        guard bytes > 0 else { return "Delete \(engine.title)'s incomplete model files from this Mac?" }
+        return "Delete \(engine.title) from this Mac? This frees \(what). You can download it again later."
     }
 
     public var body: some View {
@@ -66,26 +93,16 @@ public struct RecognizerPickerView: View {
                 Button(engine == .whisper ? "Retry Whisper" : "Retry Parakeet") { state.select(engine, send: onSelect) }
                     .disabled(state.isSelectionDisabled || onSelect == nil).accessibilityIdentifier("recognizer-picker-retry")
             }
-        }
-        .alert("Delete \(deleting?.title ?? "recognizer")?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { engine in
-            Button("Delete", role: .destructive) {
-                // A resident model is unloaded first; the delete follows once the daemon reports it asleep.
-                if state.residencyAction(for: engine) == .unload {
-                    pendingDelete = engine; onManage?(engine, .unload)
-                } else {
-                    onManage?(engine, .delete)
+            if let engine = deleting { deleteConfirmation(engine) }
+            if let blocked = blockedDelete {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(blocked.reason).font(.caption).foregroundStyle(SettingsPanePalette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("OK") { blockedDelete = nil }.controlSize(.small)
                 }
+                .accessibilityIdentifier("recognizer-delete-blocked")
             }
-            Button("Cancel", role: .cancel) {}
-        } message: { engine in
-            Text(Self.deleteMessage(state, engine))
-        }
-        .alert("Can't delete \(blockedDelete?.engine.shortName ?? "recognizer") yet",
-               isPresented: Binding(get: { blockedDelete != nil }, set: { if !$0 { blockedDelete = nil } }),
-               presenting: blockedDelete) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { blocked in
-            Text(blocked.reason)
         }
         .onChange(of: state) { _, current in
             guard let engine = pendingDelete else { return }
@@ -95,6 +112,29 @@ public struct RecognizerPickerView: View {
                 pendingDelete = nil
             }
         }
+    }
+
+    private func deleteConfirmation(_ engine: RecognizerPickerEngine) -> some View {
+        let bytes = state.diskBytes[engine] ?? 0
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(Self.deleteMessage(state, engine)).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("Cancel") { deleting = nil }
+            Button(bytes > 0 ? "Delete \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))" : "Delete",
+                   role: .destructive) {
+                deleting = nil
+                // A resident model is unloaded first; the delete follows once the daemon reports it asleep.
+                if state.residencyAction(for: engine) == .unload {
+                    pendingDelete = engine; onManage?(engine, .unload)
+                } else {
+                    onManage?(engine, .delete)
+                }
+            }
+            .tint(.red)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.08)))
+        .accessibilityIdentifier("recognizer-delete-confirm")
     }
 
     /// QA-05 / S6: one clear selected state, a leading radio mark; the faint trailing check is gone.
@@ -112,20 +152,17 @@ public struct RecognizerPickerView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(engine.title)
+                        Text(Self.rowTitle(engine)).font(SettingsRowLabel.titleFont)
                         if engine == .parakeet {
-                            Text("Recommended")
-                                .font(.caption2)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(.quaternary, in: Capsule())
+                            SettingsPill(text: "Recommended", tint: .green)
                                 .accessibilityIdentifier("recognizer-recommended")
                         }
                     }
-                    Text(Self.subtitle(state, engine))
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(Self.blurb(engine) + " " + Self.subtitle(state, engine))
+                        .font(SettingsRowLabel.descriptionFont).foregroundStyle(SettingsPanePalette.helper)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     if let line = state.autoLoadLine(for: engine) {
-                        Text(line).font(.caption).foregroundStyle(.tertiary)
+                        Text(line).font(SettingsRowLabel.descriptionFont).foregroundStyle(SettingsPanePalette.helper)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("recognizer-autoload-\(engine.rawValue)")
                     }
@@ -148,8 +185,6 @@ public struct RecognizerPickerView: View {
             VStack(alignment: .trailing, spacing: 3) {
                 ProgressView(value: Double(min(progress.received, progress.total)), total: Double(max(1, progress.total)))
                     .frame(width: 68).controlSize(.small)
-                Text(progress.state == "runtime" ? "Setting up runtime…" : progress.state == "verifying" ? "Verifying…" : "Downloading…")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
             }
             Button { onManage?(engine, .cancelDownload) } label: { Image(systemName: "xmark.circle") }
                 .buttonStyle(.plain).disabled(onManage == nil)
@@ -170,9 +205,9 @@ public struct RecognizerPickerView: View {
                 Button {
                     if action == .delete {
                         if let reason = state.deleteBlockReason(for: engine) {
-                            blockedDelete = BlockedDelete(engine: engine, reason: reason)
+                            deleting = nil; blockedDelete = BlockedDelete(engine: engine, reason: reason)
                         } else {
-                            deleting = engine
+                            blockedDelete = nil; deleting = engine
                         }
                     } else {
                         onManage?(engine, .download)
