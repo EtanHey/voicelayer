@@ -9,6 +9,36 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testCloneEngineBroadcastConnectReplayAndCorrelatedLocalAck() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        let event = CloneEngineSnapshot(state: .running, since: "2026-11-05T00:00:00Z",
+            reason: "adopted_existing", pid: 123, startWithVoiceBar: true).payload
+        fixture.server.publishCloneEngine(event)
+        for fd in [fixture.legacyClient, fixture.commandClient] {
+            let line = try XCTUnwrap(readLine(from: fd, timeout: 2))
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+            XCTAssertEqual(CloneEngineSnapshot(payload: payload)?.pid, 123)
+        }
+        let reconnect = try connectUnixSocket(path: fixture.directory.appendingPathComponent("voicelayer.sock").path)
+        defer { close(reconnect) }
+        XCTAssertTrue(try XCTUnwrap(readLine(from: reconnect, timeout: 2)).contains("clone_engine"))
+        var commands: [[String: Any]] = []
+        fixture.server.onCloneEngineCommand = { command in
+            commands.append(command)
+            return CloneEngineController.acknowledgement(command, reason: nil)
+        }
+        try writeLine(#"{"cmd":"clone_engine","action":"start","id":"engine-ack"}"#, to: reconnect)
+        XCTAssertTrue(waitUntil(timeout: 2) { commands.count == 1 })
+        let ack = try XCTUnwrap(readLine(from: reconnect, timeout: 2))
+        XCTAssertTrue(ack.contains("engine-ack"))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.025), "App commands must never reach the MCP child")
+        // A peer cannot spoof the app's authoritative lifecycle snapshot.
+        try writeLine(#"{"type":"clone_engine","state":"failed"}"#, to: reconnect)
+        _ = fixture.server.bytesReadForTesting()
+        XCTAssertNil(fixture.state.cloneEngine)
+    }
+
     func testOwnedDictationReceiptsAndCancelRouteOnlyToTheirProducingClient() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
