@@ -31,6 +31,7 @@ The decoder fixture prints stdout for historical adapters and writes segment JSO
 request `-oj -of`. The lock row observes endings from the first recording frame, excluding connection-time
 idle replay while still detecting an ending that races HOLD. [Harness replay receipts](receipts/pr680-harness-replay.generated.json)
 record bug/fix/head values of 1/0/0, 11/0/0, and 2/0/0 for these three rows, all with `error: null`.
+Those receipts measure the historical 2.2.61 repair at `c27e465c`; they do not certify a later port head.
 
 R1 requires harness evidence: a small receive buffer held unread for at least 0.5 s, queued bytes filling that buffer, a sent frame larger than the buffer and maximum recv chunk, and at least one NDJSON frame spanning multiple recv calls. The wire receipt records these values; absent evidence is `pressure not exercised` (FAIL). This proves the exercised pressure/fragmentation seam without observing or modifying product write-return values. R3 waits up to 10 s for a complete update matching the original Ask, then requires 1 s without further received bytes (12 s total bound including margin); missing events, late duplicates, and incomplete frames fail. Setup exceptions clean up the registered worktree and temp root.
 
