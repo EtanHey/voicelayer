@@ -691,11 +691,11 @@ final class SocketServerTests: XCTestCase {
         windows.append(window)
         host.layoutSubtreeIfNeeded()
 
-        try click(
-            host,
-            at: NSPoint(x: host.bounds.midX - 28, y: 23),
-            in: window
-        )
+        // 2.3 U5: Stop left the lower row, which re-centred Replay; find it by its native tooltip view and click its
+        // centre in window coordinates (`click` takes window points; the hosting view is flipped).
+        func subviews(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(subviews) }
+        let replay = try XCTUnwrap(subviews(host).first { $0.toolTip == "Replay" && !$0.visibleRect.isEmpty })
+        try click(host, at: replay.convert(NSPoint(x: replay.bounds.midX, y: replay.bounds.midY), to: nil), in: window)
 
         let replayCommand = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
         XCTAssertTrue(replayCommand.contains(#""cmd":"replay""#))
@@ -1604,8 +1604,9 @@ private func clickSpeakingStop(
     playbackClient: Int32
 ) throws -> String {
     var x = host.bounds.maxX - 10
+    // 2.3 U5: Stop is in the right wing (the top row) with the teleprompter open too.
     let y = host.bounds.height > VoiceBarNotchContract.topHeight
-        ? CGFloat(23)
+        ? host.bounds.maxY - VoiceBarNotchContract.topHeight / 2
         : host.bounds.midY
     while x >= host.bounds.midX {
         try click(host, at: NSPoint(x: x, y: y), in: window)

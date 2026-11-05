@@ -33,7 +33,7 @@ def owned_launch(kind):
     return dict(preexec_fn=register)
 
 
-SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow'}
+SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow', 'wings-u2': 'testWingsU2Flow'}
 
 
 def selected_scenario(output, scenario=None):

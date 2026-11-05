@@ -283,7 +283,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertTrue(visibleFrame.contains(recordingFrame))
         XCTAssertTrue(visibleFrame.contains(teleprompterFrame))
         XCTAssertEqual(recordingFrame.height, 49 + VoiceBarNotchContract.transientNoteCanvasReserve)
-        XCTAssertEqual(teleprompterFrame.height, 245 + VoiceBarNotchContract.transientNoteCanvasReserve)
+        // 2.3 U5: the teleprompter window holds eight Teleprompter A lines (+5 × 24 pt) so its handle never resizes it.
+        XCTAssertEqual(teleprompterFrame.height, 245 + 5 * TeleprompterA.lineHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertFalse(
             recordingFrame.contains(
                 CGPoint(x: recordingCoreMidX, y: teleprompterFrame.minY + 24)
