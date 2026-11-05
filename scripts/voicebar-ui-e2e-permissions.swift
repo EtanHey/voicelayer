@@ -21,7 +21,7 @@ func canonicalPath(_ path: String) -> String {
 /// is a failure: it makes the inventory NOT_PROVEN, never a clean empty result.
 enum AXRead<T> { case value(T), absent, failed(String) }
 /// One on-screen CG window. `bounds == nil` means its geometry could not be read.
-struct CGRow { let id: UInt32; let pid: Int32; let owner: String; let layer: Int; let bounds: CGRect?; let alpha: Double; let title: String }
+struct CGRow { let id: UInt32; let pid: Int32; let owner: String; let layer: Int; let bounds: CGRect?; let alpha: Double; let title: String; var onscreen = true }
 protocol ModalSource {
     associatedtype Element
     func windows() -> [CGRow]?                       // nil: CG enumeration failed
@@ -30,7 +30,9 @@ protocol ModalSource {
     func children(_ window: Element) -> AXRead<[Element]>
     func role(_ element: Element) -> AXRead<String>
     func title(_ element: Element) -> String
+    func isWindowServer(_ pid: Int32) -> Bool
 }
+extension ModalSource { func isWindowServer(_ pid: Int32) -> Bool { false } }
 let qaBundle = "com.voicelayer.voicebar.uie2e"
 /// kCGModalPanelWindowLevel: NSAlert/app-modal panels and system dialogs (run-03's Gatekeeper prompt).
 let modalPanelLayer = 8
@@ -41,7 +43,20 @@ let systemModalOwners: Set<String> = ["com.apple.coreservices.uiagent", "com.app
     "com.apple.securityagent", "com.apple.usernotificationcenter", "com.apple.coreautha",
     "com.apple.localauthentication.uiagent"]
 func isSystemModalOwner(_ owner: String) -> Bool { systemModalOwners.contains(owner.lowercased()) }
-struct ModalInventory { var modals: [[String: Any]] = []; var errors: [[String: Any]] = [] }
+struct ModalInventory { var modals: [[String: Any]] = []; var errors: [[String: Any]] = []; var excluded: [[String: Any]] = [] }
+let windowServerSystemLayers = Set([CGWindowLevelKey.mainMenuWindow, .statusWindow, .overlayWindow,
+    .desktopIconWindow, .backstopMenu].map { Int(CGWindowLevelForKey($0)) })
+func windowServerSystemLayer(_ layer: Int) -> Bool {
+    // The extra exact desktop row is the captured M1 fixture, not an arbitrary negative range.
+    layer <= Int(CGWindowLevelForKey(.desktopWindow)) || windowServerSystemLayers.contains(layer) || layer == -2147483602
+}
+func modalRow(_ row: CGRow) -> [String: Any] {
+    let bounds: Any
+    if let frame = row.bounds { bounds = ["X": Double(frame.origin.x), "Y": Double(frame.origin.y), "Width": Double(frame.width), "Height": Double(frame.height)] }
+    else { bounds = NSNull() }
+    return ["owner": row.owner, "pid": Int(row.pid), "layer": row.layer, "bounds": bounds,
+            "alpha": row.alpha, "onscreen": row.onscreen, "title": row.title]
+}
 /// ANY visible foreign modal on ANY display, independent of where QA windows are: a system-agent
 /// window, a window at the modal-panel level, or an app's AX modal window or sheet. `qaPids` (the
 /// run's proven QA process) is excluded: its product alert is the fixture under test.
@@ -50,24 +65,36 @@ func modalInventory<S: ModalSource>(_ source: S, qaPids: Set<Int32>) -> ModalInv
     guard let rows = source.windows() else {
         inventory.errors.append(["kind": "cg-enumeration", "owner": "unknown"]); return inventory
     }
-    func modal(_ owner: String, _ pid: Int32, _ title: String, _ kind: String) {
-        inventory.modals.append(["owner": owner, "pid": Int(pid), "title": title, "source": kind])
+    func modal(_ owner: String, _ pid: Int32, _ title: String, _ kind: String, cgRow: CGRow? = nil) {
+        for row in cgRow.map({ [$0] }) ?? rows.filter({ $0.pid == pid }) {
+            inventory.modals.append(modalRow(row).merging(["owner": owner, "title": title, "source": kind]) { _, new in new })
+        }
     }
     var inspect = Set<Int32>()
-    for row in rows where !qaPids.contains(row.pid) && row.alpha > 0 {
+    for row in rows where !qaPids.contains(row.pid) && row.alpha > 0 && row.onscreen {
+        let isWindowServer = source.isWindowServer(row.pid)
+        let evidence = modalRow(row).merging(isWindowServer ? ["owner": "WindowServer"] : [:]) { _, new in new }
         guard let bounds = row.bounds else {
-            inventory.errors.append(["kind": "cg-geometry", "owner": row.owner, "pid": Int(row.pid)]); continue
+            inventory.errors.append(evidence.merging(["kind": "cg-geometry"]) { _, new in new }); continue
         }
         if bounds.isEmpty { continue }
-        if isSystemModalOwner(row.owner) { modal(row.owner, row.pid, row.title, "system-owner"); continue }
-        if row.layer == modalPanelLayer { modal(row.owner, row.pid, row.title, "modal-level") }
+        if isWindowServer {
+            let classified = evidence.merging(["source": "system-owner"]) { _, new in new }
+            if windowServerSystemLayer(row.layer) { inventory.excluded.append(classified) }
+            else { inventory.modals.append(classified) }
+            continue // WindowServer has no application AX tree; never query it for these rows.
+        }
+        if isSystemModalOwner(row.owner) { modal(row.owner, row.pid, row.title, "system-owner", cgRow: row); continue }
+        if row.layer == modalPanelLayer { modal(row.owner, row.pid, row.title, "modal-level", cgRow: row) }
         // Window level cannot prove AX modal/sheet absence, including for overlay-only owners.
         inspect.insert(row.pid)
     }
     for pid in inspect.sorted() {
         let owner = rows.first { $0.pid == pid }?.owner ?? "unknown"
         func failed(_ kind: String, _ reason: String) {
-            inventory.errors.append(["kind": kind, "owner": owner, "pid": Int(pid), "reason": reason])
+            for row in rows where row.pid == pid {
+                inventory.errors.append(modalRow(row).merging(["kind": kind, "owner": owner, "reason": reason]) { _, new in new })
+            }
         }
         let windows: [S.Element]
         switch source.axWindows(pid) {
@@ -102,8 +129,8 @@ struct BoundaryLatch {
     private(set) var stopped: [String: Any]?
     mutating func decide(_ inventory: ModalInventory) -> String {
         if stopped != nil { return "stop" }
-        if !inventory.errors.isEmpty { stopped = ["status": "not-proven", "errors": inventory.errors]; return "not-proven" }
-        if !inventory.modals.isEmpty { stopped = ["status": "stop", "modals": inventory.modals]; return "stop" }
+        if !inventory.errors.isEmpty { stopped = ["status": "not-proven", "errors": inventory.errors, "excludedModalRows": inventory.excluded]; return "not-proven" }
+        if !inventory.modals.isEmpty { stopped = ["status": "stop", "modals": inventory.modals, "excludedModalRows": inventory.excluded]; return "stop" }
         return "clear"
     }
 }
@@ -141,7 +168,7 @@ func runModalInventory<S: ModalSource>(_ source: S, binding: inout QARunBinding,
     func retain(_ modal: [String: Any]) -> Bool {
         guard let pid = modal["pid"] as? Int, let value = Int32(exactly: pid) else { return true }
         func unproven() -> Bool {
-            unresolved.append(["kind": "own-identity", "owner": modal["owner"] ?? "unknown", "pid": pid])
+            unresolved.append(modal.merging(["kind": "own-identity"]) { _, new in new })
             return false
         }
         guard case .live(let current) = read(value), current.pid == value else { return unproven() }
@@ -277,6 +304,10 @@ func axRead(_ element: AXUIElement, _ key: String,
 }
 // END AX READ ADAPTER
 struct LiveModalSource: ModalSource {
+    func isWindowServer(_ pid: Int32) -> Bool {
+        guard case .live(let identity) = qaIdentityRead(pid) else { return false }
+        return identity.path == canonicalPath("/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer")
+    }
     func windows() -> [CGRow]? {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
         return list.map { row in
@@ -284,7 +315,8 @@ struct LiveModalSource: ModalSource {
             let bounds = (row[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
             return CGRow(id: (row[kCGWindowNumber as String] as? UInt32) ?? 0, pid: pid, owner: bundle(pid),
                          layer: row[kCGWindowLayer as String] as? Int ?? 0, bounds: bounds,
-                         alpha: row[kCGWindowAlpha as String] as? Double ?? 1, title: row[kCGWindowName as String] as? String ?? "")
+                         alpha: row[kCGWindowAlpha as String] as? Double ?? 1, title: row[kCGWindowName as String] as? String ?? "",
+                         onscreen: row[kCGWindowIsOnscreen as String] as? Bool ?? true)
         }
     }
     func axWindows(_ pid: Int32) -> AXRead<[AXUIElement]> {
@@ -476,7 +508,7 @@ final class Broker {
             : runInventory(output: latchPath.deletingLastPathComponent(), executable: executable,
                            binding: &binding, requireQA: kind == "command")
         var status = latch.decide(inventory)
-        var ack: [String: Any] = ["count": count, "kind": kind, "status": status]
+        var ack: [String: Any] = ["count": count, "kind": kind, "status": status, "excludedModalRows": redactedEntries(inventory.excluded)]
         if kind == "still" {
             if status == "clear" {
                 let path = boundary.appendingPathComponent("still-\(count).png")
@@ -502,6 +534,7 @@ final class Broker {
             var record = stopped
             record["modals"] = redactedEntries(stopped["modals"] as? [[String: Any]] ?? [])
             record["errors"] = redactedEntries(stopped["errors"] as? [[String: Any]] ?? [])
+            record["excludedModalRows"] = redactedEntries(stopped["excludedModalRows"] as? [[String: Any]] ?? [])
             if !FileManager.default.fileExists(atPath: latchPath.path) {
                 // Never acknowledge STOP before its supervisor-visible record exists.
                 do { try json(record).write(to: latchPath, options: .atomic) }
@@ -543,6 +576,6 @@ var modalBinding = QARunBinding()
 let inventory = runInventory(output: output, executable: executable, binding: &modalBinding)
 // Raw on stdout only: the supervisor redacts at ingestion before anything is persisted.
 print(String(decoding:json(["axTrusted":AXIsProcessTrusted(),"prompts":prompts,"modals":inventory.modals,
-    "inventoryErrors":inventory.errors]),as:UTF8.self))
+    "inventoryErrors":inventory.errors,"excludedModalRows":inventory.excluded]),as:UTF8.self))
 // Exit status keeps its prompt/AX meaning; the supervisor refuses on any modal or inventory error.
 exit(prompts.isEmpty && AXIsProcessTrusted() ? 0:2)
