@@ -275,7 +275,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
         case .unload: return residency(for: engine) == .loaded || residency(for: engine) == .error
         case .download: return !assetsPresent(for: engine)
         case .delete: return hasFilesOnDisk(engine) && residency(for: engine) == .unloaded
-            && assetsPresent(for: engine.other)
+            && assetsPresent(for: engine.other) && selected != engine
         case .cancelDownload: return false
         }
     }
@@ -285,6 +285,10 @@ public struct RecognizerPickerState: Equatable, Sendable {
         if downloads[engine]?.isActive == true { return "Wait for the download to finish, or cancel it." }
         if !assetsPresent(for: engine.other) {
             return "Keep at least one downloaded recognizer. Download \(engine.other.shortName) before deleting \(engine.shortName)."
+        }
+        // S3: the recognizer in use can't be deleted.
+        if selected == engine {
+            return "\(engine.shortName) is the recognizer in use. Choose \(engine.other.shortName) before deleting it."
         }
         if isSelectionDisabled { return disabledReason ?? "Recognizer status unavailable" }
         if residency(for: engine) == .loading { return "Wait for \(engine.shortName) to finish loading." }
