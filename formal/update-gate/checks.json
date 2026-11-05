@@ -11,7 +11,9 @@
     "scripts/promote-voicebar-release.sh",
     "src/update-gate-installer-participant.ts",
     "src/update-gate.ts",
-    "src/update-gate-installer.ts"
+    "src/update-gate-installer.ts",
+    "src/mcp-server-daemon.ts",
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift"
   ],
   "checks": {
     "Fixed": {
@@ -113,6 +115,26 @@
       "role": "mutant",
       "target": "LeasedUpdateReopensAdmission",
       "kind": "temporal"
+    },
+    "RecoveryFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "RecoveryOld": {
+      "role": "mutant",
+      "target": "EventuallyOpenAfterAbandonedLease",
+      "kind": "temporal"
+    },
+    "RecoveryMutantLive": {
+      "role": "mutant",
+      "target": "NeverRecoverLiveController",
+      "kind": "invariant"
+    },
+    "RecoveryMutantTarget": {
+      "role": "mutant",
+      "target": "RecoveryOnlyVerified",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -127,6 +149,9 @@
     "NeverProceedOnReusedOrCompetitor",
     "NeverProceedWithoutHeldLease",
     "NeverReopenUnverified",
-    "LeasedUpdateReopensAdmission"
+    "LeasedUpdateReopensAdmission",
+    "EventuallyOpenAfterAbandonedLease",
+    "NeverRecoverLiveController",
+    "RecoveryOnlyVerified"
   ]
 }
