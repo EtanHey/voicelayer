@@ -332,6 +332,7 @@ export interface ClipMarkerEvent {
 export type IntentOutcome = "accept" | "noop" | "reject" | "loading";
 
 export type AckCommand =
+  | "clone_engine"
   | "seek"
   | "pause"
   | "resume"
@@ -400,7 +401,22 @@ export interface ReadQueueEvent {
   current_request_id: string | null;
 }
 
+/** App-owned engine status; readiness is authenticated HTTP, not warm model/audio proof. */
+export interface CloneEngineEvent {
+  type: "clone_engine";
+  state: "running" | "starting" | "restarting" | "stopped" | "failed";
+  since: string;
+  reason: string | null;
+  pid: number | null;
+  start_with_voicebar: boolean;
+}
+export type CloneEngineCommand = SocketCommandBase & {cmd: "clone_engine"} & (
+  | {action: "start" | "restart" | "stop"; value?: never}
+  | {action: "set_autostart"; value: boolean}
+);
+
 export type SocketEvent = RecordingJobIdentity & (
+  | CloneEngineEvent
   | { type: "dictation_delivery_status"; delivery_id: string; outcome: "unverified"; recording_path?: string }
   | UpdateGateDrainEvent
   | HistoryPlaybackGateEvent
@@ -616,6 +632,7 @@ export interface PlaybackControlCommand extends SocketCommandBase {
 }
 
 export type SocketCommand =
+  | CloneEngineCommand
   | SeekCommand
   | PlaybackControlCommand
   | SpeakTextCommand
@@ -839,6 +856,14 @@ export function parseCommand(line: string): SocketCommand | null {
         ? Math.round(parsed.playback_elapsed_ms)
         : undefined;
     switch (parsed.cmd) {
+      case "clone_engine":
+        if (parsed.action === "set_autostart" && typeof parsed.value === "boolean") {
+          return withCommandId<CloneEngineCommand>({cmd: "clone_engine", action: "set_autostart", value: parsed.value}, id);
+        }
+        if (["start", "restart", "stop"].includes(parsed.action) && parsed.value === undefined) {
+          return withCommandId<CloneEngineCommand>({cmd: "clone_engine", action: parsed.action}, id);
+        }
+        return null;
       case "seek":
         if (typeof parsed.offset_ms !== "number" || !Number.isFinite(parsed.offset_ms) || parsed.offset_ms < 0 ||
             (parsed.scope !== undefined && parsed.scope !== "current" && parsed.scope !== "readback")) return null;

@@ -12,6 +12,7 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 import CoreGraphics
+import Carbon
 import Darwin
 import SwiftUI
 import VoiceBarUI
@@ -162,6 +163,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         defaults: defaults
     )
     private var daemonController = VoiceBarDaemonController()
+    private lazy var cloneEngineController = CloneEngineController.production(
+        defaults: defaults, executable: Bundle.main.executableURL!
+    )
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
     private var quitSavePending = false
@@ -671,7 +675,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients
         voiceState.sendCommand = { [weak server, weak self] cmd in
             self?.logClickDispatch(cmd)
-            server?.sendCommandToOwner(command: cmd)
+            if cmd["cmd"] as? String == "clone_engine" {
+                let ack = self?.cloneEngineController?.handle(cmd) ?? CloneEngineController.acknowledgement(cmd, reason: "isolated_app")
+                self?.voiceState.handleEvent(ack)
+            } else { server?.sendCommandToOwner(command: cmd) }
         }
         voiceState.inputDeviceLossMonitor = InputDeviceLossMonitor { [weak voiceState] reason, captureID, deviceID in
             voiceState?.sendCommand?([
@@ -714,6 +721,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         server.onUpdateGateDrainReplySent = { [weak self] request in
             guard request["action"] as? String == "quit" else { return }
             self?.requestTermination(.controlledUpdate, lease: request["lease"] as? [String: Any])
+        }
+        server.onCloneEngineCommand = { [weak self] command in
+            self?.cloneEngineController?.handle(command) ?? CloneEngineController.acknowledgement(command, reason: "isolated_app")
+        }
+        cloneEngineController?.onChange = { [weak server, weak self] event in
+            self?.voiceState.handleEvent(event)
+            server?.publishCloneEngine(event)
+        }
+        if let controller = cloneEngineController {
+            voiceState.handleEvent(controller.snapshot.payload)
+            server.publishCloneEngine(controller.snapshot.payload)
+            controller.open()
         }
         server.start()
         _ = daemonController.activateIfNeeded()
@@ -882,6 +901,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         audioLevelMonitor.shutdown()
         releaseLevelAdmission?()
         releaseLevelAdmission = nil
+        cloneEngineController?.quit()
         daemonController.stop()
         socketServer?.stop()
         if let monitor = mouseMonitor {
@@ -1366,17 +1386,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Self.typeTextGuarded(text, expectedPID: pid)
         }
         voiceState.ownedTextTypingHandler = { text, pid, matches in
-            Self.typeTextGuarded(text, expectedPID: pid, matchesCapturedTarget: matches)
+            Self.typeTextGuarded(text, expectedPID: pid, matchesCapturedTarget: matches, postToTarget: true)
         }
         voiceState.accessibilityTrustChecker = { prompt in
             Self.isAccessibilityTrusted(prompt: prompt)
         }
+        voiceState.secureInputEnabledProvider = { IsSecureEventInputEnabled() }
         voiceState.asyncDictationInsertionHandlerProvider = {
-            CommandModeAXHelper.captureFocusedInsertionHandler()
+            if let editor = LocalDictationTarget.focusedEditor { return LocalDictationTarget.insertion(for: editor) }
+            return CommandModeAXHelper.captureFocusedInsertionHandler()
         }
         voiceState.dictationTargetIdentityProvider = { CommandModeAXHelper.captureFocusedTargetIdentity() }
         voiceState.focusedTargetEligibilityProvider = {
-            CommandModeAXHelper.captureFocusedTargetEligibility()
+            let app = NSWorkspace.shared.frontmostApplication
+            return LocalDictationTarget.captureEligibility(frontmostPID: app?.processIdentifier,
+                editor: LocalDictationTarget.focusedEditor) {
+                let bundle = app?.bundleIdentifier ?? ""
+                let typedHost = TerminalPasteTargets.isTerminal(bundle)
+                    || ["com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS"].contains(bundle)
+                    || app.map { ChromiumFamilyApps.contains(bundleURL: $0.bundleURL) } == true
+                return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost)
+            }
         }
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
             commandModeAXHelper.applyReplacement(text)
@@ -1452,7 +1482,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    private static func typeTextGuarded(_ text: String, expectedPID: pid_t, matchesCapturedTarget: () -> Bool = { true }) -> GuardedTypingResult {
+    private static func typeTextGuarded(_ text: String, expectedPID: pid_t, matchesCapturedTarget: () -> Bool = { true }, postToTarget: Bool = false) -> GuardedTypingResult {
         guard isAccessibilityTrusted(prompt: false),
               let source = CGEventSource(stateID: .hidSystemState) else { return .failed }
         return SynthesizedKeyEvents.postGuardedBatch(
@@ -1462,7 +1492,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
             matchesCapturedTarget: matchesCapturedTarget,
-            postEvent: { $0.post(tap: .cghidEventTap) }
+            postEvent: { event in
+                if postToTarget { event.postToPid(expectedPID) }
+                else { event.post(tap: .cghidEventTap) }
+            }
         )
     }
 
