@@ -3346,6 +3346,27 @@ describe("input recording durability", () => {
     expectValidRetainedWav(capturedVoiceBarAudio()[0], 24 * VAD_CHUNK_BYTES);
   });
 
+  it("archives and retranscribes a text-only Ask without fabricated prompt audio", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const input = await import("../input");
+    let archivePath = "";
+    await expect(input.waitForInput(2_000, "standard", true, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: { promptDelivery: "text-only", agentTranscript: "האם להמשיך?" },
+      onArchiveCreated: path => { archivePath = path; },
+    })).resolves.toBe("Retained transcript.");
+    const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+    expect(metadata).toMatchObject({ schema_version: 5, prompt_delivery: "text-only", agent_tts_engine: null,
+      agent_tts_voice: null, agent_audio_sha256: null, artifacts: { agent_audio: null }, transcription_status: "transcribed" });
+    expect(existsSync(join(archivePath, "agent-audio.mp3"))).toBe(false);
+    expect(readFileSync(join(archivePath, "agent-transcript.txt"), "utf8")).toBe("האם להמשיך?");
+    expect(readFileSync(join(archivePath, "audio.wav")).byteLength).toBeGreaterThan(44);
+    const { basename } = await import("path");
+    await expect(input.retranscribeVoiceAskArchive(basename(archivePath), { delivery: "return-only" })).resolves.toBe(backendText);
+    expect(JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8")).prompt_delivery).toBe("text-only");
+  });
+
   it("adds measured receipt metadata to the actual completed VoiceBar event", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     installFakeRecorder(
