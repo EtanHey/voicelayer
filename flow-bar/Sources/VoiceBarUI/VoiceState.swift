@@ -755,6 +755,7 @@ public final class VoiceState {
     private var pendingEffortReloadID: String?
     private var pendingEffortReloadTimeout: Task<Void, Never>?
     /// Speech controls are owned and reported by the daemon.
+    public private(set) var cloneEngine: CloneEngineSnapshot?
     public private(set) var speechControls: SpeechControlsState?
     public private(set) var speechPending: [String: SpeechValue] = [:]
     public private(set) var speechNotice: String?
@@ -1020,13 +1021,17 @@ public final class VoiceState {
         remoteOwnedRecording = false
     }
 
-    /// The app that was frontmost when bar-initiated recording started.
-    private struct DictationTakeTarget {
+    /// One ready-time focus snapshot; never retargeted after dispatch starts.
+    private struct ReadyPasteTarget {
         let app: NSRunningApplication?
         let insertion: AsyncDictationInsertionHandler?
         let matchesFocus: (() -> Bool)?
+        let eligibility: DictationFocusedTargetEligibility?
     }
-    private var dictationTakeTargets: [String: DictationTakeTarget] = [:]
+    // Admission identity survives a bridge reconnect in this instance. A final
+    // recovered by a new app instance might already have been written before a
+    // lost ack: retain it rather than dispatching a second attempt.
+    private var locallyStartedDictationTakes: Set<String> = []
     private struct DeferredBarRecording {
         let takeID: String
         let pressToTalk: Bool
@@ -1177,6 +1182,7 @@ public final class VoiceState {
     }
 
     /// Read only at delivery, never while starting capture or handling a hotkey.
+    public var secureInputEnabledProvider: () -> Bool = { false }
     public var dictationTargetIdentityProvider: () -> (() -> Bool)? = { nil }
 
     public var focusedTargetEligibilityProvider: () -> DictationFocusedTargetEligibility? = { nil }
@@ -2140,7 +2146,7 @@ public final class VoiceState {
     public func cancel(bypassingProcessingGuard: Bool = false) {
         if case let .queued(request) = deferredBarRecording {
             deferredBarRecording = nil
-            dictationTakeTargets.removeValue(forKey: request.takeID)
+            locallyStartedDictationTakes.remove(request.takeID)
             activeBarTakeID = nil
             barInitiatedRecording = false
             barInitiatedTimeout?.cancel()
@@ -2691,6 +2697,14 @@ public final class VoiceState {
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
             "source": source,
         ])
+        if source == "shift_f5", let current = frontmostAppProvider(),
+           current.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+           current.bundleIdentifier == Bundle.main.bundleIdentifier {
+            // The focused Settings editor belongs to us; a previous external
+            // app is not the user's current input. Reuse the local field adapter.
+            pasteIntoReadyFocus(reusableText, operationID: nil)
+            return
+        }
         pasteTranscript(
             reusableText,
             for: resolvedPasteTarget(
@@ -2782,7 +2796,7 @@ public final class VoiceState {
         sendCommand?(STTVocabularyCommandPayload.list())
     }
 
-    /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
+    /// Start recording from the Voice Bar. Delivery selects focus when the final arrives.
     public func record(pressToTalk: Bool = false) {
         guard !isHidden else { return }
         guard case nil = deferredBarRecording else { return }
@@ -2845,7 +2859,7 @@ public final class VoiceState {
 
         let takeID = UUID().uuidString
         activeBarTakeID = takeID
-        dictationTakeTargets[takeID] = DictationTakeTarget(app: frontmostAppOnRecordStart, insertion: recordStartInsertionHandler, matchesFocus: dictationTargetIdentityProvider())
+        locallyStartedDictationTakes.insert(takeID)
         if queuesBehindDrain {
             deferredBarRecording = .queued(DeferredBarRecording(takeID: takeID, pressToTalk: pressToTalk, playbackElapsedMs: pressedAt))
         } else { sendBarRecordingStart(takeID: takeID, pressToTalk: pressToTalk, playbackElapsedMs: pressedAt) }
@@ -2915,7 +2929,7 @@ public final class VoiceState {
             if let activeBarTakeID, microphoneTakeID != activeBarTakeID,
                pendingIntent?.command != .record, deferredRecordingTakeID != activeBarTakeID { self.activeBarTakeID = nil }
             let ids = Set(jobs.compactMap { $0["take_id"] as? String })
-            dictationTakeTargets = dictationTakeTargets.filter { ids.contains($0.key) || $0.key == activeBarTakeID }
+            locallyStartedDictationTakes.formIntersection(ids.union([activeBarTakeID].compactMap { $0 }))
             startQueuedRecordingIfCaptureReleased()
             if type == "state" {
                 if let deferredID = deferredRecordingTakeID {
@@ -2974,28 +2988,27 @@ public final class VoiceState {
                 return true
             }
             if ownedPasteOperations.values.contains(where: { $0.deliveryID == deliveryID }) { return true }
+            let operationID = UUID()
+            ownedPasteOperations[operationID] = (takeID, deliveryID, path, text)
+            // Claim before History/observer callbacks can reenter with this final.
             // Owned finals return before the legacy transcription handler below.
             lastTranscriptionPolished = event["polished"] as? Bool
             lastTranscriptionPolishReason = event["polish_reason"] as? String
             rememberRecentTranscription(text, recordingPath: path, dictationReceipt: DictationReceipt.parse(event["dictation_receipt"]),
                 recordingCreatedAt: createdAt, recordingIsLatest: latest)
             if let path { onHistoryArchiveChange?(path) }
-            let operationID = UUID()
+            guard ownedPasteOperations[operationID] != nil else { return true }
             lastDictationCardEntry = recentTranscriptionEntries.first
             latestDictationOperationID = operationID
             latestDictationInsertionStatus = .pending
             refreshTranscriptionVocabulary()
-            guard let target = dictationTakeTargets[takeID] else {
-                noteOwnedDelivery(path: path, text: text, note: "Not pasted: target changed")
-                latestDictationInsertionStatus = .notInserted
-                // A reconnect can recover a transcript, never invent the original cursor target.
-                completedDictationDeliveries.insert(deliveryID)
-                sendCommand?(["cmd": "dictation_delivered", "take_id": takeID, "delivery_id": deliveryID, "outcome": "not_inserted"])
+            guard ownedPasteOperations[operationID] != nil else { return true }
+            if microphoneTakeID == nil { transcript = text }
+            guard locallyStartedDictationTakes.contains(takeID) else {
+                finishPasteConfirmation(outcome: .unverified, text: text, operationID: operationID)
                 return true
             }
-            ownedPasteOperations[operationID] = (takeID, deliveryID, path, text)
-            if microphoneTakeID == nil { transcript = text }
-            pasteTranscript(text, for: target.app, plan: .autoPaste, operationID: operationID, ownedTarget: target)
+            pasteIntoReadyFocus(text, operationID: operationID)
             return true
         }
         if type == "transcription_status" {
@@ -3040,6 +3053,8 @@ public final class VoiceState {
         if handleOwnedRecordingEvent(event, type: type) { return }
 
         switch type {
+        case "clone_engine":
+            if let snapshot = CloneEngineSnapshot(payload: event) { cloneEngine = snapshot }
         case "history_playback_gate":
             if let id = event["id"] as? String, let busy = event["busy"] as? Bool {
                 MainActor.assumeIsolated { historyPlayback.setVoiceOwner(
@@ -4563,7 +4578,38 @@ public final class VoiceState {
             return (!isSelf ? currentFront : nil) ?? lastPasteTargetApp
         }
 
-        return (!isSelf ? currentFront : nil) ?? frontmostAppOnRecordStart
+        return currentFront
+    }
+
+    /// Final-text arrival is the selection boundary. No activation/timer hop may
+    /// choose a later cursor, and a possibly applied write is never retried.
+    private func pasteIntoReadyFocus(_ text: String, operationID: UUID?) {
+        let app = frontmostAppProvider()
+        let eligibility = focusedTargetEligibilityProvider()
+        guard !secureInputEnabledProvider(), eligibility?.isSecure != true else {
+            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
+                refusalNote: "Not pasted: secure input; kept in History")
+            return
+        }
+        let usesTyping = app.map { TerminalPasteTargets.isTerminal($0.bundleIdentifier ?? "")
+            || Self.richHostTypingBundleIdentifiers.contains($0.bundleIdentifier ?? "")
+            || chromiumFamilyAppDetector($0) } ?? false
+        let permitsTypingHost = usesTyping && eligibility.map {
+            $0.processIdentifier == app?.processIdentifier
+                && ["AXTextField", "AXTextArea", "AXComboBox"].contains($0.role ?? "")
+                && $0.diagnosticDetails["enabledAttribute"] != "false"
+                && $0.diagnosticDetails["enabledAttribute"] != "error"
+                && $0.matchesCurrentFocus()
+        } == true
+        guard let app, let eligibility,
+              permitsTypingHost || eligibility.permitsTyping(into: app.processIdentifier) else {
+            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
+                refusalNote: "Nothing to paste into; kept in History")
+            return
+        }
+        let target = ReadyPasteTarget(app: app, insertion: captureDictationInsertionHandler(),
+            matchesFocus: eligibility.matchesCurrentFocus, eligibility: eligibility)
+        pasteTranscript(text, for: app, plan: .autoPaste, operationID: operationID, ownedTarget: target)
     }
 
     /// Refocuses the target app and delivers text through AX or typed key events.
@@ -4574,10 +4620,14 @@ public final class VoiceState {
         allowAXInsertion: Bool = false,
         requiresEditableTarget: Bool = false,
         operationID: UUID? = nil,
-        ownedTarget: DictationTakeTarget? = nil
+        ownedTarget: ReadyPasteTarget? = nil
     ) {
-        let recordStartTargetApp = ownedTarget.map { $0.app } ?? frontmostAppOnRecordStart
+        let recordStartTargetApp = ownedTarget.map { $0.app } ?? (plan == .autoPaste ? targetApp : frontmostAppOnRecordStart)
         let insertionHandler = ownedTarget.map { $0.insertion } ?? (plan == .autoPaste ? recordStartInsertionHandler : nil)
+        let legacyReadyInsertion = plan == .autoPaste && ownedTarget == nil
+            ? captureDictationInsertionHandler() : nil
+        let legacyReadyMatches = plan == .autoPaste && ownedTarget == nil
+            ? dictationTargetIdentityProvider() : nil
         let targetBundleID = targetApp?.bundleIdentifier ?? "nil"
         logDiagnostic("paste_begin", details: [
             "plan": String(describing: plan),
@@ -4587,6 +4637,11 @@ public final class VoiceState {
             "axTrusted": boolString(accessibilityTrustChecker(false)),
         ])
 
+        guard !secureInputEnabledProvider() else {
+            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
+                refusalNote: "Not pasted: secure input; kept in History")
+            return
+        }
         if let ownedTarget, !ownedTargetIsCurrent(ownedTarget) {
             finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
             return
@@ -4616,30 +4671,27 @@ public final class VoiceState {
                     "hasCapturedInsertion": boolString(insertionHandler != nil),
                 ])
                 finishPasteConfirmation(
-                    outcome: .failed(Self.genericPasteFailureMessage), text: text,
-                    operationID: operationID
+                    outcome: plan == .autoPaste ? .notInserted : .failed(Self.genericPasteFailureMessage), text: text,
+                    operationID: operationID,
+                    refusalNote: "Nothing to paste into; kept in History"
                 )
                 return
             }
 
             let pasteDelay = plan == .autoPaste ? pasteConfirmationDelay : plan.pasteDelay
-            pasteScheduler(plan.activationDelay) { [weak self] in
+            let schedule: (TimeInterval, @escaping () -> Void) -> Void = ownedTarget == nil
+                ? pasteScheduler : { _, work in work() }
+            schedule(plan.activationDelay) { [weak self] in
                 guard let self else { return }
                 let currentFront = frontmostAppProvider()
                 let currentIsSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
                 let currentPasteTarget = !currentIsSelf ? currentFront : nil
-                let pasteTarget: NSRunningApplication? = if ownedTarget != nil {
-                    targetApp
-                } else if plan == .autoPaste {
-                    currentPasteTarget ?? targetApp
-                } else {
-                    targetApp
-                }
+                let pasteTarget: NSRunningApplication? = targetApp
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
                 let targetMatchesRecordStart = Self.sameApp(pasteTarget, recordStartTargetApp)
                 let targetMatchesSettingsHistory = Self.sameApp(pasteTarget, settingsHistoryPasteTargetApp)
                 let capturedInsertionHandler =
-                    plan == .autoPaste && targetMatchesRecordStart && (ownedTarget != nil || currentPasteTarget == nil)
+                    plan == .autoPaste && ownedTarget != nil
                         ? insertionHandler
                         : allowAXInsertion && targetMatchesSettingsHistory
                         ? settingsHistoryInsertionHandler
@@ -4678,10 +4730,19 @@ public final class VoiceState {
                     "hasCapturedInsertion": boolString(capturedInsertionHandler != nil),
                 ])
 
-                pasteScheduler(pasteDelay) { [weak self] in
+                schedule(pasteDelay) { [weak self] in
                     guard let self else { return }
+                    guard !secureInputEnabledProvider() else {
+                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
+                            refusalNote: "Not pasted: secure input; kept in History")
+                        return
+                    }
                     if let ownedTarget, !ownedTargetIsCurrent(ownedTarget) {
                         finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID); return
+                    }
+                    if plan == .autoPaste, let legacyReadyMatches, !legacyReadyMatches() {
+                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                        return
                     }
                     if (plan == .autoPaste || allowAXInsertion),
                        frontmostAppProvider()?.processIdentifier != pasteTarget.processIdentifier {
@@ -4709,8 +4770,8 @@ public final class VoiceState {
                         || chromiumFamilyAppDetector(pasteTarget)
                     let skipsAX = isTerminalTarget || usesRichHostTyping
                     let requiresFocusedTypingTarget = !skipsAX && (plan == .autoPaste || requiresEditableTarget)
-                    let typingEligibility = requiresFocusedTypingTarget
-                        ? focusedTargetEligibilityProvider() : nil
+                    let typingEligibility = ownedTarget?.eligibility ?? (requiresFocusedTypingTarget
+                        ? focusedTargetEligibilityProvider() : nil)
                     if skipsAX {
                         logDiagnostic("paste_ax_insert_skipped", details: [
                             "plan": String(describing: plan),
@@ -4725,7 +4786,7 @@ public final class VoiceState {
                     let freshInsertionHandler =
                         ownedTarget == nil && !skipsAX
                             && (plan == .autoPaste || (allowAXInsertion && capturedInsertionHandler == nil))
-                            ? captureDictationInsertionHandler()
+                            ? (plan == .autoPaste ? legacyReadyInsertion : captureDictationInsertionHandler())
                             : nil
                     if let freshInsertionHandler {
                         let attempt = beginAXInsertion(
@@ -4763,13 +4824,6 @@ public final class VoiceState {
                         }
                     }
 
-                    if let ownedTarget, ownedTarget.matchesFocus != nil, !skipsAX {
-                        // A captured native cursor that declined cannot authorize typing into a
-                        // different field in the same app. The exact text remains in History.
-                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
-                        return
-                    }
-
                     if isAXInsertionInFlight,
                        activeAXInsertionTargetBundleID == pasteTargetBundleID {
                         rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
@@ -4786,7 +4840,7 @@ public final class VoiceState {
                         ])
                     }
                     // Only a pre-write AX decline reaches this fallback. Automatic
-                    // native delivery also requires the original recording process;
+                    // native delivery also requires the selected ready-time process;
                     // editability alone must not authorize typing into another app.
                     if plan == .autoPaste, !skipsAX {
                         guard recordStartTargetApp?.processIdentifier == pasteTarget.processIdentifier else {
@@ -4909,14 +4963,13 @@ public final class VoiceState {
         }
     }
 
-    private func ownedTargetIsCurrent(_ target: DictationTakeTarget) -> Bool {
+    private func ownedTargetIsCurrent(_ target: ReadyPasteTarget) -> Bool {
         guard let current = frontmostAppProvider(), let captured = target.app,
               current.processIdentifier == captured.processIdentifier,
               Self.sameApp(current, captured) else { return false }
+        guard !secureInputEnabledProvider(), target.eligibility?.isSecure != true else { return false }
         if let matchesFocus = target.matchesFocus { return matchesFocus() }
-        // Unreadable at record start is not a changed identity. The fallback
-        // requires the same process and no other recording or pending take.
-        return microphoneTakeID == nil && activeBarTakeID == nil && !remoteOwnedRecording
+        return false
     }
 
     private func noteOwnedDelivery(path: String?, text: String, note: String) {
@@ -5089,9 +5142,12 @@ public final class VoiceState {
         outcome: VoicePasteOutcome,
         text: String,
         operationID: UUID? = nil,
-        showsTerminalTranscript: Bool = false
+        showsTerminalTranscript: Bool = false,
+        refusalNote: String = PasteRecoveryFeedback.notInserted
     ) {
         if let operationID, let delivery = ownedPasteOperations.removeValue(forKey: operationID) {
+            completedDictationDeliveries.insert(delivery.deliveryID)
+            locallyStartedDictationTakes.remove(delivery.takeID)
             if operationID == latestDictationOperationID {
                 latestDictationInsertionStatus = switch outcome {
                 case .insertedAtCursor: .insertedAtCursor
@@ -5102,10 +5158,8 @@ public final class VoiceState {
                 case .failed: .failed
                 }
             }
-            if outcome == .notInserted { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: "Not pasted: target changed") }
+            if outcome == .notInserted { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: refusalNote) }
             if outcome == .unverified { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: PasteRecoveryFeedback.unverified) }
-            completedDictationDeliveries.insert(delivery.deliveryID)
-            dictationTakeTargets.removeValue(forKey: delivery.takeID)
             var receipt: [String: Any] = ["cmd": "dictation_delivered", "take_id": delivery.takeID, "delivery_id": delivery.deliveryID]
             if outcome == .notInserted { receipt["outcome"] = "not_inserted" }
             if outcome == .unverified { receipt["outcome"] = "unverified" }
@@ -5114,7 +5168,7 @@ public final class VoiceState {
                 let message: String = switch outcome {
                 case .insertedAtCursor, .pasted: text
                 case .typed: PasteDeliveryFeedback.typed
-                case .notInserted: "Not pasted: target changed"
+                case .notInserted: refusalNote
                 case .unverified: PasteRecoveryFeedback.unverified
                 case .partial: PasteRecoveryFeedback.partial
                 case let .failed(message): Self.failureMessageWithRetryHint(message)
@@ -5142,7 +5196,7 @@ public final class VoiceState {
         case .pasted:
             showConfirmation(text, duration: 5.0)
         case .notInserted:
-            showConfirmation(PasteRecoveryFeedback.notInserted, duration: 5.0)
+            showConfirmation(refusalNote, duration: 5.0)
         case .unverified:
             // Terminal confirmation keeps the dictated words; the receipt above
             // still reports posted events as unverified, without claiming readback.

@@ -112,7 +112,9 @@ describe("recording job runtime (isolated fake recorder, never real mic)", () =>
     expect(acknowledgeDictationDelivery(b, b)).toBe(true);
     finishC.resolve();
     await Promise.all([second, third]);
-    expect(events.filter(e => e.type === "transcription" && e.take_id === a)[0]).toMatchObject({ text: "first\r\nשלום fu…" });
+    expect(events.filter(e => e.type === "transcription" && e.take_id === a)[0]).toMatchObject({
+      text: "first\r\nשלום fu…", take_id: a, job_kind: "live", delivery_id: a,
+    });
   });
 
   it("cancel ownership stays disjoint for History jobs and new live captures", async () => {
