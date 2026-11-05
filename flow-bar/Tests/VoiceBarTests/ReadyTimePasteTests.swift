@@ -5,9 +5,9 @@ import XCTest
 
 final class ReadyTimePasteTests: XCTestCase {
     private final class App: NSRunningApplication, @unchecked Sendable {
-        let name: String
+        let name: String?
         let pid: pid_t
-        init(_ name: String, _ pid: pid_t) { self.name = name; self.pid = pid; super.init() }
+        init(_ name: String?, _ pid: pid_t) { self.name = name; self.pid = pid; super.init() }
         override var bundleIdentifier: String? { name }
         override var processIdentifier: pid_t { pid }
     }
@@ -87,7 +87,7 @@ final class ReadyTimePasteTests: XCTestCase {
         kit.front = nil; kit.final(id)
         XCTAssertEqual(kit.writes, [])
         XCTAssertEqual(kit.state.latestReusableTranscript, "whole fu… שלום")
-        XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; copied/kept")
+        XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; kept in History")
     }
     func testNoneditableReadyTargetIsKept() throws {
         let kit = Kit(), id = try kit.start()
@@ -146,7 +146,7 @@ final class ReadyTimePasteTests: XCTestCase {
         kit.state.focusedTargetEligibilityProvider = { nil }
         kit.final(id)
         XCTAssertEqual(kit.writes, []); XCTAssertEqual(kit.typed, [])
-        XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; copied/kept")
+        XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; kept in History")
     }
     func testSecureInputEnabledAtPostingBoundaryRefuses() throws {
         let kit = Kit(), id = try kit.start()
@@ -224,6 +224,45 @@ final class ReadyTimePasteTests: XCTestCase {
             "delivery_id": id, "text": "whole fu… שלום", "recording_path": "/synthetic/audio.wav"])
         XCTAssertTrue(replayed)
         XCTAssertEqual(kit.writes, ["start:whole fu… שלום"])
+    }
+
+    func testShiftF5TypesIntoOwnFocusedFieldInsteadOfPreviousApp() throws {
+        let kit = Kit(), id = try kit.start()
+        kit.final(id)
+        kit.front = App(Bundle.main.bundleIdentifier, ProcessInfo.processInfo.processIdentifier)
+        kit.field = "Dictionary search"
+        kit.state.repasteLastTranscript(source: "shift_f5")
+        XCTAssertEqual(kit.writes, ["start:whole fu… שלום", "Dictionary search:whole fu… שלום"])
+        XCTAssertEqual(kit.typed, [])
+    }
+    func testShiftF5WithoutOwnFocusedInputDoesNotUsePreviousApp() throws {
+        let kit = Kit(), id = try kit.start()
+        kit.final(id)
+        kit.front = App(Bundle.main.bundleIdentifier, ProcessInfo.processInfo.processIdentifier)
+        kit.state.focusedTargetEligibilityProvider = { nil }
+        kit.state.repasteLastTranscript(source: "shift_f5")
+        XCTAssertEqual(kit.writes, ["start:whole fu… שלום"])
+        XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; kept in History")
+    }
+
+    func testOwnProcessWithoutEditorRefusesWithoutQueryingExternalAX() throws {
+        let kit = Kit(), id = try kit.start()
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        kit.front = App(Bundle.main.bundleIdentifier, ownPID)
+        var externalAXCalls = 0
+        kit.state.focusedTargetEligibilityProvider = {
+            LocalDictationTarget.captureEligibility(frontmostPID: ownPID, editor: nil) {
+                externalAXCalls += 1
+                return DictationFocusedTargetEligibility(processIdentifier: ownPID,
+                    role: "AXTextField", isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+            }
+        }
+        kit.final(id)
+        XCTAssertEqual(externalAXCalls, 0)
+        XCTAssertEqual(kit.writes, [])
+        XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; kept in History")
     }
 
 }

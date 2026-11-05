@@ -11,6 +11,6 @@ Status: baseline origin/integration/2.3, b53ba2f2 (2.2.61), before P1.
 
 ## P1 policy
 
-Select the focused input when a final arrives, including VoiceBar's own editable fields. Preserve delivery-ID deduplication and History/Copy Last. Secure input, secure fields and absent/noneditable focus refuse; no-focus notice: `Nothing to paste into; copied/kept` (kept in History, no implicit clipboard overwrite).
+Select the focused input when a final arrives, including VoiceBar's own editable fields. Preserve delivery-ID deduplication and History/Copy Last. Secure input, secure fields and absent/noneditable focus refuse; no-focus notice: `Nothing to paste into; kept in History` (kept in History, no implicit clipboard overwrite).
 
 The selection-to-write phase runs synchronously on the main actor, with no activation or timer hop. Validate the ready-time target immediately before dispatch. Once a write/batch starts, finish that single attempt against its captured target; never retry or retarget a partial/uncertain write. AX readback may complete later and report uncertainty if focus moved. Synthetic typing has the existing final-check/post window: OS event routing cannot guarantee the same field if an external process changes focus during the synchronous batch. This residual macOS limitation requires lead-owned native acceptance; model results do not prove OS routing.

@@ -542,7 +542,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(activations, 0, file: file, line: line)
         XCTAssertEqual(state.latestDictationInsertionStatus, expectTyped ? .typed : .notInserted, file: file, line: line)
         XCTAssertEqual(state.latestReusableTranscript, "whole fu… שלום", file: file, line: line)
-        XCTAssertEqual(state.recentTranscriptionEntries.first?.deliveryNote, expectTyped ? nil : "Nothing to paste into; copied/kept", file: file, line: line)
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.deliveryNote, expectTyped ? nil : "Nothing to paste into; kept in History", file: file, line: line)
     }
 
     func testUnreadableIdentitySingleElectronTakeTypesExactlyOnce() throws {

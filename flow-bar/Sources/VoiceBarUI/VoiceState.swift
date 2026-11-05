@@ -2692,6 +2692,14 @@ public final class VoiceState {
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
             "source": source,
         ])
+        if source == "shift_f5", let current = frontmostAppProvider(),
+           current.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+           current.bundleIdentifier == Bundle.main.bundleIdentifier {
+            // The focused Settings editor belongs to us; a previous external
+            // app is not the user's current input. Reuse the local field adapter.
+            pasteIntoReadyFocus(reusableText, operationID: nil)
+            return
+        }
         pasteTranscript(
             reusableText,
             for: resolvedPasteTarget(
@@ -4589,7 +4597,7 @@ public final class VoiceState {
         guard let app, let eligibility,
               permitsTypingHost || eligibility.permitsTyping(into: app.processIdentifier) else {
             finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
-                refusalNote: "Nothing to paste into; copied/kept")
+                refusalNote: "Nothing to paste into; kept in History")
             return
         }
         let target = ReadyPasteTarget(app: app, insertion: captureDictationInsertionHandler(),
@@ -4658,7 +4666,7 @@ public final class VoiceState {
                 finishPasteConfirmation(
                     outcome: plan == .autoPaste ? .notInserted : .failed(Self.genericPasteFailureMessage), text: text,
                     operationID: operationID,
-                    refusalNote: "Nothing to paste into; copied/kept"
+                    refusalNote: "Nothing to paste into; kept in History"
                 )
                 return
             }

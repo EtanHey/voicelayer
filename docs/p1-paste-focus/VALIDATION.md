@@ -1,6 +1,6 @@
 # P1 validation and owner handoff
 
-Status: local verification complete; unmerged. Normal-hook push result is quoted in the PR body.
+Status: final focused verification complete; unmerged. Fresh full Swift and normal-hook push results are quoted in the PR body.
 
 ## Behavior and proof boundary
 
@@ -31,12 +31,14 @@ remain a native acceptance limitation, explicitly outside the formal abstraction
 
 Global Secure Event Input is checked at selection and at the posting boundary;
 secure/protected field metadata is rejected. Missing/unreadable/nontext focus
-keeps the transcript and shows `Nothing to paste into; copied/kept`. It is kept,
+keeps the transcript and shows `Nothing to paste into; kept in History`. It is kept,
 not automatically copied: dictation never overwrites the user's clipboard.
 
 VoiceBar's active AppKit field editor is eligible through `LocalDictationTarget`:
 selection-local insertText, no AX call back into the main thread, secure field
 editors rejected, possible writes consumed even when the delegate changes text.
+When our process is frontmost with no local editor, eligibility returns nil before
+any external AX query; a routing guard test verifies zero provider calls.
 
 ## Producer coverage and scope (lead ruling)
 
@@ -53,8 +55,9 @@ are answers for the agent and must NEVER auto-paste. The remote ownership guard
 in handleFinalTranscription remains unchanged. History re-transcription uses
 runHistoryTranscription (`socket-handlers.ts:458,475`); its job_kind=history
 finals update History without auto-paste. Shift+F5 is a local re-paste, not a
-daemon producer; `testShiftF5TypesLastTranscriptIntoCurrentInput` checks it types
-into the input selected when invoked. The old-daemon unkeyed compatibility
+daemon producer. Foreign apps keep the existing typed route; own focused fields
+use the local editor adapter, and missing own focus never falls back to an old
+external app. Guards check all three cases. The old-daemon unkeyed compatibility
 scheduler remains unchanged by design; its ready app/identity is frozen rather
 than redirected by a later focus change. The dictation lead approved this
 narrow scope on 2026-11-04 at 23:30:39Z after the producer audit.
@@ -62,11 +65,11 @@ narrow scope on 2026-11-04 at 23:30:39Z after the producer audit.
 ## Local evidence
 
 - RED commit `802f5dbe`: 8 tests, 8 assertion failures across 6 cases.
-- New P1 guard set: 19 tests, zero failures. Includes in-memory NSTextView
+- New P1 guard set: 22 tests, zero failures. Includes in-memory NSTextView
   insertion, secure field-editor refusal, same-instance reconnect, fresh-instance
   replay refusal, and reentrant delivery/History callback protection.
-- Combined paste/ownership/conformance guard run: 193 XCTest cases, zero failures.
-- Full unfiltered Swift: 2,568 tests, 73 skipped, zero failures (heavy.sh exit 0).
+- Combined paste/ownership/conformance guard run: 196 XCTest cases, zero failures.
+- Earlier full unfiltered Swift (before final own-Shift delta): 2,568 tests, 73 skipped, zero failures (heavy.sh exit 0).
   Existing permission/native/glass/benchmark opt-in skips remain explicit.
 - TLC: see `formal/ready-time-paste/README.md` for exact expected-failure table.
 - Full Bun: 6,957 passed, 54 skipped, 2 todo, 0 failures; 208,697 assertions
@@ -74,6 +77,9 @@ narrow scope on 2026-11-04 at 23:30:39Z after the producer audit.
 - Focused Bun recording-jobs contract: 7 passed, 0 failures, 48 assertions.
 - TypeScript: `bun run typecheck` (`tsc --noEmit`) exited 0.
 - Normal-hook push: result will be quoted in the PR body; no bypass is permitted.
+  The first own push was interrupted by this lane before publication (exit 143)
+  after the final scope check found the own-field Shift+F5 gap; its receipt is kept.
+  Two additional own-field Shift guards first failed with 4 assertions.
 - Earlier adverse receipts remain under `.build.noindex/p1`: RED, initial guard
   migrations, a first full run with 2 old-fixture assertion failures, and corrected
   compile errors. The final unfiltered run is a separate receipt, not a regrade.

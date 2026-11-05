@@ -2283,7 +2283,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
         XCTAssertEqual(insertedTexts, [])
         XCTAssertFalse(pasteShortcutPosted)
-        XCTAssertEqual(state.confirmationText, "Nothing to paste into; copied/kept")
+        XCTAssertEqual(state.confirmationText, "Nothing to paste into; kept in History")
     }
 
     func testAutoPasteUsesRecordStartInsertionWhenSameTargetIsFrontmostAtPasteTime() {

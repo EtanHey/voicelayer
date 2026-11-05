@@ -9,6 +9,15 @@ enum LocalDictationTarget {
         return window.firstResponder as? NSTextView
     }
 
+    static func captureEligibility(
+        frontmostPID: pid_t?, editor: NSTextView?,
+        external: () -> DictationFocusedTargetEligibility?
+    ) -> DictationFocusedTargetEligibility? {
+        if let editor { return eligibility(for: editor) }
+        guard frontmostPID != ProcessInfo.processInfo.processIdentifier else { return nil }
+        return external()
+    }
+
     static func eligibility(for editor: NSTextView) -> DictationFocusedTargetEligibility {
         DictationFocusedTargetEligibility(processIdentifier: ProcessInfo.processInfo.processIdentifier,
             role: "AXTextArea", isEditable: editor.isEditable,

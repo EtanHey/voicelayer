@@ -1368,13 +1368,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         voiceState.dictationTargetIdentityProvider = { CommandModeAXHelper.captureFocusedTargetIdentity() }
         voiceState.focusedTargetEligibilityProvider = {
-            if let editor = LocalDictationTarget.focusedEditor { return LocalDictationTarget.eligibility(for: editor) }
             let app = NSWorkspace.shared.frontmostApplication
-            let bundle = app?.bundleIdentifier ?? ""
-            let typedHost = TerminalPasteTargets.isTerminal(bundle)
-                || ["com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS"].contains(bundle)
-                || app.map { ChromiumFamilyApps.contains(bundleURL: $0.bundleURL) } == true
-            return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost)
+            return LocalDictationTarget.captureEligibility(frontmostPID: app?.processIdentifier,
+                editor: LocalDictationTarget.focusedEditor) {
+                let bundle = app?.bundleIdentifier ?? ""
+                let typedHost = TerminalPasteTargets.isTerminal(bundle)
+                    || ["com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS"].contains(bundle)
+                    || app.map { ChromiumFamilyApps.contains(bundleURL: $0.bundleURL) } == true
+                return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost)
+            }
         }
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
             commandModeAXHelper.applyReplacement(text)
