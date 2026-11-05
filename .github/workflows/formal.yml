@@ -5,19 +5,65 @@ on:
     branches: [main]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
   pull_request:
-    branches: [main]
+    branches: [main, integration/2.3]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
 
 permissions:
   contents: read
 
 jobs:
+  runners:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.runners.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: runners
+        run: |
+          python3 - <<'PYTHON'
+          import glob, json, math, os
+          from pathlib import Path
+          # Fresh-HOME M4 wall seconds, including each job's explicit replay steps.
+          seconds = {
+              "history-pull": 2.724,
+              "history-row-refresh": 0.808,
+              "idle-wings": 0.872,
+              "native-autopaste": 3.143,
+              "notch-presentation": 69.442,
+              "notch-surfaces": 1.713,
+              "notch-tab-morph": 0.934,
+              "parakeet-residency": 8.592,
+              "ptt-silence-timeout": 3.492,
+              "ready-time-paste": 1.075,
+              "record-while-processing": 213.794,
+              "record-while-processing-runtime": 76.201,
+              "selection-snapshot-startup": 1.549,
+              "speech-queue": 732.794,
+              "teleprompter-handoff": 19.257,
+              "update-gate": 10.201,
+              "update-gate-cancel": 0.566,
+              "voice-ask-no-answer": 2.077,
+              "wing-entry": 0.648,
+          }
+          found = {Path(path).parent.name for path in glob.glob("formal/*/check.sh")}
+          assert found == seconds.keys(), "Every formal runner needs a measured budget"
+          matrix = {"include": [{"runner": name, "minutes": max(15, math.ceil(wall * 3.6 * 1.5 / 60))}
+                                for name, wall in sorted(seconds.items())]}
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("matrix=" + json.dumps(matrix) + "\n")
+          PYTHON
   formal:
-    name: TLC mutants and both-policy conformance
+    needs: runners
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.runners.outputs.matrix) }}
+    name: TLC and conformance (${{ matrix.runner }})
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.minutes }}
     env:
       TLC: ${{ github.workspace }}/formal/tlc.sh
+      FORMAL_RUNNER: ${{ matrix.runner }}
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +89,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .build.noindex/swift
-          key: formal-swift-${{ runner.os }}-${{ hashFiles('flow-bar/Package.swift', 'flow-bar/Sources/**', 'flow-bar/Tests/**') }}
+          key: formal-swift-${{ runner.os }}-${{ matrix.runner }}-${{ hashFiles('flow-bar/Package.swift', 'flow-bar/Sources/**', 'flow-bar/Tests/**') }}
       - name: Install dependencies and legacy speech-queue timeout
         run: |
           bun install --frozen-lockfile
@@ -53,19 +99,20 @@ jobs:
             ln -s "$(brew --prefix coreutils)/bin/gtimeout" "$HOME/.local/bin/timeout"
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
-      - name: Check every formal runner, including exact-property mutants
-        run: |
-          for check in formal/*/check.sh; do
-            bash "$check"
-          done
+      - name: Check formal runner, including exact-property mutants
+        run: bash "formal/$FORMAL_RUNNER/check.sh"
       - name: Replay Current and Fixed against real Swift code (no skip gate)
+        if: matrix.runner == 'notch-presentation'
         run: bash formal/notch-presentation/conformance.sh
       - name: Replay Current and Fixed against real daemon admission and cancel
+        if: matrix.runner == 'record-while-processing'
         run: bash formal/record-while-processing/conformance.sh
       - name: Preserve raw TLC and replay diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: formal-diagnostics
-          path: .build.noindex/*/*.log
+          name: formal-diagnostics-${{ matrix.runner }}
+          path: |
+            .build.noindex/*/*.log
+            .build.noindex/formal-speech-queue/**/*.log
           if-no-files-found: warn
