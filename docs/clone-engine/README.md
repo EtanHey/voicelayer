@@ -58,7 +58,10 @@ Start/Restart or the next app opening. Quit stops only the retained owned child.
   the consecutive-startup-failure budget; no dependencies are auto-installed.
 - Child environment allowlist: HOME, fixed PATH, LANG. No inherited API keys,
   Python injection, proxies, test overrides, audio commands, or microphone work.
-- Read-only authenticated health polls; an occupied/unverified endpoint reports
+- Read-only authenticated health polls; failed HTTP is followed by a bounded
+  nonblocking TCP connect (200 ms), so TCP TIME_WAIT from a closed listener is
+  not mistaken for a live occupied endpoint. Probes never reserve the port.
+  An occupied/unverified endpoint reports
   `failed/port_occupied` and waits for explicit Start/Restart. Never kill/reap an
   unknown listener. The legacy `com.golems.tts-daemon` LaunchAgent (RunAtLoad=false)
   can still be started manually; VoiceBar adopts it and cannot stop it by design.

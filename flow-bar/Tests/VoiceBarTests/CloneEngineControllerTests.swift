@@ -213,6 +213,36 @@ final class CloneEngineControllerTests: XCTestCase {
         XCTAssertEqual(fixture.launchCount, 1)
     }
 
+    func testUnauthenticatedOccupiedFakeEndpointStillFailsClosed() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        fixture.controller.open()
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        let port = try XCTUnwrap(fixture.port)
+        var observation: CloneEngineObservation?
+        CloneEngineProbe.inspect(url: URL(string: "http://127.0.0.1:\(port)/health")!,
+            tokenFile: fixture.directory.appendingPathComponent("no-secret").path) { observation = $0 }
+        XCTAssertTrue(fixture.wait { observation != nil })
+        XCTAssertEqual(observation, .occupied)
+        XCTAssertTrue(fixture.process!.isRunning)
+    }
+
+    func testClosedFakeHTTPListenerIsAbsentEvenWhileItsTCPConnectionsRetire() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        fixture.controller.open()
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        fixture.tick()
+        XCTAssertTrue(fixture.wait { fixture.controller.snapshot.state == .running })
+        let port = try XCTUnwrap(fixture.port)
+        fixture.controller.quit()
+        var observation: CloneEngineObservation?
+        CloneEngineProbe.inspect(url: URL(string: "http://127.0.0.1:\(port)/health")!,
+            tokenFile: fixture.directory.appendingPathComponent("secret").path) { observation = $0 }
+        XCTAssertTrue(fixture.wait { observation != nil })
+        XCTAssertEqual(observation, .absent, "No listener is present; TIME_WAIT must not become a latched port_occupied")
+    }
+
     func testFailedRetirementRetainsOwnershipAndPreventsReplacement() throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

@@ -97,3 +97,13 @@ new unreaped mutant fails EventuallyStopped (126/48, exit 13). These failures ar
 expected adverse witnesses, not positive model runs. The model assumes an
 eligible runtime and fair OS reap; permanent setup failures and bounded-stop
 failure are handled by the focused tests and the explicit failed state.
+
+
+A follow-up real-kernel fake-HTTP regression found the pre-review bind-based
+occupancy probe returning occupied after its listener closed (TIME_WAIT). This
+would incorrectly latch port_occupied during crash recovery. The RED witness
+failed 1 test / 1 assertion. A bounded nonblocking TCP connect now distinguishes
+refusal (absent) from a real/uncertain listener (occupied), without reserving the
+port. The closed-listener and unauthenticated occupied-listener cases pass; the
+final focused suite is 22 tests / 0 failures. The full unfiltered source-head
+receipt is recorded in the updated PR body after the queued hooked push.

@@ -21,21 +21,39 @@ enum CloneEngineProbe {
                    body["status"] as? String == "ok", let pid = body["pid"] as? Int, pid > 0, pid <= Int(Int32.max) {
                     observation = .healthy(pid)
                 } else {
-                    // Binding is a non-mutating occupancy check, including unresponsive servers.
-                    let fd = socket(AF_INET, SOCK_STREAM, 0)
-                    var address = sockaddr_in()
-                    address.sin_family = sa_family_t(AF_INET)
-                    address.sin_port = in_port_t(url.port ?? 80).bigEndian
-                    address.sin_addr.s_addr = inet_addr("127.0.0.1")
-                    let available = fd >= 0 && withUnsafePointer(to: &address) {
-                        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0 }
-                    }
-                    if fd >= 0 { close(fd) }
-                    observation = available ? .absent : .occupied
+                    observation = endpointOccupied(port: url.port ?? 80) ? .occupied : .absent
                 }
                 DispatchQueue.main.async { completion(observation) }
             }.resume()
         }
+    }
+
+    /// A closed listener can leave TIME_WAIT tuples that reject bind without
+    /// occupying the service endpoint. Probe connections, never reserve its port.
+    private static func endpointOccupied(port: Int) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return true }
+        defer { close(fd) }
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { return true }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(port).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        if result == 0 { return true }
+        let code = errno
+        if code == ECONNREFUSED { return false }
+        guard code == EINPROGRESS else { return true }
+        var pending = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&pending, 1, 200) > 0 else { return true }
+        var socketError: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &length) == 0 else { return true }
+        return socketError != ECONNREFUSED // Other uncertainty fails closed.
     }
 }
 
