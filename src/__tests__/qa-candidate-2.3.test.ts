@@ -14,11 +14,13 @@ mkdirSync(root, { recursive: true });
 test("generated writable environment has no resident paths", () => {
   const result = python(`env=m['environment'](Path('/qa-candidate'),Path('/nonexistent-qa-source'))\nassert env['VOICEBAR_USER_DEFAULTS_SUITE']=='com.voicelayer.voicebar.qa23'\nassert env['VOICEBAR_QA_PRESERVE_OVERRIDES']=='1'\nfor key,value in env.items():\n if value.startswith('/'):\n  assert value.startswith(('/qa-candidate/','/tmp/vl-qa23-')), (key,value)\nprint(json.dumps(env))`);
   expect(result.exit).toBe(0); expect(result.error).toBe("");
+  expect(JSON.parse(result.out).VOICEBAR_QA_FIXTURE_RECORDER).toBeUndefined();
 });
 test("fixture recorder emits the WAV PCM through the existing recorder override", () => {
   const result = python(`import subprocess,wave\nbase=Path(${JSON.stringify(root)})\nwav=base/'input.wav'\nwith wave.open(str(wav),'wb') as f:\n f.setnchannels(1); f.setsampwidth(2); f.setframerate(16000); f.writeframes(b'\\x34\\x12'*800)\nenv=m['fixture_recorder'](wav,base)\np=subprocess.Popen([env['VOICELAYER_TEST_FAKE_REC_BIN'],'-q','-'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)\ntry:\n assert p.stdout.read(1600)==b'\\x34\\x12'*800\nfinally:\n p.terminate();p.wait(timeout=3)\nprint(json.dumps(env))`);
   expect(result.exit).toBe(0); expect(result.error).toBe("");
   const env = JSON.parse(result.out);
+  expect(env).toMatchObject({ VOICEBAR_QA_FIXTURE_RECORDER: "1", VOICEBAR_QA_SKIP_PERMISSION_PROMPTS: "1", VOICEBAR_QA_SKIP_HOTKEY: "1" });
   expect(resolveRecorderBinary(env)).toBe(env.VOICELAYER_TEST_FAKE_REC_BIN);
 });
 

@@ -182,7 +182,7 @@ def switch(fixture=None):
     try:
         stay_down()  # Observe five seconds before allowing another hotkey owner.
         job_info(stopped=True)  # Crash-only KeepAlive cannot restart a proven clean exit.
-        print('VoiceBar 2.3 QA uses a NEW bundle id; first dictation asks for microphone/accessibility permissions.', flush=True)
+        print('VoiceBar 2.3 QA uses a NEW bundle id; ' + ('fixture mode skips device input, permission requests and hotkeys.' if fixture else 'first dictation asks for microphone/accessibility permissions.'), flush=True)
         args = [item for key, value in env.items() for item in ['--env', f'{key}={value}']]
         subprocess.run(['/usr/bin/open', '-n', *args, str(APP)], check=True)
         wait_ready(APP, env, exclusive=True)

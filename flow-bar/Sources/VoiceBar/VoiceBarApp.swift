@@ -131,6 +131,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     #if VOICEBAR_QA
+    @discardableResult
+    func configureQAFixtureMeter(bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+                                 environment: [String: String] = ProcessInfo.processInfo.environment,
+                                 engine: AudioLevelMonitoringEngine = UIE2ENoDeviceLevelEngine()) -> Bool {
+        guard bundleIdentifier == "com.voicelayer.voicebar.qa23",
+              environment["VOICEBAR_QA_FIXTURE_RECORDER"] == "1" else { return false }
+        configureAudioLevelMonitoringForTesting(engine: engine)
+        return true
+    }
+
     /// Install before panel observation; the QA fixture supplies a device-free engine.
     func configureAudioLevelMonitoringForTesting(engine: AudioLevelMonitoringEngine) {
         audioLevelMonitor = AudioLevelMonitor(engine: engine) { [weak self] level in
@@ -319,6 +329,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     override init() {
         super.init()
+        #if VOICEBAR_QA
+        configureQAFixtureMeter()
+        #endif
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
             // One closure for every ack: clone_engine replies are chained here, never assigned over it.

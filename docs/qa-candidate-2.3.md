@@ -25,8 +25,9 @@ F5 relay belongs to the installed app. No relay installation is part of QA testi
 
 The explicit fixture recorder reuses the existing fake-rec override and emits
 16kHz mono 16-bit WAV PCM then silence until Stop. This replaces daemon capture;
-it does NOT disable the Swift AVAudioEngine level meter or microphone/TCC prompts.
-No speaker playback is needed, but the app must still be tested on the M1 rig.
+For qa23 fixture launches, a QA-only device-free meter replaces AVAudioEngine;
+automatic permission requests and hotkeys are skipped. Normal launches are unchanged.
+No speaker playback or M1 permission grants are part of the fixture test.
 
 ## M1 acceptance (after the stacked handover PR lands)
 
@@ -42,11 +43,11 @@ No speaker playback is needed, but the app must still be tested on the M1 rig.
    keep-alive connections). Resolve refusals through the captain, never bypass.
 4. Require a proven clean exit (LaunchAgent last exit code 0), then observe no
    resident for five seconds before launch and another five seconds after QA is ready. A respawn aborts the switch and attempts normal supervised
-   restoration. Confirm status shows one QA, zero resident. Grant NEW bundle-id
-   mic/accessibility permissions manually on M1. The Swift level meter may open
-   the real mic even with the fixture; no mic-free acceptance is claimed.
-5. Never use QA Settings > Relay setup. Start F5/pill capture, wait fixture duration
-   plus one second, then Stop. Match transcript to fixture; paste into a scratch
+   restoration. Confirm status shows one QA, zero resident. Fixture mode must show no microphone,
+   Accessibility or Input Monitoring prompts; stop/report any prompt, never grant it.
+5. Never use QA Settings > Relay setup or permission buttons. Use isolated socket
+   control start-recording/stop-recording (F5 is skipped), allowing fixture duration
+   plus one second before Stop. Match transcript to fixture; paste into a scratch
    editor. Only QA archive/state/replay/think-log paths may change. Verify the
    bundled daemon child and isolated sockets/PID/heartbeat, with no speaker output.
 6. Attempt ordinary restore during an active fixture: it must refuse. Stop capture,

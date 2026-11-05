@@ -115,7 +115,8 @@ else:
         sys.stdout.buffer.write(bytes(1600)); sys.stdout.buffer.flush(); time.sleep(.05)
 ''')
     script.chmod(0o700)
-    return {'VOICELAYER_TEST_FAKE_REC': '1', 'VOICELAYER_TEST_FAKE_REC_BIN': str(script), 'VOICELAYER_TEST_REAL_MIC': '0'}
+    return {'VOICELAYER_TEST_FAKE_REC': '1', 'VOICELAYER_TEST_FAKE_REC_BIN': str(script), 'VOICELAYER_TEST_REAL_MIC': '0', 'VOICEBAR_QA_FIXTURE_RECORDER': '1',
+            'VOICEBAR_QA_SKIP_PERMISSION_PROMPTS': '1', 'VOICEBAR_QA_SKIP_HOTKEY': '1'}
 
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else 'help'
@@ -129,7 +130,7 @@ def main():
         raise RuntimeError('Merge the R1 version PR first (package must report 2.3.0)')
     subprocess.run(['bash', str(ROOT / 'flow-bar/build-app.sh'), '--install-path', str(APP), '--no-stop', '--no-relaunch'],
                    check=True, env={**os.environ, 'VOICEBAR_QA23_BUILD': '1', 'VOICEBAR_CODESIGN_IDENTITY': '-',
-                                    'VOICEBAR_QA_BUILD': '0', 'VOICEBAR_UIE2E_ADHOC': '0'})
+                                    'VOICEBAR_QA_BUILD': '1', 'VOICEBAR_UIE2E_ADHOC': '0'})
 
 if __name__ == '__main__':
     try:
