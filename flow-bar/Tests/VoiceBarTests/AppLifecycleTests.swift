@@ -267,9 +267,12 @@ final class AppLifecycleTests: XCTestCase {
         state.canReplay = true
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
+            // 2.3 U5: Stop lives in the right wing; the lower row keeps Replay and Hide.
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 1,
-                lowerControlCount: 3,
+                trailingControlCountFromOuter: 1,
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                lowerControlCount: 2,
                 lowerSurfaceIsInteractive: true
             )
         )
