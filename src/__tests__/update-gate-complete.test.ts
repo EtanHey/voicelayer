@@ -99,8 +99,8 @@ test.each(["verified", "exit", "sha", "dead"])("G5 controller child lifecycle: %
   expect(releasedLease.targetSha).toBe(lease.targetSha);
   expect(existsSync(f.gate + `.recovery-${releasedLease.operationId}.json`)).toBe(fault !== "verified");
   if (fault === "verified") expect(error).toContain("admission OPEN");
-  else expect(error).toContain("voicelayer setup --cask-postflight");
-}, 20_000);
+  else expect(error).toContain("recover an abandoned COMMITTED lease automatically");
+}, 70_000);
 
 // readInstalledTarget shells out to /usr/bin/plutil (macOS-only); the installer itself only runs on macOS.
 test.skipIf(process.platform !== "darwin")("G5 parses installed Info.plist bytes and detects replacement before COMPLETE", () => {
@@ -153,7 +153,7 @@ async function readinessFixture(outcome: string) {
     request: async () => {
       if (successorStarted) {
         attempts++;
-        if (outcome === "never" || attempts < (outcome === "ready" ? 3 : 2)) return { kind: "UNKNOWN" };
+        if (outcome === "never" || attempts < (outcome === "late" ? 22 : outcome === "ready" ? 3 : 2)) return { kind: "UNKNOWN" };
         identities = structuredClone(fresh);
         if (outcome === "old-native") identities.native.incarnation = old.native.incarnation;
         if (outcome === "old-daemon") identities.daemon.incarnation = old.daemon.incarnation;
@@ -192,11 +192,11 @@ test("G5 readiness deadline retains COMMITTED and writes recovery without real s
   try {
     expect(await f.run()).toBe(false);
     const failures = log.mock.calls.map(args => String(args[0])).filter(line => line.includes("readiness attempt"));
-    expect(failures).toHaveLength(18);
+    expect(failures).toHaveLength(63);
     expect(failures.every((line, index) => line.includes(`attempt ${index + 1} failed:`) && line.includes("not verified"))).toBe(true);
   } finally { log.mockRestore(); }
-  expect(f.now()).toBe(15_000);
-  expect(f.attempts()).toBe(18);
+  expect(f.now()).toBe(60_000);
+  expect(f.attempts()).toBe(63);
   expect(f.sleeps.slice(0, 5)).toEqual([100, 200, 400, 800, 1000]);
   expect(f.sleeps.at(-1)).toBe(500);
   expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(committed);
@@ -212,4 +212,88 @@ test.each(["old-native", "old-daemon", "old-birth", "wrong-bundle"])("G5 readine
   expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(committed);
   expect(existsSync(f.gate + ".controller")).toBe(true);
   expect(existsSync(f.receipt)).toBe(true);
+});
+
+// R6: filesystem/G1 are real; the clock and external process/RPC observations are controlled.
+test.each(["dead", "real-dead", "late-death", "replaced-dead", "initial-contention", "live-at-completion", "live", "unknown", "wrong-sha", "foreign", "active", "diagnostic", "changed-custody"])(
+  "R6 successor recovery: %s", async fault => {
+    const f = fixture();
+    let now = 0, liveAtCompletion = false;
+    const recovers = ["dead", "real-dead", "late-death", "replaced-dead", "initial-contention"].includes(fault);
+    if (fault === "real-dead") {
+      const child = Bun.spawn(["/usr/bin/true"], { env: process.env });
+      await child.exited;
+      f.controller.pid = child.pid;
+    }
+    if (fault === "foreign") f.controller.lease.operationId = crypto.randomUUID();
+    writeFileSync(f.gate + ".controller", JSON.stringify(f.controller));
+    const custody = readFileSync(f.gate + ".controller", "utf8");
+    if (fault === "initial-contention") mkdirSync(f.gate + ".lock");
+    if (fault === "active") writeFileSync(f.gate + ".admissions/active", "retained");
+    if (fault === "diagnostic") writeFileSync(f.gate + ".voice-diag.json", "retained");
+    f.participant.refresh = async () => {
+      expect(now).toBeGreaterThanOrEqual(5000);
+      if (fault === "live-at-completion") liveAtCompletion = true;
+      if (fault === "changed-custody") writeFileSync(f.gate + ".controller", custody.replace(f.identity, "foreign"));
+      return { phase: "idle", ready: true, native: ack, daemon: ack };
+    };
+    expect(await installer.recoverAbandonedUpdate(fault === "wrong-sha" ? "b".repeat(40) : lease.targetSha, {
+      participant: f.participant, installed: () => ({ sha: lease.targetSha, unchanged: () => true }),
+      clock: { now: () => now, sleep: async ms => {
+        now += ms;
+        if (fault === "initial-contention" && now === 1600) {
+          const { rmdirSync } = await import("node:fs");
+          rmdirSync(f.gate + ".lock");
+        }
+        if (fault === "replaced-dead" && now === 4000) {
+          f.controller.pid += 100000;
+          writeFileSync(f.gate + ".controller", JSON.stringify(f.controller));
+        }
+      } },
+      controllerIdentity: () => {
+        expect(existsSync(f.gate + ".lock")).toBe(false); // No process-table waits under G1.
+        if (fault === "unknown") throw Error("process evidence unavailable");
+        if (fault === "real-dead") return installerProcessIdentity(f.controller.pid);
+        return liveAtCompletion || fault === "live" || (fault === "late-death" && now < 1000) ? f.identity : null;
+      },
+    })).toBe(recovers);
+    expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(recovers ? released : committed);
+    expect(existsSync(f.gate + ".controller")).toBe(!recovers);
+    expect(existsSync(f.gate + ".lock")).toBe(false);
+    if (recovers) {
+      expect(now).toBe(fault === "initial-contention" ? 6600 : fault === "replaced-dead" ? 9000 : fault === "late-death" ? 6000 : 5000);
+      expect(withVoiceAdmission(() => "available")).toBe("available");
+      expect(await installer.recoverAbandonedUpdate(lease.targetSha)).toBe(false); // Already OPEN.
+    }
+  });
+
+test("R6 COMPLETE survives G1 held beyond 250 ms and renews expired receipts", async () => {
+  const f = fixture();
+  const { createInstallerParticipant } = await import("../update-gate-installer-participant");
+  const { rmdirSync } = await import("node:fs");
+  let now = 0, requests = 0;
+  const identities = { native: { pid: 201, incarnation: crypto.randomUUID() }, daemon: { pid: 202, incarnation: crypto.randomUUID() } };
+  const clock = { now: () => now, sleep: async (ms = 100) => {
+    now += ms;
+    if (now >= 1600 && existsSync(f.gate + ".lock")) rmdirSync(f.gate + ".lock");
+  } };
+  const participant = createInstallerParticipant({ ...clock,
+    request: async () => { requests++; return { kind: "ACKNOWLEDGED", native: ack, daemon: ack, identities }; },
+    processIdentity: pid => "Tue Nov  3 15:54:30 2026 " + (pid === 201 ? "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar" : "/opt/homebrew/bin/bun"),
+    processParent: () => 201, participantsExited: () => false,
+  }, null);
+  mkdirSync(f.gate + ".lock");
+  expect(await installer.completeGatedInstall(lease, 0, f.identity, {
+    participant, clock, installed: () => ({ sha: lease.targetSha, unchanged: () => true }),
+  })).toBe(true);
+  expect(now).toBeGreaterThanOrEqual(1600);
+  expect(requests).toBeGreaterThan(1);
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual(released);
+});
+
+test("R6 successor ready after the old 15-second budget can COMPLETE", async () => {
+  const f = await readinessFixture("late");
+  expect(await f.run()).toBe(true);
+  expect(f.now()).toBeGreaterThan(15_000);
+  expect(f.attempts()).toBe(22);
 });

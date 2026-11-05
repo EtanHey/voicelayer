@@ -1,6 +1,6 @@
 # VoiceBar synthetic snapshots
 
-Run `scripts/voicebar-snapshots.sh` from the repository. It renders 16 states in
+Run `scripts/voicebar-snapshots.sh` from the repository. It renders 17 states in
 light and dark appearance, compares PNGs, and writes an expected/actual/diff HTML
 gallery to `.build.noindex/snapshots/index.html`. Only `--record` replaces references.
 Review the gallery and reference diff before accepting an update; recording a frame
@@ -31,7 +31,8 @@ the installed app or accesses mic/audio.
 
 States: idle, recording PTT, recording VAD, transcribing, speaking, paused,
 teleprompter expanded/collapsed, queue +1/+10 with Next, last item without Next,
-paused compact controls, hidden, snoozed, busy note, and Typed outcome.
+paused compact controls, hidden, snoozed, busy note, Typed outcome, and the 2.3 setup error
+(the badged gear).
 Hidden/snoozed frames model the panel being ordered out by omitting BarView; they
 verify the catalog's wallpaper-only expectation, not native window lifecycle.
 
