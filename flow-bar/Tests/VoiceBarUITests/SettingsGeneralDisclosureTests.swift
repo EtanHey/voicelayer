@@ -22,33 +22,32 @@ final class SettingsGeneralDisclosureTests: XCTestCase {
         super.tearDown()
     }
 
-    func testPermissionsAreAlwaysFlatRowsWithNoDisclosure() throws {
+    /// U3a (R2): permissions are General › Setup steps, flat rows with no disclosure.
+    func testPermissionsAreAlwaysFlatSetupStepsWithNoDisclosure() throws {
         let source = try settingsViewSource()
         let section = try XCTUnwrap(
-            // 2.3 U2: the Permissions header carries the notch gear's scroll target, like Microphone priority.
-            source.components(separatedBy: "Section {\n                permissionRows").dropFirst().first
-                .map { "permissionRows" + $0 }?
-                .components(separatedBy: "visibilitySection").first
+            source.components(separatedBy: "private var setupSection: some View {").dropFirst().first?
+                .components(separatedBy: "private func perform(_ fix: SettingsSetupFix)").first
         )
 
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertFalse(source.contains("isPermissionsExpanded"))
         XCTAssertFalse(section.contains("DisclosureGroup"))
-        XCTAssertFalse(section.contains("if allPermissionsGranted"))
-        XCTAssertTrue(section.contains("permissionRows"))
+        XCTAssertTrue(section.contains("ForEach(setup.steps, id: \\.id)"))
     }
 
-    func testGrantedPermissionRowsDropTheOpenButton() throws {
+    func testGrantedSetupStepsDropTheirButton() throws {
         let source = try settingsViewSource()
         let row = try XCTUnwrap(
-            source.components(separatedBy: "private func permissionRow(").dropFirst().first?
-                .components(separatedBy: "private var permissionRows").first
+            source.components(separatedBy: "private func setupStepRow(").dropFirst().first?
+                .components(separatedBy: "private func perform(").first
         )
-
-        // The row's button is the shared model's action, nil once granted; "Open" vs "Allow…" per state is pinned in
-        // SettingsMicrophonePermissionRowTests.
-        XCTAssertTrue(row.contains("if let action = row.action"))
-        XCTAssertTrue(row.contains("Button(action.title)"))
+        XCTAssertTrue(row.contains("if let fix = step.fix"))
+        let granted = SettingsGeneralSetup(permissions: SetupPermissionsStep(snapshot: .allGranted).rows,
+                                           hotkeyListenerActive: true, f5CheckedAt: nil, voice: nil)
+        let permissionSteps = granted.steps.filter { [.microphone, .accessibility, .inputMonitoring].contains($0.id) }
+        XCTAssertEqual(permissionSteps.count, 3)
+        XCTAssertTrue(permissionSteps.allSatisfy { $0.fix == nil })
     }
 
     func testAdvancedIsAFullRowDisclosure() throws {

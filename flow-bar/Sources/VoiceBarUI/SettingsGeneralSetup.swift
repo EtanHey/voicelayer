@@ -205,6 +205,11 @@ enum SettingsMicrophoneRowPresentation {
         return snapshot.nextDeviceName != nil && snapshot.nextDeviceName == row.label
     }
 
+    /// Make default is offered on any connected, prioritizable mic below the top, whether or not it is the one in use.
+    static func offersMakeDefault(_ row: MicrophonePriorityRow, at index: Int) -> Bool {
+        row.canPrioritize && row.isConnected && index > 0
+    }
+
     static func status(_ row: MicrophonePriorityRow) -> String {
         guard row.canPrioritize else { return (row.isConnected ? "Connected" : "Not connected") + " · UID unavailable" }
         return row.isConnected ? "Connected" : "Not connected"
@@ -220,7 +225,7 @@ enum SettingsGeneralCopy {
     static let mouseDescription = "Forward acts like F5. Back sends Return."
     static let openAtLoginTitle = "Open at login"
     static let hideTitle = "Hide the notch"
-    static let hideDescription = "VoiceBar keeps working while the notch is hidden."
+    static let hideDescription = "VoiceBar keeps working. Click its Dock icon to bring the notch back."
     static let relayTitle = "F5 key helper"
     static let setupAssistantTitle = "Setup assistant"
     static let setupAssistantDescription = "Walks through permissions, the F5 key, your microphone and a test dictation."
