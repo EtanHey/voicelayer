@@ -99,7 +99,11 @@ final class ProcessingTogglesTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertFalse(source.contains("Text(row.lockedReason ?? row.line)"))
-        XCTAssertTrue(source.contains("ForEach(row.captionLines, id: \\.self)"))
+        XCTAssertTrue(source.contains("description: row.rowDescription"))
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
+        let parakeet = RecognizerPickerState(selected: .parakeet, effective: .parakeet, parakeet: .loaded, whisper: .unloaded)
+        let smart = try XCTUnwrap(ModelsSettingsView.processingRows(for: state, recognizer: parakeet).last)
+        XCTAssertTrue(smart.rowDescription.hasPrefix("Unavailable with Parakeet. Splits "), "the lock leads")
     }
 
     func testPolishPreviewModeIsShownButNotAToggleState() throws {
@@ -148,7 +152,7 @@ final class ProcessingTogglesTests: XCTestCase {
             "id": commands.last?["id"] as Any, "reason": "busy",
         ])
         XCTAssertNil(state.processingPending[.smartChunks])
-        XCTAssertEqual(state.processingNotice, "Couldn't change Split long recordings at pauses - busy")
+        XCTAssertEqual(state.processingNotice, "Couldn't change Smart chunks - busy")
 
         state.setProcessingSetting(.smartChunks, true)
         XCTAssertEqual(state.processingPending[.smartChunks], true)

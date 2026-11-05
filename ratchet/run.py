@@ -215,7 +215,7 @@ class Run:
         })
         (self.root / "model.bin").touch()
         stub = self.root / "bin/whisper-cli"
-        stub.write_text("#!/bin/sh\nprintf 'Recovered synthetic answer.\\n'\n")
+        stub.write_text("#!" + sys.executable + "\n" + (REPO / "ratchet/fixture-whisper.py").read_text())
         stub.chmod(0o700)
         self.env["PATH"] = str(self.root / "bin") + ":" + self.env["PATH"]
 
@@ -279,7 +279,7 @@ class Run:
 
     def transport_log(self, name="app"):
         return "\n".join(line for line in self.log(name).splitlines() if name != "app" or any(
-            token in line for token in ("Bad JSON", "Client hello", "Server listening", "SOCKET_ISOLATION_REFUSED", "[ratchet-recents]"))) + "\n"
+            token in line for token in ("Bad JSON", "Client hello", "Server listening", "SOCKET_ISOLATION_REFUSED", "[ratchet-recents]", "No command client registered; dropping command"))) + "\n"
 
     def close(self):
         for cap in self.caps:
@@ -351,6 +351,13 @@ def isolation(run):
     return failures
 
 
+def command_client_registered(log, pid):
+    # SocketServer logs this only AFTER assigning the command-owning client's fields.
+    return any("[VoiceBar] Client hello (" in line
+               and f", role: mcp-daemon, pid: {pid}, acceptsCommands: true)" in line
+               for line in log.splitlines())
+
+
 def wire_row(run, row):
     (run.root / "vocab.json").write_text(json.dumps({"entries": []}))
     fixtures = prepare_recents(run) if row == "recents-newest-after-retranscribe" else None
@@ -418,7 +425,8 @@ def wire_row(run, row):
     thread.start()
     reverse_thread.start()
     try:
-        wait(lambda: (run.root / "m.sock").exists())
+        wait(lambda: (run.root / "m.sock").exists() and (fixtures is None
+             or command_client_registered(run.log(), cap.proc.pid)))
         if row == "ndjson-partial-write":
             try:
                 wait(lambda: all("role: ratchet-" + str(i) + "," in run.log() for i in range(3)), 10)
@@ -581,6 +589,8 @@ def lock_case(run, ending, client_script):
                 raise RuntimeError('missing lock boundary: ' + repr(faults) + run.log('sdk-' + ending))
             return any(predicate(frame) for _, frame in frames)
         cap.wait(lambda: has_frame(lambda f: f.get('type') == 'state' and f.get('state') == 'recording'), 6)
+        capture_started = next(when for when, frame in frames
+                               if frame.get('type') == 'state' and frame.get('state') == 'recording')
         command_id = 'lock-' + ending
         bar.sendall((json.dumps(dict(cmd='set_recording_hold', engaged=True, id=command_id)) + '\n').encode())
         cap.wait(lambda: has_frame(lambda f: f.get('type') == 'ack' and f.get('id') == command_id), 2)
@@ -595,7 +605,9 @@ def lock_case(run, ending, client_script):
                 raise RuntimeError('lock evidence: disconnected boundary')
             time.sleep(.05)
         release = time.monotonic()
-        ended = [(when, frame) for when, frame in frames if when < release
+        # Connection replay can include idle before this capture. Still reject any
+        # ending after recording begins, including one racing the HOLD command.
+        ended = [(when, frame) for when, frame in frames if capture_started <= when < release
                  and frame.get('type') == 'state' and frame.get('state') in ('idle', 'transcribing')
                  and frame.get('source') != 'playback']
         before_release = json.loads(rec_path.read_text())

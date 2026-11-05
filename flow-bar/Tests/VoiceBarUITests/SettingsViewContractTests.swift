@@ -522,7 +522,7 @@ final class SettingsViewContractTests: XCTestCase {
     func testGeneralTabProvidesVoiceBarHideAndUnhideAffordance() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("Section(\"Visibility\")"))
+        XCTAssertTrue(source.contains("Section(\"VoiceBar\")"))
         XCTAssertTrue(source.contains("isVoiceBarHidden"))
         XCTAssertTrue(source.contains("onHideVoiceBar"))
         XCTAssertTrue(source.contains("onShowVoiceBar"))
@@ -533,14 +533,17 @@ final class SettingsViewContractTests: XCTestCase {
     func testGeneralTabShowsPermissionsAndAdvancedF5Helper() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("permissionRow"))
+        // U3a (R2): permissions and the F5 key are General › Setup steps.
+        XCTAssertTrue(source.contains("permissionRowModels"))
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
-        XCTAssertTrue(source.contains("Section(\"Shortcut\")"))
-        XCTAssertTrue(source.contains("Text(\"Permissions\")\n                    .id(SettingsFocus.permissions)"))
+        XCTAssertTrue(source.contains("private var setupSection: some View"))
+        // 2.3 U2's gear badge target now carries Setup (its first broken step).
+        XCTAssertTrue(source.contains("Text(setup.header)\n                .id(SettingsFocus.permissions)"))
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))
-        XCTAssertTrue(source.contains("F5 key helper"))
+        XCTAssertEqual(SettingsGeneralCopy.relayTitle, "F5 key helper")
+        XCTAssertTrue(source.contains("SettingsRow(title: SettingsGeneralCopy.relayTitle"))
         XCTAssertFalse(source.contains("Relay (hidutil LaunchAgent)"))
         XCTAssertTrue(source.contains("runRelaySetup"))
         XCTAssertTrue(source.contains(".disabled(relaySetupRunning)"))
