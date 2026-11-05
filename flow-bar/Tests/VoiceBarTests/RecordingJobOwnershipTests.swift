@@ -620,7 +620,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(commands.filter { $0["cmd"] as? String == "cancel" }.count, 1)
     }
 
-    func testReconnectWithoutStartTargetUsesReadyInputAndAcknowledges() {
+    func testFreshInstanceKeepsRecoveredFinalWithoutRiskingDuplicateInsertion() {
         let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
@@ -633,9 +633,12 @@ final class RecordingJobOwnershipTests: XCTestCase {
         } }
         state.handleEvent(["type": "transcription", "take_id": "lost-target", "job_kind": "live",
             "delivery_id": "lost-target", "text": "Retain these words"])
-        XCTAssertEqual(inserted, ["Retain these words"])
+        XCTAssertEqual(inserted, [])
+        XCTAssertEqual(state.latestDictationInsertionStatus, .unverified)
+        XCTAssertEqual(state.confirmationText, "Unverified\nIn History")
         XCTAssertEqual(state.latestReusableTranscript, "Retain these words")
         XCTAssertEqual(commands.last?["cmd"] as? String, "dictation_delivered")
         XCTAssertEqual(commands.last?["take_id"] as? String, "lost-target")
+        XCTAssertEqual(commands.last?["outcome"] as? String, "unverified")
     }
 }

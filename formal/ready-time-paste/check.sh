@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
+mkdir -p "$root/.build.noindex"
 run=$(mktemp -d "$root/.build.noindex/ready-time-paste.XXXXXX")
 cd "$root/formal/ready-time-paste"
 check() {

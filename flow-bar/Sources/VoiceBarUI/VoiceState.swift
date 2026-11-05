@@ -1027,6 +1027,10 @@ public final class VoiceState {
         let matchesFocus: (() -> Bool)?
         let eligibility: DictationFocusedTargetEligibility?
     }
+    // Admission identity survives a bridge reconnect in this instance. A final
+    // recovered by a new app instance might already have been written before a
+    // lost ack: retain it rather than dispatching a second attempt.
+    private var locallyStartedDictationTakes: Set<String> = []
     private struct DeferredBarRecording {
         let takeID: String
         let pressToTalk: Bool
@@ -2139,8 +2143,9 @@ public final class VoiceState {
     }
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
-        if case .queued = deferredBarRecording {
+        if case let .queued(request) = deferredBarRecording {
             deferredBarRecording = nil
+            locallyStartedDictationTakes.remove(request.takeID)
             activeBarTakeID = nil
             barInitiatedRecording = false
             barInitiatedTimeout?.cancel()
@@ -2841,6 +2846,7 @@ public final class VoiceState {
 
         let takeID = UUID().uuidString
         activeBarTakeID = takeID
+        locallyStartedDictationTakes.insert(takeID)
         if queuesBehindDrain {
             deferredBarRecording = .queued(DeferredBarRecording(takeID: takeID, pressToTalk: pressToTalk, playbackElapsedMs: pressedAt))
         } else { sendBarRecordingStart(takeID: takeID, pressToTalk: pressToTalk, playbackElapsedMs: pressedAt) }
@@ -2909,6 +2915,8 @@ public final class VoiceState {
             }
             if let activeBarTakeID, microphoneTakeID != activeBarTakeID,
                pendingIntent?.command != .record, deferredRecordingTakeID != activeBarTakeID { self.activeBarTakeID = nil }
+            let ids = Set(jobs.compactMap { $0["take_id"] as? String })
+            locallyStartedDictationTakes.formIntersection(ids.union([activeBarTakeID].compactMap { $0 }))
             startQueuedRecordingIfCaptureReleased()
             if type == "state" {
                 if let deferredID = deferredRecordingTakeID {
@@ -2967,19 +2975,26 @@ public final class VoiceState {
                 return true
             }
             if ownedPasteOperations.values.contains(where: { $0.deliveryID == deliveryID }) { return true }
+            let operationID = UUID()
+            ownedPasteOperations[operationID] = (takeID, deliveryID, path, text)
+            // Claim before History/observer callbacks can reenter with this final.
             // Owned finals return before the legacy transcription handler below.
             lastTranscriptionPolished = event["polished"] as? Bool
             lastTranscriptionPolishReason = event["polish_reason"] as? String
             rememberRecentTranscription(text, recordingPath: path, dictationReceipt: DictationReceipt.parse(event["dictation_receipt"]),
                 recordingCreatedAt: createdAt, recordingIsLatest: latest)
             if let path { onHistoryArchiveChange?(path) }
-            let operationID = UUID()
+            guard ownedPasteOperations[operationID] != nil else { return true }
             lastDictationCardEntry = recentTranscriptionEntries.first
             latestDictationOperationID = operationID
             latestDictationInsertionStatus = .pending
             refreshTranscriptionVocabulary()
-            ownedPasteOperations[operationID] = (takeID, deliveryID, path, text)
+            guard ownedPasteOperations[operationID] != nil else { return true }
             if microphoneTakeID == nil { transcript = text }
+            guard locallyStartedDictationTakes.contains(takeID) else {
+                finishPasteConfirmation(outcome: .unverified, text: text, operationID: operationID)
+                return true
+            }
             pasteIntoReadyFocus(text, operationID: operationID)
             return true
         }
@@ -4656,7 +4671,7 @@ public final class VoiceState {
                 let currentFront = frontmostAppProvider()
                 let currentIsSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
                 let currentPasteTarget = !currentIsSelf ? currentFront : nil
-                let pasteTarget = targetApp
+                let pasteTarget: NSRunningApplication? = targetApp
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
                 let targetMatchesRecordStart = Self.sameApp(pasteTarget, recordStartTargetApp)
                 let targetMatchesSettingsHistory = Self.sameApp(pasteTarget, settingsHistoryPasteTargetApp)
@@ -5116,6 +5131,8 @@ public final class VoiceState {
         refusalNote: String = PasteRecoveryFeedback.notInserted
     ) {
         if let operationID, let delivery = ownedPasteOperations.removeValue(forKey: operationID) {
+            completedDictationDeliveries.insert(delivery.deliveryID)
+            locallyStartedDictationTakes.remove(delivery.takeID)
             if operationID == latestDictationOperationID {
                 latestDictationInsertionStatus = switch outcome {
                 case .insertedAtCursor: .insertedAtCursor
@@ -5128,7 +5145,6 @@ public final class VoiceState {
             }
             if outcome == .notInserted { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: refusalNote) }
             if outcome == .unverified { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: PasteRecoveryFeedback.unverified) }
-            completedDictationDeliveries.insert(delivery.deliveryID)
             var receipt: [String: Any] = ["cmd": "dictation_delivered", "take_id": delivery.takeID, "delivery_id": delivery.deliveryID]
             if outcome == .notInserted { receipt["outcome"] = "not_inserted" }
             if outcome == .unverified { receipt["outcome"] = "unverified" }

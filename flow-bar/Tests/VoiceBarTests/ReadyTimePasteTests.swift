@@ -96,9 +96,11 @@ final class ReadyTimePasteTests: XCTestCase {
         XCTAssertEqual(kit.state.latestReusableTranscript, "whole fu… שלום")
     }
     func testVoiceBarOwnDictionaryFieldIsValid() throws {
-        let kit = Kit(), id = try kit.start()
-        kit.front = App(Bundle.main.bundleIdentifier ?? "test.voicebar", ProcessInfo.processInfo.processIdentifier)
-        kit.field = "Dictionary search"; kit.final(id)
+        let kit = Kit()
+        kit.front = NSRunningApplication.current
+        kit.field = "Dictionary search"
+        let id = try kit.start()
+        kit.final(id)
         XCTAssertEqual(kit.writes, ["Dictionary search:whole fu… שלום"])
     }
     func testRichHostUsesReadyTargetTypingExactlyOnce() throws {
@@ -162,6 +164,65 @@ final class ReadyTimePasteTests: XCTestCase {
         let kit = Kit(), id = try kit.start()
         kit.afterWrite = { kit.final(id) }
         kit.final(id)
+        XCTAssertEqual(kit.writes, ["start:whole fu… שלום"])
+    }
+
+    func testShiftF5TypesLastTranscriptIntoCurrentInput() {
+        let kit = Kit()
+        kit.state.handleEvent(["type": "transcription", "text": "last whole words"])
+        kit.front = App("com.t3tools.t3code", 10003); kit.field = "current T3 scratch"
+        var activated: [pid_t] = []
+        kit.state.targetAppActivator = { activated.append($0.processIdentifier) }
+        kit.state.textTypingHandler = { text in kit.typed.append(kit.field + ":" + text); return true }
+        kit.state.repasteLastTranscript(source: "shift_f5")
+        XCTAssertEqual(activated, [10003])
+        XCTAssertEqual(kit.typed, ["current T3 scratch:last whole words"])
+        XCTAssertEqual(kit.writes, [])
+    }
+
+    func testMovedNativeTargetKeepsReadyFocusForTypingFallback() throws {
+        let kit = Kit(), id = try kit.start()
+        kit.front = App("com.apple.TextEdit", 10005); kit.field = "ready native"
+        kit.state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
+        kit.final(id); kit.final(id)
+        XCTAssertEqual(kit.writes, [])
+        XCTAssertEqual(kit.typed, ["ready native:whole fu… שלום"])
+        XCTAssertEqual(kit.state.latestDictationInsertionStatus, .typed)
+    }
+
+    func testFreshAppInstanceNeverReplaysAnEarlierInstanceWrite() throws {
+        let original = Kit(), id = try original.start()
+        original.final(id)
+        XCTAssertEqual(original.writes.count, 1)
+        let recovered = Kit()
+        recovered.final(id); recovered.final(id)
+        XCTAssertEqual(recovered.writes, []); XCTAssertEqual(recovered.typed, [])
+        XCTAssertEqual(recovered.state.latestReusableTranscript, "whole fu… שלום")
+        XCTAssertEqual(recovered.state.confirmationText, "Unverified\nIn History")
+    }
+
+    func testSameInstanceBridgeReconnectUsesNewReadyFocus() throws {
+        let kit = Kit(), id = try kit.start()
+        kit.state.setConnectionStatus(false)
+        kit.state.setConnectionStatus(true)
+        kit.state.handleEvent(["type": "state", "state": "transcribing", "recording_jobs": [
+            ["take_id": id, "kind": "live", "phase": "processing"]]])
+        kit.front = App("test.reconnected", 10006); kit.field = "after reconnect"
+        kit.final(id)
+        XCTAssertEqual(kit.writes, ["after reconnect:whole fu… שלום"])
+    }
+
+    func testHistoryCallbackCannotReenterAndDispatchTheSameFinalTwice() throws {
+        let kit = Kit(), id = try kit.start()
+        var replayed = false
+        kit.state.onHistoryArchiveChange = { _ in
+            guard !replayed else { return }
+            replayed = true
+            kit.final(id)
+        }
+        kit.state.handleEvent(["type": "transcription", "take_id": id, "job_kind": "live",
+            "delivery_id": id, "text": "whole fu… שלום", "recording_path": "/synthetic/audio.wav"])
+        XCTAssertTrue(replayed)
         XCTAssertEqual(kit.writes, ["start:whole fu… שלום"])
     }
 

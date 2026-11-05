@@ -2,6 +2,10 @@
 
 Status: bounded protocol proof, not native macOS acceptance.
 
+Each model run describes one locally admitted take. An unknown final recovered
+by a fresh app instance stays in History rather than risking a second write;
+Swift guards cover that recovery boundary separately.
+
 `Record` captures the old-policy start focus. `Move` may cycle arbitrarily often
 before `Ready`. `Ready` captures the new-policy input; `Deliver` dispatches one
 attempt (or retains text when none/secure), then `Complete` records completion.
@@ -22,7 +26,7 @@ invariant names, and retains raw logs under `.build.noindex/ready-time-paste.*`.
 | DoubleMutant | 12 | DeliveredAtMostOnce fails | 175 / 69 |
 | SecureMutant | 12 | NeverIntoSecureField fails | 140 / 55 |
 
-TLC 2.19, one worker, seed 1, fingerprint 0. The old counterexample records in
+TLC2 2026.10.30.154139 (rev 090e85c), one worker, seed 1, fingerprint 0. The old counterexample records in
 one input, moves to another valid input, then refuses the ready-time destination.
 These are invariants over terminal delivery states, not liveness guarantees:
 we check completion when the daemon supplies a final, not eventual transcription.
