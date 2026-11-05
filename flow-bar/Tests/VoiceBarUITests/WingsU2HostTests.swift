@@ -190,17 +190,19 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertEqual(host.router.calls, ["stop"])
     }
 
-    /// While the teleprompter is open, the right wing shows the reading time only: its Stop stays mounted but hidden
-    /// and inert (the teleprompter's lower-row Stop is live), as in 2.2.61 (Tip2PausedTooltipTests). A click into a
-    /// mounted teleprompter makes the production panel key (becomesKeyOnlyIfNeeded, unchanged), which the offscreen
-    /// isolation forbids, so Pause proves only that its hit target accepts the first mouse-down here.
-    func testReadingAloudWithTheTeleprompterShowsTheTimeAndNoLiveWingStop() {
+    /// 2.3 U5: with the teleprompter open the right wing shows the reading time and the live Stop (SPEC wing
+    /// states); the lower row has no Stop. A click into a mounted teleprompter makes the production panel key
+    /// (becomesKeyOnlyIfNeeded, unchanged), which the offscreen isolation forbids, so Pause and Stop prove here that
+    /// their hit targets accept the first mouse-down; the dispatch is proved in the plain window below.
+    func testReadingAloudWithTheTeleprompterShowsTheTimeAndALiveWingStop() {
         let state = makeSpeakingState()
         let host = makeHost(
             state: state,
             configuration: VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 1,
-                lowerControlCount: 2,
+                trailingControlCountFromOuter: 1,
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                lowerControlCount: 1,
                 lowerSurfaceIsInteractive: true
             )
         )
@@ -214,23 +216,22 @@ final class WingsU2HostTests: XCTestCase {
             return XCTFail("No Pause hit target")
         }
         XCTAssertTrue(target.acceptsFirstMouse(for: down))
-        // The hidden wing Stop is inert: a click at its slot never stops the read.
         let origin = host.layout.visibleContentRect.origin
         let stopSlot = NSPoint(
             x: origin.x + geometry.coreOriginX + geometry.coreWidth + geometry.trailingWingWidth
                 - VoiceBarNotchContract.fixedWingContentInset - VoiceBarNotchContract.material.compactControlSize / 2,
             y: pause.midY
         )
-        XCTAssertFalse(host.layout.containsInteractiveContent(stopSlot), "no live control at the hidden Stop's slot")
-        XCTAssertEqual(host.router.calls, [])
+        XCTAssertTrue(host.layout.containsInteractiveContent(stopSlot), "the wing Stop's slot is live")
+        guard let stopTarget = host.host.hitTest(stopSlot), let stopDown = event(.leftMouseDown, at: stopSlot, in: host.panel)
+        else { return XCTFail("No Stop hit target") }
+        XCTAssertTrue(stopTarget.acceptsFirstMouse(for: stopDown))
     }
 
-    /// The U2 first-click key-window regression (WIP f816fb01): with the teleprompter open, the WIP drew a live
-    /// Stop in the right wing and counted it as a wing control. A click into a mounted teleprompter makes the
-    /// non-activating panel key (2.2.61 kept that Stop hidden for exactly this, R0856-10), so the first click on it
-    /// took key focus. Clicked in a plain non-key window, so key-ness cannot mask the dispatch: the rendered wing
-    /// Stop must not act while the teleprompter is open; the teleprompter's own lower-row Stop does.
-    func testTheWingStopIsInertWhileTheTeleprompterIsOpen() {
+    /// 2.3 U5 moved the live Stop into the wing (U2's handoff note). Clicked in a plain non-key window, so key-ness
+    /// cannot mask the dispatch: the first click on the rendered wing Stop stops the read with the teleprompter open.
+    /// (R0856-10's key-focus trap was `.focusable(true)` on the Stop; the wing Stop is not focusable.)
+    func testTheWingStopStopsTheReadWhileTheTeleprompterIsOpen() {
         let state = makeSpeakingState()
         let router = Spy()
         let bar = NSHostingView(rootView: BarView(state: state, commandRouter: router,
@@ -258,7 +259,8 @@ final class WingsU2HostTests: XCTestCase {
             window.sendEvent(down)
             window.sendEvent(up)
         }
-        XCTAssertEqual(router.calls, [], "the hidden wing Stop never dispatches while the teleprompter is open")
+        XCTAssertFalse(router.calls.isEmpty, "the wing Stop dispatches on its first click")
+        XCTAssertEqual(Set(router.calls), ["stop"])
     }
 
     // MARK: - Helpers

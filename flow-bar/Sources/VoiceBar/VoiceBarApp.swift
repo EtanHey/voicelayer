@@ -2085,15 +2085,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if state.canReplay {
                 lowerControlCount += 1
             }
-            if state.mode == .speaking {
-                lowerControlCount += 1
-            }
             if state.isTeleprompterReadback {
                 lowerControlCount += 1
             }
             return VoiceBarNotchInteractionConfiguration(
-                // 2.3 U2: the right wing shows the reading time; the teleprompter's lower row keeps the live Stop.
+                // 2.3 U5: reading aloud keeps its time and the live Stop in the right wing (SPEC wing states); the
+                // teleprompter's lower row no longer carries a Stop.
                 leadingControlCount: state.mode == .speaking ? playbackLeadingSlotCount(for: state) : 0,
+                trailingControlCountFromOuter: state.mode == .speaking ? 1 : 0,
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
                 lowerControlCount: lowerControlCount,
                 lowerSurfaceIsInteractive: state.mode == .speaking
             )
@@ -2147,6 +2147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             coreWidth: coreWidth,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset
         )
+        model.setTeleprompterLines(voiceState.teleprompterVisibleLines)
         model.updateOperationalEnvelope(
             hasTeleprompter: resolved.visualState == .teleprompter,
             isRecording: resolved.visualState == .recording,
@@ -2456,8 +2457,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isIsolatedCapture: Bool? = nil
     ) {
         guard let panel else { return }
-        // 2.3 lane U4: a History pull holds the panel's mouse events until it is released.
-        if notchPresentationModel.isHistoryPullActive {
+        // 2.3 lane U4: a History pull holds the panel's mouse events until it is released (U5: or the handle's).
+        if notchPresentationModel.isPointerHeldByPull {
             panel.ignoresMouseEvents = false
             return
         }
