@@ -222,6 +222,10 @@ final class LaneIFormalConformanceTests: XCTestCase {
         let state = recordingState()
         let app = ConformanceApp()
         state.frontmostAppProvider = { app }
+        state.focusedTargetEligibilityProvider = {
+            DictationFocusedTargetEligibility(processIdentifier: app.processIdentifier,
+                role: "AXTextField", isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+        }
         state.dictationTargetIdentityProvider = { { true } }
         var commands: [[String: Any]] = [], pasted: [String] = []
         state.sendCommand = { commands.append($0) }
