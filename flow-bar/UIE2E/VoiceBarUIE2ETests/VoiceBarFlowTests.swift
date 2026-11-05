@@ -1092,19 +1092,24 @@ extension VoiceBarFlowTests {
     func historyFlow() {
         walk("History")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch, "select fixture history row")
-        // V27: the selected row is the last of its day, directly above the next day's header. No pixels here (the
-        // gatecap1 privacy guard): AX geometry plus this step's own PROVEN window still for the reviewer. The paint
-        // itself is pinned by the offscreen HistoryDayBoundaryClipTests (fail-first on 2.2.61).
-        step("assert the last row of a day sits fully above the next day's header (V27)") {
+        // V27: the selected row is the last of its day, directly above the next day's header. Each day header's
+        // accessibility element is its opaque cover (`history.dayHeader.cover`), so its frame includes the cover's
+        // `coversAbove` reach: restoring the old 18 pt cover puts its top above this row's bottom and fails here.
+        // No pixels (the gatecap1 privacy guard); the step's own PROVEN window still is the visual record. JSON
+        // carries frames and the identifier only, never a label.
+        step("assert the next day's header cover starts below the last row of the day (V27)") {
             let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch
             XCTAssertTrue(row.isSelected, "the newest row, last of its day, is selected")
-            let below = app.staticTexts.allElementsBoundByIndex.filter {
-                $0.frame.minY > row.frame.midY && $0.frame.maxX > row.frame.minX && $0.frame.minX < row.frame.maxX
-            }.min { $0.frame.minY < $1.frame.minY }
-            let header = try XCTUnwrap(below, "the next day's header is below the row")
-            XCTAssertGreaterThanOrEqual(header.frame.minY, row.frame.maxY - 0.5, "the header starts below the row")
-            attachJSON("UIE2E-V27-DAY-BOUNDARY", ["row": ["minY": row.frame.minY, "maxY": row.frame.maxY],
-                                                  "header": ["label": header.label, "minY": header.frame.minY]])
+            let covers = app.descendants(matching: .any).matching(identifier: "history.dayHeader.cover").allElementsBoundByIndex
+            let below = covers.filter { $0.frame.midY > row.frame.maxY }.min { $0.frame.minY < $1.frame.minY }
+            let cover = try XCTUnwrap(below, "a day header cover follows the row (\(covers.count) covers found)")
+            XCTAssertGreaterThanOrEqual(cover.frame.minY, row.frame.maxY - 0.5,
+                                        "the header cover reaches \(row.frame.maxY - cover.frame.minY) pt over the row")
+            attachJSON("UIE2E-V27-DAY-BOUNDARY", [
+                "identifier": "history.dayHeader.cover",
+                "row": ["minY": row.frame.minY, "maxY": row.frame.maxY],
+                "cover": ["minY": cover.frame.minY, "maxY": cover.frame.maxY],
+            ])
         }
         assertHistoryCopy(equals: "QA fixture transcript שלום 👋")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch, "select specific older row")
