@@ -2,13 +2,16 @@
 
 ## TLC tool pin and repeatable checks
 
-The verified M4 reference jar at `~/.cache/tla/tla2tools.jar` is:
+Current runs resolve the checksum-pinned jar through `formal/tlc_support.py`,
+then verify a frozen per-run copy before starting Java. No unversioned cache is required.
+
+The historical M4 reference jar at `~/.cache/tla/tla2tools.jar` was:
 
 - TLC **2.19 of 08 August 2024** (the committed receipt banner reports revision `5a47802`).
 - SHA-256: `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
 
-Recorded from the M4 Max cache on 2026-11-02. Recheck the complete hash when
-replacing the cached jar; a version string alone does not identify its bytes.
+Recorded from the M4 Max cache on 2026-11-02. These bytes identify the historical
+receipts below; current runs use `formal/tlc.lock.json` and print their actual identity.
 
 Run `bash formal/parakeet-residency/check.sh` from the repository root. The
 runner first tests its output validator, then checks every fixed configuration
@@ -19,8 +22,8 @@ expected property, and temporal configs must name exactly that one property.
 Each run prints its actual TLC version, SHA-256, source path and output folder.
 It freezes the jar bytes used by every child in a unique
 `.build.noindex/tlc-lane-d/run-*/` directory, alongside `jar.json`, logs and
-`SUMMARY.md`. Other jars, including the M1 nightly, can be checked without
-silently attributing their results to this reference pin. Model scratch state
+`SUMMARY.md`. The recorded identity distinguishes current runs from the
+historical reference pin. Model scratch state
 is removed after checking. Committed `results-round2/` files remain unchanged
 as the historical receipt; rerunning the checker never rewrites them.
 
@@ -70,8 +73,8 @@ new invariants. `Fixed.log` exits 0 for the existing residency model (1014
 generated, 416 distinct, depth 24). Run each from this directory with:
 
 ```sh
-java -XX:+UseParallelGC -cp ~/.cache/tla/tla2tools.jar tlc2.TLC -config OldDownloadBlocks.cfg ResidentRecognizer.tla
-java -XX:+UseParallelGC -cp ~/.cache/tla/tla2tools.jar tlc2.TLC -config FixedDownload.cfg ResidentRecognizer.tla
+../tlc.sh -config OldDownloadBlocks.cfg ResidentRecognizer.tla
+../tlc.sh -config FixedDownload.cfg ResidentRecognizer.tla
 ```
 
 This projection checks admission enabledness and publication availability, not

@@ -45,10 +45,14 @@ let systemModalOwners: Set<String> = ["com.apple.coreservices.uiagent", "com.app
 func isSystemModalOwner(_ owner: String) -> Bool { systemModalOwners.contains(owner.lowercased()) }
 struct ModalInventory { var modals: [[String: Any]] = []; var errors: [[String: Any]] = []; var excluded: [[String: Any]] = [] }
 let windowServerSystemLayers = Set([CGWindowLevelKey.mainMenuWindow, .statusWindow, .overlayWindow,
-    .desktopIconWindow, .backstopMenu].map { Int(CGWindowLevelForKey($0)) })
-func windowServerSystemLayer(_ layer: Int) -> Bool {
+    .cursorWindow, .desktopIconWindow, .backstopMenu].map { Int(CGWindowLevelForKey($0)) })
+func windowServerSystemLayer(_ layer: Int, bounds: CGRect) -> Bool {
+    // Cursor overlays use point bounds; oversized rows at this level still refuse.
+    if layer == Int(CGWindowLevelForKey(.cursorWindow)) {
+        guard bounds.width > 0, bounds.height > 0, bounds.width <= 64, bounds.height <= 64 else { return false }
+    }
     // The extra exact desktop row is the captured M1 fixture, not an arbitrary negative range.
-    layer <= Int(CGWindowLevelForKey(.desktopWindow)) || windowServerSystemLayers.contains(layer) || layer == -2147483602
+    return layer <= Int(CGWindowLevelForKey(.desktopWindow)) || windowServerSystemLayers.contains(layer) || layer == -2147483602
 }
 func modalRow(_ row: CGRow) -> [String: Any] {
     let bounds: Any
@@ -80,7 +84,7 @@ func modalInventory<S: ModalSource>(_ source: S, qaPids: Set<Int32>) -> ModalInv
         if bounds.isEmpty { continue }
         if isWindowServer {
             let classified = evidence.merging(["source": "system-owner"]) { _, new in new }
-            if windowServerSystemLayer(row.layer) { inventory.excluded.append(classified) }
+            if windowServerSystemLayer(row.layer, bounds: bounds) { inventory.excluded.append(classified) }
             else { inventory.modals.append(classified) }
             continue // WindowServer has no application AX tree; never query it for these rows.
         }
