@@ -20,6 +20,8 @@ final class U4NotchHistoryNativeTests: XCTestCase {
             throw XCTSkip("U4 native test needs a standard UIE2E build, not a GATE2245 one")
         }
         let app = XCUIApplication(url: appURL)
+        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
+        let previousApp = NSWorkspace.shared.frontmostApplication
         app.launchEnvironment = ["VOICEBAR_UIE2E": "1", "VOICEBAR_UIE2E_SCENARIO": "full", "VOICEBAR_UIE2E_ROOT": root.path,
             "HOME": root.appendingPathComponent("home").path, "CFFIXED_USER_HOME": root.appendingPathComponent("home").path,
             "QA_VOICE_DISABLE_FLAG_PATH": root.appendingPathComponent("disabled").path,
@@ -28,9 +30,13 @@ final class U4NotchHistoryNativeTests: XCTestCase {
             "VOICELAYER_MCP_SOCKET_PATH": root.appendingPathComponent("m.sock").path,
             "VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS": "14"]
         app.launch()
-        defer { app.terminate() }
+        defer { app.terminate(); previousApp?.activate() }
+        enum PreconditionFailure: Error { case failed }
+        func require(_ condition: Bool, _ message: String) throws {
+            guard condition else { XCTFail(message); throw PreconditionFailure.failed }
+        }
         let pill = app.dialogs["VoiceBar QA Pill"]
-        XCTAssertTrue(pill.waitForExistence(timeout: 15))
+        try require(pill.waitForExistence(timeout: 15), "the QA pill exists")
         let handle = pill.descendants(matching: .any)["notch-history-extend-handle"]
 
         // Evidence without pixels (the gatecap1 privacy guard bans screenshots in UIE2E tests): the handle's AX value
@@ -51,46 +57,66 @@ final class U4NotchHistoryNativeTests: XCTestCase {
             attachment.lifetime = .keepAlways
             add(attachment)
         }
-        func openHistory() {
+        func openHistory() throws {
+            // The host orders Settings out for U4. As in U2, a real click from Finder must leave it frontmost.
+            finder.activate()
+            try require(finder.wait(for: .runningForeground, timeout: 5), "Finder receives keyboard events")
             pill.hover()
             let history = pill.buttons["History"]
-            XCTAssertTrue(history.waitForExistence(timeout: 4), "the launcher's History button")
+            try require(history.waitForExistence(timeout: 4), "the launcher's History button")
             history.click()
+            try require(finder.state == .runningForeground, "History never activates VoiceBar")
+            try require(handle.waitForExistence(timeout: 4), "the open panel shows its extend handle")
+            try require(pill.descendants(matching: .any).matching(identifier: "notch-history-extend-handle").count == 1,
+                        "the handle identifier resolves uniquely")
         }
         func rows() -> String { handle.value as? String ?? "" }
-        func waitForRows(_ expected: String) {
+        func waitForRows(_ expected: String) throws {
             let deadline = Date().addingTimeInterval(3)
             while rows() != expected, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
-            XCTAssertEqual(rows(), expected)
+            try require(rows() == expected, "expected \(expected), got \(rows())")
         }
 
-        openHistory()
-        XCTAssertTrue(handle.waitForExistence(timeout: 4), "the open panel shows its extend handle")
-        waitForRows("7 of 12 rows")
+        try openHistory()
+        try waitForRows("7 of 12 rows")
         shot("1-open-7-rows")
+        let initialOrigin = pill.frame.origin
 
         let centre = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         centre.press(forDuration: 0.15, thenDragTo: centre.withOffset(CGVector(dx: 0, dy: 7 * 46)))
-        waitForRows("12 of 12 rows")
+        try waitForRows("12 of 12 rows")
         shot("2-pulled-12-rows")
 
         let extended = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         extended.press(forDuration: 0.15, thenDragTo: extended.withOffset(CGVector(dx: 0, dy: -2.4 * 46)))
-        waitForRows("10 of 12 rows")
+        try waitForRows("10 of 12 rows")
         shot("3-released-between-rows-snaps-10")
+        try require(abs(pill.frame.minX - initialOrigin.x) < 2 && abs(pill.frame.minY - initialOrigin.y) < 2,
+                    "extending History never drags the pill window")
 
         handle.click()
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        XCTAssertEqual(rows(), "10 of 12 rows", "a click on the handle never moves it")
+        try require(rows() == "10 of 12 rows", "a click on the handle never moves it")
 
-        app.typeKey(.escape, modifierFlags: [])
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: handle)], timeout: 3), .completed, "Esc closes History")
+        let escapeStart = ProcessInfo.processInfo.systemUptime
+        finder.typeKey(.escape, modifierFlags: [])
+        let closed = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: handle)], timeout: 3) == .completed
+        let targetURL = root.appendingPathComponent("u4-escape-target.json")
+        let target = try Data(contentsOf: targetURL)
+        let receipt = try XCTUnwrap(JSONSerialization.jsonObject(with: target) as? [String: Any])
+        let attachment = XCTAttachment(data: target, uniformTypeIdentifier: "public.json")
+        attachment.name = "U4-escape-event-target"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        try require((receipt["eventTimestamp"] as? Double ?? 0) >= escapeStart, "the Escape receipt is fresh")
+        try require(receipt["source"] as? String == "global", "Escape reached the real global monitor path")
+        try require(receipt["voiceBarKeyWindowNumber"] as? Int == 0, "no VoiceBar window owned Escape")
+        try require(closed, "Esc from the foreground app closes History")
         shot("4-closed")
 
-        openHistory()
-        XCTAssertTrue(handle.waitForExistence(timeout: 4))
-        waitForRows("10 of 12 rows")
+        try openHistory()
+        try waitForRows("10 of 12 rows")
         shot("5-reopened-keeps-10-rows")
     }
 }

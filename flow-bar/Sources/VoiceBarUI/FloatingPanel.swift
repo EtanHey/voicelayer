@@ -275,6 +275,23 @@ public final class FloatingPillPanel: NSPanel {
         isPillDragEnabled && startedInVisiblePill
     }
 
+    /// Shared by the resident app and UIE2E host: notch gestures must never move the whole window.
+    public func configureNotchDragging(screenKind: VoiceBarNotchScreenKind, allowsFreeDrag: Bool, mode: VoiceMode) {
+        if screenKind == .flatDisplayFallback {
+            isPillDragEnabled = false
+            isMovableByWindowBackground = false
+            return
+        }
+        let usesPhysicalHousing = screenKind == .hardwareNotch
+        let pillDragEnabled = !usesPhysicalHousing && allowsFreeDrag
+        let movableByWindowBackground = !usesPhysicalHousing && allowsFreeDrag
+            && VoiceBarPresentation.isPanelDraggable(mode: mode)
+        if isPillDragEnabled != pillDragEnabled { isPillDragEnabled = pillDragEnabled }
+        if isMovableByWindowBackground != movableByWindowBackground {
+            isMovableByWindowBackground = movableByWindowBackground
+        }
+    }
+
     public func startsDrag(at point: NSPoint) -> Bool {
         activeHitTestProvider?(point) ?? true
     }

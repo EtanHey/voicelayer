@@ -1538,8 +1538,8 @@ final class AppLifecycleTests: XCTestCase {
         )
         let method = source[methodStart.lowerBound ..< methodEnd.lowerBound]
 
-        XCTAssertTrue(method.contains("panel.isPillDragEnabled = false"))
-        XCTAssertTrue(method.contains("panel.isMovableByWindowBackground = false"))
+        XCTAssertTrue(method.contains("panel.configureNotchDragging(screenKind: screenGeometry.kind"))
+        XCTAssertTrue(method.contains("allowsFreeDrag: anchorMode.allowsFreeDrag, mode: voiceState.mode"))
     }
 
     func testPointerAwareCoordinatorIsTheOnlyRetainedReadbackDismissalOwner() throws {
