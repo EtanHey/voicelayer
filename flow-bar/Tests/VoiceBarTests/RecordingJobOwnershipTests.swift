@@ -16,6 +16,12 @@ final class RecordingJobOwnershipTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in })
         state.isConnected = true
         state.dictationTargetIdentityProvider = identity
+        state.focusedTargetEligibilityProvider = { [weak state] in
+            guard let app = state?.frontmostAppProvider() else { return nil }
+            return DictationFocusedTargetEligibility(processIdentifier: app.processIdentifier,
+                role: "AXTextArea", isEditable: true, isSecure: false,
+                matchesCurrentFocus: identity() ?? { true })
+        }
         state.pasteboardWriter = { _ in XCTFail("Dictation must never write the clipboard") }
         state.textTypingHandler = { _ in XCTFail("Fixture must use its captured cursor"); return false }
         return state
@@ -32,6 +38,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
 
     func testOwnedLiveFinalKeepsPolishMetadataWithoutHistoryPartialOrDuplicateOverwrite() {
         let state = makeState()
+        state.frontmostAppProvider = { nil }
         state.sendCommand = { _ in }
         func final(_ id: String, extra: [String: Any] = [:]) {
             var event: [String: Any] = ["type": "transcription", "take_id": id,
@@ -89,12 +96,12 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(commands.last?["take_id"] as? String, takeID)
     }
 
-    func testChangedOriginalTargetIsRetainedWithoutFocusStealAndLaterTakeStillDelivers() throws {
+    func testChangedOriginalTargetDeliversToReadyFocusAndLaterTakeStillDelivers() throws {
         let state = makeState()
         let appA = FakeApp("test.editor.A", 11001), appB = FakeApp("test.editor.B", 11002)
         var front: NSRunningApplication? = appA
         var commands: [[String: Any]] = [], scheduled: [() -> Void] = []
-        var inserted: [String] = [], completionA: ((DictationInsertionResult) -> Void)?
+        var inserted: [String] = []
         var cursor = "A"
         state.frontmostAppProvider = { front }
         state.targetAppActivator = { front = $0 }
@@ -104,7 +111,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
             let owner = cursor
             return { text, completion in
                 inserted.append(owner + ":" + text)
-                if owner == "A" { completionA = completion } else { completion(.verified) }
+                completion(.verified)
                 return true
             }
         }
@@ -123,20 +130,20 @@ final class RecordingJobOwnershipTests: XCTestCase {
         micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
         let raw = "first\r\nשלום fu…\n"
         delivery(a, raw); flush()
-        XCTAssertTrue(inserted.isEmpty)
-        XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
-        XCTAssertEqual(state.recentTranscriptionEntries.first?.deliveryNote, "Not pasted: target changed")
-        XCTAssertEqual(commands.last?["outcome"] as? String, "not_inserted")
+        XCTAssertEqual(inserted, ["B:" + raw])
+        XCTAssertEqual(state.latestDictationInsertionStatus, .insertedAtCursor)
+        XCTAssertNil(state.recentTranscriptionEntries.first?.deliveryNote)
+        XCTAssertNil(commands.last?["outcome"])
         delivery(a, raw); flush()
-        XCTAssertEqual(inserted.count, 0)
+        XCTAssertEqual(inserted.count, 1)
         XCTAssertEqual(commands.last?["delivery_id"] as? String, a)
         XCTAssertEqual(state.mode, .recording)
         XCTAssertEqual(state.microphoneTakeID, b)
         delivery(a, raw); flush()
-        XCTAssertEqual(inserted.count, 0)
+        XCTAssertEqual(inserted.count, 1)
         snapshot(state, jobs: [(b, "live", "processing")])
         delivery(b, "second"); flush()
-        XCTAssertEqual(inserted, ["B:second"])
+        XCTAssertEqual(inserted, ["B:" + raw, "B:second"])
         XCTAssertEqual(commands.last?["delivery_id"] as? String, b)
     }
 
@@ -163,7 +170,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(state.latestDictationInsertionStatus, .unverified)
     }
 
-    func testAnUnavailableOriginalNativeCursorCannotRetargetTypingWithinTheSameApp() throws {
+    func testReadyNativeCursorDeclineFallsBackToSameReadyInput() throws {
         let state = makeState(), app = FakeApp("test.editor.A", 11001)
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
@@ -171,12 +178,13 @@ final class RecordingJobOwnershipTests: XCTestCase {
         state.targetAppActivator = { _ in }
         state.pasteScheduler = { _, work in work() }
         state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
+        state.ownedTextTypingHandler = { _, _, matches in matches() ? .posted : .focusChanged }
         state.record(pressToTalk: true)
         let id = try XCTUnwrap(commands.last?["take_id"] as? String)
         micOpened(state, id: id, jobs: [(id, "live", "capturing")])
         snapshot(state, jobs: [(id, "live", "processing")])
         state.handleEvent(["type": "transcription", "take_id": id, "job_kind": "live", "delivery_id": id, "text": "Saved instead of misplaced"])
-        XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .typed)
         XCTAssertEqual(state.latestReusableTranscript, "Saved instead of misplaced")
         XCTAssertEqual(commands.last?["delivery_id"] as? String, id)
     }
@@ -371,16 +379,18 @@ final class RecordingJobOwnershipTests: XCTestCase {
         assertNoDrainRefusal(state)
     }
 
-    func testQueuedTargetIsCapturedAtF5RatherThanAtDrainCompletion() throws {
+    func testQueuedTargetIsCapturedAtFinalRatherThanAtF5OrDrainCompletion() throws {
         let state = makeState(), app = FakeApp("com.apple.Terminal", 11001)
         var commands: [[String: Any]] = [], typed: [String] = []
         var captures = 0, target = "B"
         state.frontmostAppProvider = { app }
         state.sendCommand = { commands.append($0) }
-        state.dictationTargetIdentityProvider = {
+        state.focusedTargetEligibilityProvider = {
             captures += 1
             let captured = target
-            return { target == captured }
+            return DictationFocusedTargetEligibility(processIdentifier: app.processIdentifier,
+                role: "AXTextArea", isEditable: true, isSecure: false,
+                matchesCurrentFocus: { target == captured })
         }
         state.ownedTextTypingHandler = { text, _, matches in
             guard matches() else { return .focusChanged }; typed.append(text); return .posted
@@ -392,15 +402,15 @@ final class RecordingJobOwnershipTests: XCTestCase {
         state.stop()
         VoiceBarCommandRouter(voiceState: state).handleHotkeyHoldStart()
         let b = try XCTUnwrap(state.queuedRecordingTakeID)
-        XCTAssertEqual(captures, 2)
+        XCTAssertEqual(captures, 0)
         target = "different element"
         snapshot(state, jobs: [(a, "live", "processing")])
         micOpened(state, id: b, jobs: [(a, "live", "processing"), (b, "live", "capturing")])
         snapshot(state, jobs: [(b, "live", "processing")])
         state.handleEvent(["type": "transcription", "take_id": b, "job_kind": "live", "delivery_id": b, "text": "kept words"])
-        XCTAssertEqual(captures, 2)
-        XCTAssertTrue(typed.isEmpty)
-        XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
+        XCTAssertEqual(captures, 1)
+        XCTAssertEqual(typed, ["kept words"])
+        XCTAssertEqual(state.latestDictationInsertionStatus, .typed)
         XCTAssertEqual(state.latestReusableTranscript, "kept words")
     }
 
@@ -464,15 +474,21 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertGreaterThan(checked, 10)
     }
 
-    func testTerminalAndElectronRequireCapturedWindowAndElementAndStripOneTerminalNewline() throws {
+    func testTerminalAndElectronUseReadyWindowAndElementAndStripOneTerminalNewline() throws {
         for bundle in ["com.apple.Terminal", "com.todesktop.230313mzl4w4u92", "test.native"] {
             for changed in [false, true] {
                 let state = makeState(), app = FakeApp(bundle, 11001)
                 state.chromiumFamilyAppDetector = { _ in bundle != "test.native" && bundle != "com.apple.Terminal" }
-                var valid = true, commands: [[String: Any]] = [], typed: [String] = [], activations = 0
+                var cursor = "start"
+                state.focusedTargetEligibilityProvider = {
+                    let readyCursor = cursor
+                    return DictationFocusedTargetEligibility(processIdentifier: app.processIdentifier,
+                        role: "AXTextArea", isEditable: true, isSecure: false,
+                        matchesCurrentFocus: { cursor == readyCursor })
+                }
+                var commands: [[String: Any]] = [], typed: [String] = [], activations = 0
                 state.sendCommand = { commands.append($0) }
                 state.frontmostAppProvider = { app }
-                state.dictationTargetIdentityProvider = { { valid } }
                 state.targetAppActivator = { _ in activations += 1 }
                 state.pasteScheduler = { _, work in work() }
                 state.guardedTextTypingHandler = { text, _ in typed.append(text); return .posted }
@@ -482,14 +498,12 @@ final class RecordingJobOwnershipTests: XCTestCase {
                 let id = try XCTUnwrap(commands.last?["take_id"] as? String)
                 micOpened(state, id: id, jobs: [(id, "live", "capturing")])
                 snapshot(state, jobs: [(id, "live", "processing")])
-                valid = !changed
+                if changed { cursor = "ready" }
                 state.handleEvent(["type": "transcription", "take_id": id, "job_kind": "live", "delivery_id": id, "text": "full words\n"])
                 XCTAssertEqual(activations, 0)
-                if changed {
-                    XCTAssertTrue(typed.isEmpty)
-                    XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
-                    XCTAssertEqual(state.recentTranscriptionEntries.first?.deliveryNote, "Not pasted: target changed")
-                } else if bundle == "com.apple.Terminal" { XCTAssertEqual(typed, ["full words"]) }
+                if bundle == "com.apple.Terminal" { XCTAssertEqual(typed, ["full words"]) }
+                else if bundle != "test.native" { XCTAssertEqual(typed, ["full words\n"]) }
+                XCTAssertNil(state.recentTranscriptionEntries.first?.deliveryNote)
             }
         }
     }
@@ -528,7 +542,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(activations, 0, file: file, line: line)
         XCTAssertEqual(state.latestDictationInsertionStatus, expectTyped ? .typed : .notInserted, file: file, line: line)
         XCTAssertEqual(state.latestReusableTranscript, "whole fu… שלום", file: file, line: line)
-        XCTAssertEqual(state.recentTranscriptionEntries.first?.deliveryNote, expectTyped ? nil : "Not pasted: target changed", file: file, line: line)
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.deliveryNote, expectTyped ? nil : "Nothing to paste into; kept in History", file: file, line: line)
     }
 
     func testUnreadableIdentitySingleElectronTakeTypesExactlyOnce() throws {
@@ -540,9 +554,9 @@ final class RecordingJobOwnershipTests: XCTestCase {
     func testUnreadableIdentitySingleGhosttyTakeTypesExactlyOnce() throws {
         try assertIdentityDelivery(bundle: "com.mitchellh.ghostty", identity: { nil }, expectTyped: true)
     }
-    func testUnreadableIdentityWhileBRecordsIsNotInserted() throws {
+    func testUnreadableStartIdentityWhileBRecordsUsesReadyInput() throws {
         for bundle in ["com.todesktop.230313mzl4w4u92", "com.apple.Terminal", "com.mitchellh.ghostty"] {
-            try assertIdentityDelivery(bundle: bundle, identity: { nil }, recordingB: true, expectTyped: false)
+            try assertIdentityDelivery(bundle: bundle, identity: { nil }, recordingB: true, expectTyped: true)
         }
     }
     func testReadableDifferentIdentityIsNotInserted() throws {
@@ -550,11 +564,11 @@ final class RecordingJobOwnershipTests: XCTestCase {
             try assertIdentityDelivery(bundle: bundle, identity: { { false } }, expectTyped: false)
         }
     }
-    func testUnreadableIdentityCannotFollowSameBundleIntoDifferentProcess() throws {
-        try assertIdentityDelivery(bundle: "com.todesktop.230313mzl4w4u92", identity: { nil }, changedProcess: true, expectTyped: false)
+    func testChangedProcessBeforeReadyUsesNewProcess() throws {
+        try assertIdentityDelivery(bundle: "com.todesktop.230313mzl4w4u92", identity: { nil }, changedProcess: true, expectTyped: true)
     }
 
-    func testUnreadableIdentityFallbackRechecksPendingBAtTypingBoundary() throws {
+    func testPendingBTakeDoesNotInvalidateReadyInput() throws {
         let state = makeState(identity: { nil }), app = FakeApp("com.todesktop.230313mzl4w4u92", 12001)
         var commands: [[String: Any]] = [], attempts = 0
         state.frontmostAppProvider = { app }
@@ -565,8 +579,8 @@ final class RecordingJobOwnershipTests: XCTestCase {
         state.ownedTextTypingHandler = { _, _, matches in
             attempts += 1
             state.record(pressToTalk: true) // B is pending; no mic-open snapshot yet.
-            XCTAssertFalse(matches(), "The posting boundary must recheck pending B")
-            return .focusChanged
+            XCTAssertTrue(matches(), "A new capture does not change the ready-time input")
+            return .posted
         }
         state.record(pressToTalk: true)
         let a = try XCTUnwrap(commands.last?["take_id"] as? String)
@@ -574,7 +588,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
         snapshot(state, jobs: [(a, "live", "processing")])
         state.handleEvent(["type": "transcription", "take_id": a, "job_kind": "live", "delivery_id": a, "text": "Keep all these words"])
         XCTAssertEqual(attempts, 1)
-        XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .typed)
         XCTAssertEqual(state.recentTranscriptionEntries.first?.text, "Keep all these words")
         XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 2)
     }
@@ -606,15 +620,25 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(commands.filter { $0["cmd"] as? String == "cancel" }.count, 1)
     }
 
-    func testReconnectWithoutOriginalTargetStoresWordsAndAcknowledgesWithoutPasting() {
+    func testFreshInstanceKeepsRecoveredFinalWithoutRiskingDuplicateInsertion() {
         let state = makeState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
-        state.pasteHandler = { _ in XCTFail("A reconnect cannot invent the original target"); return true }
+        let app = FakeApp("test.native", 12001)
+        state.frontmostAppProvider = { app }
+        state.pasteScheduler = { _, work in work() }
+        var inserted: [String] = []
+        state.asyncDictationInsertionHandlerProvider = { { text, done in
+            inserted.append(text); done(.verified); return true
+        } }
         state.handleEvent(["type": "transcription", "take_id": "lost-target", "job_kind": "live",
             "delivery_id": "lost-target", "text": "Retain these words"])
+        XCTAssertEqual(inserted, [])
+        XCTAssertEqual(state.latestDictationInsertionStatus, .unverified)
+        XCTAssertEqual(state.confirmationText, "Unverified\nIn History")
         XCTAssertEqual(state.latestReusableTranscript, "Retain these words")
         XCTAssertEqual(commands.last?["cmd"] as? String, "dictation_delivered")
         XCTAssertEqual(commands.last?["take_id"] as? String, "lost-target")
+        XCTAssertEqual(commands.last?["outcome"] as? String, "unverified")
     }
 }

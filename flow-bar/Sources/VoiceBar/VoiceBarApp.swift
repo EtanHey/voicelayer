@@ -12,6 +12,7 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 import CoreGraphics
+import Carbon
 import Darwin
 import SwiftUI
 import VoiceBarUI
@@ -1374,17 +1375,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Self.typeTextGuarded(text, expectedPID: pid)
         }
         voiceState.ownedTextTypingHandler = { text, pid, matches in
-            Self.typeTextGuarded(text, expectedPID: pid, matchesCapturedTarget: matches)
+            Self.typeTextGuarded(text, expectedPID: pid, matchesCapturedTarget: matches, postToTarget: true)
         }
         voiceState.accessibilityTrustChecker = { prompt in
             Self.isAccessibilityTrusted(prompt: prompt)
         }
+        voiceState.secureInputEnabledProvider = { IsSecureEventInputEnabled() }
         voiceState.asyncDictationInsertionHandlerProvider = {
-            CommandModeAXHelper.captureFocusedInsertionHandler()
+            if let editor = LocalDictationTarget.focusedEditor { return LocalDictationTarget.insertion(for: editor) }
+            return CommandModeAXHelper.captureFocusedInsertionHandler()
         }
         voiceState.dictationTargetIdentityProvider = { CommandModeAXHelper.captureFocusedTargetIdentity() }
         voiceState.focusedTargetEligibilityProvider = {
-            CommandModeAXHelper.captureFocusedTargetEligibility()
+            let app = NSWorkspace.shared.frontmostApplication
+            return LocalDictationTarget.captureEligibility(frontmostPID: app?.processIdentifier,
+                editor: LocalDictationTarget.focusedEditor) {
+                let bundle = app?.bundleIdentifier ?? ""
+                let typedHost = TerminalPasteTargets.isTerminal(bundle)
+                    || ["com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS"].contains(bundle)
+                    || app.map { ChromiumFamilyApps.contains(bundleURL: $0.bundleURL) } == true
+                return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost)
+            }
         }
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
             commandModeAXHelper.applyReplacement(text)
@@ -1460,7 +1471,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    private static func typeTextGuarded(_ text: String, expectedPID: pid_t, matchesCapturedTarget: () -> Bool = { true }) -> GuardedTypingResult {
+    private static func typeTextGuarded(_ text: String, expectedPID: pid_t, matchesCapturedTarget: () -> Bool = { true }, postToTarget: Bool = false) -> GuardedTypingResult {
         guard isAccessibilityTrusted(prompt: false),
               let source = CGEventSource(stateID: .hidSystemState) else { return .failed }
         return SynthesizedKeyEvents.postGuardedBatch(
@@ -1470,7 +1481,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
             matchesCapturedTarget: matchesCapturedTarget,
-            postEvent: { $0.post(tap: .cghidEventTap) }
+            postEvent: { event in
+                if postToTarget { event.postToPid(expectedPID) }
+                else { event.post(tap: .cghidEventTap) }
+            }
         )
     }
 
