@@ -284,11 +284,23 @@ if case in ("stubborn", "KILL-supervisor"):
     child = registry.spawn([sys.executable, "-c",
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)", run_dir])
     registry.publish(record, f"{os.getpid()} {child.pid}")
+elif case == "model-isolation":
+    # Model discovery starts helpers in the daemon's PGID. Model an external
+    # helper that sanitizes its environment, just as a package manager can.
+    keys = ("QA_VOICE_WHISPER_MODEL", "VOICELAYER_PARAKEET_MODEL", "XDG_CACHE_HOME")
+    if any(os.path.exists(os.environ.get(key, "")) for key in keys):
+        env = dict(os.environ)
+        for key in ("VOICELAYER_TMP_ROOT", "VOICELAYER_MCP_SOCKET_PATH", "VOICELAYER_SOCKET_PATH"):
+            env.pop(key, None)
+        child = registry.spawn([sys.executable, "-c", "import time; time.sleep(60)"], env=env)
+        registry.publish(record, f"{os.getpid()} {child.pid}")
+    else:
+        registry.publish(record, str(os.getpid()))
 else:
     registry.publish(record, str(os.getpid()))
 if case == "failure":
     raise SystemExit(7)
-if case in ("success", "debug", "stubborn", "suite-failure", "KILL-late", "KILL-supervisor"):
+if case in ("success", "debug", "stubborn", "suite-failure", "KILL-late", "KILL-supervisor", "model-isolation"):
     sock = socket.socket(socket.AF_UNIX)
     sock.bind(os.environ["VOICELAYER_MCP_SOCKET_PATH"])
 if case == "KILL-supervisor":
@@ -682,7 +694,7 @@ with path.open("w+") as lock:
         snapshot(label, orphan_pids)
 
     cases = ("KILL-supervisor", "KILL-group", "KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test",
-             "success", "failure", "timeout", "INT", "TERM", "HUP", "KILL", "KILL-late", "stubborn", "debug", "suite-failure", "real")
+             "success", "failure", "timeout", "INT", "TERM", "HUP", "KILL", "KILL-late", "stubborn", "debug", "suite-failure", "real", "model-isolation")
     if "--abort-lifecycle-check" in sys.argv[2:]:
         cases = (sys.argv[-1],)
     if "--lifecycle-only" in sys.argv[2:]:
@@ -694,6 +706,15 @@ with path.open("w+") as lock:
         record = lane / "pids"
         env = dict(os.environ, PATH=str(bin_dir) + ":" + os.environ["PATH"], TMPDIR=str(lane) + "/",
                    HOOK_CASE=case, HOOK_RECORD=str(record), HOOK_REAL_BUN=real_bun, HOOK_OWNED_PIDS=str(owned_pid_file))
+        if case == "model-isolation":
+            # These stand in for an installed host model/cache, outside RUN_DIR.
+            for key in ("QA_VOICE_WHISPER_MODEL", "VOICELAYER_PARAKEET_MODEL", "XDG_CACHE_HOME"):
+                asset = lane / key
+                if key == "QA_VOICE_WHISPER_MODEL":
+                    asset.write_bytes(b"fixture model")
+                else:
+                    asset.mkdir()
+                env[key] = str(asset)
         env["HOOK_UNREADABLE_PID"] = str(unreadable)
         env["VOICELAYER_RUN_TESTS_KEEP_RUN_DIR"] = "1" if case == "debug" else "0"
         for kind in ("SWIFT", "BUN"):
@@ -778,7 +799,7 @@ with path.open("w+") as lock:
                 text = output.read()
                 if case == "KILL-supervisor":
                     assert "PASS delayed KILL-supervisor setup: 9 seconds" in text
-                if case in ("success", "debug", "real", "stubborn"):
+                if case in ("success", "debug", "real", "stubborn", "model-isolation"):
                     assert "[pass] bun MCP daemon boot" in text
                     assert "[pass] swift test" in text and "[pass] bun test" in text
                 if case == "suite-failure":
