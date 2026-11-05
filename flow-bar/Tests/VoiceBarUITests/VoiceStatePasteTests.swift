@@ -2253,7 +2253,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.transcript, "this is the full transcript ending with wow")
     }
 
-    func testAutoPasteUsesRecordedInputInsertionBeforeTypingFallback() {
+    func testAutoPasteDoesNotResurrectRecordTargetWhenReadyFocusIsMissing() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         var frontmostApp: NSRunningApplication? = NSRunningApplication.current
@@ -2281,9 +2281,9 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "this is the full transcript ending with wow",
         ])
 
-        XCTAssertEqual(insertedTexts, ["this is the full transcript ending with wow"])
+        XCTAssertEqual(insertedTexts, [])
         XCTAssertFalse(pasteShortcutPosted)
-        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
+        XCTAssertEqual(state.confirmationText, "Nothing to paste into; kept in History")
     }
 
     func testAutoPasteUsesRecordStartInsertionWhenSameTargetIsFrontmostAtPasteTime() {
@@ -2719,7 +2719,6 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record()
-        frontmostApp = nil
         state.handleEvent([
             "type": "transcription",
             "text": "typing only after ax misses",
@@ -2734,7 +2733,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertFalse(pasteShortcutPosted)
     }
 
-    func testAutoPasteAttemptsFreshInsertionAfterActivatingRecordedTarget() {
+    func testAutoPasteCapturesFreshInsertionAtFinalArrival() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         var frontmostApp: NSRunningApplication? = NSRunningApplication.current
@@ -2769,7 +2768,6 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record()
-        frontmostApp = nil
         state.handleEvent([
             "type": "transcription",
             "text": "paste into target after activation",
@@ -2867,7 +2865,6 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record()
-        frontmostApp = nil
         state.handleEvent([
             "type": "transcription",
             "text": "this is the full transcript ending with wow",
@@ -3009,7 +3006,6 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record()
-        frontmostApp = nil
         state.handleEvent([
             "type": "transcription",
             "text": "clipboard safety check",
