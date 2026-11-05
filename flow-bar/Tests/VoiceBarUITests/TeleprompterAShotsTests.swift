@@ -78,49 +78,6 @@ final class TeleprompterAShotsTests: XCTestCase {
                                                          atomically: true, encoding: .utf8)
     }
 
-    private final class NoopRouter: BarCommandRouting {
-        func handlePrimaryTap() {}
-        func handleCancel() {}
-        func handleStop() {}
-        func handleReplay() {}
-        func handleRetranscribeHistoryEntry(recordingPath _: String) {}
-    }
-
-    /// The production notch reading aloud: time + Stop in the right wing, the handle-sized body (3 and 8 lines).
-    func testWriteLiveNotchFramesWhenRequested() throws {
-        guard let path = ProcessInfo.processInfo.environment["VOICEBAR_U5_SHOTS_DIR"], !path.isEmpty else {
-            throw XCTSkip("Set VOICEBAR_U5_SHOTS_DIR to write the U5 live notch frames")
-        }
-        let directory = URL(fileURLWithPath: path, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        for (appearanceName, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            for lines in [3, 8] {
-                let state = VoiceState()
-                state.isConnected = true
-                state.isCollapsed = false
-                state.handleEvent(["type": "state", "state": "speaking", "text": Self.text, "utteranceId": "shots",
-                                   "playback_id": "p", "generation": 1, "duration_ms": 30_000])
-                state.teleprompterVisibleLines = lines
-                var input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true,
-                                                          readQueueLeadingSlotCount: 1)
-                input.teleprompterLines = lines
-                let resolved = VoiceBarPresentation.notchPresentation(from: input)
-                let model = VoiceBarNotchPresentationModel()
-                model.setTeleprompterLines(lines)
-                model.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false,
-                                                teleprompterLeadingWingWidth: resolved.geometry.leadingWingWidth)
-                let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation).canvasGeometry
-                let size = CGSize(width: canvas.totalWidth + 24, height: canvas.totalHeight + 17)
-                let bar = BarView(state: state, commandRouter: NoopRouter(), onOpenSettings: {}, onOpenHistory: {},
-                                  presentationModel: model, includesPanelOutsets: true)
-                    .frame(width: size.width, height: size.height, alignment: .topLeading)
-                try snapshot(bar, size: size, appearance: appearance,
-                             to: directory.appendingPathComponent("notch-live-\(lines)-line-\(appearanceName).png"),
-                             settle: 2) // the body fades in after the shell's open morph
-            }
-        }
-    }
-
     private func render(_ view: TeleprompterAView, appearance: NSAppearance.Name, to url: URL) throws {
         let notchAppearance: VoiceBarNotchAppearance = appearance == .darkAqua ? .dark : .light
         let size = CGSize(width: TeleprompterA.columnWidth + 36,
@@ -131,11 +88,6 @@ final class TeleprompterAShotsTests: XCTestCase {
             .background(RoundedRectangle(cornerRadius: 24)
                 .fill(notchAppearance == .dark ? Color.black : Color(red: 0.86, green: 0.88, blue: 0.92)))
             .environment(\.voiceBarNotchAppearance, notchAppearance)
-        try snapshot(root, size: size, appearance: appearance, to: url)
-    }
-
-    private func snapshot<Content: View>(_ root: Content, size: CGSize, appearance: NSAppearance.Name, to url: URL,
-                                         settle: TimeInterval = 0.5) throws {
         let host = NSHostingView(rootView: root)
         host.appearance = NSAppearance(named: appearance)
         host.frame = NSRect(origin: .zero, size: size)
@@ -149,7 +101,7 @@ final class TeleprompterAShotsTests: XCTestCase {
             window.orderOut(nil)
             window.contentView = nil
         }
-        RunLoop.main.run(until: Date().addingTimeInterval(settle))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)

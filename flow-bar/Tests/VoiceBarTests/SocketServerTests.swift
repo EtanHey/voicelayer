@@ -691,9 +691,10 @@ final class SocketServerTests: XCTestCase {
         windows.append(window)
         host.layoutSubtreeIfNeeded()
 
+        // 2.3 U5: the teleprompter window reserves five more Teleprompter A lines below its resting body.
         try click(
             host,
-            at: NSPoint(x: host.bounds.midX - 28, y: 23),
+            at: NSPoint(x: host.bounds.midX - 28, y: 23 + 5 * TeleprompterA.lineHeight),
             in: window
         )
 
@@ -1604,8 +1605,9 @@ private func clickSpeakingStop(
     playbackClient: Int32
 ) throws -> String {
     var x = host.bounds.maxX - 10
+    // 2.3 U5: Stop is in the right wing (the top row) with the teleprompter open too.
     let y = host.bounds.height > VoiceBarNotchContract.topHeight
-        ? CGFloat(23)
+        ? host.bounds.maxY - VoiceBarNotchContract.topHeight / 2
         : host.bounds.midY
     while x >= host.bounds.midX {
         try click(host, at: NSPoint(x: x, y: y), in: window)

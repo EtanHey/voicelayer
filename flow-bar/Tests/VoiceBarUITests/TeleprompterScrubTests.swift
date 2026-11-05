@@ -400,9 +400,9 @@ final class TeleprompterScrubTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
-        // Readback keeps its 78 pt viewport; U5's live Teleprompter A sizes to its own 3-line body.
+        // Readback keeps its 78 pt viewport; U5's live Teleprompter A sizes to its lines plus the handle band.
         XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA\n" +
-            "                        ? TeleprompterA.bodyHeight(lines: TeleprompterA.lineRange.lowerBound)\n" +
+            "                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines) + TeleprompterA.handleBandHeight\n" +
             "                        : Theme.teleprompterViewportHeight : nil)"))
         XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber { Spacer(minLength: 0) }"))
         let trailing = try XCTUnwrap(bar.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
