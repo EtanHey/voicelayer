@@ -3346,6 +3346,65 @@ describe("input recording durability", () => {
     expectValidRetainedWav(capturedVoiceBarAudio()[0], 24 * VAD_CHUNK_BYTES);
   });
 
+  for (const source of ["voicebar", "voice_ask"] as const) {
+    it(`records plausible per-stage timings for a fake ${source} take without logging text`, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+      const { waitForInput } = await import("../input");
+      let archivePath = "";
+      const log = spyOn(console, "error").mockImplementation(() => {});
+      const started = performance.now();
+      try {
+        await expect(waitForInput(2_000, "standard", true, {
+          archiveSource: source,
+          ...(source === "voice_ask" ? { voiceAskArtifacts: {
+            agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]), agentAudioFormat: "mp3" as const,
+            agentTranscript: "Synthetic question", agentTtsEngine: "edge-tts" as const,
+            agentTtsVoice: "en-US-JennyNeural",
+          } } : {}),
+          onArchiveCreated: path => { archivePath = path; },
+        })).resolves.toBe("Retained transcript.");
+        const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+        const timings = metadata.stage_timings_ms;
+        expect(timings).toBeDefined();
+        for (const key of ["capture_end_to_decode", "decode", "dictionary_rules", "polish", "gates", "delivery", "total"]) {
+          expect(timings[key]).toBeNumber();
+          expect(timings[key]).toBeGreaterThanOrEqual(0);
+          expect(timings[key]).toBeLessThanOrEqual(performance.now() - started + 1);
+        }
+        expect(timings.decode).toBeGreaterThan(0);
+        expect(timings.polish).toBeGreaterThan(0);
+        const timingLog = log.mock.calls.flat().map(String).filter(line => line.includes("stage_timings_ms="));
+        expect(timingLog).toHaveLength(1);
+        expect(timingLog[0]).toContain(JSON.stringify(timings));
+        expect(timingLog[0]).not.toContain(backendText);
+        expect(timingLog[0]).not.toContain("Synthetic question");
+      } finally { log.mockRestore(); }
+    });
+  }
+
+  for (const outcome of ["no-speech", "cancelled", "decode-failed"] as const) {
+    it(`keeps per-stage timings on a ${outcome} fake take`, async () => {
+      vadProcessSpy!.mockResolvedValue(outcome === "no-speech" ? 0 : 0.95);
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(outcome === "no-speech" ? 0 : 1800)), false);
+      if (outcome === "decode-failed") backendMode = "throw-on-get";
+      const { waitForInput } = await import("../input");
+      let archivePath = "";
+      const pending = waitForInput(2_000, "standard", true, {
+        archiveSource: "voicebar",
+        onArchiveCreated: path => { archivePath = path; },
+        onCaptureEnd: () => { if (outcome === "cancelled") setCancelSignal(); },
+      });
+      if (outcome === "decode-failed") await expect(pending).rejects.toThrow("still warming");
+      else await expect(pending).resolves.toBeNull();
+      const { stage_timings_ms: timings } = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+      expect(timings).toBeDefined();
+      expect(timings.total).toBeGreaterThanOrEqual(0);
+      expect(timings.delivery).toBe(0);
+      expect(timings.polish).toBe(0);
+    });
+  }
+
   it("adds measured receipt metadata to the actual completed VoiceBar event", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     installFakeRecorder(
