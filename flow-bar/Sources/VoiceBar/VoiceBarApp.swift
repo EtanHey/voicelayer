@@ -1,7 +1,7 @@
 // VoiceBarApp.swift — Entry point for Voice Bar.
 //
 // Wires together: VoiceState, SocketServer, FloatingPillPanel, BarView.
-// No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
+// Regular resident app: Dock, app menus and the notch; status item only for alerts.
 // Tracks mouse across screens — pill follows the cursor.
 //
 // AIDEV-NOTE: Architecture inversion (Phase 0) — VoiceBar is the persistent
@@ -240,6 +240,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
     private let gestureStateMachine = GestureStateMachine()
     private var stoppingFromPhysicalPress = false
+    var appliedActivationPolicy: NSApplication.ActivationPolicy = .accessory
+    private var menuUpdateStatus: VoiceBarVersionStatus = .latest
     private var menuBarStatusItem: NSStatusItem?
     private var menuBarStatusItemController: MenuBarStatusItemController?
     private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
@@ -341,9 +343,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         closeStraySettingsScenes(trigger: "reopen")
-        // Reopening the menu-bar app must not show a restored placeholder.
-        // Explicit Settings requests still open the owned AppKit window.
+        let plan = VoiceBarAppPresence.dockReopenPlan(policy: appliedActivationPolicy, isSnoozed: isSnoozed || voiceState.isHidden)
+        if plan.unsnooze { unsnoozeNow() }
+        if let tab = plan.settingsTab { openSettingsWindow(tab: tab) }
         return false
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard appliedActivationPolicy == .regular else { return nil }
+        return pillContextMenuController.makeDockMenu()
     }
 
     @objc func showSettingsWindow(_ sender: Any?) {
@@ -608,8 +616,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard enforceCanonicalSingleInstance() else { return }
 
-        // No Dock icon (LSUIElement equivalent)
-        NSApp.setActivationPolicy(.accessory)
+        appliedActivationPolicy = VoiceBarAppPresence.activationPolicy(
+            enforcesSingletonInstance: VoiceLayerPaths.enforcesSingletonInstance
+        )
+        NSApp.setActivationPolicy(appliedActivationPolicy)
         setupMenuBarStatusItem()
 
         // Register with Launch Services so voicebar:// URL scheme works
@@ -931,6 +941,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configurePillContextMenu() {
+        pillContextMenuController.updateStatusProvider = { [weak self] in self?.menuUpdateStatus.menuMessage }
         pillContextMenuController.transcriptProvider = { [weak self] in
             self?.voiceState.latestReusableTranscript ?? ""
         }
@@ -2915,6 +2926,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    @objc func hideNotchForOneHour(_: Any?) {
+        snoozeForOneHour()
+    }
+
+    @objc func showVoiceBarHelp(_: Any?) {
+        NSWorkspace.shared.open(URL(string: "https://github.com/EtanHey/voicelayer#readme")!)
+    }
+
     @objc func quitFromMenuBar() {
         requestTermination(.menuBar)
     }
@@ -3005,6 +3024,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             menuBarStatusItem = statusItem
             let controller = MenuBarStatusItemController(button: button, presenter: presenter)
             menuBarStatusItemController = controller
+            controller.onVisibilityChange = { [weak statusItem] in statusItem?.isVisible = $0 }
+            controller.alertOnly = VoiceBarAppPresence.statusItemIsAlertOnly(appliedActivationPolicy)
             // The polish warning replaces the waveform, as the MenuBarExtra label did.
             let voiceState = voiceState
             controller.trackAlert { voiceState.polishMenuSignalPending }
@@ -3346,7 +3367,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if tab == .transcription { self?.voiceState.refreshRecognizerStatus() }
             },
             historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback },
-            versionCheck: .live
+            versionCheck: .live,
+            onVersionStatusChange: { [weak self] in self?.menuUpdateStatus = $0 }
         )
     }
 
