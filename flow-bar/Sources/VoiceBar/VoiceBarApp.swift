@@ -2111,12 +2111,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     : "flatDisplayFallback",
             ])
         }
+        Self.refreshNotchPresentationModel(
+            notchPresentationModel,
+            for: voiceState,
+            coreWidth: coreWidth,
+            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0,
+            virtualNotchIdleCoreHeight: screenGeometry?.virtualNotchIdleCoreHeight
+        )
+    }
+
+    /// The one feed from VoiceState into a notch presentation model: the app's model and the UIE2E QA host's
+    /// (U2×U4 review: the QA host's model never got it, so its fixtures rendered the idle shell).
+    static func refreshNotchPresentationModel(
+        _ model: VoiceBarNotchPresentationModel,
+        for voiceState: VoiceState,
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0,
+        virtualNotchIdleCoreHeight: CGFloat? = nil
+    ) {
         let resolved = Self.notchPresentation(
             for: voiceState,
             coreWidth: coreWidth,
-            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset
         )
-        notchPresentationModel.updateOperationalEnvelope(
+        model.updateOperationalEnvelope(
             hasTeleprompter: resolved.visualState == .teleprompter,
             isRecording: resolved.visualState == .recording,
             hasCompactStatus: resolved.visualState == .compactStatus,
@@ -2137,12 +2155,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 : nil,
             keepsIdleExpanded: voiceState.mode == .idle && !voiceState.isCollapsed,
             coreWidth: coreWidth,
-            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0,
-            virtualNotchIdleCoreHeight: screenGeometry?.virtualNotchIdleCoreHeight,
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset,
+            virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             transientNoteWidth: resolved.transientNoteWidth,
             feedback: resolved.feedback
         )
-        notchPresentationModel.setHovered(voiceState.isHovering)
+        model.setHovered(voiceState.isHovering)
     }
 
     private static func notchPresentation(
