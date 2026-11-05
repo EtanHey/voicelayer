@@ -674,6 +674,9 @@ public struct BarView: View {
                     dragHistoryRows(to: value.location.y, time: time)
                     return
                 }
+                if max(abs(value.translation.width), abs(value.translation.height)) > NotchHistoryMorph.dragSlop {
+                    historyPressIsBare = false
+                }
                 guard canPullHistory else { return }
                 guard let progress = historyPull.move(
                     y: value.location.y, time: time, range: openHeight - VoiceBarNotchContract.topHeight,
@@ -744,7 +747,7 @@ public struct BarView: View {
 
     private var bareNotchControl: some View {
         BareNotchMenuControl(isExpanded: historyBridge?.presentedMenu == .notch,
-            onMenu: onOpenNotchMenu, onHistory: { isHistoryPresented = true },
+            onMenu: onOpenNotchMenu, onHistory: { if canPullHistory { isHistoryPresented = true } },
             onClose: { isHistoryPresented = false; onCancelNotchMenu() })
             .frame(width: notchPresentation.geometry.coreWidth, height: VoiceBarNotchContract.topHeight)
             .help("Click for the menu, pull down for History.")
@@ -782,10 +785,10 @@ public struct BarView: View {
         }
     }
 
-    /// History can be pulled from the quiet core or its panel; operational controls retain their actions.
+    /// History opens only from the launcher or itself, and never while there's nothing to show.
     private var canPullHistory: Bool {
         let state = notchPresentation.visualState
-        return [.idle, .hoverLauncher, .history, .teleprompter, .compactStatus].contains(state)
+        return (state == .hoverLauncher || state == .history) && !self.state.recentTranscriptionEntries.isEmpty
     }
 
     private var notchPresentationOpenHistoryHeight: CGFloat {

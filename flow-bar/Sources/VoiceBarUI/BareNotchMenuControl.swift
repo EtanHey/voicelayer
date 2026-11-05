@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-/// Pointer hit testing stays with BarView's click-versus-pull gesture. The same core is a keyboard and AX button.
+/// Pointer events stay with BarView. Native key/AX adapters exist; production focus and VoiceOver hit testing need M1 acceptance.
 struct BareNotchMenuControl: NSViewRepresentable {
     var isExpanded: Bool
     var onMenu: () -> Void
@@ -12,7 +12,7 @@ struct BareNotchMenuControl: NSViewRepresentable {
         view.onHistory = onHistory
         view.onClose = onClose
         view.setAccessibilityElement(true)
-        view.setAccessibilityRole(.button)
+        view.setAccessibilityRole(.menuButton)
         view.setAccessibilityLabel("VoiceBar menu")
         view.setAccessibilityHelp("Click for the menu, pull down for History.")
         view.setAccessibilityIdentifier("voicebar.bare-notch")
