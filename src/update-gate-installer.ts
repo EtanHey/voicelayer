@@ -195,7 +195,9 @@ export async function completeGatedInstall(lease: UpdateGateLease, exitCode: num
 async function cancelLease(lease: UpdateGateLease): Promise<void> {
   let failure: unknown;
   try {
-    const result = await retryContention(() => updateVoiceGate({ kind: "CANCEL", lease }), result => result.kind === "REFUSED" && result.reason === "UNKNOWN");
+    // Retry the failed acquisition even if its holder releases before we decide.
+    const result = await retryContention(() => updateVoiceGate({ kind: "CANCEL", lease }, undefined,
+      process.env, { throwOnContention: true }), () => false);
     if (result.kind !== "REFUSED") return;
     failure = Error(`Cancel refused: ${result.reason}`);
   } catch (error) { failure = error; }

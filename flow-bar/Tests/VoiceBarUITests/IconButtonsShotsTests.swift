@@ -43,12 +43,12 @@ final class IconButtonsShotsTests: XCTestCase {
                     ],
                     activeRetranscriptionPath: nil,
                     palette: VoiceBarNotchContrastPalette.resolve(for: scheme == "light" ? .light : .dark),
-                    onCopy: { _ in true }, onPaste: { _ in }, onRetranscribe: { _ in }, onOpenHistory: {},
+                    onCopy: { _ in true }, onPaste: { _ in }, onRetranscribe: { _ in },
                     forcedHoverIndex: 1
                 )
                 .padding(14)
                 .background(scheme == "light" ? Color.white : Color(white: 0.09)),
-                appearance: appearance, size: CGSize(width: 332, height: 220),
+                appearance: appearance, size: CGSize(width: 432, height: 352),
                 to: directory.appendingPathComponent("notch-history-rows-\(scheme).png")
             )
             try render(
