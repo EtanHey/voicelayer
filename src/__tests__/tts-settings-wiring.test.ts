@@ -276,10 +276,12 @@ test("preview_tts_profile clone with non-zero rate survives stale PATH ffmpeg an
 });
 
 test("Hebrew Ask uses Hila under the default Edge voice", async () => {
+ const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
  const result = await speak("האם אפשר להמשיך?", { mode: "converse" });
  await awaitCurrentPlayback();
  expect(result.voice).toBe("he-IL-HilaNeural");
  expect(synthArgs()).toEqual([["--voice=he-IL-HilaNeural", "--rate=+0%"]]);
+ expect(logs.mock.calls.some(([line]) => String(line).includes("first_audio_ms=") && String(line).includes("voice=he-IL-HilaNeural"))).toBe(true);
 });
 
 test("Hebrew Ask preserves a selected clone and never routes it to Hila", async () => {

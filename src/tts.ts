@@ -525,6 +525,8 @@ interface SynthesizedChunk {
   durationMs: number;
 }
 
+class EdgeSynthesisUnavailableError extends Error {}
+
 async function synthesizeEdgeChunk(
   text: string,
   voice: string,
@@ -547,7 +549,7 @@ async function synthesizeEdgeChunk(
   );
 
   if (!result.success) {
-    throw new Error(result.error || "edge-tts synthesis failed after retries");
+    throw new EdgeSynthesisUnavailableError(result.error || "edge-tts synthesis failed after retries");
   }
 
   const durationMs = Math.max(
@@ -3299,6 +3301,7 @@ async function prepareSpeech(
   // Tier 2: Preset/default → edge-tts
   if (!requestedClone && options?.mode === "converse") {
     resolved.voice = edgeVoiceForText(displayText, resolved.voice);
+    audioVoice = resolved.voice;
   }
   return speakWithEdgeTTS(
     edgeProjection.speechText,
@@ -3372,7 +3375,7 @@ async function speakWithEdgeTTS(
       wordBoundaries = mergeWordBoundaryChunks(synthesizedChunks);
     }
   } catch (error) {
-    const textOnlyAllowed = options?.textOnlyOnSynthesisFailure &&
+    const textOnlyAllowed = error instanceof EdgeSynthesisUnavailableError && options?.textOnlyOnSynthesisFailure &&
       !options.textOnlyOnSynthesisFailure.aborted && !signal?.aborted;
     if (!signal?.aborted && !textOnlyAllowed) broadcast({
       type: "error",
