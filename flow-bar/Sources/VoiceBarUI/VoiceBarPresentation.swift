@@ -265,10 +265,10 @@ public enum VoiceBarPresentation {
                 showsRecordingHold: input.showsRecordingHold
             ),
             recordingTrailingWingWidth: input.mode == .recording
-                ? VoiceBarNotchContract.waveformWingWidth
+                ? VoiceBarNotchContract.fixedWingWidth
                 : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
-                ? playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+                ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
                 : nil,
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
@@ -283,9 +283,23 @@ public enum VoiceBarPresentation {
     private static func compactStatusLeadingWingWidth(
         input: VoiceBarNotchOperationalInput
     ) -> CGFloat? {
-        input.mode == .speaking || input.mode == .idle
-            ? playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
-            : VoiceBarNotchContract.compactIndicatorLaneWidth
+        switch input.mode {
+        case .speaking:
+            readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+        case .idle:
+            playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+        case .transcribing:
+            // 2.3 U2: the spinner sits where Stop was, in the same fixed wing.
+            VoiceBarNotchContract.fixedWingWidth
+        case .recording, .error, .disconnected:
+            VoiceBarNotchContract.compactIndicatorLaneWidth
+        }
+    }
+
+    /// 2.3 U2: reading aloud keeps the fixed wing; only a queued read's Next + "+N" (which the mock does not
+    /// draw) can still widen it past two slots.
+    public static func readingLeadingWingWidth(slotCount: Int) -> CGFloat {
+        max(VoiceBarNotchContract.fixedWingWidth, playbackLeadingWingWidth(slotCount: slotCount))
     }
 
     /// QUEUE1: the leading wing fits its control slots exactly, so the hit rects (from the core outward) match.
@@ -337,16 +351,9 @@ public enum VoiceBarPresentation {
         let material = VoiceBarNotchContract.material
         let insets = WaveformLayout.coreGap + WaveformLayout.outerInset
         switch input.mode {
-        case .transcribing:
-            return insets + material.waveformSlotWidth +
-                material.compactControlSpacing + material.compactControlSize
-        case .speaking:
-            let visibilityControl = input.isTeleprompterDismissed && !input.isPlaybackPaused
-                ? material.compactControlSpacing + material.compactControlSize
-                : 0
-            return insets + material.waveformSlotWidth +
-                material.compactControlSpacing + material.compactControlSize +
-                visibilityControl
+        case .transcribing, .speaking:
+            // 2.3 U2: History + Settings while transcribing; the time (or Show teleprompter) + Stop while reading.
+            return VoiceBarNotchContract.fixedWingWidth
         case .error:
             return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
                 3 + material.compactControlSize +

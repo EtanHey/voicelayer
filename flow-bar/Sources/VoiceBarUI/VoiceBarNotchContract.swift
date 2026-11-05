@@ -166,15 +166,20 @@ public struct VoiceBarNotchMaterialContract: Equatable {
     ) -> VoiceBarNotchWingContentLayout {
         // P16: every leading wing, the teleprompter's pause/play included, uses the idle-hover mic's lane
         // (Etan: "centered like the idle hover state has the microphone").
-        let isWaveformTrailing = side == .trailing && [
+        // 2.3 U2 (3-wings mock): the right wing is a fixed 73.5 pt in every state, so its content sits centred
+        // between the shared fixed-wing insets instead of the old waveform lane (24 pt from the core). That room
+        // is what fits the reading time beside Stop without widening the wing.
+        let isFixedTrailing = side == .trailing && [
             VoiceBarNotchVisualState.recording,
             .compactStatus,
             .teleprompter,
         ].contains(state)
         return VoiceBarNotchWingContentLayout(
             side: side,
-            coreInset: isWaveformTrailing ? WaveformLayout.coreGap : VoiceBarNotchContract.compactCoreContentInset,
-            outerInset: isWaveformTrailing ? WaveformLayout.outerInset : compactContentInset,
+            coreInset: isFixedTrailing
+                ? VoiceBarNotchContract.fixedWingContentInset
+                : VoiceBarNotchContract.compactCoreContentInset,
+            outerInset: isFixedTrailing ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
             alignment: .center
         )
     }
@@ -462,9 +467,19 @@ public enum VoiceBarNotchContract {
         contentWidth: material.compactControlSize
     )
 
-    public static let hoverLauncherTrailingWingWidth = compactContentFitWingWidth(
+    /// 2.3 U2 (Etan, 2026-11-03, the 3-wings mock): both wings are one fixed width in every state the mock draws
+    /// (idle launcher, History, recording, transcribing, setup error, reading aloud), so the outline never moves
+    /// between them (R0856-05). It is today's two-control wing (the launcher's History + Settings and the
+    /// recording Stop + Cancel), which the mock measured as 73 pt; it fits mic + chevron or Stop + Cancel.
+    public static let fixedWingWidth = compactContentFitWingWidth(
         contentWidth: 2 * material.compactControlSize + material.compactControlSpacing
     )
+
+    /// The inset a fixed trailing wing keeps on both sides of its centred content (the reading time + Stop row
+    /// fills the remaining 57.5 pt exactly).
+    public static let fixedWingContentInset: CGFloat = 8
+
+    public static let hoverLauncherTrailingWingWidth = fixedWingWidth
 
     public static let waveformWingWidth = WaveformLayout.coreGap +
         material.waveformSlotWidth + WaveformLayout.outerInset
@@ -478,9 +493,7 @@ public enum VoiceBarNotchContract {
         material.compactControlSpacing +
         material.compactControlSize
 
-    public static let recordingLeadingWingWidth = compactContentFitWingWidth(
-        contentWidth: 2 * material.compactControlSize + material.compactControlSpacing
-    )
+    public static let recordingLeadingWingWidth = fixedWingWidth
 
     public static let recordingLeadingWingWidthWithHoldControl: CGFloat =
         recordingLeadingWingWidth + material.compactControlSpacing + material.compactControlSize
@@ -517,9 +530,7 @@ public enum VoiceBarNotchContract {
         contentWidth: teleprompterLeadingContentWidth
     )
 
-    public static let teleprompterTrailingWingWidth = teleprompterWaveformWingWidth(
-        visibleCoreOcclusionInset: 0
-    )
+    public static let teleprompterTrailingWingWidth = fixedWingWidth
 
     public static let material = VoiceBarNotchMaterialContract(
         blackToGlassFadeWidth: 16,
@@ -561,10 +572,11 @@ public enum VoiceBarNotchContract {
             material.fadeToContentGap + contentWidth + material.outerContentInset
     }
 
+    /// 2.3 U2: the reading-aloud right wing is the fixed wing (time + Stop), like every other state.
     public static func teleprompterWaveformWingWidth(
         visibleCoreOcclusionInset _: CGFloat
     ) -> CGFloat {
-        WaveformLayout.coreGap + material.waveformSlotWidth + WaveformLayout.outerInset
+        fixedWingWidth
     }
 
     public static func geometry(
@@ -589,17 +601,17 @@ public enum VoiceBarNotchContract {
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: compactIndicatorLaneWidth,
-                trailingWingWidth: hoverLauncherTrailingWingWidth,
-                bodyLeadingExtent: compactIndicatorLaneWidth,
-                bodyTrailingExtent: hoverLauncherTrailingWingWidth
+                leadingWingWidth: fixedWingWidth,
+                trailingWingWidth: fixedWingWidth,
+                bodyLeadingExtent: fixedWingWidth,
+                bodyTrailingExtent: fixedWingWidth
             )
         case .recording:
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: recordingLeadingWingWidth,
-                trailingWingWidth: waveformWingWidth
+                leadingWingWidth: fixedWingWidth,
+                trailingWingWidth: fixedWingWidth
             )
         case .compactStatus:
             geometry(
@@ -613,9 +625,7 @@ public enum VoiceBarNotchContract {
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
                 leadingWingWidth: 0,
-                trailingWingWidth: teleprompterWaveformWingWidth(
-                    visibleCoreOcclusionInset: visibleCoreOcclusionInset
-                ),
+                trailingWingWidth: fixedWingWidth,
                 bodyLeadingExtent: 140,
                 bodyTrailingExtent: 140,
                 lowerSurfaceHeight: 196
@@ -624,8 +634,8 @@ public enum VoiceBarNotchContract {
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: compactIndicatorLaneWidth,
-                trailingWingWidth: hoverLauncherTrailingWingWidth,
+                leadingWingWidth: fixedWingWidth,
+                trailingWingWidth: fixedWingWidth,
                 bodyLeadingExtent: historyBodyExtent(coreWidth: coreWidth),
                 bodyTrailingExtent: historyBodyExtent(coreWidth: coreWidth),
                 lowerSurfaceHeight: historyLowerSurfaceHeight

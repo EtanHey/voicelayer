@@ -41,12 +41,13 @@ final class NotchRecordingFromHistoryTests: XCTestCase {
     }
 
     func testAGrowingWingNeverWaitsForTheBodyToEmpty() {
-        for hold in [false, true] {
-            let recording = geometry(.init(mode: .recording, showsRecordingHold: hold))
-            XCTAssertGreaterThan(recording.leadingWingWidth, history.leadingWingWidth)
-            let transition = VoiceBarNotchShellTransition.resolve(from: history, to: recording, visualState: .recording)
-            XCTAssertEqual(transition.delay, 0, "the slab shrinks and the wing grows from the first frame")
-        }
+        // 2.3 U2: History and recording share the fixed 73.5 pt left wing, so Stop + Cancel never outgrow it; only
+        // an Ask's hold lock (a third control) still grows the wing.
+        XCTAssertEqual(geometry(.init(mode: .recording)).leadingWingWidth, history.leadingWingWidth)
+        let recording = geometry(.init(mode: .recording, showsRecordingHold: true))
+        XCTAssertGreaterThan(recording.leadingWingWidth, history.leadingWingWidth)
+        let transition = VoiceBarNotchShellTransition.resolve(from: history, to: recording, visualState: .recording)
+        XCTAssertEqual(transition.delay, 0, "the slab shrinks and the wing grows from the first frame")
         // A shrinking body whose wings do not grow still lets its content fade first.
         let launcher = geometry(.init(mode: .idle, isHovered: true))
         XCTAssertEqual(VoiceBarNotchShellTransition.resolve(from: history, to: launcher, visualState: .hoverLauncher).delay,
@@ -105,7 +106,8 @@ final class NotchRecordingFromHistoryTests: XCTestCase {
 
     /// The old timing, replayed: the content appeared at once and the shell waited 0.12 s.
     func testTheOldTimingClippedTheStopButton() {
-        let recording = geometry(.init(mode: .recording))
+        // 2.3 U2: only the hold lock still widens the wing, so the witness replays that case.
+        let recording = geometry(.init(mode: .recording, showsRecordingHold: true))
         let shell = interpolate(history, recording, springProgress(at: 0)) // still waiting out the delay
         let layout = VoiceBarNotchShapeLayout(geometry: shell)
         let path = VoiceBarNotchContinuousShape(geometry: shell, compactOuterCornerRadius: 15,
@@ -115,6 +117,6 @@ final class NotchRecordingFromHistoryTests: XCTestCase {
         // The recording controls already at their final place (walkthrough frame, 37.5 s).
         let minX = shell.coreOriginX - recording.leadingWingWidth + material.compactContentInset
         XCTAssertFalse(path.contains(CGPoint(x: minX + 1, y: shell.topHeight / 2)),
-                       "regression witness: the Stop's outer edge sat outside the mic-width wing")
+                       "regression witness: the outer control sat outside the narrower old wing")
     }
 }

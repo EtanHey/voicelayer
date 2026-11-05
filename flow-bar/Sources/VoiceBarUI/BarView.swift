@@ -132,7 +132,13 @@ public struct VoiceBarNotchControlOptics: Equatable {
     /// Sized for the plate, which fills the 20 pt layout slot (C1: the 26 pt plate and 15 pt glyphs
     /// made Stop and X touch). Scaled from P05's 10/15 on 26 by 20/26.
     public static func resolve(for systemName: String) -> Self {
-        VoiceBarNotchControlOptics(pointSize: systemName == "stop.fill" ? 8 : 12, offsetX: 0, offsetY: 0)
+        // 2.3 U2: the chevron is the mock's small button (12 of 17 pt glyph), so it reads as secondary to the mic.
+        let pointSize: CGFloat = switch systemName {
+        case "stop.fill": 8
+        case "chevron.down": 9
+        default: 12
+        }
+        return VoiceBarNotchControlOptics(pointSize: pointSize, offsetX: 0, offsetY: 0)
     }
 
     /// The pre-P05 compact optics. P05's 26 pt system (`resolve`) is for the pill controls only;
@@ -333,6 +339,10 @@ public struct BarView: View {
     public var commandRouter: BarCommandRouting
     public var onOpenSettings: () -> Void
     public var onOpenHistory: () -> Void
+    /// 2.3 U2: the chevron beside the mic opens the microphone list under the left wing.
+    public var onOpenMicrophonePicker: () -> Void
+    /// 2.3 U2: the gear while setup needs attention opens Settings at the setup spot.
+    public var onOpenSetupSettings: () -> Void
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
@@ -372,7 +382,9 @@ public struct BarView: View {
         onOpenHistory: @escaping () -> Void,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
-        includesPanelOutsets: Bool = false
+        includesPanelOutsets: Bool = false,
+        onOpenMicrophonePicker: @escaping () -> Void = {},
+        onOpenSetupSettings: (() -> Void)? = nil
     ) {
         _notchAppearance = State(
             initialValue: VoiceBarNotchAppearance(
@@ -383,6 +395,8 @@ public struct BarView: View {
         self.commandRouter = commandRouter
         self.onOpenSettings = onOpenSettings
         self.onOpenHistory = onOpenHistory
+        self.onOpenMicrophonePicker = onOpenMicrophonePicker
+        self.onOpenSetupSettings = onOpenSetupSettings ?? onOpenSettings
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
@@ -522,11 +536,16 @@ public struct BarView: View {
         case .idle:
             EmptyView()
         case .hoverLauncher, .history:
-            notchButton(
-                icon: "mic.fill",
-                accessibilityLabel: "Start voice recording"
-            ) {
-                commandRouter.handlePrimaryTap()
+            // 2.3 U2: the mic, then the chevron for the microphone list, which opens beside it on the left.
+            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                notchButton(
+                    icon: "mic.fill",
+                    accessibilityLabel: "Start voice recording",
+                    tooltip: "Start dictation (F5)"
+                ) {
+                    commandRouter.handlePrimaryTap()
+                }
+                microphonePickerButton
             }
         case .recording:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
@@ -559,7 +578,16 @@ public struct BarView: View {
             .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
         case .compactStatus, .teleprompter:
             if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {
+                // 2.3 U2: the spinner sits where Stop was, in a control slot so it lines up with it. It is not a
+                // control, so it registers no tooltip (R0856-09: tooltips sit on controls); VoiceOver reads it.
                 ProcessingSpinner()
+                    .frame(
+                        width: VoiceBarNotchContract.material.compactControlSize,
+                        height: VoiceBarNotchContract.material.compactControlSize
+                    )
+                    .accessibilityElement()
+                    .accessibilityLabel("Transcribing")
+                    .accessibilityAddTraits(.updatesFrequently)
             } else if let playbackPauseControl {
                 playbackLeadingControls(playbackPauseControl)
             } else if notchPresentation.visualState == .compactStatus,
@@ -598,6 +626,9 @@ public struct BarView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: state.readQueueCount)
+        // 2.3 U2: the reading wing is the fixed two-slot wing. Without the mock's speed control (no playback-rate
+        // logic exists yet) Pause takes the core-side slot, which is where its hit rect is counted from.
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     /// P16: Pause collapses the teleprompter and Play expands it again; the shell's own morph animates both.
@@ -623,7 +654,8 @@ public struct BarView: View {
                 settingsButton
             }
         case .recording:
-            notchWaveform
+            // 2.3 U2: six level bars in the fixed right wing.
+            notchWaveform(style: .wingLevels)
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
                 notchSpeakingTrailingContent
@@ -639,11 +671,10 @@ public struct BarView: View {
     private var notchCompactStatusContent: some View {
         switch state.mode {
         case .transcribing:
+            // 2.3 U2: no "Transcribing" label and no third control; History and Settings stay usable.
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-                notchWaveform
-                notchButton(icon: "xmark", accessibilityLabel: "Cancel transcription") {
-                    commandRouter.handleCancel()
-                }
+                historyButton
+                settingsButton
             }
         case .speaking:
             notchSpeakingTrailingContent
@@ -674,10 +705,13 @@ public struct BarView: View {
         }
     }
 
+    /// 2.3 U2 (3-wings mock): reading aloud shows the time and Stop in the fixed right wing. A dismissed-but-playing
+    /// read swaps the time for Show teleprompter, so the wing never carries a third control. While the teleprompter
+    /// is open its own lower-row Stop is the live one (lane U5 moves it into the wing), so the wing Stop stays
+    /// mounted but hidden and inert, keeping its slot so the time does not jump when the read collapses.
     private var notchSpeakingTrailingContent: some View {
         let isCompact = notchPresentation.visualState == .compactStatus
-        return HStack(spacing: isCompact ? VoiceBarNotchContract.material.compactControlSpacing : 0) {
-            notchWaveform
+        return HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
             if isCompact, state.isTeleprompterDismissed, !state.isPlaybackPaused {
                 notchTeleprompterButton(
                     icon: "eye",
@@ -685,6 +719,13 @@ public struct BarView: View {
                 ) {
                     state.showTeleprompter()
                 }
+                .frame(width: VoiceBarReadingTimeLabel.width)
+            } else {
+                VoiceBarReadingTimeLabel(
+                    elapsedMilliseconds: { state.playbackElapsedMilliseconds() },
+                    // The palette's secondary ink (the mock's ink-2), which holds its contrast on the light glass.
+                    color: notchPalette.secondary.color
+                )
             }
             notchTeleprompterButton(
                 icon: "stop.fill",
@@ -697,7 +738,6 @@ public struct BarView: View {
             .background(playbackStopHostProbe)
             // Keep the compact Stop mounted while the lower teleprompter Stop is visible.
             .opacity(isCompact ? 1 : 0)
-            .frame(width: isCompact ? nil : 0)
             .allowsHitTesting(isCompact)
             // R0856-10: hidden, it must not stay in the keyboard loop either (NotchIconButtonTooltipTests).
             // `.focusable(true)` on the visible Stop made a click take key focus; disabling keeps its identity.
@@ -707,15 +747,21 @@ public struct BarView: View {
     }
 
     private var notchWaveform: some View {
+        notchWaveform(style: .standard)
+    }
+
+    private func notchWaveform(style: WaveformBarStyle) -> some View {
         VoiceBarNotchWaveform(
             mode: state.mode,
             isListening: !state.speechDetected,
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() },
-            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused
+            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused,
+            style: style
         )
-        .help("Audio level")
+        .help("Input level")
+        .accessibilityLabel("Input level")
     }
 
     /// NOTCH1: a transient note gets its own band at the top of the lower body (the presentation grew the
@@ -1081,9 +1127,38 @@ public struct BarView: View {
         }
     }
 
+    /// 2.3 U2: a setup problem badges the gear (an orange dot) instead of adding a third icon; the badged gear
+    /// opens Settings at the setup spot.
     private var settingsButton: some View {
-        notchButton(icon: "gearshape", accessibilityLabel: "Settings") {
-            onOpenSettings()
+        let missing = state.setupMissingPermissions
+        let needsAttention = !missing.isEmpty
+        return notchButton(
+            icon: "gearshape",
+            accessibilityLabel: VoiceBarSetupAttention.accessibilityLabel(missing: missing),
+            tooltip: VoiceBarSetupAttention.tooltip(missing: missing)
+        ) {
+            if state.setupNeedsAttention {
+                onOpenSetupSettings()
+            } else {
+                onOpenSettings()
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if needsAttention {
+                VoiceBarSetupAttentionDot()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private var microphonePickerButton: some View {
+        notchButton(
+            icon: "chevron.down",
+            accessibilityLabel: "Choose microphone",
+            tooltip: "Choose microphone"
+        ) {
+            onOpenMicrophonePicker()
         }
     }
 
