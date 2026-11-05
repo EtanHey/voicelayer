@@ -2287,7 +2287,9 @@ public final class VoiceState {
         guard !trimmedPath.isEmpty else { return }
         let id = UUID().uuidString
         guard historyRetranscriptionRequest.begin(path: trimmedPath, intentID: id) else { return }
-        historyRunLog.begin(id: id, path: trimmedPath)
+        // History feedback only: the text this request starts from, so the Log can say "No change: same text".
+        historyRunLog.begin(id: id, path: trimmedPath,
+                            priorText: recentTranscriptionEntries.first { $0.recordingPath == trimmedPath }?.text)
         sendCommand?([
             "cmd": "retranscribe_recording",
             "audio_path": trimmedPath,

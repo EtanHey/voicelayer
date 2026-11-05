@@ -46,13 +46,17 @@ final class NotchHistoryPanelTests: XCTestCase {
                 XCTAssertEqual(geometry.bodyLeadingExtent, geometry.bodyTrailingExtent, "symmetric about the core")
             }
         }
-        // UXP-2: the History body is flush with the launcher wings, and a flush side is drawn straight down (the
-        // old S-hook came from a shoulder curve drawn at the wing's own x; a flush shoulder now has no depth).
-        // The mic's fitted wing is narrower, so on that side the body steps out past it (W11); the step is a
-        // convex corner inside the body's own bounds, so still nothing sticks out.
+        // UXP-2: a flush side is drawn straight down (the old S-hook came from a shoulder curve drawn at the wing's
+        // own x). The plain state shell steps out past both launcher wings with convex corners inside the body's
+        // own bounds, so still nothing sticks out.
         for core in [CGFloat(185), 200, 220] {
             let history = VoiceBarNotchContract.geometry(for: .history, coreWidth: core)
-            XCTAssertEqual(history.bodyTrailingExtent, history.trailingWingWidth, "flush @\(core)")
+            // 2.3 lane U4: the morph draws History as ONE shape, flush on both sides (mock 2-morph).
+            let drawn = VoiceBarNotchHistoryMorphInput(
+                progress: 1, closed: VoiceBarNotchContract.geometry(for: .hoverLauncher, coreWidth: core), open: history
+            ).flushTop
+            XCTAssertEqual(drawn.bodyTrailingExtent, drawn.trailingWingWidth, "flush @\(core)")
+            XCTAssertEqual(drawn.bodyLeadingExtent, drawn.leadingWingWidth, "flush @\(core)")
             let path = VoiceBarNotchContinuousShape(
                 geometry: history,
                 compactOuterCornerRadius: VoiceBarNotchContract.material.compactOuterCornerRadius(for: .history),
@@ -65,20 +69,22 @@ final class NotchHistoryPanelTests: XCTestCase {
                           VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth, "still narrower")
     }
 
-    /// W11 lead call: fitting the mic's wing must not shrink or shift the panel. 332 pt, centred on the housing,
-    /// is what 2.2.28 shipped; at 306 pt the footer's paste hint wrapped to a second line.
-    func testTheHistoryPanelKeepsItsWidthAndCentringAndItsFooterFitsOnOneLine() {
+    /// 2.3 lane U4 (mock 5-history): 420 pt wide, centred on the housing, seven 46 pt rows under an 8 pt inset
+    /// with the 18 pt extend-handle band below (40 + 322 + 18 = 380 pt from the top of the screen, the mock's
+    /// `40 + rows × 46 + 18`).
+    func testTheHistoryPanelMatchesTheMock() {
         let history = VoiceBarNotchContract.geometry(for: .history)
         let layout = VoiceBarNotchShapeLayout(geometry: history)
-        XCTAssertEqual(history.bodyWidth, 332)
+        XCTAssertEqual(history.bodyWidth, 420)
+        let drawn = VoiceBarNotchHistoryMorphInput(
+            progress: 1, closed: VoiceBarNotchContract.geometry(for: .hoverLauncher), open: history
+        ).flushTop
+        XCTAssertEqual(drawn.topWidth, 420, "the morph draws the top row as wide as the panel")
         XCTAssertEqual(layout.bodyRect.midX, layout.coreRect.midX, "centred on the housing")
-        XCTAssertEqual(history.bodyLeadingExtent, 73.5)
-        XCTAssertEqual(history.bodyTrailingExtent, 73.5)
-
-        let inset = VoiceBarNotchContract.material.teleprompterBodyHorizontalInset
-        let footer = NotchHistoryPresentation.footerOneLineWidth
-        XCTAssertLessThanOrEqual(footer, history.bodyWidth - 2 * inset, "the paste hint wraps")
-        XCTAssertGreaterThan(footer, 306 - 2 * inset, "a panel as narrow as the fitted launcher would wrap it")
+        XCTAssertEqual(history.lowerSurfaceHeight, 348)
+        XCTAssertEqual(history.totalHeight, 380)
+        XCTAssertEqual(NotchHistoryMorph.listHeight, 322)
+        XCTAssertEqual(NotchHistoryMorph.bodyWidth - 2 * NotchHistoryMorph.listHorizontalInset, 404)
     }
 
     private func key(_ code: UInt16, _ characters: String, in window: NSWindow?) throws -> NSEvent {
@@ -214,7 +220,7 @@ final class NotchHistoryPanelTests: XCTestCase {
         )
         XCTAssertTrue(region.contains(CGPoint(x: geometry.totalWidth / 2, y: geometry.lowerSurfaceHeight / 2)),
                       "rows scroll and hover, so the body is interactive")
-        XCTAssertTrue(region.contains(CGPoint(x: geometry.bodyOriginX + 2, y: 2)), "down to the footer")
+        XCTAssertTrue(region.contains(CGPoint(x: geometry.bodyOriginX + 2, y: 2)), "down to its bottom edge")
         let historyButton = CGPoint(
             x: geometry.coreOriginX + geometry.coreWidth + VoiceBarNotchContract.compactCoreContentInset + 2,
             y: geometry.lowerSurfaceHeight + geometry.topHeight / 2
@@ -232,8 +238,12 @@ final class NotchHistoryPanelTests: XCTestCase {
         ))
         XCTAssertEqual(canvas.canvasGeometry.totalWidth, teleprompterCanvas.canvasGeometry.totalWidth,
                        "one fixed canvas width, so the shell morphs instead of the window jumping")
+        // V6: the window holds seven rows plus the note reserve, or the 12-row panel, whichever is taller, and
+        // stays that size whatever rows the handle settles on.
         XCTAssertEqual(canvas.canvasGeometry.totalHeight,
-                       resolve(history: true).geometry.totalHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
+                       VoiceBarNotchContract.topHeight + NotchHistoryMorph.historyCanvasLowerSurfaceHeight)
+        XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalHeight,
+                                    resolve(history: true).geometry.totalHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
     }
 
     func testRowsShowFirstWordsOnOneFlattenedLine() {
@@ -249,7 +259,7 @@ final class NotchHistoryPanelTests: XCTestCase {
         XCTAssertEqual(NotchHistoryPresentation.rowActions.map(\.symbol),
                        ["doc.on.doc", "text.insert", "arrow.clockwise"])
         XCTAssertEqual(NotchHistoryPresentation.rowActions.map(\.label),
-                       ["Copy", "Paste into the app you were using", "Re-transcribe"])
+                       ["Copy", "Paste into the app you were using", "Transcribe again"])
         XCTAssertGreaterThanOrEqual(NotchHistoryPresentation.rowActionSize, 24)
     }
 }

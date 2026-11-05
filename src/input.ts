@@ -753,6 +753,11 @@ export interface VoiceBarUntranscribedRecordingArchiveInput extends Omit<
 export interface WaitForInputOptions {
   archiveSource?: "voicebar" | "voice_ask";
   voiceAskArtifacts?: {
+    promptDelivery: "text-only";
+    agentTranscript: string;
+    createdAt?: Date;
+  } | {
+    promptDelivery?: "audio";
     agentAudioBytes: Uint8Array;
     agentAudioFormat: "mp3";
     agentTranscript: string;
@@ -916,8 +921,8 @@ interface VoiceAskRecordingMetadata {
   sample_rate: number;
   channels: number;
   backend: string | null;
-  agent_tts_engine: TextToSpeechEngine;
-  agent_tts_voice: string;
+  agent_tts_engine: TextToSpeechEngine | null;
+  agent_tts_voice: string | null;
   language_mode: string;
   transcription_status: "captured" | "transcribed";
   retention_policy: "indefinite";
@@ -925,12 +930,13 @@ interface VoiceAskRecordingMetadata {
   agent_transcript_chars: number;
   user_transcript_chars: number;
   audio_sha256: string;
-  agent_audio_sha256: string;
+  agent_audio_sha256: string | null;
   user_audio_sha256: string;
-  artifacts: typeof VOICE_ASK_ARTIFACT_NAMES;
+  artifacts: Omit<typeof VOICE_ASK_ARTIFACT_NAMES, "agent_audio"> & { agent_audio: "agent-audio.mp3" | null };
+  prompt_delivery?: "text-only";
   app_version: string | null;
   provenance: RecordingProvenance;
-  schema_version: 4;
+  schema_version: 4 | 5;
 }
 
 function resolvedRecordingsArchiveRoot(): string {
@@ -1233,15 +1239,15 @@ function requireVoiceAskArtifacts(options: WaitForInputOptions) {
   if (
     options.archiveSource !== "voice_ask" ||
     !artifacts ||
-    artifacts.agentAudioFormat !== "mp3" ||
-    artifacts.agentAudioBytes.byteLength === 0 ||
+    (artifacts.promptDelivery !== "text-only" && (artifacts.agentAudioFormat !== "mp3" ||
+      artifacts.agentAudioBytes.byteLength === 0)) ||
     !artifacts.agentTranscript.trim()
   ) {
     throw new Error(
       "voice_ask archive requires immutable agent audio and transcript artifacts",
     );
   }
-  if (!artifacts.agentTtsEngine || !artifacts.agentTtsVoice.trim()) {
+  if (artifacts.promptDelivery !== "text-only" && (!artifacts.agentTtsEngine || !artifacts.agentTtsVoice.trim())) {
     throw new Error(
       "voice_ask archive requires actual-used TTS engine and voice",
     );
@@ -1261,7 +1267,7 @@ export function archiveVoiceAskCapture(
   const dayDir = join(archiveRoot, createdAtIso.slice(0, 10));
   const stagingDir = join(dayDir, `.tmp-${id}`);
   const finalDir = join(dayDir, id);
-  const agentAudioBytes = artifacts.agentAudioBytes;
+  const agentAudioBytes = artifacts.promptDelivery === "text-only" ? null : artifacts.agentAudioBytes;
   const userAudioSha256 = createHash("sha256")
     .update(input.audioBytes)
     .digest("hex");
@@ -1285,8 +1291,8 @@ export function archiveVoiceAskCapture(
     sample_rate: SAMPLE_RATE,
     channels: CHANNELS,
     backend: null,
-    agent_tts_engine: artifacts.agentTtsEngine,
-    agent_tts_voice: artifacts.agentTtsVoice,
+    agent_tts_engine: artifacts.promptDelivery === "text-only" ? null : artifacts.agentTtsEngine,
+    agent_tts_voice: artifacts.promptDelivery === "text-only" ? null : artifacts.agentTtsVoice,
     language_mode: languageMode,
     transcription_status: "captured",
     retention_policy: "indefinite",
@@ -1294,14 +1300,13 @@ export function archiveVoiceAskCapture(
     agent_transcript_chars: artifacts.agentTranscript.length,
     user_transcript_chars: 0,
     audio_sha256: userAudioSha256,
-    agent_audio_sha256: createHash("sha256")
-      .update(agentAudioBytes)
-      .digest("hex"),
+    agent_audio_sha256: agentAudioBytes ? createHash("sha256").update(agentAudioBytes).digest("hex") : null,
     user_audio_sha256: userAudioSha256,
-    artifacts: VOICE_ASK_ARTIFACT_NAMES,
+    artifacts: { ...VOICE_ASK_ARTIFACT_NAMES, agent_audio: agentAudioBytes ? VOICE_ASK_ARTIFACT_NAMES.agent_audio : null },
+    ...(agentAudioBytes ? {} : { prompt_delivery: "text-only" as const }),
     app_version: provenance.app_version,
     provenance,
-    schema_version: 4,
+    schema_version: artifacts.promptDelivery === "text-only" ? 5 : 4,
   };
 
   let stagingCreated = false;
@@ -1310,9 +1315,8 @@ export function archiveVoiceAskCapture(
     fsyncPath(archiveRoot);
     mkdirSync(stagingDir, { mode: 0o700 });
     stagingCreated = true;
-    atomicWriteFile(
-      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.agent_audio),
-      agentAudioBytes,
+    if (agentAudioBytes) atomicWriteFile(
+      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.agent_audio), agentAudioBytes,
     );
     atomicWriteFile(
       join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.agent_transcript),
@@ -1370,15 +1374,14 @@ function requireVoiceAskArchiveDirectory(archivePath: string): {
   }
 
   // Read as a widened schema_version: a v3 capture on disk must still finalize
-  // (every recording is kept), even though this build only writes v4.
+  // (every recording is kept); v5 represents a text-only question.
   const metadata = JSON.parse(
     readFileSync(join(resolvedPath, "metadata.json"), "utf8"),
   ) as StoredVoiceAskRecordingMetadata;
   if (
     metadata.source !== "voice_ask" ||
-    // Accept 3 and 4: v4 only adds the provenance block, and every recording
-    // is kept — a v3 capture must still finalize.
-    (metadata.schema_version !== 3 && metadata.schema_version !== 4) ||
+    // v4 adds provenance; v5 explicitly has no synthesized question audio.
+    (metadata.schema_version !== 3 && metadata.schema_version !== 4 && metadata.schema_version !== 5) ||
     metadata.id !== basename(resolvedPath)
   ) {
     throw new Error(`Invalid voice_ask archive metadata: ${archivePath}`);
@@ -1422,7 +1425,7 @@ export function finalizeVoiceAskArchive(
       polishStatus: input.polishStatus,
       probe: input.provenanceProbe,
     }),
-    schema_version: 4,
+    schema_version: archive.metadata.prompt_delivery === "text-only" ? 5 : 4,
   };
   atomicWriteFile(
     join(archive.path, "metadata.json"),
@@ -4112,7 +4115,6 @@ function loadVoiceAskArchiveSnapshot(
   );
   const metadataPath = join(archivePath, "metadata.json");
   requireRegularFileWithoutSymlink(audioPath, "audio");
-  requireRegularFileWithoutSymlink(agentAudioPath, "agent audio");
   requireRegularFileWithoutSymlink(agentTranscriptPath, "agent transcript");
   requireRegularFileWithoutSymlink(metadataPath, "metadata");
 
@@ -4150,19 +4152,22 @@ function loadVoiceAskArchiveSnapshot(
     metadata.id !== archiveId ||
     (metadata.schema_version !== 2 &&
       metadata.schema_version !== 3 &&
-      metadata.schema_version !== 4) ||
+      metadata.schema_version !== 4 && metadata.schema_version !== 5) ||
     (metadata.transcription_status !== "captured" &&
       metadata.transcription_status !== "transcribed")
   ) {
     throw new Error(`Invalid voice_ask archive metadata for ${archiveId}`);
   }
+  const textOnly = metadata.schema_version === 5 && metadata.prompt_delivery === "text-only" &&
+    metadata.agent_tts_engine === null && metadata.agent_tts_voice === null && metadata.agent_audio_sha256 === null;
+  if (!textOnly) requireRegularFileWithoutSymlink(agentAudioPath, "agent audio");
   const artifacts = metadata.artifacts;
   if (
     !artifacts ||
     typeof artifacts !== "object" ||
     Array.isArray(artifacts) ||
     (artifacts as Record<string, unknown>).agent_audio !==
-      VOICE_ASK_ARTIFACT_NAMES.agent_audio ||
+      (textOnly ? null : VOICE_ASK_ARTIFACT_NAMES.agent_audio) ||
     (artifacts as Record<string, unknown>).agent_transcript !==
       VOICE_ASK_ARTIFACT_NAMES.agent_transcript ||
     (artifacts as Record<string, unknown>).user_audio !==
@@ -4181,9 +4186,8 @@ function loadVoiceAskArchiveSnapshot(
   );
   if (wavError) throw new Error(wavError);
   const audioHash = createHash("sha256").update(audioBytes).digest("hex");
-  const agentAudioHash = createHash("sha256")
-    .update(readFileSync(agentAudioPath))
-    .digest("hex");
+  const agentAudioHash = textOnly ? null : createHash("sha256")
+    .update(readFileSync(agentAudioPath)).digest("hex");
   if (
     metadata.audio_sha256 !== audioHash ||
     metadata.user_audio_sha256 !== audioHash ||

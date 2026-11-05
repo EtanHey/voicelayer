@@ -79,6 +79,13 @@ struct SettingsHistoryRecordingMemory: Equatable {
 
     mutating func select(_ id: String) { selectedID = id }
 
+    /// A row asked for from outside (a notch History row click): selected now and kept by the next page while that
+    /// page has it, falling back to the newest otherwise, exactly as a user's own pick is.
+    mutating func request(_ id: String) {
+        selectedID = id
+        hasPage = true
+    }
+
     /// The first page selects the newest row. Every later page (a refresh, a search, Load more, coming back
     /// to History) keeps the remembered row while it is still loaded, and falls back to the newest otherwise.
     mutating func applyPage(_ ids: [String]) {
