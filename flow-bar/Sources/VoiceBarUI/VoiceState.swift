@@ -934,6 +934,9 @@ public final class VoiceState {
 
     /// Global hotkey availability and live gesture hint state.
     public var hotkeyEnabled: Bool = false
+    /// 2.3 U2: the permissions whose absence made the F5 listener fail. Non-empty badges the notch gear and names the
+    /// problem in its tooltip. Distinct from `hotkeyEnabled`, which is also false before the listener has started.
+    public private(set) var setupMissingPermissions: [HotkeyPermission] = []
     public var hotkeyPhase: HotkeyPhase = .idle {
         didSet {
             clearSelectionBusyNoteIfSessionEnded()
@@ -3959,6 +3962,17 @@ public final class VoiceState {
         } else {
             expandFromCollapse()
         }
+    }
+
+    /// 2.3 U2: the notch gear's orange dot (a setup problem). The polish alert stays on the menu-bar item until
+    /// lane U1 removes that item and folds it in here.
+    public var setupNeedsAttention: Bool {
+        !setupMissingPermissions.isEmpty
+    }
+
+    public func setSetupMissingPermissions(_ missing: [HotkeyPermission]) {
+        guard setupMissingPermissions != missing else { return }
+        setupMissingPermissions = missing
     }
 
     public func setHotkeyEnabled(_ enabled: Bool) {

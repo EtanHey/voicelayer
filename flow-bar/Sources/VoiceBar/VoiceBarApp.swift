@@ -770,7 +770,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
-            includesPanelOutsets: true
+            includesPanelOutsets: true,
+            // 2.3 U2: until the chevron's own microphone list lands, it opens Settings › Microphone priority, the
+            // D2 "Change…" path.
+            onOpenMicrophonePicker: { [weak self] in
+                self?.openSettingsWindow(tab: .general, focus: .microphonePriority)
+            },
+            onOpenSetupSettings: { [weak self] in self?.openSetupAttentionSettings() }
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
@@ -1582,6 +1588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotkeyEnabled = false
             missingHotkeyPermissions = missing
             voiceState.setHotkeyEnabled(false)
+            voiceState.setSetupMissingPermissions(missing)
             NSLog(
                 "[VoiceBar] Hotkey system unavailable — missing permissions: %@",
                 missingHotkeyPermissions.map {
@@ -1596,6 +1603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotkeyEnabled = true
             missingHotkeyPermissions = []
             voiceState.setHotkeyEnabled(true)
+            voiceState.setSetupMissingPermissions([])
             NSLog("%@", VoiceBarHotkeyContract.activationLogMessage)
         }
     }
@@ -2007,8 +2015,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .idle:
             return .none
         case .hoverLauncher:
+            // 2.3 U2: the mic and its chevron on the left; History and Settings on the right.
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: 2,
                 trailingControlCountFromCore: 2
             )
         case .recording:
@@ -2018,17 +2027,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .compactStatus:
             switch state.mode {
             case .transcribing:
-                return VoiceBarNotchInteractionConfiguration(
-                    trailingControlCountFromOuter: 1,
-                    trailingOuterInset: WaveformLayout.outerInset
-                )
+                // 2.3 U2: the spinner is not a control; History and Settings stay live on the right.
+                return VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
             case .speaking:
-                // P16: pause/play on the left; a hidden-but-playing read adds its eye beside Stop.
-                // QUEUE1: Next and the "+N" count share the left wing.
+                // P16: pause/play on the left; QUEUE1: Next and the "+N" count share it.
+                // 2.3 U2: Stop at the right wing's outer edge (its time, or a hidden read's eye, beside it).
                 return VoiceBarNotchInteractionConfiguration(
                     leadingControlCount: playbackLeadingSlotCount(for: state),
                     trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
-                    trailingOuterInset: WaveformLayout.outerInset
+                    trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
                 )
             case .error:
                 return VoiceBarNotchInteractionConfiguration(
@@ -2054,6 +2061,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 lowerControlCount += 1
             }
             return VoiceBarNotchInteractionConfiguration(
+                // 2.3 U2: the right wing shows the reading time; the teleprompter's lower row keeps the live Stop.
                 leadingControlCount: state.mode == .speaking ? playbackLeadingSlotCount(for: state) : 0,
                 lowerControlCount: lowerControlCount,
                 lowerSurfaceIsInteractive: state.mode == .speaking
@@ -3033,6 +3041,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let voiceState = voiceState
             controller.trackAlert { voiceState.polishMenuSignalPending }
         }
+    }
+
+    // MARK: - Setup attention (2.3 U2)
+
+    /// The badged gear opens Settings › General › Permissions (the 3-wings mock's "setup spot").
+    func openSetupAttentionSettings() {
+        openSettingsWindow(tab: .general, focus: .permissions)
     }
 
     var settingsWindowForTesting: NSWindow? {

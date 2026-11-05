@@ -31,15 +31,18 @@ final class VoiceBarNotchMotionTests: XCTestCase {
         XCTAssertTrue(plan.preservesFixedCore)
     }
 
-    func testRecordingToHoverLauncherUsesClosingMotionBecauseTheSurfaceContracts() {
+    /// 2.3 U2: recording and the launcher share the fixed 73 + 73 pt outline, so leaving recording no longer
+    /// contracts the surface and is not a closing motion: the controls swap inside an unchanged shell.
+    func testRecordingToHoverLauncherKeepsTheOutlineAndIsNotAClosingMotion() {
         let plan = VoiceBarNotchMotionPlan.resolve(
             from: .recording,
             to: .hoverLauncher,
             reducedMotion: false
         )
-
-        XCTAssertEqual(plan.steps.map(\.component), [.content, .panel, .wings])
-        XCTAssertTrue(plan.steps.allSatisfy { !$0.targetVisible })
+        XCTAssertEqual(VoiceBarNotchContract.geometry(for: .recording).topWidth,
+                       VoiceBarNotchContract.geometry(for: .hoverLauncher).topWidth)
+        XCTAssertEqual(plan.steps.map(\.component), [.wings, .panel, .content])
+        XCTAssertTrue(plan.steps.allSatisfy(\.targetVisible))
     }
 
     func testFixedCoreNeverAppearsInAnAnimatedComponent() {
