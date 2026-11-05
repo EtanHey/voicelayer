@@ -72,21 +72,22 @@ final class SettingsViewTests: XCTestCase {
 
         XCTAssertTrue(
             source.contains("deleteDictionaryEntryButton"),
-            "each canonical term card needs an always-visible delete affordance"
+            "each canonical term card needs a delete affordance (shown on hover or selection; U3 spec)"
         )
     }
 
-    /// R4/D1: a term's misheard spellings are one quiet line under it, only when it has some. There is no
-    /// "+ misheard as…" row under every term any more (Etan's 2.2.24 review #3).
-    func testVariantSummaryIsOneQuietLineOnlyWhenThereAreVariants() throws {
+    /// U3 spec: a term's misheard spellings are its row description ("Also heard as …"), only when it has some,
+    /// wrapping to two lines (V12 row anatomy) instead of a one-line clip.
+    func testVariantSummaryIsTheRowDescriptionOnlyWhenThereAreVariants() throws {
         let source = try settingsViewSource()
-        let card = try XCTUnwrap(source.functionBody(named: "dictionaryEntryCard"))
+        let header = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
 
-        XCTAssertTrue(card.contains("if !entry.variants.isEmpty"))
-        XCTAssertTrue(card.contains(".lineLimit(1)"))
+        XCTAssertTrue(header.contains("entry.variants.isEmpty ? nil : Self.variantSummary(entry.variants)"))
+        XCTAssertTrue(header.contains("SettingsRowLabel("))
+        XCTAssertFalse(header.contains(".lineLimit(1)"))
         XCTAssertEqual(
             SettingsView.variantSummary(["voice lair", "voice layer"]),
-            "misheard as voice lair, voice layer"
+            "Also heard as voice lair, voice layer"
         )
     }
 
@@ -109,31 +110,16 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertLessThan(editable.lowerBound, pencil.lowerBound)
     }
 
-    func testDictionaryTextActionsUseStyledButtons() throws {
+    /// U3 spec: the trash deletes at once and offers a 4 s Undo; there is no "Delete?" confirm step any more.
+    func testTrashDeletesWithUndoInsteadOfAConfirmStep() throws {
         let source = try settingsViewSource()
         let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
 
-        XCTAssertTrue(deleteButtonSource.contains("Button(\"Cancel\") {"))
-        XCTAssertTrue(deleteButtonSource.contains(".buttonStyle(.bordered)"))
-        XCTAssertTrue(deleteButtonSource
-            .contains(
-                "Button(\"Delete?\", role: .destructive) {\n                SettingsDictionaryMutations.confirmDeleteTerm("
-            ))
-        XCTAssertTrue(deleteButtonSource.contains(".buttonStyle(.borderedProminent)"))
-        XCTAssertTrue(deleteButtonSource.contains(".tint(.red)"))
-    }
-
-    func testDeleteConfirmationHeaderHidesEditButton() throws {
-        let source = try settingsViewSource()
-        let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
-        let deleteConfirmBranch = try XCTUnwrap(headerSource.range(of: "if pendingDeleteCanonical == entry.canonical"))
-        let editButton = headerSource.range(of: "termSheet = DictionaryTermEdit(original: entry)")
-
-        XCTAssertNotNil(editButton)
-        XCTAssertTrue(
-            try XCTUnwrap(editButton?.lowerBound) > deleteConfirmBranch.upperBound,
-            "the edit pencil must only render outside the delete-confirm branch"
-        )
+        XCTAssertTrue(deleteButtonSource.contains("deleteTerm(canonical, rowID: rowID)"))
+        XCTAssertFalse(source.contains("Button(\"Delete?\""))
+        XCTAssertFalse(source.contains("pendingDeleteCanonical"))
+        XCTAssertTrue(source.contains("Button(\"Undo\") { undoDeletion() }"))
+        XCTAssertTrue(source.contains(".onDeleteCommand { deleteSelectedTerm() }"))
     }
 
     func testDictionaryDoesNotRenderOldSplitSections() throws {
@@ -296,30 +282,27 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
-    func testDeleteTermRequiresConfirmationBeforeMutating() {
+    /// U3 spec: Delete hides the term at once, but the daemon removal waits for the 4 s Undo window to close.
+    func testDeleteHidesTermAndCommitsOnlyAfterTheUndoWindow() {
         var localEntries = [
             STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"]),
         ]
-        var pendingDelete: String?
+        var pending: DictionaryPendingDeletion?
         var removedTerms: [String] = []
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
 
-        SettingsDictionaryMutations.requestDeleteTerm(
-            "VoiceLayer",
-            pendingDeleteCanonical: &pendingDelete
-        )
+        DictionaryDeletion.begin("VoiceLayer", localEntries: &localEntries, pending: &pending, now: start,
+                                 commit: { removedTerms.append($0.canonical) })
 
-        XCTAssertEqual(pendingDelete, "VoiceLayer")
-        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"])])
-        XCTAssertTrue(removedTerms.isEmpty)
+        XCTAssertEqual(localEntries, [])
+        XCTAssertEqual(pending?.deadline, start.addingTimeInterval(4))
+        XCTAssertTrue(removedTerms.isEmpty, "nothing reaches the daemon inside the Undo window")
 
-        SettingsDictionaryMutations.confirmDeleteTerm(
-            "VoiceLayer",
-            pendingDeleteCanonical: &pendingDelete,
-            localEntries: &localEntries,
-            onRemovePromptTerm: { removedTerms.append($0) }
-        )
-
-        XCTAssertNil(pendingDelete)
+        XCTAssertFalse(DictionaryDeletion.commitIfExpired(now: start.addingTimeInterval(3.9), pending: &pending,
+                                                          commit: { removedTerms.append($0.canonical) }))
+        XCTAssertTrue(DictionaryDeletion.commitIfExpired(now: start.addingTimeInterval(4), pending: &pending,
+                                                         commit: { removedTerms.append($0.canonical) }))
+        XCTAssertNil(pending)
         XCTAssertEqual(removedTerms, ["VoiceLayer"])
         XCTAssertEqual(localEntries, [])
     }
