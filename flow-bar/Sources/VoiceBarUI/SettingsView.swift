@@ -1682,6 +1682,13 @@ public struct SettingsView: View {
         return VStack(alignment: .leading, spacing: 6) {
             historyMediaPartStats(part)
             historyMediaPartActions(part, isRetranscribing: retranscribing, enablement: enablement)
+            // Etan, 2026-11-05: a Re-transcribe that produced the same words said nothing. Now it says so here.
+            if !retranscribing,
+               let note = SettingsHistoryDiagnosticsCopy.latestRequestNote(runs: historyRunLog().runs(for: entry.audioPath.path)) {
+                Label(note, systemImage: "equal.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("history-retranscribe-unchanged")
+            }
             if historyPlayback.playingURL == part.audioPath {
                 SettingsPlaybackScrubBar(playback: historyPlayback, url: entry.audioPath, accessibilityNoun: part.accessibilityNoun)
             }
