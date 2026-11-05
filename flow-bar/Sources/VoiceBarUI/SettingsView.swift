@@ -67,6 +67,8 @@ public struct SettingsTabRequest: Equatable {
 public enum SettingsFocus: String, Equatable, Hashable {
     /// General › Microphone priority, where the default microphone is chosen (D2 "Change…").
     case microphonePriority = "settings-general-microphone-priority"
+    /// General › Permissions, where the notch gear's setup badge leads (2.3 U2).
+    case permissions = "settings-general-permissions"
 }
 
 /// History scopes in on-screen order; Dictations remains the default.
@@ -1038,8 +1040,12 @@ public struct SettingsView: View {
             }
 
             // Always flat, even when everything is granted (Etan's 2.2.24 review #4; BrainBar #920).
-            Section("Permissions") {
+            Section {
                 permissionRows
+            } header: {
+                // 2.3 U2: the badged notch gear scrolls here.
+                Text("Permissions")
+                    .id(SettingsFocus.permissions)
             }
 
             Section("Setup") {

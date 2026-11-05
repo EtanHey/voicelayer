@@ -1,0 +1,19 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "PendingMenuShows",
+  "status": "EXPECTED_FAIL",
+  "generated": 153,
+  "distinct": 72,
+  "trace": [
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"none\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 0\n/\\ viewHistory = FALSE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"mic\"\n/\\ wanted = \"mic\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 1\n/\\ viewHistory = FALSE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"history\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 2\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"none\"\n/\\ closing = TRUE\n/\\ closeAsked = FALSE\n/\\ events = 3\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"notch\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"notch\"\n/\\ closing = TRUE\n/\\ closeAsked = FALSE\n/\\ events = 4\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"notch\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"notch\"\n/\\ closing = TRUE\n/\\ closeAsked = FALSE\n/\\ events = 5\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"notch\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"notch\"\n/\\ closing = TRUE\n/\\ closeAsked = FALSE\n/\\ events = 6\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ queued = \"none\"\n/\\ wanted = \"notch\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 6\n/\\ viewHistory = FALSE",
+    "Finished checking temporal properties in 00s at 2026-11-05 11:58:12"
+  ]
+}

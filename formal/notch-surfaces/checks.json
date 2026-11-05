@@ -1,0 +1,47 @@
+{
+  "module": "NotchSurfaces",
+  "sourceBaseline": "531a261ed",
+  "sources": [
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Old": {
+      "role": "mutant",
+      "target": "ExclusiveSurfaces",
+      "kind": "invariant"
+    },
+    "MutantNoClose": {
+      "role": "mutant",
+      "target": "ExclusiveSurfaces",
+      "kind": "invariant"
+    },
+    "MutantDropPending": {
+      "role": "mutant",
+      "target": "PendingMenuShows",
+      "kind": "temporal"
+    },
+    "MutantPresentStale": {
+      "role": "mutant",
+      "target": "ExclusiveSurfaces",
+      "kind": "invariant"
+    },
+    "MutantNoReopenCancel": {
+      "role": "mutant",
+      "target": "NoStaleMenu",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "ExclusiveSurfaces",
+    "NoStaleMenu",
+    "PendingMenuShows"
+  ]
+}

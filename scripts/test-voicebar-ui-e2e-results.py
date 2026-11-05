@@ -429,6 +429,22 @@ class ReportTests(unittest.TestCase):
         with patch.object(results.subprocess, 'run'), self.assertRaises(ValueError):
             results.export(self.root, sandbox)
 
+    def test_wings_u2_export_requires_every_wing_state_and_copies_wings_receipt(self):
+        directory, ledger, _ = self.attachment_run()
+        ledger.update(scenario='wings-u2', scope='wings-u2')
+        ledger['coverage']['scenario'] = 'wings-u2'
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        (sandbox / 'wings.json').write_text(json.dumps({'fixture': 'launcher', 'fixedWingWidth': 73.5}))
+        (self.root / 'scenario.json').write_text(json.dumps({'scenario': 'wings-u2'}))
+        # The attachment run carries none of the WINGS-U2 steps: the scenario must refuse to pass.
+        with patch.object(results.subprocess, 'run'):
+            self.assertFalse(results.export(self.root, sandbox))
+        qa = json.loads((self.root / 'qa-report.json').read_text())
+        self.assertIn('FAIL wings-u2 missing required wing-state evidence', qa['issues'])
+        self.assertEqual((self.root / 'wings.json').read_bytes(), (sandbox / 'wings.json').read_bytes())
+        self.assertEqual(results.SCENARIOS['wings-u2'], 'testWingsU2Flow')
+
     def test_focused_p1e_expected_waiver_cannot_pass(self):
         directory, ledger, _, sandbox = self.focused_run()
         ledger['steps'][0]['expectedFailure'] = dict(packet='P1e', surface='feedback',

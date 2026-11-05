@@ -535,7 +535,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
         XCTAssertTrue(source.contains("Section(\"Shortcut\")"))
-        XCTAssertTrue(source.contains("Section(\"Permissions\")"))
+        XCTAssertTrue(source.contains("Text(\"Permissions\")\n                    .id(SettingsFocus.permissions)"))
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))
         XCTAssertTrue(source.contains("F5 key helper"))

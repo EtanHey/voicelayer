@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 
-SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow'}
+SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow', 'wings-u2': 'testWingsU2Flow'}
 
 
 def selected_scenario(output, scenario=None):
@@ -381,7 +381,7 @@ def export(output, sandbox, scenario=None):
     steps, ledger, issues = receipts(directory, manifest)
     if ledger is not None:
         labels = [ledger.get('scenario'), ledger.get('scope'), ledger['coverage'].get('scenario')]
-        if ((scenario in {'focused-338', 'hide1', 'gate2246'} and labels != [scenario] * 3)
+        if ((scenario in {'focused-338', 'hide1', 'gate2246', 'wings-u2'} and labels != [scenario] * 3)
                 or any(label is not None and label != scenario for label in labels)):
             raise ValueError('Ledger scenario/scope differs from selected scenario: ' + scenario)
     if scenario == 'focused-338':
@@ -408,6 +408,14 @@ def export(output, sandbox, scenario=None):
             issues.append('FAIL hide1 missing required before/hidden/shown evidence')
         if any(step.get('skipped') or expected_packet(step) is not None for step in steps):
             issues.append('FAIL hide1 cannot skip or waive a case')
+    if scenario == 'wings-u2':
+        required = {'WINGS-U2 ' + name for name in
+                    ['launcher', 'chevron-list', 'setup-error', 'recording', 'transcribing', 'speaking-collapsed',
+                     'first-click', 'first-click-chevron', 'queued-cancel']}
+        if not required.issubset({step['name'] for step in steps}):
+            issues.append('FAIL wings-u2 missing required wing-state evidence')
+        if any(step.get('skipped') or expected_packet(step) is not None for step in steps):
+            issues.append('FAIL wings-u2 cannot skip or waive a case')
     issues += guard_export_issues(scenario, sandbox, [step['name'] for step in steps])
     (output / 'steps.json').write_text(json.dumps(steps, indent=2))
     if ledger is not None:
@@ -415,7 +423,7 @@ def export(output, sandbox, scenario=None):
         (output / 'coverage.json').write_text(json.dumps(ledger['coverage'], indent=2))
     # These receipts are written by the isolated QA app, not the sandboxed XCTest runner.
     for name in ['events.json', 'dictionary.json', 'speech.json', 'processing.json',
-                 'gallery.json', 'focused-scope.json']:
+                 'gallery.json', 'focused-scope.json', 'wings.json']:
         source = sandbox / name
         if not source.is_file():
             if scenario == 'focused-338' and name == 'gallery.json':
@@ -438,7 +446,7 @@ def export(output, sandbox, scenario=None):
                     ledger.get('limitations', []) if ledger else [], scenario)
     write_scenario(output, scenario)
     qa = dict(version=1, scenario=scenario, scope=scenario, scenarioPassed=passed,
-              verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'focused-338', 'hide1', 'gate2246'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
+              verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'focused-338', 'hide1', 'gate2246', 'wings-u2'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
               fullReleasePass=False, fullReleaseCoverage='NOT_PROVEN', issues=issues,
               # Steps with no proven QA window to capture: no frame was taken (never a desktop crop).
               visualNotProven=[s['number'] for s in steps if (s.get('capture') or {}).get('status') == 'NOT_PROVEN'])
