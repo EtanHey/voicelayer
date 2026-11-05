@@ -25,7 +25,9 @@ final class SettingsGeneralDisclosureTests: XCTestCase {
     func testPermissionsAreAlwaysFlatRowsWithNoDisclosure() throws {
         let source = try settingsViewSource()
         let section = try XCTUnwrap(
-            source.components(separatedBy: "Section(\"Permissions\") {").dropFirst().first?
+            // 2.3 U2: the Permissions header carries the notch gear's scroll target, like Microphone priority.
+            source.components(separatedBy: "Section {\n                permissionRows").dropFirst().first
+                .map { "permissionRows" + $0 }?
                 .components(separatedBy: "visibilitySection").first
         )
 

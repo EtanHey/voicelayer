@@ -93,6 +93,7 @@ struct ClippingAwareText: View {
             .lineLimit(lineLimit)
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
+            .settingsTextAudit(text, font: font)
             .background(alignment: .topLeading) {
                 GeometryReader { limited in
                     Text(text)

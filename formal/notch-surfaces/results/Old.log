@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "ExclusiveSurfaces",
+  "status": "EXPECTED_FAIL",
+  "generated": 6,
+  "distinct": 6,
+  "trace": [
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ readingCovered = FALSE\n/\\ queued = \"none\"\n/\\ wanted = \"none\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 0\n/\\ viewHistory = FALSE",
+    "/\\ pending = \"none\"\n/\\ shown = \"none\"\n/\\ readingCovered = FALSE\n/\\ queued = \"none\"\n/\\ wanted = \"history\"\n/\\ closing = FALSE\n/\\ closeAsked = FALSE\n/\\ events = 1\n/\\ viewHistory = TRUE",
+    "/\\ pending = \"none\"\n/\\ shown = \"notch\"\n/\\ readingCovered = FALSE\n/\\ queued = \"none\"\n/\\ wanted = \"notch\"\n/\\ closing = FALSE\n/\\ closeAsked = TRUE\n/\\ events = 2\n/\\ viewHistory = TRUE"
+  ]
+}

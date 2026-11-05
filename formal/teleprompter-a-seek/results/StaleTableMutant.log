@@ -1,0 +1,12 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "TableIsCurrent",
+  "status": "EXPECTED_FAIL",
+  "generated": 2,
+  "distinct": 2,
+  "trace": [
+    "/\\ pending = [u |-> 0, line |-> 0]\n/\\ utt = 1\n/\\ paused = FALSE\n/\\ slideTo = 0\n/\\ sends = 0\n/\\ shown = 0\n/\\ clockLine = 0\n/\\ table = 1\n/\\ sliding = FALSE\n/\\ pausedSend = FALSE",
+    "/\\ pending = [u |-> 0, line |-> 0]\n/\\ utt = 2\n/\\ paused = FALSE\n/\\ slideTo = 0\n/\\ sends = 0\n/\\ shown = 0\n/\\ clockLine = 0\n/\\ table = 1\n/\\ sliding = TRUE\n/\\ pausedSend = FALSE"
+  ]
+}

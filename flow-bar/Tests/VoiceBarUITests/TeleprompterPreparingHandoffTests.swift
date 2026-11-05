@@ -43,7 +43,8 @@ final class TeleprompterPreparingHandoffTests: XCTestCase {
         let start = try XCTUnwrap(source.range(of: "private func notchTeleprompterBody(text: String)"))
         let end = try XCTUnwrap(source.range(of: "private var notchTeleprompterControls", range: start.upperBound ..< source.endIndex))
         let body = source[start.upperBound ..< end.lowerBound]
-        XCTAssertEqual(body.components(separatedBy: ".transition(TeleprompterPreparingHandoff.transition)").count - 1, 2)
+        // Status, U5's live Teleprompter A and the readback TeleprompterView: every branch hands off.
+        XCTAssertEqual(body.components(separatedBy: ".transition(TeleprompterPreparingHandoff.transition)").count - 1, 3)
         XCTAssertFalse(body.contains(".transition(.opacity)"))
         // The insertion transitions alone did not hold the arriving side back (review round 2); the gate does,
         // in both directions. Rendered proof: TeleprompterPreparingHandoffRenderTests.

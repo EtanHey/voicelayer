@@ -1,3 +1,4 @@
+import * as journal from "../control-layer-journal";
 import { finishBarCapture, acknowledgeDictationDelivery, runBarCapture } from "../recording-jobs";
 import { z } from "zod";
 import { parseCommand } from "../socket-protocol";
@@ -272,6 +273,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   for (const kind of ["short", "long"] as const) for (const localPress of [2000, 4000])
   for (const ending of ["auto", "slow-exit", "manual", "stop", "refused", "n6-A", "n6-B", "queued"] as const)
   it(`F-resume-clone ${kind} chunked F5 ${localPress}/${ending}`, async () => {
+    const journalEvents = spyOn(journal, "appendControlLayerEvent");
+    spies.push(journalEvents);
     modelReplay = true;
     const cloneReady = fixtureBarrier<string>(), opened = fixtureBarrier<void>();
     const results = [deferred<string | null>(), deferred<string | null>()];
@@ -337,6 +340,12 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       const resumes = !["manual", "stop", "refused"].includes(ending);
       if (resumes) { await playerBarrier.at(3); await fixtureCheckpoint(); }
       const resumed = events.filter(event => event.type === "playback_state" && event.state === "resumed");
+      expect(journalEvents.mock.calls.filter(([type]) => type === "playback_state").map(([, payload]) => payload))
+        .toEqual(events.filter(event => event.type === "playback_state").map(event => ({
+          state: event.state, playback_id: event.playback_id, generation: event.generation,
+          chunk_index: event.long_read?.chunk_index ?? 0, offset_ms: event.offset_ms,
+          owner: event.state === "paused" ? event.pause_owner : "f5",
+        })));
       const wire = { requestID: "clone-owner", text, resumes, ending, events: events.map(event => JSON.parse(serializeEvent(event))) };
       if (process.env.VOICELAYER_F5_CLONE_WIRE) {
         const path = process.env.VOICELAYER_F5_CLONE_WIRE;
@@ -373,6 +382,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   for (const ending of ["auto", "manual", "stop", "refused", "n6-A", "n6-B"] as const) {
     if (window !== "synthesis-after-settle" && ending !== "auto") continue;
   it(`F-resume-clone gap ${kind}/${window}/${ending}`, async () => {
+    const journalEvents = spyOn(journal, "appendControlLayerEvent");
+    spies.push(journalEvents);
     modelReplay = true;
     const pending = deferred<void>(), entered = fixtureBarrier<number>(), ready = fixtureBarrier<number>();
     const opened = fixtureBarrier<void>(), results = [deferred<string | null>(), deferred<string | null>()];
@@ -427,6 +438,12 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       else if (ending === "manual") { await ready.at(5); await fixtureCheckpoint(); }
       else await h.done;
       await fixtureCheckpoint();
+      expect(journalEvents.mock.calls.filter(([type]) => type === "playback_state").map(([, payload]) => payload))
+        .toEqual(events.filter(event => event.type === "playback_state").map(event => ({
+          state: event.state, playback_id: event.playback_id, generation: event.generation,
+          chunk_index: event.long_read?.chunk_index ?? 0, offset_ms: event.offset_ms,
+          owner: event.state === "paused" ? event.pause_owner : "f5",
+        })));
       const frames = events.map(event => JSON.parse(serializeEvent(event)));
       if (process.env.VOICELAYER_F5_CLONE_WIRE) {
         const path = process.env.VOICELAYER_F5_CLONE_WIRE;

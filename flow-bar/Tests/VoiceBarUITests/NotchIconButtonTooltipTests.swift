@@ -108,7 +108,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
     func testIdleLauncherButtons() throws {
         let s = state { $0.isHovering = true }
         assertEveryControlHasATooltip("idle", try mount(bar(s)),
-                                     expecting: ["Start voice recording", "History", "Settings"])
+                                     // 2.3 U2: the mic's tooltip names its shortcut (3-wings mock); the chevron joins it.
+                                     expecting: ["Start dictation (F5)", "Choose microphone", "History", "Settings"])
     }
 
     /// The dropdown open: the wing buttons keep their tooltips and every row action (Copy, Paste,
@@ -122,7 +123,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         // 2.3 lane U4: no footer. Each row's text is its own open button, labelled by that text; a row too long for
         // its line carries its whole text as a tooltip (V12).
         assertEveryControlHasATooltip("history", mounted, expecting: [
-            "Start voice recording", "Close history", "Settings",
+            // 2.3 U2 (mic tooltip + chevron) × U4 (row actions, the long row's clipped-text tooltip).
+            "Start dictation (F5)", "Choose microphone", "Close history", "Settings",
             "Copy", "Paste into the app you were using", "Transcribe again", Self.longRow,
         ], textButtons: 2)
     }
@@ -136,7 +138,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
     func testTranscribingAndErrorButtons() throws {
         let transcribing = state { $0.handleEvent(["type": "state", "state": "transcribing"]) }
         assertEveryControlHasATooltip("transcribing", try mount(bar(transcribing)),
-                                     expecting: ["Cancel transcription"])
+                                     // 2.3 U2: no third control while transcribing; History and Settings stay live.
+                                     expecting: ["History", "Settings"])
         let error = state { $0.handleEvent(["type": "error", "message": "Synthetic diagnostic for the tooltip test."]) }
         assertEveryControlHasATooltip("error", try mount(bar(error)),
                                      expecting: ["Synthetic diagnostic for the tooltip test.", "Dismiss error",
@@ -148,6 +151,7 @@ final class NotchIconButtonTooltipTests: XCTestCase {
             $0.handleEvent(["type": "state", "state": "speaking", "text": "Synthetic teleprompter text.",
                             "playback_id": "tooltips", "generation": 1])
         }
-        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking"])
+        // U5: each Teleprompter A word is a text-labelled "Jump to:" button, not an icon-only control.
+        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking"], textButtons: 3)
     }
 }
