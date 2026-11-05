@@ -172,6 +172,8 @@ enum VoiceBarDaemonEnvironment {
     private static let legacyPreserveQAOverridesEnvironmentVariable = "QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"
 
     private static let preservedQAOverrideAllowlist: Set<String> = [
+        "VOICELAYER_QA_HEALTH",
+        "QA_VOICE_RECORDINGS_DIR",
         "QA_VOICE_DISABLE_FLAG_PATH",
         "QA_VOICE_MCP_PID_PATH",
         "QA_VOICE_MCP_HEARTBEAT_PATH",
@@ -183,6 +185,7 @@ enum VoiceBarDaemonEnvironment {
     ]
 
     private static let inheritedEnvironmentDenylist: Set<String> = [
+        "VOICELAYER_QA_HEALTH",
         "CODEX_CI",
         "DISABLE_VOICELAYER",
         "QA_VOICE_ALLOW_SOCKET_RECLAIM",

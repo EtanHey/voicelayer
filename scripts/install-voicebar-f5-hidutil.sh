@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 # Install VoiceBar's macOS Dictation-key -> F18 hidutil relay.
 set -euo pipefail
+# A QA home must never take over the global gui/$UID relay label.
+if [[ "${VOICELAYER_QA_HEALTH:-}" == 1 || "${VOICEBAR_QA_PRESERVE_OVERRIDES:-}" == 1 ||
+      "${QA_VOICEBAR_PRESERVE_TEST_OVERRIDES:-}" == 1 || -n "${VOICEBAR_USER_DEFAULTS_SUITE:-}" ]]; then
+  echo 'REFUSED: QA app cannot install the system F5 relay' >&2; exit 1
+fi
+if [[ "${VOICELAYER_TEST_ISOLATED:-}" != 1 ]]; then
+  real_home="$(/usr/bin/dscl . -read "/Users/$(/usr/bin/id -un)" NFSHomeDirectory)" || exit 1
+  real_home="${real_home#NFSHomeDirectory: }"
+  [[ "$HOME" == "$real_home" && "${CFFIXED_USER_HOME:-$HOME}" == "$real_home" ]] || {
+    echo 'REFUSED: relay installer requires the real HOME' >&2; exit 1;
+  }
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Refuse before sourcing a restore trap, writing HOME or invoking a host tool.
