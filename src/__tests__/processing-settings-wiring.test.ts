@@ -4,6 +4,8 @@ import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
 import { polishTranscriptionText } from "../stt-polish";
 import { WhisperServerBackend } from "../stt";
+import { processingEnv } from "../processing-settings";
+import { outroGateEnabled } from "../stt-outro-gate";
 
 // P1: a read site that still passes process.env ignores the Settings toggle
 // silently: the "toggle that does nothing" bug. Every pipeline read of the
@@ -69,7 +71,7 @@ describe("a settings file reaches the pipeline with no env set (P1)", () => {
     expect(result.mode).toBe("off");
   });
 
-  test("the closing-phrase filter off in the file stops the chunked decode asking for segments", async () => {
+  test("the closing-phrase filter stays off while chunked seam timing stays on", async () => {
     const segmentRequests: boolean[] = [];
     const wav = new Uint8Array(44 + 95 * 32_000);
     const view = new DataView(wav.buffer);
@@ -93,6 +95,7 @@ describe("a settings file reaches the pipeline with no env set (P1)", () => {
     useSettings({ outro_gate: false });
     await backend.transcribe(wavPath);
     expect(segmentRequests.length).toBeGreaterThan(0);
-    expect(segmentRequests.every((asked) => !asked)).toBe(true);
+    expect(outroGateEnabled(processingEnv())).toBe(false);
+    expect(segmentRequests.every(Boolean)).toBe(true);
   });
 });
