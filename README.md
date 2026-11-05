@@ -122,6 +122,12 @@ Daemon speech profiles, env overrides, and socket controls: [docs/tts-settings.m
 edge-tts → records the mic and resamples to 16kHz → Silero VAD detects when you stop talking →
 whisper.cpp transcribes locally (~200-400ms on Apple Silicon) → returns the text to your agent.
 
+Predominantly Hebrew questions use `he-IL-HilaNeural` when an English Edge voice
+is selected. Clone selections stay as configured. If Edge synthesis exhausts its
+retries, Ask shows the question in an MCP warning notification and still records
+the answer. The saved exchange marks `prompt_delivery: "text-only"` (schema 5)
+and retains the question text and answer WAV without inventing prompt audio.
+
 Full tool parameters: **[docs/tools-reference.md](docs/tools-reference.md)**.
 
 ## VoiceBar — the notch surface (macOS)

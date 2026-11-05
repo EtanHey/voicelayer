@@ -104,11 +104,72 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
         log.observe(["type": "ack", "command": "retranscribe_recording", "id": "r2", "outcome": "reject", "reason": "Busy"])
         log.observe(["type": "transcription", "recording_path": path.path, "text": "Synthetic words"])
         let lines = copy(snapshot(), runs: log.runs, entry: entry()).logLines
-        XCTAssertEqual(lines.map(\.title), ["Saved result", "Retry", "Retry"], "earlier sessions' retries are unknown, so no numbering")
+        XCTAssertEqual(lines.map(\.title), ["Saved result", "Re-transcribed", "Re-transcribed"],
+                       "earlier sessions' retries are unknown, so no numbering; the row is named after its button")
         XCTAssertEqual(lines.map(\.time), [clock(created), clock(first), clock(second)], "oldest first")
         XCTAssertEqual(lines.map(\.outcome), ["Finished", "New text received", "Couldn't start"])
         XCTAssertEqual(lines.dropFirst().map(\.processing), [nil, nil], "observation times are never shown as processing")
     }
+    /// Etan, 2026-11-05: ~20 "Retry · New text received" rows for one take after repeated Re-transcribe clicks.
+    func testRepeatedReTranscriptionsFoldIntoOneRowAndSameTextSaysNoChange() {
+        var log = SettingsHistoryRunLog()
+        for index in 0 ..< 20 {
+            log.begin(id: "r\(index)", path: path.path, at: created.addingTimeInterval(Double(60 + index * 10)),
+                      priorText: "Synthetic words")
+            log.observe(["type": "transcription", "recording_path": path.path, "text": "Synthetic   words"])
+        }
+        let reported = copy(snapshot(), runs: log.runs, entry: entry())
+        XCTAssertEqual(reported.logLines.count, 2, "the saved result and ONE folded row, not 21 rows")
+        let folded = reported.logLines[1]
+        XCTAssertEqual(folded.title, "Re-transcribed ×20")
+        XCTAssertEqual(folded.outcome, "No change: same text", "whitespace-only differences are the same text")
+        XCTAssertEqual(folded.time, "\(clock(created.addingTimeInterval(60)))–\(clock(created.addingTimeInterval(250)))")
+        XCTAssertEqual(folded.repeats.count, 20, "it opens to every request")
+        XCTAssertEqual(reported.logCopyText.components(separatedBy: "No change: same text").count - 1, 21,
+                       "Copy carries the folded row and every request under it")
+        XCTAssertEqual(SettingsHistoryDiagnosticsCopy.latestRequestNote(runs: log.runs), "No change: same text")
+    }
+
+    /// Codex review R1: an unrelated error noted before the final result made the run's observations non-empty, so
+    /// the same-text final never got its digest and the row said "New text received".
+    func testAnUnrelatedErrorBeforeTheFinalStillAllowsNoChange() {
+        var log = SettingsHistoryRunLog()
+        log.begin(id: "r", path: path.path, at: created.addingTimeInterval(60), priorText: "hello")
+        log.observe(["type": "error", "message": "Synthetic unrelated failure"])
+        log.observe(["type": "transcription", "recording_path": path.path, "text": "hello"])
+        XCTAssertEqual(copy(snapshot(), runs: log.runs).logLines.last?.outcome, "No change: same text")
+        XCTAssertEqual(SettingsHistoryDiagnosticsCopy.latestRequestNote(runs: log.runs), "No change: same text")
+        log.observe(["type": "transcription", "recording_path": path.path, "text": "a later, different result"])
+        XCTAssertEqual(copy(snapshot(), runs: log.runs).logLines.last?.outcome, "No change: same text",
+                       "only the first final after the request is its result")
+    }
+
+    func testOnlyIdenticalNeighboursFoldAndNewTextStaysNewText() {
+        var log = SettingsHistoryRunLog()
+        log.begin(id: "a", path: path.path, at: created.addingTimeInterval(60), priorText: "Old words")
+        log.observe(["type": "transcription", "recording_path": path.path, "text": "New words"])
+        log.begin(id: "b", path: path.path, at: created.addingTimeInterval(70))
+        log.observe(["type": "transcription", "recording_path": path.path, "text": "New words"])
+        log.begin(id: "c", path: path.path, at: created.addingTimeInterval(80))
+        log.observe(["type": "ack", "command": "retranscribe_recording", "id": "c", "outcome": "reject", "reason": "Busy"])
+        log.begin(id: "d", path: path.path, at: created.addingTimeInterval(90))
+        log.observe(["type": "transcription", "recording_path": path.path, "text": "New words"])
+        let lines = copy(snapshot(), runs: log.runs, entry: entry()).logLines.dropFirst()
+        XCTAssertEqual(lines.map(\.outcome), ["New text received", "No change: same text", "Couldn't start", "No change: same text"],
+                       "b and d compare with the previous result; a failure between them is never folded away")
+        XCTAssertTrue(lines.allSatisfy(\.repeats.isEmpty), "no two neighbours share an outcome here")
+        XCTAssertEqual(SettingsHistoryDiagnosticsCopy.latestRequestNote(runs: log.runs), "No change: same text")
+        var changed = SettingsHistoryRunLog()
+        changed.begin(id: "x", path: path.path, priorText: "Old words")
+        changed.observe(["type": "transcription", "recording_path": path.path, "text": "New words"])
+        XCTAssertNil(SettingsHistoryDiagnosticsCopy.latestRequestNote(runs: changed.runs), "new text gets no note")
+        var unknown = SettingsHistoryRunLog()
+        unknown.begin(id: "y", path: path.path)
+        unknown.observe(["type": "transcription", "recording_path": path.path, "text": "New words"])
+        XCTAssertEqual(copy(snapshot(), runs: unknown.runs).logLines.last?.outcome, "New text received",
+                       "no prior text known: never claims no change")
+    }
+
     func testRecordingErrorIsVisibleWithoutInventingARequestFailure() {
         var log = SettingsHistoryRunLog(); log.begin(id: "current", path: path.path, at: created)
         log.observe(["type": "error", "message": "Could not retranscribe archived recording \(path.path). Synthetic decoder failure"])

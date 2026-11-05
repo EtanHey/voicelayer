@@ -1,3 +1,4 @@
+import * as ttsHealth from "../tts-health";
 import { flushSpeechArchives } from "../speech-archive-live";
 import { speechArchiveWriter } from "../speech-archive-writer";
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
@@ -139,6 +140,26 @@ describe(`Ask and Preview real receipt ingress: ${caller} (canonical preload; sy
     else process.env.QA_VOICE_RECORDINGS_DIR = savedRoot;
     fs.rmSync(fixture, { recursive: true, force: true });
     expect(hasActiveVoiceOperation()).toBe(false);
+  });
+
+  for (const connection of ["stdio", "daemon"] as const) it(`Hebrew Ask uses a Hebrew Edge voice and retains text-only question/answer after NoAudioReceived: ${connection}`, async () => {
+    speak.mockImplementation(realSpeak);
+    const synth = spyOn(ttsHealth, "synthesizeWithRetry").mockResolvedValue({
+      success: false, error: "NoAudioReceived", attempts: 2,
+    }); spies.push(synth);
+    const result = await ask({ message: "האם אפשר להמשיך עכשיו?", voice: "en-US-JennyNeural" },
+      createVoiceToolContext(undefined, n => { notifications.push(n); }, connection));
+    expect(result.isError).not.toBe(true);
+    expect(synth).toHaveBeenCalled();
+    expect(synth.mock.calls[0][1]).toBe("he-IL-HilaNeural");
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(capture.mock.calls[0][3]?.voiceAskArtifacts).toEqual({
+      promptDelivery: "text-only", agentTranscript: "האם אפשר להמשיך עכשיו?",
+    });
+    expect(notifications).toContainEqual(expect.objectContaining({ method: "notifications/message",
+      params: expect.objectContaining({ data: expect.objectContaining({
+        kind: "voice_ask_text_prompt", question: "האם אפשר להמשיך עכשיו?",
+      }) }) }));
   });
 
   for (const connection of ["stdio", "daemon", undefined] as const) it(`Ask retains exact bytes and one context: ${connection}`, async () => {

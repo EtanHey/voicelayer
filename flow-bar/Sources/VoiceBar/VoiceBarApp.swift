@@ -750,6 +750,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             commandRouter: commandRouter,
             onOpenSettings: { [weak self] in self?.openSettingsWindow() },
             onOpenHistory: { [weak self] in self?.openSettingsWindow(tab: .history) },
+            onOpenHistoryRecording: { [weak self] path in
+                self?.openSettingsWindow(tab: .history, historyRecordingID: path)
+            },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true
@@ -2372,6 +2375,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isIsolatedCapture: Bool? = nil
     ) {
         guard let panel else { return }
+        // 2.3 lane U4: a History pull holds the panel's mouse events until it is released.
+        if notchPresentationModel.isHistoryPullActive {
+            panel.ignoresMouseEvents = false
+            return
+        }
         let gate = currentPanelHitGate()
         let point = localPoint ?? panel.convertPoint(fromScreen: NSEvent.mouseLocation)
         Self.applyPanelMouseEventPassthrough(
@@ -2911,11 +2919,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         requestTermination(.menuBar)
     }
 
-    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil) {
+    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil, historyRecordingID: String? = nil) {
         voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
         if let tab {
-            settingsTabRequest = SettingsTabRequest(tab: tab, focus: focus, id: (settingsTabRequest?.id ?? 0) + 1)
+            settingsTabRequest = SettingsTabRequest(
+                tab: tab, focus: focus, historyRecordingID: historyRecordingID, id: (settingsTabRequest?.id ?? 0) + 1
+            )
         }
         if let settingsWindow {
             if tab == nil, settingsWindow.contentViewController == nil {

@@ -2441,6 +2441,43 @@ describe("input recording durability", () => {
     return capturedVoiceBarAudio()[0];
   }
 
+  it("D1 finalizes Parakeet number words through live dictation and History re-transcribe", async () => {
+    const vocabularyPath = join(tmpRoot, "dictionary-numbers.json");
+    writeFileSync(vocabularyPath, JSON.stringify({ entries: [
+      { canonical: "6.1 Sol", variants: ["6 point 1 sol"] },
+    ] }));
+    const overrides = {
+      QA_VOICE_STT_VOCABULARY_PATH: vocabularyPath,
+      QA_VOICE_CORRECTOR: "off",
+      QA_VOICE_STT_POLISH: "off",
+    };
+    const saved = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]));
+    Object.assign(process.env, overrides);
+    polishSpy?.mockRestore();
+    const raw = "and make it a codex six point one sol on extra high please";
+    const expected = "And make it a codex 6.1 Sol on extra high please.";
+    getBackendSpy!.mockResolvedValue({
+      name: "parakeet-mlx", isAvailable: async () => true,
+      transcribe: async () => ({ text: raw, backend: "parakeet-mlx", durationMs: 1 }),
+    });
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    try {
+      const { waitForInput, retranscribeRecordingCapture } = await import("../input");
+      const pending = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+      await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+      expect(await pending).toBe(expected);
+      const [archive] = capturedVoiceBarAudio();
+      expect(await retranscribeRecordingCapture(archive)).toBe(expected);
+      expect(readFileSync(archive.replace("audio.wav", "voicelayer-transcript.txt"), "utf8")).toBe(expected);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("NOTX1 tells History when a live capture is kept with a reason", async () => {
     const archive = await silentVoiceBarArchive();
     expect(metadataUpdates()).toEqual([
@@ -3344,6 +3381,27 @@ describe("input recording durability", () => {
     expect(event?.recording_path).toBeUndefined();
     expect(event?.dictation_receipt).toBeUndefined();
     expectValidRetainedWav(capturedVoiceBarAudio()[0], 24 * VAD_CHUNK_BYTES);
+  });
+
+  it("archives and retranscribes a text-only Ask without fabricated prompt audio", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const input = await import("../input");
+    let archivePath = "";
+    await expect(input.waitForInput(2_000, "standard", true, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: { promptDelivery: "text-only", agentTranscript: "האם להמשיך?" },
+      onArchiveCreated: path => { archivePath = path; },
+    })).resolves.toBe("Retained transcript.");
+    const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+    expect(metadata).toMatchObject({ schema_version: 5, prompt_delivery: "text-only", agent_tts_engine: null,
+      agent_tts_voice: null, agent_audio_sha256: null, artifacts: { agent_audio: null }, transcription_status: "transcribed" });
+    expect(existsSync(join(archivePath, "agent-audio.mp3"))).toBe(false);
+    expect(readFileSync(join(archivePath, "agent-transcript.txt"), "utf8")).toBe("האם להמשיך?");
+    expect(readFileSync(join(archivePath, "audio.wav")).byteLength).toBeGreaterThan(44);
+    const { basename } = await import("path");
+    await expect(input.retranscribeVoiceAskArchive(basename(archivePath), { delivery: "return-only" })).resolves.toBe(backendText);
+    expect(JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8")).prompt_delivery).toBe("text-only");
   });
 
   it("adds measured receipt metadata to the actual completed VoiceBar event", async () => {

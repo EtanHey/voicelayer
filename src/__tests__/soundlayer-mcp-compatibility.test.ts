@@ -336,6 +336,7 @@ describe("SoundLayer MCP compatibility regression", () => {
       waitForPlayback: true,
       voice: "theo",
       captureAudioArtifact: true,
+      textOnlyOnSynthesisFailure: expect.any(AbortSignal),
     });
     expect(waitForInputSpy).toHaveBeenCalledWith(45_000, "quick", true, {
       archiveSource: "voice_ask",
