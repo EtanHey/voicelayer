@@ -6,20 +6,27 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from tlc_result import valid_result
 
 root = Path(__file__).resolve().parent
+sys.path.insert(0, str(root.parent))
+from tlc_support import tlc_jar
+
 scratch = root.parent.parent / '.build.noindex' / 'tlc-lane-d'
 scratch.mkdir(parents=True, exist_ok=True)
 logs = Path(tempfile.mkdtemp(prefix='run-', dir=scratch))
-source_jar = Path.home() / '.cache/tla/tla2tools.jar'
+source_jar = tlc_jar()
 # Freeze the bytes used by every Java child even if the shared cache changes.
 jar = logs / 'tla2tools.jar'
 jar_bytes = source_jar.read_bytes()
 jar.write_bytes(jar_bytes)
-jar_sha = hashlib.sha256(jar_bytes).hexdigest()
+jar_sha = hashlib.sha256(jar.read_bytes()).hexdigest()
+lock = json.loads((root.parent / 'tlc.lock.json').read_text())
+if jar_sha != lock['sha256']:
+    raise RuntimeError('Frozen TLC checksum mismatch')
 help_result = subprocess.run(['java', '-cp', str(jar), 'tlc2.TLC', '-help'],
                              env=os.environ.copy(), capture_output=True, text=True, timeout=10)
 version = re.search(r'\bVersion ([^\r\n]+)', help_result.stdout + help_result.stderr)

@@ -7,7 +7,7 @@ owners and loads the selected engine eagerly; the runtime idle default stays 600
 Command (run in this directory, substituting each configuration):
 
 ```sh
-java -XX:+UseParallelGC -cp ~/.cache/tla/tla2tools.jar tlc2.TLC -workers 1 -config FixedDelete.cfg ResidentRecognizer.tla
+../tlc.sh -workers 1 -config FixedDelete.cfg ResidentRecognizer.tla
 ```
 
 | Configuration | Result | Evidence |
