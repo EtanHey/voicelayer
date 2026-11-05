@@ -34,6 +34,36 @@ import VoiceBarUI
         XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateNow)
     }
 
+    func testUserQuitWithDeadControllerAndCommittedGateKeepsRecoveryEvidence() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("gate").path
+        let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
+            "ownerId": UUID().uuidString, "targetSha": String(repeating: "a", count: 40)]
+        let ack: [String: Any] = ["lease": lease, "activeOperations": 0, "openArchives": 0]
+        let bytes = try JSONSerialization.data(withJSONObject: ["version": 1, "kind": "COMMITTED",
+            "lease": lease, "native": ack, "daemon": ack])
+        try bytes.write(to: URL(fileURLWithPath: path))
+        try FileManager.default.createDirectory(atPath: path + ".admissions", withIntermediateDirectories: false)
+        // A reaped child gives a real dead PID without signalling any resident process.
+        let child = Process(); child.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try child.run(); child.waitUntilExit()
+        let controller = try JSONSerialization.data(withJSONObject: ["pid": child.processIdentifier, "identity": "retired"])
+        try controller.write(to: URL(fileURLWithPath: path + ".controller"))
+        let app = AppDelegate()
+        app.terminationGateForTesting = NativeUpdateGate(path: path)
+        app.terminationOwnsServerForTesting = true
+        var cleanups = 0
+        app.terminationCleanupForTesting = { cleanups += 1 }
+        app.voiceState.mode = .idle
+        // Exercise the same AppKit delegate used by the menu, without terminating the test host.
+        XCTAssertEqual(app.applicationShouldTerminate(.shared), .terminateNow)
+        XCTAssertEqual(cleanups, 1)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path + ".controller")), controller)
+    }
+
     func testAcknowledgedControlledQuitCannotBeCancelledByLaterIngress() {
         var policy = VoiceBarTerminationPolicy()
         policy.authorize(.controlledUpdate)
