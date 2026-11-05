@@ -256,7 +256,10 @@ async function main() {
   void withFreshAsyncVoiceAdmission(() => warmSelectedRecognizer()).catch(() => {
     console.error("[voicelayer-daemon] Boot recognizer warm-up failed; dictation can retry");
   });
-  void Promise.resolve().then(() => initializeVoiceGate()).then(() => recoverAbandonedUpdate()).catch(() => {
+  void Promise.resolve().then(async () => {
+    await initializeVoiceGate();
+    await recoverAbandonedUpdate();
+  }).catch(() => {
     console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   });
 

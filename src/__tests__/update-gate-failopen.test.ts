@@ -108,16 +108,27 @@ test("N3 preserves first-seen diagnostic bytes and rate-limits repeated UNKNOWN 
 for (const name of ["daemon.ts", "mcp-server-daemon.ts", "mcp-server.ts"]) test(`R2 ${name} guards bootstrap and continues startup`, async () => {
   const source = fs.readFileSync(join(import.meta.dir, "..", name), "utf8");
   const main = source.slice(source.indexOf("async function main()"));
-  const guarded = main.match(/void Promise\.resolve\(\)\.then\(\(\) => initializeVoiceGate\(\)\)\.catch\(\(\) => \{[^}]*\}\);/)?.[0];
+  const bootstrap = name === "mcp-server-daemon.ts"
+    ? /void Promise\.resolve\(\)\.then\(async \(\) => \{\s*await initializeVoiceGate\(\);\s*await recoverAbandonedUpdate\(\);\s*\}\)\.catch\(\(\) => \{[^}]*\}\);/
+    : /void Promise\.resolve\(\)\.then\(\(\) => initializeVoiceGate\(\)\)\.catch\(\(\) => \{[^}]*\}\);/;
+  const guarded = main.match(bootstrap)?.[0];
   expect(guarded).toBeDefined();
-  const run = new Function("initializeVoiceGate", "console", `return (async () => { ${guarded}; return 'continued'; })();`);
-  expect(await run(async () => { throw Error("gate unavailable"); }, console)).toBe("continued");
-  await Bun.sleep(0); // Detached rejection handler must still log the fault.
-  expect(console.error).toHaveBeenCalled();
-  (console.error as ReturnType<typeof spyOn>).mockClear();
-  expect(await run(() => { throw Error("sync gate unavailable"); }, console)).toBe("continued");
-  await Bun.sleep(0);
-  expect(console.error).toHaveBeenCalled();
+  const run = new Function("initializeVoiceGate", "recoverAbandonedUpdate", "console", `return (async () => { ${guarded}; return 'continued'; })();`);
+  const steps = name === "mcp-server-daemon.ts" ? ["initialize", "recover"] : ["initialize"];
+  for (const step of steps) for (const synchronous of [false, true]) {
+    const calls: string[] = [];
+    const invoke = (operation: string) => {
+      calls.push(operation);
+      if (operation !== step) return Promise.resolve();
+      if (synchronous) throw Error(`${operation} unavailable`);
+      return Promise.reject(Error(`${operation} unavailable`));
+    };
+    expect(await run(() => invoke("initialize"), () => invoke("recover"), console)).toBe("continued");
+    await Bun.sleep(0); // Detached rejection handler must still log the fault.
+    expect(calls).toEqual(step === "recover" ? ["initialize", "recover"] : ["initialize"]);
+    expect(console.error).toHaveBeenCalledTimes(1);
+    (console.error as ReturnType<typeof spyOn>).mockClear();
+  }
   if (name !== "mcp-server.ts") expect(main.indexOf(guarded!)).toBeGreaterThan(main.lastIndexOf("acquireProcessLock("));
   if (name === "mcp-server-daemon.ts") expect(main.indexOf(guarded!)).toBeGreaterThan(main.indexOf("if (isVoicelayerDisabled())"));
 });
