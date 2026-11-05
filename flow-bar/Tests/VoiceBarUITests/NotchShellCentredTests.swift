@@ -225,78 +225,56 @@ final class NotchShellCentredTests: XCTestCase {
         }
     }
 
-    /// The right side is flush (UXP-2). The left steps out from the mic's fitted wing to the panel's unchanged
-    /// edge with one convex corner: the outline only ever moves outward on the way down, so there is no pocket.
-    func testTheHistoryPanelIsFlushOnTheRightAndStepsOutConvexlyOnTheLeft() {
+    /// 2.3 lane U4 (mock 2-morph, morph B): the open History panel is drawn as ONE shape, flush on both sides, its
+    /// top row as wide as its body, flaring into the menu bar with the 19 pt top radius. Under the flare the outline
+    /// goes straight down: no step, no shoulder, no pocket. The wing controls keep the launcher's slots.
+    func testTheOpenHistoryPanelIsOneFlushShapeWithFlaredTopCorners() {
         let history = presentation(history: true)
-        let layout = VoiceBarNotchShapeLayout(geometry: history.geometry)
-        let wing = layout.leadingWingRect
+        let morph = VoiceBarNotchHistoryMorphInput(
+            progress: 1, closed: VoiceBarNotchContract.geometry(for: .hoverLauncher), open: history.geometry
+        )
+        let drawn = morph.flushTop
+        let layout = VoiceBarNotchShapeLayout(geometry: drawn)
         let body = layout.bodyRect
-        XCTAssertEqual(body.maxX, layout.trailingWingRect.maxX, "the panel's right edge meets the wing's")
-        XCTAssertEqual(wing.minX - body.minX, 26, "the panel steps out past the mic's wing")
+        XCTAssertEqual(layout.leadingWingRect.minX, body.minX, "flush on the left")
+        XCTAssertEqual(layout.trailingWingRect.maxX, body.maxX, "flush on the right")
+        XCTAssertEqual(history.geometry.leadingWingWidth, VoiceBarNotchContract.compactIndicatorLaneWidth,
+                       "the mic keeps its slot")
 
-        let glass = shellPath(history)
+        let glass = VoiceBarNotchHistoryMorphShape(morph: morph, coreAnchorX: nil)
+            .path(in: CGRect(x: 0, y: 0, width: drawn.totalWidth, height: drawn.totalHeight))
         var subpaths = 0
         glass.forEach { if case .move = $0 { subpaths += 1 } }
         XCTAssertEqual(subpaths, 1, "one continuous shell path")
-        XCTAssertEqual(glass.boundingRect.minX, body.minX, accuracy: 0.001)
-        XCTAssertEqual(glass.boundingRect.maxX, body.maxX, accuracy: 0.001, "no shoulder sticks out")
-        for y in stride(from: CGFloat(1), to: body.minY + 40, by: 1) {
+        let flare = NotchHistoryMorph.openTopRadius
+        XCTAssertEqual(glass.boundingRect.minX, body.minX - flare, accuracy: 0.001)
+        XCTAssertEqual(glass.boundingRect.maxX, body.maxX + flare, accuracy: 0.001)
+        for y in stride(from: flare + 1, to: body.minY + 60, by: 1) {
+            XCTAssertTrue(glass.contains(CGPoint(x: body.minX + 0.5, y: y)), "left side at y \(y)")
             XCTAssertTrue(glass.contains(CGPoint(x: body.maxX - 0.5, y: y)), "right side at y \(y)")
+            XCTAssertFalse(glass.contains(CGPoint(x: body.minX - 0.5, y: y)), "nothing sticks out at y \(y)")
         }
+        XCTAssertTrue(glass.contains(CGPoint(x: body.minX - flare + 5, y: 0.5)), "the flare meets the menu bar")
+        XCTAssertFalse(glass.contains(CGPoint(x: body.minX - flare + 2, y: flare - 2)), "the flare is concave")
 
-        /// The left outline: the leftmost covered x at each height.
-        func leftEdge(_ y: CGFloat) -> CGFloat {
-            var x = body.minX
-            while x < wing.maxX, !glass.contains(CGPoint(x: x, y: y)) {
-                x += 0.25
-            }
-            return x
-        }
-        var previous = leftEdge(0.5)
-        XCTAssertEqual(previous, wing.minX, accuracy: 0.25, "the wing fits the mic above the panel")
-        for y in stride(from: CGFloat(1.5), to: body.minY + 60, by: 1) {
-            let edge = leftEdge(y)
-            XCTAssertLessThanOrEqual(edge, previous + 0.25, "the outline turns back inward at y \(y): a pocket")
-            previous = edge
-        }
-        XCTAssertEqual(previous, body.minX, accuracy: 0.25, "the step-out reaches the panel's edge")
-        // A rounded, convex outer corner rather than a square ledge.
-        let radius = VoiceBarNotchContract.material.bodyShoulderCornerRadius(for: .history)
-        XCTAssertEqual(radius, 15)
-        XCTAssertFalse(glass.contains(CGPoint(x: body.minX + 1, y: body.minY + 1)), "the step-out corner is square")
-        XCTAssertTrue(glass.contains(CGPoint(x: body.minX + radius, y: body.minY + 1)))
-        XCTAssertTrue(glass.contains(CGPoint(x: body.minX + 1, y: body.minY + radius)))
-    }
-
-    /// X15 r1 (#235): the settled History step-out is ONE convex corner. A concave fillet where the wing meets
-    /// the panel's top edge (the teleprompter's 5 pt inverse join) also passes the no-pocket test above.
-    func testTheHistoryStepOutHasNoConcaveCurve() {
-        let history = presentation(history: true)
-        let layout = VoiceBarNotchShapeLayout(geometry: history.geometry)
+        // Only the two flares curve concavely; every other curve on the outline is a convex corner.
         var current = CGPoint.zero
         var concave = 0
-        var convex = 0
-        for element in Self.elements(of: shellPath(history)) {
+        for element in Self.elements(of: glass) {
             switch element {
             case let .move(to: point), let .line(to: point):
                 current = point
             case let .quadCurve(to: end, control: control):
-                if current.x <= layout.leadingWingRect.minX + 0.01, current.y > 0,
-                   end.y <= layout.bodyRect.minY + 15 {
-                    let turnA: CGFloat = (control.x - current.x) * (end.y - control.y)
-                    let turnB: CGFloat = (control.y - current.y) * (end.x - control.x)
-                    let turn = turnA - turnB
-                    if turn > 0.01 { concave += 1 }
-                    if turn < -0.01 { convex += 1 }
+                let turn = (control.x - current.x) * (end.y - control.y) - (control.y - current.y) * (end.x - control.x)
+                if turn > 0.01, max(current.y, end.y) > flare + 0.01, min(current.y, end.y) < body.minY + 60 {
+                    concave += 1
                 }
                 current = end
             default:
                 break
             }
         }
-        XCTAssertEqual(concave, 0, "History's step-out must not have a concave shoulder")
-        XCTAssertEqual(convex, 1, "History's step-out is one convex corner")
+        XCTAssertEqual(concave, 0, "no concave shoulder below the flares")
     }
 
     /// X15 r1 (#235): the left outline jumped 1.08 pt between two almost identical morph frames, where the body
@@ -431,11 +409,11 @@ final class NotchShellCentredTests: XCTestCase {
     func testAPanelThatHasJustStartedToGrowKeepsTheWingsRoundedCorners() {
         // Hover → History, one frame in: the body is 1 pt tall. The old body path drew its bottom corners at
         // min(18, body height / 2) = 0.5 pt, so the 15 pt wing corners snapped square on the first frame.
-        // A real first frame: every value has moved 1/360 of its way, so the left step-out is 0.07 pt deep.
+        // A real first frame: every value has moved 1/340 of its way, so the left step-out is 0.07 pt deep.
         let hover = VoiceBarNotchGeometryAnimatableData(geometry: VoiceBarNotchContract.geometry(for: .hoverLauncher))
         var travel = VoiceBarNotchGeometryAnimatableData(geometry: VoiceBarNotchContract.geometry(for: .history))
         travel -= hover
-        travel.scale(by: 1.0 / 360)
+        travel.scale(by: 1.0 / VoiceBarNotchContract.historyLowerSurfaceHeight)
         let frameOne = (hover + travel).geometry
         XCTAssertEqual(frameOne.lowerSurfaceHeight, 1, accuracy: 0.001)
         let path = VoiceBarNotchContinuousShape(
