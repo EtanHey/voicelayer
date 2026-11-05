@@ -8,6 +8,8 @@ on:
     branches: [main, integration/2.2.61]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
 
+concurrency: { group: 'formal-${{ github.ref }}', cancel-in-progress: true }
+
 permissions:
   contents: read
 
@@ -53,6 +55,7 @@ jobs:
     needs: runners
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.runners.outputs.matrix) }}
     name: TLC and conformance (${{ matrix.runner }})
     runs-on: macos-26
