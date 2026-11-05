@@ -167,7 +167,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }.padding(6)
             UIE2ESettings(model: model)
         })
-        notchModel = VoiceBarNotchPresentationModel(onLayoutInvalidated: { [weak self] in self?.updatePillLayout() })
+        bindNotchModel(VoiceBarNotchPresentationModel(onLayoutInvalidated: { [weak self] in self?.updatePillLayout() }))
         let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
             onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 },
@@ -281,7 +281,21 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             environment: [VoiceBarIsolatedCapturePlacement.topRightEnvironmentVariable: "1"]), display: true)
     }
 
+    /// U2×U4 review: the QA BarView renders this model, so it is fed from VoiceState exactly like the app's
+    /// (`AppDelegate.refreshNotchPresentationModel`), on every fixture and every layout change.
+    func bindNotchModel(_ notchModel: VoiceBarNotchPresentationModel) {
+        self.notchModel = notchModel
+        model.onFixtureApplied = { [weak self] in self?.refreshNotchModel() }
+        refreshNotchModel()
+    }
+
+    func refreshNotchModel() {
+        guard let notchModel else { return }
+        AppDelegate.refreshNotchPresentationModel(notchModel, for: model.voice)
+    }
+
     func updatePillLayout() {
+        refreshNotchModel()
         guard !contextMenuTracking else {
             model.receipt("qa-menu-layout-deferred")
             return
@@ -467,6 +481,8 @@ final class UIE2EModel {
     var selectionText = "QA original selection"
     private var holdsFixturePresentation = false
     var onRunSetup: () -> Void = {}
+    /// The QA host refreshes its notch presentation model after every fixture (U2×U4 review).
+    var onFixtureApplied: () -> Void = {}
     var residency = "loaded"
     var processing: [String: Any] = [:]
     var speech: [String: Any] = [:]
@@ -702,6 +718,7 @@ final class UIE2EModel {
                                  "setupNeedsAttention": voice.setupNeedsAttention], file: "wings.json")
         }
         receipt("fixture:" + name)
+        onFixtureApplied()
     }
 }
 
