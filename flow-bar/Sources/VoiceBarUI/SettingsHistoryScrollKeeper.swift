@@ -38,7 +38,9 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
         private weak var clip: NSClipView?
         /// Nothing is recorded until the remembered offset has been put back, so the rebuilt view's
         /// starting position (the top) never overwrites where the user really was.
-        private(set) var hasRestored = false
+        private enum RestorePhase { case waiting, restored, gaveUp }
+        private var restorePhase: RestorePhase = .waiting
+        var hasRestored: Bool { restorePhase != .waiting }
         /// Content arrives over a few layout passes; wait for it to be tall enough, for at most ~1 s.
         /// Giving up leaves the position alone: a late jump would land on whatever the user is reading.
         static let restoreAttempts = 30
@@ -57,6 +59,10 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
         /// The last clip origin seen. A bounds notification with the same origin is a size-only layout
         /// change (window or split pane resizing), never the user scrolling.
         private var lastOriginY: CGFloat?
+        /// Reachable range at the last origin change; size-only notifications must not consume it
+        /// before AppKit posts the resulting origin clamp.
+        private var lastReachableY: CGFloat?
+        private var isUserScrolling = false
 
         init(memory: SettingsHistoryScrollMemory, key: SettingsHistoryScrollMemory.Key) {
             self.memory = memory; self.key = key
@@ -78,11 +84,14 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
             detach()
             clip = scroll.contentView
             lastOriginY = scroll.contentView.bounds.origin.y
+            lastReachableY = reachableHeight(in: scroll)
             scroll.contentView.postsBoundsChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(boundsChanged),
                                                    name: NSView.boundsDidChangeNotification, object: scroll.contentView)
             NotificationCenter.default.addObserver(self, selector: #selector(userBeganLiveScroll),
                                                    name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+            NotificationCenter.default.addObserver(self, selector: #selector(userEndedLiveScroll),
+                                                   name: NSScrollView.didEndLiveScrollNotification, object: scroll)
             restore(attempt: 0)
         }
 
@@ -91,19 +100,23 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: clip)
                 NotificationCenter.default.removeObserver(self, name: NSScrollView.willStartLiveScrollNotification,
                                                           object: clip.superview)
+                NotificationCenter.default.removeObserver(self, name: NSScrollView.didEndLiveScrollNotification,
+                                                          object: clip.superview)
             }
             clip = nil
-            hasRestored = false
+            restorePhase = .waiting
+            isUserScrolling = false
             restoreGeneration &+= 1
         }
 
         private func restore(attempt: Int) {
             guard !hasRestored, let clip, let scroll = clip.superview as? NSScrollView else { return }
-            guard let target = memory.offset(for: key), target > 0 else { hasRestored = true; return }
-            let reachable = (scroll.documentView?.frame.height ?? 0) - clip.bounds.height
+            guard let target = memory.offset(for: key), target > 0 else { restorePhase = .restored; return }
+            let reachable = reachableHeight(in: scroll)
             if attempt >= Self.restoreAttempts {
-                hasRestored = true // Too short for too long: keep where it is, record from here on.
+                restorePhase = .gaveUp // Too short for too long: never restart this wait on layout alone.
                 onGaveUp?()
+                return
             } else if reachable >= target - 0.5 {
                 // Bracketed like a user's live scroll: SwiftUI's hosting scroll view then adopts the offset
                 // as its own. A bare clip-view move is undone by the next content update (the re-entry
@@ -117,34 +130,58 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
                 center.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
                 isApplying = false
                 lastOriginY = clip.bounds.origin.y
-                hasRestored = true
-            } else {
-                let generation = restoreGeneration
-                scheduleRetry { [weak self] in
-                    guard let self, self.restoreGeneration == generation else { return }
-                    self.restore(attempt: attempt + 1)
+                lastReachableY = reachableHeight(in: scroll)
+                if abs(clip.bounds.origin.y - target) <= 0.5 {
+                    restorePhase = .restored
+                    return
                 }
+            }
+            let generation = restoreGeneration
+            scheduleRetry { [weak self] in
+                guard let self, self.restoreGeneration == generation else { return }
+                self.restore(attempt: attempt + 1)
             }
         }
 
         /// The user moved first (wheel, trackpad, scroller drag, Page Up/Down, arrows, Home/End all move
         /// the clip view): their position wins, and nothing queued may move it afterwards.
         private func userTookOver() {
-            guard !hasRestored else { return }
-            restoreGeneration &+= 1
-            hasRestored = true
+            if !hasRestored { restoreGeneration &+= 1 }
+            restorePhase = .restored
         }
 
         @objc private func userBeganLiveScroll() {
             guard !isApplying else { return }
+            isUserScrolling = true
             userTookOver()
+            if let clip { memory.record(clip.bounds.origin.y, for: key) }
+        }
+
+        @objc private func userEndedLiveScroll() {
+            guard !isApplying else { return }
+            isUserScrolling = false
+        }
+
+        private func reachableHeight(in scroll: NSScrollView) -> CGFloat {
+            max(0, (scroll.documentView?.frame.height ?? 0) - scroll.contentView.bounds.height)
         }
 
         @objc private func boundsChanged() {
-            guard !isApplying, let clip else { return }
+            guard !isApplying, let clip, let scroll = clip.superview as? NSScrollView else { return }
             let originY = clip.bounds.origin.y
             guard originY != lastOriginY else { return } // size-only: not the user
+            let reachable = reachableHeight(in: scroll)
+            let passiveClamp = !isUserScrolling && lastReachableY != reachable
+                && (lastOriginY ?? 0) > reachable + 0.5 && abs(originY - reachable) <= 0.5
             lastOriginY = originY
+            lastReachableY = reachable
+            if passiveClamp {
+                if restorePhase == .restored {
+                    restorePhase = .waiting
+                    restore(attempt: 0)
+                }
+                return
+            }
             userTookOver()
             memory.record(clip.bounds.origin.y, for: key)
         }
