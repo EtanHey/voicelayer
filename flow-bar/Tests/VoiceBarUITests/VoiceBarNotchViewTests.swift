@@ -146,13 +146,17 @@ final class VoiceBarNotchViewTests: XCTestCase {
         let source = try notchViewSource()
         let body = try bracedScope(after: "public var body: some View", in: source)
         let container = try bracedScope(after: "VoiceBarGlassContainer", in: body)
-        let surface = try bracedScope(after: "private var notchSurface", in: source)
+        // 2.3 lane U4: `notchSurface` picks the shape (the History morph or the state shell); one generic builder
+        // draws either, so the material, mask and hit shape stay single.
+        let surface = try bracedScope(after: "private func notchSurface(shape:", in: source)
         let slots = try bracedScope(after: "private var notchSlots", in: source)
 
         XCTAssertFalse(container.contains("if presentation.visualState != .idle"))
         XCTAssertTrue(container.contains("morphingNotchSurface"))
         XCTAssertTrue(container.contains("presentation.visualState == .idle ? 0 : 1"))
-        XCTAssertTrue(surface.contains("VoiceBarNotchContinuousShape"))
+        let picker = try bracedScope(after: "private var notchSurface", in: source)
+        XCTAssertTrue(picker.contains("VoiceBarNotchContinuousShape"))
+        XCTAssertTrue(picker.contains("VoiceBarNotchHistoryMorphShape"))
         XCTAssertTrue(surface.contains("notchSlots"))
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
         XCTAssertFalse(surface.contains("Color.clear"))
@@ -191,7 +195,9 @@ final class VoiceBarNotchViewTests: XCTestCase {
     /// mask and yielded a render turn started it a frame late, which showed as a hard cut on the far wing.
     func testTheRevealMaskRidesTheGeometryTransaction() throws {
         let source = try notchViewSource()
-        let surface = try bracedScope(after: "private var notchSurface", in: source)
+        // 2.3 lane U4: `notchSurface` picks the shape (the History morph or the state shell); one generic builder
+        // draws either, so the material, mask and hit shape stay single.
+        let surface = try bracedScope(after: "private func notchSurface(shape:", in: source)
         let geometryChange = try bracedScope(after: ".onChange(of: presentation.geometry)", in: source)
         let transaction = try bracedScope(after: "withAnimation(shellAnimation.delay(transition.delay))", in: geometryChange)
 
@@ -200,8 +206,8 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertFalse(source.contains("Task.yield()"))
         XCTAssertTrue(transaction.contains("renderedGeometry = nextGeometry"))
         XCTAssertTrue(transaction.contains("surfaceRevealProgress = transition.revealProgress"))
-        XCTAssertEqual(source.components(separatedBy: "surfaceRevealProgress =").count - 1, 3,
-                       "only init, onAppear and the geometry transaction set the mask")
+        XCTAssertEqual(source.components(separatedBy: "surfaceRevealProgress =").count - 1, 4,
+                       "only init, onAppear, the geometry transaction and the unanimated History hand-off set the mask")
         XCTAssertTrue(surface.contains("VoiceBarNotchCoreAnchoredRevealMask"))
         XCTAssertTrue(surface.contains(".mask"))
     }
@@ -233,7 +239,9 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
     func testContinuousContentBearingGlassOwnsTheHoverRegion() throws {
         let source = try notchViewSource()
-        let surface = try bracedScope(after: "private var notchSurface", in: source)
+        // 2.3 lane U4: `notchSurface` picks the shape (the History morph or the state shell); one generic builder
+        // draws either, so the material, mask and hit shape stay single.
+        let surface = try bracedScope(after: "private func notchSurface(shape:", in: source)
         let interactiveSurface = try XCTUnwrap(surface.components(separatedBy: ".overlay").first)
 
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
@@ -246,7 +254,9 @@ final class VoiceBarNotchViewTests: XCTestCase {
     func testTeleprompterMaterialAndContentRemovalIsAtomic() throws {
         let source = try notchViewSource()
         let body = try bracedScope(after: "public var body: some View", in: source)
-        let surface = try bracedScope(after: "private var notchSurface", in: source)
+        // 2.3 lane U4: `notchSurface` picks the shape (the History morph or the state shell); one generic builder
+        // draws either, so the material, mask and hit shape stay single.
+        let surface = try bracedScope(after: "private func notchSurface(shape:", in: source)
 
         XCTAssertTrue(body.contains("morphingNotchSurface"))
         XCTAssertTrue(surface.contains("notchSlots"))

@@ -1,0 +1,42 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/update-gate-cancel/CancelRetry.tla": "1d62b4c5c84ba54d98a8b15730ccd18fb4aa6bd037234f0e1e17b4954cd64dbc",
+    "formal/update-gate-cancel/checks.json": "1e7f75800dfb64bb47051ec735ef16dab37573fdd2eedfff589002009a901ee3",
+    "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/update-gate-cancel/OldSplitProbe.cfg": "b336cef02cd77e7bd1c46d32a3da5c1c5ddcaf93e935549d4cec0c69132bddc3",
+    "formal/update-gate-cancel/Fixed.cfg": "35994917140bc8206c60115bac13ecb1d96c5e4e47c9aaf27b956b4fd7964212",
+    "src/update-gate-installer.ts": "bfe4723aa9cf69c40c2ef18cdad52991abfd9d76fc3a20c87b638330d009a655",
+    "src/update-gate-installer-participant.ts": "254f1e555a4bf56678ef33dd5d247bb0ef93eb282898ef9ef65e0bd50d96f736",
+    "src/update-gate-admission.ts": "675cdd7a8e9dc69c243cd58a97f8afde881cfbbcb3bc5d9304e3a304ce78262d",
+    "src/__tests__/update-gate-drain-readback.test.ts": "cfeebb18af5cc3fb5d856ddefaa17d6b82b73115986689cd415fd68f1b377051"
+  },
+  "mutants": {
+    "RecoverableCancelReopens": [
+      "OldSplitProbe"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "6892180d018439f9c11fb0a8d3143d99f831b46609ed9024312c9f8d765f4877"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 33,
+      "distinct": 33
+    },
+    "OldSplitProbe": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "RecoverableCancelReopens",
+      "status": "EXPECTED_FAIL",
+      "generated": 31,
+      "distinct": 31
+    }
+  }
+}

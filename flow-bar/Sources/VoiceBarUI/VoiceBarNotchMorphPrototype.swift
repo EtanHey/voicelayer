@@ -88,7 +88,12 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
             coreWidth: presentation.geometry.coreWidth,
             visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
         )
-        let maximumCompactWingWidth = VoiceBarNotchContract.morphCanvasWingCapacity
+        // 2.3 lane U4: the open History panel plus its top flares must fit too (a narrow virtual notch makes
+        // its extents wider than the teleprompter's).
+        let historyReach = VoiceBarNotchContract.geometry(
+            for: .history, coreWidth: presentation.geometry.coreWidth
+        ).bodyLeadingExtent + NotchHistoryMorph.openTopRadius
+        let maximumCompactWingWidth = max(VoiceBarNotchContract.morphCanvasWingCapacity, historyReach)
         // The canvas's wings reach as far as its body does. `coreOriginX` reads the wings when there is no
         // lower surface and the body when there is one, so wings narrower than the body put the core 10 pt
         // further right once History or the teleprompter opened; the window moved back 10 pt in a separate
@@ -129,8 +134,12 @@ extension VoiceBarNotchMorphCanvasLayout {
     /// clearance on top of it, so showing or clearing a note never resizes the panel: AppKit used to commit the
     /// shorter window at once while the shell was still easing up, cutting its bottom flat.
     static func restingLowerSurfaceHeight(of presentation: VoiceBarNotchPresentation) -> CGFloat {
-        presentation.geometry.lowerSurfaceHeight -
-            presentation.feedbackHeight
+        // V6: History's window is the same whatever rows the handle settles on (`historyCanvasLowerSurfaceHeight`),
+        // so dragging it never resizes the window under the pointer. The hit region stays the settled rows.
+        guard presentation.visualState == .history else {
+            return presentation.geometry.lowerSurfaceHeight - presentation.feedbackHeight
+        }
+        return NotchHistoryMorph.historyCanvasLowerSurfaceHeight - VoiceBarNotchContract.transientNoteCanvasReserve
     }
 }
 

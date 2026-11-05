@@ -29,6 +29,97 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
     }
 }
 
+/// 2.3 lane U4: the History morph's input. While History is mounted the shell is drawn from `progress`
+/// (animated by the caller with `NotchHistoryMorph.animation`) between the launcher and the open panel, instead
+/// of springing between whole visual states.
+public struct VoiceBarNotchHistoryMorphInput: Equatable {
+    public var progress: CGFloat
+    public let closed: VoiceBarNotchGeometry
+    public let open: VoiceBarNotchGeometry
+    public let closedBottomRadius: CGFloat
+    public let closedTopRadius: CGFloat
+    /// V6: the open panel's live lower height while the extend handle is dragged or settling (`open` holds the
+    /// snapped rows the hit region uses). Animated with `progress`, so the shell follows the handle's spring.
+    public var openLowerSurfaceHeight: CGFloat
+
+    public init(
+        progress: CGFloat,
+        closed: VoiceBarNotchGeometry,
+        open: VoiceBarNotchGeometry,
+        closedBottomRadius: CGFloat = VoiceBarNotchContract.material.compactOuterCornerRadius(for: .hoverLauncher),
+        closedTopRadius: CGFloat = 0,
+        openLowerSurfaceHeight: CGFloat? = nil
+    ) {
+        self.progress = progress
+        self.closed = closed
+        self.open = open
+        self.closedBottomRadius = closedBottomRadius
+        self.closedTopRadius = closedTopRadius
+        self.openLowerSurfaceHeight = openLowerSurfaceHeight ?? open.lowerSurfaceHeight
+    }
+
+    /// `open` at the live extended height: where the rows are laid out.
+    public var openExtended: VoiceBarNotchGeometry {
+        VoiceBarNotchGeometry(
+            coreWidth: open.coreWidth,
+            topHeight: open.topHeight,
+            leadingWingWidth: open.leadingWingWidth,
+            trailingWingWidth: open.trailingWingWidth,
+            bodyLeadingExtent: open.bodyLeadingExtent,
+            bodyTrailingExtent: open.bodyTrailingExtent,
+            lowerSurfaceHeight: openLowerSurfaceHeight
+        )
+    }
+
+    /// The open panel as the mock draws it: one shape, its top row as wide as its body.
+    public var flushTop: VoiceBarNotchGeometry {
+        VoiceBarNotchGeometry(
+            coreWidth: open.coreWidth,
+            topHeight: open.topHeight,
+            leadingWingWidth: max(open.leadingWingWidth, open.bodyLeadingExtent),
+            trailingWingWidth: max(open.trailingWingWidth, open.bodyTrailingExtent),
+            bodyLeadingExtent: open.bodyLeadingExtent,
+            bodyTrailingExtent: open.bodyTrailingExtent,
+            lowerSurfaceHeight: openLowerSurfaceHeight
+        )
+    }
+
+    public func geometry(at p: CGFloat) -> VoiceBarNotchGeometry {
+        NotchHistoryMorph.geometry(progress: p, closed: closed, open: flushTop)
+    }
+}
+
+/// The History shell at an animated progress: geometry and radii are derived per frame, so the shape, the
+/// radii and the rows (driven by the same value) can never drift apart.
+public struct VoiceBarNotchHistoryMorphShape: Shape {
+    public var morph: VoiceBarNotchHistoryMorphInput
+    public let coreAnchorX: CGFloat?
+
+    public init(morph: VoiceBarNotchHistoryMorphInput, coreAnchorX: CGFloat?) {
+        self.morph = morph
+        self.coreAnchorX = coreAnchorX
+    }
+
+    public var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(morph.progress, morph.openLowerSurfaceHeight) }
+        set {
+            morph.progress = newValue.first
+            morph.openLowerSurfaceHeight = newValue.second
+        }
+    }
+
+    public func path(in rect: CGRect) -> Path {
+        let p = morph.progress
+        return VoiceBarNotchContinuousShape(
+            geometry: morph.geometry(at: p),
+            compactOuterCornerRadius: NotchHistoryMorph.bottomRadius(progress: p, closed: morph.closedBottomRadius),
+            bodyShoulderCornerRadius: VoiceBarNotchContract.material.bodyShoulderCornerRadius(for: .history),
+            coreAnchorX: coreAnchorX,
+            topFlareRadius: NotchHistoryMorph.topRadius(progress: p, closed: morph.closedTopRadius)
+        ).path(in: rect)
+    }
+}
+
 public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, LowerContent: View>: View {
     public let presentation: VoiceBarNotchPresentation
     public let appearance: VoiceBarNotchAppearance
@@ -38,6 +129,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private let onHoverChanged: (Bool) -> Void
     private let morphVariant: VoiceBarNotchMorphVariant
     private let canvasGeometry: VoiceBarNotchGeometry?
+    private let historyMorph: VoiceBarNotchHistoryMorphInput?
     @State private var renderedGeometry: VoiceBarNotchGeometry
     @State private var renderedOuterCornerRadius: CGFloat
     @State private var renderedShoulderCornerRadius: CGFloat
@@ -45,6 +137,8 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     /// N1: a spring waiting for its invisible start (`morphEndpoints`) to commit. It runs from the next update's
     /// `onChange`, never from an escaping closure: writes from a closure that captured this view were dropped.
     @State private var pendingTabMorph: VoiceBarNotchPendingMorph?
+    /// The visual state `renderedGeometry` was last moved to (2.3 lane U4: History hand-off).
+    @State private var renderedVisualState: VoiceBarNotchVisualState?
     @Namespace private var morphNamespace
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -53,6 +147,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         appearance: VoiceBarNotchAppearance = .dark,
         morphVariant: VoiceBarNotchMorphVariant = .p1Matched,
         canvasGeometry: VoiceBarNotchGeometry? = nil,
+        historyMorph: VoiceBarNotchHistoryMorphInput? = nil,
         onHoverChanged: @escaping (Bool) -> Void = { _ in },
         @ViewBuilder leadingContent: () -> LeadingContent,
         @ViewBuilder trailingContent: () -> TrailingContent,
@@ -62,6 +157,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         self.appearance = appearance
         self.morphVariant = morphVariant
         self.canvasGeometry = canvasGeometry
+        self.historyMorph = historyMorph
         _renderedGeometry = State(initialValue: presentation.geometry)
         _renderedOuterCornerRadius = State(
             initialValue: VoiceBarNotchContract.material.compactOuterCornerRadius(for: presentation.visualState)
@@ -111,8 +207,26 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             renderedOuterCornerRadius = compactOuterCornerRadius
             renderedShoulderCornerRadius = bodyShoulderCornerRadius
             surfaceRevealProgress = presentation.visualState == .idle ? 0 : 1
+            renderedVisualState = presentation.visualState
         }
         .onChange(of: presentation.geometry) { _, presentedGeometry in
+            // 2.3 lane U4: launcher <-> History is drawn from the History progress, which already moved the
+            // shell; the state geometry follows unanimated so nothing springs a second time underneath it.
+            let historyOwnsMorph = historyMorph != nil || renderedVisualState == .history
+            let wasHistory = renderedVisualState
+            renderedVisualState = presentation.visualState
+            if historyOwnsMorph, Self.isHistoryPair(wasHistory, presentation.visualState) {
+                var snap = Transaction()
+                snap.disablesAnimations = true
+                withTransaction(snap) {
+                    renderedGeometry = presentedGeometry
+                    renderedOuterCornerRadius = compactOuterCornerRadius
+                    renderedShoulderCornerRadius = bodyShoulderCornerRadius
+                    surfaceRevealProgress = 1
+                }
+                pendingTabMorph = nil
+                return
+            }
             let transition = VoiceBarNotchShellTransition.resolve(
                 from: renderedGeometry,
                 to: presentedGeometry,
@@ -184,7 +298,19 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     }
 
     private var surfaceOffsetX: CGFloat {
-        resolvedCanvasGeometry.coreOriginX - renderedGeometry.coreOriginX
+        resolvedCanvasGeometry.coreOriginX - slotGeometry.coreOriginX
+    }
+
+    /// The geometry the slots are laid out in. While History is mounted its content sits at the OPEN panel's
+    /// rects for the whole morph: the rows grow out of the notch by scale, they never reflow.
+    private var slotGeometry: VoiceBarNotchGeometry {
+        historyMorph?.openExtended ?? renderedGeometry
+    }
+    // (`open` keeps the launcher's wing rects, so the controls and their hit targets never move.)
+
+    static func isHistoryPair(_ from: VoiceBarNotchVisualState?, _ to: VoiceBarNotchVisualState) -> Bool {
+        let pair: Set<VoiceBarNotchVisualState?> = [.hoverLauncher, .history]
+        return from != to && pair.contains(from) && pair.contains(to)
     }
 
     private var shellAnimation: Animation {
@@ -235,7 +361,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     }
 
     private var layout: VoiceBarNotchShapeLayout {
-        VoiceBarNotchShapeLayout(geometry: renderedGeometry)
+        VoiceBarNotchShapeLayout(geometry: slotGeometry)
     }
 
     @ViewBuilder
@@ -285,18 +411,28 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         }
     }
 
+    @ViewBuilder
     private var notchSurface: some View {
-        let shape = VoiceBarNotchContinuousShape(
-            geometry: renderedGeometry,
-            compactOuterCornerRadius: renderedOuterCornerRadius,
-            bodyShoulderCornerRadius: renderedShoulderCornerRadius,
-            coreAnchorX: resolvedCanvasGeometry.coreOriginX
-        )
-        return ZStack(alignment: .topLeading) {
+        if let historyMorph {
+            notchSurface(shape: VoiceBarNotchHistoryMorphShape(
+                morph: historyMorph, coreAnchorX: resolvedCanvasGeometry.coreOriginX
+            ))
+        } else {
+            notchSurface(shape: VoiceBarNotchContinuousShape(
+                geometry: renderedGeometry,
+                compactOuterCornerRadius: renderedOuterCornerRadius,
+                bodyShoulderCornerRadius: renderedShoulderCornerRadius,
+                coreAnchorX: resolvedCanvasGeometry.coreOriginX
+            ))
+        }
+    }
+
+    private func notchSurface(shape: some Shape) -> some View {
+        ZStack(alignment: .topLeading) {
             notchSlots
                 .frame(
-                    width: renderedGeometry.totalWidth,
-                    height: renderedGeometry.totalHeight,
+                    width: slotGeometry.totalWidth,
+                    height: slotGeometry.totalHeight,
                     alignment: .topLeading
                 )
                 .offset(x: surfaceOffsetX)
@@ -350,31 +486,27 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     private var notchSlots: some View {
         ZStack(alignment: .topLeading) {
-            if layout.leadingWingRect.width > 0 {
+            let leadingWing = layout.leadingWingRect
+            if leadingWing.width > 0 {
                 wingSlot(leadingContent, side: .leading)
-                    .frame(
-                        width: layout.leadingWingRect.width,
-                        height: layout.leadingWingRect.height
-                    )
-                    .position(
-                        x: layout.leadingWingRect.midX,
-                        y: layout.leadingWingRect.midY
-                    )
+                    .frame(width: leadingWing.width, height: leadingWing.height)
+                    .position(x: leadingWing.midX, y: leadingWing.midY)
             }
 
-            if layout.trailingWingRect.width > 0 {
+            let trailingWing = layout.trailingWingRect
+            if trailingWing.width > 0 {
                 wingSlot(trailingContent, side: .trailing)
-                    .frame(
-                        width: layout.trailingWingRect.width,
-                        height: layout.trailingWingRect.height
-                    )
-                    .position(
-                        x: layout.trailingWingRect.midX,
-                        y: layout.trailingWingRect.midY
-                    )
+                    .frame(width: trailingWing.width, height: trailingWing.height)
+                    .position(x: trailingWing.midX, y: trailingWing.midY)
             }
 
-            if !layout.bodyRect.isEmpty {
+            if historyMorph != nil, !layout.bodyRect.isEmpty {
+                // Morph B: the rows ride the History progress themselves (`NotchHistoryRowsMorph`); no
+                // opacity transition of their own.
+                lowerContent
+                    .frame(width: layout.bodyRect.width, height: layout.bodyRect.height)
+                    .position(x: layout.bodyRect.midX, y: layout.bodyRect.midY)
+            } else if !layout.bodyRect.isEmpty {
                 lowerContent
                     .transition(
                         surfaceTransition(

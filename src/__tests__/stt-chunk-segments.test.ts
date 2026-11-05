@@ -328,7 +328,7 @@ describe("chunk transcript segment stitching", () => {
     }
   });
 
-  test("keeps the chunked escape hatch on json with no returned segments", async () => {
+  test("requests seam timing with outro off and uses bounded fallback without it", async () => {
     process.env[OUTRO_FLAG] = "0";
     delete process.env[SMART_CHUNKS_FLAG];
     const wavPath = join(TEST_TMP, "stt-segments-chunked-off.wav");
@@ -350,7 +350,7 @@ describe("chunk transcript segment stitching", () => {
 
     const result = await backend.transcribe(wavPath);
 
-    expect(requestedSegments).toEqual([false, false, false, false]);
+    expect(requestedSegments).toEqual([true, true, true, true]);
     expect(result.text).toBe("alpha bridge middle final done");
     expect(result.segments).toBeUndefined();
     expect(result.segmentsAudioSha256).toBeUndefined();
