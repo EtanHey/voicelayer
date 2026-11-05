@@ -207,6 +207,59 @@ public enum NotchHistoryMorph {
     }
 }
 
+/// A spring in flight, as mass-1 physics: where SwiftUI is drawing it right now. SwiftUI never reports an in-flight
+/// value (the model already holds the target), so a press that grabs a moving panel reads it from here and the panel
+/// stays under the pointer instead of jumping to where the spring was headed (Codex review R1).
+public struct NotchHistorySpringFlight: Equatable {
+    public let from: CGFloat
+    public let to: CGFloat
+    /// In value units per second at `start`.
+    public let velocity: Double
+    public let start: TimeInterval
+    public let stiffness: Double
+    public let damping: Double
+
+    public init(from: CGFloat, to: CGFloat, velocity: Double, start: TimeInterval,
+                response: Double, dampingFraction: Double) {
+        let coefficients = NotchHistoryMorph.springCoefficients(response: response, dampingFraction: dampingFraction)
+        self.from = from
+        self.to = to
+        self.velocity = velocity
+        self.start = start
+        self.stiffness = coefficients.stiffness
+        self.damping = coefficients.damping
+    }
+
+    /// Displacement from `to` and its velocity `t` seconds in (x'' = -k x - c x', x(0) = from - to, x'(0) = velocity).
+    private func state(_ t: Double) -> (x: Double, v: Double) {
+        let a = Double(from - to), v0 = velocity
+        let omega = stiffness.squareRoot(), zeta = damping / (2 * omega)
+        if abs(zeta - 1) < 1e-6 {
+            let b = v0 + omega * a, e = exp(-omega * t)
+            return ((a + b * t) * e, (b - omega * (a + b * t)) * e)
+        }
+        if zeta < 1 {
+            let wd = omega * (1 - zeta * zeta).squareRoot(), decay = zeta * omega
+            let b = (v0 + decay * a) / wd, e = exp(-decay * t)
+            let x = e * (a * cos(wd * t) + b * sin(wd * t))
+            let v = e * ((b * wd - decay * a) * cos(wd * t) - (a * wd + decay * b) * sin(wd * t))
+            return (x, v)
+        }
+        let root = (zeta * zeta - 1).squareRoot()
+        let r1 = -omega * (zeta - root), r2 = -omega * (zeta + root)
+        let c2 = (v0 - r1 * a) / (r2 - r1), c1 = a - c2
+        return (c1 * exp(r1 * t) + c2 * exp(r2 * t), c1 * r1 * exp(r1 * t) + c2 * r2 * exp(r2 * t))
+    }
+
+    public func value(at time: TimeInterval) -> CGFloat {
+        to + CGFloat(state(max(0, time - start)).x)
+    }
+
+    public func velocity(at time: TimeInterval) -> Double {
+        state(max(0, time - start)).v
+    }
+}
+
 /// The drag-versus-click disambiguation and drag-follow for pulling History down from the notch
 /// (formal/history-pull, `HistoryPull.tla`). A press on the band (or on the open panel's bottom edge) is
 /// pending until it moves `dragSlop`; only then does it become a drag that owns the progress. A press that
@@ -268,15 +321,23 @@ public struct NotchHistoryPull: Equatable {
 
     /// The pointer moved. Returns the value the panel should show (`band` stretches it past its ends), or nil while
     /// this is not a drag. `range` is how far the pointer travels per unit of value.
+    /// `seed` is what the panel shows at the moment the press becomes a drag (a spring may have moved it since the
+    /// press): the drag continues from there, from this pointer position, so nothing jumps.
     public mutating func move(
         y: CGFloat, time: TimeInterval, range: CGFloat,
-        band: (CGFloat) -> CGFloat = NotchHistoryMorph.rubberBand
+        band: (CGFloat) -> CGFloat = NotchHistoryMorph.rubberBand, seed: CGFloat? = nil
     ) -> CGFloat? {
         switch phase {
         case .idle:
             return nil
         case let .pending(startY, startProgress):
             guard abs(y - startY) > NotchHistoryMorph.dragSlop else { return nil }
+            if let seed {
+                phase = .dragging(startY: y, startProgress: seed)
+                lastY = y
+                lastTime = time
+                return band(seed)
+            }
             phase = .dragging(startY: startY, startProgress: startProgress)
             return band(track(y: y, time: time, range: range, startY: startY, startProgress: startProgress))
         case let .dragging(startY, startProgress):

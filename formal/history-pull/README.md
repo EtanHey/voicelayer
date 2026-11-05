@@ -19,6 +19,10 @@ is. Order-of-events risks modelled here:
   (`NoStrandedRows`); at rest the hit region holds exactly the rows drawn (`HitMatchesRows`),
   because the settled rows reach the presentation model on release. The band pull and the handle
   never own the pointer at once.
+- **Cancelled presses and mid-flight grabs (Codex review R1).** A press the system cancels
+  while still inside the slop ends like a click, so the next gesture never reuses its stale start
+  (`NoStalePress`). A press that grabs a moving panel or rows continues from what is drawn
+  (`NotchHistorySpringFlight`), never from the spring's target (`NoGrabJump`).
 - **Reversible.** `Animate` never changes the level: a retarget springs from where it is.
   This holds by construction in the spec (and in SwiftUI interpolating springs, which merge
   velocity on retarget).
@@ -28,13 +32,15 @@ Run: `bash formal/history-pull/check.sh` (needs a JDK on PATH, e.g.
 
 | Config | Expected | Result (2026-11-05, M4, OpenJDK 21) |
 | --- | --- | --- |
-| Fixed | PASS | 1236 distinct states |
-| Old (2.2.60: close unmounts at once) | `NoClippedPanel` fails | violated, 23 states |
-| MutantNoGeneration (any completion unmounts) | `NoClippedPanel` fails | violated, 125 states |
+| Fixed | PASS | 1008 distinct states |
+| Old (2.2.60: close unmounts at once) | `NoClippedPanel` fails | violated, 19 states |
+| MutantNoGeneration (any completion unmounts) | `NoClippedPanel` fails | violated, 104 states |
 | MutantNoSlop (a press moves before the slop) | `ClickNeverMoves` fails | violated, 7 states |
-| MutantNoCancel (a cancelled pull is dropped) | `NoStrandedPanel` fails | violated, 36 states |
-| MutantNoSnap (a released handle stays between rows) | `NoStrandedRows` fails | violated, 448 states |
-| MutantNoPublish (settled rows never reach the hit region) | `HitMatchesRows` fails | violated, 605 states |
+| MutantNoCancel (a cancelled drag is dropped) | `NoStrandedPanel` fails | violated, 32 states |
+| MutantNoSnap (a released handle stays between rows) | `NoStrandedRows` fails | violated, 474 states |
+| MutantNoPublish (settled rows never reach the hit region) | `HitMatchesRows` fails | violated, 714 states |
+| MutantNoPendingCancel (a press cancelled inside the slop stays pending) | `NoStalePress` fails | violated, 11 states |
+| MutantSeedFromTarget (a grab mid-spring starts from the target) | `NoGrabJump` fails | violated, 15 states |
 
 Swift guards: `NotchHistoryMorphTests` (pull state machine, release target, rubber band,
 spring values, handle hit strip, rows rubber band and snap, hit region = settled rows, session height), `NotchShellCentredTests.testTheOpenHistoryPanelIsOneFlushShapeWithFlaredTopCorners`.

@@ -255,6 +255,47 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertFalse(NotchHistoryPull.accepts(y: 360), "the bottom edge belongs to the extend handle")
     }
 
+    // MARK: Grabbing a moving panel (Codex review R1)
+
+    func testTheSpringFlightTracksWhatIsDrawn() {
+        let open = NotchHistorySpringFlight(from: 0, to: 1, velocity: 0, start: 10,
+                                            response: NotchHistoryMorph.openResponse,
+                                            dampingFraction: NotchHistoryMorph.openDampingFraction)
+        XCTAssertEqual(open.value(at: 10), 0, accuracy: 1e-9, "starts where it was")
+        XCTAssertEqual(open.value(at: 9), 0, accuracy: 1e-9, "never before its start")
+        let mid = open.value(at: 10.1)
+        XCTAssertGreaterThan(mid, 0.05)
+        XCTAssertLessThan(mid, 0.95, "mid-flight is neither end: grabbing here must not jump to 1")
+        let peak = stride(from: 10.0, through: 11.5, by: 0.005).map { open.value(at: $0) }.max() ?? 0
+        XCTAssertGreaterThan(peak, 1, "the 0.8-damped open spring overshoots a little, as SwiftUI's does")
+        XCTAssertLessThan(peak, 1.05)
+        XCTAssertEqual(open.value(at: 14), 1, accuracy: 1e-4, "settles")
+        // Velocity is the derivative of the value.
+        let t = 10.07, h = 1e-5
+        XCTAssertEqual(open.velocity(at: t), Double(open.value(at: t + h) - open.value(at: t - h)) / (2 * h), accuracy: 1e-3)
+
+        let close = NotchHistorySpringFlight(from: 1, to: 0, velocity: 0, start: 0,
+                                             response: NotchHistoryMorph.closeResponse,
+                                             dampingFraction: NotchHistoryMorph.closeDampingFraction)
+        let samples = stride(from: 0.0, through: 2, by: 0.01).map { close.value(at: $0) }
+        XCTAssertTrue(zip(samples, samples.dropFirst()).allSatisfy { $0 >= $1 - 1e-9 }, "critically damped: no bounce")
+        XCTAssertGreaterThanOrEqual(samples.min() ?? -1, -1e-9)
+        let thrown = NotchHistorySpringFlight(from: 0.4, to: 1, velocity: 3, start: 0, response: 0.42, dampingFraction: 1.4)
+        XCTAssertEqual(thrown.velocity(at: 0), 3, accuracy: 1e-9, "an overdamped spring keeps its release speed at t = 0")
+        XCTAssertEqual(thrown.value(at: 6), 1, accuracy: 1e-4)
+    }
+
+    func testAGrabMidFlightContinuesFromWhatIsDrawnNotTheTarget() throws {
+        var pull = NotchHistoryPull()
+        // The close spring is heading to 0; the model already holds 0, the panel is drawn at 0.6.
+        pull.press(y: 10, progress: 0, time: 0)
+        XCTAssertNil(pull.move(y: 12, time: 0.01, range: 348, seed: 0.6), "inside the slop: nothing moves")
+        let first = try XCTUnwrap(pull.move(y: 14, time: 0.02, range: 348, seed: 0.6))
+        XCTAssertEqual(first, 0.6, accuracy: 1e-9, "the drag starts exactly where the panel is drawn")
+        let next = try XCTUnwrap(pull.move(y: 14 + 34.8, time: 0.04, range: 348, seed: 0.1))
+        XCTAssertEqual(next, 0.7, accuracy: 1e-9, "then follows the pointer from there; a later seed is ignored")
+    }
+
     // MARK: V6 extend handle
 
     func testTheHandleTakesPressesOnlyInItsBandOnTheOpenPanel() {

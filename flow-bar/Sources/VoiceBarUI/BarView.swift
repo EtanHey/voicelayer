@@ -358,6 +358,9 @@ public struct BarView: View {
     @State private var historyRows = NotchHistoryMorph.visibleRows
     @State private var historyRowsExtent = CGFloat(NotchHistoryMorph.visibleRows)
     @State private var historyRowsPull = NotchHistoryPull()
+    /// The springs currently moving the panel and the rows, so a press can read what is drawn (Codex review R1).
+    @State private var historyFlight: NotchHistorySpringFlight?
+    @State private var historyRowsFlight: NotchHistorySpringFlight?
     @GestureState private var isHistoryPullGestureActive = false
     /// Visual shots only: show the panel frozen at this progress.
     private var historyFrozenProgress: CGFloat?
@@ -458,8 +461,9 @@ public struct BarView: View {
         .coordinateSpace(name: Self.notchCanvasSpace)
         .gesture(historyPullGesture)
         .onChange(of: isHistoryPullGestureActive) { _, isActive in
-            // A pull the system cancelled (no `onEnded`) still settles, at the nearer end.
-            if !isActive, historyPull.isDragging || historyRowsPull.isDragging { endHistoryPull(cancelled: true) }
+            // A press the system cancelled (no `onEnded`) ends here: a drag settles at the nearer end, a press still
+            // inside the slop just ends, so the next gesture never reuses a stale start (Codex review R1).
+            if !isActive, historyPull.phase != .idle || historyRowsPull.phase != .idle { endHistoryPull(cancelled: true) }
         }
         .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
@@ -572,12 +576,22 @@ public struct BarView: View {
         }
         guard !accessibilityReduceMotion else {
             // Reduced motion swaps every morph for an instant change (the mock's note).
+            historyFlight = nil
             historyProgress = toOpen ? 1 : 0
             if !toOpen { isHistoryMounted = false }
             return
         }
+        // SwiftUI retargets from what is drawn and keeps its velocity; the flight records the same.
+        let now = Date().timeIntervalSinceReferenceDate
+        let drawn = renderedHistoryProgress(at: now)
+        let carried = (historyFlight?.velocity(at: now) ?? 0) + velocity
+        historyFlight = NotchHistorySpringFlight(
+            from: drawn, to: toOpen ? 1 : 0, velocity: carried, start: now,
+            response: toOpen ? NotchHistoryMorph.openResponse : NotchHistoryMorph.closeResponse,
+            dampingFraction: toOpen ? NotchHistoryMorph.openDampingFraction : NotchHistoryMorph.closeDampingFraction
+        )
         withAnimation(
-            NotchHistoryMorph.animation(opening: toOpen, from: historyProgress, velocity: velocity),
+            NotchHistoryMorph.animation(opening: toOpen, from: drawn, velocity: velocity),
             completionCriteria: .removed
         ) {
             historyProgress = toOpen ? 1 : 0
@@ -603,7 +617,7 @@ public struct BarView: View {
                         historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
                     } else if isHistoryPresented, NotchHistoryPull.acceptsHandle(
                         point: value.startLocation, centreX: historyPanelCentreX,
-                        panelHeight: openHeight, progress: historyFrozenProgress ?? historyProgress
+                        panelHeight: openHeight, progress: historyFrozenProgress ?? renderedHistoryProgress(at: time)
                     ) {
                         historyRowsPull.press(y: value.startLocation.y, progress: historyRowsExtent, time: time)
                     } else {
@@ -615,8 +629,10 @@ public struct BarView: View {
                     return
                 }
                 guard let progress = historyPull.move(
-                    y: value.location.y, time: time, range: openHeight - VoiceBarNotchContract.topHeight
+                    y: value.location.y, time: time, range: openHeight - VoiceBarNotchContract.topHeight,
+                    seed: renderedHistoryProgress(at: time)
                 ) else { return }
+                historyFlight = nil // the pointer owns the value now
                 if !isHistoryMounted {
                     historyMorphGeneration &+= 1
                     isHistoryMounted = true
@@ -635,8 +651,10 @@ public struct BarView: View {
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
         guard let rows = historyRowsPull.move(
             y: y, time: time, range: NotchHistoryMorph.rowHeight,
-            band: { NotchHistoryMorph.rowsRubberBand($0, maximum: maximum) }
+            band: { NotchHistoryMorph.rowsRubberBand($0, maximum: maximum) },
+            seed: renderedHistoryRows(at: time)
         ) else { return }
+        historyRowsFlight = nil
         presentationModel?.setHistoryPullActive(true)
         var follow = Transaction()
         follow.disablesAnimations = true
@@ -654,12 +672,26 @@ public struct BarView: View {
         historyRows = rows
         presentationModel?.setHistoryRows(rows)
         guard !accessibilityReduceMotion else {
+            historyRowsFlight = nil
             historyRowsExtent = CGFloat(rows)
             return
         }
+        historyRowsFlight = NotchHistorySpringFlight(
+            from: historyRowsExtent, to: CGFloat(rows), velocity: velocity, start: Date().timeIntervalSinceReferenceDate,
+            response: NotchHistoryMorph.pullResponse, dampingFraction: NotchHistoryMorph.pullDampingFraction
+        )
         withAnimation(NotchHistoryMorph.rowsAnimation(from: historyRowsExtent, to: rows, velocity: velocity)) {
             historyRowsExtent = CGFloat(rows)
         }
+    }
+
+    /// What the panel draws at `time`: the running spring's position, else the model value.
+    private func renderedHistoryProgress(at time: TimeInterval) -> CGFloat {
+        historyFlight?.value(at: time) ?? historyProgress
+    }
+
+    private func renderedHistoryRows(at time: TimeInterval) -> CGFloat {
+        historyRowsFlight?.value(at: time) ?? historyRowsExtent
     }
 
     /// The open panel's centre in the canvas: the extend handle sits there.
@@ -1324,6 +1356,7 @@ public struct BarView: View {
         guard rows != historyRows else { return }
         historyRows = rows
         presentationModel?.setHistoryRows(rows)
+        historyRowsFlight = nil
         historyRowsExtent = CGFloat(rows) // an assistive step, like a keyboard action, never animates
     }
 

@@ -1,6 +1,6 @@
 {
   "module": "HistoryPull",
-  "sourceBaseline": "b53ba2f2d0d5f0df705c0b534a0fc03d613f87f8",
+  "sourceBaseline": "531a261ede5d11466920e2249dac0b4045c33c64",
   "sources": [
     "flow-bar/Sources/VoiceBarUI/BarView.swift",
     "flow-bar/Sources/VoiceBarUI/NotchHistoryMorph.swift"
@@ -40,6 +40,16 @@
       "role": "mutant",
       "target": "HitMatchesRows",
       "kind": "invariant"
+    },
+    "MutantNoPendingCancel": {
+      "role": "mutant",
+      "target": "NoStalePress",
+      "kind": "invariant"
+    },
+    "MutantSeedFromTarget": {
+      "role": "mutant",
+      "target": "NoGrabJump",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -47,6 +57,8 @@
     "ClickNeverMoves",
     "NoStrandedPanel",
     "NoStrandedRows",
-    "HitMatchesRows"
+    "HitMatchesRows",
+    "NoStalePress",
+    "NoGrabJump"
   ]
 }
