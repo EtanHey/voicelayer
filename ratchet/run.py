@@ -215,7 +215,7 @@ class Run:
         })
         (self.root / "model.bin").touch()
         stub = self.root / "bin/whisper-cli"
-        stub.write_text("#!/bin/sh\nprintf 'Recovered synthetic answer.\\n'\n")
+        stub.write_text("#!" + sys.executable + "\n" + (REPO / "ratchet/fixture-whisper.py").read_text())
         stub.chmod(0o700)
         self.env["PATH"] = str(self.root / "bin") + ":" + self.env["PATH"]
 
@@ -581,6 +581,8 @@ def lock_case(run, ending, client_script):
                 raise RuntimeError('missing lock boundary: ' + repr(faults) + run.log('sdk-' + ending))
             return any(predicate(frame) for _, frame in frames)
         cap.wait(lambda: has_frame(lambda f: f.get('type') == 'state' and f.get('state') == 'recording'), 6)
+        capture_started = next(when for when, frame in frames
+                               if frame.get('type') == 'state' and frame.get('state') == 'recording')
         command_id = 'lock-' + ending
         bar.sendall((json.dumps(dict(cmd='set_recording_hold', engaged=True, id=command_id)) + '\n').encode())
         cap.wait(lambda: has_frame(lambda f: f.get('type') == 'ack' and f.get('id') == command_id), 2)
@@ -595,7 +597,9 @@ def lock_case(run, ending, client_script):
                 raise RuntimeError('lock evidence: disconnected boundary')
             time.sleep(.05)
         release = time.monotonic()
-        ended = [(when, frame) for when, frame in frames if when < release
+        # Connection replay can include idle before this capture. Still reject any
+        # ending after recording begins, including one racing the HOLD command.
+        ended = [(when, frame) for when, frame in frames if capture_started <= when < release
                  and frame.get('type') == 'state' and frame.get('state') in ('idle', 'transcribing')
                  and frame.get('source') != 'playback']
         before_release = json.loads(rec_path.read_text())
