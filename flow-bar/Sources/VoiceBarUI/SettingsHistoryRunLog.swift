@@ -34,6 +34,9 @@ public struct SettingsHistoryRunLog: Equatable, Sendable {
         /// digests (never the words). Equal digests mean the re-transcription produced the same text.
         public var priorTextDigest: Int?
         public var resultTextDigest: Int?
+        /// A final result has been seen since this request began. Tracked apart from `recordingObservations`, which
+        /// also holds unrelated errors and idle notes (Codex review R1).
+        public var hasObservedFinal = false
     }
 
     /// A process-local digest of `text` with whitespace collapsed, so a re-decode that only moved a line break
@@ -90,7 +93,8 @@ public struct SettingsHistoryRunLog: Equatable, Sendable {
             let digest = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : Self.textDigest(text)
             for index in unresolved(for: path) {
                 // Only the first final text after a request is its result; later ones belong to later requests.
-                if runs[index].resultTextDigest == nil, runs[index].recordingObservations.isEmpty {
+                if !runs[index].hasObservedFinal {
+                    runs[index].hasObservedFinal = true
                     runs[index].resultTextDigest = digest
                 }
                 note(index, observation, at: at)

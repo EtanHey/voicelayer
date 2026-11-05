@@ -130,6 +130,20 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
         XCTAssertEqual(SettingsHistoryDiagnosticsCopy.latestRequestNote(runs: log.runs), "No change: same text")
     }
 
+    /// Codex review R1: an unrelated error noted before the final result made the run's observations non-empty, so
+    /// the same-text final never got its digest and the row said "New text received".
+    func testAnUnrelatedErrorBeforeTheFinalStillAllowsNoChange() {
+        var log = SettingsHistoryRunLog()
+        log.begin(id: "r", path: path.path, at: created.addingTimeInterval(60), priorText: "hello")
+        log.observe(["type": "error", "message": "Synthetic unrelated failure"])
+        log.observe(["type": "transcription", "recording_path": path.path, "text": "hello"])
+        XCTAssertEqual(copy(snapshot(), runs: log.runs).logLines.last?.outcome, "No change: same text")
+        XCTAssertEqual(SettingsHistoryDiagnosticsCopy.latestRequestNote(runs: log.runs), "No change: same text")
+        log.observe(["type": "transcription", "recording_path": path.path, "text": "a later, different result"])
+        XCTAssertEqual(copy(snapshot(), runs: log.runs).logLines.last?.outcome, "No change: same text",
+                       "only the first final after the request is its result")
+    }
+
     func testOnlyIdenticalNeighboursFoldAndNewTextStaysNewText() {
         var log = SettingsHistoryRunLog()
         log.begin(id: "a", path: path.path, at: created.addingTimeInterval(60), priorText: "Old words")
