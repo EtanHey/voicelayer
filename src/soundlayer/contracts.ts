@@ -88,9 +88,13 @@ export interface TextToSpeechOptions {
   requireClonedVoice?: boolean;
   /** Return an immutable copy of the synthesized audio for paired archives. */
   captureAudioArtifact?: boolean;
+  /** Ask may continue recording when Edge synthesis exhausts its retries. */
+  textOnlyOnSynthesisFailure?: boolean;
 }
 
 export interface TextToSpeechResult {
+  /** No audio was generated; the caller must display the question before capture. */
+  textOnly?: true;
   warning?: string;
   /** Sanitized human-readable text paired with the synthesized audio. */
   displayText?: string;

@@ -274,3 +274,20 @@ test("preview_tts_profile clone with non-zero rate survives stale PATH ffmpeg an
  expect(commands.some(cmd => cmd[0] === "/opt/homebrew/bin/ffmpeg" && cmd.includes("-af"))).toBe(true);
  expect(commands.some(cmd => cmd[0] === "ffprobe" || cmd[0] === "ffmpeg")).toBe(false);
 });
+
+test("Hebrew Ask uses Hila under the default Edge voice", async () => {
+ const result = await speak("האם אפשר להמשיך?", { mode: "converse" });
+ await awaitCurrentPlayback();
+ expect(result.voice).toBe("he-IL-HilaNeural");
+ expect(synthArgs()).toEqual([["--voice=he-IL-HilaNeural", "--rate=+0%"]]);
+});
+
+test("Hebrew Ask preserves a selected clone and never routes it to Hila", async () => {
+ cloneFixture();
+ writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!, JSON.stringify({ profiles: { short: { engine: "clone", voice: "fixture" } } }));
+ const result = await speak("האם אפשר להמשיך?", { mode: "converse", textOnlyOnSynthesisFailure: true });
+ await awaitCurrentPlayback();
+ expect(qwen.synthesizeCloned).toHaveBeenCalledWith("האם אפשר להמשיך?", "fixture", expect.any(AbortSignal));
+ expect(result).toMatchObject({ engine: "qwen3-tts", voice: "fixture" });
+ expect(synthArgs()).toHaveLength(0);
+});
