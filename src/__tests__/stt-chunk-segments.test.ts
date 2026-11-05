@@ -249,6 +249,7 @@ describe("chunk transcript segment stitching", () => {
     expect(JSON.stringify(original)).toBe(before);
   });
 
+  // Hosted replay reached 8.8 s; 2x headroom rounded up keeps all 500 trials.
   test("emits monotonic segments for 500 tiled random chunk groupings", () => {
     let seed = 12_345;
     const random = () =>
@@ -297,7 +298,7 @@ describe("chunk transcript segment stitching", () => {
         );
       }
     }
-  });
+  }, 20_000);
 
   test("replays every captured M1 segment stream through all real seams", () => {
     // The fixture retains the real verbose_json segment grouping and timing,
