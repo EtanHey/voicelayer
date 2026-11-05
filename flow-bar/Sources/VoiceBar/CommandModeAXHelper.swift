@@ -117,7 +117,7 @@ final class CommandModeAXHelper {
     }
 
     /// Captures focus identity and metadata only; never reads the element's text.
-    static func captureFocusedTargetEligibility() -> DictationFocusedTargetEligibility? {
+    static func captureFocusedTargetEligibility(requiresWritableAX: Bool = true) -> DictationFocusedTargetEligibility? {
         guard AXIsProcessTrusted() else {
             logNativePaste("paste_native_focus", ["reason": "ax_untrusted"])
             return nil
@@ -146,7 +146,11 @@ final class CommandModeAXHelper {
                 guard CFEqual(currentWindow, window) else { return focusDeclined("window_changed", pid: pid) }
             }
             let rechecked = targetEligibility(current, pid: pid, matchesCurrentFocus: { true })
-            let reason = rechecked.typingRejectionReason(into: pid)
+            let reason: String? = requiresWritableAX ? rechecked.typingRejectionReason(into: pid)
+                : rechecked.isSecure ? "secure_target"
+                : !["AXTextField", "AXTextArea", "AXComboBox"].contains(rechecked.role ?? "") ? "non_text_role"
+                : rechecked.diagnosticDetails["enabledAttribute"] == "false" ? "not_enabled"
+                : rechecked.diagnosticDetails["enabledAttribute"] == "error" ? "enabled_read_failed" : nil
             var details = rechecked.diagnosticDetails
             details["reason"] = reason ?? "eligible"
             details["focusedPID"] = String(pid)
