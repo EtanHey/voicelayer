@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
@@ -79,5 +80,101 @@ final class TeleprompterAHandleTests: XCTestCase {
                               encoding: .utf8)
         XCTAssertTrue(view.contains(".focusable(interactions: .activate)"))
         XCTAssertFalse(view.contains(".focusable()"), "a click on the handle must not make the panel key")
+    }
+
+    // MARK: - Rendered pointer-hold ownership (review R1 on #738; the reviewer's probe shape)
+
+    private struct Mounted {
+        let host: NSHostingView<AnyView>
+        let window: NSWindow
+        let handle: NSPoint
+    }
+
+    private func mount(_ view: TeleprompterAView) throws -> Mounted {
+        let host = NSHostingView(rootView: AnyView(view))
+        host.frame = NSRect(x: 0, y: 0, width: 440, height: 140)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
+        window.orderBack(nil)
+        addTeardownBlock { window.orderOut(nil); window.contentView = nil; window.close() }
+        drain(host)
+        func descendants(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(descendants) }
+        let tooltip = try XCTUnwrap(descendants(host).first { $0.toolTip == "Drag to show more or fewer lines" })
+        return Mounted(host: host, window: window,
+                       handle: tooltip.convert(NSPoint(x: tooltip.bounds.midX, y: tooltip.bounds.midY), to: nil))
+    }
+
+    private func drain(_ host: NSView) {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+        host.layoutSubtreeIfNeeded()
+    }
+
+    private func send(_ type: NSEvent.EventType, _ point: NSPoint, _ number: Int, in mounted: Mounted) throws {
+        mounted.window.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(
+            with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: mounted.window.windowNumber, context: nil, eventNumber: number, clickCount: 1, pressure: 1)))
+        drain(mounted.host)
+    }
+
+    private func handleView(_ holds: @escaping (Bool) -> Void) -> TeleprompterAView {
+        TeleprompterAView(text: "Synthetic handle ownership probe.", onVisibleLinesChange: { _ in },
+                          onHandleDrag: holds, playbackElapsedMilliseconds: { 0 })
+    }
+
+    func testNormalReleaseLetsGoOfTheHoldOnce() throws {
+        let model = VoiceBarNotchPresentationModel()
+        var holds: [Bool] = []
+        let mounted = try mount(handleView { holds.append($0); model.setTeleprompterHandlePullActive($0) })
+        try send(.leftMouseDown, mounted.handle, 1, in: mounted)
+        try send(.leftMouseDragged, NSPoint(x: mounted.handle.x, y: mounted.handle.y - 3), 2, in: mounted)
+        XCTAssertTrue(model.isPointerHeldByPull)
+        try send(.leftMouseUp, NSPoint(x: mounted.handle.x, y: mounted.handle.y - 3), 3, in: mounted)
+        XCTAssertEqual(holds, [true, false])
+        XCTAssertFalse(model.isPointerHeldByPull)
+    }
+
+    /// RED before the fix: the handle went away mid-drag, onEnded never came and the hold stayed (the 8-line reserve
+    /// then swallowed clicks meant for the app underneath).
+    func testHandleRemovedMidDragReleasesItsHold() throws {
+        let model = VoiceBarNotchPresentationModel()
+        var holds: [Bool] = []
+        let mounted = try mount(handleView { holds.append($0); model.setTeleprompterHandlePullActive($0) })
+        try send(.leftMouseDown, mounted.handle, 1, in: mounted)
+        try send(.leftMouseDragged, NSPoint(x: mounted.handle.x, y: mounted.handle.y - 3), 2, in: mounted)
+        XCTAssertEqual(holds, [true])
+        mounted.host.rootView = AnyView(TeleprompterAView(text: "Handle removed.", playbackElapsedMilliseconds: { 0 }))
+        drain(mounted.host)
+        XCTAssertEqual(holds, [true, false], "the handle's disappearance releases its hold")
+        XCTAssertFalse(model.isPointerHeldByPull)
+        try send(.leftMouseUp, NSPoint(x: mounted.handle.x, y: mounted.handle.y - 3), 3, in: mounted)
+        XCTAssertEqual(holds, [true, false], "never a second release")
+    }
+
+    func testTeleprompterUnmountedMidDragReleasesItsHold() throws {
+        let model = VoiceBarNotchPresentationModel()
+        var holds: [Bool] = []
+        let mounted = try mount(handleView { holds.append($0); model.setTeleprompterHandlePullActive($0) })
+        try send(.leftMouseDown, mounted.handle, 1, in: mounted)
+        try send(.leftMouseDragged, NSPoint(x: mounted.handle.x, y: mounted.handle.y - 3), 2, in: mounted)
+        mounted.host.rootView = AnyView(EmptyView())
+        drain(mounted.host)
+        XCTAssertEqual(holds, [true, false])
+        XCTAssertFalse(model.isPointerHeldByPull)
+    }
+
+    /// The handle releases only its own hold: History's pull keeps the pointer.
+    func testHandleNeverReleasesAHistoryHold() throws {
+        let model = VoiceBarNotchPresentationModel()
+        model.setHistoryPullActive(true)
+        let mounted = try mount(handleView { model.setTeleprompterHandlePullActive($0) })
+        try send(.leftMouseDown, mounted.handle, 1, in: mounted)
+        try send(.leftMouseDragged, NSPoint(x: mounted.handle.x, y: mounted.handle.y - 3), 2, in: mounted)
+        mounted.host.rootView = AnyView(EmptyView())
+        drain(mounted.host)
+        XCTAssertFalse(model.isTeleprompterHandlePullActive)
+        XCTAssertTrue(model.isHistoryPullActive)
+        XCTAssertTrue(model.isPointerHeldByPull)
     }
 }

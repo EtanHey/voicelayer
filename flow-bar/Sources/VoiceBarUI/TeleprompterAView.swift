@@ -47,6 +47,10 @@ public struct TeleprompterAView: View {
     @State private var cache = TeleprompterAModelCache()
     @State private var dragStartLines: Int?
     @State private var handleOvershoot: CGFloat = 0
+    /// True only between this handle's own `onHandleDrag(true)` and its one matching `false`.
+    @State private var ownsPointer = false
+    /// Resets to false however the gesture ends: release, cancellation, or the handle going away.
+    @GestureState private var isHandleGestureActive = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
@@ -156,8 +160,12 @@ public struct TeleprompterAView: View {
             // Whole lines follow the pointer (the shell settles each with `pull`); past 3 or 8 only the handle
             // stretches. The window already holds eight lines, so nothing resizes under the pointer.
             .gesture(DragGesture(minimumDistance: 1)
+                .updating($isHandleGestureActive) { _, active, _ in active = true }
                 .onChanged { value in
-                    if dragStartLines == nil { onHandleDrag?(true) }
+                    if !ownsPointer {
+                        ownsPointer = true
+                        onHandleDrag?(true)
+                    }
                     let start = dragStartLines ?? visibleLines
                     dragStartLines = start
                     var follow = Transaction()
@@ -173,13 +181,16 @@ public struct TeleprompterAView: View {
                 .onEnded { value in
                     let lines = TeleprompterA.snappedLines(startLines: dragStartLines ?? visibleLines,
                                                            translation: value.translation.height)
-                    dragStartLines = nil
                     withAnimation(reduceMotion ? nil : TeleprompterA.pull) {
                         handleOvershoot = 0
                         onVisibleLinesChange?(lines)
                     }
-                    onHandleDrag?(false)
+                    releasePointer()
                 })
+            // A cancelled gesture or an unmounted handle never delivers onEnded (formal/teleprompter-a-handle Cancel):
+            // release on the gesture state's reset and on disappearance too. Idempotent.
+            .onChange(of: isHandleGestureActive) { _, active in if !active { releasePointer() } }
+            .onDisappear { releasePointer() }
             // Keyboard navigation only: a click must not make the non-activating panel key (R0856-10).
             .focusable(interactions: .activate)
             .onKeyPress(.upArrow) { step(-1) }
@@ -190,6 +201,15 @@ public struct TeleprompterAView: View {
             .accessibilityAdjustableAction { direction in
                 _ = step(direction == .increment ? 1 : -1)
             }
+    }
+
+    /// Lets go of this handle's pointer hold, at most once per drag; clears the drag seed and the stretch.
+    private func releasePointer() {
+        dragStartLines = nil
+        handleOvershoot = 0
+        guard ownsPointer else { return }
+        ownsPointer = false
+        onHandleDrag?(false)
     }
 
     private func step(_ delta: Int) -> KeyPress.Result {

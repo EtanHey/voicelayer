@@ -3,14 +3,14 @@
   "kind": "invariant",
   "target": "NoDeadBand",
   "status": "EXPECTED_FAIL",
-  "generated": 33,
-  "distinct": 18,
+  "generated": 74,
+  "distinct": 28,
   "trace": [
-    "/\\ pendingSync = FALSE\n/\\ held = FALSE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = FALSE",
-    "/\\ pendingSync = FALSE\n/\\ held = TRUE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = TRUE",
-    "/\\ pendingSync = TRUE\n/\\ held = TRUE\n/\\ drawn = 4\n/\\ hit = 3\n/\\ dragging = TRUE",
-    "/\\ pendingSync = FALSE\n/\\ held = TRUE\n/\\ drawn = 4\n/\\ hit = 4\n/\\ dragging = TRUE",
-    "/\\ pendingSync = TRUE\n/\\ held = TRUE\n/\\ drawn = 3\n/\\ hit = 4\n/\\ dragging = TRUE",
-    "/\\ pendingSync = TRUE\n/\\ held = FALSE\n/\\ drawn = 3\n/\\ hit = 4\n/\\ dragging = FALSE"
+    "/\\ pendingSync = FALSE\n/\\ historyDragging = FALSE\n/\\ held = FALSE\n/\\ historyHeld = FALSE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = FALSE",
+    "/\\ pendingSync = FALSE\n/\\ historyDragging = FALSE\n/\\ held = TRUE\n/\\ historyHeld = FALSE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = TRUE",
+    "/\\ pendingSync = TRUE\n/\\ historyDragging = FALSE\n/\\ held = TRUE\n/\\ historyHeld = FALSE\n/\\ drawn = 4\n/\\ hit = 3\n/\\ dragging = TRUE",
+    "/\\ pendingSync = FALSE\n/\\ historyDragging = FALSE\n/\\ held = TRUE\n/\\ historyHeld = FALSE\n/\\ drawn = 4\n/\\ hit = 4\n/\\ dragging = TRUE",
+    "/\\ pendingSync = TRUE\n/\\ historyDragging = FALSE\n/\\ held = TRUE\n/\\ historyHeld = FALSE\n/\\ drawn = 3\n/\\ hit = 4\n/\\ dragging = TRUE",
+    "/\\ pendingSync = TRUE\n/\\ historyDragging = FALSE\n/\\ held = FALSE\n/\\ historyHeld = FALSE\n/\\ drawn = 3\n/\\ hit = 4\n/\\ dragging = FALSE"
   ]
 }

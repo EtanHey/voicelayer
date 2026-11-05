@@ -505,6 +505,10 @@ public struct BarView: View {
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
         }
+        // U5 backstop: the teleprompter body going away can never leave the handle's pointer hold behind.
+        .onChange(of: isMorphTeleprompterContentPresented) { _, shown in
+            if !shown { presentationModel?.setTeleprompterHandlePullActive(false) }
+        }
         .onAppear {
             presentationModel?.setHovered(state.isHovering)
             synchronizeLauncherRetention()
@@ -1148,7 +1152,7 @@ public struct BarView: View {
                         state.teleprompterVisibleLines = lines
                         presentationModel?.setTeleprompterLines(lines)
                     },
-                    onHandleDrag: { presentationModel?.setHistoryPullActive($0) },
+                    onHandleDrag: { presentationModel?.setTeleprompterHandlePullActive($0) },
                     columnWidth: min(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth)),
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,

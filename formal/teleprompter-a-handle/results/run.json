@@ -2,17 +2,20 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/teleprompter-a-handle/TeleprompterAHandle.tla": "a4e24343db35cf06127cab36b46253d7577347e54a6a22fe1a2ba1f177f61249",
-    "formal/teleprompter-a-handle/checks.json": "4ae7de4c4b17302316839d4695a204257b6b9c93da616a7c90a607da58f4863b",
+    "formal/teleprompter-a-handle/TeleprompterAHandle.tla": "94ea89d6737892866b2c01d664688f7d955a1082cf8a60390a9cdb524baa2785",
+    "formal/teleprompter-a-handle/checks.json": "f93904d624467dc30c520b6ee3feea268218de33dd8ba231147ea3d8357d047e",
     "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
-    "formal/teleprompter-a-handle/ShrinkReleaseMutant.cfg": "8bda397fadcd9cbb1d41461db134618bcec0cc250b2fbb29dad7950b869e7b6d",
-    "formal/teleprompter-a-handle/AsyncReleaseMutant.cfg": "b19e752e61acbcaf40d67a407517218671b650766e32e45bff0fffd4ccc4f7bd",
-    "formal/teleprompter-a-handle/Fixed.cfg": "2fe97aff7971e98ae5516720c89a746f1e86d0a598b7c1b18b1165df2cb2ec9d",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "0972cf4cf721e81d8b8e7a39170b66d9069598d8cd226884a75259d8f17b1f5c",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "997ff87c0389a2cf5cec98de295d330170ba1a9564c5c1c9e5a31a867cd00bb1",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "7e30051c8168d9fa2083882d7182dbbf857f80873c6d53c214283ea08cc4f7b6",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMorphPrototype.swift": "04c646c9f9cf9e2ee47079a733d65ec4ba8a35ebaadc11f3a2a86f763a7ce39a"
+    "formal/teleprompter-a-handle/ShrinkReleaseMutant.cfg": "1791cb30ab0b2f853459a62be79a803f1a66c66bcf50ac4ed1849343f03950c9",
+    "formal/teleprompter-a-handle/AsyncReleaseMutant.cfg": "41fa547357b57d5a28a43a347511fd583b7cab696022178130639fab13a3c720",
+    "formal/teleprompter-a-handle/CancelLeakMutant.cfg": "ccfc8339c139f5ef7e5c50e447d7744d31844728408550fa2a18482583016e72",
+    "formal/teleprompter-a-handle/SharedHoldMutant.cfg": "0df4e5079fac548275daac98617538f9af9918c8d48e1c3a5e217fa231d7a608",
+    "formal/teleprompter-a-handle/Fixed.cfg": "345e0359af8c9fd7590f585ac5d34a10b4756e97913448c95d52afee7dbf2f2e",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "45acd26f29ae7cdd3b4879d6accedea0e21bf2ebc0110a9ead5501ed2d629f4b",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "25513cd10e2ed8ec64ca487d0f61b06310498dd51535c74d8c08bda3cc8d593f",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "0cc4af74ed42802e8daaf00eb54139a248266e2eb08f712f302776d156b53e82",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMorphPrototype.swift": "04c646c9f9cf9e2ee47079a733d65ec4ba8a35ebaadc11f3a2a86f763a7ce39a",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "f435a8352e193bdbe7fda9f8f166fd35120d1a9e13efd0c13e6907fb0e7be6d5"
   },
   "mutants": {
     "HandleReachable": [
@@ -20,10 +23,16 @@
     ],
     "NoDeadBand": [
       "ShrinkReleaseMutant"
+    ],
+    "NoStuckHold": [
+      "CancelLeakMutant"
+    ],
+    "HistoryHoldKept": [
+      "SharedHoldMutant"
     ]
   },
   "graphHashes": {
-    "Fixed": "5f734bfc3b41df3221b6af76eaab11cb04030a7c771c47caa19659b0edb19875"
+    "Fixed": "b4936e0cd303d9e264ea731aebf143fae2ec91539fc0e1862ac7d52d2de82aa3"
   },
   "checks": {
     "Fixed": {
@@ -31,24 +40,40 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 31,
-      "distinct": 12
+      "generated": 97,
+      "distinct": 24
     },
     "AsyncReleaseMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "HandleReachable",
       "status": "EXPECTED_FAIL",
-      "generated": 9,
-      "distinct": 7
+      "generated": 14,
+      "distinct": 9
     },
     "ShrinkReleaseMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "NoDeadBand",
       "status": "EXPECTED_FAIL",
-      "generated": 33,
-      "distinct": 18
+      "generated": 74,
+      "distinct": 28
+    },
+    "CancelLeakMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoStuckHold",
+      "status": "EXPECTED_FAIL",
+      "generated": 7,
+      "distinct": 6
+    },
+    "SharedHoldMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "HistoryHoldKept",
+      "status": "EXPECTED_FAIL",
+      "generated": 25,
+      "distinct": 14
     }
   }
 }
