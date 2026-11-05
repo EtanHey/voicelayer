@@ -141,9 +141,10 @@ final class Tip2PausedTooltipTests: XCTestCase {
         let playing = try controls("Pause speech")
         let stops = descendants(host).filter { $0.toolTip == "Stop speaking" }
         XCTAssertEqual(stops.count, 1, "Hidden compact Stop must clear its native registration")
-        XCTAssertLessThan(try XCTUnwrap(stops.first).convert(stops.first!.bounds, to: nil).midY,
-                          playing[0].convert(playing[0].bounds, to: nil).midY,
-                          "Expanded Stop belongs in the lower controls row")
+        // 2.3 U5: the expanded Stop moved from the lower row into the right wing, Pause's top row.
+        XCTAssertEqual(try XCTUnwrap(stops.first).convert(stops.first!.bounds, to: nil).midY,
+                       playing[0].convert(playing[0].bounds, to: nil).midY, accuracy: 1,
+                       "Expanded Stop belongs in the right wing")
         for tooltip in playing {
             XCTAssertNil(tooltip.hitTest(NSPoint(x: tooltip.bounds.midX, y: tooltip.bounds.midY)),
                          "Tooltip registration must leave button clicks to SwiftUI")

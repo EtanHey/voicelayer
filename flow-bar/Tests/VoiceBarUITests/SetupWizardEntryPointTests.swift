@@ -146,7 +146,7 @@ final class SetupWizardEntryPointContractTests: XCTestCase {
     func testSettingsGeneralOffersRunSetupAgain() throws {
         let settings = try source("Sources/VoiceBarUI/SettingsView.swift")
         XCTAssertTrue(settings.contains("public let onRunSetup: () -> Void"))
-        XCTAssertTrue(settings.contains("Button(\"Run setup again\") {\n                    onRunSetup()"))
+        XCTAssertTrue(settings.contains("Button(\"Run setup again\") { onRunSetup() }"))
     }
 
     func testTheMenuBarPopoverOffersRunSetup() throws {

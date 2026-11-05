@@ -514,6 +514,10 @@ public struct BarView: View {
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
         }
+        // U5 backstop: the teleprompter body going away can never leave the handle's pointer hold behind.
+        .onChange(of: isMorphTeleprompterContentPresented) { _, shown in
+            if !shown { presentationModel?.setTeleprompterHandlePullActive(false) }
+        }
         .onAppear {
             presentationModel?.setHovered(state.isHovering)
             synchronizeLauncherRetention()
@@ -577,6 +581,7 @@ public struct BarView: View {
         )
         input.isHistoryPanelOpen = isHistoryMounted
         input.historyRows = historyRows
+        input.teleprompterLines = state.teleprompterVisibleLines
         input.transientNoteOffersHistory = state.selectionFeedbackNoteOffersHistory
         return VoiceBarPresentation.notchPresentation(from: input)
     }
@@ -995,9 +1000,8 @@ public struct BarView: View {
     }
 
     /// 2.3 U2 (3-wings mock): reading aloud shows the time and Stop in the fixed right wing. A dismissed-but-playing
-    /// read swaps the time for Show teleprompter, so the wing never carries a third control. While the teleprompter
-    /// is open its own lower-row Stop is the live one (lane U5 moves it into the wing), so the wing Stop stays
-    /// mounted but hidden and inert, keeping its slot so the time does not jump when the read collapses.
+    /// read swaps the time for Show teleprompter, so the wing never carries a third control. 2.3 U5: the wing Stop is
+    /// the live one with the teleprompter open too; the teleprompter's lower row no longer has a Stop.
     private var notchSpeakingTrailingContent: some View {
         let isCompact = notchPresentation.visualState == .compactStatus
         return HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
@@ -1019,19 +1023,11 @@ public struct BarView: View {
             notchTeleprompterButton(
                 icon: "stop.fill",
                 isDestructive: true,
-                accessibilityLabel: "Stop speaking",
-                registersTooltip: isCompact
+                accessibilityLabel: "Stop speaking"
             ) {
                 commandRouter.handleStop()
             }
             .background(playbackStopHostProbe)
-            // Keep the compact Stop mounted while the lower teleprompter Stop is visible.
-            .opacity(isCompact ? 1 : 0)
-            .allowsHitTesting(isCompact)
-            // R0856-10: hidden, it must not stay in the keyboard loop either (NotchIconButtonTooltipTests).
-            // `.focusable(true)` on the visible Stop made a click take key focus; disabling keeps its identity.
-            .disabled(!isCompact)
-            .accessibilityHidden(!isCompact)
         }
     }
 
@@ -1110,7 +1106,7 @@ public struct BarView: View {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
                     .frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA
-                        ? TeleprompterA.bodyHeight(lines: TeleprompterA.lineRange.lowerBound)
+                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines) + TeleprompterA.handleBandHeight
                         : Theme.teleprompterViewportHeight : nil)
                 if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
@@ -1178,6 +1174,13 @@ public struct BarView: View {
                     footerState: TeleprompterA.footerState(isPaused: state.isPlaybackPaused,
                                                            isPausedForDictation: state.isF5SpeechPausedDuringCapture),
                     queuedCount: state.queuedSpeakCount,
+                    visibleLines: state.teleprompterVisibleLines,
+                    onVisibleLinesChange: { lines in
+                        // The hit region takes the lines before the pull lets go of the pointer (formal/teleprompter-a-handle).
+                        state.teleprompterVisibleLines = lines
+                        presentationModel?.setTeleprompterLines(lines)
+                    },
+                    onHandleDrag: { presentationModel?.setTeleprompterHandlePullActive($0) },
                     columnWidth: min(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth)),
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
@@ -1242,15 +1245,6 @@ public struct BarView: View {
                     state.showTeleprompter()
                 } else {
                     state.dismissTeleprompter()
-                }
-            }
-            if state.mode == .speaking {
-                notchTeleprompterButton(
-                    icon: "stop.fill",
-                    isDestructive: true,
-                    accessibilityLabel: "Stop speaking"
-                ) {
-                    commandRouter.handleStop()
                 }
             }
             if state.isTeleprompterReadback {

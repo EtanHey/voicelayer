@@ -152,6 +152,6 @@ final class NotchIconButtonTooltipTests: XCTestCase {
                             "playback_id": "tooltips", "generation": 1])
         }
         // U5: each Teleprompter A word is a text-labelled "Jump to:" button, not an icon-only control.
-        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking"], textButtons: 3)
+        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking", "Drag to show more or fewer lines"], textButtons: 3)
     }
 }

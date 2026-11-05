@@ -27,11 +27,21 @@ The runner builds clean detached commit worktrees and launches the real debug ap
 | recents-newest-after-retranscribe | **behavior (overlay: trigger + snapshot + defaults-domain test seams)**: real History retry restores the newest cancelled capture first, inserts a missing older recovery chronologically, and updates an existing older row in place | 0 ordering/age/membership violations |
 | voice-ask-lock-suspends-timeout | Real daemon via MCP SDK; accepted app HOLD command keeps silent capture alive beyond 5 s input deadline, 20 s outer watchdog and 15 s pre-speech silence; stop and unlock finish it | 0 early terminations |
 
+The decoder fixture prints stdout for historical adapters and writes segment JSON when current adapters
+request `-oj -of`. The lock row observes endings from the first recording frame, excluding connection-time
+idle replay while still detecting an ending that races HOLD. [Harness replay receipts](receipts/pr680-harness-replay.generated.json)
+record bug/fix/head values of 1/0/0, 11/0/0, and 2/0/0 for these three rows, all with `error: null`.
+Those receipts measure the historical 2.2.61 repair at `c27e465c`; they do not certify a later port head.
+
 R1 requires harness evidence: a small receive buffer held unread for at least 0.5 s, queued bytes filling that buffer, a sent frame larger than the buffer and maximum recv chunk, and at least one NDJSON frame spanning multiple recv calls. The wire receipt records these values; absent evidence is `pressure not exercised` (FAIL). This proves the exercised pressure/fragmentation seam without observing or modifying product write-return values. R3 waits up to 10 s for a complete update matching the original Ask, then requires 1 s without further received bytes (12 s total bound including margin); missing events, late duplicates, and incomplete frames fail. Setup exceptions clean up the registered worktree and temp root.
 
 R1/R3 app sources are unmodified. R2 adds exactly one isolated fixture path to `SocketBindingPolicy.livePaths`; decision code is byte-identical. The saved patch and SHA-256 accompany every result. Before the policy existed, the patch is empty and FAIL demonstrates actual listener takeover. The lead approved this seam in the 2026-10-06 collab ruling.
 
 The Recents row pins `575ca6ce7950b3e1c5ebe0edd9d97b3958e56c25` (the first parent of #244, including #243's cancel recovery UI) to `2f2de18c1c19339379375df7b9475c99704f2eed` (#244). #244 supplies both immutable archive creation/latest metadata and chronological Recents insertion; #243 does not implement either ordering half. The row uses four synthetic dictation archives, a two-entry synthetic persisted Recents seed, and the same deterministic STT executable as R3. It requires actual daemon finals and durable transcript/metadata before measuring the app's array through its log; no mock state reducer is used.
+
+Before triggering a History retry, the Recents row requires SocketServer's command-client registration
+for the owned daemon PID as well as its MCP listener. A listening MCP socket alone does not make native
+commands deliverable. Missing registration still fails within the existing socket/event deadline.
 
 The Recents scratch overlay exposes two private IPC inputs: one calls the existing `retranscribeHistoryEntry` method, the other logs the actual array plus pending/mode state. It also remaps only the four Recents load/save `UserDefaults.standard` references to an absolute defaults domain under a fresh physical `~/.vlv/pdv-k-*` root: the existing app QA defaults suite alone does **not** isolate these methods. App and Recents defaults, archives, sockets, and daemon state stay under that root, which cleanup removes. The ordering reducer and daemon are unchanged; patch bytes and SHA-256 are saved for each build and the comment labels this overlay. A 45-second owned-daemon deadline prevents its unchanged production-log rotator reaching its first 60-second tick. Missing finals, snapshots, seeds, sockets, binaries, or durable files fail. The lead approved these three seams in the lane K collab ruling; every run records a before/after `defaults read com.voicelayer.voicebar` fingerprint and proves the Recents plist was read and written beneath its isolated root. Personal preference contents are never saved or printed. An absent resident defaults domain on CI is recorded explicitly; unexpected defaults-probe failures fail the row.
 
@@ -73,3 +83,6 @@ uses this provenance once this change reaches the default branch.
 Fresh row logs live under `baseline/<row>/<row>.build.log`; cache hits carry
 JSON receipts only, with the original run id, rather than copied build logs.
 Reusing an output directory is rejected explicitly to avoid stale results.
+
+The 2.3 port has its own [bug/fix/head replay receipts](receipts/pr680-2.3-harness-replay.generated.json),
+measured at `6e0787ddd023d69585e6e6fbf541894de5cdd5da`: all nine contracts met with `error: null`.

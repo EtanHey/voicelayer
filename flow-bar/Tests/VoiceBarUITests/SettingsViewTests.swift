@@ -491,7 +491,8 @@ final class SettingsViewTests: XCTestCase {
             relaySummary: "Relay needs attention"
         ).contains("Relay needs attention"))
         let source = try settingsViewSource()
-        XCTAssertTrue(source.contains("Button(\"Check shortcut\")"))
+        // U3a (R2): Check is the F5 key step's fix in General › Setup.
+        XCTAssertTrue(source.contains("case .checkF5:\n            shortcutCheckRunning = true"))
     }
 
     /// Fold 2 review S2: the visible-first fix goes through the same reorder path as the arrows.
