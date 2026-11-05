@@ -9,6 +9,15 @@ does not constitute approval.
 References were generated on the MBP (Apple M4 Max, Mac16,5). OS build,
 host model and backing scale are recorded in environment.json. Any renderer
 mismatch emits a specific expected/actual XCTSkip, without blocking a push.
+References were re-recorded on 2026-11-05 after lane A commit `9df635663`
+raised the intentional note text limit from 72 to 80 pt. The canvas reserves two
+such limits, so compact/expanded captures grew by 16 px (259 to 275 / 455 to
+471). References were stale since lane A, not environmental. The previous
+reference-generation commit `f7ec1dc7f` still reproduces all 24 old PNGs byte for
+byte on this host; changing only its limit from 72 to 80 reproduces the drift.
+`environment.json` was regenerated and remains byte-identical: macOS 27.0 build
+26A428, Mac16,5. Pixel thresholds and renderer mismatch skips are unchanged.
+
 The catalog runs inside the existing scripts/run_tests.sh Swift test phase,
 under its heavy-suite gate and sharing its build. There is no extra hook step.
 Standalone comparison uses the same default Swift build directory.
