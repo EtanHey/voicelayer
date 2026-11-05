@@ -35,3 +35,9 @@ Swift guards: `WingsU2Tests.testAMenuAskedForOverHistoryWaitsForHistoryToClose`,
 `testTheHandoffNeverPresentsOverAHistoryThatOpenedFirst`, `testTheBridgeReportsHistoryOnceAndCountsCloseRequests`.
 The view side (`BarView` closing History on the bridge's `closeRequest`) and the menu placement need
 the installed-app check.
+
+## U1: bare-notch menu and reading
+
+`"notch"` maps to `VoiceBarNotchMenuKind.notch` through the same handoff as `"mic"`.
+`readingCovered` represents the presentation cover, without changing playback; `ReadingRestored` requires it to clear after tracking closes and History is absent.
+`MutantForgetReading` must fail exactly `ReadingRestored`; `CancelQueued` models Escape before tracking starts.

@@ -5,6 +5,7 @@ import Observation
 /// an AppKit menu that hangs from the same spot under the notch. Lane U1 adds the bare-notch menu as a second kind.
 public enum VoiceBarNotchMenuKind: Equatable, Sendable {
     case microphone
+    case notch
 }
 
 public enum VoiceBarNotchSurface: Equatable, Sendable {
@@ -83,6 +84,11 @@ public struct VoiceBarNotchSurfaceCoordinator: Equatable, Sendable {
         return true
     }
 
+    public mutating func cancelQueuedMenu() {
+        queuedMenu = nil
+        pendingMenu = nil
+    }
+
     public mutating func menuDidClose() {
         shownMenu = nil
     }
@@ -96,6 +102,7 @@ public struct VoiceBarNotchSurfaceCoordinator: Equatable, Sendable {
 public final class VoiceBarNotchHistoryBridge {
     public private(set) var closeRequest = 0
     public private(set) var isHistoryOpen = false
+    public fileprivate(set) var presentedMenu: VoiceBarNotchMenuKind?
     @ObservationIgnored public var onHistoryPanelChanged: (Bool) -> Void = { _ in }
     /// Every open intent (a click or a pull), mounted or not. Deliberately not de-duplicated: reopening a History
     /// that is still mounted (closing) changes no mount state, so `historyDidChange` cannot carry it.
@@ -131,14 +138,16 @@ public final class VoiceBarNotchSurfaceHandoff {
     public let bridge: VoiceBarNotchHistoryBridge
     /// Shows the menu and returns when its (modal) tracking ends.
     private let present: (VoiceBarNotchMenuKind) -> Void
+    private let presentationModel: VoiceBarNotchPresentationModel?
     public var schedule: (@escaping () -> Void) -> Void = { block in
         DispatchQueue.main.async(execute: block)
     }
     public var onOutcome: (Outcome) -> Void = { _ in }
 
-    public init(bridge: VoiceBarNotchHistoryBridge, present: @escaping (VoiceBarNotchMenuKind) -> Void) {
+    public init(bridge: VoiceBarNotchHistoryBridge, presentationModel: VoiceBarNotchPresentationModel? = nil, present: @escaping (VoiceBarNotchMenuKind) -> Void) {
         self.bridge = bridge
         self.present = present
+        self.presentationModel = presentationModel
         bridge.onHistoryPanelChanged = { [weak self] isOpen in
             self?.historyDidChange(isOpen: isOpen)
         }
@@ -151,6 +160,8 @@ public final class VoiceBarNotchSurfaceHandoff {
         apply(coordinator.historyDidChange(isOpen: bridge.isHistoryOpen))
         apply(coordinator.requestMenu(kind))
     }
+
+    public func cancelQueuedMenu() { coordinator.cancelQueuedMenu() }
 
     private func historyDidChange(isOpen: Bool) {
         apply(coordinator.historyDidChange(isOpen: isOpen))
@@ -173,8 +184,14 @@ public final class VoiceBarNotchSurfaceHandoff {
             onOutcome(.cancelled(kind))
             return
         }
+        bridge.presentedMenu = kind
+        presentationModel?.setMenuPresented(true)
         onOutcome(.presented(kind))
-        defer { coordinator.menuDidClose() }
+        defer {
+            coordinator.menuDidClose()
+            bridge.presentedMenu = nil
+            presentationModel?.setMenuPresented(false)
+        }
         present(kind)
     }
 }

@@ -27,9 +27,13 @@ final class U1MenuAssessmentTests: XCTestCase {
         }
         let controller = PillContextMenuController()
         controller.transcriptProvider = { "A synthetic transcript." }
+        controller.versionProvider = { "2.3.0" }
+        controller.updateStatusProvider = { VoiceBarVersionStatus.latest.menuMessage }
+        controller.canRetranscribeLatestProvider = { true }
         for (id, menu) in [("01-app-before", before), ("01-app-after", app),
                            ("02-dock-after", controller.makeDockMenu()),
-                           ("03-help-after", try XCTUnwrap(main.item(withTitle: "Help")?.submenu))] {
+                           ("03-help-after", try XCTUnwrap(main.item(withTitle: "Help")?.submenu)),
+                           ("04-notch-before", controller.makeMenu()), ("04-notch-after", controller.makeNotchMenu())] {
             for light in [false, true] {
                 try crop(menu, light: light, to: directory.appendingPathComponent("\(id)-\(light ? "light" : "dark").png"))
             }
@@ -43,9 +47,11 @@ final class U1MenuAssessmentTests: XCTestCase {
                     Divider().padding(.horizontal, 10).frame(height: 9)
                 } else {
                     HStack {
+                        if let image = item.image { Image(nsImage: image) }
                         Text(item.title)
                         Spacer()
                         if !item.keyEquivalent.isEmpty { Text("⌘\(item.keyEquivalent)") }
+                        if item.submenu != nil { Image(systemName: "chevron.right") }
                     }
                     .foregroundStyle(item.view != nil ? Color(nsColor: PillContextMenuController.versionTextColor) : item.isEnabled ? .primary : .secondary)
                     .font(.system(size: 13)).padding(.horizontal, 12).frame(height: 25)

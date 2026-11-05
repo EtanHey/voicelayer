@@ -12,6 +12,7 @@ public final class VoiceBarNotchPresentationModel {
     public private(set) var isHovered = false
     public private(set) var isKeyboardFocused = false
     public private(set) var isHistoryPanelOpen = false
+    public private(set) var isMenuPresented = false
     public private(set) var isReducedMotionEnabled = false
 
     private var hasTeleprompter = false
@@ -96,6 +97,12 @@ public final class VoiceBarNotchPresentationModel {
         resolvePresentation()
     }
 
+    public func setMenuPresented(_ isOpen: Bool) {
+        guard isMenuPresented != isOpen else { return }
+        isMenuPresented = isOpen
+        resolvePresentation()
+    }
+
     public func setHistoryPanelOpen(_ isOpen: Bool) {
         guard isHistoryPanelOpen != isOpen else { return }
         isHistoryPanelOpen = isOpen
@@ -127,7 +134,7 @@ public final class VoiceBarNotchPresentationModel {
 
     private func resolvePresentation() {
         let next = VoiceBarNotchPresentation.resolve(
-            hasTeleprompter: hasTeleprompter,
+            hasTeleprompter: hasTeleprompter && !isMenuPresented && !isHistoryPanelOpen,
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
             hasHistoryPanel: isHistoryPanelOpen,
@@ -137,7 +144,7 @@ public final class VoiceBarNotchPresentationModel {
             recordingLeadingWingWidth: recordingLeadingWingWidth,
             recordingTrailingWingWidth: recordingTrailingWingWidth,
             teleprompterLeadingWingWidth: teleprompterLeadingWingWidth,
-            isHovered: isHovered || keepsIdleExpanded,
+            isHovered: isHovered || keepsIdleExpanded || isMenuPresented,
             isKeyboardFocused: isKeyboardFocused,
             coreWidth: coreWidth,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
