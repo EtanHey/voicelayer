@@ -2390,6 +2390,16 @@ public final class VoiceState {
         )
     }
 
+    /// U5: the daemon's word table for the utterance on screen (nil from a daemon without word timing).
+    public private(set) var speechWords: SpeechWordTable?
+
+    /// Playback-only: a word click names the utterance it was drawn from, never the latest one.
+    public func seekSpeechWord(utteranceID: String, wordIndex: Int) {
+        guard mode == .speaking, !isPlaybackPaused, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
+        sendCommand?(["cmd": "speech_seek", "utteranceId": utteranceID, "wordIndex": wordIndex,
+                      "id": UUID().uuidString])
+    }
+
     public func seek(offsetMs: Int) {
         guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0 else { return }
         var command: [String: Any] = ["cmd": "seek", "offset_ms": offsetMs]
@@ -3222,6 +3232,9 @@ public final class VoiceState {
                     (event["generation"] as? NSNumber).map { (id, $0.intValue) }
                 }
                 statusText = event["text"] as? String ?? ""
+                // U5: a new utterance replaces the word table; its chunks and seeks keep it.
+                let utteranceID = event["utteranceId"] as? String
+                if speechWords?.utteranceID != utteranceID { speechWords = utteranceID.map(SpeechWordTable.init) }
                 // Consume startup timing before announcing speaking to observers.
                 if var timing = event["initial_timing"] as? [String: Any], timing["type"] as? String == "subtitle" {
                     if let number = timing["estimated_duration_ms"] as? NSNumber, number.doubleValue.isFinite,
@@ -3472,6 +3485,9 @@ public final class VoiceState {
                   id == playbackLongReadID, let duration = (event["duration_ms"] as? NSNumber)?.intValue, duration > 0 else { return }
             playbackDurationMilliseconds = max(current, duration)
             if event["final"] as? Bool == true { isPlaybackDurationGrowing = false }
+
+        case "speech_words":
+            if var table = speechWords, table.apply(event) { speechWords = table }
 
         case "subtitle":
             // Old daemons' missing/mistyped words are a no-op. Indexed payloads
@@ -5420,6 +5436,10 @@ public final class VoiceState {
     private func handleAckEvent(_ event: [String: Any]) {
         if let command = event["command"] as? String, command == "pause" || command == "resume" {
             handlePlaybackPauseAck(event, command: command)
+            return
+        }
+        if event["command"] as? String == "speech_seek" {
+            if event["reason"] as? String == "word timing unavailable" { reportWordTimingUnavailable() }
             return
         }
         if event["command"] as? String == "seek" {
