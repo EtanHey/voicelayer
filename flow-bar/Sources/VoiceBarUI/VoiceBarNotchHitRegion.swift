@@ -27,8 +27,9 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     }
 
     /// The History panel: the launcher's buttons stay live (History closes it again) and the body is live.
+    /// 2.3 U2: the left wing carries the mic and its chevron.
     public static let historyPanel = VoiceBarNotchInteractionConfiguration(
-        leadingControlCount: 1,
+        leadingControlCount: 2,
         trailingControlCountFromCore: 2,
         lowerSurfaceIsInteractive: true
     )
@@ -46,7 +47,7 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
             .none
         case .hoverLauncher:
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: 2,
                 trailingControlCountFromCore: 2
             )
         case .recording:

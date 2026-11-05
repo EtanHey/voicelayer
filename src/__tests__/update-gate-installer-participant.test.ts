@@ -406,7 +406,7 @@ test("uncertain exit exhausts its deadline and names availability recovery", asy
   f.deps.request = async () => ({ kind: "UNKNOWN" });
   f.deps.participantsExited = () => "UNKNOWN";
   f.deps.sleep = async () => { sleeps++; f.advance(); };
-  await expect(f.participant.quit(f.lease)).rejects.toThrow("voicelayer setup --cask-postflight");
+  await expect(f.participant.quit(f.lease)).rejects.toThrow("successor verifies abandoned COMMITTED recovery automatically");
   expect(sleeps).toBe(3);
   expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
 });

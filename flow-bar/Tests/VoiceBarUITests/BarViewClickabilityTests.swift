@@ -80,7 +80,9 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(launcher.contains("historyButton"))
         XCTAssertTrue(launcher.contains("settingsButton"))
         XCTAssertFalse(launcher.contains("vocabularyButton"))
-        XCTAssertTrue(source.contains("notchButton(icon: \"gearshape\", accessibilityLabel: \"Settings\")"))
+        // 2.3 U2: the gear names a setup problem in its label and tooltip ("Settings" when there is none).
+        XCTAssertTrue(source.contains("icon: \"gearshape\""))
+        XCTAssertTrue(source.contains("accessibilityLabel: VoiceBarSetupAttention.accessibilityLabel(missing: missing)"))
         XCTAssertTrue(source.contains("onOpenSettings()"))
         XCTAssertTrue(source.contains("commandRouter.handlePrimaryTap()"))
         XCTAssertTrue(source.contains("commandRouter.handleStop()"))
@@ -123,8 +125,8 @@ final class BarViewClickabilityTests: XCTestCase {
         idle.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 306, height: 32),
-            "visible idle must hold the launcher envelope through its collapse grace window"
+            NSSize(width: 332, height: 32),
+            "visible idle must hold the launcher envelope through its collapse grace window (2.3 U2: 185 + 2 × 73.5)"
         )
 
         idle.isCollapsed = true
@@ -140,7 +142,7 @@ final class BarViewClickabilityTests: XCTestCase {
         hover.isHovering = true
         XCTAssertEqual(
             makeHost(state: hover, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 306, height: 32)
+            NSSize(width: 332, height: 32)
         )
 
         let recording = VoiceState()
@@ -150,7 +152,8 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 363, height: 32)
+            // 2.3 U2: an Ask's hold lock widens the left wing by one slot (99.5); the right wing stays 73.5.
+            NSSize(width: 358, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -332,7 +335,7 @@ final class BarViewClickabilityTests: XCTestCase {
             )
         )
         let leadingWing = teleprompter.layout.presentation.geometry.leadingWingWidth
-        XCTAssertEqual(leadingWing, VoiceBarNotchContract.compactIndicatorLaneWidth)
+        XCTAssertEqual(leadingWing, VoiceBarNotchContract.fixedWingWidth)
         let pauseRect = teleprompter.controlRects[0]
         let pausePoint = NSPoint(x: pauseRect.midX, y: pauseRect.midY)
         XCTAssertLessThan(pauseRect.maxX, teleprompter.layout.visibleContentRect.minX
@@ -348,7 +351,7 @@ final class BarViewClickabilityTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 1,
                 trailingControlCountFromOuter: 2,
-                trailingOuterInset: WaveformLayout.outerInset
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
             )
         )
         XCTAssertEqual(speaking.layout.presentation.visualState, .compactStatus)
@@ -368,7 +371,7 @@ final class BarViewClickabilityTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 1,
                 trailingControlCountFromOuter: 1,
-                trailingOuterInset: WaveformLayout.outerInset
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
             )
         )
         XCTAssertEqual(paused.layout.presentation.visualState, .compactStatus)
@@ -396,7 +399,7 @@ final class BarViewClickabilityTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 3,
                 trailingControlCountFromOuter: 2,
-                trailingOuterInset: WaveformLayout.outerInset
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
             )
         )
         XCTAssertEqual(speaking.layout.presentation.visualState, .compactStatus)
@@ -498,7 +501,7 @@ final class BarViewClickabilityTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
                 trailingControlCountFromOuter: paused ? 1 : 2,
-                trailingOuterInset: WaveformLayout.outerInset
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
             )
         )
         XCTAssertEqual(panel.layout.presentation.visualState, .compactStatus)
@@ -841,7 +844,9 @@ final class BarViewClickabilityTests: XCTestCase {
 
     func testPillButtonRingClicksReachHandlersWithoutChangingDragRegion() {
         let ringOffsets: [(CGFloat, CGFloat)] = [(12, 0), (-12, 0), (0, 12), (0, -12)]
-        for (name, index) in [("Stop", 2), ("Cancel", 1), ("Lock", 0), ("Mic", 0), ("Settings", 2)] {
+        // 2.3 U2: the launcher's left wing is the chevron (core side) then the mic, so the mic is index 1 and
+        // Settings index 3.
+        for (name, index) in [("Stop", 2), ("Cancel", 1), ("Lock", 0), ("Mic", 1), ("Settings", 3)] {
             for (dx, dy) in ringOffsets {
                 let state = VoiceState()
                 state.isConnected = true
@@ -858,7 +863,7 @@ final class BarViewClickabilityTests: XCTestCase {
                 let configuration = state.mode == .recording
                     ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
                     : VoiceBarNotchInteractionConfiguration(
-                        leadingControlCount: 1, trailingControlCountFromCore: 2
+                        leadingControlCount: 2, trailingControlCountFromCore: 2
                     )
                 let (host, panel, _, rects) = makeInteractivePanelHost(
                     state: state, router: router, configuration: configuration,
@@ -991,10 +996,11 @@ final class BarViewClickabilityTests: XCTestCase {
             x: layout.visibleContentRect.midX,
             y: layout.visibleContentRect.minY + 120
         )
-        // Left of P16's pause wing, where the old Dictionary lane hung below the top row.
+        // Left of P16's pause wing (2.3 U2: the fixed 73.5 pt wing), where the old Dictionary lane hung below the
+        // top row.
         let formerDictionaryLane = NSPoint(
             x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX
-                - VoiceBarNotchContract.compactIndicatorLaneWidth - 20,
+                - VoiceBarNotchContract.fixedWingWidth - 20,
             y: layout.visibleContentRect.minY + 212
         )
 

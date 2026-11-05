@@ -1,0 +1,18 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "RecoveryOnlyVerified",
+  "status": "EXPECTED_FAIL",
+  "generated": 59,
+  "distinct": 44,
+  "trace": [
+    "/\\ phase = \"watch\"\n/\\ available = FALSE\n/\\ scenario = \"wrongTarget\"\n/\\ creation = [recovered |-> FALSE, live |-> FALSE, verified |-> FALSE]\n/\\ gate = \"COMMITTED\"\n/\\ created = 0\n/\\ participants = FALSE\n/\\ evidence = [sha |-> FALSE, ready |-> TRUE]\n/\\ mutex = TRUE",
+    "/\\ phase = \"watch\"\n/\\ available = FALSE\n/\\ scenario = \"wrongTarget\"\n/\\ creation = [recovered |-> FALSE, live |-> FALSE, verified |-> FALSE]\n/\\ gate = \"COMMITTED\"\n/\\ created = 1\n/\\ participants = FALSE\n/\\ evidence = [sha |-> FALSE, ready |-> TRUE]\n/\\ mutex = TRUE",
+    "/\\ phase = \"watch\"\n/\\ available = FALSE\n/\\ scenario = \"wrongTarget\"\n/\\ creation = [recovered |-> FALSE, live |-> FALSE, verified |-> FALSE]\n/\\ gate = \"COMMITTED\"\n/\\ created = 2\n/\\ participants = FALSE\n/\\ evidence = [sha |-> FALSE, ready |-> TRUE]\n/\\ mutex = TRUE",
+    "/\\ phase = \"watch\"\n/\\ available = FALSE\n/\\ scenario = \"wrongTarget\"\n/\\ creation = [recovered |-> FALSE, live |-> FALSE, verified |-> FALSE]\n/\\ gate = \"COMMITTED\"\n/\\ created = 3\n/\\ participants = FALSE\n/\\ evidence = [sha |-> FALSE, ready |-> TRUE]\n/\\ mutex = TRUE",
+    "/\\ phase = \"watch\"\n/\\ available = FALSE\n/\\ scenario = \"wrongTarget\"\n/\\ creation = [recovered |-> FALSE, live |-> FALSE, verified |-> FALSE]\n/\\ gate = \"COMMITTED\"\n/\\ created = 4\n/\\ participants = FALSE\n/\\ evidence = [sha |-> FALSE, ready |-> TRUE]\n/\\ mutex = TRUE",
+    "/\\ phase = \"watch\"\n/\\ available = FALSE\n/\\ scenario = \"wrongTarget\"\n/\\ creation = [recovered |-> FALSE, live |-> FALSE, verified |-> FALSE]\n/\\ gate = \"COMMITTED\"\n/\\ created = 5\n/\\ participants = FALSE\n/\\ evidence = [sha |-> FALSE, ready |-> TRUE]\n/\\ mutex = TRUE",
+    "/\\ phase = \"watch\"\n/\\ available = FALSE\n/\\ scenario = \"wrongTarget\"\n/\\ creation = [recovered |-> FALSE, live |-> FALSE, verified |-> FALSE]\n/\\ gate = \"COMMITTED\"\n/\\ created = 5\n/\\ participants = FALSE\n/\\ evidence = [sha |-> FALSE, ready |-> TRUE]\n/\\ mutex = FALSE",
+    "/\\ phase = \"done\"\n/\\ available = TRUE\n/\\ scenario = \"wrongTarget\"\n/\\ creation = [recovered |-> TRUE, live |-> FALSE, verified |-> FALSE]\n/\\ gate = \"OPEN\"\n/\\ created = 5\n/\\ participants = FALSE\n/\\ evidence = [sha |-> FALSE, ready |-> TRUE]\n/\\ mutex = FALSE"
+  ]
+}

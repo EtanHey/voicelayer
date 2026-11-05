@@ -149,9 +149,11 @@ final class DictionaryAddExistingTermTests: XCTestCase {
                 .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(source.contains(
-            "Label(\"Add term\", systemImage: \"plus\")\n                }\n"
-                + "                .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))"
+        // U3b moved the button into the header and keeps its natural width (`.fixedSize()`); the gate is unchanged.
+        XCTAssertNotNil(source.range(
+            of: #"Label\("Add term", systemImage: "plus"\)\s*\}\s*(\.fixedSize\(\)\s*)?"#
+                + #"\.disabled\(!Self\.addTermEnabled\(loaded: hasLoadedDictionaryOnce\)\)"#,
+            options: .regularExpression
         ))
     }
 
