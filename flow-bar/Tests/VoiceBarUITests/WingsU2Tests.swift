@@ -280,8 +280,9 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(handoff.coordinator.surface, .none, "tracking ended")
     }
 
-    /// U2×U4 review (P2): a History still mounted (closing) that the user asks for again changes no mount state;
-    /// the explicit open request drops the waiting list so a later close never opens it.
+    /// U2×U4 review (P2): open History → request the list (History is asked to close and starts its close spring,
+    /// still mounted) → reopen History before the spring settles. No mount change fires; the explicit open request
+    /// drops the waiting list so a later close never opens it (formal/notch-surfaces, MutantNoReopenCancel).
     func testAnOpenRequestWhileHistoryIsStillMountedDropsTheWaitingMenu() {
         var surfaces = VoiceBarNotchSurfaceCoordinator()
         _ = surfaces.historyDidChange(isOpen: true)
