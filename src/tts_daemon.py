@@ -37,6 +37,7 @@ import logging
 import os
 import re
 import secrets
+import socket
 import sys
 import tempfile
 import time
@@ -632,14 +633,25 @@ def main():
         logger.error("uvicorn not installed. Run: pip install uvicorn")
         sys.exit(1)
 
-    app = create_app(
-        args.model,
-        host=args.host,
-        port=args.port,
-        auth_token_file=args.auth_token_file,
-    )
-    logger.info(f"Starting TTS daemon on {args.host}:{args.port}")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    # Reserve before app construction / lifespan model loading. A competing
+    # VoiceBar, CLI or legacy launchd listener wins without a second model load.
+    # No SO_REUSEPORT: the kernel is the final arbiter after the health probe.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            listener.bind((args.host, args.port))
+            listener.listen(128)
+        except OSError:
+            logger.error("TTS endpoint occupied or unavailable; refusing another engine")
+            sys.exit(1)
+        app = create_app(
+            args.model,
+            host=args.host,
+            port=args.port,
+            auth_token_file=args.auth_token_file,
+        )
+        logger.info(f"Starting TTS daemon on {args.host}:{args.port}")
+        uvicorn.run(app, fd=listener.fileno(), log_level="warning")
 
 
 if __name__ == "__main__":
