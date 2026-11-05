@@ -1,5 +1,39 @@
 import SwiftUI
 
+/// A pop-up choice the app owns but Settings only shows (Transcription › Language).
+///
+/// AIDEV-NOTE: the recognizer language is not reported to Settings yet; a nil input hides the row rather than
+/// showing a picker that changes nothing.
+public struct SettingsChoiceInput {
+    public let options: [String]
+    public let selected: () -> String
+    public let select: (String) -> Void
+
+    public init(options: [String], selected: @escaping () -> String, select: @escaping (String) -> Void) {
+        self.options = options; self.selected = selected; self.select = select
+    }
+}
+
+/// K-ui: which engine wrote the last dictation, and when.
+///
+/// AIDEV-NOTE: the last-dictation entry Settings receives carries no backend chain; the app must supply the newest
+/// recording's writer (RecognizerProvenance over its archived backend). Until it does, no note shows.
+public struct SettingsLastDictationNote: Equatable {
+    public let at: Date
+    public let engine: RecognizerProvenance.Engine
+
+    public init(at: Date, engine: RecognizerProvenance.Engine) { self.at = at; self.engine = engine }
+
+    public func text(calendar: Calendar = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = calendar.locale ?? .current
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
+        return "Your last dictation, at \(formatter.string(from: at)), was transcribed by \(engine.name)."
+    }
+}
+
 public struct ModelsSettingsView: View {
     public let state: ModelsSettingsState
     private let notice: String?
@@ -14,6 +48,9 @@ public struct ModelsSettingsView: View {
     private let onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)?
     private let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
     private let onSetUnloadWhenIdle: ((Bool) -> Void)?
+    private let language: SettingsChoiceInput?
+    private let lastDictationNote: SettingsLastDictationNote?
+    @State private var detailsExpanded = false
 
     public init(
         state: ModelsSettingsState,
@@ -28,8 +65,12 @@ public struct ModelsSettingsView: View {
         recognizerState: RecognizerPickerState = .unavailable,
         onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil,
         onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)? = nil,
-        onSetUnloadWhenIdle: ((Bool) -> Void)? = nil
+        onSetUnloadWhenIdle: ((Bool) -> Void)? = nil,
+        language: SettingsChoiceInput? = nil,
+        lastDictationNote: SettingsLastDictationNote? = nil
     ) {
+        self.language = language
+        self.lastDictationNote = lastDictationNote
         self.onSetUnloadWhenIdle = onSetUnloadWhenIdle
         self.onManageRecognizer = onManageRecognizer
         self.recognizerState = recognizerState
@@ -65,6 +106,11 @@ public struct ModelsSettingsView: View {
                 if let row = Self.unloadWhenIdleRow(for: recognizerState, canChange: onSetUnloadWhenIdle != nil) {
                     unloadWhenIdleToggle(row)
                 }
+                if let lastDictationNote {
+                    Label(lastDictationNote.text(), systemImage: "info.circle")
+                        .font(SettingsRowLabel.descriptionFont).foregroundStyle(SettingsPanePalette.helper)
+                        .accessibilityIdentifier("recognizer-last-dictation")
+                }
                 // One shared reason above the controls it disables. The picker keeps
                 // command/fallback notices, but omits its duplicate disabled explanation.
                 if state.availability == .available, let reason = Self.effortDisabledReason(for: state) {
@@ -72,6 +118,17 @@ public struct ModelsSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("models-busy-reason")
+                }
+            }
+
+            if let language {
+                Section("Language") {
+                    SettingsRow(title: "Language", description: "Auto detects English and Hebrew per recording.") {
+                        Picker("Language", selection: Binding(get: language.selected, set: language.select)) {
+                            ForEach(language.options, id: \.self) { Text($0).tag($0) }
+                        }
+                        .labelsHidden().fixedSize()
+                    }
                 }
             }
 
@@ -91,6 +148,16 @@ public struct ModelsSettingsView: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("models-polish-unavailable")
                 }
+            }
+
+            SettingsDisclosureRow("Recognizer details", isExpanded: $detailsExpanded) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Self.detailFacts(state: state, recognizer: recognizerState), id: \.label) { row in
+                        LabeledContent(row.label) { Text(row.value).textSelection(.enabled) }
+                    }
+                    recognizerNotes
+                }
+                .padding(.top, 6)
             }
         }
         .formStyle(.grouped)
@@ -130,6 +197,22 @@ public struct ModelsSettingsView: View {
             active: VoiceModelDisplayName.normalize(state.activeModelName)
         ) + (state.residency == .loaded && state.configuredEffort == state.activeEffort
             ? [] : rows("Recognition preset", configured: state.configuredEffort?.displayName, active: state.activeEffort?.displayName))
+    }
+
+    /// Spec 2.3 Recognizer details: the chosen recognizer, the one running now, and the effort.
+    static func detailFacts(state: ModelsSettingsState, recognizer: RecognizerPickerState) -> [RecognizerDetailRow] {
+        var rows: [RecognizerDetailRow] = []
+        if let chosen = recognizer.selected { rows.append(.init(label: "Chosen", value: chosen.title)) }
+        if let running = recognizer.effective, recognizer.residency(for: running) == .loaded {
+            rows.append(.init(label: "Running now", value: running.title))
+        } else if recognizer.selected != nil {
+            rows.append(.init(label: "Running now", value: "Nothing loaded"))
+        }
+        if state.availability == .available, let effort = state.configuredEffort {
+            let active = state.activeEffort.map { $0 == effort ? "" : " (running \($0.displayName))" } ?? ""
+            rows.append(.init(label: "Effort", value: effort.displayName + active))
+        }
+        return rows
     }
 
     private var modelSummary: String {
@@ -201,34 +284,20 @@ public struct ModelsSettingsView: View {
         let busyReason = Self.effortDisabledReason(for: state)
         let disabled = row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
             || processingPending[row.key] != nil
-        return VStack(alignment: .leading, spacing: 2) {
-            Toggle(isOn: Binding(
+        return SettingsRow(title: row.key.title, description: row.rowDescription) {
+            if row.experimental { SettingsPill(text: "Experimental", tint: .orange) }
+            Toggle(row.key.title, isOn: Binding(
                 get: { processingPending[row.key] ?? row.isOn },
                 set: { onToggleProcessing?(row.key, $0) }
-            )) {
-                HStack(spacing: 6) {
-                    Text(row.key.title)
-                    if row.experimental {
-                        Text("Experimental")
-                            .font(.caption2)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
-                    }
-                }
-            }
+            ))
+            .labelsHidden().toggleStyle(.switch)
             .disabled(disabled)
-            // SwiftUI's default macOS Form toggle leaves a saved-on switch looking active.
-            // Keep its saved value but mute the entire control when it cannot be used.
-            .opacity(disabled ? 0.45 : 1)
             .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
-            ForEach(row.captionLines, id: \.self) { caption in
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
+        // SwiftUI's default macOS Form toggle leaves a saved-on switch looking active.
+        // Keep its saved value but mute the entire row when it cannot be used.
+        .opacity(disabled ? 0.45 : 1)
+        .modifier(OptionalHelp(text: row.lockedReason))
     }
 
     /// Row 2 (Etan ruling: Parakeet stays resident). OFF by default; nil while the daemon does not report it. The switch
@@ -249,11 +318,13 @@ public struct ModelsSettingsView: View {
         guard let setting = recognizer.unloadWhenIdle else { return nil }
         let engine = RecognizerPickerEngine.parakeet
         let size = recognizer.assetsPresent(for: engine) ? recognizer.diskBytes[engine].flatMap(approximateSize) : nil
-        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) idle" } ?? "when idle"
+        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) without dictation" }
+            ?? "when you are not dictating"
         return UnloadWhenIdleRow(
-            title: "Unload when idle" + (size.map { " (saves ~\($0))" } ?? ""),
+            title: "Unload when idle",
             isOn: recognizer.unloadWhenIdlePending ?? setting.effective,
-            line: "Off keeps \(engine.shortName) loaded so dictation starts right away. On frees its memory \(idle).",
+            // The load cost is not measured on this Mac yet, so the copy says "a few seconds", never a number.
+            line: "Frees \(size.map { "about \($0) of " } ?? "")memory \(idle). The next dictation loads \(engine.shortName) again, which adds a few seconds.",
             lockedReason: setting.lockedReason,
             disabled: setting.lockedReason != nil || recognizer.unloadWhenIdlePending != nil
                 || recognizer.selected == nil || !canChange)
@@ -272,19 +343,14 @@ public struct ModelsSettingsView: View {
     }
 
     private func unloadWhenIdleToggle(_ row: UnloadWhenIdleRow) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        SettingsRow(title: row.title, description: row.captionLines.joined(separator: " ")) {
             Toggle(row.title, isOn: Binding(get: { row.isOn }, set: { onSetUnloadWhenIdle?($0) }))
+                .labelsHidden().toggleStyle(.switch)
                 .disabled(row.disabled)
-                // Matches the Processing rows: a locked switch is muted whole, keeping its real value.
-                .opacity(row.lockedReason != nil ? 0.45 : 1)
                 .accessibilityIdentifier("recognizer-unload-when-idle")
-            ForEach(row.captionLines, id: \.self) { caption in
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
+        // Matches the Processing rows: a locked switch is muted whole, keeping its real value.
+        .opacity(row.lockedReason != nil ? 0.45 : 1)
         .padding(.top, 4)
     }
 
@@ -300,11 +366,19 @@ public struct ModelsSettingsView: View {
         var captionLines: [String] {
             [line] + (lockedReason.map { [$0] } ?? [])
         }
+
+        /// The row's one description (V12, two lines then an ellipsis): a lock leads, so the ellipsis never hides it.
+        var rowDescription: String {
+            (lockedReason.map { ["\($0)."] } ?? []).joined() + (lockedReason == nil ? "" : " ") + line
+        }
     }
 
 
     /// D194-r1: smart chunks exist only on the resident Whisper server path (src/stt.ts);
     /// whisper-cli and Wispr Flow return no segments, and a server request that falls back to the CLI skips them.
+    /// Etan's note #2 (2.3): smart chunks are Whisper-only, so with Parakeet the row is disabled with this tooltip.
+    static let unavailableWithParakeet = "Unavailable with Parakeet"
+
     static let whisperServerOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
 
     static func processingRows(for controls: PolishControlsState, recognizer: RecognizerPickerState? = nil) -> [ProcessingRow] {
@@ -317,14 +391,14 @@ public struct ModelsSettingsView: View {
         return [
             ProcessingRow(
                 key: .modelPolish,
-                line: "Fixes punctuation and capitals with a small local model.",
+                line: "Fixes punctuation and capitals. If polish would add or drop a word, VoiceBar keeps the raw text instead.",
                 experimental: false,
                 isOn: controls.modelPolish.effective == .on,
                 lockedReason: polishLock
             ),
             ProcessingRow(
                 key: .outroGate,
-                line: "Removes a ‘Thank you.’ the model invented over silence.",
+                line: "Drops a “Thank you.” the recognizer invents in silence. Words you really said stay.",
                 experimental: false,
                 isOn: controls.outroGate.effective,
                 lockedReason: locked(.outroGate, controls.outroGate)
@@ -334,7 +408,7 @@ public struct ModelsSettingsView: View {
                 line: "Splits long Whisper recordings at pauses.",
                 experimental: true,
                 isOn: controls.smartChunks.effective,
-                lockedReason: recognizer.map { $0.smartChunkingApplicable ? locked(.smartChunks, controls.smartChunks) : "Only used with Whisper" } ?? locked(.smartChunks, controls.smartChunks)
+                lockedReason: recognizer.map { $0.smartChunkingApplicable ? locked(.smartChunks, controls.smartChunks) : unavailableWithParakeet } ?? locked(.smartChunks, controls.smartChunks)
             ),
         ]
     }
