@@ -45,6 +45,7 @@ import {
   hasPendingSpeechPreparation,
   speakText,
   seekPlayback,
+  seekSpeechWord,
   pausePlayback,
   hasF5Capture,
   resumePlayback,
@@ -250,9 +251,11 @@ function handleSocketCommandAdmitted(
     case "dictation_delivered":
       acknowledgeDictationDelivery(command.take_id, command.delivery_id, command.outcome);
       return;
+    case "speech_seek":
     case "seek": {
       if (recordingState !== "idle" || getEffectiveRecordingState() !== "idle") return buildAck(command, "reject", "busy");
-      const result = seekPlayback(command.offset_ms, command.scope, command.readback_id);
+      const result = command.cmd === "speech_seek" ? seekSpeechWord(command.utteranceId, command.wordIndex, command.id)
+        : seekPlayback(command.offset_ms, command.scope, command.readback_id);
       return { ...buildAck(command, result.outcome, result.reason),
         ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms, clamped: result.clamped } : {}) };
     }
