@@ -327,6 +327,8 @@ struct SettingsHistoryRowModel: Equatable {
 
 private enum DictEditorField: Hashable {
     case search
+    /// The term list itself, so Delete/Backspace and the arrow keys act on the selected row.
+    case list
 }
 
 private enum DictionaryCardLayout {
@@ -573,7 +575,8 @@ public struct SettingsView: View {
     @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
     /// The one Add/Edit sheet (nil = closed). Etan's 2.2.24 review #3: no inline box, no per-term misheard row.
     @State private var termSheet: DictionaryTermEdit?
-    @State private var pendingDeleteCanonical: String?
+    /// A term deleted from Your terms that Undo can still put back (4 s; spec Dictionary).
+    @State private var pendingDeletion: DictionaryPendingDeletion?
     @State private var hoveredTermRowID: String?
     /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
     @State private var relaySetupFeedback: (
@@ -2335,6 +2338,20 @@ public struct SettingsView: View {
                     }
                     .padding(18)
                 }
+                // The list takes key focus like a macOS table: arrows move the selection, Delete/Backspace removes
+                // the selected term of your own (with Undo). The search field keeps its own text editing.
+                .focusable()
+                .focused($focusedEditorField, equals: .list)
+                .focusEffectDisabled()
+                .onMoveCommand { direction in
+                    let offset = direction == .up ? -1 : direction == .down ? 1 : 0
+                    guard offset != 0 else { return }
+                    selectedTermRowID = DictionaryDeletion.selection(
+                        movingFrom: selectedTermRowID, by: offset, in: visibleTermRowIDs
+                    )
+                    if let rowID = selectedTermRowID { proxy.scrollTo(rowID) }
+                }
+                .onDeleteCommand { deleteSelectedTerm() }
                 .onChange(of: pendingScrollRowID) { _, rowID in
                     guard let rowID else { return }
                     // The saved row lands in the list on the same update; scroll once it has been laid out.
@@ -2346,6 +2363,20 @@ public struct SettingsView: View {
                     }
                 }
             }
+            if let pendingDeletion {
+                dictionaryUndoBar(pendingDeletion)
+                    .transition(reduceMotion
+                        ? AnyTransition.opacity
+                        : AnyTransition.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 0.2), value: pendingDeletion)
+        .task(id: pendingDeletion?.deadline) {
+            guard let deadline = pendingDeletion?.deadline else { return }
+            let delay = deadline.timeIntervalSinceNow
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            guard !Task.isCancelled else { return }
+            DictionaryDeletion.commitIfExpired(now: Date(), pending: &pendingDeletion, commit: commitDeletion)
         }
         .sheet(item: $termSheet) { edit in
             DictionaryAddSheetView(edit: edit, existingEntries: localEntries, onSave: { saved in
@@ -2353,8 +2384,15 @@ public struct SettingsView: View {
             }, onCancel: { termSheet = nil })
                 .frame(width: 420)
         }
+        .onChange(of: termSheet) { _, sheet in
+            // A save could re-add the very term waiting for its Undo window; send that removal first.
+            if sheet != nil { DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion) }
+        }
         .onAppear {
             resetDictionaryEditors()
+        }
+        .onDisappear {
+            DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion)
         }
         .onChange(of: hasPendingDictionaryEdit) { _, pending in
             if !pending, dictionaryReloadGate.editEnded() { loadDictionaryPreview() }
@@ -2428,6 +2466,24 @@ public struct SettingsView: View {
         .padding(.bottom, 14)
     }
 
+    private func dictionaryUndoBar(_ deletion: DictionaryPendingDeletion) -> some View {
+        HStack(spacing: 12) {
+            Text(DictionaryDeletion.undoMessage(deletion))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Button("Undo") { undoDeletion() }
+                .keyboardShortcut(focusedEditorField == .search ? nil : KeyboardShortcut("z", modifiers: .command))
+                .accessibilityHint("Puts the term back")
+        }
+        .font(.callout)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 10)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .contain)
+    }
+
     private var searchRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
@@ -2482,10 +2538,14 @@ public struct SettingsView: View {
             }
             .onTapGesture {
                 selectedTermRowID = rowID
+                focusedEditorField = .list
             }
             .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
             .accessibilityAction(named: "Edit") {
                 if isEditable { termSheet = DictionaryTermEdit(original: entry) }
+            }
+            .accessibilityAction(named: "Delete") {
+                if isEditable { deleteTerm(entry.canonical, rowID: rowID) }
             }
     }
 
@@ -2502,7 +2562,7 @@ public struct SettingsView: View {
         let isSelected = selectedTermRowID == rowID
         // Spec: hover or selection shows the row's actions. They keep their width while hidden, so the text never
         // reflows under the pointer; VoiceOver reaches them as row actions instead.
-        let showsActions = isSelected || hoveredTermRowID == rowID || pendingDeleteCanonical == entry.canonical
+        let showsActions = isSelected || hoveredTermRowID == rowID
         let label = SettingsRowLabel(
             title: entry.canonical,
             description: entry.variants.isEmpty ? nil : Self.variantSummary(entry.variants),
@@ -2511,22 +2571,17 @@ public struct SettingsView: View {
         let actions = HStack(spacing: 4) {
             SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)")
             if isEditable {
-                if pendingDeleteCanonical == entry.canonical {
-                    deleteDictionaryEntryButton(entry.canonical)
-                } else {
-                    Button {
-                        pendingDeleteCanonical = nil
-                        termSheet = DictionaryTermEdit(original: entry)
-                    } label: {
-                        Image(systemName: "pencil")
-                            .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Edit term")
-                    .accessibilityLabel("Edit term \(entry.canonical)")
-                    deleteDictionaryEntryButton(entry.canonical)
+                Button {
+                    termSheet = DictionaryTermEdit(original: entry)
+                } label: {
+                    Image(systemName: "pencil")
+                        .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.borderless)
+                .help("Edit term")
+                .accessibilityLabel("Edit term \(entry.canonical)")
+                deleteDictionaryEntryButton(entry.canonical, rowID: rowID)
             }
         }
         .fixedSize()
@@ -2543,43 +2598,65 @@ public struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func deleteDictionaryEntryButton(_ canonical: String) -> some View {
-        if pendingDeleteCanonical == canonical {
-            Button("Cancel") {
-                pendingDeleteCanonical = nil
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .frame(height: DictionaryCardLayout.headerHeight)
-            Button("Delete?", role: .destructive) {
-                SettingsDictionaryMutations.confirmDeleteTerm(
-                    canonical,
-                    pendingDeleteCanonical: &pendingDeleteCanonical,
-                    localEntries: &localEntries,
-                    onRemovePromptTerm: onRemovePromptTerm
-                )
-                dictionaryReloadGate.mutationSent()
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .frame(height: DictionaryCardLayout.headerHeight)
-            .tint(.red)
-        } else {
-            Button {
-                SettingsDictionaryMutations.requestDeleteTerm(
-                    canonical,
-                    pendingDeleteCanonical: &pendingDeleteCanonical
-                )
-            } label: {
-                Image(systemName: "trash")
-                    .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.red)
-            .help("Delete term")
-            .accessibilityLabel("Delete term \(canonical)")
+    private func deleteDictionaryEntryButton(_ canonical: String, rowID: String) -> some View {
+        Button {
+            deleteTerm(canonical, rowID: rowID)
+        } label: {
+            Image(systemName: "trash")
+                .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.red)
+        .help("Delete term")
+        .accessibilityLabel("Delete term \(canonical)")
+    }
+
+    /// The rows arrow keys move through, in display order.
+    private var visibleTermRowIDs: [String] {
+        let isSearching = !Self.dictionaryQuery(dictionarySearch).isEmpty
+        var rows: [String] = []
+        if yourTermsExpanded || isSearching {
+            rows += dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch).map(\.rowID)
+        }
+        if includedTermsExpanded || isSearching {
+            rows += dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch).map(\.rowID)
+        }
+        return rows
+    }
+
+    /// Delete/Backspace: only a selected term of your own; an included row has nothing to delete.
+    private func deleteSelectedTerm() {
+        guard let rowID = selectedTermRowID,
+              let row = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
+                  .first(where: { $0.rowID == rowID })
+        else { return }
+        deleteTerm(row.entry.canonical, rowID: rowID)
+    }
+
+    private func deleteTerm(_ canonical: String, rowID: String) {
+        let rows = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch).map(\.rowID)
+        let nextSelection = DictionaryDeletion.selection(afterRemoving: rowID, from: rows)
+        guard DictionaryDeletion.begin(
+            canonical, localEntries: &localEntries, pending: &pendingDeletion, now: Date(), commit: commitDeletion
+        ) != nil else { return }
+        if selectedTermRowID == rowID { selectedTermRowID = nextSelection }
+        if hoveredTermRowID == rowID { hoveredTermRowID = nil }
+        // Keep keyboard focus in the list so the next Delete or ⌘Z lands where the user is.
+        if focusedEditorField != .search { focusedEditorField = .list }
+    }
+
+    private func undoDeletion() {
+        guard let entry = DictionaryDeletion.undo(localEntries: &localEntries, pending: &pendingDeletion, now: Date())
+        else { return }
+        selectedTermRowID = STTDictionaryDisplayEntry(source: "personal", entry: entry).rowID
+        pendingScrollRowID = selectedTermRowID
+    }
+
+    /// The removal reaches the daemon only here, when the Undo window has closed.
+    private func commitDeletion(_ entry: STTDictionaryEntry) {
+        onRemovePromptTerm(entry.canonical)
+        dictionaryReloadGate.mutationSent()
     }
 
     // MARK: - Helpers
@@ -2985,13 +3062,12 @@ public struct SettingsView: View {
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        termSheet != nil || pendingDeleteCanonical != nil
+        termSheet != nil || pendingDeletion != nil
     }
 
     /// Arriving on the tab never finds an editor already open (UI pass #17: the first row was).
     private func resetDictionaryEditors() {
         termSheet = nil
-        pendingDeleteCanonical = nil
     }
 
     private func saveTermSheet(_ edit: DictionaryTermEdit) {
@@ -3186,25 +3262,6 @@ enum SettingsDictionaryMutations {
         }
         onRemovePromptTerm(canonical)
         editText = ""
-    }
-
-    static func requestDeleteTerm(
-        _ canonical: String,
-        pendingDeleteCanonical: inout String?
-    ) {
-        pendingDeleteCanonical = canonical
-    }
-
-    static func confirmDeleteTerm(
-        _ canonical: String,
-        pendingDeleteCanonical: inout String?,
-        localEntries: inout [STTDictionaryEntry],
-        onRemovePromptTerm: (String) -> Void
-    ) {
-        guard pendingDeleteCanonical == canonical else { return }
-        localEntries.removeAll { $0.canonical == canonical }
-        onRemovePromptTerm(canonical)
-        pendingDeleteCanonical = nil
     }
 
     static func addVariant(
