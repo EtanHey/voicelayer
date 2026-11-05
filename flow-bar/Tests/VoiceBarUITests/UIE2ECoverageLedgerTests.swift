@@ -102,6 +102,30 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
             bounds: CGRect(x: 0, y: 0, width: 900, height: 600)).isEmpty)
     }
 
+    func testGalleryValidatesN2SpinnerFramesWithoutDemandingRenderedLabelText() {
+        let id = "busy-transcribing"
+        let panel = CGRect(x: 20, y: 30, width: 340, height: 50)
+        let spinner = CGRect(x: 35, y: 40, width: 20, height: 20)
+        let bounds = CGRect(x: 0, y: 0, width: 900, height: 600)
+        let expected = [id: "Transcribing"] // AX label, not painted text (Etan N2).
+        XCTAssertTrue(UIE2EGalleryFrames.problems(panels: [id: panel], texts: [id: spinner],
+            expected: expected, bounds: bounds, indicatorIDs: [id]).isEmpty)
+        XCTAssertEqual(UIE2EGalleryFrames.verifiedIDs(panels: [id: panel], texts: [id: spinner],
+            expected: expected, bounds: bounds, indicatorIDs: [id]), [id])
+        for invalid in [CGRect.zero, CGRect(x: 500, y: 40, width: 20, height: 20)] {
+            XCTAssertFalse(UIE2EGalleryFrames.problems(panels: [id: panel], texts: [id: invalid],
+                expected: expected, bounds: bounds, indicatorIDs: [id]).isEmpty)
+        }
+        XCTAssertFalse(UIE2EGalleryFrames.problems(panels: [id: panel], texts: [:],
+            expected: expected, bounds: bounds, indicatorIDs: [id]).isEmpty)
+        // Full-text states never inherit the spinner exemption.
+        for (id, text) in [("busy-recording", "Busy recording. Selection not read"),
+                           ("busy-f5-preview", "Busy with F5. Selection not read")] {
+            XCTAssertFalse(UIE2EGalleryFrames.problems(panels: [id: panel], texts: [id: spinner],
+                expected: [id: text], bounds: bounds).isEmpty)
+        }
+    }
+
     func testGalleryCreditsEachVariantWithoutMaskingItsClippedSibling() {
         let panels = ["recovery": CGRect(x: 20, y: 30, width: 300, height: 100),
                       "terminal": CGRect(x: 340, y: 30, width: 300, height: 100)]
