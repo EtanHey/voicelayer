@@ -147,12 +147,20 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.makeContextMenu().popUp(positioning: nil, at: NSPoint(x: 20, y: 20), in: self.settings.contentView)
                 }.accessibilityIdentifier("qa-fixture-hidden-menu")
             }
+            // 2.3 U2 wings (scenario wings-u2): each wing state of the 3-wings mock, silently.
+            HStack {
+                ForEach(["launcher", "recording", "setup-error", "speaking-collapsed"], id: \.self) { name in
+                    Button("Wing " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
+                }
+            }.padding(6)
             UIE2ESettings(model: model)
         })
         let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
             onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 },
-            includesPanelOutsets: true))
+            includesPanelOutsets: true,
+            onOpenMicrophonePicker: { [weak self] in DispatchQueue.main.async { self?.openMicrophoneList() } },
+            onOpenSetupSettings: { [weak self] in self?.openSetupSettings() }))
         bar.activeHitTestProvider = { [weak self] point in
             guard let self else { return false }
             return Self.panelLayout(for: self.model.voice).containsInteractiveContent(point)
@@ -186,6 +194,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if hidden { self?.pill?.orderOut(nil) } else { self?.pill?.orderFront(nil) }
         }
         configureMenu()
+        // wings-u2 first-click check: the pill must never become key from a click while another app is active.
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: pill, queue: .main) {
+            [weak self] _ in MainActor.assumeIsolated { self?.model.receipt("pill-became-key") }
+        }
         pill.contextMenuProvider = { self.makeContextMenu() }
         pill.contextMenuHitTestProvider = { _ in true }
         pill.orderFront(nil)
@@ -251,6 +263,28 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         guard let pill, let screen = NSScreen.main else { return }
         Self.fitPill(pill, layout: Self.panelLayout(for: model.voice), in: screen.visibleFrame)
+    }
+
+    /// 2.3 U2: the chevron's microphone list, from the production controller, under the left wing.
+    func openMicrophoneList() {
+        guard let pill, let content = pill.contentView else { return }
+        menu.microphonePickerRowsProvider = { [model] in MicrophonePickerRow.rows(from: model.microphone) }
+        let list = menu.makeMicrophonePickerMenu()
+        list.items.first?.setAccessibilityIdentifier("uie2e-microphone-list")
+        list.delegate = self
+        let origin = AppDelegate.notchMenuOrigin(kind: .microphone, menuWidth: list.size.width,
+                                                 layout: Self.panelLayout(for: model.voice))
+        model.receipt("microphone-list-open")
+        list.popUp(positioning: nil, at: content.convert(origin, from: nil), in: content)
+    }
+
+    /// 2.3 U2: the badged gear opens Settings › General scrolled to Permissions.
+    func openSetupSettings() {
+        model.tab = .general
+        model.focus = .permissions
+        model.requestID += 1
+        settings.makeKeyAndOrderFront(nil)
+        model.receipt("setup-settings")
     }
 
     private func makeContextMenu() -> NSMenu {
@@ -374,6 +408,7 @@ final class UIE2EModel {
     var hidden = false { didSet { onVisibilityChange?(hidden) } }
     var onVisibilityChange: ((Bool) -> Void)?
     var tab: SettingsTab = .general
+    var focus: SettingsFocus?
     var requestID = 0
     var events: [String] = []
     var commands: [[String: Any]] = []
@@ -556,6 +591,7 @@ final class UIE2EModel {
             if name == "readback" { voice.handleEvent(["type": "state", "state": "idle", "source": "playback"]) }
         case "finish": voice.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         case "idle":
+            voice.setSetupMissingPermissions([])
             // Preserve the existing fixture contract: every idle reset restores
             // the synthetic health/connection baseline before clearing playback.
             refresh()
@@ -572,8 +608,31 @@ final class UIE2EModel {
         case "paste-failed": voice.mode = .idle; voice.confirmationText = "Paste failed. Click the text field and press Shift+F5."
         case "error": voice.handleEvent(["type": "error", "message": "QA fixture failure", "recoverable": true])
         case "transcribing": voice.handleEvent(["type": "state", "state": "transcribing"])
+        // 2.3 U2 wing states. The launcher and setup-error fixtures hold the hover presentation (a real pointer
+        // exit must not collapse them before their frame is measured); recording is a state event only, so no
+        // device opens.
+        case "launcher", "setup-error":
+            refresh(); voice.handleEvent(["type": "state", "state": "idle"])
+            voice.setSetupMissingPermissions(name == "setup-error" ? [.accessibility] : [])
+            voice.isHovering = true
+            voice.beginModalInteraction(); holdsFixturePresentation = true
+        case "recording":
+            voice.setSetupMissingPermissions([])
+            voice.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
+        case "speaking-collapsed":
+            voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
+                "text": "First QA item\nSecond QA item", "readback_id": "qa-readback"])
+            voice.dismissTeleprompter()
         case "disconnected": voice.setConnectionStatus(false)
         default: refresh(); voice.mode = .idle
+        }
+        if ["launcher", "setup-error", "recording", "transcribing", "speaking-collapsed"].contains(name) {
+            // 2.3 U2: the wing widths the production presentation resolves for this state (wings-u2 reads it).
+            let geometry = UIE2EHost.panelLayout(for: voice).presentation.geometry
+            sandbox.writeObject(["fixture": name, "leadingWingWidth": Double(geometry.leadingWingWidth),
+                                 "trailingWingWidth": Double(geometry.trailingWingWidth),
+                                 "fixedWingWidth": Double(VoiceBarNotchContract.fixedWingWidth),
+                                 "setupNeedsAttention": voice.setupNeedsAttention], file: "wings.json")
         }
         receipt("fixture:" + name)
     }
@@ -613,7 +672,7 @@ private struct UIE2ESettings: View {
             onRevealHistoryFile: { _ in model.receipt("history-finder") },
             footerPresentation: { .resolve(isConnected: model.voice.isConnected, mode: model.voice.mode, captureLive: false,
                                             errorMessage: nil, remoteSTTConfigured: false) }, onRunSetup: { model.receipt("run-setup"); model.onRunSetup() },
-            tabRequest: .init(tab: model.tab, id: model.requestID), initialDictionaryPreview: model.preview,
+            tabRequest: .init(tab: model.tab, focus: model.focus, id: model.requestID), initialDictionaryPreview: model.preview,
             onSelectedTabChange: { model.tab = $0 },
             historyPlayback: .init(start: { _ in fatalError("UIE2E forbids playback") }, stop: {}))
     }
