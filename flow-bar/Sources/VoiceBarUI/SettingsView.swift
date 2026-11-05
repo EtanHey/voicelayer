@@ -67,8 +67,9 @@ public struct SettingsTabRequest: Equatable {
 public enum SettingsFocus: String, Equatable, Hashable {
     /// General › Microphone priority, where the default microphone is chosen (D2 "Change…").
     case microphonePriority = "settings-general-microphone-priority"
-    /// General › Setup, at its first broken step (the notch's orange dot).
-    case setup = "settings-general-setup"
+    /// General › Setup, at its first broken step: where the notch gear's setup badge leads (2.3 U2). Permissions
+    /// are Setup steps since U3a (R2), so the case keeps U2's name and raw value.
+    case permissions = "settings-general-permissions"
 }
 
 /// History scopes in on-screen order; Dictations remains the default.
@@ -526,6 +527,7 @@ public struct SettingsView: View {
     public let installedVersion: VoiceBarInstalledVersion
     /// Nil (tests, the UI E2E host) means no network check; the row then shows the version only.
     public let versionCheck: VoiceBarVersionCheck?
+    public let onVersionStatusChange: (VoiceBarVersionStatus) -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -737,7 +739,8 @@ public struct SettingsView: View {
         onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in },
         historyPlayback: SettingsAudioPlayback? = nil,
         installedVersion: VoiceBarInstalledVersion = .current(),
-        versionCheck: VoiceBarVersionCheck? = nil
+        versionCheck: VoiceBarVersionCheck? = nil,
+        onVersionStatusChange: @escaping (VoiceBarVersionStatus) -> Void = { _ in }
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -834,6 +837,7 @@ public struct SettingsView: View {
         self.lastDictationNote = lastDictationNote
         self.installedVersion = installedVersion
         self.versionCheck = versionCheck
+        self.onVersionStatusChange = onVersionStatusChange
         self.tabRequest = tabRequest
         self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
@@ -929,7 +933,9 @@ public struct SettingsView: View {
         .task {
             guard let versionCheck, versionStatus == nil else { return }
             versionStatus = .checking
-            versionStatus = await versionCheck.status(installed: installedVersion.version)
+            let status = await versionCheck.status(installed: installedVersion.version)
+            versionStatus = status
+            onVersionStatusChange(status)
         }
         .task(id: selectedTab) {
             guard selectedTab == .dictionary else { return }
@@ -1009,7 +1015,7 @@ public struct SettingsView: View {
     private func scrollToRequestedFocus(_ proxy: ScrollViewProxy, animated: Bool) {
         guard let focus = tabRequest?.focus, tabRequest?.tab == .general else { return }
         DispatchQueue.main.async {
-            if focus == .setup, generalSetup.firstBroken != nil { return arriveAtSetup(proxy) }
+            if focus == .permissions, generalSetup.firstBroken != nil { return arriveAtSetup(proxy) }
             if animated {
                 withAnimation { proxy.scrollTo(focus, anchor: .top) }
             } else {
@@ -1144,12 +1150,12 @@ public struct SettingsView: View {
             }
         } header: {
             Text(setup.header)
-                .id(SettingsFocus.setup)
+                .id(SettingsFocus.permissions)
         }
     }
 
     private func setupStepRow(_ step: SettingsSetupStep) -> some View {
-        SettingsRow(title: step.title, description: step.description, lead: { SettingsSetupMark(isDone: step.isDone) }) {
+        SettingsRow(title: step.title, description: step.description, lead: { SettingsSetupMark(kind: step.markKind) }) {
             if let fix = step.fix {
                 Button(fix.title) { perform(fix) }
                     .buttonStyle(.bordered)
@@ -1300,16 +1306,18 @@ public struct SettingsView: View {
                 .opacity(row.canPrioritize ? 1 : 0)
                 .accessibilityHidden(true)
         }) {
-            if isUsed {
-                SettingsPill(text: "Used for dictation")
-            } else if row.canPrioritize, index > 0 {
+            // Review R1 #736: the pill and Make default are independent. The mic in use can still sit below a
+            // disconnected one, and promoting it keeps it first when that one reconnects.
+            if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
                 // Hover reveals it; VoiceOver and the keyboard keep the named action below.
                 Button("Make default") {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
-                .disabled(!row.isConnected)
                 .opacity(hoveredMicrophoneIndex == index ? 1 : 0)
+            }
+            if isUsed {
+                SettingsPill(text: "Used for dictation")
             }
         }
         .opacity(row.isConnected ? 1 : 0.55)

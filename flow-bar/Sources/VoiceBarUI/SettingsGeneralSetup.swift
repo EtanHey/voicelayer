@@ -7,11 +7,20 @@ import SwiftUI
 /// Until then `SettingsView.speakingVoiceStatus` defaults to nil and the step is left out rather than guessed.
 public enum SettingsSetupVoiceStatus: Equatable, Sendable {
     case ready
+    /// Loading the voice model: not ready yet, and nothing for you to fix.
+    case starting
+    /// It stopped unexpectedly and VoiceBar is starting it again: not ready, and nothing for you to fix.
+    case restarting
     case engineDown
 
-    /// The engine counts as down only when it is stopped or failed; starting and restarting are on their way.
+    /// One state per engine state: only running is ready, and only stopped or failed needs you.
     public init(cloneEngine state: CloneEngineSnapshot.State) {
-        self = state == .stopped || state == .failed ? .engineDown : .ready
+        switch state {
+        case .running: self = .ready
+        case .starting: self = .starting
+        case .restarting: self = .restarting
+        case .stopped, .failed: self = .engineDown
+        }
     }
 }
 
@@ -46,6 +55,11 @@ public struct SettingsSetupStep: Equatable, Sendable {
     public let description: String
     public let isDone: Bool
     public let fix: SettingsSetupFix?
+    /// On its way by itself (loading or recovering): not done, but not broken either.
+    public var isPending = false
+
+    public var isBroken: Bool { !isDone && !isPending }
+    var markKind: SettingsSetupMark.Kind { isDone ? .done : isPending ? .pending : .attention }
 }
 
 /// General › Setup (R2: setup is folded into General). Everything fine is one quiet row; anything missing lists the
@@ -79,24 +93,29 @@ public struct SettingsGeneralSetup: Equatable, Sendable {
             // fixed on its own row first.
             fix: hotkeyListenerActive ? .checkF5 : (permissionsDone ? .restartF5Listener : nil)
         ))
-        if let voice {
-            let ready = voice == .ready
-            ordered.append(SettingsSetupStep(
-                id: .speakingVoice, title: "Speaking voice",
-                description: ready ? "Your cloned voice is ready for long replies."
-                    : "The cloned voice engine is not running. Long replies use the fast voice.",
-                isDone: ready, fix: ready ? .manageVoice : .startVoiceEngine
-            ))
-        }
-        steps = ordered.filter { !$0.isDone } + ordered.filter(\.isDone)
+        if let voice { ordered.append(Self.voiceStep(voice)) }
+        steps = ordered.filter(\.isBroken) + ordered.filter(\.isPending) + ordered.filter(\.isDone)
         knowsVoice = voice != nil
     }
 
+    /// Every step done. A pending step keeps the list open (the voice isn't "set up" yet) without calling it broken.
     public var isReady: Bool { steps.allSatisfy(\.isDone) }
-    public var header: String { isReady ? "Setup" : "Finish setup" }
+    public var header: String { steps.contains(where: \.isBroken) ? "Finish setup" : "Setup" }
     public var readyDescription: String { knowsVoice ? Self.readyDescription : Self.readyDescriptionWithoutVoice }
-    /// The step the notch's orange dot points at: the first broken one.
-    public var firstBroken: SettingsSetupStepID? { steps.first { !$0.isDone }?.id }
+    /// The step the notch's orange dot points at: the first broken one. A pending step is never a target.
+    public var firstBroken: SettingsSetupStepID? { steps.first(where: \.isBroken)?.id }
+
+    static func voiceStep(_ voice: SettingsSetupVoiceStatus) -> SettingsSetupStep {
+        let (description, isDone, isPending): (String, Bool, Bool) = switch voice {
+        case .ready: ("Your cloned voice is ready for long replies.", true, false)
+        case .starting: ("Your cloned voice is starting. Long replies use the fast voice until it's ready.", false, true)
+        case .restarting: ("The cloned voice engine stopped unexpectedly, so VoiceBar is starting it again. "
+            + "Long replies use the fast voice meanwhile.", false, true)
+        case .engineDown: ("The cloned voice engine is not running. Long replies use the fast voice.", false, false)
+        }
+        return SettingsSetupStep(id: .speakingVoice, title: "Speaking voice", description: description, isDone: isDone,
+                                 fix: voice == .engineDown ? .startVoiceEngine : .manageVoice, isPending: isPending)
+    }
 
     static func step(for row: SetupPermissionRow) -> SettingsSetupStep? {
         let fix = row.action.map(SettingsSetupFix.permission)
@@ -186,6 +205,11 @@ enum SettingsMicrophoneRowPresentation {
         return snapshot.nextDeviceName != nil && snapshot.nextDeviceName == row.label
     }
 
+    /// Make default is offered on any connected, prioritizable mic below the top, whether or not it is the one in use.
+    static func offersMakeDefault(_ row: MicrophonePriorityRow, at index: Int) -> Bool {
+        row.canPrioritize && row.isConnected && index > 0
+    }
+
     static func status(_ row: MicrophonePriorityRow) -> String {
         guard row.canPrioritize else { return (row.isConnected ? "Connected" : "Not connected") + " · UID unavailable" }
         return row.isConnected ? "Connected" : "Not connected"
@@ -201,7 +225,7 @@ enum SettingsGeneralCopy {
     static let mouseDescription = "Forward acts like F5. Back sends Return."
     static let openAtLoginTitle = "Open at login"
     static let hideTitle = "Hide the notch"
-    static let hideDescription = "VoiceBar keeps working while the notch is hidden."
+    static let hideDescription = "VoiceBar keeps working. Click its Dock icon to bring the notch back."
     static let relayTitle = "F5 key helper"
     static let setupAssistantTitle = "Setup assistant"
     static let setupAssistantDescription = "Walks through permissions, the F5 key, your microphone and a test dictation."

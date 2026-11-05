@@ -143,7 +143,7 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertEqual(layout.coreRect.width, resolved.housingFrame.width)
         XCTAssertEqual(renderedCoreFrame.minX, resolved.housingFrame.minX)
         XCTAssertEqual(renderedCoreFrame.maxX, resolved.housingFrame.maxX)
-        XCTAssertEqual(frame.width, 73.5 + 184 + 78)
+        XCTAssertEqual(frame.width, 73.5 + 184 + 73.5)
     }
 
     func testCompactGlassMeetsTheCalibratedPhysicalBezelWithoutASecondKeepOut() {
@@ -163,8 +163,8 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         )
 
         XCTAssertEqual(geometry.leadingWingWidth, 73.5)
-        XCTAssertEqual(geometry.trailingWingWidth, 78)
-        XCTAssertEqual(geometry.totalWidth, 319.5)
+        XCTAssertEqual(geometry.trailingWingWidth, 73.5)
+        XCTAssertEqual(geometry.totalWidth, 315)
         XCTAssertTrue(path.contains(CGPoint(x: layout.coreRect.minX - 0.5, y: 16)))
         XCTAssertTrue(path.contains(CGPoint(x: layout.coreRect.maxX + 0.5, y: 16)))
         XCTAssertFalse(path.contains(CGPoint(x: layout.coreRect.midX, y: 16)))

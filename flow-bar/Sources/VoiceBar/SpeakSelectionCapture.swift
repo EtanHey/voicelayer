@@ -257,7 +257,14 @@ final class SpeakSelectionCapture {
                     completion(result.withPreflightDetails(recheck.details))
                 }
                 guard let snapshot else { complete(.captureFailed); return }
-                guard self.pasteboard.changeCount == changeCount else { complete(.clipboardChanged); return }
+                let preCopyCount = self.pasteboard.changeCount
+                guard preCopyCount == changeCount else {
+                    complete(.clipboardChanged.withPreflightDetails([
+                        "clipboard_changed_at": "pre_copy", "clipboard_start_count": String(changeCount),
+                        "clipboard_pre_copy_count": String(preCopyCount),
+                    ]))
+                    return
+                }
                 if let blockReason = recheck.blockReason { complete(blockReason); return }
                 if let intendedCopyApp, self.frontmostApp() != intendedCopyApp {
                     complete(.captureFailed)
@@ -275,18 +282,27 @@ final class SpeakSelectionCapture {
                              completion: @escaping (SelectionCaptureResult) -> Void) {
         let deadline = now() + 0.4
         var copyAttempted = false
+        var clipboardDetails = ["clipboard_start_count": String(changeCount)]
         func finish(_ result: SelectionCaptureResult, expectedChangeCount: Int) {
             let complete = { (resolved: SelectionCaptureResult) in
-                completion(copyAttempted ? resolved.withCopyAttempt(resolvedAs: resolved.outcome) : resolved)
+                let observed = resolved.withPreflightDetails(clipboardDetails)
+                completion(copyAttempted ? observed.withCopyAttempt(resolvedAs: resolved.outcome) : observed)
             }
             guard copyAttempted else {
-                complete(pasteboard.changeCount == expectedChangeCount ? result : .clipboardChanged)
+                let preCopyCount = pasteboard.changeCount
+                clipboardDetails["clipboard_pre_copy_count"] = String(preCopyCount)
+                if preCopyCount != expectedChangeCount { clipboardDetails["clipboard_changed_at"] = "pre_copy" }
+                complete(preCopyCount == expectedChangeCount ? result : .clipboardChanged)
                 return
             }
-            switch restore(snapshot, expectedChangeCount: expectedChangeCount) {
+            let restoration = restore(snapshot, expectedChangeCount: expectedChangeCount) {
+                clipboardDetails["clipboard_restore_count"] = String($0)
+            }
+            switch restoration {
             case .restored:
                 complete(result)
             case .changed:
+                if clipboardDetails["clipboard_changed_at"] == nil { clipboardDetails["clipboard_changed_at"] = "restore" }
                 complete(.clipboardChanged)
             case .failed:
                 NSLog("[VoiceBar] Selection capture could not restore the pasteboard")
@@ -303,19 +319,26 @@ final class SpeakSelectionCapture {
             return
         }
         copyAttempted = true
-        guard postCopy() else { finish(.copyFailed, expectedChangeCount: changeCount); return }
+        let copyPosted = postCopy()
+        clipboardDetails["clipboard_after_copy_count"] = String(pasteboard.changeCount)
+        guard copyPosted else { finish(.copyFailed, expectedChangeCount: changeCount); return }
         func poll() {
             Self.onMain { [self] in
                 let observedChangeCount = pasteboard.changeCount
+                clipboardDetails["clipboard_poll_count"] = String(observedChangeCount)
                 if observedChangeCount != changeCount {
                     // More than one ownership change before we can read is ambiguous.
                     guard observedChangeCount == changeCount + 1 else {
+                        clipboardDetails["clipboard_changed_at"] = "poll_delta"
                         finish(.clipboardChanged, expectedChangeCount: changeCount)
                         return
                     }
+                    clipboardDetails["clipboard_read_count"] = String(observedChangeCount)
                     let text = readCopiedString()
                     let copiedChangeCount = pasteboard.changeCount
+                    clipboardDetails["clipboard_post_read_count"] = String(copiedChangeCount)
                     guard copiedChangeCount == observedChangeCount else {
+                        clipboardDetails["clipboard_changed_at"] = "post_read"
                         finish(.clipboardChanged, expectedChangeCount: observedChangeCount)
                         return
                     }
@@ -336,7 +359,13 @@ final class SpeakSelectionCapture {
 
     private enum RestorationResult { case restored, changed, failed }
 
-    private func restore(_ snapshot: Snapshot, expectedChangeCount: Int) -> RestorationResult {
+    private func restore(_ snapshot: Snapshot, expectedChangeCount: Int,
+                         observeChangeCount: (Int) -> Void) -> RestorationResult {
+        func currentChangeCount() -> Int {
+            let count = pasteboard.changeCount
+            observeChangeCount(count)
+            return count
+        }
         func prepareItems() -> [NSPasteboardItem]? {
             var items: [NSPasteboardItem] = []
             for values in snapshot {
@@ -350,17 +379,17 @@ final class SpeakSelectionCapture {
         }
         guard let items = prepareItems() else { return .failed }
         // Check immediately before taking ownership, after preparing every item.
-        guard pasteboard.changeCount == expectedChangeCount else { return .changed }
+        guard currentChangeCount() == expectedChangeCount else { return .changed }
         let clearedCount = pasteboard.clearContents()
         if items.isEmpty || writeRestoredItems(items) { return .restored }
         // Our data writes keep the generation; preserve a new clear/declare transaction.
-        guard pasteboard.changeCount == clearedCount else { return .changed }
+        guard currentChangeCount() == clearedCount else { return .changed }
         // Reusing accepted items after clearing throws; build fresh items for the retry.
         guard let retryItems = prepareItems() else { return .failed }
-        guard pasteboard.changeCount == clearedCount else { return .changed }
+        guard currentChangeCount() == clearedCount else { return .changed }
         let retryCount = pasteboard.clearContents()
         if writeRestoredItems(retryItems) { return .restored }
-        return pasteboard.changeCount == retryCount ? .failed : .changed
+        return currentChangeCount() == retryCount ? .failed : .changed
     }
 
     static func isSecureFocus(role: String?, subrole: String?, secureInput: Bool) -> Bool {

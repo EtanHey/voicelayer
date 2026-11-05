@@ -51,12 +51,14 @@ final class NotchGlassMorphTests: XCTestCase {
         )
     }
 
-    func testMicTapGrowsTheGlassWithTheShape() throws {
-        try assertGlassMorphs(from: Self.presentation(), to: Self.presentation(recording: true), "mic → recording")
-    }
-
-    func testCancelTapShrinksTheGlassWithTheShape() throws {
-        try assertGlassMorphs(from: Self.presentation(recording: true), to: Self.presentation(), "X → launcher")
+    /// 2.3 U2 (M4): the launcher and recording share the fixed 73 + 73 pt wings, so a mic tap or Cancel swaps the
+    /// controls and the glass outline does not move at all.
+    func testMicTapAndCancelKeepTheGlassOutline() {
+        let launcher = Self.presentation().geometry, recording = Self.presentation(recording: true).geometry
+        XCTAssertEqual(launcher.leadingWingWidth, recording.leadingWingWidth)
+        XCTAssertEqual(launcher.trailingWingWidth, recording.trailingWingWidth)
+        XCTAssertEqual(launcher.topWidth, recording.topWidth)
+        XCTAssertEqual(launcher.totalHeight, recording.totalHeight)
     }
 
     func testHistoryPanelGrowsTheGlassWithTheShape() throws {

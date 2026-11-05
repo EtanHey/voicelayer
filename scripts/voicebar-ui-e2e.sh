@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # UI-only runner. --build-only is the only mode permitted on an occupied Mac.
 set -euo pipefail
-usage() { echo "usage: $0 [--output NEW_DIRECTORY] [--build-only] [--scenario full|focused-338|hide1|gate2246]"; }
+usage() { echo "usage: $0 [--output NEW_DIRECTORY] [--build-only] [--scenario full|focused-338|hide1|gate2246|wings-u2]"; }
 build_only=0
 scenario=full
 focused_338=0
@@ -21,7 +21,8 @@ case "$scenario" in
   focused-338) focused_338=1 ;;
   hide1) export VOICEBAR_UIE2E_GATE2245=1 VOICEBAR_UIE2E_GATE2246_CAPTURE=0 ;;
   gate2246) export VOICEBAR_UIE2E_GATE2245=1 VOICEBAR_UIE2E_GATE2246_CAPTURE=1 ;;
-  *) echo "FAIL unknown scenario: $scenario (expected full, focused-338, hide1 or gate2246)" >&2; exit 2 ;;
+  wings-u2) ;; # 2.3 U2 wing states (native run pending on the M1 test rig)
+  *) echo "FAIL unknown scenario: $scenario (expected full, focused-338, hide1, gate2246 or wings-u2)" >&2; exit 2 ;;
 esac
 repo=$(cd "$(dirname "$0")/.." && pwd)
 output=${output:-"$repo/.build.noindex/ui-e2e/$(date -u +%Y%m%dT%H%M%S)-$$"}

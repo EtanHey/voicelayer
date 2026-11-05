@@ -605,6 +605,23 @@ describe("stt-polish", () => {
     expect(result.text.endsWith('".')).toBe(false);
   });
 
+  it("keeps the fidelity guard for transcripts beyond the former completion cap", async () => {
+    const cleanedText = Array.from({ length: 2400 }, (_, index) => `word${index}`).join(" ");
+    server = createMockPolishServer(() => ({ text: "word0 word1 word2." }));
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+    expect(result.status).toBe("rejected");
+    expect(result.text).toBe(`${cleanedText}.`);
+    expect(result.error).toContain("dropped too much text");
+  });
+
   it("rejects same-length long rewrites in on mode", async () => {
     server = createMockPolishServer(() => ({
       text: "After merge, the app is faster, cleaner, safer, simpler, stable, ready, reviewed, documented, tested, and deployable without me reading the pull request again today safely.",
@@ -1678,6 +1695,46 @@ describe("stt-polish", () => {
     });
   }
 
+  it("rejects the V29 v22-interruption benchmark control", async () => {
+    const cleanedText = "Send it on Tuesday — no, Wednesday, after lunch.";
+    const candidate = "Send it on Tuesday  no, Wednesday, after lunch.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+    expect(result).toMatchObject({
+      status: "rejected", text: cleanedText, polishedText: candidate,
+      error: "polish response deleted retraction content", changed: false,
+    });
+  });
+
+  for (const marker of ["—", "…", "..."]) {
+    it.each(["dictation", "voice_ask"] as const)(
+      `rejects removal of a standalone ${marker} marker on %s`,
+      async (surface) => {
+        const cleanedText = `Keep this ${marker} before release ${marker} and save every word.`;
+        let candidate = cleanedText.replace(marker, "");
+        server = createMockPolishServer(() => ({ text: candidate }));
+        const env = {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        };
+        const refused = await polishTranscriptionText({ rawText: cleanedText, cleanedText, surface, env });
+        expect(refused).toMatchObject({ status: "rejected", text: cleanedText, changed: false });
+        candidate = cleanedText.replace("before", "Before");
+        const accepted = await polishTranscriptionText({ rawText: cleanedText, cleanedText, surface, env });
+        expect(accepted).toMatchObject({ status: "applied", text: candidate });
+      },
+    );
+  }
+
   it("keeps a spoken retraction and cutoff fragment when polishing punctuation", async () => {
     const cleanedText = "I want the red — no, the blue one fu… before release.";
     server = createMockPolishServer(() => ({ text: cleanedText }));
@@ -2073,10 +2130,10 @@ describe("stt-polish", () => {
     }
   });
 
-  it("scales HTTP polish completion budget above the floor for long dictation", async () => {
+  it("scales HTTP polish completion budget beyond 4096 tokens for long dictation", async () => {
     const requests: Record<string, unknown>[] = [];
     const cleanedText = Array.from(
-      { length: 260 },
+      { length: 2400 },
       (_, index) => `word${index}`,
     ).join(" ");
     const server = Bun.serve({
@@ -2094,7 +2151,7 @@ describe("stt-polish", () => {
     });
 
     try {
-      await polishTranscriptionText({
+      const result = await polishTranscriptionText({
         rawText: cleanedText,
         cleanedText,
         env: {
@@ -2106,7 +2163,9 @@ describe("stt-polish", () => {
 
       expect(requests).toHaveLength(3);
       expect(requests[0].max_tokens).toBeGreaterThan(512);
-      expect(requests[0].max_tokens).toBeLessThanOrEqual(4096);
+      expect(requests[0].max_tokens).toBeGreaterThan(4096);
+      expect(result.status).toBe("applied");
+      expect(result.text).toBe(`${cleanedText}.`);
       expect(requests[1].max_tokens).toBe(requests[0].max_tokens);
       expect(requests[2].max_tokens).toBe(requests[0].max_tokens);
     } finally {

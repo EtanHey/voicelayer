@@ -56,14 +56,46 @@ enum SettingsMarkPalette {
                                                                   name: "VoiceBarSettingsDoneMark"))
 }
 
-/// The leading check or warning mark of a setup step. State is never colour-only: the glyphs differ too.
+/// The leading mark of a setup step: done, on its way (loading or recovering by itself), or needing attention.
+/// State is never colour-only: the glyphs differ too.
 struct SettingsSetupMark: View {
-    let isDone: Bool
+    enum Kind { case done, pending, attention }
+    let kind: Kind
+
+    init(kind: Kind) { self.kind = kind }
+    init(isDone: Bool) { kind = isDone ? .done : .attention }
 
     var body: some View {
-        Image(systemName: isDone ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+        Image(systemName: kind == .done ? "checkmark.circle.fill"
+            : kind == .pending ? "clock.fill" : "exclamationmark.triangle.fill")
             .font(.system(size: 13))
-            .foregroundStyle(isDone ? SettingsMarkPalette.done : SettingsPanePalette.warning)
-            .accessibilityLabel(isDone ? "Done" : "Needs attention")
+            .foregroundStyle(kind == .done ? SettingsMarkPalette.done
+                : kind == .pending ? SettingsPanePalette.helper : SettingsPanePalette.warning)
+            .accessibilityLabel(kind == .done ? "Done" : kind == .pending ? "In progress" : "Needs attention")
+    }
+}
+
+/// V12 audit: a visible row text publishes the string, font and frame it was laid out in, so the row-clipping guard
+/// can compare the pixels actually drawn there with an unclipped two-line, tail-truncated reference. Nothing in the
+/// app reads the preference.
+struct SettingsTextAuditEntry: Equatable {
+    let text: String
+    let font: Font
+    let frame: CGRect
+}
+
+struct SettingsTextAuditKey: PreferenceKey {
+    static let defaultValue: [SettingsTextAuditEntry] = []
+    static func reduce(value: inout [SettingsTextAuditEntry], nextValue: () -> [SettingsTextAuditEntry]) {
+        value += nextValue()
+    }
+}
+
+extension View {
+    func settingsTextAudit(_ text: String, font: Font) -> some View {
+        background(GeometryReader { proxy in
+            Color.clear.preference(key: SettingsTextAuditKey.self,
+                                   value: [SettingsTextAuditEntry(text: text, font: font, frame: proxy.frame(in: .global))])
+        })
     }
 }

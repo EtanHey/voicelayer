@@ -9,8 +9,9 @@ import { createConnection } from "node:net";
 import { STATE_DIR } from "../paths";
 import { testSocket } from "./setup/test-tmp";
 
-// Real subprocesses: standalone p95 <= 987 ms; 4x rounded up, with a 5 s scheduling floor.
-const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// Real subprocesses: measured readiness <= 944 ms with eight stress workers;
+// concurrent pre-push runs exceeded 3 s. Allow 8 s readiness plus 2 s for teardown.
+const SUBPROCESS_TEST_TIMEOUT_MS = 10_000;
 
 const io = (stdin = "") => ({ readStdin: async () => stdin, readFile: async () => "# File", stderr: (_s: string) => {}, stdout: (_s: string) => {} });
 
@@ -137,7 +138,7 @@ describe("speak CLI", () => {
 
 
 async function until(check: () => boolean) {
-  const deadline = Date.now() + 3000;
+  const deadline = Date.now() + SUBPROCESS_TEST_TIMEOUT_MS - 2_000;
   while (!check()) { if (Date.now() > deadline) throw new Error("Fixture did not advance"); await Bun.sleep(10); }
 }
 function alive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch { return false; } }
@@ -218,7 +219,7 @@ describe("speak CLI review regressions", () => {
       expect(ended).toBe(true);
       expect((await rpc(socketPath, "tools/list")).result.tools.map((tool: any) => tool.name)).toEqual(["voice_speak", "voice_ask"]);
     } finally { daemon.stop(); }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
   for (const host of ["native", "linux"]) for (const signal of ["SIGINT", "SIGTERM"] as const) for (const phase of ["synth", "player"]) test(`${signal} reaps foreground fallback during ${phase} (${host})`, async () => {
     const dir = join(STATE_DIR, `r1-${phase}`); mkdirSync(dir, { recursive: true });
     const fixture = `#!${process.execPath}
