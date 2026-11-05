@@ -2441,6 +2441,43 @@ describe("input recording durability", () => {
     return capturedVoiceBarAudio()[0];
   }
 
+  it("D1 finalizes Parakeet number words through live dictation and History re-transcribe", async () => {
+    const vocabularyPath = join(tmpRoot, "dictionary-numbers.json");
+    writeFileSync(vocabularyPath, JSON.stringify({ entries: [
+      { canonical: "6.1 Sol", variants: ["6 point 1 sol"] },
+    ] }));
+    const overrides = {
+      QA_VOICE_STT_VOCABULARY_PATH: vocabularyPath,
+      QA_VOICE_CORRECTOR: "off",
+      QA_VOICE_STT_POLISH: "off",
+    };
+    const saved = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]));
+    Object.assign(process.env, overrides);
+    polishSpy?.mockRestore();
+    const raw = "and make it a codex six point one sol on extra high please";
+    const expected = "And make it a codex 6.1 Sol on extra high please.";
+    getBackendSpy!.mockResolvedValue({
+      name: "parakeet-mlx", isAvailable: async () => true,
+      transcribe: async () => ({ text: raw, backend: "parakeet-mlx", durationMs: 1 }),
+    });
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    try {
+      const { waitForInput, retranscribeRecordingCapture } = await import("../input");
+      const pending = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+      await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+      expect(await pending).toBe(expected);
+      const [archive] = capturedVoiceBarAudio();
+      expect(await retranscribeRecordingCapture(archive)).toBe(expected);
+      expect(readFileSync(archive.replace("audio.wav", "voicelayer-transcript.txt"), "utf8")).toBe(expected);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("NOTX1 tells History when a live capture is kept with a reason", async () => {
     const archive = await silentVoiceBarArchive();
     expect(metadataUpdates()).toEqual([
