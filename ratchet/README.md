@@ -79,3 +79,6 @@ uses this provenance once this change reaches the default branch.
 Fresh row logs live under `baseline/<row>/<row>.build.log`; cache hits carry
 JSON receipts only, with the original run id, rather than copied build logs.
 Reusing an output directory is rejected explicitly to avoid stale results.
+
+The 2.3 port has its own [bug/fix/head replay receipts](receipts/pr680-2.3-harness-replay.generated.json),
+measured at `6e0787ddd023d69585e6e6fbf541894de5cdd5da`: all nine contracts met with `error: null`.
