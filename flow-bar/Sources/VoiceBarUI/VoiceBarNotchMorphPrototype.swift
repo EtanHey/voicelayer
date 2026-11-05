@@ -134,8 +134,12 @@ extension VoiceBarNotchMorphCanvasLayout {
     /// clearance on top of it, so showing or clearing a note never resizes the panel: AppKit used to commit the
     /// shorter window at once while the shell was still easing up, cutting its bottom flat.
     static func restingLowerSurfaceHeight(of presentation: VoiceBarNotchPresentation) -> CGFloat {
-        presentation.geometry.lowerSurfaceHeight -
-            presentation.feedbackHeight
+        // V6: History's window is the same whatever rows the handle settles on (`historyCanvasLowerSurfaceHeight`),
+        // so dragging it never resizes the window under the pointer. The hit region stays the settled rows.
+        guard presentation.visualState == .history else {
+            return presentation.geometry.lowerSurfaceHeight - presentation.feedbackHeight
+        }
+        return NotchHistoryMorph.historyCanvasLowerSurfaceHeight - VoiceBarNotchContract.transientNoteCanvasReserve
     }
 }
 

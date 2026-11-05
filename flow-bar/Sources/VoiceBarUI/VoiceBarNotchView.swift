@@ -38,19 +38,37 @@ public struct VoiceBarNotchHistoryMorphInput: Equatable {
     public let open: VoiceBarNotchGeometry
     public let closedBottomRadius: CGFloat
     public let closedTopRadius: CGFloat
+    /// V6: the open panel's live lower height while the extend handle is dragged or settling (`open` holds the
+    /// snapped rows the hit region uses). Animated with `progress`, so the shell follows the handle's spring.
+    public var openLowerSurfaceHeight: CGFloat
 
     public init(
         progress: CGFloat,
         closed: VoiceBarNotchGeometry,
         open: VoiceBarNotchGeometry,
         closedBottomRadius: CGFloat = VoiceBarNotchContract.material.compactOuterCornerRadius(for: .hoverLauncher),
-        closedTopRadius: CGFloat = 0
+        closedTopRadius: CGFloat = 0,
+        openLowerSurfaceHeight: CGFloat? = nil
     ) {
         self.progress = progress
         self.closed = closed
         self.open = open
         self.closedBottomRadius = closedBottomRadius
         self.closedTopRadius = closedTopRadius
+        self.openLowerSurfaceHeight = openLowerSurfaceHeight ?? open.lowerSurfaceHeight
+    }
+
+    /// `open` at the live extended height: where the rows are laid out.
+    public var openExtended: VoiceBarNotchGeometry {
+        VoiceBarNotchGeometry(
+            coreWidth: open.coreWidth,
+            topHeight: open.topHeight,
+            leadingWingWidth: open.leadingWingWidth,
+            trailingWingWidth: open.trailingWingWidth,
+            bodyLeadingExtent: open.bodyLeadingExtent,
+            bodyTrailingExtent: open.bodyTrailingExtent,
+            lowerSurfaceHeight: openLowerSurfaceHeight
+        )
     }
 
     /// The open panel as the mock draws it: one shape, its top row as wide as its body.
@@ -62,7 +80,7 @@ public struct VoiceBarNotchHistoryMorphInput: Equatable {
             trailingWingWidth: max(open.trailingWingWidth, open.bodyTrailingExtent),
             bodyLeadingExtent: open.bodyLeadingExtent,
             bodyTrailingExtent: open.bodyTrailingExtent,
-            lowerSurfaceHeight: open.lowerSurfaceHeight
+            lowerSurfaceHeight: openLowerSurfaceHeight
         )
     }
 
@@ -82,9 +100,12 @@ public struct VoiceBarNotchHistoryMorphShape: Shape {
         self.coreAnchorX = coreAnchorX
     }
 
-    public var animatableData: CGFloat {
-        get { morph.progress }
-        set { morph.progress = newValue }
+    public var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(morph.progress, morph.openLowerSurfaceHeight) }
+        set {
+            morph.progress = newValue.first
+            morph.openLowerSurfaceHeight = newValue.second
+        }
     }
 
     public func path(in rect: CGRect) -> Path {
@@ -283,7 +304,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     /// The geometry the slots are laid out in. While History is mounted its content sits at the OPEN panel's
     /// rects for the whole morph: the rows grow out of the notch by scale, they never reflow.
     private var slotGeometry: VoiceBarNotchGeometry {
-        historyMorph?.open ?? renderedGeometry
+        historyMorph?.openExtended ?? renderedGeometry
     }
     // (`open` keeps the launcher's wing rects, so the controls and their hit targets never move.)
 

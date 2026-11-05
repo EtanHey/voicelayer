@@ -5,7 +5,8 @@ import XCTest
 
 /// 2.3 lane U4 visual receipt (opt-in): History morph B frozen at each state, light and dark. Closed launcher, the
 /// first frames (rows still blurred and small), halfway, the open spring's overshoot, open, a hovered row with its
-/// actions, and the scroll indicator mid-scroll. Synthetic rows only.
+/// actions, the scroll indicator mid-scroll, and the panel extended by its handle to 10 and 12 rows (V6).
+/// Synthetic rows only.
 @MainActor
 final class NotchHistoryMorphShotsTests: XCTestCase {
     private final class NoopRouter: BarCommandRouting {
@@ -72,11 +73,15 @@ final class NotchHistoryMorphShotsTests: XCTestCase {
             ("8-scroll-indicator", {
                 $0.presentingHistoryForShots().forcingHistoryScrollIndicator(offset: 4 * NotchHistoryMorph.rowHeight)
             }, true),
+            ("9-extended-10-rows", { $0.presentingHistoryForShots().extendingHistory(rows: 10) }, true),
+            ("10-extended-12-rows", { $0.presentingHistoryForShots().extendingHistory(rows: 12) }, true),
         ]
         for (name, configure, historyOpen) in cases {
             let model = VoiceBarNotchPresentationModel()
             model.setHovered(true)
             model.setHistoryPanelOpen(historyOpen)
+            if name.hasPrefix("9-") { model.setHistoryRows(10) }
+            if name.hasPrefix("10-") { model.setHistoryRows(12) }
             let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation).canvasGeometry
             let size = CGSize(width: canvas.totalWidth + 24, height: canvas.totalHeight + 17)
             for (scheme, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {

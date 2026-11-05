@@ -35,13 +35,70 @@ public enum NotchHistoryMorph {
     public static let bodyWidth: CGFloat = 420
     public static let rowHeight: CGFloat = 46
     public static let visibleRows = 7
-    /// The list starts 8 pt under the 32 pt band (40 pt from the top of the screen) and ends 10 pt above the
-    /// panel's bottom edge; it is 404 pt wide in the 420 pt panel.
+    /// V6 (Etan: "draggable to extend, downward-only is fine"): the handle adds whole rows up to 12 (the mock's
+    /// `dims('history')`: 40 + rows × 46 + 18).
+    public static let maximumRows = 12
+    /// The list starts 8 pt under the 32 pt band (40 pt from the top of the screen); under it an 18 pt band holds
+    /// the extend handle. The list is 404 pt wide in the 420 pt panel.
     public static let listTopInset: CGFloat = 8
-    public static let listBottomInset: CGFloat = 10
+    public static let handleBandHeight: CGFloat = 18
     public static let listHorizontalInset: CGFloat = 8
-    public static var listHeight: CGFloat { rowHeight * CGFloat(visibleRows) }
-    public static var lowerSurfaceHeight: CGFloat { listTopInset + listHeight + listBottomInset }
+    public static var listHeight: CGFloat { listHeight(rows: CGFloat(visibleRows)) }
+    public static var lowerSurfaceHeight: CGFloat { lowerSurfaceHeight(rows: CGFloat(visibleRows)) }
+
+    public static func listHeight(rows: CGFloat) -> CGFloat { rowHeight * rows }
+
+    public static func lowerSurfaceHeight(rows: CGFloat) -> CGFloat {
+        listTopInset + listHeight(rows: rows) + handleBandHeight
+    }
+
+    // MARK: Extend handle (mock `.pull`: a 34 × 4 capsule, white 22 %, 50 % under the pointer)
+
+    public static let handleWidth: CGFloat = 34
+    public static let handleThickness: CGFloat = 4
+    public static let handleOpacity: Double = 0.22
+    public static let handleHoverOpacity: Double = 0.5
+    /// The handle takes presses across a wider strip than it draws (Fitts): 88 pt × the band, plus 4 pt below.
+    public static let handleHitWidth: CGFloat = 88
+    /// The `pull` motion token: a released handle settles on the nearest whole row.
+    public static let pullResponse: Double = 0.38
+    public static let pullDampingFraction: Double = 0.86
+
+    /// History's window below the 32 pt band: seven rows plus the transient-note reserve, or the 12-row panel,
+    /// whichever is taller (578 pt; the window stays 610 pt, inside the 640 pt narrow-display guard). An extended
+    /// panel and a note share this space; the shell never draws past it.
+    public static var historyCanvasLowerSurfaceHeight: CGFloat {
+        max(lowerSurfaceHeight(rows: CGFloat(visibleRows)) + VoiceBarNotchContract.transientNoteCanvasReserve,
+            lowerSurfaceHeight(rows: CGFloat(maximumRows)))
+    }
+
+    /// How far the handle may extend: never past the rows there are to show (no empty rows), never past 12.
+    public static func maximumRows(entryCount: Int) -> Int {
+        max(visibleRows, min(maximumRows, entryCount))
+    }
+
+    /// The mock's handle drag: rows follow the pointer and stretch with resistance past either end (at most
+    /// 0.6 of a row), so the handle never hits a wall.
+    public static func rowsRubberBand(_ rows: CGFloat, maximum: Int) -> CGFloat {
+        let low = CGFloat(visibleRows), high = CGFloat(maximum)
+        if rows > high { return high + (1 - 1 / (1 + (rows - high) * 0.5)) * 0.6 }
+        if rows < low { return low - (1 - 1 / (1 + (low - rows) * 0.5)) * 0.6 }
+        return rows
+    }
+
+    /// Where a released handle settles: the nearest whole row inside 7…maximum. Never between rows.
+    public static func snappedRows(_ rows: CGFloat, maximum: Int) -> Int {
+        min(max(visibleRows, Int(rows.rounded())), max(visibleRows, maximum))
+    }
+
+    public static func rowsAnimation(from rows: CGFloat, to target: Int, velocity: Double) -> Animation {
+        let coefficients = springCoefficients(response: pullResponse, dampingFraction: pullDampingFraction)
+        let distance = Double(CGFloat(target) - rows)
+        return .interpolatingSpring(
+            mass: 1, stiffness: coefficients.stiffness, damping: coefficients.damping,
+            initialVelocity: abs(distance) > 0.001 ? velocity / distance : 0
+        )
+    }
 
     // MARK: Pull-down
 
@@ -49,8 +106,6 @@ public enum NotchHistoryMorph {
     public static let dragSlop: CGFloat = 3
     /// The band a pull starts in, measured from the top of the screen.
     public static let pullBandHeight: CGFloat = 34
-    /// While open, a pull may also start this close to the panel's bottom edge, to push it back up.
-    public static let bottomEdgeGrabHeight: CGFloat = 24
     /// A release faster than this (in progress per second) decides the target by its direction alone.
     public static let flickVelocity: Double = 0.5
     public static let maximumReleaseVelocity: Double = 8
@@ -187,12 +242,19 @@ public struct NotchHistoryPull: Equatable {
         return false
     }
 
-    /// Whether a press at `y` (points from the top of the screen) may start a pull: on the band, or on the
-    /// open panel's bottom edge.
-    public static func accepts(y: CGFloat, progress: CGFloat, openHeight: CGFloat) -> Bool {
-        if y <= NotchHistoryMorph.pullBandHeight { return true }
-        return progress > 0.5 && y > progress * openHeight - NotchHistoryMorph.bottomEdgeGrabHeight
-            && y <= progress * openHeight + NotchHistoryMorph.bottomEdgeGrabHeight
+    /// Whether a press at `y` (points from the top of the screen) may start an open/close pull: on the band.
+    /// Pulling the band up closes the panel; the panel's bottom edge belongs to the extend handle.
+    public static func accepts(y: CGFloat) -> Bool {
+        y <= NotchHistoryMorph.pullBandHeight
+    }
+
+    /// Whether a press at `point` lands on the open panel's extend handle: its band under the last row, within
+    /// `handleHitWidth` of the panel's centre `centreX`. `panelHeight` is the open panel from the top of the screen.
+    public static func acceptsHandle(point: CGPoint, centreX: CGFloat, panelHeight: CGFloat, progress: CGFloat) -> Bool {
+        guard progress > 0.98 else { return false }
+        let bandTop = panelHeight - NotchHistoryMorph.handleBandHeight
+        return abs(point.x - centreX) <= NotchHistoryMorph.handleHitWidth / 2
+            && point.y >= bandTop - 2 && point.y <= panelHeight + 4
     }
 
     /// A press. Ignored while another press is in progress (one pointer owns the pull).
@@ -204,17 +266,21 @@ public struct NotchHistoryPull: Equatable {
         lastTime = time
     }
 
-    /// The pointer moved. Returns the progress the panel should show, or nil while this is not a drag.
-    public mutating func move(y: CGFloat, time: TimeInterval, range: CGFloat) -> CGFloat? {
+    /// The pointer moved. Returns the value the panel should show (`band` stretches it past its ends), or nil while
+    /// this is not a drag. `range` is how far the pointer travels per unit of value.
+    public mutating func move(
+        y: CGFloat, time: TimeInterval, range: CGFloat,
+        band: (CGFloat) -> CGFloat = NotchHistoryMorph.rubberBand
+    ) -> CGFloat? {
         switch phase {
         case .idle:
             return nil
         case let .pending(startY, startProgress):
             guard abs(y - startY) > NotchHistoryMorph.dragSlop else { return nil }
             phase = .dragging(startY: startY, startProgress: startProgress)
-            return track(y: y, time: time, range: range, startY: startY, startProgress: startProgress)
+            return band(track(y: y, time: time, range: range, startY: startY, startProgress: startProgress))
         case let .dragging(startY, startProgress):
-            return track(y: y, time: time, range: range, startY: startY, startProgress: startProgress)
+            return band(track(y: y, time: time, range: range, startY: startY, startProgress: startProgress))
         }
     }
 
@@ -227,7 +293,7 @@ public struct NotchHistoryPull: Equatable {
         velocity = 0.7 * Double((y - lastY) / span) / dt + 0.3 * velocity
         lastY = y
         lastTime = time
-        return NotchHistoryMorph.rubberBand(startProgress + (y - startY) / span)
+        return startProgress + (y - startY) / span
     }
 
     /// The press ended (or was cancelled: then a drag still settles, at the nearer end).

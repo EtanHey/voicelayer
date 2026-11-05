@@ -111,6 +111,16 @@ public final class VoiceBarNotchPresentationModel {
         isHistoryPullActive = isActive
     }
 
+    /// V6: the rows the History extend handle settled on. Kept for the app session (SPEC open question 4: a
+    /// reopened panel keeps its height; a relaunch starts again at 7). The hit region follows it at once.
+    public private(set) var historyRows = NotchHistoryMorph.visibleRows
+
+    public func setHistoryRows(_ rows: Int) {
+        guard historyRows != rows else { return }
+        historyRows = rows
+        resolvePresentation()
+    }
+
     public func setReducedMotion(_ isEnabled: Bool) {
         isReducedMotionEnabled = isEnabled
     }
@@ -121,6 +131,7 @@ public final class VoiceBarNotchPresentationModel {
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
             hasHistoryPanel: isHistoryPanelOpen,
+            historyRows: historyRows,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth,
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth,
             recordingLeadingWingWidth: recordingLeadingWingWidth,

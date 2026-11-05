@@ -14,6 +14,10 @@ struct NotchHistoryPanel: View {
     let onCopy: (RecentTranscriptionEntry) -> Bool
     let onPaste: (RecentTranscriptionEntry) -> Void
     let onRetranscribe: (String) -> Void
+    /// A click on a row's text opens it in the History window (SPEC open question 1). Copy / Paste stay on hover.
+    var onOpen: (RecentTranscriptionEntry) -> Void = { _ in }
+    /// The visible list: seven rows, or more once the extend handle pulled it down (V6).
+    var listHeight: CGFloat = NotchHistoryMorph.listHeight
     /// Shots only: render one row as hovered without a pointer.
     var forcedHoverIndex: Int?
     /// Shots only: render the scroll indicator as if mid-scroll, at this content offset.
@@ -63,7 +67,7 @@ struct NotchHistoryPanel: View {
         .onPreferenceChange(NotchHistoryScrollOffsetKey.self) { offset in
             scrolled(to: offset)
         }
-        .frame(height: NotchHistoryMorph.listHeight)
+        .frame(height: listHeight)
         .overlay(alignment: .topTrailing) {
             scrollIndicator
         }
@@ -77,7 +81,7 @@ struct NotchHistoryPanel: View {
         let offset = forcedScrollOffset ?? scrollOffset
         if let thumb = NotchHistoryPresentation.scrollThumb(
             offset: offset,
-            visibleHeight: NotchHistoryMorph.listHeight,
+            visibleHeight: listHeight,
             contentHeight: NotchHistoryMorph.rowHeight * CGFloat(entries.count)
         ) {
             RoundedRectangle(cornerRadius: NotchHistoryPresentation.scrollIndicatorWidth / 2, style: .continuous)
@@ -118,19 +122,28 @@ struct NotchHistoryPanel: View {
         let isHovered = (forcedHoverIndex ?? hoveredIndex) == index
         let showsActions = isHovered || isCopied
         return HStack(alignment: .center, spacing: NotchHistoryPresentation.rowColumnSpacing) {
-            VStack(alignment: .leading, spacing: NotchHistoryPresentation.rowLineSpacing) {
-                Text(NotchHistoryPresentation.firstWords(entry.text))
-                    .font(.system(size: NotchHistoryPresentation.rowTextFontSize))
-                    .foregroundStyle(palette.primary.color)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(NotchHistoryPresentation.rowHeader(for: entry) ?? " ")
-                    .font(.system(size: NotchHistoryPresentation.rowMetaFontSize))
-                    .monospacedDigit()
-                    .foregroundStyle(palette.tertiary.color)
-                    .lineLimit(1)
+            // A row click opens it in the History window (SPEC open question 1). A plain button, so the clipped-text
+            // tooltip sits on a control and keyboard users reach it too.
+            Button { onOpen(entry) } label: {
+                VStack(alignment: .leading, spacing: NotchHistoryPresentation.rowLineSpacing) {
+                    Text(NotchHistoryPresentation.firstWords(entry.text))
+                        .font(.system(size: NotchHistoryPresentation.rowTextFontSize))
+                        .foregroundStyle(palette.primary.color)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        // V12: a row whose words don't fit shows them all when the pointer rests on it.
+                        .background(PillControlTooltip(text: NotchHistoryPresentation.clippedTextTooltip(entry.text)))
+                    Text(NotchHistoryPresentation.rowHeader(for: entry) ?? " ")
+                        .font(.system(size: NotchHistoryPresentation.rowMetaFontSize))
+                        .monospacedDigit()
+                        .foregroundStyle(palette.tertiary.color)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.plain)
+            .accessibilityHidden(true) // the row element already carries its label and the open action
 
             if isRetranscribing {
                 HistoryRetranscribingBadge(
@@ -158,11 +171,13 @@ struct NotchHistoryPanel: View {
         )
         // UXP-3: the hover buttons exist only under the pointer; VoiceOver and keyboard users get the same actions
         // on the row itself.
+        .accessibilityAction { onOpen(entry) }
         .accessibilityActions {
             ForEach(NotchHistoryPresentation.accessibilityActions(for: entry), id: \.symbol) { action in
                 Button(action.label) { perform(action.kind, entry: entry, id: id) }
             }
         }
+        .accessibilityHint(NotchHistoryPresentation.openHint)
     }
 
     private func actionButtons(_ entry: RecentTranscriptionEntry, id: String) -> some View {

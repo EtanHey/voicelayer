@@ -333,6 +333,9 @@ public struct BarView: View {
     public var commandRouter: BarCommandRouting
     public var onOpenSettings: () -> Void
     public var onOpenHistory: () -> Void
+    /// SPEC open question 1 (recommendation built): a notch History row click opens that recording in the History
+    /// window. Nil falls back to opening the window at its newest row.
+    public var onOpenHistoryRecording: ((String) -> Void)?
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
@@ -350,6 +353,11 @@ public struct BarView: View {
     @State private var historyMorphGeneration = 0
     @State private var historyPull = NotchHistoryPull()
     @State private var pendingHistoryReleaseVelocity: Double = 0
+    /// V6: the rows the extend handle settled on (7…12; the hit region and the next open use it) and the live,
+    /// animated rows the shell and list draw while the handle is dragged or settling.
+    @State private var historyRows = NotchHistoryMorph.visibleRows
+    @State private var historyRowsExtent = CGFloat(NotchHistoryMorph.visibleRows)
+    @State private var historyRowsPull = NotchHistoryPull()
     @GestureState private var isHistoryPullGestureActive = false
     /// Visual shots only: show the panel frozen at this progress.
     private var historyFrozenProgress: CGFloat?
@@ -383,6 +391,7 @@ public struct BarView: View {
         commandRouter: BarCommandRouting,
         onOpenSettings: @escaping () -> Void,
         onOpenHistory: @escaping () -> Void,
+        onOpenHistoryRecording: ((String) -> Void)? = nil,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false
@@ -396,6 +405,7 @@ public struct BarView: View {
         self.commandRouter = commandRouter
         self.onOpenSettings = onOpenSettings
         self.onOpenHistory = onOpenHistory
+        self.onOpenHistoryRecording = onOpenHistoryRecording
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
@@ -449,7 +459,7 @@ public struct BarView: View {
         .gesture(historyPullGesture)
         .onChange(of: isHistoryPullGestureActive) { _, isActive in
             // A pull the system cancelled (no `onEnded`) still settles, at the nearer end.
-            if !isActive, historyPull.isDragging { endHistoryPull(cancelled: true) }
+            if !isActive, historyPull.isDragging || historyRowsPull.isDragging { endHistoryPull(cancelled: true) }
         }
         .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
@@ -474,6 +484,10 @@ public struct BarView: View {
             synchronizeLauncherRetention()
             presentationModel?.setReducedMotion(accessibilityReduceMotion)
             isMorphTeleprompterContentPresented = notchPresentation.visualState == .teleprompter
+            if let rows = presentationModel?.historyRows {
+                historyRows = rows
+                historyRowsExtent = CGFloat(rows)
+            }
             if isHistoryPresented, !isHistoryMounted {
                 isHistoryMounted = true
                 historyProgress = historyFrozenProgress ?? 1
@@ -514,6 +528,7 @@ public struct BarView: View {
             transientNote: state.selectionFeedbackNote
         )
         input.isHistoryPanelOpen = isHistoryMounted
+        input.historyRows = historyRows
         input.transientNoteOffersHistory = state.selectionFeedbackNoteOffersHistory
         return VoiceBarPresentation.notchPresentation(from: input)
     }
@@ -537,7 +552,12 @@ public struct BarView: View {
                 coreWidth: presentation.geometry.coreWidth,
                 visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
             ),
-            open: presentation.geometry
+            open: presentation.geometry,
+            // The live rows plus any note band, never past History's window.
+            openLowerSurfaceHeight: min(
+                NotchHistoryMorph.lowerSurfaceHeight(rows: historyRowsExtent) + presentation.feedbackHeight,
+                NotchHistoryMorph.historyCanvasLowerSurfaceHeight
+            )
         )
     }
 
@@ -576,18 +596,26 @@ public struct BarView: View {
             .updating($isHistoryPullGestureActive) { _, active, _ in active = true }
             .onChanged { value in
                 let openHeight = notchPresentationOpenHistoryHeight
-                if case .idle = historyPull.phase {
-                    guard canPullHistory,
-                          NotchHistoryPull.accepts(
-                              y: value.startLocation.y, progress: historyProgress, openHeight: openHeight
-                          )
-                    else { return }
-                    historyPull.press(y: value.startLocation.y, progress: historyProgress, time: value.time.timeIntervalSinceReferenceDate)
+                let time = value.time.timeIntervalSinceReferenceDate
+                if case .idle = historyPull.phase, case .idle = historyRowsPull.phase {
+                    guard canPullHistory else { return }
+                    if NotchHistoryPull.accepts(y: value.startLocation.y) {
+                        historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
+                    } else if isHistoryPresented, NotchHistoryPull.acceptsHandle(
+                        point: value.startLocation, centreX: historyPanelCentreX,
+                        panelHeight: openHeight, progress: historyFrozenProgress ?? historyProgress
+                    ) {
+                        historyRowsPull.press(y: value.startLocation.y, progress: historyRowsExtent, time: time)
+                    } else {
+                        return
+                    }
+                }
+                if historyRowsPull.phase != .idle {
+                    dragHistoryRows(to: value.location.y, time: time)
+                    return
                 }
                 guard let progress = historyPull.move(
-                    y: value.location.y,
-                    time: value.time.timeIntervalSinceReferenceDate,
-                    range: openHeight - VoiceBarNotchContract.topHeight
+                    y: value.location.y, time: time, range: openHeight - VoiceBarNotchContract.topHeight
                 ) else { return }
                 if !isHistoryMounted {
                     historyMorphGeneration &+= 1
@@ -602,7 +630,51 @@ public struct BarView: View {
             .onEnded { _ in endHistoryPull(cancelled: false) }
     }
 
+    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past 7 and the last row.
+    private func dragHistoryRows(to y: CGFloat, time: TimeInterval) {
+        let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
+        guard let rows = historyRowsPull.move(
+            y: y, time: time, range: NotchHistoryMorph.rowHeight,
+            band: { NotchHistoryMorph.rowsRubberBand($0, maximum: maximum) }
+        ) else { return }
+        presentationModel?.setHistoryPullActive(true)
+        var follow = Transaction()
+        follow.disablesAnimations = true
+        withTransaction(follow) { historyRowsExtent = rows }
+    }
+
+    /// A released (or cancelled) handle settles on the nearest whole row with the `pull` spring; the hit region and
+    /// the session's remembered height take the settled rows at once. A press that never moved changes nothing.
+    private func endHistoryRowsPull(cancelled: Bool) {
+        presentationModel?.setHistoryPullActive(false)
+        guard case let .settle(_, velocity) = historyRowsPull.release(progress: historyRowsExtent, cancelled: cancelled)
+        else { return }
+        let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
+        let rows = NotchHistoryMorph.snappedRows(historyRowsExtent, maximum: maximum)
+        historyRows = rows
+        presentationModel?.setHistoryRows(rows)
+        guard !accessibilityReduceMotion else {
+            historyRowsExtent = CGFloat(rows)
+            return
+        }
+        withAnimation(NotchHistoryMorph.rowsAnimation(from: historyRowsExtent, to: rows, velocity: velocity)) {
+            historyRowsExtent = CGFloat(rows)
+        }
+    }
+
+    /// The open panel's centre in the canvas: the extend handle sits there.
+    private var historyPanelCentreX: CGFloat {
+        let presentation = notchPresentation
+        let geometry = includesPanelOutsets
+            ? VoiceBarNotchMorphCanvasLayout.resolve(for: presentation).canvasGeometry : presentation.geometry
+        return geometry.coreOriginX + geometry.coreWidth / 2
+    }
+
     private func endHistoryPull(cancelled: Bool) {
+        if historyRowsPull.phase != .idle {
+            endHistoryRowsPull(cancelled: cancelled)
+            return
+        }
         presentationModel?.setHistoryPullActive(false)
         switch historyPull.release(progress: historyProgress, cancelled: cancelled) {
         case let .settle(open, velocity):
@@ -624,7 +696,7 @@ public struct BarView: View {
     }
 
     private var notchPresentationOpenHistoryHeight: CGFloat {
-        VoiceBarNotchContract.topHeight + VoiceBarNotchContract.historyLowerSurfaceHeight
+        VoiceBarNotchContract.topHeight + NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(historyRows))
     }
 
     /// Click-away and Esc close the History panel, as the transient popover did (#166 review).
@@ -892,10 +964,17 @@ public struct BarView: View {
     @ViewBuilder
     private var notchLowerPanelContent: some View {
         if notchPresentation.visualState == .history {
-            historyPanelContent()
-                .padding(.horizontal, NotchHistoryMorph.listHorizontalInset)
-                .padding(.top, NotchHistoryMorph.listTopInset)
-                .padding(.bottom, NotchHistoryMorph.listBottomInset)
+            VStack(spacing: 0) {
+                historyPanelContent()
+                    .padding(.horizontal, NotchHistoryMorph.listHorizontalInset)
+                    .padding(.top, NotchHistoryMorph.listTopInset)
+                NotchHistoryExtendHandle(
+                    palette: notchPalette,
+                    rows: historyRows,
+                    maximumRows: NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
+                    onAdjust: adjustHistoryRows
+                )
+            }
                 .frame(maxHeight: .infinity, alignment: .top)
                 .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress))
         } else if isMorphTeleprompterContentPresented {
@@ -1230,6 +1309,24 @@ public struct BarView: View {
         return copy
     }
 
+    /// Visual shots only: the panel extended to `rows` (V6), as if the handle had settled there.
+    func extendingHistory(rows: Int) -> BarView {
+        var copy = self
+        copy._historyRows = State(initialValue: rows)
+        copy._historyRowsExtent = State(initialValue: CGFloat(rows))
+        return copy
+    }
+
+    /// VoiceOver's adjust on the extend handle: one row at a time, instantly.
+    private func adjustHistoryRows(by delta: Int) {
+        let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
+        let rows = NotchHistoryMorph.snappedRows(CGFloat(historyRows + delta), maximum: maximum)
+        guard rows != historyRows else { return }
+        historyRows = rows
+        presentationModel?.setHistoryRows(rows)
+        historyRowsExtent = CGFloat(rows) // an assistive step, like a keyboard action, never animates
+    }
+
     /// Visual shots only: the scroll indicator shown as if mid-scroll at this offset.
     func forcingHistoryScrollIndicator(offset: CGFloat) -> BarView {
         var copy = self
@@ -1261,6 +1358,19 @@ public struct BarView: View {
                 state.repasteTranscript(entry.text, source: "bar_history")
             },
             onRetranscribe: { commandRouter.handleRetranscribeHistoryEntry(recordingPath: $0) },
+            onOpen: { entry in
+                isHistoryPresented = false
+                if let path = entry.recordingPath, let onOpenHistoryRecording {
+                    onOpenHistoryRecording(path)
+                } else {
+                    onOpenHistory()
+                }
+            },
+            listHeight: min(
+                NotchHistoryMorph.listHeight(rows: historyRowsExtent),
+                NotchHistoryMorph.historyCanvasLowerSurfaceHeight - notchPresentation.feedbackHeight
+                    - NotchHistoryMorph.listTopInset - NotchHistoryMorph.handleBandHeight
+            ),
             forcedHoverIndex: historyForcedHoverIndex,
             forcedScrollOffset: historyForcedScrollOffset
         )

@@ -88,7 +88,7 @@ final class NotchHistoryMorphTests: XCTestCase {
         let (bounds, geometry) = shapeBounds(progress: 1)
         XCTAssertEqual(bounds.minX, geometry.topOriginX - 19, accuracy: 0.01)
         XCTAssertEqual(bounds.maxX, geometry.topOriginX + geometry.topWidth + 19, accuracy: 0.01)
-        XCTAssertEqual(bounds.height, 372, accuracy: 0.01)
+        XCTAssertEqual(bounds.height, 380, accuracy: 0.01)
     }
 
     func testAtZeroTheMorphIsExactlyTheLauncher() {
@@ -138,7 +138,8 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertEqual(NotchHistoryMorph.rowHeight, 46)
         XCTAssertEqual(NotchHistoryMorph.visibleRows, 7)
         XCTAssertEqual(NotchHistoryMorph.listTopInset, 8)
-        XCTAssertEqual(NotchHistoryMorph.listBottomInset, 10)
+        XCTAssertEqual(NotchHistoryMorph.handleBandHeight, 18, "the mock: 40 + rows × 46 + 18")
+        XCTAssertEqual(NotchHistoryMorph.lowerSurfaceHeight, 8 + 7 * 46 + 18)
         XCTAssertEqual(NotchHistoryPresentation.rowLeadingPadding, 10)
         XCTAssertEqual(NotchHistoryPresentation.rowTrailingPadding, 6)
         XCTAssertEqual(NotchHistoryPresentation.rowCornerRadius, 8)
@@ -248,12 +249,133 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertTrue(pull.isDragging, "a second press doesn't restart the drag")
     }
 
-    func testAPullStartsOnTheBandOrTheOpenPanelsBottomEdgeOnly() {
-        let height: CGFloat = 372
-        XCTAssertTrue(NotchHistoryPull.accepts(y: 20, progress: 0, openHeight: height))
-        XCTAssertFalse(NotchHistoryPull.accepts(y: 200, progress: 0, openHeight: height))
-        XCTAssertFalse(NotchHistoryPull.accepts(y: 200, progress: 1, openHeight: height), "rows keep their clicks")
-        XCTAssertTrue(NotchHistoryPull.accepts(y: 360, progress: 1, openHeight: height), "bottom edge pushes it up")
+    func testAPullStartsOnTheBandOnly() {
+        XCTAssertTrue(NotchHistoryPull.accepts(y: 20))
+        XCTAssertFalse(NotchHistoryPull.accepts(y: 200), "rows keep their clicks")
+        XCTAssertFalse(NotchHistoryPull.accepts(y: 360), "the bottom edge belongs to the extend handle")
+    }
+
+    // MARK: V6 extend handle
+
+    func testTheHandleTakesPressesOnlyInItsBandOnTheOpenPanel() {
+        let height = VoiceBarNotchContract.topHeight + NotchHistoryMorph.lowerSurfaceHeight // 380
+        let centre: CGFloat = 300
+        func accepts(_ x: CGFloat, _ y: CGFloat, progress: CGFloat = 1) -> Bool {
+            NotchHistoryPull.acceptsHandle(
+                point: CGPoint(x: x, y: y), centreX: centre, panelHeight: height, progress: progress
+            )
+        }
+        XCTAssertTrue(accepts(300, height - 9), "the handle's centre")
+        XCTAssertTrue(accepts(300 + 44, height - 1), "the edge of its 88 pt strip")
+        XCTAssertFalse(accepts(300 + 50, height - 9), "beside the strip: the panel keeps the press")
+        XCTAssertFalse(accepts(300, height - 30), "the last row keeps its clicks")
+        XCTAssertFalse(accepts(300, height - 9, progress: 0.6), "never while the panel is still opening")
+    }
+
+    func testRowsFollowTheHandleStretchPastBothEndsAndSnapToWholeRows() {
+        XCTAssertEqual(NotchHistoryMorph.rowsRubberBand(9.4, maximum: 12), 9.4)
+        let past = NotchHistoryMorph.rowsRubberBand(14, maximum: 12)
+        XCTAssertGreaterThan(past, 12)
+        XCTAssertLessThan(past, 12.6, "at most 0.6 of a row past the end")
+        let below = NotchHistoryMorph.rowsRubberBand(5, maximum: 12)
+        XCTAssertLessThan(below, 7)
+        XCTAssertGreaterThan(below, 6.4)
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(9.4, maximum: 12), 9)
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(9.6, maximum: 12), 10)
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(12.5, maximum: 12), 12)
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(6.6, maximum: 12), 7)
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(11, maximum: 9), 9, "never past the rows there are")
+    }
+
+    func testTheHandleNeverExtendsIntoEmptyRows() {
+        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 3), 7)
+        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 9), 9)
+        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 40), 12)
+    }
+
+    func testAHandleDragFollowsThePointerOneRowPer46Points() throws {
+        var pull = NotchHistoryPull()
+        pull.press(y: 380, progress: 7, time: 0)
+        let band = { NotchHistoryMorph.rowsRubberBand($0, maximum: 12) }
+        XCTAssertNil(pull.move(y: 382, time: 0.01, range: 46, band: band), "inside the slop: a click")
+        let rows = try XCTUnwrap(pull.move(y: 380 + 92, time: 0.2, range: 46, band: band))
+        XCTAssertEqual(rows, 9, accuracy: 0.001)
+        guard case .settle = pull.release(progress: rows) else { return XCTFail("a drag settles") }
+        pull.press(y: 380, progress: 9, time: 1)
+        XCTAssertEqual(pull.release(progress: 9), .click, "a press that never moved changes nothing")
+    }
+
+    func testTheSettledRowsAreTheHitRegionAndOutliveAClose() {
+        let model = VoiceBarNotchPresentationModel()
+        model.setHistoryPanelOpen(true)
+        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight)
+        model.setHistoryRows(10)
+        XCTAssertEqual(
+            model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 10),
+            "the hit region grows with the settled rows"
+        )
+        model.setHistoryPanelOpen(false)
+        model.setHistoryPanelOpen(true)
+        XCTAssertEqual(model.historyRows, 10, "a reopened panel keeps its height for the session")
+        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 10))
+    }
+
+    func testTheWindowHoldsTheTallestPanelWhileHistoryIsUp() {
+        let model = VoiceBarNotchPresentationModel()
+        model.setHistoryPanelOpen(true)
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation).canvasGeometry
+        XCTAssertGreaterThanOrEqual(
+            canvas.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 12),
+            "dragging the handle never resizes the window under the pointer"
+        )
+        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 7),
+                       "but clicks below the seven rows still reach the app underneath")
+    }
+
+    func testTheExtendedShellFollowsTheLiveHeight() {
+        let model = VoiceBarNotchPresentationModel()
+        model.setHistoryPanelOpen(true)
+        let open = model.presentation.geometry
+        let closed = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        var morph = VoiceBarNotchHistoryMorphInput(
+            progress: 1, closed: closed, open: open,
+            openLowerSurfaceHeight: NotchHistoryMorph.lowerSurfaceHeight(rows: 9.5)
+        )
+        XCTAssertEqual(morph.geometry(at: 1).lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 9.5))
+        XCTAssertEqual(morph.openExtended.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 9.5))
+        var shape = VoiceBarNotchHistoryMorphShape(morph: morph, coreAnchorX: nil)
+        shape.animatableData = AnimatablePair(1, NotchHistoryMorph.lowerSurfaceHeight(rows: 11))
+        XCTAssertEqual(shape.morph.openLowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 11),
+                       "the handle's spring animates the shell's height")
+        morph.progress = 0
+        XCTAssertEqual(morph.geometry(at: 0).lowerSurfaceHeight, closed.lowerSurfaceHeight)
+    }
+
+    // MARK: V12 clipped rows, row click
+
+    func testAClippedRowShowsItsWholeTextInATooltipAndAShortOneShowsNone() {
+        XCTAssertNil(NotchHistoryPresentation.clippedTextTooltip("Ship it."))
+        let long = "For History I want two lines per row and seven rows visible, and I want to pull it down to see more."
+        XCTAssertEqual(NotchHistoryPresentation.clippedTextTooltip(long), long)
+        XCTAssertEqual(NotchHistoryPresentation.clippedTextTooltip("Ship   it.\nNow", availableWidth: 10), "Ship it. Now")
+        let huge = String(repeating: "word ", count: 400)
+        let tip = try? XCTUnwrap(NotchHistoryPresentation.clippedTextTooltip(huge))
+        XCTAssertEqual(tip?.count, NotchHistoryPresentation.clippedTooltipLimit)
+        XCTAssertEqual(tip?.last, "…")
+        XCTAssertNil(NotchHistoryPresentation.clippedTextTooltip("   "))
+    }
+
+    func testARowClickRequestsThatRecordingInTheHistoryWindow() {
+        var memory = SettingsHistoryRecordingMemory()
+        memory.request("/a/audio.wav")
+        memory.applyPage(["/b/audio.wav", "/a/audio.wav"])
+        XCTAssertEqual(memory.selectedID, "/a/audio.wav", "the clicked recording, not the newest")
+        var missing = SettingsHistoryRecordingMemory()
+        missing.request("/gone/audio.wav")
+        missing.applyPage(["/b/audio.wav"])
+        XCTAssertEqual(missing.selectedID, "/b/audio.wav", "not on the page: the newest, as before")
+        let request = SettingsTabRequest(tab: .history, historyRecordingID: "/a/audio.wav", id: 1)
+        XCTAssertEqual(request.historyRecordingID, "/a/audio.wav")
     }
 
     func testAPullHoldsThePanelsMouseEvents() {

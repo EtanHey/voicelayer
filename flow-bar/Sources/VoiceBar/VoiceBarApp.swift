@@ -750,6 +750,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             commandRouter: commandRouter,
             onOpenSettings: { [weak self] in self?.openSettingsWindow() },
             onOpenHistory: { [weak self] in self?.openSettingsWindow(tab: .history) },
+            onOpenHistoryRecording: { [weak self] path in
+                self?.openSettingsWindow(tab: .history, historyRecordingID: path)
+            },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true
@@ -2916,11 +2919,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         requestTermination(.menuBar)
     }
 
-    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil) {
+    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil, historyRecordingID: String? = nil) {
         voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
         if let tab {
-            settingsTabRequest = SettingsTabRequest(tab: tab, focus: focus, id: (settingsTabRequest?.id ?? 0) + 1)
+            settingsTabRequest = SettingsTabRequest(
+                tab: tab, focus: focus, historyRecordingID: historyRecordingID, id: (settingsTabRequest?.id ?? 0) + 1
+            )
         }
         if let settingsWindow {
             if tab == nil, settingsWindow.contentViewController == nil {

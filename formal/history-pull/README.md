@@ -14,6 +14,11 @@ is. Order-of-events risks modelled here:
   wanted or a pull holds the panel.
 - **Cancelled drags.** A pull the system cancels (no `onEnded`) still settles at the nearer end
   (`@GestureState` reset → `endHistoryPull(cancelled: true)`).
+- **Extend handle (V6).** A handle press inside the slop is a click and changes nothing; a
+  released (or cancelled) handle springs to a whole row, never resting between rows
+  (`NoStrandedRows`); at rest the hit region holds exactly the rows drawn (`HitMatchesRows`),
+  because the settled rows reach the presentation model on release. The band pull and the handle
+  never own the pointer at once.
 - **Reversible.** `Animate` never changes the level: a retarget springs from where it is.
   This holds by construction in the spec (and in SwiftUI interpolating springs, which merge
   velocity on retarget).
@@ -21,15 +26,17 @@ is. Order-of-events risks modelled here:
 Run: `bash formal/history-pull/check.sh` (needs a JDK on PATH, e.g.
 `PATH=/opt/homebrew/opt/openjdk/bin:$PATH`).
 
-| Config | Expected | Result (2026-11-04, M1) |
+| Config | Expected | Result (2026-11-05, M4, OpenJDK 21) |
 | --- | --- | --- |
-| Fixed | PASS | 589 distinct states |
+| Fixed | PASS | 1236 distinct states |
 | Old (2.2.60: close unmounts at once) | `NoClippedPanel` fails | violated, 23 states |
-| MutantNoGeneration (any completion unmounts) | `NoClippedPanel` fails | violated, 124 states |
+| MutantNoGeneration (any completion unmounts) | `NoClippedPanel` fails | violated, 125 states |
 | MutantNoSlop (a press moves before the slop) | `ClickNeverMoves` fails | violated, 7 states |
 | MutantNoCancel (a cancelled pull is dropped) | `NoStrandedPanel` fails | violated, 36 states |
+| MutantNoSnap (a released handle stays between rows) | `NoStrandedRows` fails | violated, 448 states |
+| MutantNoPublish (settled rows never reach the hit region) | `HitMatchesRows` fails | violated, 605 states |
 
 Swift guards: `NotchHistoryMorphTests` (pull state machine, release target, rubber band,
-spring values), `NotchShellCentredTests.testTheOpenHistoryPanelIsOneFlushShapeWithFlaredTopCorners`.
+spring values, handle hit strip, rows rubber band and snap, hit region = settled rows, session height), `NotchShellCentredTests.testTheOpenHistoryPanelIsOneFlushShapeWithFlaredTopCorners`.
 The live drag on the real notch (pointer capture across the panel edge, `isHistoryPullActive`)
-needs the installed-app Computer Use run.
+is the native XCUI `U4NotchHistoryNativeTests` (pointer events: run on the M1 test rig).

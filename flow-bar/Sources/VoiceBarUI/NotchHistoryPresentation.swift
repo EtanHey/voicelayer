@@ -84,6 +84,31 @@ public enum NotchHistoryPresentation {
         }
     }
 
+    public static let openHint = "Opens this recording in the History window"
+    public static let extendHandleLabel = "Show more rows"
+
+    // V12: what a row's text column can show while its hover actions are out (the 404 pt list, the row's insets,
+    // the action column and the gap before it).
+    public static var rowTextAvailableWidth: CGFloat {
+        NotchHistoryMorph.bodyWidth - 2 * NotchHistoryMorph.listHorizontalInset - rowLeadingPadding
+            - rowTrailingPadding - rowColumnSpacing - rowActionsMinimumWidth
+    }
+
+    public static let clippedTooltipLimit = 600
+
+    /// The row's whole text for its tooltip, only when the row can't show it all: past the first-words cut, or
+    /// wider than the text column at 13 pt. Very long dictations stop at 600 characters; the History window has
+    /// the rest.
+    public static func clippedTextTooltip(_ text: String, availableWidth: CGFloat = rowTextAvailableWidth) -> String? {
+        let flattened = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !flattened.isEmpty else { return nil }
+        let shown = firstWords(text)
+        let width = (shown as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: rowTextFontSize)]).width
+        guard shown != flattened || width > availableWidth else { return nil }
+        guard flattened.count > clippedTooltipLimit else { return flattened }
+        return String(flattened.prefix(clippedTooltipLimit - 1)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
     /// The row's first words on one line: whitespace and line breaks collapse, and long text ends in "…".
     public static func firstWords(_ text: String) -> String {
         let flattened = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")

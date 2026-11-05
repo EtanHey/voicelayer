@@ -70,7 +70,8 @@ final class NotchHistoryPanelTests: XCTestCase {
     }
 
     /// 2.3 lane U4 (mock 5-history): 420 pt wide, centred on the housing, seven 46 pt rows under an 8 pt inset
-    /// with 10 pt below (40 + 322 + 10 = 372 pt from the top of the screen).
+    /// with the 18 pt extend-handle band below (40 + 322 + 18 = 380 pt from the top of the screen, the mock's
+    /// `40 + rows × 46 + 18`).
     func testTheHistoryPanelMatchesTheMock() {
         let history = VoiceBarNotchContract.geometry(for: .history)
         let layout = VoiceBarNotchShapeLayout(geometry: history)
@@ -80,8 +81,8 @@ final class NotchHistoryPanelTests: XCTestCase {
         ).flushTop
         XCTAssertEqual(drawn.topWidth, 420, "the morph draws the top row as wide as the panel")
         XCTAssertEqual(layout.bodyRect.midX, layout.coreRect.midX, "centred on the housing")
-        XCTAssertEqual(history.lowerSurfaceHeight, 340)
-        XCTAssertEqual(history.totalHeight, 372)
+        XCTAssertEqual(history.lowerSurfaceHeight, 348)
+        XCTAssertEqual(history.totalHeight, 380)
         XCTAssertEqual(NotchHistoryMorph.listHeight, 322)
         XCTAssertEqual(NotchHistoryMorph.bodyWidth - 2 * NotchHistoryMorph.listHorizontalInset, 404)
     }
@@ -237,8 +238,12 @@ final class NotchHistoryPanelTests: XCTestCase {
         ))
         XCTAssertEqual(canvas.canvasGeometry.totalWidth, teleprompterCanvas.canvasGeometry.totalWidth,
                        "one fixed canvas width, so the shell morphs instead of the window jumping")
+        // V6: the window holds seven rows plus the note reserve, or the 12-row panel, whichever is taller, and
+        // stays that size whatever rows the handle settles on.
         XCTAssertEqual(canvas.canvasGeometry.totalHeight,
-                       resolve(history: true).geometry.totalHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
+                       VoiceBarNotchContract.topHeight + NotchHistoryMorph.historyCanvasLowerSurfaceHeight)
+        XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalHeight,
+                                    resolve(history: true).geometry.totalHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
     }
 
     func testRowsShowFirstWordsOnOneFlattenedLine() {

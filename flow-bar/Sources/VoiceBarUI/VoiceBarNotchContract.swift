@@ -325,6 +325,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         isRecording: Bool,
         hasCompactStatus: Bool,
         hasHistoryPanel: Bool = false,
+        historyRows: Int = NotchHistoryMorph.visibleRows,
         compactStatusLeadingWingWidth: CGFloat? = nil,
         compactStatusTrailingWingWidth: CGFloat? = nil,
         recordingLeadingWingWidth: CGFloat? = nil,
@@ -385,6 +386,17 @@ public struct VoiceBarNotchPresentation: Equatable {
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
+            )
+        } else if visualState == .history, historyRows != NotchHistoryMorph.visibleRows {
+            // V6: the extended panel's hit region is the rows the handle settled on.
+            VoiceBarNotchGeometry(
+                coreWidth: baseGeometry.coreWidth,
+                topHeight: baseGeometry.topHeight,
+                leadingWingWidth: baseGeometry.leadingWingWidth,
+                trailingWingWidth: baseGeometry.trailingWingWidth,
+                bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
+                bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
+                lowerSurfaceHeight: NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(historyRows))
             )
         } else if visualState == .teleprompter, let teleprompterLeadingWingWidth {
             VoiceBarNotchGeometry(
