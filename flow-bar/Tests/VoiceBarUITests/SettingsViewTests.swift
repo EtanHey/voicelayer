@@ -72,21 +72,22 @@ final class SettingsViewTests: XCTestCase {
 
         XCTAssertTrue(
             source.contains("deleteDictionaryEntryButton"),
-            "each canonical term card needs an always-visible delete affordance"
+            "each canonical term card needs a delete affordance (shown on hover or selection; U3 spec)"
         )
     }
 
-    /// R4/D1: a term's misheard spellings are one quiet line under it, only when it has some. There is no
-    /// "+ misheard as…" row under every term any more (Etan's 2.2.24 review #3).
-    func testVariantSummaryIsOneQuietLineOnlyWhenThereAreVariants() throws {
+    /// U3 spec: a term's misheard spellings are its row description ("Also heard as …"), only when it has some,
+    /// wrapping to two lines (V12 row anatomy) instead of a one-line clip.
+    func testVariantSummaryIsTheRowDescriptionOnlyWhenThereAreVariants() throws {
         let source = try settingsViewSource()
-        let card = try XCTUnwrap(source.functionBody(named: "dictionaryEntryCard"))
+        let header = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
 
-        XCTAssertTrue(card.contains("if !entry.variants.isEmpty"))
-        XCTAssertTrue(card.contains(".lineLimit(1)"))
+        XCTAssertTrue(header.contains("entry.variants.isEmpty ? nil : Self.variantSummary(entry.variants)"))
+        XCTAssertTrue(header.contains("SettingsRowLabel("))
+        XCTAssertFalse(header.contains(".lineLimit(1)"))
         XCTAssertEqual(
             SettingsView.variantSummary(["voice lair", "voice layer"]),
-            "misheard as voice lair, voice layer"
+            "Also heard as voice lair, voice layer"
         )
     }
 

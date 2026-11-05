@@ -570,6 +570,7 @@ public struct SettingsView: View {
     /// The one Add/Edit sheet (nil = closed). Etan's 2.2.24 review #3: no inline box, no per-term misheard row.
     @State private var termSheet: DictionaryTermEdit?
     @State private var pendingDeleteCanonical: String?
+    @State private var hoveredTermRowID: String?
     /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
     @State private var relaySetupFeedback: (
         action: SettingsRelaySetupFeedback.Action,
@@ -2212,7 +2213,7 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Dictionary").font(.title2.weight(.semibold))
-                    Text("Used on every dictation").font(.subheadline).foregroundStyle(.secondary)
+                    Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
                 }
                 searchRow
                 Button {
@@ -2248,7 +2249,7 @@ public struct SettingsView: View {
                             case .loading:
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    Text("Loading…").foregroundStyle(.secondary)
+                                    Text("Loading…").foregroundStyle(SettingsPanePalette.helper)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 170)
                             case .empty:
@@ -2256,7 +2257,7 @@ public struct SettingsView: View {
                                     Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
                                     Text("No terms yet").font(.headline)
                                     Text("Add names, products, and other preferred spellings.")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                        .font(.caption).foregroundStyle(SettingsPanePalette.helper)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 170)
                             case nil:
@@ -2329,10 +2330,10 @@ public struct SettingsView: View {
             Text(header.title)
             if header.isLoading {
                 ProgressView().controlSize(.small)
-                Text("Loading…").font(.caption).foregroundStyle(.secondary)
+                Text("Loading…").font(.caption).foregroundStyle(SettingsPanePalette.helper)
             }
             Spacer()
-            Text("built in").font(.caption).foregroundStyle(.secondary)
+            Text("built in").font(.caption).foregroundStyle(SettingsPanePalette.helper)
         }
     }
 
@@ -2365,40 +2366,37 @@ public struct SettingsView: View {
         rowID: String,
         isEditable: Bool = true
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
-            if !entry.variants.isEmpty {
-                Text(Self.variantSummary(entry.variants))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(Self.variantSummary(entry.variants))
+        let isSelected = selectedTermRowID == rowID
+        return dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.accentColor.opacity(
+                        flashingTermRowID == rowID ? 0.28 : isSelected ? 0.12 : 0
+                    ))
+            )
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: flashingTermRowID)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { hoveredTermRowID = rowID } else if hoveredTermRowID == rowID { hoveredTermRowID = nil }
             }
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.accentColor.opacity(
-                    flashingTermRowID == rowID ? 0.28 : selectedTermRowID == rowID ? 0.12 : 0
-                ))
-        )
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: flashingTermRowID)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            if isEditable { termSheet = DictionaryTermEdit(original: entry) }
-        }
-        .onTapGesture {
-            selectedTermRowID = rowID
-        }
-        .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
+            .onTapGesture(count: 2) {
+                if isEditable { termSheet = DictionaryTermEdit(original: entry) }
+            }
+            .onTapGesture {
+                selectedTermRowID = rowID
+            }
+            .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
+            .accessibilityAction(named: "Edit") {
+                if isEditable { termSheet = DictionaryTermEdit(original: entry) }
+            }
     }
 
-    /// A term's misheard spellings on one quiet line under it, only when it has some.
+    /// A term's misheard spellings, as the row's description, only when it has some.
     static func variantSummary(_ variants: [String]) -> String {
-        "misheard as " + variants.joined(separator: ", ")
+        "Also heard as " + variants.joined(separator: ", ")
     }
 
     private func dictionaryEntryHeader(
@@ -2406,10 +2404,16 @@ public struct SettingsView: View {
         rowID: String,
         isEditable: Bool
     ) -> some View {
-        HStack(spacing: 4) {
-            Text(entry.canonical)
-                .font(.headline)
-            Spacer()
+        let isSelected = selectedTermRowID == rowID
+        // Spec: hover or selection shows the row's actions. They keep their width while hidden, so the text never
+        // reflows under the pointer; VoiceOver reaches them as row actions instead.
+        let showsActions = isSelected || hoveredTermRowID == rowID || pendingDeleteCanonical == entry.canonical
+        let label = SettingsRowLabel(
+            title: entry.canonical,
+            description: entry.variants.isEmpty ? nil : Self.variantSummary(entry.variants),
+            isSelected: isSelected
+        )
+        let actions = HStack(spacing: 4) {
             SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)")
             if isEditable {
                 if pendingDeleteCanonical == entry.canonical {
@@ -2429,6 +2433,16 @@ public struct SettingsView: View {
                     deleteDictionaryEntryButton(entry.canonical)
                 }
             }
+        }
+        .fixedSize()
+        .opacity(showsActions ? 1 : 0)
+        .allowsHitTesting(showsActions)
+        .accessibilityHidden(!showsActions)
+        // Trailing controls keep their natural width; when the text column can't keep its minimum beside them they
+        // wrap under the text (V12).
+        return SettingsRowLayout {
+            label
+            actions
         }
         .frame(minHeight: DictionaryCardLayout.headerHeight)
     }
