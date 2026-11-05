@@ -20,11 +20,25 @@ struct VoiceBarTerminationPolicy {
 
         if controlledQuitCommitted { return .terminateNow }
 
+        // User exit does not grant updater authority and never depends on gate evidence.
+        let userQuit = authorizedIntent == .menuBar || (authorizedIntent == nil && enforcesSingleton)
+        if userQuit { return voiceBusy ? .terminateLater : .terminateNow }
         guard !voiceBusy, gatePermitsQuit else { return .terminateCancel }
 
         if enforcesSingleton {
             return .terminateNow
         }
         return authorizedIntent == nil ? .terminateCancel : .terminateNow
+    }
+}
+
+/// A bounded save window, independent of update-controller liveness or playback.
+@MainActor enum VoiceBarQuitDeferral {
+    static func waitWhileSaving(_ saving: () -> Bool,
+                                sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }) async {
+        for _ in 0..<60 {
+            guard saving() else { return }
+            await sleep(.milliseconds(100))
+        }
     }
 }

@@ -137,58 +137,106 @@ function harnessCompletionEvidence(): CompletionEvidence {
     },
   };
 }
-/** Only this controller completes. No successor startup writer or recovery bypass.
- * RPC/ps/plist parsing precede G1; its callback checks fresh cached participant
- * proof, unchanged installed bytes, and this process's durable controller custody. */
+/** Refresh proofs after acquisition timeout; never stretch a receipt across the budget. */
+async function finishWithSuccessor(lease: UpdateGateLease, evidence: CompletionEvidence,
+  custody: ParticipantProof, beforeAcquisition: () => void = () => {}): Promise<void> {
+  const installed = evidence.installed(), successor = evidence.participant;
+  if (installed.sha !== lease.targetSha) throw Error("installed GitCommit does not match lease.targetSha");
+  const clock = evidence.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
+  const deadline = clock.now() + 60_000;
+  for (let attempt = 1, backoff = 100; ; attempt++, backoff = Math.min(backoff * 2, 1000)) {
+    let acquiring = false;
+    try {
+      const proof = await successor.refresh(lease);
+      if (!proof.ready || !proof.native || !proof.daemon || !sameLease(proof.native.lease, lease) || !sameLease(proof.daemon.lease, lease))
+        throw Error(`new participants not verified: ${proof.phase}`);
+      if (clock.now() >= deadline) throw Error("successor readiness deadline passed");
+      beforeAcquisition(); // Process sampling stays outside G1.
+      const apply = () => updateVoiceGate({ kind: "COMPLETE", lease, installerExitCode: 0,
+        installedSha: installed.sha, participantsVerified: true }, state => safeParticipantProof(() => ({
+          ready: clock.now() < deadline && state.kind === "COMMITTED" && sameLease(state.lease, lease) &&
+            custody(state) && installed.unchanged() && successor.verify(state),
+        })), process.env, { throwOnContention: true });
+      acquiring = true;
+      const result = successor.withCompletionProof ? await successor.withCompletionProof(apply) : await retryInstallerAcquisition(apply);
+      if (result.kind === "REFUSED") throw Error(`COMPLETE refused: ${result.reason}`);
+      return;
+    } catch (error) {
+      if (error instanceof UnsafeSuccessorError || (acquiring && !(error instanceof Error &&
+        error.message === "UNKNOWN: update-gate lock acquisition timed out"))) throw error;
+      console.error(`[update-gate] Successor readiness attempt ${attempt} failed: ${error}`);
+      const remaining = deadline - clock.now();
+      if (remaining <= 0) throw Error(`successor readiness deadline passed: ${error}`);
+      await clock.sleep(Math.min(backoff, remaining));
+      if (clock.now() >= deadline) throw Error(`successor readiness deadline passed: ${error}`);
+    }
+  }
+}
 export async function completeGatedInstall(lease: UpdateGateLease, exitCode: number, identity: string,
   harness?: CompletionEvidence, previous?: InstallerParticipant, installerPid?: number): Promise<boolean> {
   try {
     assertGatePath();
-    if (harness) { harnessParticipantEvidence(); }
+    if (harness) harnessParticipantEvidence();
     if (exitCode !== 0) throw Error(`installer exited ${exitCode}; completion not verified`);
     if (installerProcessIdentity(process.pid) !== identity) throw Error("controller process identity changed");
-    const evidence = harness ?? (process.env.VOICELAYER_TEST_ISOLATED === "1" ? harnessCompletionEvidence() : {
+    await finishWithSuccessor(lease, harness ?? (process.env.VOICELAYER_TEST_ISOLATED === "1" ? harnessCompletionEvidence() : {
       installed: readInstalledTarget,
       participant: previous?.successor ? previous.successor() : createInstallerParticipant(undefined, null),
+    }), () => {
+      const controller = readInstallerController(updateGateFilePath());
+      return controller?.pid === process.pid && controller.identity === identity &&
+        controller.lease.operationId === lease.operationId && controller.lease.generation === lease.generation;
     });
-    const installed = evidence.installed();
-    if (installed.sha !== lease.targetSha) throw Error("installed GitCommit does not match lease.targetSha");
-    const successor = evidence.participant;
-    const clock = harness?.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
-    const deadline = clock.now() + 15_000;
-    for (let attempt = 1, backoff = 100; ; attempt++, backoff = Math.min(backoff * 2, 1000)) {
-      try {
-        // refresh invalidates cached evidence and authenticates a new round trip.
-        const proof = await successor.refresh(lease);
-        if (!proof.ready || !proof.native || !proof.daemon || !sameLease(proof.native.lease, lease) || !sameLease(proof.daemon.lease, lease))
-          throw Error(`new participants not verified: ${proof.phase}`);
-        if (clock.now() >= deadline) throw Error("successor readiness deadline passed");
-        break;
-      } catch (error) {
-        console.error(`[update-gate] Successor readiness attempt ${attempt} failed: ${error}`);
-        if (error instanceof UnsafeSuccessorError) throw error;
-        const remaining = deadline - clock.now();
-        if (remaining <= 0) throw Error(`successor readiness deadline passed: ${error}`);
-        await clock.sleep(Math.min(backoff, remaining));
-        if (clock.now() >= deadline) throw Error(`successor readiness deadline passed: ${error}`);
-      }
-    }
-    const apply = () => updateVoiceGate({ kind: "COMPLETE", lease, installerExitCode: 0,
-      installedSha: installed.sha, participantsVerified: true }, state => safeParticipantProof(() => {
-        const controller = readInstallerController(updateGateFilePath());
-        return { ready: state.kind === "COMMITTED" && sameLease(state.lease, lease) &&
-          controller?.pid === process.pid && controller.identity === identity &&
-          controller.lease.operationId === lease.operationId && controller.lease.generation === lease.generation &&
-          installed.unchanged() && successor.verify(state) };
-      }), process.env, { throwOnContention: true });
-    const result = successor.withCompletionProof ? await successor.withCompletionProof(apply) : await retryInstallerAcquisition(apply);
-    if (result.kind === "REFUSED") throw Error(`COMPLETE refused: ${result.reason}`);
     console.error("[update-gate] COMPLETE: verified installed target and new participants; admission OPEN.");
     return true;
   } catch (error) {
     recoveryReceipt(lease, `completion failed: ${error}`, installerPid);
-    console.error("After this updater exits, restore availability with: voicelayer setup --cask-postflight\n" +
-      "This does not recover a COMMITTED gate; retain all gate/controller/recovery evidence.");
+    console.error("[update-gate] The next matching VoiceBar launch will verify and recover an abandoned COMMITTED lease automatically; retain recovery evidence.");
+    return false;
+  }
+}
+
+/** Availability backstop, never installer authorization. No rollback or half-state repair.
+ * A reaped controller cannot become live again; PID reuse/unknown identity refuses.
+ * Observe death for five seconds, then recheck custody under G1. The verified
+ * running target replaces the unavailable old controller's exit receipt. */
+export async function recoverAbandonedUpdate(ownSha = process.env.VOICEBAR_GIT_COMMIT,
+  harness?: CompletionEvidence & { controllerIdentity(pid: number): string | null }): Promise<boolean> {
+  try {
+    assertGatePath();
+    if (harness) harnessParticipantEvidence();
+    if (!ownSha || !/^[0-9a-f]{40}$/.test(ownSha)) return false;
+    const evidence: CompletionEvidence = harness ?? { installed: readInstalledTarget, participant: createInstallerParticipant(undefined, null) };
+    const clock = evidence.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
+    const identity = harness?.controllerIdentity ?? installerProcessIdentity;
+    const deadline = clock.now() + 60_000;
+    let abandonedAt: number | undefined;
+    let observedCustody: string | undefined;
+    for (;;) {
+      const state = await retryInstallerAcquisition(() => readInstallerGateState(), deadline, clock, 30_000);
+      if (state.kind !== "COMMITTED" || state.lease.targetSha !== ownSha) return false;
+      const lease = state.lease, controller = readInstallerController(updateGateFilePath());
+      if (!controller || controller.lease.operationId !== lease.operationId || controller.lease.generation !== lease.generation) return false;
+      const bytes = JSON.stringify(controller);
+      const custody = JSON.stringify({ lease, controller });
+      if (custody !== observedCustody) abandonedAt = undefined;
+      observedCustody = custody;
+      if (identity(controller.pid) !== null) abandonedAt = undefined;
+      else abandonedAt ??= clock.now();
+      if (abandonedAt !== undefined && clock.now() - abandonedAt >= 5000) {
+        // The observed dead incarnation cannot revive. Sample again outside G1;
+        // only unchanged custody is read inside the short publication section.
+        await finishWithSuccessor(lease, evidence,
+          () => JSON.stringify(readInstallerController(updateGateFilePath())) === bytes,
+          () => { if (identity(controller.pid) !== null) throw new UnsafeSuccessorError("controller absence changed"); });
+        console.error("[update-gate] Recovered abandoned COMMITTED lease: verified successor COMPLETE; admission OPEN.");
+        return true;
+      }
+      if (clock.now() >= deadline) return false;
+      await clock.sleep(Math.min(250, deadline - clock.now()));
+    }
+  } catch (error) {
+    console.error(`[update-gate] Successor recovery deferred; gate and custody retained: ${error}`);
     return false;
   }
 }

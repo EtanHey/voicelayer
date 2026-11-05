@@ -67,6 +67,8 @@ public struct SettingsTabRequest: Equatable {
 public enum SettingsFocus: String, Equatable, Hashable {
     /// General › Microphone priority, where the default microphone is chosen (D2 "Change…").
     case microphonePriority = "settings-general-microphone-priority"
+    /// General › Permissions, where the notch gear's setup badge leads (2.3 U2).
+    case permissions = "settings-general-permissions"
 }
 
 /// History scopes in on-screen order; Dictations remains the default.
@@ -327,6 +329,8 @@ struct SettingsHistoryRowModel: Equatable {
 
 private enum DictEditorField: Hashable {
     case search
+    /// The term list itself, so Delete/Backspace and the arrow keys act on the selected row.
+    case list
 }
 
 private enum DictionaryCardLayout {
@@ -454,6 +458,8 @@ public struct SettingsView: View {
     public let onChangeSpeech: ((String, SpeechValue) -> Void)?
     public let onSelectSpeechEngine: ((SpeechProfile, String, String) -> Void)?
     public let onPreviewSpeech: ((SpeechProfile) -> Void)?
+    /// V10 clone-engine row (Speech). The app feeds it `clone_engine` events and acks; nil reads "Unavailable".
+    public let cloneEngineControl: CloneEngineControlViewModel?
     public let onReadClipboard: (() -> Void)?
     public let processingPending: () -> [ProcessingKey: Bool]
     public let processingNotice: () -> String?
@@ -512,6 +518,7 @@ public struct SettingsView: View {
     public let installedVersion: VoiceBarInstalledVersion
     /// Nil (tests, the UI E2E host) means no network check; the row then shows the version only.
     public let versionCheck: VoiceBarVersionCheck?
+    public let onVersionStatusChange: (VoiceBarVersionStatus) -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -573,7 +580,9 @@ public struct SettingsView: View {
     @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
     /// The one Add/Edit sheet (nil = closed). Etan's 2.2.24 review #3: no inline box, no per-term misheard row.
     @State private var termSheet: DictionaryTermEdit?
-    @State private var pendingDeleteCanonical: String?
+    /// A term deleted from Your terms that Undo can still put back (4 s; spec Dictionary).
+    @State private var pendingDeletion: DictionaryPendingDeletion?
+    @State private var hoveredTermRowID: String?
     /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
     @State private var relaySetupFeedback: (
         action: SettingsRelaySetupFeedback.Action,
@@ -617,6 +626,7 @@ public struct SettingsView: View {
         onChangeSpeech: ((String, SpeechValue) -> Void)? = nil,
         onSelectSpeechEngine: ((SpeechProfile, String, String) -> Void)? = nil,
         onPreviewSpeech: ((SpeechProfile) -> Void)? = nil,
+        cloneEngineControl: CloneEngineControlViewModel? = nil,
         onReadClipboard: (() -> Void)? = nil,
         processingPending: @escaping () -> [ProcessingKey: Bool] = { [:] },
         processingNotice: @escaping () -> String? = { nil },
@@ -711,7 +721,8 @@ public struct SettingsView: View {
         onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in },
         historyPlayback: SettingsAudioPlayback? = nil,
         installedVersion: VoiceBarInstalledVersion = .current(),
-        versionCheck: VoiceBarVersionCheck? = nil
+        versionCheck: VoiceBarVersionCheck? = nil,
+        onVersionStatusChange: @escaping (VoiceBarVersionStatus) -> Void = { _ in }
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -740,6 +751,7 @@ public struct SettingsView: View {
         self.onChangeSpeech = onChangeSpeech
         self.onSelectSpeechEngine = onSelectSpeechEngine
         self.onPreviewSpeech = onPreviewSpeech
+        self.cloneEngineControl = cloneEngineControl
         self.onReadClipboard = onReadClipboard
         self.processingPending = processingPending
         self.processingNotice = processingNotice
@@ -802,6 +814,7 @@ public struct SettingsView: View {
         self.onRunSetup = onRunSetup
         self.installedVersion = installedVersion
         self.versionCheck = versionCheck
+        self.onVersionStatusChange = onVersionStatusChange
         self.tabRequest = tabRequest
         self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
@@ -863,7 +876,8 @@ public struct SettingsView: View {
                 settingsPage(title: "Speech") {
                     SpeechSettingsView(controls: speechControls(), connected: speechConnected(),
                                        busy: speechBusyReason() != nil, busyReason: speechBusyReason(), pending: speechPending(), notice: speechNotice(),
-                                       onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech)
+                                       onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech,
+                                       cloneEngine: cloneEngineControl)
                         .onAppear { onRefreshModelsStatus() }
                 }
             case .transcription:
@@ -894,7 +908,9 @@ public struct SettingsView: View {
         .task {
             guard let versionCheck, versionStatus == nil else { return }
             versionStatus = .checking
-            versionStatus = await versionCheck.status(installed: installedVersion.version)
+            let status = await versionCheck.status(installed: installedVersion.version)
+            versionStatus = status
+            onVersionStatusChange(status)
         }
         .task(id: selectedTab) {
             guard selectedTab == .dictionary else { return }
@@ -1033,8 +1049,12 @@ public struct SettingsView: View {
             }
 
             // Always flat, even when everything is granted (Etan's 2.2.24 review #4; BrainBar #920).
-            Section("Permissions") {
+            Section {
                 permissionRows
+            } header: {
+                // 2.3 U2: the badged notch gear scrolls here.
+                Text("Permissions")
+                    .id(SettingsFocus.permissions)
             }
 
             Section("Setup") {
@@ -2240,18 +2260,22 @@ public struct SettingsView: View {
     private var dictionaryTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Dictionary").font(.title2.weight(.semibold))
-                    Text("Used on every dictation").font(.subheadline).foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Dictionary").font(.title2.weight(.semibold))
+                        Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
+                    }
+                    Spacer(minLength: 12)
+                    Button {
+                        termSheet = DictionaryTermEdit()
+                    } label: {
+                        Label("Add term", systemImage: "plus")
+                    }
+                    .fixedSize()
+                    .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))
+                    .help("Add a term to your dictionary")
                 }
                 searchRow
-                Button {
-                    termSheet = DictionaryTermEdit()
-                } label: {
-                    Label("Add term", systemImage: "plus")
-                }
-                .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))
-                .help("Add a term to your dictionary")
             }
             .padding(.horizontal, 22)
             .padding(.top, 19)
@@ -2263,6 +2287,12 @@ public struct SettingsView: View {
                     let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
                     let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
                     LazyVStack(alignment: .leading, spacing: 0) {
+                        if let query = DictionarySearchPresentation.addSuggestion(
+                            search: dictionarySearch, loaded: hasLoadedDictionaryOnce,
+                            personalMatches: personal.count, includedMatches: included.count
+                        ) {
+                            dictionaryNoMatches(query)
+                        }
                         let yourTermsTitle = Self.dictionarySectionTitle(
                             "Your terms", count: dictionaryDisplayIndex.personalCount,
                             matches: isSearching ? personal.count : nil,
@@ -2278,7 +2308,7 @@ public struct SettingsView: View {
                             case .loading:
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    Text("Loading…").foregroundStyle(.secondary)
+                                    Text("Loading…").foregroundStyle(SettingsPanePalette.helper)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 170)
                             case .empty:
@@ -2286,7 +2316,7 @@ public struct SettingsView: View {
                                     Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
                                     Text("No terms yet").font(.headline)
                                     Text("Add names, products, and other preferred spellings.")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                        .font(.caption).foregroundStyle(SettingsPanePalette.helper)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 170)
                             case nil:
@@ -2312,6 +2342,9 @@ public struct SettingsView: View {
                         }
                         .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
                         .padding(.top, 18)
+                        if includedHeader.showsChevron, !isSearching {
+                            includedTermsSummary(expanded: includedTermsExpanded)
+                        }
                         if includedTermsExpanded || isSearching {
                             ForEach(included, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
@@ -2321,6 +2354,20 @@ public struct SettingsView: View {
                     }
                     .padding(18)
                 }
+                // The list takes key focus like a macOS table: arrows move the selection, Delete/Backspace removes
+                // the selected term of your own (with Undo). The search field keeps its own text editing.
+                .focusable()
+                .focused($focusedEditorField, equals: .list)
+                .focusEffectDisabled()
+                .onMoveCommand { direction in
+                    let offset = direction == .up ? -1 : direction == .down ? 1 : 0
+                    guard offset != 0 else { return }
+                    selectedTermRowID = DictionaryDeletion.selection(
+                        movingFrom: selectedTermRowID, by: offset, in: visibleTermRowIDs
+                    )
+                    if let rowID = selectedTermRowID { proxy.scrollTo(rowID) }
+                }
+                .onDeleteCommand { deleteSelectedTerm() }
                 .onChange(of: pendingScrollRowID) { _, rowID in
                     guard let rowID else { return }
                     // The saved row lands in the list on the same update; scroll once it has been laid out.
@@ -2332,6 +2379,20 @@ public struct SettingsView: View {
                     }
                 }
             }
+            if let pendingDeletion {
+                dictionaryUndoBar(pendingDeletion)
+                    .transition(reduceMotion
+                        ? AnyTransition.opacity
+                        : AnyTransition.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 0.2), value: pendingDeletion)
+        .task(id: pendingDeletion?.deadline) {
+            guard let deadline = pendingDeletion?.deadline else { return }
+            let delay = deadline.timeIntervalSinceNow
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            guard !Task.isCancelled else { return }
+            DictionaryDeletion.commitIfExpired(now: Date(), pending: &pendingDeletion, commit: commitDeletion)
         }
         .sheet(item: $termSheet) { edit in
             DictionaryAddSheetView(edit: edit, existingEntries: localEntries, onSave: { saved in
@@ -2339,8 +2400,15 @@ public struct SettingsView: View {
             }, onCancel: { termSheet = nil })
                 .frame(width: 420)
         }
+        .onChange(of: termSheet) { _, sheet in
+            // A save could re-add the very term waiting for its Undo window; send that removal first.
+            if sheet != nil { DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion) }
+        }
         .onAppear {
             resetDictionaryEditors()
+        }
+        .onDisappear {
+            DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion)
         }
         .onChange(of: hasPendingDictionaryEdit) { _, pending in
             if !pending, dictionaryReloadGate.editEnded() { loadDictionaryPreview() }
@@ -2359,20 +2427,90 @@ public struct SettingsView: View {
             Text(header.title)
             if header.isLoading {
                 ProgressView().controlSize(.small)
-                Text("Loading…").font(.caption).foregroundStyle(.secondary)
+                Text("Loading…").font(.caption).foregroundStyle(SettingsPanePalette.helper)
             }
             Spacer()
-            Text("built in").font(.caption).foregroundStyle(.secondary)
+            Text("built in").font(.caption).foregroundStyle(SettingsPanePalette.helper)
         }
+    }
+
+    /// Spec: Included terms (closed) shows a sample of the daemon's own rows as chips, and why they can't be edited.
+    private func includedTermsSummary(expanded: Bool) -> some View {
+        let sample = DictionarySearchPresentation.includedSample(
+            dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }.map(\.entry)
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            if !expanded, !sample.isEmpty {
+                DictionaryChipFlow(spacing: 6) {
+                    ForEach(sample, id: \.self) { term in
+                        Text(term)
+                            .font(.system(size: 11.5))
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.primary.opacity(0.07)))
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Included terms include " + sample.joined(separator: ", "))
+            }
+            Text(DictionarySearchPresentation.includedExplanation)
+                .font(.system(size: 11.5))
+                .foregroundStyle(SettingsPanePalette.helper)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 8)
+    }
+
+    private func dictionaryNoMatches(_ query: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No terms match \u{201C}\(query)\u{201D}.")
+                .font(SettingsRowLabel.titleFont)
+                .lineLimit(2)
+            Button {
+                termSheet = DictionaryTermEdit(correct: query)
+            } label: {
+                Label(DictionarySearchPresentation.addSuggestionTitle(query), systemImage: "plus")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .help(DictionarySearchPresentation.addSuggestionTitle(query))
+            .accessibilityIdentifier("dictionary-add-search-query")
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 14)
+    }
+
+    private func dictionaryUndoBar(_ deletion: DictionaryPendingDeletion) -> some View {
+        HStack(spacing: 12) {
+            Text(DictionaryDeletion.undoMessage(deletion))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Button("Undo") { undoDeletion() }
+                .keyboardShortcut(focusedEditorField == .search ? nil : KeyboardShortcut("z", modifiers: .command))
+                .accessibilityHint("Puts the term back")
+        }
+        .font(.callout)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 10)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .contain)
     }
 
     private var searchRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
+            // The search is a plain TextField: normal macOS editing, Edit menu ⌘V, and P1's paste integration reach it
+            // through `focusedEditorField == .search`. No paste path of its own.
             TextField("Search terms and variants", text: $dictionarySearch)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .search)
+                .onExitCommand { dictionarySearch = "" }
+                .accessibilityLabel("Search your dictionary")
             // QA-27: the same clear (X) the History search has. It follows the raw field, not the trimmed query:
             // a lone space is not a search, but it is still text the X should clear.
             if dictionarySearch != "" {
@@ -2395,40 +2533,41 @@ public struct SettingsView: View {
         rowID: String,
         isEditable: Bool = true
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
-            if !entry.variants.isEmpty {
-                Text(Self.variantSummary(entry.variants))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(Self.variantSummary(entry.variants))
+        let isSelected = selectedTermRowID == rowID
+        return dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.accentColor.opacity(
+                        flashingTermRowID == rowID ? 0.28 : isSelected ? 0.12 : 0
+                    ))
+            )
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: flashingTermRowID)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { hoveredTermRowID = rowID } else if hoveredTermRowID == rowID { hoveredTermRowID = nil }
             }
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.accentColor.opacity(
-                    flashingTermRowID == rowID ? 0.28 : selectedTermRowID == rowID ? 0.12 : 0
-                ))
-        )
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: flashingTermRowID)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            if isEditable { termSheet = DictionaryTermEdit(original: entry) }
-        }
-        .onTapGesture {
-            selectedTermRowID = rowID
-        }
-        .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
+            .onTapGesture(count: 2) {
+                if isEditable { termSheet = DictionaryTermEdit(original: entry) }
+            }
+            .onTapGesture {
+                selectedTermRowID = rowID
+                focusedEditorField = .list
+            }
+            .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
+            .accessibilityAction(named: "Edit") {
+                if isEditable { termSheet = DictionaryTermEdit(original: entry) }
+            }
+            .accessibilityAction(named: "Delete") {
+                if isEditable { deleteTerm(entry.canonical, rowID: rowID) }
+            }
     }
 
-    /// A term's misheard spellings on one quiet line under it, only when it has some.
+    /// A term's misheard spellings, as the row's description, only when it has some.
     static func variantSummary(_ variants: [String]) -> String {
-        "misheard as " + variants.joined(separator: ", ")
+        "Also heard as " + variants.joined(separator: ", ")
     }
 
     private func dictionaryEntryHeader(
@@ -2436,71 +2575,104 @@ public struct SettingsView: View {
         rowID: String,
         isEditable: Bool
     ) -> some View {
-        HStack(spacing: 4) {
-            Text(entry.canonical)
-                .font(.headline)
-            Spacer()
+        let isSelected = selectedTermRowID == rowID
+        // Spec: hover or selection shows the row's actions. They keep their width while hidden, so the text never
+        // reflows under the pointer; VoiceOver reaches them as row actions instead.
+        let showsActions = isSelected || hoveredTermRowID == rowID
+        let label = SettingsRowLabel(
+            title: entry.canonical,
+            description: entry.variants.isEmpty ? nil : Self.variantSummary(entry.variants),
+            isSelected: isSelected
+        )
+        let actions = HStack(spacing: 4) {
             SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)")
             if isEditable {
-                if pendingDeleteCanonical == entry.canonical {
-                    deleteDictionaryEntryButton(entry.canonical)
-                } else {
-                    Button {
-                        pendingDeleteCanonical = nil
-                        termSheet = DictionaryTermEdit(original: entry)
-                    } label: {
-                        Image(systemName: "pencil")
-                            .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Edit term")
-                    .accessibilityLabel("Edit term \(entry.canonical)")
-                    deleteDictionaryEntryButton(entry.canonical)
+                Button {
+                    termSheet = DictionaryTermEdit(original: entry)
+                } label: {
+                    Image(systemName: "pencil")
+                        .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.borderless)
+                .help("Edit term")
+                .accessibilityLabel("Edit term \(entry.canonical)")
+                deleteDictionaryEntryButton(entry.canonical, rowID: rowID)
             }
+        }
+        .fixedSize()
+        .opacity(showsActions ? 1 : 0)
+        .allowsHitTesting(showsActions)
+        .accessibilityHidden(!showsActions)
+        // Trailing controls keep their natural width; when the text column can't keep its minimum beside them they
+        // wrap under the text (V12).
+        return SettingsRowLayout {
+            label
+            actions
         }
         .frame(minHeight: DictionaryCardLayout.headerHeight)
     }
 
     @ViewBuilder
-    private func deleteDictionaryEntryButton(_ canonical: String) -> some View {
-        if pendingDeleteCanonical == canonical {
-            Button("Cancel") {
-                pendingDeleteCanonical = nil
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .frame(height: DictionaryCardLayout.headerHeight)
-            Button("Delete?", role: .destructive) {
-                SettingsDictionaryMutations.confirmDeleteTerm(
-                    canonical,
-                    pendingDeleteCanonical: &pendingDeleteCanonical,
-                    localEntries: &localEntries,
-                    onRemovePromptTerm: onRemovePromptTerm
-                )
-                dictionaryReloadGate.mutationSent()
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .frame(height: DictionaryCardLayout.headerHeight)
-            .tint(.red)
-        } else {
-            Button {
-                SettingsDictionaryMutations.requestDeleteTerm(
-                    canonical,
-                    pendingDeleteCanonical: &pendingDeleteCanonical
-                )
-            } label: {
-                Image(systemName: "trash")
-                    .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.red)
-            .help("Delete term")
-            .accessibilityLabel("Delete term \(canonical)")
+    private func deleteDictionaryEntryButton(_ canonical: String, rowID: String) -> some View {
+        Button {
+            deleteTerm(canonical, rowID: rowID)
+        } label: {
+            Image(systemName: "trash")
+                .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.red)
+        .help("Delete term")
+        .accessibilityLabel("Delete term \(canonical)")
+    }
+
+    /// The rows arrow keys move through, in display order.
+    private var visibleTermRowIDs: [String] {
+        let isSearching = !Self.dictionaryQuery(dictionarySearch).isEmpty
+        var rows: [String] = []
+        if yourTermsExpanded || isSearching {
+            rows += dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch).map(\.rowID)
+        }
+        if includedTermsExpanded || isSearching {
+            rows += dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch).map(\.rowID)
+        }
+        return rows
+    }
+
+    /// Delete/Backspace: only a selected term of your own; an included row has nothing to delete.
+    private func deleteSelectedTerm() {
+        guard let rowID = selectedTermRowID,
+              let row = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
+                  .first(where: { $0.rowID == rowID })
+        else { return }
+        deleteTerm(row.entry.canonical, rowID: rowID)
+    }
+
+    private func deleteTerm(_ canonical: String, rowID: String) {
+        let rows = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch).map(\.rowID)
+        let nextSelection = DictionaryDeletion.selection(afterRemoving: rowID, from: rows)
+        guard DictionaryDeletion.begin(
+            canonical, localEntries: &localEntries, pending: &pendingDeletion, now: Date(), commit: commitDeletion
+        ) != nil else { return }
+        if selectedTermRowID == rowID { selectedTermRowID = nextSelection }
+        if hoveredTermRowID == rowID { hoveredTermRowID = nil }
+        // Keep keyboard focus in the list so the next Delete or ⌘Z lands where the user is.
+        if focusedEditorField != .search { focusedEditorField = .list }
+    }
+
+    private func undoDeletion() {
+        guard let entry = DictionaryDeletion.undo(localEntries: &localEntries, pending: &pendingDeletion, now: Date())
+        else { return }
+        selectedTermRowID = STTDictionaryDisplayEntry(source: "personal", entry: entry).rowID
+        pendingScrollRowID = selectedTermRowID
+    }
+
+    /// The removal reaches the daemon only here, when the Undo window has closed.
+    private func commitDeletion(_ entry: STTDictionaryEntry) {
+        onRemovePromptTerm(entry.canonical)
+        dictionaryReloadGate.mutationSent()
     }
 
     // MARK: - Helpers
@@ -2906,13 +3078,12 @@ public struct SettingsView: View {
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        termSheet != nil || pendingDeleteCanonical != nil
+        termSheet != nil || pendingDeletion != nil
     }
 
     /// Arriving on the tab never finds an editor already open (UI pass #17: the first row was).
     private func resetDictionaryEditors() {
         termSheet = nil
-        pendingDeleteCanonical = nil
     }
 
     private func saveTermSheet(_ edit: DictionaryTermEdit) {
@@ -3107,25 +3278,6 @@ enum SettingsDictionaryMutations {
         }
         onRemovePromptTerm(canonical)
         editText = ""
-    }
-
-    static func requestDeleteTerm(
-        _ canonical: String,
-        pendingDeleteCanonical: inout String?
-    ) {
-        pendingDeleteCanonical = canonical
-    }
-
-    static func confirmDeleteTerm(
-        _ canonical: String,
-        pendingDeleteCanonical: inout String?,
-        localEntries: inout [STTDictionaryEntry],
-        onRemovePromptTerm: (String) -> Void
-    ) {
-        guard pendingDeleteCanonical == canonical else { return }
-        localEntries.removeAll { $0.canonical == canonical }
-        onRemovePromptTerm(canonical)
-        pendingDeleteCanonical = nil
     }
 
     static func addVariant(

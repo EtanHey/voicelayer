@@ -3,8 +3,8 @@
   "kind": "invariant",
   "target": "BootstrapOnlyQuiescent",
   "status": "EXPECTED_FAIL",
-  "generated": 23,
-  "distinct": 21,
+  "generated": 19,
+  "distinct": 19,
   "trace": [
     "/\\ phase = \"check\"\n/\\ available = FALSE\n/\\ scenario = \"live\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = TRUE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
     "/\\ phase = \"locked\"\n/\\ available = FALSE\n/\\ scenario = \"live\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = TRUE\n/\\ evidence = FALSE\n/\\ mutex = TRUE",

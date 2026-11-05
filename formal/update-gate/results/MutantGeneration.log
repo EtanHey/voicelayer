@@ -3,8 +3,8 @@
   "kind": "invariant",
   "target": "BootstrapOpenGenerationZero",
   "status": "EXPECTED_FAIL",
-  "generated": 19,
-  "distinct": 19,
+  "generated": 20,
+  "distinct": 20,
   "trace": [
     "/\\ phase = \"check\"\n/\\ available = FALSE\n/\\ scenario = \"fresh\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
     "/\\ phase = \"locked\"\n/\\ available = FALSE\n/\\ scenario = \"fresh\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = TRUE",

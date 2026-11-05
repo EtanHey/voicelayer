@@ -538,6 +538,7 @@ final class VoiceBarDaemonController {
         // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
         var daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
         daemonEnvironment["VOICEBAR_UPDATE_SECRET"] = NativeDrainParticipant.secret
+        daemonEnvironment["VOICEBAR_GIT_COMMIT"] = Bundle.main.object(forInfoDictionaryKey: "GitCommit") as? String
         daemonEnvironment["VOICEBAR_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         guard socketBindingAllowed(daemonEnvironment) else {
             NSLog("[VoiceBar] SOCKET_ISOLATION_REFUSED: refusing MCP child with resident socket paths")

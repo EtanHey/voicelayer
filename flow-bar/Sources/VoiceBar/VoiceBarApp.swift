@@ -1,7 +1,7 @@
 // VoiceBarApp.swift — Entry point for Voice Bar.
 //
 // Wires together: VoiceState, SocketServer, FloatingPillPanel, BarView.
-// No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
+// Regular resident app: Dock, app menus and the notch; status item only for alerts.
 // Tracks mouse across screens — pill follows the cursor.
 //
 // AIDEV-NOTE: Architecture inversion (Phase 0) — VoiceBar is the persistent
@@ -166,13 +166,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var cloneEngineController = CloneEngineController.production(
         defaults: defaults, executable: Bundle.main.executableURL!
     )
+    /// Settings › Speech engine row (U3b). Created once and held here: `makeSettingsView()` runs on every rebuild.
+    private lazy var cloneEngineControl = CloneEngineControlViewModel(
+        snapshot: voiceState.cloneEngine,
+        send: { [weak self] command in
+            guard let send = self?.voiceState.sendCommand else { return false }
+            send(command.wireObject)
+            return true
+        }
+    )
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
+    private var quitSavePending = false
     private var controlledUpdateLease: [String: Any]?
     #if VOICEBAR_QA
     var terminationGateForTesting: NativeUpdateGate?
     var terminationOwnsServerForTesting: Bool?
     var terminationCleanupForTesting: (() -> Void)?
+    var terminationSaveSleepForTesting: ((Duration) async -> Void)?
     #endif
 
     private var socketServer: SocketServer?
@@ -240,8 +251,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
     private let gestureStateMachine = GestureStateMachine()
     private var stoppingFromPhysicalPress = false
+    var appliedActivationPolicy: NSApplication.ActivationPolicy = .accessory
+    private var menuUpdateStatus: VoiceBarVersionStatus = .latest
     private var menuBarStatusItem: NSStatusItem?
     private var menuBarStatusItemController: MenuBarStatusItemController?
+    /// 2.3 U2: History and the microphone list never show together (lane U1 adds the notch menu). The QA host
+    /// drives the same handoff.
+    private let notchHistoryBridge = VoiceBarNotchHistoryBridge()
+    private lazy var notchSurfaceHandoff: VoiceBarNotchSurfaceHandoff = {
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: notchHistoryBridge) { [weak self] kind in
+            self?.presentNotchMenu(kind)
+        }
+        handoff.onOutcome = { [weak self] outcome in
+            if case .cancelled = outcome { self?.logDiagnostic(event: "notch_microphone_list_cancelled") }
+        }
+        return handoff
+    }()
     private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
         modeProvider: { [weak self] in self?.voiceState.mode ?? .idle },
         restartRecordingAudio: { [weak self] in
@@ -296,6 +321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         super.init()
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
+            // One closure for every ack: clone_engine replies are chained here, never assigned over it.
+            self?.cloneEngineControl.receive(ack: ack)
         }
         voiceState.onRecognizerStatusChange = { [weak self] in
             self?.refreshSettingsWindowAnchorState()
@@ -341,9 +368,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         closeStraySettingsScenes(trigger: "reopen")
-        // Reopening the menu-bar app must not show a restored placeholder.
-        // Explicit Settings requests still open the owned AppKit window.
+        let plan = VoiceBarAppPresence.dockReopenPlan(policy: appliedActivationPolicy, isSnoozed: isSnoozed || voiceState.isHidden)
+        if plan.unsnooze { unsnoozeNow() }
+        if let tab = plan.settingsTab { openSettingsWindow(tab: tab) }
         return false
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard appliedActivationPolicy == .regular else { return nil }
+        return pillContextMenuController.makeDockMenu()
     }
 
     @objc func showSettingsWindow(_ sender: Any?) {
@@ -588,7 +621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             queue: .main
         )
         terminationSignalSource.setEventHandler { [weak self] in
-            self?.requestTermination(.internalFailure)
+            self?.requestTermination(.menuBar)
         }
         terminationSignalSource.resume()
         self.terminationSignalSource = terminationSignalSource
@@ -608,8 +641,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard enforceCanonicalSingleInstance() else { return }
 
-        // No Dock icon (LSUIElement equivalent)
-        NSApp.setActivationPolicy(.accessory)
+        appliedActivationPolicy = VoiceBarAppPresence.activationPolicy(
+            enforcesSingletonInstance: VoiceLayerPaths.enforcesSingletonInstance
+        )
+        NSApp.setActivationPolicy(appliedActivationPolicy)
         setupMenuBarStatusItem()
 
         // Register with Launch Services so voicebar:// URL scheme works
@@ -725,10 +760,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         cloneEngineController?.onChange = { [weak server, weak self] event in
             self?.voiceState.handleEvent(event)
+            self?.cloneEngineControl.receive(snapshot: self?.voiceState.cloneEngine)
             server?.publishCloneEngine(event)
         }
         if let controller = cloneEngineController {
             voiceState.handleEvent(controller.snapshot.payload)
+            cloneEngineControl.receive(snapshot: voiceState.cloneEngine)
             server.publishCloneEngine(controller.snapshot.payload)
             controller.open()
         }
@@ -755,7 +792,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
-            includesPanelOutsets: true
+            includesPanelOutsets: true,
+            onOpenMicrophonePicker: { [weak self] in
+                // The handoff schedules the (modal) menu after the chevron's own click finishes.
+                self?.notchSurfaceHandoff.requestMenu(.microphone)
+            },
+            onOpenSetupSettings: { [weak self] in self?.openSetupAttentionSettings() },
+            historyBridge: notchHistoryBridge
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
@@ -931,6 +974,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configurePillContextMenu() {
+        pillContextMenuController.updateStatusProvider = { [weak self] in self?.menuUpdateStatus.menuMessage }
         pillContextMenuController.transcriptProvider = { [weak self] in
             self?.voiceState.latestReusableTranscript ?? ""
         }
@@ -939,6 +983,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         pillContextMenuController.defaultMicrophoneNameProvider = { [weak self] in
             self?.defaultMicrophoneName()
+        }
+        pillContextMenuController.microphonePickerRowsProvider = { [weak self] in
+            guard let self else { return [] }
+            return MicrophonePickerRow.rows(
+                from: microphonePrioritySnapshot(devices: MicrophoneDeviceManager.availableInputDevices())
+            )
         }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
@@ -1316,22 +1366,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
         let reply = terminationPolicy.reply(
             enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance,
-            voiceBusy: voiceState.isQuitBusy && ownsServer,
+            voiceBusy: voiceState.isSavingDictationForQuit && ownsServer,
             gatePermitsQuit: !ownsServer || gate.permitsTermination(controlledLease: controlledUpdateLease)
         )
-        guard reply == .terminateNow else {
-            // The note clears once the same policy would let this quit through (the work stopped).
-            let lease = controlledUpdateLease
-            let refusalOwnsServer = ownsServer
-            let refusalGate = gate
-            // Voice work is read live by VoiceState; only the update gate's part is rechecked here.
-            voiceState.reportQuitRefusal(
-                gateBlocked: refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease),
-                isGateStillBlocked: { refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease) }
-            )
-            NSLog("[VoiceBar] Quit refused: voice/update safety evidence unavailable")
-            return reply
+        if reply == .terminateLater {
+            guard !quitSavePending else { return .terminateLater }
+            quitSavePending = true
+            voiceState.reportQuitRefusal(gateBlocked: true, message: "Saving dictation before quitting…")
+            voiceState.stop()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                var sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+                #if VOICEBAR_QA
+                sleep = self.terminationSaveSleepForTesting ?? sleep
+                #endif
+                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, sleep: sleep)
+                self.quitSavePending = false
+                #if VOICEBAR_QA
+                if let cleanup = self.terminationCleanupForTesting { cleanup(); return }
+                #endif
+                self.performTerminationCleanup()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
         }
+        guard reply == .terminateNow else { return reply }
 
         // Clean shutdown — exit code 0 so launchd KeepAlive.SuccessfulExit:false
         // does NOT respawn. Only crashes (non-zero) trigger restart.
@@ -1558,6 +1617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotkeyEnabled = false
             missingHotkeyPermissions = missing
             voiceState.setHotkeyEnabled(false)
+            voiceState.setSetupMissingPermissions(missing)
             NSLog(
                 "[VoiceBar] Hotkey system unavailable — missing permissions: %@",
                 missingHotkeyPermissions.map {
@@ -1572,6 +1632,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotkeyEnabled = true
             missingHotkeyPermissions = []
             voiceState.setHotkeyEnabled(true)
+            voiceState.setSetupMissingPermissions([])
             NSLog("%@", VoiceBarHotkeyContract.activationLogMessage)
         }
     }
@@ -1983,8 +2044,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .idle:
             return .none
         case .hoverLauncher:
+            // 2.3 U2: the mic and its chevron on the left; History and Settings on the right.
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: 2,
                 trailingControlCountFromCore: 2
             )
         case .recording:
@@ -1994,17 +2056,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .compactStatus:
             switch state.mode {
             case .transcribing:
-                return VoiceBarNotchInteractionConfiguration(
-                    trailingControlCountFromOuter: 1,
-                    trailingOuterInset: WaveformLayout.outerInset
-                )
+                // 2.3 U2: the spinner is not a control; History and Settings stay live on the right.
+                return VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
             case .speaking:
-                // P16: pause/play on the left; a hidden-but-playing read adds its eye beside Stop.
-                // QUEUE1: Next and the "+N" count share the left wing.
+                // P16: pause/play on the left; QUEUE1: Next and the "+N" count share it.
+                // 2.3 U2: Stop at the right wing's outer edge (its time, or a hidden read's eye, beside it).
                 return VoiceBarNotchInteractionConfiguration(
                     leadingControlCount: playbackLeadingSlotCount(for: state),
                     trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
-                    trailingOuterInset: WaveformLayout.outerInset
+                    trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
                 )
             case .error:
                 return VoiceBarNotchInteractionConfiguration(
@@ -2030,6 +2090,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 lowerControlCount += 1
             }
             return VoiceBarNotchInteractionConfiguration(
+                // 2.3 U2: the right wing shows the reading time; the teleprompter's lower row keeps the live Stop.
                 leadingControlCount: state.mode == .speaking ? playbackLeadingSlotCount(for: state) : 0,
                 lowerControlCount: lowerControlCount,
                 lowerSurfaceIsInteractive: state.mode == .speaking
@@ -2061,12 +2122,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     : "flatDisplayFallback",
             ])
         }
+        Self.refreshNotchPresentationModel(
+            notchPresentationModel,
+            for: voiceState,
+            coreWidth: coreWidth,
+            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0,
+            virtualNotchIdleCoreHeight: screenGeometry?.virtualNotchIdleCoreHeight
+        )
+    }
+
+    /// The one feed from VoiceState into a notch presentation model: the app's model and the UIE2E QA host's
+    /// (U2×U4 review: the QA host's model never got it, so its fixtures rendered the idle shell).
+    static func refreshNotchPresentationModel(
+        _ model: VoiceBarNotchPresentationModel,
+        for voiceState: VoiceState,
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0,
+        virtualNotchIdleCoreHeight: CGFloat? = nil
+    ) {
         let resolved = Self.notchPresentation(
             for: voiceState,
             coreWidth: coreWidth,
-            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset
         )
-        notchPresentationModel.updateOperationalEnvelope(
+        model.updateOperationalEnvelope(
             hasTeleprompter: resolved.visualState == .teleprompter,
             isRecording: resolved.visualState == .recording,
             hasCompactStatus: resolved.visualState == .compactStatus,
@@ -2087,12 +2166,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 : nil,
             keepsIdleExpanded: voiceState.mode == .idle && !voiceState.isCollapsed,
             coreWidth: coreWidth,
-            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0,
-            virtualNotchIdleCoreHeight: screenGeometry?.virtualNotchIdleCoreHeight,
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset,
+            virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             transientNoteWidth: resolved.transientNoteWidth,
             feedback: resolved.feedback
         )
-        notchPresentationModel.setHovered(voiceState.isHovering)
+        model.setHovered(voiceState.isHovering)
     }
 
     private static func notchPresentation(
@@ -2915,6 +2994,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    @objc func hideNotchForOneHour(_: Any?) {
+        snoozeForOneHour()
+    }
+
+    @objc func showVoiceBarHelp(_: Any?) {
+        NSWorkspace.shared.open(URL(string: "https://github.com/EtanHey/voicelayer#readme")!)
+    }
+
     @objc func quitFromMenuBar() {
         requestTermination(.menuBar)
     }
@@ -3005,9 +3092,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             menuBarStatusItem = statusItem
             let controller = MenuBarStatusItemController(button: button, presenter: presenter)
             menuBarStatusItemController = controller
+            controller.onVisibilityChange = { [weak statusItem] in statusItem?.isVisible = $0 }
+            controller.alertOnly = VoiceBarAppPresence.statusItemIsAlertOnly(appliedActivationPolicy)
             // The polish warning replaces the waveform, as the MenuBarExtra label did.
             let voiceState = voiceState
             controller.trackAlert { voiceState.polishMenuSignalPending }
+        }
+    }
+
+    // MARK: - Microphone list and setup attention (2.3 U2)
+
+    /// The badged gear opens Settings › General › Permissions (the 3-wings mock's "setup spot").
+    func openSetupAttentionSettings() {
+        openSettingsWindow(tab: .general, focus: .permissions)
+    }
+
+    /// The handoff's presenter: runs only after the coordinator re-admitted the queued menu; returns when the
+    /// menu's modal tracking ends.
+    private func presentNotchMenu(_ kind: VoiceBarNotchMenuKind) {
+        guard let panel, let contentView = panel.contentView else { return }
+        let menu = switch kind {
+        case .microphone: pillContextMenuController.makeMicrophonePickerMenu()
+        }
+        let origin = Self.notchMenuOrigin(kind: kind, menuWidth: menu.size.width, layout: currentPanelLayout())
+        logDiagnostic(event: "notch_microphone_list_opened")
+        menu.popUp(positioning: nil, at: contentView.convert(origin, from: nil), in: contentView)
+    }
+
+    /// The mocks' placement, in window space: the list hangs 6 pt under the 32 pt top row (38 pt from the screen
+    /// top) and ends 4 pt past the left wing's notch-side edge, so it opens beside the mic and away from the notch.
+    static func notchMenuOrigin(kind: VoiceBarNotchMenuKind, menuWidth: CGFloat, layout: VoiceBarPanelLayout) -> CGPoint {
+        let top = layout.panelSize.height - (layout.presentation.geometry.topHeight + 6)
+        switch kind {
+        case .microphone:
+            return CGPoint(x: layout.leadingWingWindowRect.maxX + 4 - menuWidth, y: top)
         }
     }
 
@@ -3222,6 +3340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.voiceState.previewTTSProfile(profile)
                 self?.refreshSettingsWindowAnchorState()
             },
+            cloneEngineControl: cloneEngineControl,
             onReadClipboard: { [weak self] in self?.voiceState.readClipboard() },
             processingPending: { [weak self] in self?.voiceState.processingPending ?? [:] },
             processingNotice: { [weak self] in self?.voiceState.processingNotice },
@@ -3346,7 +3465,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if tab == .transcription { self?.voiceState.refreshRecognizerStatus() }
             },
             historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback },
-            versionCheck: .live
+            versionCheck: .live,
+            onVersionStatusChange: { [weak self] in self?.menuUpdateStatus = $0 }
         )
     }
 

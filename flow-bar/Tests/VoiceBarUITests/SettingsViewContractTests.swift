@@ -63,15 +63,17 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
     }
 
-    /// Approved spec §6: the sticky header shows the search field first, then "Add term".
-    func testDictionaryAddAndSearchAppearBeforeCanonicalCards() throws {
+    /// U3 spec (Dictionary): the header carries "Add term"; the search sits under it, both above the term rows.
+    func testDictionaryHeaderAddThenSearchAppearBeforeCanonicalCards() throws {
         let source = try settingsViewSource()
-        let searchRange = try XCTUnwrap(source.range(of: "searchRow"))
-        let addRange = try XCTUnwrap(source.range(of: "Label(\"Add term\""))
-        let cardRange = try XCTUnwrap(source.range(of: "dictionaryEntryCard"))
+        let tab = try XCTUnwrap(source.components(separatedBy: "private var dictionaryTab: some View {")
+            .dropFirst().first?.components(separatedBy: "private func includedTermsHeaderLabel(").first)
+        let addRange = try XCTUnwrap(tab.range(of: "Label(\"Add term\""))
+        let searchRange = try XCTUnwrap(tab.range(of: "searchRow"))
+        let cardRange = try XCTUnwrap(tab.range(of: "dictionaryEntryCard"))
 
-        XCTAssertLessThan(searchRange.lowerBound, addRange.lowerBound)
-        XCTAssertLessThan(addRange.lowerBound, cardRange.lowerBound)
+        XCTAssertLessThan(addRange.lowerBound, searchRange.lowerBound)
+        XCTAssertLessThan(searchRange.lowerBound, cardRange.lowerBound)
     }
 
     func testSettingsDoesNotExposePositionControls() throws {
@@ -535,7 +537,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
         XCTAssertTrue(source.contains("Section(\"Shortcut\")"))
-        XCTAssertTrue(source.contains("Section(\"Permissions\")"))
+        XCTAssertTrue(source.contains("Text(\"Permissions\")\n                    .id(SettingsFocus.permissions)"))
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))
         XCTAssertTrue(source.contains("F5 key helper"))

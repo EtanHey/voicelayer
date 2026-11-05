@@ -42,6 +42,30 @@ final class F5ResumeIdentityTests: XCTestCase {
         }
     }
 
+    /// F5-owned pause confirmed while still speaking, then the daemon ends playback (speaking -> idle).
+    /// Afterwards, Option+F5 on the same text must start a fresh read (send speak_text).
+    func testSpeakingToIdleWithF5ParkDoesNotSwallowSameTextRead() throws {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        state.isConnected = true
+        state.frontmostAppProvider = { nil }
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.selectionTextCaptureHandler = { $0(.completed("One two")) }
+        state.speakSelection()
+        let requestID = try XCTUnwrap(commands.last?["id"] as? String)
+        state.handleEvent(["type": "ack", "command": "speak_text", "id": requestID, "outcome": "accept"])
+        state.handleEvent(["type": "state", "state": "speaking", "request_id": requestID,
+                           "text": "One two", "playback_id": "read", "generation": 1])
+        state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "read",
+                           "generation": 2, "pause_owner": "f5", "offset_ms": 1000])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertEqual(state.mode, .idle)
+        let before = commands.count
+        state.speakSelection()
+        let sent = commands[before...].contains { $0["cmd"] as? String == "speak_text" }
+        XCTAssertTrue(sent, "commands after: \(commands[before...].map { $0["cmd"] ?? "?" })")
+    }
+
     private func replay(takes: Int, queued: Int, failed: Bool = false) throws {
         let state = VoiceState(playbackAmplitudeClock: { 100 })
         state.isConnected = true
