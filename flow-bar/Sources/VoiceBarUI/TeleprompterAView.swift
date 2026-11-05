@@ -14,6 +14,8 @@ public struct TeleprompterAView: View {
     public var visibleLines = 3
     /// Nil hides the handle (the shell cannot grow yet).
     public var onVisibleLinesChange: ((Int) -> Void)?
+    /// True while the handle owns the pointer (the panel must keep its mouse events), false on release.
+    public var onHandleDrag: ((Bool) -> Void)?
     public var columnWidth = TeleprompterA.columnWidth
     public let playbackElapsedMilliseconds: () -> Int
     public var onSpeechSeek: ((String, Int) -> Void)?
@@ -22,7 +24,7 @@ public struct TeleprompterAView: View {
     public init(text: String, wordBoundaries: [TeleprompterBoundary] = [], displayBlocks: [TeleprompterDisplayBlock] = [],
                 hasCompleteDisplay: Bool = false, speechWords: SpeechWordTable? = nil, isPaused: Bool = false,
                 footerState: String? = nil, queuedCount: Int = 0, visibleLines: Int = 3,
-                onVisibleLinesChange: ((Int) -> Void)? = nil, columnWidth: CGFloat = TeleprompterA.columnWidth,
+                onVisibleLinesChange: ((Int) -> Void)? = nil, onHandleDrag: ((Bool) -> Void)? = nil, columnWidth: CGFloat = TeleprompterA.columnWidth,
                 playbackElapsedMilliseconds: @escaping () -> Int,
                 onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil) {
         self.text = text
@@ -35,6 +37,7 @@ public struct TeleprompterAView: View {
         self.queuedCount = queuedCount
         self.visibleLines = TeleprompterA.clamp(visibleLines)
         self.onVisibleLinesChange = onVisibleLinesChange
+        self.onHandleDrag = onHandleDrag
         self.columnWidth = columnWidth
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.onSpeechSeek = onSpeechSeek
@@ -43,7 +46,7 @@ public struct TeleprompterAView: View {
 
     @State private var cache = TeleprompterAModelCache()
     @State private var dragStartLines: Int?
-    @State private var dragHeight: CGFloat?
+    @State private var handleOvershoot: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
@@ -56,8 +59,7 @@ public struct TeleprompterAView: View {
             TimelineView(.animation(minimumInterval: 1.0 / 30, paused: isPaused)) { _ in
                 column(model, focus: model.focusWord(table: speechWords, clock: playbackElapsedMilliseconds()))
             }
-            .frame(width: columnWidth, height: dragHeight ?? CGFloat(visibleLines) * TeleprompterA.lineHeight,
-                   alignment: .topLeading)
+            .frame(width: columnWidth, height: CGFloat(visibleLines) * TeleprompterA.lineHeight, alignment: .topLeading)
             .clipped()
             footer.frame(width: columnWidth, height: TeleprompterA.footerHeight)
             if onVisibleLinesChange != nil { handle }
@@ -146,24 +148,40 @@ public struct TeleprompterAView: View {
         Capsule()
             .fill(palette.tertiary.color)
             .frame(width: TeleprompterA.handleSize.width, height: TeleprompterA.handleSize.height)
-            .frame(width: 64, height: 14)
+            .frame(width: 64, height: TeleprompterA.handleBandHeight)
             .contentShape(Rectangle())
+            // Icon-only control: the notch's native tooltip, like every wing button.
+            .background(PillControlTooltip(text: "Drag to show more or fewer lines"))
+            .offset(y: handleOvershoot)
+            // Whole lines follow the pointer (the shell settles each with `pull`); past 3 or 8 only the handle
+            // stretches. The window already holds eight lines, so nothing resizes under the pointer.
             .gesture(DragGesture(minimumDistance: 1)
                 .onChanged { value in
+                    if dragStartLines == nil { onHandleDrag?(true) }
                     let start = dragStartLines ?? visibleLines
                     dragStartLines = start
-                    dragHeight = TeleprompterA.draggedHeight(startLines: start, translation: value.translation.height)
+                    var follow = Transaction()
+                    follow.disablesAnimations = true
+                    withTransaction(follow) {
+                        handleOvershoot = TeleprompterA.handleOvershoot(startLines: start, translation: value.translation.height)
+                    }
+                    let lines = TeleprompterA.snappedLines(startLines: start, translation: value.translation.height)
+                    if lines != visibleLines {
+                        withAnimation(reduceMotion ? nil : TeleprompterA.pull) { onVisibleLinesChange?(lines) }
+                    }
                 }
                 .onEnded { value in
                     let lines = TeleprompterA.snappedLines(startLines: dragStartLines ?? visibleLines,
                                                            translation: value.translation.height)
                     dragStartLines = nil
                     withAnimation(reduceMotion ? nil : TeleprompterA.pull) {
-                        dragHeight = nil
+                        handleOvershoot = 0
                         onVisibleLinesChange?(lines)
                     }
+                    onHandleDrag?(false)
                 })
-            .focusable()
+            // Keyboard navigation only: a click must not make the non-activating panel key (R0856-10).
+            .focusable(interactions: .activate)
             .onKeyPress(.upArrow) { step(-1) }
             .onKeyPress(.downArrow) { step(1) }
             .accessibilityElement()

@@ -1,0 +1,15 @@
+{
+  "module": "TeleprompterAHandle",
+  "sources": [
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMorphPrototype.swift"
+  ],
+  "checks": {
+    "Fixed": {"role": "positive", "target": null, "kind": "pass"},
+    "AsyncReleaseMutant": {"role": "mutant", "target": "HandleReachable", "kind": "invariant"},
+    "ShrinkReleaseMutant": {"role": "mutant", "target": "NoDeadBand", "kind": "invariant"}
+  },
+  "acceptance": ["HandleReachable", "NoDeadBand"]
+}

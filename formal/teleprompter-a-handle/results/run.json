@@ -1,0 +1,54 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/teleprompter-a-handle/TeleprompterAHandle.tla": "a4e24343db35cf06127cab36b46253d7577347e54a6a22fe1a2ba1f177f61249",
+    "formal/teleprompter-a-handle/checks.json": "4ae7de4c4b17302316839d4695a204257b6b9c93da616a7c90a607da58f4863b",
+    "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/teleprompter-a-handle/ShrinkReleaseMutant.cfg": "8bda397fadcd9cbb1d41461db134618bcec0cc250b2fbb29dad7950b869e7b6d",
+    "formal/teleprompter-a-handle/AsyncReleaseMutant.cfg": "b19e752e61acbcaf40d67a407517218671b650766e32e45bff0fffd4ccc4f7bd",
+    "formal/teleprompter-a-handle/Fixed.cfg": "2fe97aff7971e98ae5516720c89a746f1e86d0a598b7c1b18b1165df2cb2ec9d",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "0972cf4cf721e81d8b8e7a39170b66d9069598d8cd226884a75259d8f17b1f5c",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "997ff87c0389a2cf5cec98de295d330170ba1a9564c5c1c9e5a31a867cd00bb1",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "7e30051c8168d9fa2083882d7182dbbf857f80873c6d53c214283ea08cc4f7b6",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMorphPrototype.swift": "04c646c9f9cf9e2ee47079a733d65ec4ba8a35ebaadc11f3a2a86f763a7ce39a"
+  },
+  "mutants": {
+    "HandleReachable": [
+      "AsyncReleaseMutant"
+    ],
+    "NoDeadBand": [
+      "ShrinkReleaseMutant"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "5f734bfc3b41df3221b6af76eaab11cb04030a7c771c47caa19659b0edb19875"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 31,
+      "distinct": 12
+    },
+    "AsyncReleaseMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "HandleReachable",
+      "status": "EXPECTED_FAIL",
+      "generated": 9,
+      "distinct": 7
+    },
+    "ShrinkReleaseMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDeadBand",
+      "status": "EXPECTED_FAIL",
+      "generated": 33,
+      "distinct": 18
+    }
+  }
+}

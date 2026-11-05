@@ -132,6 +132,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var isHistoryPanelOpen: Bool = false
     /// V6: the rows the History panel's extend handle settled on (7…12).
     public var historyRows: Int = NotchHistoryMorph.visibleRows
+    public var teleprompterLines: Int = TeleprompterA.lineRange.lowerBound
     /// N5: whether `transientNote` is the busy-selection note (Open History inline). Callers that know set it from
     /// `VoiceState.selectionFeedbackNoteOffersHistory`; nil falls back to recognising the app's own busy copy.
     public var transientNoteOffersHistory: Bool?
@@ -261,6 +262,7 @@ public enum VoiceBarPresentation {
             hasCompactStatus: hasCompactStatus,
             hasHistoryPanel: input.isHistoryPanelOpen,
             historyRows: input.historyRows,
+            teleprompterLines: input.teleprompterLines,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(input: input),
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
             recordingLeadingWingWidth: recordingLeadingWingWidth(

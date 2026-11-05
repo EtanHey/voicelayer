@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "HandleReachable",
+  "status": "EXPECTED_FAIL",
+  "generated": 9,
+  "distinct": 7,
+  "trace": [
+    "/\\ pendingSync = FALSE\n/\\ held = FALSE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = FALSE",
+    "/\\ pendingSync = FALSE\n/\\ held = TRUE\n/\\ drawn = 3\n/\\ hit = 3\n/\\ dragging = TRUE",
+    "/\\ pendingSync = TRUE\n/\\ held = TRUE\n/\\ drawn = 4\n/\\ hit = 3\n/\\ dragging = TRUE",
+    "/\\ pendingSync = TRUE\n/\\ held = FALSE\n/\\ drawn = 4\n/\\ hit = 3\n/\\ dragging = FALSE"
+  ]
+}
