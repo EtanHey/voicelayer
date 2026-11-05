@@ -486,6 +486,9 @@ public struct BarView: View {
         }
         .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
+            // U2×U4 review: a renewed open intent cancels a waiting notch menu even when the panel is still
+            // mounted (reopened during its close spring), where no mount change reaches the handoff.
+            if isOpen { historyBridge?.historyOpenRequested() }
             synchronizeHistoryDismissal(isOpen: isOpen)
             let velocity = pendingHistoryReleaseVelocity
             pendingHistoryReleaseVelocity = 0
@@ -665,6 +668,7 @@ public struct BarView: View {
                     seed: renderedHistoryProgress(at: time)
                 ) else { return }
                 historyFlight = nil // the pointer owns the value now
+                historyBridge?.historyOpenRequested() // grabbing History cancels a waiting notch menu
                 if !isHistoryMounted {
                     historyMorphGeneration &+= 1
                     isHistoryMounted = true

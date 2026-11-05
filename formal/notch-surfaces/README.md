@@ -12,6 +12,8 @@ Lane U2 ships History + the microphone list; lane U1 adds the bare-notch menu as
 
 Presentation is scheduled (the next main-queue turn), so a requested menu is only queued until that block
 runs; History opening in that gap cancels it and `beginPresenting` re-checks (U2 review R1).
+History counts as open while MOUNTED, including its close spring (U2×U4); a reopen during that spring
+cancels a waiting menu through the bridge's explicit `historyOpenRequested` (no mount change fires).
 
 `VoiceBarNotchSurfaceCoordinator` (VoiceBarUI) holds a menu asked for while History is open
 until the view reports History closed (`VoiceBarNotchHistoryBridge.onHistoryPanelChanged`),
@@ -25,6 +27,7 @@ Run: `bash formal/notch-surfaces/check.sh`.
 | Old | `ExclusiveSurfaces` fails | ask History to close and show the menu at once |
 | MutantNoClose | `ExclusiveSurfaces` fails | show the menu over History without closing it |
 | MutantDropPending | `PendingMenuShows` fails (temporal) | the History-closed report forgets the waiting menu |
+| MutantNoReopenCancel | `NoStaleMenu` fails | reopening a History that is still mounted (its close spring running after a menu request) keeps the waiting menu, so a later close opens a stale list (the U2×U4 review defect) |
 | MutantPresentStale | `ExclusiveSurfaces` fails | a scheduled (queued) menu is neither cancelled by History opening nor re-checked when it runs (the U2 review R1 defect) |
 
 Swift guards: `WingsU2Tests.testAMenuAskedForOverHistoryWaitsForHistoryToClose`,

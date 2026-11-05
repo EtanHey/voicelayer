@@ -3,7 +3,7 @@
   "kind": "pass",
   "target": null,
   "status": "PASS",
-  "generated": 78,
-  "distinct": 47,
+  "generated": 129,
+  "distinct": 62,
   "trace": []
 }
