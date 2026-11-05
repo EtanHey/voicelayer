@@ -691,12 +691,11 @@ final class SocketServerTests: XCTestCase {
         windows.append(window)
         host.layoutSubtreeIfNeeded()
 
-        // 2.3 U5: the teleprompter window reserves five more Teleprompter A lines below its resting body.
-        try click(
-            host,
-            at: NSPoint(x: host.bounds.midX - 28, y: 23 + 5 * TeleprompterA.lineHeight),
-            in: window
-        )
+        // 2.3 U5: Stop left the lower row, which re-centred Replay; find it by its native tooltip view and click its
+        // centre in window coordinates (`click` takes window points; the hosting view is flipped).
+        func subviews(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(subviews) }
+        let replay = try XCTUnwrap(subviews(host).first { $0.toolTip == "Replay" && !$0.visibleRect.isEmpty })
+        try click(host, at: replay.convert(NSPoint(x: replay.bounds.midX, y: replay.bounds.midY), to: nil), in: window)
 
         let replayCommand = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
         XCTAssertTrue(replayCommand.contains(#""cmd":"replay""#))
