@@ -90,7 +90,7 @@ final class MenuBarStatusItemController: NSObject {
         presenter.isShown
     }
 
-    /// The popover's window while it is open, for "Open Settings…" / "Run setup…" to close.
+    /// The popover's window while it is open, for "Open Settings…" / "Fix <step>…" to close.
     var popoverWindow: NSWindow? {
         presenter.isShown ? presenter.window : nil
     }

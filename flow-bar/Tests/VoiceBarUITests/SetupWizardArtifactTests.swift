@@ -88,8 +88,8 @@ final class SetupWizardArtifactTests: XCTestCase {
         }
     }
 
-    /// The way back in: "Run setup…" in the menu-bar popover (General's "Run setup again" was removed for permission
-    /// health, 2026-11-07).
+    /// Historical entry-point frames (F3). Both generic re-run entries were removed for permission health
+    /// (2026-11-07); the popover frame now shows no setup row because nothing is broken.
     func testWritesTheEntryPointsInLightAndDark() throws {
         try VisualArtifactTestPolicy.requireRegeneration()
         let directory = URL(fileURLWithPath: #filePath)

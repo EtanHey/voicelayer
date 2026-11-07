@@ -13,8 +13,10 @@ public struct MenuBarPopoverView: View {
     @State private var copyFeedback = CopyFeedback()
     public let onSettings: () -> Void
     public let onQuit: () -> Void
-    /// Opens the setup wizard (F3).
-    public let onRunSetup: () -> Void
+    /// The first broken Setup step, or nil: healthy shows no setup entry at all (permission health, 2026-11-07).
+    public let setupAlert: MenuBarSetupAlert?
+    /// Opens Settings › General scrolled to the first broken step.
+    public let onFixSetup: () -> Void
     /// Opens Settings › General › Microphone priority. There is no direct device pick here (D2).
     public let onChangeMicrophone: () -> Void
     public let onLayout: ([String: CGRect]) -> Void
@@ -28,7 +30,8 @@ public struct MenuBarPopoverView: View {
         onCopy: @escaping () -> Bool = { false },
         onSettings: @escaping () -> Void = {},
         onQuit: @escaping () -> Void = {},
-        onRunSetup: @escaping () -> Void = {},
+        setupAlert: MenuBarSetupAlert? = nil,
+        onFixSetup: @escaping () -> Void = {},
         onChangeMicrophone: @escaping () -> Void = {},
         onLayout: @escaping ([String: CGRect]) -> Void = { _ in }
     ) {
@@ -40,7 +43,8 @@ public struct MenuBarPopoverView: View {
         self.onCopy = onCopy
         self.onSettings = onSettings
         self.onQuit = onQuit
-        self.onRunSetup = onRunSetup
+        self.setupAlert = setupAlert
+        self.onFixSetup = onFixSetup
         self.onChangeMicrophone = onChangeMicrophone
         self.onLayout = onLayout
     }
@@ -152,18 +156,37 @@ public struct MenuBarPopoverView: View {
             .font(.system(size: 12))
             .buttonStyle(.plain)
             .popoverFrame("footer")
-            Button("Run setup…", action: onRunSetup)
+            // Etan, 2026-11-07: no generic re-run entry; only a broken step, named, straight to its fix.
+            if let setupAlert {
+                Button(action: onFixSetup) {
+                    Label(setupAlert.title, systemImage: "exclamationmark.circle.fill")
+                }
                 .buttonStyle(.link)
                 .font(.system(size: 12))
-                .help("Walk through permissions, the F5 key, your microphone and a test dictation again.")
+                .help(setupAlert.help)
                 .accessibilityIdentifier("popover-setup")
                 .popoverFrame("setup")
+            }
         }
         .frame(width: 276)
         .padding(12)
         .focusEffectDisabled()
         .coordinateSpace(name: "popover")
         .onPreferenceChange(PopoverFramesKey.self, perform: onLayout)
+    }
+}
+
+/// The popover's setup row: names the first broken Setup step. Nil when nothing is broken.
+public struct MenuBarSetupAlert: Equatable, Sendable {
+    public let step: SettingsSetupStepID
+    public let title: String
+    public let help: String
+
+    public init?(setup: SettingsGeneralSetup) {
+        guard let step = setup.steps.first else { return nil }
+        self.step = step.id
+        title = "Fix \(step.title)…"
+        help = step.description + " Opens Settings › General."
     }
 }
 

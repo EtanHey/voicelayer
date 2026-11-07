@@ -1621,6 +1621,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         permissionHealth.refresh(trigger, force: force)
     }
 
+    /// The popover's setup row: General › Setup's first broken step from the latest health reading. Nil when healthy,
+    /// and nil before the monitor starts (QA launches that skip the listener).
+    func menuBarSetupAlert() -> MenuBarSetupAlert? {
+        guard let reading = permissionHealth.reading else { return nil }
+        return MenuBarSetupAlert(setup: SettingsGeneralSetup(
+            permissions: SetupPermissionsStep(snapshot: reading.snapshot(hotkeyListenerActive: hotkeyEnabled)).rows,
+            hotkeyListenerActive: hotkeyEnabled, f5CheckedAt: nil, voice: nil
+        ))
+    }
+
     /// Status only: the F5 listener's running state (`hotkeyEnabled`) is never changed here; a listener that is off
     /// once the permissions are back offers "Restart F5 listener" in Settings.
     private func applyPermissionHealth(_ reading: PermissionHealthReading, trigger: PermissionHealthTrigger) {
@@ -3249,13 +3259,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if shouldShow() { openSetupWizard() }
     }
 
-    /// "Run setup…" in the menu-bar popover: close the popover first, as Open Settings… does.
-    func openSetupWizardFromMenuBar(popover: NSWindow?) {
-        MainActor.assumeIsolated { menuBarStatusItemController?.closeIfPresenting(popover) }
-        Self.dismissMenuBarPopover(popover, keeping: nil)
-        openSetupWizard()
-    }
-
     /// First launch: once the F5 listener has started, decide whether the wizard opens by itself
     /// (SetupWizardLaunchPolicy). A Mac that has dictated before is already set up and never sees it (#211 r1).
     /// QA and test instances that skip permission prompts never show it.
@@ -3760,6 +3763,7 @@ struct MenuBarPopoverHost: View {
     var body: some View {
         popover
             .onAppear {
+                appDelegate.refreshPermissionHealth(.menuBarOpened)
                 voiceState.acknowledgePolishMenuSignal()
                 menuMicrophoneRefresh &+= 1
             }
@@ -3784,7 +3788,12 @@ struct MenuBarPopoverHost: View {
             onCopy: { voiceState.copyLastTranscript() },
             onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
             onQuit: { appDelegate.quitFromMenuBar() },
-            onRunSetup: { appDelegate.openSetupWizardFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
+            setupAlert: appDelegate.menuBarSetupAlert(),
+            onFixSetup: {
+                appDelegate.openSettingsFromMenuBar(
+                    popover: AppDelegate.menuBarPopoverWindow(), tab: .general, focus: .permissions
+                )
+            },
             onChangeMicrophone: {
                 appDelegate.openSettingsFromMenuBar(
                     popover: AppDelegate.menuBarPopoverWindow(),

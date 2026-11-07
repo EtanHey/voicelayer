@@ -1570,10 +1570,10 @@ extension VoiceBarFlowTests {
         guard click(app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@",
             "popover-microphone", "Change default microphone in Settings")).firstMatch) else { return }
         receipt("popover-microphone")
+        // Permission health (2026-11-07): "Run setup…" became "Fix <step>…", which opens General at Setup.
         guard openQAPopover(), click(app.descendants(matching: .any).matching(identifier: "popover-setup").firstMatch,
-            "popover Run setup") else { return }
+            "popover Fix Accessibility") else { return }
         receipt("popover-setup")
-        wizardFlow()
         guard openQAPopover(), click(app.buttons["popover-quit"], evidenceContract: "terminated") else { return }
         step("assert QA popover Quit", evidenceContract: "terminated") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
         receipt("popover-quit", evidenceContract: "terminated")

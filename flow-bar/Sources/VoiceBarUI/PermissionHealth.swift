@@ -42,7 +42,7 @@ public struct PermissionHealthReading: Equatable, Sendable {
 
 /// Why a re-check ran. Logged, and lets a test say which seam caught a reset.
 public enum PermissionHealthTrigger: String, Sendable {
-    case launch, appActivated, settingsOpened, notchHovered, captureEnded, listenerChanged, poll
+    case launch, appActivated, settingsOpened, menuBarOpened, notchHovered, captureEnded, listenerChanged, poll
 }
 
 /// Re-reads permission state while VoiceBar runs, so a permission revoked in System Settings (or reset by `tccutil`

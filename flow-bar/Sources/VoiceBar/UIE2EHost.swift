@@ -476,7 +476,14 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 transcript: UIE2EModel.transcript, onCopy: { self.model.copy(UIE2EModel.transcript) },
                 onSettings: { self.popoverPresenter?.close(); self.settings.makeKeyAndOrderFront(nil); self.model.receipt("popover-settings") },
                 onQuit: { self.model.receipt("popover-quit"); NSApp.terminate(nil) },
-                onRunSetup: { self.popoverPresenter?.close(); self.model.receipt("popover-setup"); self.openWizard() },
+                // A fixture broken step, so the popover's setup row exists; it opens General at Setup.
+                setupAlert: MenuBarSetupAlert(setup: SettingsGeneralSetup(
+                    permissions: SetupPermissionsStep(snapshot: SetupPermissionSnapshot(
+                        microphone: .granted, accessibilityGranted: false, inputMonitoringGranted: true,
+                        hotkeyListenerActive: true)).rows,
+                    hotkeyListenerActive: true, f5CheckedAt: nil, voice: nil)),
+                onFixSetup: { self.popoverPresenter?.close(); self.model.tab = .general; self.model.focus = .permissions
+                    self.model.requestID += 1; self.model.receipt("popover-setup") },
                 onChangeMicrophone: { self.popoverPresenter?.close(); self.model.tab = .general; self.model.requestID += 1; self.model.receipt("popover-microphone") }))
         }
         popoverPresenter = presenter

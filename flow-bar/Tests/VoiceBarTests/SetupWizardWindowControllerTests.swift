@@ -78,7 +78,9 @@ final class SetupWizardWindowControllerTests: XCTestCase {
             "failure: voiceState.mode == .error ? voiceState.errorMessage : nil",
             "archiveRoot: SettingsHistoryArchive.defaultRoot",
             "SetupWizardLaunchPolicy.resolve(store: store, hasPriorUse: hasPriorUse, readiness: readiness)",
-            "onRunSetup: { appDelegate.openSetupWizardFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) }",
+            "setupAlert: appDelegate.menuBarSetupAlert(),",
+            "popover: AppDelegate.menuBarPopoverWindow(), tab: .general, focus: .permissions",
+            "appDelegate.refreshPermissionHealth(.menuBarOpened)",
         ] {
             XCTAssertTrue(app.contains(wiring), wiring)
         }

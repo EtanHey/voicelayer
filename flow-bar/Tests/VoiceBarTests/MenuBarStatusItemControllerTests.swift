@@ -195,7 +195,7 @@ final class MenuBarStatusItemControllerTests: XCTestCase {
         XCTAssertTrue(item.isPopoverShown)
     }
 
-    /// "Open Settings…" / "Run setup…" close the popover they were clicked in, through the popover itself so the
+    /// "Open Settings…" / "Fix <step>…" close the popover they were clicked in, through the popover itself so the
     /// next press opens it again.
     func testClosingFromTheMenuBarClosesOnlyItsOwnPopover() {
         let popover = FakePopover()
