@@ -85,6 +85,7 @@ final class HistoryScrollRestoreTests: XCTestCase {
                       "the selected long dictation's detail pane can scroll")
 
         host.layoutSubtreeIfNeeded()
+        print("History initial layout: \(scrollDiagnostics(in: host)); backingScale=\(window.backingScaleFactor)")
         XCTAssertTrue(settle { historyKeepers(in: host).count == 2 && historyKeepers(in: host).allSatisfy(\.hasRestored) },
                       "both scroll keepers attach before simulating the user's scroll")
 
@@ -111,6 +112,7 @@ final class HistoryScrollRestoreTests: XCTestCase {
         if releaseReloadImmediately { reload.release() }
 
         XCTAssertTrue(settle { historyScrollViews(in: host).list != nil && historyScrollViews(in: host).detail != nil })
+        print("History rebuilt before reload wait: \(scrollDiagnostics(in: host))")
         XCTAssertTrue(settle { reload.started }, "re-entry starts its asynchronous archive reload")
         if !releaseReloadImmediately {
             // Force the reload to finish AFTER the rebuilt keepers restore. The old fixed delay could
@@ -126,6 +128,7 @@ final class HistoryScrollRestoreTests: XCTestCase {
                 && abs((scrolls.list?.contentView.bounds.origin.y ?? -1) - 400) <= 2
                 && abs((scrolls.detail?.contentView.bounds.origin.y ?? -1) - 260) <= 2
         }, "re-entry layout and both restores finish: \(scrollDiagnostics(in: host))")
+        print("History restored: \(scrollDiagnostics(in: host))")
         pause() // allow a subsequent lazy layout to invalidate an unstable restore
         (list, detail) = historyScrollViews(in: host)
         XCTAssertEqual(try XCTUnwrap(list).contentView.bounds.origin.y, 400, accuracy: 2,
@@ -219,6 +222,62 @@ final class HistoryScrollRestoreTests: XCTestCase {
 /// restores once the content is tall enough.
 @MainActor
 final class SettingsHistoryScrollKeeperTests: XCTestCase {
+    /// A rebuilt lazy document can expose its old estimate while it is still attaching. A live-scroll
+    /// notification inside that attachment re-enters layout with an incomplete document (hosted: 464 pt).
+    /// Force that ordering without depending on the OS's lazy-layout scheduling.
+    func testRestoreWaitsUntilDocumentAttachmentFinishes() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(400, for: .list)
+        let view = scrollView(height: 1800)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
+        var attaching = true
+        let token = NotificationCenter.default.addObserver(forName: NSScrollView.didLiveScrollNotification,
+                                                           object: view.scroll, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                if attaching { self.resizeDocument(view.scroll, height: 464) }
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        view.scroll.documentView?.addSubview(keeper)
+        attaching = false
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 0, "no scroll while the document is attaching")
+        clock.drain()
+        XCTAssertEqual(view.scroll.documentView?.frame.height, 1800, "initial layout retained the complete extent")
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 400, accuracy: 0.5)
+        XCTAssertEqual(memory.offset(for: .list), 400)
+        _ = view.window
+    }
+
+    func testUserScrollBeforeFirstRestoreCancelsTheQueuedAttempt() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(400, for: .list)
+        let view = scrollView(height: 1800)
+        let clock = ManualRetryClock()
+        view.scroll.documentView?.addSubview(makeKeeper(memory, clock))
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: view.scroll)
+        view.scroll.contentView.scroll(to: NSPoint(x: 0, y: 120))
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: view.scroll)
+        clock.drain()
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 120, accuracy: 0.5)
+        XCTAssertEqual(memory.offset(for: .list), 120, "the user's position wins before the first scheduled restore")
+        _ = view.window
+    }
+
+    func testDetachBeforeFirstRestoreInvalidatesTheQueuedAttempt() {
+        let memory = SettingsHistoryScrollMemory()
+        memory.record(400, for: .list)
+        let view = scrollView(height: 1800)
+        let clock = ManualRetryClock()
+        let keeper = makeKeeper(memory, clock)
+        view.scroll.documentView?.addSubview(keeper)
+        keeper.removeFromSuperview()
+        clock.drain()
+        XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 0)
+        XCTAssertEqual(memory.offset(for: .list), 400)
+        _ = view.window
+    }
+
     func testPassiveDocumentClampDuringRestoreKeepsAndRestoresTheRememberedPosition() {
         let memory = SettingsHistoryScrollMemory()
         memory.record(400, for: .list)
@@ -233,6 +292,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
             }
         }
         view.scroll.documentView?.addSubview(keeper)
+        clock.step() // first restore runs after attachment
         NotificationCenter.default.removeObserver(token)
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 100, accuracy: 0.5, "AppKit really clamped the origin")
         XCTAssertEqual(memory.offset(for: .list), 400, "passive layout is not a user scroll")
@@ -249,6 +309,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let clock = ManualRetryClock()
         let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
+        clock.step() // first restore runs after attachment
         view.window.setContentSize(NSSize(width: 300, height: 1700))
         view.scroll.layoutSubtreeIfNeeded()
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 100, accuracy: 0.5, "the larger viewport clamped the origin")
@@ -265,6 +326,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let clock = ManualRetryClock()
         let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
+        clock.step() // first restore runs after attachment
         resizeDocument(view.scroll, height: 900)
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 500, accuracy: 0.5)
         userScroll(view.scroll, by: -200)
@@ -282,6 +344,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let view = scrollView(height: 1800)
         let clock = ManualRetryClock()
         view.scroll.documentView?.addSubview(makeKeeper(memory, clock))
+        clock.step() // first restore runs after attachment
         NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: view.scroll)
         resizeDocument(view.scroll, height: 500)
         NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: view.scroll)
@@ -299,6 +362,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let clock = ManualRetryClock()
         let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
+        clock.step() // first restore runs after attachment
         resizeDocument(view.scroll, height: 900)
         for _ in 0..<15 { clock.step() }
         resizeDocument(view.scroll, height: 800)
@@ -348,6 +412,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let clock = ManualRetryClock()
         let rebuilt = makeKeeper(memory, clock)
         second.scroll.documentView?.addSubview(rebuilt)
+        clock.step() // first restore runs after attachment
         XCTAssertFalse(rebuilt.hasRestored, "waits for content tall enough to hold the position")
         XCTAssertEqual(memory.offset(for: .list), 650)
         clock.step(); clock.step() // two retries pass while the content is still short
@@ -368,6 +433,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let clock = ManualRetryClock()
         let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
+        clock.step() // first restore runs after attachment
         XCTAssertFalse(keeper.hasRestored, "waiting for content")
         userScroll(view.scroll, by: 200)
         XCTAssertEqual(view.scroll.contentView.bounds.origin.y, 200, accuracy: 0.5, "the user's wheel scroll landed")
@@ -388,6 +454,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let clock = ManualRetryClock()
         let keeper = makeKeeper(memory, clock)
         view.scroll.documentView?.addSubview(keeper)
+        clock.step() // first restore runs after attachment
         XCTAssertFalse(keeper.hasRestored, "waiting for content")
         // A layout pass resizes the visible area. AppKit posts no bounds notification for a frame-driven
         // resize, so the clip's bounds size is changed directly: that posts boundsDidChange with the origin
@@ -420,6 +487,7 @@ final class SettingsHistoryScrollKeeperTests: XCTestCase {
         let gaveUp = expectation(description: "the keeper gave up")
         keeper.onGaveUp = { gaveUp.fulfill() }
         view.scroll.documentView?.addSubview(keeper)
+        clock.step() // first restore runs after attachment
         XCTAssertFalse(keeper.hasRestored, "waiting for content")
         let retries = clock.drain()
         wait(for: [gaveUp], timeout: 1)
