@@ -1,8 +1,8 @@
 import Foundation
 
-/// One non-prompting read of the three permissions VoiceBar needs (2.3 permission health). The app reads them with
-/// `AVCaptureDevice.authorizationStatus(for:)`, `AXIsProcessTrusted()` (no prompt option) and
-/// `CGPreflightListenEventAccess()`; none of those can show a TCC dialog.
+/// One non-prompting read of the three permissions VoiceBar needs (2.3 permission health). The app target does the
+/// reading (`AppDelegate.readPermissionHealth()`, status-only APIs that cannot show a TCC dialog); this presentation
+/// module only holds the result.
 public struct PermissionHealthReading: Equatable, Sendable {
     public let microphone: SetupMicrophoneAuthorization
     public let accessibilityGranted: Bool
