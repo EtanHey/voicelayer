@@ -29,24 +29,43 @@ extension VoiceBarFlowTests {
         XCTAssertEqual(receipt?["trailingWingWidth"] as? Double ?? -1, fixed, accuracy: 0.001, "\(fixture) right wing")
     }
 
-    /// Buttons in the pill's top row, split by the pill's horizontal centre (the core).
+    /// Buttons in the pill's top row, split by the pill's horizontal centre (the core). One AX snapshot per call:
+    /// the native 8a36d965 run spent ~1 s per element-by-element pass (13 queries x ~90 ms, twice per poll), so
+    /// the 3 s wait timed out although the very next read matched (AX dump: the wings sit inside the pill dialog).
     func wingButtons() -> (left: [String], right: [String]) {
-        let pill = qaPill.frame
-        let row = qaPill.buttons.allElementsBoundByIndex.filter {
-            $0.exists && $0.frame.height > 0 && $0.frame.midY < pill.minY + 40
+        guard let pill = try? qaPill.snapshot() else { return ([], []) }
+        var buttons: [XCUIElementSnapshot] = []
+        func collect(_ node: XCUIElementSnapshot) {
+            if node.elementType == .button { buttons.append(node) }
+            node.children.forEach(collect)
         }
-        return (row.filter { $0.frame.midX < pill.midX }.map(\.label),
-                row.filter { $0.frame.midX > pill.midX }.map(\.label))
+        pill.children.forEach(collect)
+        let row = buttons.filter { $0.frame.height > 0 && $0.frame.midY < pill.frame.minY + 40 }
+        return (row.filter { $0.frame.midX < pill.frame.midX }.map(\.label),
+                row.filter { $0.frame.midX > pill.frame.midX }.map(\.label))
     }
 
     func assertWing(_ fixture: String, left: [String], right: [String]) {
         XCTAssertTrue(qaPill.waitForExistence(timeout: 3), "QA pill")
-        waitUntil { Set(self.wingButtons().left).isSuperset(of: left) && Set(self.wingButtons().right).isSuperset(of: right) }
+        waitUntil({
+            let wings = self.wingButtons()
+            return Set(wings.left).isSuperset(of: left) && Set(wings.right).isSuperset(of: right)
+        }, timeout: 10)
         let wings = wingButtons()
         for label in left { XCTAssertTrue(wings.left.contains(label), "\(fixture): \(label) on the left; got \(wings.left)") }
         for label in right { XCTAssertTrue(wings.right.contains(label), "\(fixture): \(label) on the right; got \(wings.right)") }
         XCTAssertLessThanOrEqual(wings.right.count, 2, "\(fixture): never a third right-wing control: \(wings.right)")
         assertFixedWings(fixture)
+    }
+
+    func firstClickReceipts() -> [[String: Any]] { uie2eFirstClickReceipts(root) }
+
+    func assertFirstClickInactive(_ records: [[String: Any]], _ control: String) {
+        XCTAssertFalse(records.isEmpty, "\(control): the host recorded the mouse-down on the pill")
+        for record in records {
+            XCTAssertEqual(record["appActive"] as? Bool, false, "\(control): VoiceBar was not active at click time: \(record)")
+            XCTAssertEqual(record["pillKey"] as? Bool, false, "\(control): the pill was not key at click time: \(record)")
+        }
     }
 
     func testWingsU2Flow() throws {
@@ -86,9 +105,13 @@ extension VoiceBarFlowTests {
               "badged gear opens the setup spot")
         step("assert Settings › General at Permissions") {
             waitUntil { self.fixtureEvents().dropFirst(beforeSetup).contains("setup-settings") }
+            // General's permission rows sit under "Finish setup" while one is broken (SettingsGeneralSetup.header);
+            // there is no "Permissions" heading. The broken row the gear named must be on screen and reachable.
             let settings = app.windows["VoiceBar QA Settings"]
-            XCTAssertTrue(settings.staticTexts["Permissions"].waitForExistence(timeout: 3))
-            XCTAssertTrue(settings.staticTexts["Permissions"].isHittable, "scrolled to the broken rows")
+            XCTAssertTrue(settings.staticTexts["Finish setup"].waitForExistence(timeout: 3), "the setup section heads General")
+            let broken = settings.buttons["Open System Settings: Accessibility"]
+            XCTAssertTrue(broken.waitForExistence(timeout: 3), "the Accessibility row offers its fix")
+            XCTAssertTrue(broken.isHittable, "scrolled to the broken rows")
             activePage = "General"
         }
 
@@ -124,9 +147,11 @@ extension VoiceBarFlowTests {
         step("WINGS-U2 first-click") {
             let history = qaPill.buttons["History"]
             XCTAssertTrue(history.waitForExistence(timeout: 3))
-            try mutate { history.click() }
+            let beforeClicks = firstClickReceipts().count
+            try mutate { try XCTUnwrap(uie2eForegroundPoint(history, via: finder), "Finder anchor").click() }
             waitUntil { self.qaPill.buttons["Close history"].exists }
             XCTAssertTrue(qaPill.buttons["Close history"].exists, "the first click acted")
+            assertFirstClickInactive(Array(firstClickReceipts().dropFirst(beforeClicks)), "History")
             XCTAssertEqual(finder.state, .runningForeground, "the first click left Finder frontmost")
             XCTAssertFalse(fixtureEvents().dropFirst(beforeFirst).contains("pill-became-key"),
                            "the first click did not make the pill key")
@@ -142,15 +167,26 @@ extension VoiceBarFlowTests {
         step("WINGS-U2 first-click-chevron") {
             let chevron = qaPill.buttons["Choose microphone"]
             XCTAssertTrue(chevron.waitForExistence(timeout: 3))
-            try mutate { chevron.click() }
+            let beforeClicks = firstClickReceipts().count
+            try mutate { try XCTUnwrap(uie2eForegroundPoint(chevron, via: finder), "Finder anchor").click() }
             waitUntil { self.fixtureEvents().dropFirst(beforeChevron).contains("microphone-list-open") }
             XCTAssertTrue(app.menuItems["Microphone priority…"].waitForExistence(timeout: 3), "the first click acted")
             XCTAssertFalse(qaPill.buttons["Close history"].exists, "History closed before the list showed")
+            assertFirstClickInactive(Array(firstClickReceipts().dropFirst(beforeClicks)), "chevron")
             XCTAssertEqual(finder.state, .runningForeground, "opening the list left Finder frontmost")
             XCTAssertFalse(fixtureEvents().dropFirst(beforeChevron).contains("pill-became-key"),
                            "the first click did not make the pill key")
         }
-        click(app.menuItems["Microphone priority…"], "close the list through its footer")
+        // The list was opened without activating VoiceBar QA. XCUIElement.click() would activate it first, which
+        // dismisses the open menu before the click lands, so close it through the same Finder-anchored path.
+        let beforeFooter = fixtureEvents().count
+        step("close the list through its footer") {
+            let footer = app.menuItems["Microphone priority…"]
+            XCTAssertTrue(footer.waitForExistence(timeout: 3), "the list is still open")
+            try mutate { try XCTUnwrap(uie2eForegroundPoint(footer, via: finder), "Finder anchor").click() }
+            waitUntil { self.fixtureEvents().dropFirst(beforeFooter).contains("menu-microphone") }
+            XCTAssertFalse(app.menuItems["Microphone priority…"].exists, "the list closed")
+        }
 
         // Queued-presentation cancellation through the production handoff: the scheduled presentation is held,
         // the user opens History in the gap, and the released block must show nothing.
@@ -173,4 +209,23 @@ extension VoiceBarFlowTests {
         click(qaPill.buttons["Close history"], "close History")
         click(app.buttons["qa-fixture-idle"])
     }
+}
+
+/// The host's first-click receipts (UIE2EHost.installFirstClickReceipts): one record per mouse-down on the pill.
+func uie2eFirstClickReceipts(_ root: URL) -> [[String: Any]] {
+    guard let data = try? Data(contentsOf: root.appendingPathComponent("first-click.json")) else { return [] }
+    return (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+}
+
+/// A point on `target`, addressed through the frontmost app's menu bar. XCUIElement.click() and hover() first
+/// "Activate" the element's own application (8a36d965 test.log, step 33), which makes Finder's state and
+/// NSApp.isActive useless as a first-click oracle. Anchored on Finder, XCUITest activates Finder (already
+/// frontmost) and the synthesized event lands on whatever window is topmost at that point: the pill.
+func uie2eForegroundPoint(_ target: XCUIElement, via frontmost: XCUIApplication) -> XCUICoordinate? {
+    let anchor = frontmost.menuBars.firstMatch
+    guard anchor.exists, target.exists else { return nil }
+    let anchorFrame = anchor.frame
+    let frame = target.frame
+    return anchor.coordinate(withNormalizedOffset: .zero)
+        .withOffset(CGVector(dx: frame.midX - anchorFrame.minX, dy: frame.midY - anchorFrame.minY))
 }

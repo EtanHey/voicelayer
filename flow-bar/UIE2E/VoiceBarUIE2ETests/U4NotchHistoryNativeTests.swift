@@ -61,10 +61,18 @@ final class U4NotchHistoryNativeTests: XCTestCase {
             // The host orders Settings out for U4. As in U2, a real click from Finder must leave it frontmost.
             finder.activate()
             try require(finder.wait(for: .runningForeground, timeout: 5), "Finder receives keyboard events")
-            pill.hover()
+            // Hover and click through Finder's anchor: pill.hover()/history.click() would activate VoiceBar QA
+            // first, so neither Finder's state nor the host receipt could tell a product activation from XCUITest's.
+            try require(pill.exists, "the QA pill")
+            try XCTUnwrap(uie2eForegroundPoint(pill, via: finder), "Finder anchor").hover()
             let history = pill.buttons["History"]
             try require(history.waitForExistence(timeout: 4), "the launcher's History button")
-            history.click()
+            let beforeClicks = uie2eFirstClickReceipts(root).count
+            try XCTUnwrap(uie2eForegroundPoint(history, via: finder), "Finder anchor").click()
+            let clicks = Array(uie2eFirstClickReceipts(root).dropFirst(beforeClicks))
+            try require(!clicks.isEmpty, "the host recorded the mouse-down on the pill")
+            try require(clicks.allSatisfy { $0["appActive"] as? Bool == false && $0["pillKey"] as? Bool == false },
+                        "History never activates VoiceBar or keys the pill at click time: \(clicks)")
             try require(finder.state == .runningForeground, "History never activates VoiceBar")
             try require(handle.waitForExistence(timeout: 4), "the open panel shows its extend handle")
             try require(pill.descendants(matching: .any).matching(identifier: "notch-history-extend-handle").count == 1,

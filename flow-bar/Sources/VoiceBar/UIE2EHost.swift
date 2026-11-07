@@ -62,6 +62,8 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var holdsMenuQueue = false
     var heldMenuPresentations: [() -> Void] = []
     private var historyEscapeMonitors: [Any] = []
+    private var firstClickMonitor: Any?
+    private var firstClickRecords: [[String: Any]] = []
 #if VOICEBAR_UIE2E_GATE2245
     var gate2245: UIE2EGate2245?
 #endif
@@ -187,6 +189,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pill.orderFront(nil)
         settings.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "wings-u2"
+            || ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS"] != nil {
+            installFirstClickReceipts()
+        }
         if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS"] != nil {
             // U4 exercises the normal nonactivating click path with another app frontmost, not Settings' Esc.
             settings.orderOut(nil)
@@ -223,9 +229,27 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }) { historyEscapeMonitors.append(monitor) }
     }
 
+    /// First-click oracle (U2 wings-u2, U4): whether VoiceBar was active, and whether the pill was key, at the moment
+    /// a mouse-down reached the pill. Written by the host at click time, because Finder's state after the click
+    /// cannot tell a product activation from XCUITest's own activation of the app under test.
+    private func installFirstClickReceipts() {
+        firstClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, let pill = self.pill, event.window === pill else { return }
+                self.firstClickRecords.append(["appActive": NSApp.isActive, "pillKey": pill.isKeyWindow,
+                                               "frontmost": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
+                                               "eventTimestamp": event.timestamp])
+                self.sandbox.writeObject(self.firstClickRecords, file: "first-click.json")
+            }
+            return event
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         historyEscapeMonitors.forEach(NSEvent.removeMonitor)
         historyEscapeMonitors.removeAll()
+        if let firstClickMonitor { NSEvent.removeMonitor(firstClickMonitor) }
+        firstClickMonitor = nil
     }
 
     /// Shared with the offscreen layout regression test; constructing this view starts no services.
