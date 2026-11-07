@@ -44,6 +44,10 @@ No speaker playback or M1 permission grants are part of the fixture test.
    It must refuse active capture/session locks, afplay/say/edge-tts/rec/sox or
    unknown descendants, and established Qwen connections (including uncertain
    keep-alive connections). Resolve refusals through the captain, never bypass.
+   An idle state file with a dead PID is accepted only when its mtime strictly
+   predates the verified resident app's sole bundled Bun daemon start time.
+   UTC `ps lstart` has second precision: equal/newer mtimes, non-idle state,
+   unknown start time or changed identity refuse. The file is never rewritten.
 4. Require a proven clean exit (LaunchAgent last exit code 0), then observe no
    resident for five seconds before launch and another five seconds after QA is ready. A respawn aborts the switch and attempts normal supervised
    restoration. Confirm status shows one QA, zero resident. Fixture mode must show no microphone,
