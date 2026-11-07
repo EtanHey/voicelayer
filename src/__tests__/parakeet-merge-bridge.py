@@ -40,6 +40,35 @@ for name in ("merge_longest_contiguous", "merge_longest_common_subsequence"):
         [before, *a], [*b, after], overlap_duration=2.0
     ) == [before, *b, after]
 
+# Same spoken boundary word, different subword IDs and punctuation. Timestamp
+# fallback used to keep only " o" from the first chunk and "." from the next.
+for name in ("merge_longest_contiguous", "merge_longest_common_subsequence"):
+    prefix = token_class(id=1, text=" Ready,", start=25.0, duration=0.4)
+    a = [prefix, token_class(id=2, text=" o", start=28.56, duration=0.32),
+         token_class(id=3, text="kay", start=28.88, duration=0.32),
+         token_class(id=4, text="?", start=29.2, duration=0.32)]
+    b = [token_class(id=5, text=" Okay", start=28.56, duration=0.24),
+         token_class(id=6, text=".", start=29.04, duration=0.24)]
+    suffix = token_class(id=7, text=" Continue.", start=30.0, duration=0.4)
+    for later in (b, [*b, suffix]):
+        merged = getattr(alignment, name)(a, later, overlap_duration=2.0)
+        assert merged == a + ([suffix] if len(later) > len(b) else []), (name, merged)
+    # Repeated words outside the shared acoustic span remain two words.
+    repeat = [token_class(id=5, text=" Okay", start=30.0, duration=0.24)]
+    assert getattr(alignment, name)(a, repeat, overlap_duration=2.0) == a + repeat
+
+# A different word or nonoverlapping repetition is never a text-only anchor.
+for left_text, right_text, right_start in [
+    (" okay?", " thanks.", 10.1),
+    (" okay?", " okay.", 11.0),
+    (" re-sign", " resign", 10.1),
+    (" .", " !", 10.1),
+    (" two words", " two words", 10.1),
+]:
+    a = [token_class(id=1, text=left_text, start=10.0, duration=0.5)]
+    b = [token_class(id=2, text=right_text, start=right_start, duration=0.5)]
+    assert bridge.merge_boundary_word(a, b, 2.0) is None
+
 fixed_function = alignment.merge_longest_contiguous
 bridge.apply_alignment_bridge(alignment)
 assert alignment.merge_longest_contiguous is fixed_function
