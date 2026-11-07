@@ -171,45 +171,54 @@ test("setup verification failure with persistent close-before remains explicitly
 });
 
 for (const target of ["writer", "reader"]) {
-  test.each(["before", "after", "different-file", "same-inode"])(`${target} close %s is single-attempt and unconfirmed`, fault => {
-    const attempts: number[] = [];
-    let replacement: number | undefined;
-    let replacedFd = -1;
-    let identity: fs.Stats | undefined;
-    const owner = make({ close: fd => {
-      attempts.push(fd);
-      const selected = target === "writer" ? opened[0] : opened[1];
-      if (fd !== selected) return release(fd);
-      if (fault !== "before") release(fd);
-      if (fault === "different-file" || fault === "same-inode") {
-        const path = fault === "same-inode" ? owner.path : join(root, "replacement");
-        if (fault === "different-file") fs.writeFileSync(path, B);
-        identity = fs.statSync(path);
-        replacedFd = fd;
-        replacement = acquire(path, "r");
-        ambiguous.add(replacement);
+  for (const allocation of ["unconstrained", "different-fd"]) {
+    test.each(["before", "after", "different-file", "same-inode"])(`${target} close %s (${allocation}) is single-attempt and unconfirmed`, fault => {
+      const attempts: number[] = [];
+      let replacement: number | undefined;
+      let replacedFd = -1;
+      let identity: fs.Stats | undefined;
+      const owner = make({ close: fd => {
+        attempts.push(fd);
+        const selected = target === "writer" ? opened[0] : opened[1];
+        if (fd !== selected) return release(fd);
+        if (fault !== "before") release(fd);
+        if (fault === "different-file" || fault === "same-inode") {
+          const path = fault === "same-inode" ? owner.path : join(root, "replacement");
+          if (fault === "different-file") fs.writeFileSync(path, B);
+          identity = fs.statSync(path);
+          replacedFd = fd;
+          replacement = acquire(path, "r");
+          ambiguous.add(replacement);
+          if (allocation === "different-fd" && replacement === replacedFd) {
+            // Keep the reused slot occupied so the replacement cannot use it.
+            replacement = acquire(path, "r");
+            ambiguous.add(replacement);
+          }
+        }
+        if (fault === "before") ambiguous.add(fd);
+        throw new Error("ambiguous synthetic close");
+      } });
+      owner.appendNative(A);
+      const result = owner.close();
+      expect(result).toMatchObject({ closureStatus: "unconfirmed", raw: { kind: "verified", verifiedBytes: 5, sha256: hash(A) } });
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(String(result.errors[0]?.cause)).toBe("Error: ambiguous synthetic close");
+      expect(owner.close()).toBe(result);
+      expect(attempts.length).toBe(2);
+      expect(new Set(attempts).size).toBe(2);
+      if (fault === "before") expect(live.has(target === "writer" ? opened[0]! : opened[1]!)).toBe(true);
+      if (fault === "before") expect(fs.fstatSync(target === "writer" ? opened[0]! : opened[1]!).isFile()).toBe(true);
+      if (replacement !== undefined) {
+        if (!identity) throw new Error("replacement identity was not observed");
+        if (allocation === "different-fd") expect(replacement).not.toBe(replacedFd);
+        for (const fd of ambiguous) {
+          expect(fs.fstatSync(fd)).toMatchObject({ ino: identity.ino, dev: identity.dev, mode: identity.mode, size: identity.size, ctimeMs: identity.ctimeMs, mtimeMs: identity.mtimeMs });
+          expect(fs.readFileSync(fd)).toEqual(fault === "same-inode" ? A : B);
+        }
       }
-      if (fault === "before") ambiguous.add(fd);
-      throw new Error("ambiguous synthetic close");
-    } });
-    owner.appendNative(A);
-    const result = owner.close();
-    expect(result).toMatchObject({ closureStatus: "unconfirmed", raw: { kind: "verified", verifiedBytes: 5, sha256: hash(A) } });
-    expect(result.errors.length).toBeGreaterThan(0);
-    expect(String(result.errors[0]?.cause)).toBe("Error: ambiguous synthetic close");
-    expect(owner.close()).toBe(result);
-    expect(attempts.length).toBe(2);
-    expect(new Set(attempts).size).toBe(2);
-    if (fault === "before") expect(live.has(target === "writer" ? opened[0]! : opened[1]!)).toBe(true);
-    if (fault === "before") expect(fs.fstatSync(target === "writer" ? opened[0]! : opened[1]!).isFile()).toBe(true);
-    if (replacement !== undefined) {
-      if (!identity) throw new Error("replacement identity was not observed");
-      expect(replacement).toBe(replacedFd);
-      expect(fs.fstatSync(replacement)).toMatchObject({ ino: identity.ino, dev: identity.dev, mode: identity.mode, size: identity.size, ctimeMs: identity.ctimeMs, mtimeMs: identity.mtimeMs });
-      expect(fs.readFileSync(replacement)).toEqual(fault === "same-inode" ? A : B);
-    }
-    expect(fs.readFileSync(owner.path)).toEqual(A);
-  });
+      expect(fs.readFileSync(owner.path)).toEqual(A);
+    });
+  }
 }
 
 test("live A/inspect/B/inspect/close independently rereads each prefix and keeps snapshots stable", () => {
