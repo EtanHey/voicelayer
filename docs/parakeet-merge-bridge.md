@@ -12,7 +12,18 @@ Status: temporary bridge for mlx-audio 0.6.3; remove when upstream releases the 
 Both adjacent chunks can recognize the same token across the merge midpoint.
 The old end/start predicates discard both copies. The fork assigns ownership by
 token center, with midpoint ties assigned to the later chunk. It changes all
-three timestamp fallback sites; matching-based merges remain unchanged.
+three timestamp fallback sites.
+
+The boundary-word guard also handles adjacent chunks spelling one shared word
+with different subword tokens (for example ` o` + `kay` + `?` versus ` Okay` +
+`.`). Token matching cannot align those IDs, and timestamp fallback can splice
+them into `o.`. Before either merge function runs, the guard checks the last
+complete word of the earlier chunk against the first of the later chunk. Only
+matching words with overlapping timestamps and starts less than half the overlap
+apart are collapsed. The earlier complete word, including its punctuation, is
+kept. Nonoverlapping repeats, differing words and multiword tokens use the existing
+merge. No audio, runtime package or model assets are rewritten. This additional
+VoiceLayer guard still needs an upstream fix; #1125 covers the midpoint patch.
 
 `src/parakeet_merge_bridge.py` carries that predicate patch. Worker startup applies
 it in memory before loading the model. Source hashes pin the original 0.6.3
