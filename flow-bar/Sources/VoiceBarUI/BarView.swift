@@ -1247,11 +1247,24 @@ public struct BarView: View {
                     state.dismissTeleprompter()
                 }
             }
+            // Keep Replay and Eye fixed when the terminal X appears after speaking.
             if state.isTeleprompterReadback {
-                notchTeleprompterButton(icon: "xmark", accessibilityLabel: "Dismiss teleprompter") {
-                    state.dismissRetainedTeleprompter()
-                }
+                notchTeleprompterDismissButton
+            } else {
+                notchTeleprompterDismissButton
+                    .hidden()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
+        }
+    }
+
+    private var notchTeleprompterDismissButton: some View {
+        notchTeleprompterButton(
+            icon: "xmark", accessibilityLabel: "Dismiss teleprompter",
+            registersTooltip: state.isTeleprompterReadback
+        ) {
+            state.dismissRetainedTeleprompter()
         }
     }
 
