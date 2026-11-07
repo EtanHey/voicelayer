@@ -130,43 +130,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         settings.title = "VoiceBar QA Settings"
         settings.isReleasedWhenClosed = false
-        settings.contentView = NSHostingView(rootView: VStack(spacing: 0) {
-            HStack {
-                Text("UI ONLY · synthetic data · no audio").font(.caption)
-                ForEach(["idle", "transcribing", "confirmation", "paste-failed", "error", "disconnected"], id: \.self) { name in
-                    Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
-                }
-            }.padding(6)
-#if VOICEBAR_UIE2E_GATE2245
-            gate2245Controls
-#endif
-            if Bundle.main.object(forInfoDictionaryKey: "UIE2EPasteFeedback") as? Bool == true {
-                HStack {
-                    ForEach(["paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"], id: \.self) { name in
-                        Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
-                    }
-                }.padding(6)
-            }
-            HStack {
-                ForEach(["speaking", "readback", "finish", "preparing", "selection-replace"], id: \.self) { name in
-                    Button("Silent " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
-                }
-                Button("Hidden pill menu") {
-                    self.makeContextMenu().popUp(positioning: nil, at: NSPoint(x: 20, y: 20), in: self.settings.contentView)
-                }.accessibilityIdentifier("qa-fixture-hidden-menu")
-            }
-            // 2.3 U2 wings (scenario wings-u2): each wing state of the 3-wings mock, silently.
-            HStack {
-                ForEach(["launcher", "recording", "setup-error", "speaking-collapsed"], id: \.self) { name in
-                    Button("Wing " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
-                }
-                Button("Hold menu queue") { self.holdsMenuQueue = true; self.model.receipt("menu-queue-held") }
-                    .accessibilityIdentifier("qa-fixture-hold-menu-queue")
-                Button("Release menu queue") { self.releaseMenuQueue() }
-                    .accessibilityIdentifier("qa-fixture-release-menu-queue")
-            }.padding(6)
-            UIE2ESettings(model: model)
-        })
+        settings.contentView = NSHostingView(rootView: settingsRoot())
         bindNotchModel(VoiceBarNotchPresentationModel(onLayoutInvalidated: { [weak self] in self?.updatePillLayout() }))
         let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
@@ -230,6 +194,55 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onRunSetup = { [weak self] in self?.openWizard() }
         model.seedNotchHistoryIfRequested()
         model.receipt("launch")
+    }
+
+    /// Shared with the offscreen layout regression test; constructing this view starts no services.
+    func settingsRoot(pasteFeedback: Bool? = nil, onFixtureFrames: @escaping ([String: CGRect]) -> Void = { _ in }) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("UI ONLY · synthetic data · no audio").font(.caption)
+                ForEach(["idle", "transcribing", "confirmation", "paste-failed", "error", "disconnected"], id: \.self) { name in
+                    Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
+                }
+            }.controlSize(.small).padding(2).fixtureFrame("baseline")
+#if VOICEBAR_UIE2E_GATE2245
+            gate2245Controls.controlSize(.small).fixtureFrame("gate")
+#endif
+            if pasteFeedback ?? (Bundle.main.object(forInfoDictionaryKey: "UIE2EPasteFeedback") as? Bool == true) {
+                HStack {
+                    ForEach(["paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"], id: \.self) { name in
+                        Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
+                    }
+                }.controlSize(.small).padding(2).fixtureFrame("paste")
+            }
+            HStack {
+                ForEach(["speaking", "readback", "finish", "preparing", "selection-replace"], id: \.self) { name in
+                    Button("Silent " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
+                }
+                Button("Hidden pill menu") {
+                    self.makeContextMenu().popUp(positioning: nil, at: NSPoint(x: 20, y: 20), in: self.settings.contentView)
+                }.accessibilityIdentifier("qa-fixture-hidden-menu")
+            }
+            .controlSize(.small).fixtureFrame("silent")
+            // 2.3 U2 wings (scenario wings-u2): each wing state of the 3-wings mock, silently.
+            HStack {
+                ForEach(["launcher", "recording", "setup-error", "speaking-collapsed"], id: \.self) { name in
+                    Button("Wing " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
+                }
+                Button("Hold menu queue") { self.holdsMenuQueue = true; self.model.receipt("menu-queue-held") }
+                    .accessibilityIdentifier("qa-fixture-hold-menu-queue")
+                Button("Release menu queue") { self.releaseMenuQueue() }
+                    .accessibilityIdentifier("qa-fixture-release-menu-queue")
+            }.controlSize(.small).padding(2).fixtureFrame("wings")
+            // Preserve Settings' real minimum viewport for its inner scrollers;
+            // only the small overflow below the fixture rows scrolls here.
+            ScrollView(.vertical) {
+                UIE2ESettings(model: model).frame(height: 620).fixtureFrame("settings")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .fixtureFrame("settings-viewport")
+        }
+        .onPreferenceChange(UIE2EFixtureFrames.self, perform: onFixtureFrames)
     }
 
     /// Same operational input, morph canvas and hit configuration used by the production
@@ -725,6 +738,22 @@ final class UIE2EModel {
         }
         receipt("fixture:" + name)
         onFixtureApplied()
+    }
+}
+
+private struct UIE2EFixtureFrames: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private extension View {
+    func fixtureFrame(_ name: String) -> some View {
+        background(GeometryReader { geometry in
+            Color.clear.preference(key: UIE2EFixtureFrames.self,
+                value: [name: geometry.frame(in: .global)])
+        })
     }
 }
 
