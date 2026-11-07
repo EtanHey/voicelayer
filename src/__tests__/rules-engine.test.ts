@@ -24,6 +24,18 @@ const wordCount = (text: string): number =>
   text.match(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu)?.length ?? 0;
 
 describe("rules-engine", () => {
+  // Regression guard: Etan 11-06 shapes; rules+polish already preserve these on 2.3.
+  describe("raw hesitation conservation", () => {
+    it.each([
+      ["it reads pub… publishing… published in this booklet", "It reads pub… publishing… published in this booklet"],
+      ["it reads pub… published in this booklet", "It reads pub… published in this booklet"],
+      ["the… the response is ready", "The… the response is ready"],
+      ["we'll… we'll find it", "We'll… we'll find it"],
+    ])("keeps every fragment, repetition and ellipsis in %s", (raw, expected) => {
+      expect(applyRules(raw)).toBe(expected);
+    });
+  });
+
   // --- Stage 1: Filler removal ---
   describe("filler removal", () => {
     it("removes common English fillers", () => {
