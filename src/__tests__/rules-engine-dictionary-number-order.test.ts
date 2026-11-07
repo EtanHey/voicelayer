@@ -164,3 +164,7 @@ describe("stage toggles prove the ordering", () => {
     expect(run("six sol", { "six sol": "Six-Sol", "6 sol": "6-SOL" })).toBe("Six-Sol");
   });
 });
+
+for (const [phrase, expected] of [["at one point", "At 1 point"], ["two points", "2 points"], ["point taken", "Point taken"], ["the point is", "The point is"]]) {
+  test(`prose point survives: ${phrase}`, () => { expect(applyRules(phrase)).toBe(expected); });
+}

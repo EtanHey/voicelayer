@@ -6,6 +6,8 @@ import { finalizeTranscriptionTextForSurface } from "../input";
 import { applyRules } from "../rules-engine";
 import { TEST_TMP } from "./setup/test-tmp";
 
+// #709 Non-goals: "Spoken-decimal normalization" was "D1b, follow-up".
+// This D1b follow-up updates numeric output; code and alias targets stay literal.
 describe("Dictionary variants copied from normalized transcripts", () => {
   let root: string;
   let vocabularyPath: string;
@@ -26,6 +28,11 @@ describe("Dictionary variants copied from normalized transcripts", () => {
 
   it("matches the exact number-word dictation with the displayed digit variant", () => {
     expect(cleanupTranscriptionText(raw, env())).toBe(expected);
+  });
+
+  it("matches a legacy point variant after spoken-decimal normalization", () => {
+    expect(applyRules("use six point one sol", { aliases: { "6 point 1 sol": "6.1 Sol" } }))
+      .toBe("Use 6.1 Sol");
   });
 
   it("still matches a digit variant directly", () => {
@@ -51,7 +58,7 @@ describe("Dictionary variants copied from normalized transcripts", () => {
     expect(applyRules("use preview fixture and two workers", { aliases: {
       "preview fixture": "type script eight point two preview",
       "8 point 2": "8 point 2 preview",
-    } })).toBe("Use TypeScript 8 point 2 preview and 2 workers");
+    } })).toBe("Use TypeScript eight point two preview and 2 workers");
   });
 
   it("matches independent raw and number-word occurrences without chaining targets", () => {
@@ -68,20 +75,20 @@ describe("Dictionary variants copied from normalized transcripts", () => {
 
   it("preserves possessives, code, and unfinished variants on the normalized pass", () => {
     expect(cleanupTranscriptionText("use six point one sol’s and `six point one sol` and six point one sol…", env()))
-      .toBe("Use 6.1 Sol’s and`six point 1 sol`and 6 point 1 sol…");
+      .toBe("Use 6.1 Sol’s and`six point 1 sol`and 6.1 sol…");
   });
 
   it("retains the alias policy callback on the normalized pass", () => {
     expect(applyRules("use six point one sol", {
       aliases: { "6 point 1 sol": "6.1 Sol" },
       shouldApplyAlias: () => false,
-    })).toBe("Use 6 point 1 sol");
+    })).toBe("Use 6.1 sol");
   });
 
   it("respects disabled aliases and number formatting", () => {
     const aliases = { "6 point 1 sol": "6.1 Sol" };
     expect(applyRules(raw, { aliases, disabledStages: new Set(["aliases"]) }))
-      .toBe("And make it a codex 6 point 1 sol on extra high please");
+      .toBe("And make it a codex 6.1 sol on extra high please");
     expect(applyRules(raw, { aliases, disabledStages: new Set(["numbers"]) })).toBe("And make it a codex six point one sol on extra high please");
   });
 

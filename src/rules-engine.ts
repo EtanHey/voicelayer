@@ -63,26 +63,34 @@ export function applyRules(text: string, config?: RulesConfig): string {
     );
   }
 
+  // Canonical dictionary spelling is final, including number words.
+  const canonicalTerms = [...appliedAliasTerms].sort((a, b) => b.length - a.length);
+  const protectedOutputs: string[] = [];
+  for (const term of canonicalTerms) {
+    result = result.split(term).join(`\uE000${String.fromCharCode(0xE100 + protectedOutputs.length)}\uE001`);
+    protectedOutputs.push(applyPreNumberFormatting(term, disabled));
+  }
   result = applyPreNumberFormatting(result, disabled);
-
-  // Stage 4: Number formatting
-  if (!disabled?.has("numbers")) {
-    const numberFormatted = applyNumberFormatting(result);
-    // Dictionary variants describe the displayed transcript. A decoder's
-    // "six point one" becomes "6 point 1" here, after the first alias pass.
-    // Retry only digit variants when formatting changed, shielding canonical
-    // terms emitted earlier so a source-like target cannot expand twice.
-    result = numberFormatted !== result && !disabled?.has("aliases") && config?.aliases
-      ? applyAliases(
-          numberFormatted,
-          Object.fromEntries(Object.entries(config.aliases).filter(([from]) => /\d/u.test(from))),
-          config.hebrewLatinAliasSources,
-          config.shouldApplyAlias,
-          config.possessiveAliasSources,
-          { protectedTerms: [...appliedAliasTerms].map(term =>
-            applyNumberFormatting(applyPreNumberFormatting(term, disabled))) },
-        )
-      : numberFormatted;
+  if (!disabled?.has("numbers")) result = applyNumberFormatting(result);
+  for (let i = 0; i < protectedOutputs.length; i++) {
+    result = result.split(`\uE000${String.fromCharCode(0xE100 + i)}\uE001`).join(protectedOutputs[i]);
+  }
+  if (!disabled?.has("numbers") && !disabled?.has("aliases") && config?.aliases) {
+    const normalizedAliases: Record<string, string> = {};
+    const originalSources = new Map<string, string>();
+    const normalizeVariant = (source: string) => applyNumberFormatting(source).replace(
+      /\b(\d+)[ \t]+point[ \t]+(\d+)\b/gi, "$1.$2");
+    for (const [from, to] of Object.entries(config.aliases)) {
+      const normalized = normalizeVariant(from);
+      normalizedAliases[normalized] = to;
+      originalSources.set(normalized, from);
+    }
+    const normalizeSources = (sources?: ReadonlySet<string>) => new Set(
+      [...(sources ?? [])].map(normalizeVariant));
+    result = applyAliases(result, normalizedAliases,
+      normalizeSources(config.hebrewLatinAliasSources),
+      config.shouldApplyAlias ? (source, text) => config.shouldApplyAlias!(originalSources.get(source) ?? source, text) : undefined,
+      normalizeSources(config.possessiveAliasSources), { protectedTerms: canonicalTerms.map(term => applyPreNumberFormatting(term, disabled)) });
   }
 
   // Stage 2: Spoken punctuation
@@ -1132,6 +1140,13 @@ function isProseOne(words: string[], index: number): boolean {
 }
 
 function formatNumbersInLine(text: string): string {
+  const cardinal = [...NUMBER_WORDS].join("|");
+  const digit = "zero|one|two|three|four|five|six|seven|eight|nine";
+  const decimal = new RegExp(`\\b((?:${cardinal})(?:[ \\t]+(?:${cardinal}))*)[ \\t]+point[ \\t]+((?:${digit})(?:[ \\t]+(?:${digit}))*)\\b`, "gi");
+  text = text.split(/(`[^`]*`)/g).map(part => part.startsWith("`") ? part : part.replace(decimal, (match, left: string, right: string) => {
+    const integer = parseNumberWords(left.toLowerCase().split(/[ \t]+/));
+    return integer === null ? match : `${integer}.${right.toLowerCase().split(/[ \t]+/).map(word => WORD_TO_NUMBER[word]).join("")}`;
+  })).join("");
   // Horizontal whitespace only — a \n never reaches here.
   const words = text.split(/[^\S\n]+/).flatMap((token, index, tokens) => {
     // A decoder commonly attaches sentence punctuation to the final number.
