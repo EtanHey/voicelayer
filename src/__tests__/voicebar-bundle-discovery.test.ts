@@ -121,6 +121,62 @@ for (const source of ["find", "mdfind"]) {
   }
 }
 
+for (const source of ["find", "mdfind"]) {
+  for (const mode of ["--dry-run", "--apply"]) {
+    test(`dedupe excludes .test-tmp bundles via ${source} in ${mode}`, () => {
+      const f = fixture();
+      const candidate = join(f.candidates, "Gits/repo/.test-tmp/run/VoiceBar.app");
+      f.plist(candidate, bundleId);
+      if (source === "mdfind") f.stub("find", "exit 0");
+      const result = f.run(scriptNames[1], {
+        VB_TEST_SPOTLIGHT: source === "mdfind" ? `${f.app}\n${candidate}` : f.app,
+      }, mode);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).not.toContain(`mv ${candidate} `);
+      expect(result.stdout.toString()).not.toContain(`Developer-ID build found at: ${candidate}`);
+      expect(existsSync(candidate)).toBe(true);
+      expect(readFileSync(f.effects, "utf8")).toBe("");
+      // Retain protected fixtures as evidence, just like health discovery.
+    }, 16_000);
+  }
+  test(`dedupe never selects a .test-tmp canonical source via ${source}`, () => {
+    const f = fixture();
+    rmSync(f.app, { recursive: true });
+    const candidate = join(f.candidates, "Gits/repo/.test-tmp/run/VoiceBar.app");
+    f.plist(candidate, bundleId);
+    if (source === "mdfind") f.stub("find", "exit 0");
+    for (const mode of ["--dry-run", "--apply"]) {
+      const result = f.run(scriptNames[1], { VB_TEST_SPOTLIGHT: candidate }, mode);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout.toString()).toContain("Cannot safely pick a canonical app");
+      expect(result.stdout.toString()).not.toContain("would run: cp");
+      expect(existsSync(candidate)).toBe(true);
+      expect(existsSync(f.app)).toBe(false);
+      expect(readFileSync(f.effects, "utf8")).toBe("");
+    }
+    // Retain the protected fixture instead of moving it for test cleanup.
+  }, 16_000);
+  test(`dedupe still plans genuine strays and .test-tmp lookalikes via ${source}`, () => {
+    const f = fixture();
+    try {
+      const candidates = ["Gits/repo/VoiceBar.app", "Gits/repo.test-tmp/VoiceBar.app",
+        "Gits/repo/.build.noindex/VoiceBar.app", "Downloads/VoiceBar.app"]
+        .map(path => join(f.candidates, path));
+      for (const candidate of candidates) f.plist(candidate, bundleId);
+      if (source === "mdfind") f.stub("find", "exit 0");
+      const result = f.run(scriptNames[1], {
+        VB_TEST_SPOTLIGHT: source === "mdfind" ? [f.app, ...candidates].join("\n") : f.app,
+      });
+      expect(result.exitCode).toBe(0);
+      for (const candidate of candidates) {
+        expect(result.stdout.toString()).toContain(`would run: mv ${candidate} `);
+        expect(existsSync(candidate)).toBe(true);
+      }
+      expect(readFileSync(f.effects, "utf8")).toBe("");
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }, 16_000);
+}
+
 test("both discovery paths preserve inert directories and valid missing/other IDs", () => {
   const f = fixture();
   try {
