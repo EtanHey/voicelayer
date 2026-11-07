@@ -137,8 +137,14 @@ public final class PillContextMenuController: NSObject {
 
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
-        if #available(macOS 14.4, *) {
-            microphoneItem.subtitle = defaultMicrophoneNameProvider()
+        if let name = defaultMicrophoneNameProvider() {
+            let subtitle = Self.fittedMenuText(name, middle: true)
+            microphoneItem.toolTip = name
+            // AppKit otherwise sizes this row for "Microphone", clipping its subtitle.
+            menu.minimumWidth = Self.textWidth(subtitle) + 64
+            if #available(macOS 14.4, *) {
+                microphoneItem.subtitle = subtitle
+            }
         }
         menu.addItem(microphoneItem)
 
@@ -236,6 +242,15 @@ public final class PillContextMenuController: NSObject {
             )
             item.target = self
             item.representedObject = entry.text
+            item.toolTip = entry.text
+            let title = NSMutableAttributedString(string: item.title, attributes: [
+                .font: NSFont.menuFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
+            ])
+            if let time = VoiceBarRelativeTime.label(entry.createdAt, now: now) {
+                title.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor,
+                                   range: NSRange(location: 0, length: (time as NSString).length))
+            }
+            item.attributedTitle = title
             menu.addItem(item)
         }
 
@@ -247,11 +262,12 @@ public final class PillContextMenuController: NSObject {
     public func makeMicrophoneSubmenu() -> NSMenu {
         let menu = NSMenu()
         let current = NSMenuItem(
-            title: MicrophoneDefaultPresentation.title(defaultMicrophoneNameProvider()),
+            title: Self.fittedMenuText(MicrophoneDefaultPresentation.title(defaultMicrophoneNameProvider()), middle: true),
             action: nil,
             keyEquivalent: ""
         )
         current.isEnabled = false
+        current.toolTip = defaultMicrophoneNameProvider()
         menu.addItem(current)
         menu.addItem(.separator())
         let change = NSMenuItem(
@@ -313,17 +329,41 @@ public final class PillContextMenuController: NSObject {
 
     /// Spec §3: time + the first words; no "Latest —".
     public static func recentTranscriptMenuTitle(for transcript: String, time: String?) -> String {
-        let flattened = transcript
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .joined(separator: " ")
-        let trimmed = flattened.trimmingCharacters(in: .whitespacesAndNewlines)
-        let previewLimit = 54
-        let preview = trimmed.count > previewLimit
-            ? String(trimmed.prefix(previewLimit - 1)) + "…"
-            : trimmed
-        return time.map { "\($0) · \(preview)" } ?? preview
+        let text = transcript.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let prefix = time.map { "\($0) · " } ?? ""
+        return prefix + fittedMenuText(text, maximumWidth: max(0, 420 - textWidth(prefix)))
+    }
+
+    private static func textWidth(_ text: String, fontSize: CGFloat = 13) -> CGFloat {
+        (text as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: fontSize)]).width
+    }
+
+    /// Measure in the native menu font, preserving graphemes and an explicit ellipsis at every cut.
+    private static func fittedMenuText(
+        _ text: String, fontSize: CGFloat = 13, maximumWidth: CGFloat = 420, middle: Bool = false
+    ) -> String {
+        guard textWidth(text, fontSize: fontSize) > maximumWidth else { return text }
+        let characters = Array(text)
+        func candidate(_ count: Int) -> String {
+            if middle {
+                return String(characters.prefix((count + 1) / 2)) + "…" + String(characters.suffix(count / 2))
+            }
+            return String(characters.prefix(count)) + "…"
+        }
+        var low = 0
+        var high = characters.count
+        while low < high {
+            let count = (low + high + 1) / 2
+            if textWidth(candidate(count), fontSize: fontSize) <= maximumWidth { low = count }
+            else { high = count - 1 }
+        }
+        if !middle {
+            let prefix = String(characters.prefix(low))
+            if let space = prefix.lastIndex(of: " ") {
+                return String(prefix[..<space]) + "…"
+            }
+        }
+        return candidate(low)
     }
 
     @objc private func handleOpenSettings() {
