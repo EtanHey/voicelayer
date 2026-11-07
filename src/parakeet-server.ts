@@ -24,6 +24,19 @@ export interface ParakeetResponse {
   language: string | null;
   attemptEvidence?: STTAttemptEvidence;
   raw_token_times?: unknown[];
+  /** Provider-reported end frame of every decode window, in order (worker protocol 1, additive). */
+  window_end_frames?: number[];
+  window_geometry?: { chunk_seconds: number; overlap_seconds: number };
+}
+
+/** Overall Parakeet budget for one dictation request, shared by every attempt in it. */
+export const PARAKEET_REQUEST_BUDGET_MS = 120_000;
+
+export interface ParakeetTranscribeOptions {
+  /** Only a coverage retry passes this; the worker refuses non-allow-listed values. */
+  geometry?: import("./parakeet-coverage").ParakeetWindowGeometry;
+  /** Remaining request budget; can only shorten the request deadline, never extend it. */
+  timeoutMs?: number;
 }
 
 /** Preserve returned/partial provider bytes separately from the control error. */
@@ -263,11 +276,14 @@ export class ParakeetServer {
     });
   }
 
-  async transcribe(audioPath: string): Promise<ParakeetResponse> {
+  async transcribe(audioPath: string, options: ParakeetTranscribeOptions = {}): Promise<ParakeetResponse> {
     return this.residency.use(() => this.serial(async () => {
       const child = await this.ensure();
       try {
-        const result = await this.command(child, { op: "transcribe", audio_path: audioPath }, this.options.requestMs ?? 120_000);
+        const requestMs = this.options.requestMs ?? PARAKEET_REQUEST_BUDGET_MS;
+        const timeoutMs = options.timeoutMs === undefined ? requestMs : Math.max(1, Math.min(requestMs, Math.floor(options.timeoutMs)));
+        const geometry = options.geometry ? { chunk_seconds: options.geometry.chunkSeconds, overlap_seconds: options.geometry.overlapSeconds } : {};
+        const result = await this.command(child, { op: "transcribe", audio_path: audioPath, ...geometry }, timeoutMs);
         if (child.fault) throw child.fault;
         if (typeof result.text !== "string" || result.complete !== true || result.sample_rate !== 16000 ||
             !Number.isSafeInteger(result.input_frames) || (result.input_frames as number) <= 0 ||
