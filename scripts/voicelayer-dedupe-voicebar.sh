@@ -130,6 +130,8 @@ if ! bundle_inventory="$(
   exit 1
 fi
 while IFS= read -r b; do
+  # Retained test fixtures are never install sources or stray bundles to move.
+  [[ "$b" == */.test-tmp/* ]] && continue
   [[ -d "$b" ]] || continue
   if voicebar_bundle_identity "$b"; then
     BUNDLES+=("$b")
