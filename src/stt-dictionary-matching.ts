@@ -25,7 +25,7 @@ export function dictionarySurfacePattern(from: string, to = from, options: { cli
   // Extend prose names/terms only. A bare trailing s is another word, and
   // addresses, paths and explicitly stored contractions keep exact matching.
   const proseTerm = /^[\p{L}\p{M}\p{N}]+(?:[ '’\-][\p{L}\p{M}\p{N}]+)*$/u;
-  const suffix = options.clitics && proseTerm.test(from) && !/['’]s$/iu.test(from) && !/['’]s$/iu.test(to)
+  const suffix = options.clitics && proseTerm.test(from.replace(/\b\d+\.\d+\b/gu, "0")) && !/['’]s$/iu.test(from) && !/['’]s$/iu.test(to)
     ? "(?:['’]s)?" : "";
   return dictionaryOccurrencePattern(`${escaped}${suffix}`);
 }
