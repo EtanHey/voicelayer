@@ -110,6 +110,20 @@ final class ReadyTimePasteTests: XCTestCase {
         XCTAssertEqual(kit.writes, [])
         XCTAssertEqual(kit.typed, ["T3 scratch:whole fu… שלום"])
     }
+    /// cmux's Ghostty surface is a focused AXTextArea whose value is not writable.
+    /// Terminal delivery must type into it exactly once, without AX or the clipboard.
+    func testTerminalReadOnlyTextAreaFocusIsTypedExactlyOnce() throws {
+        let kit = Kit(), id = try kit.start()
+        let cmux = App("com.cmuxterm.app", 10005)
+        kit.front = cmux; kit.field = "cmux"
+        kit.state.focusedTargetEligibilityProvider = {
+            DictationFocusedTargetEligibility(processIdentifier: cmux.processIdentifier, role: "AXTextArea",
+                isEditable: false, isSecure: false, matchesCurrentFocus: { kit.field == "cmux" })
+        }
+        kit.final(id); kit.final(id)
+        XCTAssertEqual(kit.writes, [])
+        XCTAssertEqual(kit.typed, ["cmux:whole fu… שלום"])
+    }
     func testFocusMoveAfterWriteNeverRetargetsOrRetries() throws {
         let kit = Kit(), id = try kit.start()
         kit.afterWrite = { kit.field = "elsewhere"; kit.front = App("test.other", 10004) }

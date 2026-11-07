@@ -1117,6 +1117,15 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         var pasteShortcutPosted = false
         var axInsertionFired = false
         state.frontmostAppProvider = { cmux }
+        // Since 2.3 (P1, #683) delivery selects the focused field when the final
+        // arrives and refuses when no eligible focus exists. The app supplies
+        // this from AX; cmux's Ghostty surface reports AXTextArea whose value is
+        // not writable, which the terminal typed route accepts.
+        state.focusedTargetEligibilityProvider = {
+            DictationFocusedTargetEligibility(
+                processIdentifier: cmux.processIdentifier, role: "AXTextArea",
+                isEditable: false, isSecure: false, matchesCurrentFocus: { true })
+        }
         state.targetAppActivator = { _ in }
         state.pasteScheduler = { _, block in block() }
         state.pasteConfirmationDelay = 0
