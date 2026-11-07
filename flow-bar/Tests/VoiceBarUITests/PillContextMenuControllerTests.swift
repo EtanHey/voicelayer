@@ -15,6 +15,49 @@ final class PillContextMenuControllerTests: XCTestCase {
         XCTAssertFalse(submenu.items[0].isEnabled)
     }
 
+    func testRecentTitlesUseMeasuredWidthAndWholeWords() {
+        let source = "A short opening followed by " + String(repeating: "extraordinarily readable words ", count: 12)
+        let title = PillContextMenuController.recentTranscriptMenuTitle(for: source, time: "2 min ago")
+        XCTAssertTrue(title.hasSuffix("…"))
+        XCTAssertLessThanOrEqual((title as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: 13)]).width, 420)
+        let preview = String(title.dropFirst("2 min ago · ".count).dropLast())
+        XCTAssertTrue(source.hasPrefix(preview + " "), "Truncate at a word boundary")
+    }
+
+    func testRecentTitlesNormalizeWhitespaceAndKeepUnicodeCharacters() {
+        XCTAssertEqual(PillContextMenuController.recentTranscriptMenuTitle(
+            for: "  hello\tthere\n  👩🏽‍💻 שלום  ", time: "2 min ago"), "2 min ago · hello there 👩🏽‍💻 שלום")
+        for token in ["👨‍👩‍👧‍👦", "שָׁלוֹם", "👩🏽‍💻"] {
+            let title = PillContextMenuController.recentTranscriptMenuTitle(
+                for: String(repeating: token, count: 100), time: nil)
+            XCTAssertTrue(title.hasSuffix("…"))
+            XCTAssertEqual(String(title.dropLast()).replacingOccurrences(of: token, with: ""), "")
+            XCTAssertLessThanOrEqual((title as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: 13)]).width, 420)
+        }
+    }
+
+    func testMicrophoneSubtitleHasRoomAndFullNameRemainsDiscoverable() throws {
+        let name = "Studio microphone with a descriptive USB device name"
+        let controller = PillContextMenuController()
+        controller.defaultMicrophoneNameProvider = { name }
+        let menu = controller.makeMenu()
+        let microphone = try XCTUnwrap(menu.item(withTitle: "Microphone"))
+        if #available(macOS 14.4, *) { XCTAssertEqual(microphone.subtitle, name) }
+        XCTAssertEqual(microphone.toolTip, name)
+        XCTAssertGreaterThanOrEqual(menu.minimumWidth,
+            (name as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: 11)]).width + 64)
+        let longName = String(repeating: "Studio Microphone ", count: 20) + "USB"
+        controller.defaultMicrophoneNameProvider = { longName }
+        let longMenu = controller.makeMenu()
+        let longMic = try XCTUnwrap(longMenu.item(withTitle: "Microphone"))
+        if #available(macOS 14.4, *) {
+            XCTAssertTrue(longMic.subtitle?.contains("…") == true)
+            XCTAssertTrue(longMic.subtitle?.hasSuffix("USB") == true)
+        }
+        XCTAssertEqual(longMic.toolTip, longName)
+        XCTAssertLessThanOrEqual(longMenu.minimumWidth, 484)
+    }
+
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
 
     private func titles(_ menu: NSMenu) -> [String] {
