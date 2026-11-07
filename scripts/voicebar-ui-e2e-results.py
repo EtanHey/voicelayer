@@ -293,7 +293,7 @@ def guard_receipt_steps(scenario, launches, gate_build=False):
     """In-app tripwire receipts: per QA launch, and before/after the scenario's gate fixtures."""
     required = {'GUARD launch %d %s' % (n, phase) for n in range(1, launches + 1)
                 for phase in ['installed', 'no tripwire']}
-    prefix = {'hide1': 'HIDE1VIS', 'gate2246': 'GATE2246'}.get(scenario, 'GATE2245' if gate_build else None)
+    prefix = {'hide1': 'HIDE1VIS', 'gate2246': 'GATE2246'}.get(scenario, 'GATE2245' if gate_build and scenario == 'full' else None)
     if prefix is not None:
         required |= {prefix + ' no-device guard installed before fixtures',
                      prefix + ' no device-start or process tripwire invoked'}

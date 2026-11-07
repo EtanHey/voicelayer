@@ -204,6 +204,18 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(results.guard_receipt_steps('full', 0), set())
         self.assertEqual(results.guard_receipt_steps('focused-338', 0), set())
 
+    def test_gate_build_fixture_guards_only_apply_to_full(self):
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        contents = sandbox / 'VoiceBarQA.app/Contents'; contents.mkdir(parents=True)
+        (contents / 'Info.plist').write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+        self.guard_logs(sandbox, self.INSTALLED)
+        names = ['launch isolated QA app', 'GUARD launch 1 installed',
+                 'GUARD launch 1 no tripwire']
+        self.assertEqual(results.guard_export_issues('focused-338', sandbox, names), [])
+        issues = results.guard_export_issues('full', sandbox, names)
+        self.assertTrue(any('GATE2245 no-device guard installed before fixtures' in i for i in issues))
+        self.assertTrue(any('GATE2245 no device-start or process tripwire invoked' in i for i in issues))
+
     def test_one_install_marker_per_launch_passes_and_any_other_line_is_a_trip(self):
         sandbox = self.root / 'sandbox'; sandbox.mkdir()
         self.assertEqual(results.guard_launch_issues(sandbox, 1), ['FAIL no-device guard receipt missing for launch 1'])
