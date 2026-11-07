@@ -6,7 +6,7 @@ import { BUILTIN_STT_DICTIONARY_ENTRIES } from "../stt-vocabulary-store";
 // public decision: extend this list in the same PR, and keep it to generic developer vocabulary.
 const REVIEWED_GENERIC_DEVELOPER_TERMS = [
   "Full Stack", "Front-end", "Front", "Back-end", "Back", "Go", "Figma", "React Native", "Svelte", "Bubble",
-  "Kubernetes",
+  "Kubernetes", "TextEdit",
 ];
 
 describe("bundled dictionary", () => {
@@ -21,4 +21,18 @@ describe("bundled dictionary", () => {
       expect(Object.keys(entry).sort()).toEqual(["canonical", "variants"]);
     }
   });
+});
+
+import { cleanupTranscriptionText } from "../stt-cleanup";
+import { finalizeTranscriptionTextForSurface } from "../input";
+
+it("normalizes TextEdit only when its bundled surface matches", async () => {
+  const env = { ...process.env, QA_VOICE_CORRECTOR: "off", QA_VOICE_STT_POLISH: "off" };
+  expect(cleanupTranscriptionText("open text edit please", env)).toBe("Open TextEdit please");
+  expect(cleanupTranscriptionText("edit the text please", env)).toBe("Edit the text please");
+  expect(cleanupTranscriptionText("text editing and context editor", env)).toBe("Text editing and context editor");
+  for (const surface of ["dictation", "voice_ask"] as const) {
+    expect(await finalizeTranscriptionTextForSurface("open text edit please", surface, env))
+      .toBe("Open TextEdit please.");
+  }
 });
