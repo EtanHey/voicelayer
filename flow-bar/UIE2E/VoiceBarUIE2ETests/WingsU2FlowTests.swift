@@ -72,6 +72,12 @@ extension VoiceBarFlowTests {
         guard scenario == "wings-u2" else { throw NSError(domain: "UIE2E wings-u2 test selected outside its scenario", code: 1) }
         limitations = ["Silent fixtures drive VoiceState; the mic button is located but never pressed (the harness forbids audio actions).",
                        "The QA pill sits top-right (isolated capture placement), not in the notch; the wing widths come from the production presentation (wings.json)."]
+        // A focused scenario: scope the ledger to U2 (not the full flow's surfaces), and on a GATE2245 build carry the
+        // same no-device guard receipts as every other gate run (voicebar-ui-e2e-results.py guard_receipt_steps).
+        ledger.requiredScope = ["wings:U2"]
+        if gate2245Enabled {
+            step("GATE2245 no-device guard installed before fixtures") { XCTAssertTrue(guardReceiptIsClean(guardLaunches)) }
+        }
 
         click(app.buttons["qa-fixture-launcher"])
         step("WINGS-U2 launcher") {
@@ -187,6 +193,9 @@ extension VoiceBarFlowTests {
             waitUntil { self.fixtureEvents().dropFirst(beforeFooter).contains("menu-microphone") }
             XCTAssertFalse(app.menuItems["Microphone priority…"].exists, "the list closed")
         }
+        // The first-click cases left VoiceBar QA inactive on purpose. Restore the foreground state the remaining
+        // ordinary clicks assume; otherwise XCUITest reports the app's own window-sharing dialog as an interruption.
+        foregroundQA()
 
         // Queued-presentation cancellation through the production handoff: the scheduled presentation is held,
         // the user opens History in the gap, and the released block must show nothing.
@@ -208,6 +217,11 @@ extension VoiceBarFlowTests {
         }
         click(qaPill.buttons["Close history"], "close History")
         click(app.buttons["qa-fixture-idle"])
+        if gate2245Enabled {
+            step("GATE2245 no device-start or process tripwire invoked") { XCTAssertTrue(guardReceiptIsClean(guardLaunches)) }
+        }
+        if (testRun?.failureCount ?? 1) == 0 { ledger.verifiedSurfaces.insert("wings:U2") }
+        completed = true
     }
 }
 
@@ -222,10 +236,16 @@ func uie2eFirstClickReceipts(_ root: URL) -> [[String: Any]] {
 /// NSApp.isActive useless as a first-click oracle. Anchored on Finder, XCUITest activates Finder (already
 /// frontmost) and the synthesized event lands on whatever window is topmost at that point: the pill.
 func uie2eForegroundPoint(_ target: XCUIElement, via frontmost: XCUIApplication) -> XCUICoordinate? {
-    let anchor = frontmost.menuBars.firstMatch
-    guard anchor.exists, target.exists else { return nil }
-    let anchorFrame = anchor.frame
+    guard target.exists else { return nil }
     let frame = target.frame
+    return uie2eForegroundPoint(CGPoint(x: frame.midX, y: frame.midY), via: frontmost)
+}
+
+/// A screen point addressed through the frontmost app's menu bar (see above).
+func uie2eForegroundPoint(_ point: CGPoint, via frontmost: XCUIApplication) -> XCUICoordinate? {
+    let anchor = frontmost.menuBars.firstMatch
+    guard anchor.exists else { return nil }
+    let anchorFrame = anchor.frame
     return anchor.coordinate(withNormalizedOffset: .zero)
-        .withOffset(CGVector(dx: frame.midX - anchorFrame.minX, dy: frame.midY - anchorFrame.minY))
+        .withOffset(CGVector(dx: point.x - anchorFrame.minX, dy: point.y - anchorFrame.minY))
 }
