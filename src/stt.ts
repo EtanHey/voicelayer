@@ -13,7 +13,8 @@
 
 import { processingEnv } from "./processing-settings";
 import { recognizerRecovery, recognizerRecoveryWhisper, recognizerPreference, beginRecognizerRequestAfterMaintenance, closeRecognizerOwner, joinRecognizerMaintenance, assertRecognizerCleanupConfirmed, finishRecognizerRequest, readRecognizerStatus, noteRecognizerEffective, noteRecognizerEngine } from "./recognizer-state";
-import { existsSync, readdirSync, appendFileSync, mkdirSync } from "fs";
+import { existsSync, readdirSync, appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { z } from "zod";
 import { getStateDir, SESSION_TOKEN } from "./paths";
 import { chooseSeamVariant } from "./stt-seam-stride";
 import { homedir } from "os";
@@ -34,6 +35,7 @@ import {
 } from "./language-config";
 import { getSTTVocabularyPrompt } from "./stt-cleanup";
 import { ParakeetBackend } from "./parakeet-backend";
+import { probeParakeetSpeech, PARAKEET_EMPTY_SPEECH_THRESHOLD } from "./parakeet-vad";
 import { parakeetOwnerShutdownSignal, shutdownParakeetEngines } from "./parakeet-server";
 import { createHash } from "crypto";
 import {
@@ -44,7 +46,7 @@ import {
   type PauseSpan,
 } from "./stt-pause-map";
 import type { TranscriptSegment } from "./stt-transcript-alignment";
-import { outroGateEnabled, stripHallucinatedOutro } from "./stt-outro-gate";
+import { isCjkHallucinationCandidate, outroGateEnabled, stripHallucinatedOutro, type ExplicitOutroLanguage } from "./stt-outro-gate";
 import { stripAudioUnsupportedEcho } from "./stt-echo-gate";
 import { stripHallucinatedCaption } from "./stt-caption-gate";
 import type {
@@ -80,6 +82,12 @@ export interface STTResult extends TranscriptionResult {
    * round 1).
    */
   segmentsAudioSha256?: string;
+}
+
+/** Deliberately accepts no decode/LID options: auto cannot acquire a mismatch language. */
+function explicitOutroLanguageSetting(): ExplicitOutroLanguage | undefined {
+  const mode = getLanguageModeFromEnv();
+  return mode === "english" ? "en" : mode === "hebrew" ? "he" : undefined;
 }
 
 function residentFallbackReason(
@@ -2154,6 +2162,12 @@ function getBrewPrefix(): string | null {
 
 const ownedFallbackExits = new Set<Promise<number>>();
 
+const whisperCliJson = z.object({ transcription: z.array(z.object({
+  text: z.string(),
+  offsets: z.object({ from: z.number().finite().nonnegative(), to: z.number().finite().nonnegative() })
+    .refine(offsets => offsets.to >= offsets.from),
+})) });
+
 export class WhisperCliError extends Error {
   readonly outcome = "UNRESOLVED_FALLBACK_FAILED";
   constructor(readonly attempt: { stdout: string; stderr: string; exitCode: number }) {
@@ -2165,7 +2179,7 @@ export class WhisperCppBackend implements STTBackend {
   name = "whisper.cpp";
   private binaryPath: string | null = null;
   private modelPath: string | null = null;
-  constructor(private readonly lifecycle: { signal?: AbortSignal; noVocabularyPrompt?: boolean } = {}) {}
+  constructor(private readonly lifecycle: { signal?: AbortSignal; noVocabularyPrompt?: boolean; captionGate?: typeof stripHallucinatedCaption; speechProbe?: typeof probeParakeetSpeech } = {}) {}
 
   async isAvailable(): Promise<boolean> {
     this.binaryPath = findWhisperBinary();
@@ -2210,7 +2224,7 @@ export class WhisperCppBackend implements STTBackend {
     }
 
     // AIDEV-NOTE: Language config drives whisper args — supports auto (mixed
-    // Hebrew-English), hebrew, or english modes. Auto omits -l for auto-detect.
+    // Hebrew-English), hebrew, or english modes. Auto passes -l auto explicitly.
     // Initial prompt primes vocabulary for dev terms in the configured language.
     const langMode = getLanguageModeFromEnv();
     const langConfig = getLanguageConfig(langMode);
@@ -2234,53 +2248,119 @@ export class WhisperCppBackend implements STTBackend {
       whisperArgs.push("--prompt", prompt);
     }
 
+    const gateEnabled = outroGateEnabled(processingEnv());
+    // A private, unique output prefix prevents concurrent/stale JSON from
+    // supplying another decode's timing. Never write beside archived audio.
+    mkdirSync(getStateDir(), { recursive: true, mode: 0o700 });
+    const outputDir = gateEnabled ? mkdtempSync(join(getStateDir(), "whisper-cli-")) : null;
+    const outputPrefix = outputDir ? join(outputDir, "decode") : null;
     const args = [
       this.binaryPath,
       "-m",
       this.modelPath,
       "-f",
       audioPath,
-      "--no-timestamps",
+      ...(!gateEnabled ? ["--no-timestamps"] : []),
       ...whisperArgs,
       "--no-prints", // suppress progress output
+      ...(outputPrefix ? ["-oj", "-of", outputPrefix] : []),
     ];
 
-    const proc = Bun.spawn(args, {
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-      ...(this.lifecycle.signal ? { signal: this.lifecycle.signal, killSignal: "SIGKILL" } : {}),
-    });
-    if (this.lifecycle.signal) {
-      const exited = proc.exited;
-      ownedFallbackExits.add(exited);
-      void exited.then(() => ownedFallbackExits.delete(exited), () => ownedFallbackExits.delete(exited));
+    try {
+      const proc = Bun.spawn(args, {
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+        ...(this.lifecycle.signal ? { signal: this.lifecycle.signal, killSignal: "SIGKILL" } : {}),
+      });
+      if (this.lifecycle.signal) {
+        const exited = proc.exited;
+        ownedFallbackExits.add(exited);
+        void exited.then(() => ownedFallbackExits.delete(exited), () => ownedFallbackExits.delete(exited));
+      }
+
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      const exitCode = await proc.exited;
+
+      if (exitCode !== 0) {
+        throw new WhisperCliError({ stdout, stderr, exitCode });
+      }
+
+      // whisper-cpp outputs transcription text, clean it up
+      let text = stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .join(" ")
+        .trim();
+
+      let segments: TranscriptSegment[] | undefined;
+      if (outputPrefix) {
+        // Missing/malformed JSON refuses delivery rather than silently disabling
+        // the gates. CLI offsets are integer milliseconds, not word timestamps.
+        const payload = whisperCliJson.parse(await Bun.file(outputPrefix + ".json").json());
+        segments = payload.transcription.map(({ text, offsets }) => ({ text, startS: offsets.from / 1000, endS: offsets.to / 1000 }));
+        if (segments.some((segment, index, all) => index > 0 && segment.startS < all[index - 1]!.endS)) {
+          throw new Error("whisper-cli segment evidence overlaps or is out of order");
+        }
+        text = segments.map(segment => segment.text.trim()).filter(Boolean).join(" ");
+      }
+      const explicitLanguage = explicitOutroLanguageSetting();
+      const wavData = gateEnabled ? new Uint8Array(await Bun.file(audioPath).arrayBuffer()) : new Uint8Array();
+      let gated = gateEnabled
+        ? stripHallucinatedOutro(text, wavData, { explicitLanguage, segments, segmentsText: text })
+        : { text, removed: [] };
+      // CLI gating is newly enabled here. A fresh Silero state also protects
+      // quiet real closers following a much louder lead, which can sit below
+      // the existing recording-relative energy threshold. Never weaken that
+      // gate or use detector failure as permission to delete.
+      if (gated.removed.length && !isCjkHallucinationCandidate(text, explicitLanguage)) {
+        for (const removal of gated.removed) {
+          const startS = Math.max(0, removal.startS - 0.3);
+          const region = sliceWavSegment(wavData, startS, removal.endS - startS + 0.15);
+          let noSpeech = false;
+          if (region && outputDir) {
+            const probePath = join(outputDir, "outro-probe.wav");
+            writeFileSync(probePath, region, { mode: 0o600 });
+            try {
+              const evidence = await (this.lifecycle.speechProbe ?? probeParakeetSpeech)(probePath);
+              const probeInfo = parseWavPcmInfo(region);
+              const frames = probeInfo ? probeInfo.dataSize / probeInfo.blockAlign : -1;
+              noSpeech = evidence.status === "COMPLETE" && evidence.threshold === PARAKEET_EMPTY_SPEECH_THRESHOLD &&
+                evidence.inputSha256 === createHash("sha256").update(region).digest("hex") &&
+                evidence.frames === frames && evidence.analyzedFrames === frames && evidence.speechFrames === 0 &&
+                typeof evidence.maxProbability === "number" && Number.isFinite(evidence.maxProbability) &&
+                evidence.maxProbability >= 0 && evidence.maxProbability < PARAKEET_EMPTY_SPEECH_THRESHOLD;
+            } catch { /* Unknown speech evidence keeps the original words. */ }
+          }
+          if (!noSpeech) {
+            console.error("[voicelayer] CLI outro gate: speech or unavailable Silero evidence; keeping decoded words");
+            gated = { text, removed: [] };
+            break;
+          }
+        }
+      }
+      for (const removal of gated.removed) console.error(`[voicelayer] CLI outro gate: dropped at ${removal.startS.toFixed(2)}-${removal.endS.toFixed(2)}s`);
+      const caption = gateEnabled
+        ? await (this.lifecycle.captionGate ?? stripHallucinatedCaption)(gated.text, wavData, { segments, segmentsText: text })
+        : { text: gated.text, removed: null };
+      if (caption.removed) console.error(`[voicelayer] CLI caption gate: dropped class ${caption.removed.class} at ${caption.removed.startS.toFixed(2)}-${caption.removed.endS.toFixed(2)}s`);
+
+      return {
+        text: caption.text,
+        backend: this.name + (gated.removed.length ? "+outro" : "") + (caption.removed ? "+caption" : ""),
+        durationMs: Date.now() - start,
+        attemptEvidence: { status: caption.text.trim() ? "RETURNED" : "EMPTY_RESPONSE", processExitCode: exitCode, inputPath: audioPath, decodeCoverage: "UNKNOWN", tail: "UNKNOWN",
+          ...(gated.removed.length || caption.removed ? { gateRemoval: {
+            gate: isCjkHallucinationCandidate(text, explicitLanguage) ? "cjk-outro" : "closing-caption",
+            removedSpans: gated.removed.length + (caption.removed ? 1 : 0), rawCharacters: text.length } } : {}) },
+      };
+    } finally {
+      if (outputDir) rmSync(outputDir, { recursive: true, force: true });
     }
-
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-      throw new WhisperCliError({ stdout, stderr, exitCode });
-    }
-
-    // whisper-cpp outputs transcription text, clean it up
-    const text = stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .join(" ")
-      .trim();
-
-    return {
-      text,
-      backend: this.name,
-      durationMs: Date.now() - start,
-      attemptEvidence: { status: text.trim() ? "RETURNED" : "EMPTY_RESPONSE", processExitCode: exitCode, inputPath: audioPath, decodeCoverage: "UNKNOWN", tail: "UNKNOWN" },
-    };
   }
 
   /** Get info about the detected model (for logging) */
@@ -2360,6 +2440,7 @@ export class WhisperServerBackend implements STTBackend {
         const outroGate = outroGateEnabled(processingEnv());
         const gated = outroGate
           ? stripHallucinatedOutro(chunkedResult.text, wavData, {
+              explicitLanguage: explicitOutroLanguageSetting(),
               segments: chunkedResult.segments,
               segmentsText: chunkedResult.segmentsText,
             })
@@ -2483,6 +2564,7 @@ export class WhisperServerBackend implements STTBackend {
         : tail.wouldRewrite
           ? { text: cleanedText, removed: [], reason: "segments-stale" as const }
           : stripHallucinatedOutro(cleanedText, wavData, {
+              explicitLanguage: explicitOutroLanguageSetting(),
               segments: echo.segments,
               segmentsText: echo.segmentsText,
             });

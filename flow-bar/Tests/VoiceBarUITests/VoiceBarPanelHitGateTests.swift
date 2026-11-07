@@ -5,7 +5,8 @@ import XCTest
 /// NOTCH2 R2 (Sol): the note no longer resizes the window, so AppKit's hit providers must follow the shell as
 /// drawn. While a same-size change settles, nothing the interpolated shell has not reached may be claimed.
 final class VoiceBarPanelHitGateTests: XCTestCase {
-    private let note = "Busy recording. Selection not read"
+    /// A note that fits the under-notch tab on one line, so it keeps the plain single-band renderer.
+    private let note = "Busy. Selection not read"
     private let progressPoints: [CGFloat] = stride(from: 0, through: 1, by: 0.1).map { CGFloat($0) }
 
     private var inputs: [(String, VoiceBarNotchOperationalInput)] {

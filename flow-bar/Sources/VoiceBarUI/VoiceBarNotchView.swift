@@ -42,6 +42,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     @State private var renderedOuterCornerRadius: CGFloat
     @State private var renderedShoulderCornerRadius: CGFloat
     @State private var surfaceRevealProgress: CGFloat
+    /// N1: a spring waiting for its invisible start (`morphEndpoints`) to commit. It runs from the next update's
+    /// `onChange`, never from an escaping closure: writes from a closure that captured this view were dropped.
+    @State private var pendingTabMorph: VoiceBarNotchPendingMorph?
     @Namespace private var morphNamespace
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -109,22 +112,55 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             renderedShoulderCornerRadius = bodyShoulderCornerRadius
             surfaceRevealProgress = presentation.visualState == .idle ? 0 : 1
         }
-        .onChange(of: presentation.geometry) { _, nextGeometry in
+        .onChange(of: presentation.geometry) { _, presentedGeometry in
             let transition = VoiceBarNotchShellTransition.resolve(
                 from: renderedGeometry,
-                to: nextGeometry,
+                to: presentedGeometry,
                 visualState: presentation.visualState
             )
-            // The radii and the reveal mask ride the same transaction as the geometry, so they share one spring.
-            withAnimation(shellAnimation.delay(transition.delay)) {
-                renderedGeometry = nextGeometry
+            // N1: the spring runs between these; they differ from the presented geometry only in a bodiless
+            // shell's invisible body extents (see `morphEndpoints`).
+            let endpoints = VoiceBarNotchShellTransition.morphEndpoints(from: renderedGeometry, to: presentedGeometry)
+            let nextGeometry = endpoints.end
+            let outerRadius = compactOuterCornerRadius
+            let shoulderRadius = bodyShoulderCornerRadius
+            let animate = {
+                // The radii and the reveal mask ride the same transaction as the geometry, so they share one spring.
+                withAnimation(shellAnimation.delay(transition.delay)) {
+                    renderedGeometry = nextGeometry
+                    renderedOuterCornerRadius = outerRadius
+                    renderedShoulderCornerRadius = shoulderRadius
+                    surfaceRevealProgress = transition.revealProgress
+                }
+            }
+            guard endpoints.start != renderedGeometry else {
+                pendingTabMorph = nil
+                return animate()
+            }
+            // N1: commit the invisible extent rewrite unanimated in this update; the spring starts from it in the
+            // next one. Only a bodiless, already revealed shell takes this path, so the reveal mask is unaffected.
+            var snap = Transaction()
+            snap.disablesAnimations = true
+            withTransaction(snap) { renderedGeometry = endpoints.start }
+            pendingTabMorph = VoiceBarNotchPendingMorph(
+                serial: (pendingTabMorph?.serial ?? 0) &+ 1, presented: presentedGeometry,
+                start: endpoints.start, geometry: nextGeometry, delay: transition.delay
+            )
+        }
+        .onChange(of: pendingTabMorph) { _, pending in
+            // A newer geometry change in the same update has already taken over; never spring to a stale target
+            // (formal/notch-motion/TabMorph.tla, Unguarded fails NoSlabSweep).
+            guard let pending, pending.presented == presentation.geometry, pending.start == renderedGeometry
+            else { return }
+            withAnimation(shellAnimation.delay(pending.delay)) {
+                renderedGeometry = pending.geometry
                 renderedOuterCornerRadius = compactOuterCornerRadius
                 renderedShoulderCornerRadius = bodyShoulderCornerRadius
-                surfaceRevealProgress = transition.revealProgress
             }
         }
         .onChange(of: compactOuterCornerRadius) { _, nextRadius in
-            guard renderedGeometry == presentation.geometry else { return } // the geometry change carries it
+            // The geometry change carries it.
+            guard renderedGeometry.drawsIdentically(to: presentation.geometry) else { return }
             withAnimation(shellAnimation) {
                 renderedOuterCornerRadius = nextRadius
             }
@@ -406,6 +442,15 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             slot.side == .leading ? .trailing : .leading
         }
     }
+}
+
+struct VoiceBarNotchPendingMorph: Equatable {
+    let serial: Int
+    /// The presented geometry this spring was made for, and the snapped geometry it springs from.
+    let presented: VoiceBarNotchGeometry
+    let start: VoiceBarNotchGeometry
+    let geometry: VoiceBarNotchGeometry
+    let delay: TimeInterval
 }
 
 enum VoiceBarNotchCoreAnchoredRevealLayout {

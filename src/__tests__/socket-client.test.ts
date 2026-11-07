@@ -1,3 +1,4 @@
+import { finishSyntheticCapture } from "./setup/recording-jobs-fixture";
 import { testSocket } from "./setup/test-tmp";
 /**
  * Tests for socket-client.ts — MCP server as client connecting to VoiceBar server.
@@ -198,7 +199,7 @@ describe("socket-client", () => {
       displayText: "Synthetic prompt", engine: "edge-tts", voice: "synthetic",
     };
     const speak = spyOn(tts, "speak").mockResolvedValue(speech);
-    const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => null));
     const booked = spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true });
     const flow = handlers.handleConverse({ message: "Synthetic prompt", timeout_seconds: 5 });
     try {
@@ -233,7 +234,7 @@ describe("socket-client", () => {
     expect(await waitFor(client.isConnected)).toBe(true);
     const speech = Promise.withResolvers<any>();
     const speak = spyOn(tts, "speak").mockImplementation(() => speech.promise);
-    const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => null));
     const booked = spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true });
     const nativeTimer = globalThis.setTimeout;
     let expire!: () => void;
@@ -275,7 +276,7 @@ describe("socket-client", () => {
         audioArtifact: { bytes: new Uint8Array([0]), format: "mp3" as const },
         displayText: "Synthetic prompt", engine: "edge-tts", voice: "synthetic",
       });
-      const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+      const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => null));
       const booked = spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true });
       const priorGateIds = new Set(parseReceived(mockServer).filter(e => e.type === "history_playback_gate").map(e => e.id));
       const started = performance.now();
@@ -466,6 +467,15 @@ describe("socket-client", () => {
     expect(hello.role).toBe("mcp-server");
     expect(hello.accepts_commands).toBe(false);
     expect(hello.voicebar_socket_path).toBe(TEST_SOCKET);
+  });
+
+  it("passive MCP reconnects never publish the command daemon's recording snapshot", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const { connectToBar } = await import("../socket-client");
+    connectToBar(TEST_SOCKET, { role: "mcp-server", acceptsCommands: false });
+    expect(await waitFor(() => parseReceived(mockServer!).some(message => message.type === "client_hello"))).toBe(true);
+    await Bun.sleep(30);
+    expect(parseReceived(mockServer).filter(message => message.recording_jobs !== undefined)).toEqual([]);
   });
 
   it("can declare the persistent daemon as the command owner", async () => {

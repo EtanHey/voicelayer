@@ -1,3 +1,6 @@
+import { fixtureCheckpoint } from "./long-read-fixture-barriers";
+import { finishSyntheticCapture } from "./setup/recording-jobs-fixture";
+import { finishBarCapture, recordingJobsSnapshot } from "../recording-jobs";
 import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
 import { TEST_TMP } from "./setup/test-tmp";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
@@ -30,6 +33,14 @@ mock.module("../paths", () => ({
 }));
 
 import { handleSocketCommand } from "../socket-handlers";
+
+async function settleHistoryJobs(): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    if (recordingJobsSnapshot().recording_jobs.length === 0) return;
+    await Bun.sleep(1);
+  }
+  throw new Error("History fixture did not settle before restoring its input spies");
+}
 
 function cleanup() {
   for (const file of [
@@ -64,7 +75,8 @@ describe("ack protocol", () => {
     playAudioSpy = spyOn(tts, "playAudioNonBlocking").mockImplementation(
       () => {},
     );
-    waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue("");
+    waitForInputSpy = spyOn(input, "waitForInput").mockImplementation(() =>
+      finishBarCapture(Promise.resolve(), "synthetic-ack-archive", async () => ""));
     bookingSpy = spyOn(sessionBooking, "isVoiceBooked").mockReturnValue({
       booked: false,
       ownedByUs: true,
@@ -102,7 +114,10 @@ describe("ack protocol", () => {
     writeFileSync(TEST_REPLAY_FILE, "mp3");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await fixtureCheckpoint();
+    await settleHistoryJobs();
+    await fixtureCheckpoint();
     stopPlaybackSpy.mockRestore();
     playAudioSpy.mockRestore();
     waitForInputSpy.mockRestore();
@@ -149,7 +164,18 @@ describe("ack protocol", () => {
     });
   });
 
-  it("honors trusted VoiceBar press_to_talk without the MCP gate or a deprecation warning", () => {
+  it("parses speech/capture Stop scopes and the F5 press position without accepting invalid fields", () => {
+    for (const scope of ["speech", "capture"]) {
+      expect(parseCommand(JSON.stringify({ cmd: "stop", scope }))).toEqual({ cmd: "stop", scope });
+    }
+    expect(parseCommand('{"cmd":"stop","scope":"both"}')).toBeNull();
+    expect(parseCommand('{"cmd":"record","playback_elapsed_ms":3500}')).toEqual({ cmd: "record", playback_elapsed_ms: 3500 });
+    for (const position of [-1, "3500", null]) {
+      expect(parseCommand(JSON.stringify({ cmd: "record", playback_elapsed_ms: position }))).toBeNull();
+    }
+  });
+
+  it("honors trusted VoiceBar press_to_talk without the MCP gate or a deprecation warning", async () => {
     const savedAllowPushToEnd = process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -166,13 +192,14 @@ describe("ack protocol", () => {
 
       queueDepthSpy.mockReturnValue(0);
       recordingStateSpy.mockReturnValue("idle");
-      handleSocketCommand(command!);
+      await handleSocketCommand(command!);
+      await fixtureCheckpoint();
 
       expect(waitForInputSpy).toHaveBeenCalledWith(
         30_000,
         "standard",
         true,
-        { archiveSource: "voicebar" },
+        { archiveSource: "voicebar", onCaptureStart: expect.any(Function) },
       );
       expect(errorSpy).not.toHaveBeenCalled();
     } finally {
@@ -185,7 +212,7 @@ describe("ack protocol", () => {
     }
   });
 
-  it("returns accept ack for record under happy path", () => {
+  it("returns accept ack for record under happy path", async () => {
     queueDepthSpy.mockReturnValue(0);
     recordingStateSpy.mockReturnValue("idle");
 
@@ -196,9 +223,10 @@ describe("ack protocol", () => {
       silence_mode: "standard",
     } as unknown as SocketCommand);
 
+    await fixtureCheckpoint();
     expect(waitForInputSpy).toHaveBeenCalled();
     expect(waitForInputSpy).toHaveBeenCalledWith(30000, "standard", false, {
-      archiveSource: "voicebar",
+      archiveSource: "voicebar", onCaptureStart: expect.any(Function),
     });
     expect(response).toEqual({
       type: "ack",
@@ -275,7 +303,7 @@ describe("ack protocol", () => {
     });
   });
 
-  it("returns accept ack for retranscribe-last under happy path", () => {
+  it("returns accept ack for retranscribe-last under happy path", async () => {
     queueDepthSpy.mockReturnValue(0);
     recordingStateSpy.mockReturnValue("idle");
 
@@ -284,6 +312,7 @@ describe("ack protocol", () => {
       id: "retranscribe-1",
     } as unknown as SocketCommand);
 
+    await settleHistoryJobs();
     expect(retranscribeLastCaptureSpy).toHaveBeenCalled();
     expect(response).toEqual({
       type: "ack",
@@ -313,7 +342,7 @@ describe("ack protocol", () => {
     });
   });
 
-  it("returns accept ack for history-entry retranscribe and passes the archived audio path", () => {
+  it("returns accept ack for history-entry retranscribe and passes the archived audio path", async () => {
     queueDepthSpy.mockReturnValue(0);
     recordingStateSpy.mockReturnValue("idle");
     const audioPath =
@@ -325,6 +354,7 @@ describe("ack protocol", () => {
       audio_path: audioPath,
     } as unknown as SocketCommand);
 
+    await settleHistoryJobs();
     expect(retranscribeRecordingCaptureSpy).toHaveBeenCalledWith(audioPath);
     expect(retranscribeLastCaptureSpy).not.toHaveBeenCalled();
     expect(response).toEqual({
@@ -347,7 +377,7 @@ describe("ack protocol", () => {
       id: "history-retry-fail",
       audio_path: audioPath,
     } as unknown as SocketCommand);
-    await Promise.resolve();
+    await settleHistoryJobs();
 
     expect(response).toEqual({
       type: "ack",
@@ -356,9 +386,8 @@ describe("ack protocol", () => {
       id: "history-retry-fail",
     });
     expect(broadcastSpy).toHaveBeenCalledWith({
-      type: "state",
-      state: "idle",
-      source: "recording",
+      type: "state", state: "idle", source: "recording",
+      recording_jobs: [], processing_count: 0, mic_take_id: null,
     });
     expect(broadcastSpy).not.toHaveBeenCalledWith({
       type: "state",

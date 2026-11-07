@@ -304,15 +304,15 @@ describe("stt-cleanup", () => {
 
     for (const [variant, canonical] of cases) {
       it(`corrects stored variant ${variant} without losing surrounding words`, () => {
+        const storedAlias = entries.some((entry) => entry.variants.includes(variant));
         const contexts = [
           [`${variant} called today`, `${canonical} called today`],
           [`please call ${variant} today`, `Please call ${canonical} today`],
           [`please call ${variant}`, `Please call ${canonical}`],
           [`please call ${variant}.`, `Please call ${canonical}.`],
           [`please call ${variant}, then wait`, `Please call ${canonical}, then wait`],
-          // A base alias is not authority to replace an unstored possessive.
-          [`${variant}'s message`, `${variant[0].toUpperCase()}${variant.slice(1)}'s message`],
-          [`please check ${variant}’s message`, `Please check ${variant}’s message`],
+          [`${variant}'s message`, `${storedAlias ? canonical : variant[0].toUpperCase() + variant.slice(1)}'s message`],
+          [`please check ${variant}’s message`, `Please check ${storedAlias ? canonical : variant}’s message`],
           [`שלום ${variant} עכשיו`, `שלום ${canonical} עכשיו`],
           [`please call ${variant.toUpperCase()}`, `Please call ${canonical}`],
         ];

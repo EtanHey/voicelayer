@@ -337,8 +337,8 @@ voicebar_cask_repair_needed() {
     codesign --verify --deep --strict "$VOICEBAR_CANONICAL_APP" >/dev/null 2>&1 || return 0
 
     signature="$(codesign -dvvv "$VOICEBAR_CANONICAL_APP" 2>&1 || true)"
-    team_id="$(printf '%s\n' "$signature" | awk -F= '/^TeamIdentifier=/{print $2; exit}')"
-    authority="$(printf '%s\n' "$signature" | awk -F= '/^Authority=/{print $2; exit}')"
+    team_id="$(awk -F= '/^TeamIdentifier=/{print $2; exit}' <<<"$signature")"
+    authority="$(awk -F= '/^Authority=/{print $2; exit}' <<<"$signature")"
     [[ "$team_id" = "$VOICEBAR_REQUIRED_TEAM_ID" ]] || return 0
     [[ "$authority" = "Developer ID Application"* ]] || return 0
 
@@ -672,11 +672,11 @@ installed_package_version() {
         printf '%s\n' "$VOICELAYER_UPDATE_TEST_PACKAGE_VERSION"
     elif command -v bun >/dev/null 2>&1; then
         bun pm ls -g 2>/dev/null | awk -v name="$PACKAGE_NAME" '
-            index($0, name "@") { sub(".*" name "@", ""); print; exit }
+            !found && index($0, name "@") { sub(".*" name "@", ""); print; found=1 }
         ' || true
     elif command -v npm >/dev/null 2>&1; then
         npm list -g --depth=0 2>/dev/null | awk -v name="$PACKAGE_NAME" '
-            index($0, name "@") { sub(".*" name "@", ""); print; exit }
+            !found && index($0, name "@") { sub(".*" name "@", ""); print; found=1 }
         ' || true
     fi
 }

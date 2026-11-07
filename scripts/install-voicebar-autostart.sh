@@ -273,6 +273,9 @@ if [[ "$RESTORE_AVAILABILITY" -eq 1 ]]; then
   launchctl kickstart "$DOMAIN/$LABEL"
   exit 0
 fi
+if [[ "$RELOAD" -eq 1 ]]; then
+  vl_gate_legacy_formula_availability "$ROOT_DIR"
+fi
 vl_update_gate "$ROOT_DIR" bash "$ROOT_DIR/scripts/install-voicebar-autostart.sh" ${UPDATE_GATE_ARGS[@]+"${UPDATE_GATE_ARGS[@]}"}
 # A validated bootstrap keeps old jobs disabled until the replacement's repair.
 if [[ "${VOICELAYER_INSTALL_OPERATION:-}" == *'"source":"supervised-bootstrap"'* ]]; then

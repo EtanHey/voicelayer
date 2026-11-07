@@ -387,11 +387,13 @@ function assertSetupHost(): void {
   check(VOICEBAR_APP_PATH, "app");
 }
 
-function voiceBarStopped(): boolean {
-  const result = Bun.spawnSync(["pgrep", "-x", "VoiceBar"], { env: process.env, stdout: "pipe", stderr: "pipe" });
+function firstInstallParticipantsStopped(): boolean {
+  // Include old unregistered owners: a legacy daemon/CLI cannot publish a ledger.
+  const owners = "(^|/| )(VoiceBar|voicelayer-mcp|whisper-server|rec|sox|afplay)( |$)|src/mcp-server(-daemon)?\\.ts|src/cli/(speak|ask|converse)\\.ts";
+  const result = Bun.spawnSync(["pgrep", "-fl", owners], { env: process.env, stdout: "pipe", stderr: "pipe" });
   if (result.exitCode === 1) return true;
   if (result.exitCode === 0 && result.stdout.toString().trim()) return false;
-  throw Error("UNKNOWN: VoiceBar process inventory unavailable");
+  throw Error("UNKNOWN: first-install participant inventory unavailable");
 }
 function canonicalVoiceBarRunning(): boolean {
   const result = Bun.spawnSync(["pgrep", "-x", "VoiceBar"], { env: process.env, stdout: "pipe", stderr: "pipe" });
@@ -486,16 +488,16 @@ async function runCaskPostflight(packageRoot: string): Promise<"controller" | "r
     try {
       if (faults.length) throw Error("UNKNOWN: inherited operation validation failed; gate evidence retained");
       if (!evidenceExists(gate)) {
-        if (!existsSync(VOICEBAR_APP_PATH) || !voiceBarStopped()) throw Error("UNKNOWN: legacy setup requires an installed, stopped VoiceBar");
+        if (!existsSync(VOICEBAR_APP_PATH) || !firstInstallParticipantsStopped()) throw Error("UNKNOWN: legacy setup requires an installed bundle and no live voice participants");
         for (const suffix of [".bootstrap", ".lock"]) if (evidenceExists(gate + suffix)) throw Error(`UNKNOWN: gate recovery evidence retained: ${suffix}`);
         mkdirSync(dirname(mutex), { recursive: true, mode: 0o700 });
         try { mkdirSync(mutex, { mode: 0o700 }); }
         catch { throw Error("UNKNOWN: another bootstrap or recovery owns this host (.bootstrap-lock retained)"); }
         ownsMutex = true;
-        if (!voiceBarStopped()) throw Error("UNKNOWN: VoiceBar started during legacy initialization");
+        if (!firstInstallParticipantsStopped()) throw Error("UNKNOWN: voice participant started during first-install initialization");
         const { initializeSupervisedVoiceGate } = await import("../update-gate-admission");
         if (!initializeSupervisedVoiceGate()) throw Error("UNKNOWN: legacy gate initialization refused; evidence retained");
-        if (!voiceBarStopped()) throw Error("UNKNOWN: VoiceBar started during legacy initialization");
+        if (!firstInstallParticipantsStopped()) throw Error("UNKNOWN: voice participant started during first-install initialization");
       }
       const state = readUpdateGateFile();
       if (state.kind !== "OPEN") throw Error(`UNKNOWN: gate ${state.kind} without a live controller`);
@@ -547,6 +549,7 @@ if (import.meta.main) {
     }
   } catch (error) {
     recoveryRequired(error);
+    console.error("[voicelayer] Setup did not complete. For a Homebrew install, update both etanhey/layers/voicelayer and etanhey/layers/voicebar to matching versions, then run voicelayer setup --cask-postflight. Retain gate evidence; do not delete it to retry.");
     process.exitCode = 1;
   }
 }

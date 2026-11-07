@@ -1,3 +1,7 @@
+import { finishBarCapture, acknowledgeDictationDelivery, runBarCapture } from "../recording-jobs";
+import { z } from "zod";
+import { parseCommand } from "../socket-protocol";
+import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { speechArchiveWriter } from "../speech-archive-writer";
 import * as speechReceipts from "../speak-archive";
 import { beginSpeechArchive, LiveSpeechArchive, flushSpeechArchives } from "../speech-archive-live";
@@ -26,17 +30,23 @@ import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
+import { planProsody } from "../tts/prosody";
+import { projectSpeakableText } from "../speakable-text";
 import { PreparedReadStart } from "../tts/selection-read-preparation";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
+// Five M1 standalone baselines: max 3.58 s including teardown; allow >= 3x once.
+const QWEN_FIXTURE_TIMEOUT_MS = 12_000;
 
 describe("long-read real runtime with owned synth/player fakes", () => {
   const originalSpawn = Bun.spawn, originalSpawnSync = Bun.spawnSync;
   let synths: { argv: string[]; exit: ReturnType<typeof deferred<number>>; killed: boolean }[];
   let players: { exit: ReturnType<typeof deferred<number>>; killed: boolean; synthCount: number; argv: string[]; signals: string[] }[];
   let events: any[];
+  let holdFirstSynth = false;
   let holdSynth: boolean, autoPlay: boolean, holdPlayerExit: boolean;
+  let archiveBeforePlayerExit: boolean;
   let handles: { done: Promise<void> }[];
   let spies: ReturnType<typeof spyOn>[];
   let historyInputs: string[][];
@@ -44,6 +54,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let failHistory: boolean;
   let failPlayerSpawn = false;
   let synthLatencyMs = 0;
+  let firstSynthCostPerChar = 0;
+  let modelReplay = false;
+  let effectiveStateSpy: ReturnType<typeof spyOn>;
   type Child = { exit: ReturnType<typeof deferred<number>>; killed: boolean };
   let synthBarrier: ReturnType<typeof fixtureBarrier<typeof synths[number]>>;
   let playerBarrier: ReturnType<typeof fixtureBarrier<typeof players[number]>>;
@@ -54,23 +67,25 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let releaseAlignments: (() => void)[];
 
   beforeEach(() => {
+    modelReplay = false;
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
-    holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
+    holdFirstSynth = false; holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
-    clockMs = 100_000;
+    archiveBeforePlayerExit = false;
+    clockMs = 100_000; firstSynthCostPerChar = 0;
     releaseAlignments = [];
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
     synthBarrier = fixtureBarrier(); playerBarrier = fixtureBarrier();
     historyBarrier = fixtureBarrier(); decoderBarrier = fixtureBarrier(); histories = []; decoders = [];
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
     spies.push(spyOn(socket, "broadcast").mockImplementation((event) => events.push(structuredClone(event))));
-    spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
+    spies.push(effectiveStateSpy = spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(alignment, "alignCloneAudio").mockResolvedValue({ status: "untimed", identity: {} as any, words: [] }));
     // Only platform probing uses spawnSync; all synth/play/decode/conversion spawns are fakes.
     Bun.spawnSync = ((argv: string[]) => {
       if (argv.includes("-af")) { writeFileSync(argv.at(-1)!, "adjusted audio"); return { exitCode: 0 }; }
       if (argv[0] === "which" && ["ffprobe", "ffmpeg"].includes(argv[1])) return {exitCode:0, stdout:Buffer.from(argv[1]), stderr:Buffer.alloc(0)};
-      return ({ exitCode: ["ffprobe", "ffmpeg"].includes(argv[0]) ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
+      return ({ exitCode: ["ffprobe", "ffmpeg"].includes(argv[0]) ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? modelReplay ? "4\n" : "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
     Bun.spawn = ((argv: string[]) => {
       if (argv[1] === "-version") return {pid: 70001, exited: Promise.resolve(argv[0] === "ffmpeg" ? 0 : 1), kill() {}};
       if (argv[0] === "which") return { pid: 70000, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg"]).stream(), kill: () => {} };
@@ -78,9 +93,10 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const media = argv.find((arg) => arg.startsWith("--write-media="))!.split("=").slice(1).join("=");
         const metadata = argv.find((arg) => arg.startsWith("--write-metadata="))!.split("=").slice(1).join("=");
         const spoken = argv.find(a => a.startsWith("--text="))!.slice(7);
-        writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * 120000, duration: 100000})).join("\n"));
+        writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * (modelReplay ? 20000000 : 120000), duration: modelReplay ? 18000000 : 100000})).join("\n"));
         const exit = deferred<number>(); const item = { argv, exit, killed: false }; synths.push(item); synthBarrier.push(item);
-        if (!holdSynth || synths.length === 1) {
+        if (synths.length === 1) clockMs += firstSynthCostPerChar * spoken.length;
+        if (!holdSynth || (synths.length === 1 && !holdFirstSynth)) {
           if (synthLatencyMs > 0) setTimeout(() => exit.resolve(0), synthLatencyMs); else exit.resolve(0);
         }
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
@@ -102,17 +118,484 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       }
       if (failPlayerSpawn) throw new Error("player launch failed");
       const exit = deferred<number>(); const item = { exit, killed: false, synthCount: synths.length, argv, signals: [] as string[] }; players.push(item); playerBarrier.push(item);
-      if (autoPlay) exit.resolve(0);
+      if (autoPlay) {
+        // The large Qwen fixture must not leave hundreds of durable writes for afterEach.
+        // Other autoPlay cases keep instant exits and continue exercising archive lag.
+        if (archiveBeforePlayerExit) void flushSpeechArchives().then(() => exit.resolve(0), exit.reject);
+        else exit.resolve(0);
+      }
       return { pid: 73000 + players.length, exited: exit.promise, kill: (signal: string) => { item.signals.push(signal); item.killed = true; if (!holdPlayerExit) exit.resolve(143); } };
     }) as any;
   });
   afterEach(async () => {
     stopPlayback(); for (const release of releaseAlignments) release(); for (const player of players) player.exit.resolve(143); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
     await flushSpeechArchives();
+    await settleRecordingJobs();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
-  const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+  const start = (engine: "edge" | "clone" = "edge", readText = text, identity: Parameters<typeof speakLongRead>[3] = {}) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }, Date.now(), identity); handles.push(h); return h; };
+  it("F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots", async () => {
+    const wire: { expected: number; events: unknown[] }[] = [];
+    const rows = process.env.VOICELAYER_SPEECH_CASES
+      ? z.array(z.object({ phase: z.enum(["preparing", "playing", "parked", "resume_manual", "resume_f5"]), queued: z.number().int().min(0).max(2), holdExit: z.boolean().default(false) }))
+          .parse(JSON.parse(readFileSync(process.env.VOICELAYER_SPEECH_CASES, "utf8")))
+      : ["preparing", "playing", "parked", "resume_manual", "resume_f5"].flatMap(phase =>
+          (phase.startsWith("resume_") ? [false, true] : [false]).flatMap(holdExit =>
+            [0, 1, 2].map(queued => ({ phase, queued, holdExit }))));
+    for (const row of rows) {
+      const beginning = events.length, playerIndex = players.length, decoderIndex = decoders.length;
+      holdDecoder = true; holdPlayerExit = row.holdExit;
+      // Fake media lives in the preload-owned run; no resident file is read.
+      playAudioNonBlocking(TTS_HISTORY_FILE + ".owner.mp3", { text: "Current read", voice: "fixture", durationMs: 4000 });
+      await decoderBarrier.at(decoderIndex);
+      for (let i = 0; i < row.queued; i++) playAudioNonBlocking(TTS_HISTORY_FILE + `.wait-${i}.mp3`,
+        { text: `Waiting ${i}`, voice: "fixture", durationMs: 4000 });
+      if (row.phase !== "preparing") {
+        holdDecoder = false; decoders[decoderIndex].exit.resolve(0); await playerBarrier.at(playerIndex);
+        if (row.phase === "resume_f5") {
+          const capture = tts.pauseForF5Capture(0);
+          try {
+            await fixtureCheckpoint();
+            expect(tts.hasF5Capture()).toBe(true);
+            // Settle the owned synthetic take even before physical exit: the queue
+            // must stay correct for this adversarial ordering, without opening a mic.
+            await runBarCapture(`F-speech-${playerIndex}`, () => finishSyntheticCapture(async () => null), { expectsAck: false });
+            await settleRecordingJobs();
+          } finally { capture.settle(); }
+          expect(tts.hasF5Capture()).toBe(false);
+        } else if (row.phase === "parked" || row.phase === "resume_manual") {
+          expect(pausePlayback({}, 0).outcome).toBe("accept"); await fixtureCheckpoint();
+          if (row.phase === "resume_manual") expect(tts.resumePlayback().outcome).toBe("accept");
+        }
+        if (row.phase.startsWith("resume_")) {
+          await fixtureCheckpoint();
+          if (row.holdExit) expect(players.length).toBe(playerIndex + 1);
+          else await playerBarrier.at(playerIndex + 1);
+        }
+      }
+      const snapshots = events.slice(beginning).filter(event => event.type === "queue");
+      expect(snapshots.flatMap(event => event.items).filter(item => item.text === "Current read" && !item.is_current),
+        "QueuedCountExcludesCurrent every published frame").toHaveLength(0);
+      const queue = snapshots.at(-1);
+      if (row.phase.startsWith("resume_")) {
+        expect(queue.items.filter((item: {text: string}) => item.text === "Current read")).toHaveLength(1);
+        // Inspect frames both during the physical-exit wait and after promotion.
+        players[playerIndex].exit.resolve(143); await playerBarrier.at(playerIndex + 1);
+        snapshots.push(...events.slice(beginning).filter(event => event.type === "queue").slice(snapshots.length));
+        expect(snapshots.flatMap(event => event.items).filter(item => item.text === "Current read" && !item.is_current),
+          "QueuedCountExcludesCurrent across Resume").toHaveLength(0);
+      }
+      expect(queue.items.filter((item: { is_current: boolean }) => !item.is_current).length,
+        `QueuedCountExcludesCurrent ${row.phase}/${row.queued}`).toBe(row.queued);
+      for (const snapshot of snapshots) {
+        expect(snapshot.items.filter((item: {text: string; is_current: boolean}) => item.text.startsWith("Waiting ") && item.is_current),
+          "QueuedCountExcludesCurrent D2 waiting reads remain waiting").toHaveLength(0);
+      }
+      wire.push({ expected: row.queued, events: [
+        { type: "state", state: "speaking", text: "Current read", duration_ms: 4000 }, ...snapshots] });
+      stopPlayback(); for (const player of players) player.exit.resolve(143); for (const child of decoders) child.exit.resolve(0); await awaitCurrentPlayback();
+    }
+    if (process.env.VOICELAYER_SPEECH_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_WIRE, JSON.stringify(wire));
+    console.log(`QueuedCountExcludesCurrent replayed ${rows.length} real queue scenarios`);
+  });
+
+  it.each([20, 60, 200])("F-speech first audio uses bounded startup synthesis for %i words", async words => {
+    holdSynth = true; firstSynthCostPerChar = 10;
+    const source = "alpha ".repeat(words).trim() + ". Later sentence stays behind the player.";
+    const chunks = chunkTextForLongRead(source);
+    expect(chunks.join(" ")).toBe(source);
+    const h = start("edge", source);
+    await playerBarrier.at(0); await h.started;
+    const request = synths[0].argv.find(arg => arg.startsWith("--text="))!.slice(7);
+    expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(request.length * 10);
+    console.log(`F-speech fake first audio: words=${words} request_chars=${request.length} synthesis_ms=${request.length * 10}`);
+    expect(request.length, "StartupRequestBound").toBeLessThanOrEqual(100);
+    expect(events.find(event => event.state === "speaking" && !event.long_read?.preparing).initial_timing?.words.length,
+      "TimingNeverBlankWhilePlaying Edge").toBeGreaterThan(0);
+    expect(synths[1].exit.promise).toBeDefined();
+    expect(players).toHaveLength(1); // Later synthesis is still unresolved.
+    stopPlayback(); await h.done;
+  });
+
+  it.each(["edge", "clone"] as const)("F-speech %s structured startup preserves words within its budget", engine => {
+    const source = "alpha ".repeat(60).trim() + ".\n\n## Next paragraph\nKeep every word.";
+    const plan = planProsody({ readText: source, projection: projectSpeakableText(source, [], engine), engine });
+    expect(plan.segments[0].text.length, "StartupRequestBound").toBeLessThanOrEqual(100);
+    expect(plan.chunks.map(chunk => chunk.text).join(" ").split(/\s+/)).toEqual(source.split(/\s+/));
+    expect(chunkTextForLongRead(source, engine)[0].length, "StartupRequestBound").toBeLessThanOrEqual(100);
+    const heading = "# " + "a ".repeat(49) + "bb";
+    const headingPlan = planProsody({ readText: heading, projection: projectSpeakableText(heading, [], engine), engine });
+    expect(headingPlan.segments[0].text.length, "StartupRequestBound including emphasis punctuation").toBeLessThanOrEqual(100);
+    const longWord = "x".repeat(150);
+    expect(chunkTextForLongRead(longWord + " next words.")[0]).toBe(longWord);
+  });
+
+  it("F-speech TimingNeverBlankWhilePlaying first clone frame precedes delayed alignment", async () => {
+    const later = deferred<any>();
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("fixture audio")));
+    spies.push(spyOn(alignment, "alignCloneAudio").mockImplementation(() => later.promise));
+    releaseAlignments.push(() => later.resolve({ status: "untimed", identity: {}, words: [] }));
+    const h = start("clone", "One two three four.");
+    await playerBarrier.at(0);
+    const first = events.find(event => event.state === "speaking" && !event.long_read?.preparing);
+    expect(first.initial_timing?.aligned_words?.some((word: {offset_ms: number | null}) => word.offset_ms !== null),
+      "TimingNeverBlankWhilePlaying").toBe(true);
+    if (process.env.VOICELAYER_SPEECH_TIMING_WIRE) writeFileSync(process.env.VOICELAYER_SPEECH_TIMING_WIRE, JSON.stringify(
+      events.filter(event => event.state === "speaking").map(event => JSON.parse(serializeEvent(event)))));
+    stopPlayback(); await h.done;
+  });
+
+  for (const kind of ["short", "long"] as const) for (const localPress of [2000, 4000])
+  for (const ending of ["auto", "slow-exit", "manual", "stop", "refused", "n6-A", "n6-B", "queued"] as const)
+  it(`F-resume-clone ${kind} chunked F5 ${localPress}/${ending}`, async () => {
+    modelReplay = true;
+    const cloneReady = fixtureBarrier<string>(), opened = fixtureBarrier<void>();
+    const results = [deferred<string | null>(), deferred<string | null>()];
+    let captures = 0;
+    const realSpeakText = tts.speakText, voice = kind === "short" ? "ben-c1" : "theo-c4s";
+    spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
+      kind, engine: "clone", voice, rate: "+0%", engineSource: "settings", rateSource: "settings",
+    }), spyOn(qwen, "loadProfile").mockReturnValue({ name: voice, engine: "qwen3-tts", model_path: "",
+      reference_clips: [], reference_clip: "", fallback: "jenny", created: "" }),
+    spyOn(qwen, "synthesizeCloned").mockImplementation(async part => {
+      cloneReady.push(part); return Buffer.from("owned clone audio");
+    }), spyOn(tts, "speakText").mockImplementation((...args) => {
+      const read = realSpeakText(...args); handles.push(read); return read;
+    }), spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+      const index = captures++;
+      options?.onCaptureStart?.(); opened.push(); return finishSyntheticCapture(() => results[index].promise);
+    }));
+    resetSelectionReadQueueForTests();
+    try {
+      expect(await handleSocketCommand({ cmd: "speak_text", id: "clone-owner", text,
+        profile: kind, source: "selection" })).toMatchObject({ outcome: "accept" });
+      await playerBarrier.at(0);
+      for (let index = 0; index < 2; index++) {
+        clockMs += 4000; players[index].exit.resolve(0); await playerBarrier.at(index + 1);
+      }
+      await cloneReady.at(4); await fixtureCheckpoint();
+      const playing = events.findLast(event => event.state === "speaking" && !event.long_read?.preparing);
+      expect(playing.long_read.chunk_index).toBe(2);
+      expect(cloneReady.values).toHaveLength(5);
+      expect(readTTSControlsStatus().profiles[kind].last_first_audio)
+        .toEqual({ engine: "qwen3-tts", origin: "speak", fallback: false });
+      // The native cursor can reach a chunk boundary before its owned player exits.
+      // Its physical process is still alive in both rows; no completion is delivered here.
+      clockMs += 2000;
+      holdPlayerExit = ending === "slow-exit";
+      expect(handleSocketCommand({ cmd: "record", take_id: crypto.randomUUID(), press_to_talk: true,
+        playback_elapsed_ms: playing.long_read.chunk_start_ms + localPress })).toMatchObject({ outcome: "accept" });
+      if (holdPlayerExit) {
+        await fixtureCheckpoint(); expect(captures).toBe(0);
+        players[2].exit.resolve(143);
+      }
+      await opened.at(0); await fixtureCheckpoint();
+      const paused = events.findLast(event => event.type === "playback_state" && event.state === "paused");
+      expect(paused).toMatchObject({ playback_id: playing.playback_id, generation: playing.generation + 1, pause_owner: "f5" });
+      const pressWord = playing.initial_timing.aligned_words.findLast((word: { offset_ms: number }) => word.offset_ms <= localPress);
+      expect(players).toHaveLength(3);
+      if (ending === "manual") expect(await handleSocketCommand({ cmd: "pause", playback_id: paused.playback_id,
+        generation: paused.generation })).toMatchObject({ outcome: "accept" });
+      if (ending === "stop") expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
+      if (ending === "refused") effectiveStateSpy.mockReturnValue("recording");
+      if (ending === "queued") for (let index = 0; index < 2; index++) {
+        expect(await handleSocketCommand({ cmd: "speak_text", id: `clone-waiting-${index}`, text: `Waiting ${index}.`,
+          profile: kind, source: "selection", queue: true })).toMatchObject({ outcome: "accept", reason: "queued" });
+      }
+      if (ending.startsWith("n6-")) {
+        expect(handleSocketCommand({ cmd: "record", take_id: crypto.randomUUID(), press_to_talk: true })).toMatchObject({ outcome: "accept" });
+        await opened.at(1);
+        results[ending === "n6-A" ? 0 : 1].resolve(null); await fixtureCheckpoint();
+        expect(events.filter(event => event.state === "resumed")).toHaveLength(0);
+      }
+      for (const result of results) result.resolve(null);
+      await settleRecordingJobs(tts.hasF5Capture); await fixtureCheckpoint();
+      const resumes = !["manual", "stop", "refused"].includes(ending);
+      if (resumes) { await playerBarrier.at(3); await fixtureCheckpoint(); }
+      const resumed = events.filter(event => event.type === "playback_state" && event.state === "resumed");
+      const wire = { requestID: "clone-owner", text, resumes, ending, events: events.map(event => JSON.parse(serializeEvent(event))) };
+      if (process.env.VOICELAYER_F5_CLONE_WIRE) {
+        const path = process.env.VOICELAYER_F5_CLONE_WIRE;
+        const rows = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : [];
+        writeFileSync(path, JSON.stringify([...rows, wire]));
+      }
+      expect(Math.abs(paused.chunk_offset_ms - pressWord.offset_ms), "ClonePauseKeepsPressWord").toBeLessThanOrEqual(1);
+      expect(resumed, "CloneResumeKeepsParkedIdentity").toHaveLength(resumes ? 1 : 0);
+      if (resumes) {
+        expect(resumed[0]).toMatchObject({ playback_id: paused.playback_id, generation: paused.generation + 1,
+          offset_ms: paused.offset_ms });
+        const fresh = events.findLast(event => event.state === "speaking" && !event.long_read?.preparing);
+        expect(fresh).toMatchObject({ playback_id: paused.playback_id, generation: paused.generation + 1,
+          playback_offset_ms: paused.offset_ms, long_read: { chunk_index: 2 } });
+        expect(tts.playbackTelemetrySnapshot()).toEqual({ phase: "playing", generation: paused.generation + 1 });
+      } else {
+        expect(isPlaybackPaused()).toBe(ending === "manual");
+        if (ending === "refused") expect(events.some(event => event.reason === "resume-refused")).toBe(true);
+      }
+      expect(cloneReady.values.filter(part => !part.startsWith("Waiting "))).toHaveLength(5);
+      if (ending === "queued") expect(events.findLast(event => event.type === "read_queue"))
+        .toEqual({ type: "read_queue", count: 2, current_request_id: "clone-owner" });
+      expect(players).toHaveLength(resumes ? 4 : 3);
+    } finally {
+      effectiveStateSpy.mockReturnValue("idle"); holdPlayerExit = false;
+      for (const result of results) result.resolve(null);
+      for (const player of players) player.exit.resolve(143);
+      await settleRecordingJobs(tts.hasF5Capture);
+      stopPlayback(); await awaitCurrentPlayback(); resetSelectionReadQueueForTests();
+    }
+  });
+
+  for (const kind of ["short", "long"] as const) for (const window of ["synthesis-after-settle", "synthesis-during-capture", "decoder-before-player"] as const)
+  for (const ending of ["auto", "manual", "stop", "refused", "n6-A", "n6-B"] as const) {
+    if (window !== "synthesis-after-settle" && ending !== "auto") continue;
+  it(`F-resume-clone gap ${kind}/${window}/${ending}`, async () => {
+    modelReplay = true;
+    const pending = deferred<void>(), entered = fixtureBarrier<number>(), ready = fixtureBarrier<number>();
+    const opened = fixtureBarrier<void>(), results = [deferred<string | null>(), deferred<string | null>()];
+    let calls = 0, captures = 0;
+    spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(async () => {
+      const index = calls++; entered.push(index);
+      if (index === 5) await pending.promise;
+      ready.push(index); return Buffer.from("owned clone audio");
+    }), spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+      const index = captures++; options?.onCaptureStart?.(); opened.push(); return finishSyntheticCapture(() => results[index].promise);
+    }));
+    try {
+      const h = speakLongRead(text, { kind, engine: "clone", voice: kind === "short" ? "ben-c1" : "theo-c4s", rate: "+0%" }, Date.now(), { request_id: "clone-gap" });
+      handles.push(h); await playerBarrier.at(0);
+      for (let index = 0; index < 4; index++) {
+        clockMs += 4000; players[index].exit.resolve(0); await playerBarrier.at(index + 1);
+      }
+      await entered.at(5); await ready.at(4);
+      const previous = events.findLast(event => event.state === "speaking" && !event.long_read?.preparing);
+      expect(previous.long_read.chunk_index).toBe(4);
+      clockMs += 4000; players[4].exit.resolve(0); await fixtureCheckpoint();
+      expect(players).toHaveLength(5);
+      expect(ready.values).toEqual([0, 1, 2, 3, 4]);
+      const decoderIndex = decoders.length;
+      if (window === "decoder-before-player") {
+        holdDecoder = true; pending.resolve(); await decoderBarrier.at(decoderIndex); await fixtureCheckpoint();
+        expect(players).toHaveLength(5);
+      }
+      expect(handleSocketCommand({ cmd: "record", take_id: crypto.randomUUID(), press_to_talk: true,
+        playback_elapsed_ms: 20000 })).toMatchObject({ outcome: "accept" });
+      await opened.at(0); await fixtureCheckpoint();
+      const paused = events.findLast(event => event.type === "playback_state" && event.state === "paused");
+      if (window !== "synthesis-after-settle") {
+        pending.resolve(); holdDecoder = false;
+        for (const decoder of decoders) decoder.exit.resolve(0);
+        await ready.at(5); await fixtureCheckpoint(); expect(players).toHaveLength(5);
+      }
+      if (ending === "manual") expect(await handleSocketCommand({ cmd: "pause", playback_id: paused?.playback_id,
+        generation: paused?.generation })).toMatchObject({ outcome: "accept" });
+      if (ending === "stop") expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
+      if (ending === "refused") effectiveStateSpy.mockReturnValue("recording");
+      if (ending.startsWith("n6-")) {
+        expect(handleSocketCommand({ cmd: "record", take_id: crypto.randomUUID(), press_to_talk: true })).toMatchObject({ outcome: "accept" });
+        await opened.at(1); results[ending === "n6-A" ? 0 : 1].resolve(null); await fixtureCheckpoint();
+        expect(events.filter(event => event.state === "resumed")).toHaveLength(0);
+      }
+      for (const result of results) result.resolve(null);
+      await settleRecordingJobs(tts.hasF5Capture);
+      const resumes = !["manual", "stop", "refused"].includes(ending);
+      pending.resolve();
+      if (resumes) await playerBarrier.at(5);
+      else if (ending === "manual") { await ready.at(5); await fixtureCheckpoint(); }
+      else await h.done;
+      await fixtureCheckpoint();
+      const frames = events.map(event => JSON.parse(serializeEvent(event)));
+      if (process.env.VOICELAYER_F5_CLONE_WIRE) {
+        const path = process.env.VOICELAYER_F5_CLONE_WIRE;
+        const rows = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : [];
+        writeFileSync(path, JSON.stringify([...rows, { requestID: "clone-gap", text, resumes, window, ending, events: frames }]));
+      }
+      expect(paused, "GapPauseHasOwner").toBeDefined();
+      const resumed = events.filter(event => event.type === "playback_state" && event.state === "resumed");
+      expect(resumed, "GapResumeKeepsParkedIdentity").toHaveLength(resumes ? 1 : 0);
+      if (resumes) {
+      expect(resumed[0]).toMatchObject({ playback_id: paused.playback_id, generation: paused.generation + 1, offset_ms: 20000 });
+      expect(events.findLast(event => event.state === "speaking" && !event.long_read?.preparing))
+        .toMatchObject({ playback_id: paused.playback_id, generation: paused.generation + 1,
+          playback_offset_ms: 20000, long_read: { chunk_index: 5 } });
+      expect(tts.playbackTelemetrySnapshot()).toEqual({ phase: "playing", generation: paused.generation + 1 });
+      } else expect(isPlaybackPaused()).toBe(ending === "manual");
+      expect(players).toHaveLength(resumes ? 6 : 5);
+    } finally {
+      pending.resolve(); for (const result of results) result.resolve(null); holdDecoder = false; effectiveStateSpy.mockReturnValue("idle");
+      for (const decoder of decoders) decoder.exit.resolve(0);
+      await settleRecordingJobs(tts.hasF5Capture); stopPlayback(); await awaitCurrentPlayback();
+    }
+  });
+  }
+
+  it.skipIf(!process.env.VOICELAYER_F5_CASES)("TLC F5 native command projection conforms to real daemon/player/take handlers", async () => {
+    const schema = z.array(z.object({ initial: z.enum(["playing", "preparing", "paused"]), press: z.number().int(),
+      manual: z.boolean(), stopped: z.boolean(), outcome: z.enum(["pasted", "empty", "failed", "cancelled", "timeout"]),
+      queued: z.number().int(), gesture: z.enum(["tap", "hold", "double"]),
+      takes: z.union([z.literal(1), z.literal(2)]).default(1), ending: z.union([z.literal(0), z.literal(1)]).default(0),
+      manualBefore: z.boolean().optional() }));
+    const rows = schema.parse(JSON.parse(readFileSync(process.env.VOICELAYER_F5_CASES!, "utf8")));
+    const native = z.array(z.array(z.record(z.string(), z.unknown()))).parse(JSON.parse(readFileSync(process.env.VOICELAYER_F5_WIRE!, "utf8")));
+    expect(native).toHaveLength(rows.length);
+    modelReplay = true;
+    let replayed = 0;
+    const daemonWire: { requestID: string; resumes: boolean; events: unknown[] }[] = [];
+    for (const [index, row] of rows.entries()) {
+      resetSelectionReadQueueForTests();
+      const firstPlayer = players.length, firstEvent = events.length;
+      const takes = Array.from({ length: row.takes }, () => ({
+        result: deferred<{ text: string | null; failed: boolean }>(), mic: deferred<void>(),
+      }));
+      let captures = 0;
+      const wait = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+        const take = takes[captures++];
+        expect(take, `unexpected capture row ${index}`).toBeDefined();
+        expect(isPlaybackPaused(), `open mic row ${index}`).toBe(true);
+        options?.onCaptureStart?.();
+        return finishBarCapture(take.mic.promise, "fixture.wav", async () => {
+          const outcome = await take.result.promise;
+          if (outcome.failed) throw new Error("model capture failure");
+          return outcome.text;
+        });
+      });
+      const speakText = spyOn(tts, "speakText").mockImplementation((text, _kind, identity) => start("edge", text, identity));
+      try {
+        await handleSocketCommand({ cmd: "speak_text", text: "One two", source: "selection", id: `owner-${index}` });
+        const original = handles.at(-1)!;
+        if (row.initial !== "preparing") await playerBarrier.at(firstPlayer);
+        clockMs += Math.min(row.press * 1000, 4000);
+        let records = 0;
+        for (const payload of native[index]) {
+          const control = { ...payload };
+          if (control.cmd === "record" && records++ > 0) {
+            // N6 opens B after A's physical recorder exits, while A's result remains pending.
+            takes[0].mic.resolve();
+            await fixtureCheckpoint();
+          }
+          if (control.cmd === "pause" || control.cmd === "resume") {
+            const current = events.slice(firstEvent).findLast(event => event.type === "playback_state" || event.state === "speaking");
+            // Rebind the native fixture's symbolic player to the daemon's fresh scoped identity.
+            delete control.playback_id; delete control.generation;
+            if (current) { control.playback_id = current.playback_id; control.generation = current.generation; }
+          }
+          const command = parseCommand(JSON.stringify(control));
+          if (!command) throw new Error(`Invalid native command row ${index}`);
+          const ack = await handleSocketCommand(command);
+          expect(ack, `row ${index} ${command.cmd}`).not.toMatchObject({ outcome: "reject" });
+          await fixtureCheckpoint();
+        }
+        expect(captures, `row ${index}`).toBe(row.takes);
+        for (let queued = 0; queued < row.queued; queued++) {
+          expect(await handleSocketCommand({ cmd: "speak_text", id: `queued-${index}-${queued}`, text: `Queued ${queued}`,
+            source: "selection", queue: true })).toMatchObject({ outcome: "accept", reason: "queued" });
+        }
+        const parked = events.slice(firstEvent).findLast(event => event.type === "playback_state" && event.state === "paused");
+        if (row.initial !== "preparing") expect(parked?.offset_ms, `word row ${index}`).toBe(Math.min(Math.floor(row.press / 2) * 2000, 4000));
+        const ending = takes[row.ending];
+        ending.mic.resolve();
+        ending.result.resolve({ text: row.outcome === "pasted" ? "fixture transcript" : null, failed: row.outcome === "failed" });
+        if (takes.length === 2) {
+          await fixtureCheckpoint();
+          expect(events.slice(firstEvent).filter(event => event.type === "playback_state" && event.state === "resumed"),
+            `partial settle row ${index}`).toHaveLength(0);
+          // Lane I retains FIFO delivery even when B finishes first. The other take still owns the loan.
+          const remaining = takes[1 - row.ending];
+          remaining.mic.resolve(); remaining.result.resolve({ text: null, failed: false });
+        }
+        await settleRecordingJobs(); await fixtureCheckpoint();
+        const manual = row.initial === "paused" || row.manualBefore === true || row.manual;
+        if (!row.stopped && !manual && (row.initial === "preparing" || row.press < 4)) {
+          await playerBarrier.at(firstPlayer + (row.initial === "preparing" ? 0 : 1));
+          expect(events.slice(firstEvent).filter(event => event.type === "playback_state" && event.state === "resumed")).toHaveLength(1);
+          expect(events.slice(firstEvent).findLast(event => event.state === "speaking")?.playback_offset_ms)
+            .toBe(row.initial === "preparing" ? 0 : Math.min(Math.floor(row.press / 2) * 2000, 4000));
+        } else {
+          expect(events.slice(firstEvent).filter(event => event.type === "playback_state" && event.state === "resumed")).toHaveLength(0);
+          if (!row.stopped && manual) expect(isPlaybackPaused()).toBe(true);
+          if (!row.stopped && !manual) await original.done; // End-of-read sentinel: complete without a player.
+        }
+        expect(acknowledgeDictationDelivery("stale-take", "stale-take")).toBe(false);
+        daemonWire.push({ requestID: `owner-${index}`,
+          resumes: !row.stopped && !manual && (row.initial === "preparing" || row.press < 4),
+          events: events.slice(firstEvent).map(event => JSON.parse(serializeEvent(event))) });
+        stopPlayback();
+        for (const player of players) player.exit.resolve(0);
+        await original.done;
+        await awaitCurrentPlayback();
+        replayed++;
+      } finally {
+        for (const take of takes) { take.mic.resolve(); take.result.resolve({ text: null, failed: false }); }
+        await settleRecordingJobs(); wait.mockRestore(); speakText.mockRestore();
+        stopPlayback();
+      }
+    }
+    expect(replayed).toBe(rows.length);
+    if (process.env.VOICELAYER_F5_DAEMON_WIRE) writeFileSync(process.env.VOICELAYER_F5_DAEMON_WIRE, JSON.stringify(daemonWire));
+    console.log(`Replayed ${replayed} TLC F5 native command scenarios through real daemon, PlaybackQueueManager and Lane I take settlement`);
+  }, 120_000);
+
+  for (const phase of ["preparing", "playing"] as const) {
+    it(`R2-01 refused automatic resume releases ${phase} read and retains its History text`, async () => {
+      holdFirstSynth = holdSynth = phase === "preparing";
+      const text = "Keep this whole read in History.";
+      const archive = beginSpeechArchive(text);
+      await archive.settled();
+      const h = speakLongRead(text, { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+      handles.push(h);
+      if (phase === "preparing") await synthBarrier.at(0);
+      else await playerBarrier.at(0);
+      const capture = tts.pauseForF5Capture();
+      await capture.ready;
+      effectiveStateSpy.mockReturnValue("transcribing");
+      try {
+        capture.settle();
+        expect(isPlaybackPaused()).toBe(false);
+        expect(events.find(e => e.type === "playback_outcome" && e.reason === "resume-refused")).toBeDefined();
+      } finally { effectiveStateSpy.mockReturnValue("idle"); capture.settle(); }
+      await h.done;
+      await flushSpeechArchives();
+      expect(readFileSync(join(archive.context.path, "input.txt"), "utf8")).toBe(text);
+      const metadata = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+      expect(metadata.speech.state).toBe(phase === "preparing" ? "cancelled" : "stopped");
+      expect(archive.failures).toEqual([]);
+      holdFirstSynth = holdSynth = false;
+      const later = start("edge", "A later read works.");
+      await playerBarrier.at(phase === "preparing" ? 0 : 1);
+      stopPlayback(); await later.done;
+    });
+  }
+
+  for (const control of ["settle", "manual", "stop"] as const) {
+    it(`R2-01 F5 holds a read before its first chunk (${control})`, async () => {
+      autoPlay = true;
+      const capture = deferred<string | null>();
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(() => capture.promise)));
+      const h = start("edge", "One two three four.");
+      const ack = handleSocketCommand({ cmd: "record", take_id: `preparing-${control}` });
+      await fixtureCheckpoint();
+      expect(await ack).toMatchObject({ outcome: "accept" });
+      await synthBarrier.at(0);
+      await fixtureCheckpoint();
+      expect(players).toHaveLength(0);
+      expect(isPlaybackPaused()).toBe(true);
+      if (control === "manual") expect(await handleSocketCommand({ cmd: "pause" })).toMatchObject({ outcome: "accept", reason: "manual pause" });
+      if (control === "stop") expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
+      capture.resolve(null);
+      await settleRecordingJobs();
+      await fixtureCheckpoint();
+      if (control === "settle") {
+        await h.done;
+        expect(players).toHaveLength(1);
+      } else {
+        expect(players).toHaveLength(0);
+        if (control === "manual") expect(isPlaybackPaused()).toBe(true);
+        stopPlayback();
+        await h.done;
+      }
+    });
+  }
+
   it("S2 a later structured player launch failure cannot strand bounded prefetch", async () => {
     spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
     const h = start("clone", "## Status\n" + "- Keep every complete word in this read.\n".repeat(8));
@@ -229,7 +712,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       return receipt;
     }));
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    spies.push(spyOn(input, "waitForInput").mockResolvedValue("fixture answer"));
+    spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")));
     autoPlay = true;
     const answer = await handleVoiceAsk({ message: "  Durable question?  ", voice: "en-US-JennyNeural", timeout_seconds: 5 });
     expect(answer.isError).not.toBe(true);
@@ -408,7 +891,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it("R2 Ask cannot start capture until its clone alignment child is reaped", async () => {
     const f = cloneFixture();
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
     await playerBarrier.at(0); await f.entered.at(0); players[0].exit.resolve(0);
     await fixtureCheckpoint(); await Bun.sleep(5); expect(capture).not.toHaveBeenCalled();
@@ -422,7 +905,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     }));
     releaseAlignments.push(() => lookup.resolve("fixture-binary"));
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
     await playerBarrier.at(0); await entered.at(0); players[0].exit.resolve(0);
     try {
@@ -433,7 +916,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it("INT1 Ask waits for the spawned child, then captures while adapter cleanup is still held", async () => {
     const f = cloneFixture();
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
     await playerBarrier.at(0); const request = await f.entered.at(0); players[0].exit.resolve(0);
     await fixtureCheckpoint(); expect(request.signal!.aborted).toBe(true); expect(capture).not.toHaveBeenCalled();
@@ -461,7 +944,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     else expect(logs.mock.calls.some(([line]) => /alignment.*unconfirmed/i.test(String(line)))).toBe(true);
     releaseAlignments[1](); players[1].exit.resolve(0); await awaitCurrentPlayback();
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     autoPlay = true;
     const answer = await handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
     expect(answer.isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
@@ -543,7 +1026,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const old = start(); await playerBarrier.at(0); await synthBarrier.at(1);
     clockMs += 250;
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
     const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
     const history = await historyBarrier.at(0); await fixtureCheckpoint();
@@ -866,7 +1349,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it("voice_ask preempts synthesis before waiting on its prompt and recording", async () => {
     holdSynth = true; const old = start(); await synthBarrier.at(1); await playerBarrier.at(0);
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
-    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
     const answer = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
     await old.done;
@@ -957,13 +1440,14 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(async (part, _voice, signal) => {
       calls.push(part); signals.push(signal!); return Buffer.from("clone audio");
     }));
+    archiveBeforePlayerExit = true;
     autoPlay = true; await start("clone", longText).done;
     expect(longText.length).toBeGreaterThan(50_000);
     expect(calls.join(" ")).toBe(longText); expect(calls.length).toBeGreaterThan(1);
     expect(new Set(signals).size).toBe(1);
     expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine: "qwen3-tts", origin: "speak", fallback: false});
     expect(events.some((e) => e.type === "subtitle")).toBe(false); expect(loadHistory()).toHaveLength(1);
-  });
+  }, QWEN_FIXTURE_TIMEOUT_MS);
 
   it("history failure warns without failing a successful playback completion", async () => {
     failHistory = true; autoPlay = true;
@@ -1010,7 +1494,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const timer = spyOn(globalThis, "setTimeout").mockImplementation(((fn: any, ms: number, ...args: any[]) =>
       realTimer(fn, ms === 35000 ? 25 : ms, ...args)) as any);
     try {
-      expect(await handleSocketCommand({ cmd, id: `capture-${cmd}` })).toMatchObject({ command: cmd, outcome: "accept" });
+      expect(await handleSocketCommand({ cmd, id: `capture-${cmd}`, ...(cmd === "stop" ? { scope: "capture" as const } : {}) })).toMatchObject({ command: cmd, outcome: "accept" });
       expect(isPlaybackPaused()).toBe(true);
     } finally { timer.mockRestore(); capture.mockRestore(); }
   });
@@ -1023,6 +1507,91 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const receipts = (id: string) => events.filter(e => e.type === "state" && e.state === "speaking" && e.request_id === id);
     const settle = async () => { for (let i = 0; i < 20; i++) await fixtureCheckpoint(); await flushSpeechArchives(); };
     afterEach(() => resetSelectionReadQueueForTests());
+
+    it("R2-01 D2 two waiting reads survive F5 park and resume and play once in order", async () => {
+      const opened = deferred<void>(), take = deferred<string | null>();
+      const realSpeakText = tts.speakText;
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }),
+        spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+          options?.onCaptureStart?.(); opened.resolve();
+          return finishSyntheticCapture(() => take.promise);
+        }), spyOn(tts, "speakText").mockImplementation((...args) => {
+          const read = realSpeakText(...args); handles.push(read); return read;
+        }));
+      const started = () => events.filter(e => e.type === "state" && e.state === "speaking" &&
+        e.long_read?.preparing !== true).map(e => e.request_id);
+      const selections = ["Alpha current read.", "Bravo waiting read.", "Charlie waiting read."];
+      try {
+        expect(await select("A", selections[0])).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(0);
+        expect(await select("B", selections[1])).toMatchObject({ outcome: "accept", reason: "queued" });
+        expect(await select("C", selections[2])).toMatchObject({ outcome: "accept", reason: "queued" });
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+
+        expect(handleSocketCommand({ cmd: "record", take_id: "queue-borrow", playback_elapsed_ms: 0 }))
+          .toMatchObject({ outcome: "accept" });
+        await opened.promise;
+        expect(isPlaybackPaused()).toBe(true);
+        expect(players[0].killed).toBe(true);
+        expect(players).toHaveLength(1);
+        expect(started()).toEqual(["A"]);
+        expect(lastQueue(), "F5 park must keep both waiting reads")
+          .toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+
+        take.resolve(null);
+        await settleRecordingJobs(tts.hasF5Capture);
+        await playerBarrier.at(1);
+        expect(isPlaybackPaused()).toBe(false);
+        expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
+        expect(started()).toEqual(["A", "A"]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+
+        players[1].exit.resolve(0);
+        await playerBarrier.at(2);
+        expect(started()).toEqual(["A", "A", "B"]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 1, current_request_id: "B" });
+        players[2].exit.resolve(0);
+        await playerBarrier.at(3);
+        expect(started()).toEqual(["A", "A", "B", "C"]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: "C" });
+        players[3].exit.resolve(0);
+        await Promise.all(handles.map(read => read.done));
+        await awaitCurrentPlayback(); await flushSpeechArchives();
+        expect(handles).toHaveLength(3);
+        expect(players).toHaveLength(4);
+        expect(started()).toEqual(["A", "A", "B", "C"]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+        expect(loadHistory().map(entry => entry.text).sort()).toEqual([...selections].sort());
+      } finally {
+        take.resolve(null); await settleRecordingJobs(tts.hasF5Capture);
+        stopPlayback(); await awaitCurrentPlayback();
+      }
+    });
+
+    it("R2-01 refused automatic resume through socket capture releases Option+F5 admission", async () => {
+      const opened = deferred<void>(), take = deferred<string | null>();
+      spies.push(spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+        options?.onCaptureStart?.(); opened.resolve();
+        return finishSyntheticCapture(() => take.promise).finally(() => effectiveStateSpy.mockReturnValue("transcribing"));
+      }));
+      try {
+        expect(await select("A", "Keep the interrupted source text.")).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(0);
+        expect(handleSocketCommand({ cmd: "record", take_id: "refused-real-take" })).toMatchObject({ outcome: "accept" });
+        await opened.promise;
+        take.resolve(null);
+        await settleRecordingJobs(tts.hasF5Capture);
+        expect(isPlaybackPaused()).toBe(false);
+        expect(events.find(e => e.type === "playback_outcome" && e.reason === "resume-refused")).toBeDefined();
+        await awaitCurrentPlayback();
+        effectiveStateSpy.mockReturnValue("idle");
+        expect(await handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "noop", reason: "stale" });
+        expect(await select("D", "A later Option+F5 works.")).toMatchObject({ outcome: "accept" });
+        await playerBarrier.at(1);
+        expect(receipts("D").length).toBeGreaterThan(0);
+      } finally { take.resolve(null); effectiveStateSpy.mockReturnValue("idle"); }
+    });
+
 
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
       const cloneProfile = { name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [],
@@ -1117,12 +1686,15 @@ describe("long-read real runtime with owned synth/player fakes", () => {
           kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
           engineSource: "settings", rateSource: "settings",
         }), spyOn(qwen, "loadProfile").mockReturnValue(cloneProfile));
+        const source = `## ${heading}\n- Red apple\n- Green pear\n- Blue sky`;
+        const planned = planProsody({ readText: source, projection: projectSpeakableText(source, [], "clone"),
+          engine: "clone", listNumbers: "inline", concurrency: 1 });
         let running = 0, maximum = 0;
         const pending = deferred<void>();
         const clone = spyOn(qwen, "synthesizeCloned").mockImplementation(async (text, _voice, signal) => {
           maximum = Math.max(maximum, ++running);
           try {
-            if (text === `${heading}.` || text.startsWith("Bravo")) return Buffer.from("clone audio");
+            if (text === planned.segments[0].text || text.startsWith("Bravo")) return Buffer.from("clone audio");
             pending.resolve();
             await new Promise<void>(resolve => {
               if (signal?.aborted) resolve(); else signal?.addEventListener("abort", () => resolve(), { once: true });
@@ -1130,7 +1702,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
             return null;
           } finally { running--; }
         }); spies.push(clone);
-        select("A", `## ${heading}\n- Red apple\n- Green pear\n- Blue sky`);
+        select("A", source);
         await pending.promise;
         if (playing) await playerBarrier.at(0);
         else expect(players).toHaveLength(0);
@@ -1140,7 +1712,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         if (command === "read_next") await playerBarrier.at(playing ? 1 : 0);
         else await settle();
         expect(maximum).toBe(1);
-        expect(clone.mock.calls.map(call => call[0])).toEqual([`${heading}.`, "Red apple.",
+        expect(clone.mock.calls.map(call => call[0])).toEqual([...planned.segments.slice(0, 2).map(segment => segment.text),
           ...(command === "read_next" ? ["Bravo queued read."] : [])]);
         expect(clone.mock.calls[1][2]?.aborted).toBe(true);
         await handleSocketCommand({ cmd: "stop" });
@@ -1468,7 +2040,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     function startCapture() {
       spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
       const done = deferred<string>();
-      spies.push(spyOn(input, "waitForInput").mockImplementation(() => done.promise));
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(() => done.promise)));
       expect(handleSocketCommand({ cmd: "record", id: "rec", press_to_talk: true } as any)).toMatchObject({ outcome: "accept" });
       const state = spyOn(input, "getRecordingState").mockReturnValue("recording"); spies.push(state);
       return { done, state };
@@ -1546,7 +2118,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       await suspendedBehindA();
       autoPlay = true;
       spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
-      spies.push(spyOn(input, "waitForInput").mockResolvedValue("an answer"));
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "an answer")));
       await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
       await settle();
       expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });

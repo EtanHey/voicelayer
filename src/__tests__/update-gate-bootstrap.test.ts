@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { test as bunTest, expect, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync, utimesSync, watch } from "node:fs";
 import { join } from "node:path";
@@ -127,7 +128,7 @@ test("process fallback busy waits even with idle daemon", async () => {
 test("idle disables autostart before quit, verifies exit before install, records source", async () => {
   const f = fixture(); writeFileSync(join(f.root, "recovery.wav"), "retained audio"); const c = f.start();
   try {
-    expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 0 });
+    expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 1 });
     const calls = readFileSync(f.log, "utf8");
     expect(calls.indexOf("disable ")).toBeLessThan(calls.indexOf("quit"));
     expect(calls.indexOf("bootout ")).toBeLessThan(calls.indexOf("install"));
@@ -151,7 +152,7 @@ test("CLI opt-in reaches the TTY gate; default stays UNKNOWN", async () => {
 });
 test("unreadable socket refuses unless process/diag evidence is clean AND human confirmed", async () => {
   const f = fixture(null), c = f.start();
-  try { expect(await c.exited).toBe(0); expect(await new Response(c.stderr).text()).toContain("socket UNKNOWN"); }
+  try { expect(await c.exited).toBe(1); expect(await new Response(c.stderr).text()).toContain("socket UNKNOWN"); }
   finally { f.server.stop(true); }
   const bad = fixture(null); writeFileSync(join(bad.root, "diag"), "unreadable state"); const b = bad.start();
   try { await bad.waitForPhase("UNKNOWN", b); expect(readFileSync(bad.log, "utf8")).toBe(""); const output = await cancel(b); expect(output).toContain("UNKNOWN"); expect(output).toContain(join(bad.root, "diag")); expect(output).toContain("VOICELAYER_BOOTSTRAP_DIAG_PATH"); }
@@ -245,7 +246,7 @@ test("R1 cancelled bootout cannot commit or install and permits a fresh retry", 
     expect(readFileSync(f.log, "utf8")).not.toContain("install");
     expect(existsSync(f.gate)).toBe(false);
     unlinkSync(join(f.root, "cancel-bootout"));
-    expect(await f.start().exited).toBe(0);
+    expect(await f.start().exited).toBe(1);
   } finally { f.server.stop(true); }
 });
 
@@ -258,14 +259,14 @@ test("R1 evidence fault refuses outside the gate lock and bootstrap remains retr
     expect(existsSync(f.gate)).toBe(false);
     expect(readFileSync(f.log, "utf8")).not.toContain("install");
     unlinkSync(join(f.root, "proof-fault"));
-    expect(await f.start().exited).toBe(0);
+    expect(await f.start().exited).toBe(1);
   } finally { f.server.stop(true); }
 });
 
 test("R1 resident whisper exits with its native owner instead of blocking idle bootstrap", async () => {
   const f = fixture(); writeFileSync(join(f.root, "resident"), "456 whisper-server\n");
   const c = f.start();
-  try { expect(await c.exited).toBe(0); expect(readFileSync(f.log, "utf8")).toContain("install"); }
+  try { expect(await c.exited).toBe(1); expect(readFileSync(f.log, "utf8")).toContain("install"); }
   finally { f.server.stop(true); }
 });
 
@@ -300,7 +301,7 @@ test("R1 loaded legacy stderr diagnostics can establish idle when the default ha
   writeFileSync(join(f.root, "diag"), "no diagnostic here\n");
   writeFileSync(legacy, diagLine());
   const c = f.start();
-  try { expect(await c.exited).toBe(0); expect(readFileSync(f.log, "utf8")).toContain("install"); }
+  try { expect(await c.exited).toBe(1); expect(readFileSync(f.log, "utf8")).toContain("install"); }
   finally { f.server.stop(true); }
 });
 
@@ -352,7 +353,7 @@ test("R2 successful COMMIT finalizer never reads G1 again", async () => {
   const f = fixture(); writeFileSync(join(f.root, "finalizer-lock"), "yes");
   const c = f.start();
   try {
-    expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 0 });
+    expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 1 });
     expect(readFileSync(f.log, "utf8")).toContain("install");
     expect(readFileSync(f.log, "utf8")).not.toContain("enable ");
     await waitFor(f.root, () => !existsSync(f.gate + ".lock"), "finalizer lock release");
@@ -363,7 +364,7 @@ test("R2 bootstrap COMMIT readback outlives the pre-sample deadline", async () =
   const f = fixture(); writeFileSync(join(f.root, "late-commit"), "yes");
   const c = f.start();
   try {
-    expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 0 });
+    expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 1 });
     expect(readFileSync(f.log, "utf8")).toContain("install");
   } finally { f.server.stop(true); }
 });
@@ -375,6 +376,6 @@ for (const zone of ["local", "offset"]) test(`R2 NSLog diagnostic timestamp form
     : new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().replace("T", " ").replace("Z", "");
   writeFileSync(join(f.root, "diag"), `${stamp} VoiceBar[123:456] [VoiceBar][diag] state_idle voiceMode=idle\n`);
   const c = f.start();
-  try { expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 0 }); }
+  try { expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 1 }); }
   finally { f.server.stop(true); }
 });

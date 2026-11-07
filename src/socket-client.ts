@@ -1,3 +1,4 @@
+import { replayRecordingJobs } from "./recording-jobs";
 /**
  * Unix domain socket client for VoiceLayer → VoiceBar communication.
  *
@@ -257,6 +258,7 @@ function startConnection(): void {
           broadcast({ type: "history_playback_gate", id, busy: gate.busy });
           if (!gate.busy) historyGates.delete(id);
         }
+        if (connectionOptions.acceptsCommands === true) replayRecordingJobs();
         connectionOptions.onConnected?.();
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },

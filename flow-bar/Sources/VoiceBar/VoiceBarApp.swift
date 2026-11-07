@@ -172,9 +172,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     #endif
 
     private var socketServer: SocketServer?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var panelPointerMovementHandler: ((NSPoint) -> Void)?
+    private var windowFocusObservers: [NSObjectProtocol] = []
+
+    private func synchronizeVoiceBarWindowFocus() {
+        voiceState.setVoiceBarWindowFocused(
+            VoiceBarWindowFocus.holdsIdleWings(keyWindow: NSApp.keyWindow, notchPanel: panel)
+        )
+    }
     /// NOTCH2: the hit providers' animation-aware view of the panel layout (see `VoiceBarPanelHitGate`).
     private var panelHitGate: VoiceBarPanelHitGate?
     private var panelHitGateSettleGeneration: UInt = 0
@@ -625,6 +633,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Socket server — listens on VoiceLayerPaths.socketPath
         let server = SocketServer(state: voiceState)
         socketServer = server
+        let pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        pressure.setEventHandler { [weak self, weak server] in
+            guard let pressure = self?.memoryPressureSource else { return }
+            let level = pressure.data.contains(.critical) ? "critical" : "warning"
+            server?.sendCommandToOwner(command: ["cmd": "memory_pressure", "level": level])
+        }
+        memoryPressureSource = pressure
+        pressure.resume()
         server.onControlCommand = { [weak self] command in
             self?.handleLocalControlCommand(command)
         }
@@ -662,13 +678,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         configurePanelStateObservation()
         voiceState.onHistoryArchiveChange = { path in
-            // Drop that entry from the History index first, so the reload the notification triggers can't serve a
-            // stale transcript (a re-transcription rewrites an old entry in place).
+            // Materialize the changed row on the archive actor. Known-path events patch History in place;
+            // they must not cancel paging or replace every row while the user is selecting text.
             Task {
-                if let path { await SettingsArchiveIndex.shared.invalidate(entryPath: path) }
-                await MainActor.run {
-                    NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
-                }
+                await SettingsHistoryArchiveChangeNotifier.post(entryPath: path)
             }
         }
         voiceState.onPolishStatusChange = { [weak self] in
@@ -809,6 +822,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.savePanelPosition()
         }
 
+        // R0856-12: the idle wings stay while VoiceBar's own Settings or popover window has focus.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                     NSWindow.willCloseNotification, NSApplication.didResignActiveNotification] {
+            windowFocusObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                // Resign and close fire before AppKit settles the next key window; read it after.
+                DispatchQueue.main.async { self?.synchronizeVoiceBarWindowFocus() }
+            })
+        }
+
         // Track mouse across screens — move pill to whichever monitor the cursor is on
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             self?.handleMouseMoved()
@@ -835,6 +859,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func performTerminationCleanup() {
+        memoryPressureSource?.cancel()
+        memoryPressureSource = nil
         microphonePriorityTimer?.invalidate()
         microphonePriorityTimer = nil
         if let isolatedInstanceMarkerPID {
@@ -848,6 +874,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NotificationCenter.default.removeObserver(observer)
         }
         settingsSceneObservers.removeAll()
+        windowFocusObservers.forEach(NotificationCenter.default.removeObserver)
+        windowFocusObservers.removeAll()
         hotkeyListener.stop()
         audioLevelMonitor.shutdown()
         releaseLevelAdmission?()
@@ -1269,7 +1297,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             gatePermitsQuit: !ownsServer || gate.permitsTermination(controlledLease: controlledUpdateLease)
         )
         guard reply == .terminateNow else {
-            voiceState.reportQuitRefusal()
+            // The note clears once the same policy would let this quit through (the work stopped).
+            let lease = controlledUpdateLease
+            let refusalOwnsServer = ownsServer
+            let refusalGate = gate
+            // Voice work is read live by VoiceState; only the update gate's part is rechecked here.
+            voiceState.reportQuitRefusal(
+                gateBlocked: refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease),
+                isGateStillBlocked: { refusalOwnsServer && !refusalGate.permitsTermination(controlledLease: lease) }
+            )
             NSLog("[VoiceBar] Quit refused: voice/update safety evidence unavailable")
             return reply
         }
@@ -1318,12 +1354,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.guardedTextTypingHandler = { text, pid in
             Self.typeTextGuarded(text, expectedPID: pid)
         }
+        voiceState.ownedTextTypingHandler = { text, pid, matches in
+            Self.typeTextGuarded(text, expectedPID: pid, matchesCapturedTarget: matches)
+        }
         voiceState.accessibilityTrustChecker = { prompt in
             Self.isAccessibilityTrusted(prompt: prompt)
         }
         voiceState.asyncDictationInsertionHandlerProvider = {
             CommandModeAXHelper.captureFocusedInsertionHandler()
         }
+        voiceState.dictationTargetIdentityProvider = { CommandModeAXHelper.captureFocusedTargetIdentity() }
         voiceState.focusedTargetEligibilityProvider = {
             CommandModeAXHelper.captureFocusedTargetEligibility()
         }
@@ -1401,7 +1441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    private static func typeTextGuarded(_ text: String, expectedPID: pid_t) -> GuardedTypingResult {
+    private static func typeTextGuarded(_ text: String, expectedPID: pid_t, matchesCapturedTarget: () -> Bool = { true }) -> GuardedTypingResult {
         guard isAccessibilityTrusted(prompt: false),
               let source = CGEventSource(stateID: .hidSystemState) else { return .failed }
         return SynthesizedKeyEvents.postGuardedBatch(
@@ -1410,6 +1450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: text), source: source)
             },
             frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+            matchesCapturedTarget: matchesCapturedTarget,
             postEvent: { $0.post(tap: .cghidEventTap) }
         )
     }
@@ -1446,7 +1487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return outcome
     }
 
-    private func makeHotkeyManager() -> HotkeyManager {
+    func makeHotkeyManager() -> HotkeyManager {
         let manager = HotkeyManager(gesture: gestureStateMachine)
         manager.onKeyDown = { [weak self] in
             self?.handleHotkeyKeyDown(from: .native)
@@ -1522,6 +1563,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configureHotkeyCallbacks() {
+        voiceState.onHotkeyCancellationChange = { [weak self] active in
+            self?.gestureStateMachine.activity.setCancellationActive(active)
+        }
+        gestureStateMachine.activity.setCancellationActive(commandRouter.shouldHandleEscape)
         // Hold start → push-to-talk recording
         gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
             if phase == .pressing {
@@ -1549,9 +1594,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Single/double tap are intentionally not assigned in the immediate PTT model.
         gestureStateMachine.onSingleTap = { [weak self] in
             NSLog("[VoiceBar] Hotkey single tap — checking active recording/transcription")
-            // QUEUE1 D2: the router is unchanged; an F5 stop over a playing read keeps queued reads for Next.
-            guard let self else { return }
-            voiceState.retainingReadQueueOnStop { self.commandRouter.handleHotkeySingleTap() }
+            self?.commandRouter.handleHotkeySingleTap()
         }
 
         gestureStateMachine.onDoubleTap = { [weak self] in
@@ -1561,7 +1604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         gestureStateMachine.onCancel = { [weak self] in
             NSLog("[VoiceBar] Hotkey cancel — cancelling active recording")
-            self?.commandRouter.handleCancel()
+            self?.commandRouter.handleEscape()
         }
     }
 
@@ -2043,7 +2086,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isCollapsed: state?.isCollapsed ?? false,
                 coreWidth: coreWidth,
                 visibleCoreOcclusionInset: visibleCoreOcclusionInset,
-                transientNote: state?.selectionFeedbackNote
+                transientNote: state?.selectionFeedbackNote,
+                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory
             )
         )
     }
@@ -2194,13 +2238,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
-        voiceState.retainingReadQueueOnStop {
-            if stoppingFromPhysicalPress {
-                commandRouter.handlePhysicalPressStop()
-                return
-            }
-            commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
+        if stoppingFromPhysicalPress {
+            commandRouter.handlePhysicalPressStop()
+            return
         }
+        commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
     }
 
     func handleHotkeyDoubleTap() {
@@ -3119,6 +3161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             recognizerStatus: { [weak self] in self?.voiceState.recognizerPickerState ?? .unavailable },
             onSelectRecognizer: { [weak self] in self?.voiceState.selectRecognizer($0) },
             onManageRecognizer: { [weak self] in self?.voiceState.manageRecognizer($0, action: $1) },
+            onSetUnloadWhenIdle: { [weak self] in self?.voiceState.setRecognizerUnloadWhenIdle($0) },
             speechControls: { [weak self] in self?.voiceState.speechControls },
             speechConnected: { [weak self] in self?.voiceState.isConnected ?? false },
             speechBusyReason: { [weak self] in self?.voiceState.speechBusyReason },
@@ -3319,7 +3362,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastHotkeyActivitySource = source
     }
 
+    /// A finished locked take cannot turn the next F5 down-edge into a stop of the resumed read.
+    private func retireSettledCaptureGesture() {
+        if gestureStateMachine.state == .locked, voiceState.mode != .recording { resetHotkeyTracking() }
+    }
+
     func handleHotkeyKeyDown(from source: HotkeyInputSource) {
+        retireSettledCaptureGesture()
         let now = CFAbsoluteTimeGetCurrent()
         if source == .native, shouldSuppressLaunchStartCommand(rawCommand: "native-hotkey") {
             resetHotkeyTracking()
@@ -3355,6 +3404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func handleHotkeyMouseDown(from source: HotkeyInputSource) {
+        retireSettledCaptureGesture()
         let now = CFAbsoluteTimeGetCurrent()
         guard !shouldIgnoreIncomingHotkeyEvent(from: source, now: now) else {
             NSLog("[VoiceBar] Ignoring duplicate %@ mouseDown", source == .native ? "native" : "legacy socket")

@@ -5,6 +5,23 @@ import { resolve } from "node:path";
 const script = resolve(import.meta.dir, "test_hook_orphan_daemon.sh");
 const hasCompiler = !!Bun.which("cc");
 if (!hasCompiler) console.warn("SKIP HO3 native sender helper: cc toolchain missing");
+// The cited crashes were decoding errors; the old 300 s ceiling was not hit.
+// Five M1 standalone baselines: max 106.93 s; one fixture budget >= 3x that run.
+const ORPHAN_FIXTURE_TIMEOUT_MS = 360_000;
+const NATIVE_PREFLIGHT_TIMEOUT_MS = 15_000;
+const SNAPSHOT_GUARD_TIMEOUT_MS = 5_000;
+
+test("raw ps snapshot tolerates non-UTF8 argv and still detects leaked run paths", () => {
+  const result = spawnSync("python3", [resolve(import.meta.dir, "check_hook_process_snapshot.py")], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+    encoding: "utf8", timeout: SNAPSHOT_GUARD_TIMEOUT_MS,
+  });
+  expect(result.error).toBeUndefined();
+  expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
+    status: 0, output: expect.any(String),
+  });
+  expect(result.stdout.match(/^PASS snapshot:/gm)).toHaveLength(4);
+}, SNAPSHOT_GUARD_TIMEOUT_MS + 1_000);
 
 for (const name of ["cross-untagged", "unscoped-negative"]) {
   for (const phase of ["ongoing", "final"]) {
@@ -25,11 +42,11 @@ for (const name of ["cross-untagged", "unscoped-negative"]) {
 }
 
 test.skipIf(!hasCompiler)("independent hook test roots isolate fixtures and reap daemons on every exit path", () => {
-  const native = spawnSync("bash", [script, "--native-check"], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8", timeout: 15_000 });
+  const native = spawnSync("bash", [script, "--native-check"], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8", timeout: NATIVE_PREFLIGHT_TIMEOUT_MS });
   expect({ status: native.status, output: native.stdout + native.stderr }).toEqual({ status: 0, output: expect.any(String) });
   const result = spawnSync("bash", [script, process.env.HOOK_CROSS_RUN_CHILD ? "--concurrent" : "--cross-run"], {
         env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
-    encoding: "utf8", timeout: 300_000,
+    encoding: "utf8", timeout: ORPHAN_FIXTURE_TIMEOUT_MS,
   });
   if (process.env.HOOK_CROSS_RUN_CHILD || process.env.HOOK_KEEP_EVIDENCE === "1" || result.status !== 0) console.log(result.stdout + result.stderr);
   expect(result.error).toBeUndefined();
@@ -38,7 +55,20 @@ test.skipIf(!hasCompiler)("independent hook test roots isolate fixtures and reap
     status: 0,
     output: expect.stringContaining("PASS real:"),
   });
-}, 305_000);
+}, NATIVE_PREFLIGHT_TIMEOUT_MS + ORPHAN_FIXTURE_TIMEOUT_MS + 5_000);
+
+// Cross-run children already cover this case in their paired lifecycle matrix.
+test.skipIf(!hasCompiler || !!process.env.HOOK_CROSS_RUN_CHILD)("hook smoke isolates inherited model paths before helpers can join its daemon group", () => {
+  const result = spawnSync("bash", [script, "--lifecycle-only", "model-isolation"], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+    encoding: "utf8", timeout: 60_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
+    status: 0,
+    output: expect.stringContaining("PASS model-isolation: exit=0, daemon/descendants gone, RUN_DIR checked"),
+  });
+}, 65_000);
 
 test("native TERM attribution immediately fails every protected sender without retry", () => {
   const result = spawnSync("bash", [script, "--policy-check"], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8" });

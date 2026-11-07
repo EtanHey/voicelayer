@@ -1,0 +1,16 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "VoiceBarRunningAfterUpgrade",
+  "status": "EXPECTED_FAIL",
+  "generated": 12,
+  "distinct": 11,
+  "trace": [
+    "/\\ phase = \"formula\"\n/\\ available = TRUE\n/\\ scenario = \"oldUpdater\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"cask\"\n/\\ available = TRUE\n/\\ scenario = \"oldUpdater\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"postflight\"\n/\\ available = FALSE\n/\\ scenario = \"oldUpdater\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"dedupe\"\n/\\ available = TRUE\n/\\ scenario = \"oldUpdater\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"OPEN\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"done\"\n/\\ available = TRUE\n/\\ scenario = \"oldUpdater\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"OPEN\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "Finished checking temporal properties in 00s at 2026-11-03 18:09:28"
+  ]
+}

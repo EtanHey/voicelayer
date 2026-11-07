@@ -126,7 +126,6 @@ private final class PasteHarness {
         self.pasteboard = pasteboard
         let app = FakeTargetApplication(bundleIdentifier: bundleIdentifier)
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.frontmostAppProvider = { app }
         state.targetAppActivator = { _ in }

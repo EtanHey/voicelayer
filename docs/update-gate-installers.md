@@ -5,13 +5,12 @@
 Homebrew removes all services, deletes their plists, quits VoiceBar and replaces
 its bundle before running setup. Postflight restores availability for the bundle
 Homebrew will keep; it never requests an update lease or calls `runGatedInstall`.
-The tap should explicitly call `voicelayer setup --cask-postflight`. Until that
-follow-up lands, no-flag setup with the canonical installed bundle uses the same
+Promotion renders the tap to explicitly call `voicelayer setup --cask-postflight`. For old-cask compatibility, no-flag setup with the canonical installed bundle uses the same
 availability path. Manual nested setup (`VOICELAYER_INSTALL_OPERATION`) instead
 validates its lease and never owns recovery, including on failure.
 
 * Absent means `lstat` returned ENOENT. Under the shared `.bootstrap-lock`, setup
-  rechecks stopped-process evidence and exclusively initializes OPEN through
+  rechecks stopped VoiceBar, daemon, direct CLI, decoder and audio-process evidence and exclusively initializes OPEN through
   `initializeSupervisedVoiceGate`. Retained `.bootstrap`, `.lock`, `.admissions`,
   `.controller` and `.voice-diag.json` evidence refuses initialization. Signals
   SIGINT, SIGTERM, SIGHUP and SIGQUIT unwind the owned mutex; cleanup errors are
@@ -47,7 +46,17 @@ OPEN, closed/live, malformed, locked and orphaned states, nested failure, intern
 mode refusal, isolation and mutex signal cleanup. These are isolated proofs, not
 real cask, launchd or installed-app qualification.
 
-Tap follow-up: pass `--cask-postflight` explicitly; move the cask's uninstall
+Promotion renders a legacy `postflight do` with
+`system_command ... must_succeed: false` and a visible terminal repair message.
+Homebrew 7's declarative `postflight_steps` sandbox blocks launchd and
+LaunchServices; its legacy flight block runs unsandboxed. Nonzero setup status
+must retain the bundle. See [G1 compatibility and the Homebrew follow-up ledger](update-gate-first-install.md#g1-old-updater-new-formula-scripts).
+Lease-less 2.2.58 Cellar dedupe/autostart repair calls use availability only;
+lease-holding callers retain exact validation and controller-owned restoration.
+Old cask + new formula keeps no-flag setup compatibility. Neither availability
+pairing requires a target SHA. Real installed qualification is separate.
+
+Tap follow-up: move the cask's uninstall
 `delete:` of LaunchAgents to `zap` only. This PR does not change the tap or qualify
 its earlier stop/delete/replace sequence as an idle-gated update.
 
@@ -86,12 +95,12 @@ drops), the controller verifies the outcome rather than reporting a plain
 install failure: both pinned processes must be absent, no
 VoiceBar executable may remain in the process table, and G2 must still observe
 the exact COMMITTED lease with no diagnostic or admission records. It observes
-exit with a five-second polling budget. A clean exit confirmed by the final poll
-continues installation even when that poll finishes just past the deadline;
-otherwise the deadline refuses and never proves exit. A same-start-time
-`<defunct>` participant is still exiting and is polled until reaped. An unreadable process table, reused PID, explicit
-refusal, malformed reply, changed lease, retained process, diagnostic or ledger
-entry stops UNKNOWN,
+exit with a five-second polling budget. Confirmed absence can finish the final poll
+just past the deadline; otherwise expiry refuses.
+Same-start-time `<defunct>`/`(basename)` participants, empty ps while a PID exists,
+and unreadable process evidence keep polling without authorizing installation.
+A reused PID or competing VoiceBar refuses immediately. Deadline exhaustion,
+explicit refusal, malformed reply, changed lease, diagnostic or ledger entry stops UNKNOWN,
 writes the recovery receipt and keeps admission closed. Nothing force-stops a
 participant or reopens the gate. Nested helpers validate the retained COMMITTED
 lease and the controller's PID, start time and executable name recorded in the

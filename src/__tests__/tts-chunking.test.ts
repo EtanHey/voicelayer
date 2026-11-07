@@ -71,8 +71,9 @@ it("SPEECH-PACING retains every character of an overlong first token", async () 
   const { chunkTextForLongRead } = await import("../tts");
   const text = "x".repeat(450) + " final words.";
   const chunks = chunkTextForLongRead(text);
-  expect(chunks[0].length).toBeLessThanOrEqual(400);
-  expect(chunks.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
+  expect(chunks[0], "WholeStartupWord").toBe("x".repeat(450));
+  expect(chunks.slice(1).every(chunk => chunk.length <= 400)).toBe(true);
+  expect(chunks.join(" ").match(/\S+/gu)).toEqual(text.match(/\S+/gu));
 });
 
 it("SPEECH-PACING retains tokens across repeated whitespace and paragraphs", async () => {
@@ -105,14 +106,15 @@ describe("SPEECH-PACING natural startup and ramp", () => {
     });
   }
   for (const [opening, expected] of [
-    ["This first sentence contains enough words to exceed the old startup budget and continues naturally until its final punctuation.", null],
+    ["This first sentence contains enough words to exceed the old startup budget and continues naturally until its final punctuation.", "This first sentence contains enough words to exceed the old startup budget and continues naturally"],
     ["This first clause contains enough words to reach a natural pause; the following clause continues well beyond the old startup budget and ends here.", "This first clause contains enough words to reach a natural pause;"],
     ["This first clause contains enough words to reach a natural pause, and the following clause continues well beyond the old startup budget and ends here.", "This first clause contains enough words to reach a natural pause,"],
   ]) {
     it(`uses a sentence or clause boundary: ${opening}`, async () => {
       const { chunkTextForLongRead } = await import("../tts");
       const chunks = chunkTextForLongRead(opening! + tail);
-      expect(chunks[0]).toBe(expected ?? opening!);
+      expect(chunks[0], "StartupRequestBound").toBe(expected ?? opening!);
+      expect(chunks[0].length).toBeLessThanOrEqual(100);
       expect(chunks.join(" ").match(/\S+/gu)).toEqual((opening! + tail).match(/\S+/gu));
     });
   }
@@ -139,5 +141,43 @@ describe("SPEECH-PACING natural startup and ramp", () => {
     expect(chunks[1].length).toBeLessThanOrEqual(200);
     expect(chunks[2].length).toBeGreaterThan(200);
     expect(chunks.slice(2).every(chunk => chunk.length <= 400)).toBe(true);
+  });
+});
+
+
+describe("F-speech R2 real clause boundary", () => {
+  for (const [token, marker, language] of [
+    ["https://example.test/path", ":", "English"], ["1,000", ",", "English"],
+    ["inside;token", ";", "English"], ["מילה،המשך", "،", "Hebrew"],
+  ]) {
+    it(`keeps ${token} whole when ${marker} is at index 99 (${language})`, async () => {
+      const { chunkTextForLongRead } = await import("../tts");
+      const lead = (language === "Hebrew" ? "שלום " : "word ").repeat(20).slice(0, 99 - token.indexOf(marker) - 1) + " ";
+      const source = lead + token + " trailing words without a sentence break ".repeat(20);
+      expect(source[99]).toBe(marker);
+      for (const engine of ["edge", "clone"] as const) {
+        const chunks = chunkTextForLongRead(source, engine);
+        expect(source.slice(chunks[0].length, chunks[0].length + 1), "RealClauseBoundary head ends at whitespace").toMatch(/\s/u);
+        expect(chunks.join(" ").match(/\S+/gu), "RealClauseBoundary token conservation").toEqual(source.match(/\S+/gu));
+      }
+    });
+  }
+
+  it("fuzzes 6000 engine/text pairs with no head token splits or character drops/duplicates", async () => {
+    const { chunkTextForLongRead } = await import("../tts");
+    const vocabulary = ["https://example.test/path", "1,000", "inside;token", "מילה،המשך", "שלום", "U.S.", "alpha", "…"];
+    let seed = 2261, splits = 0, changed = 0;
+    const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+    for (let i = 0; i < 3000; i++) {
+      const source = Array.from({ length: 60 + next() % 30 }, () => vocabulary[(next() >>> 16) % vocabulary.length]).join(" ");
+      for (const engine of ["edge", "clone"] as const) {
+        const chunks = chunkTextForLongRead(source, engine), head = chunks[0];
+        if (head.length < source.length && !/\s/u.test(source[head.length])) splits++;
+        if (chunks.join("").replace(/\s/gu, "") !== source.replace(/\s/gu, "")) changed++;
+      }
+    }
+    console.log(`F-speech R2 fuzz: 6000 pairs; ${splits} head token splits; ${changed} character drops/duplicates`);
+    expect(splits, "RealClauseBoundary fuzz").toBe(0);
+    expect(changed).toBe(0);
   });
 });

@@ -1,3 +1,6 @@
+import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
+import { deferredFixture as deferred } from "./long-read-fixture-barriers";
+import { hasF5Capture } from "../tts";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { writeFileSync, unlinkSync } from "fs";
 import { LOCK_FILE } from "../paths";
@@ -155,18 +158,22 @@ describe("explicit whisper-server unload", () => {
       postUnloadListeners: () => listeners,
     });
     const recording = spyOn(input, "getRecordingState").mockReturnValue("idle");
-    const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+    const started = deferred<void>();
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => {
+      started.resolve(); return finishSyntheticCapture(async () => null);
+    });
     try {
       const unload = unloadOwnedServer(() => false);
       expect(handleSocketCommand({ cmd: "record", id: "f5-unload-race" }))
         .toMatchObject({ outcome: "accept" });
+      await started.promise;
       expect(capture).toHaveBeenCalledTimes(1);
       listeners = [];
       exit(0);
       expect(await unload).toEqual({ outcome: "reject", reason: "capture took priority" });
     } finally {
-      recording.mockRestore();
-      capture.mockRestore();
+      try { await settleRecordingJobs(hasF5Capture); }
+      finally { recording.mockRestore(); capture.mockRestore(); }
     }
   });
 

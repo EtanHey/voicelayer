@@ -1,3 +1,4 @@
+import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
  * Input module — mic recording + STT transcription.
@@ -78,7 +79,9 @@ import {
   VAD_CHUNK_SAMPLES,
   type SilenceMode,
 } from "./vad";
-import { broadcast } from "./socket-client";
+import { broadcastInputEvent as broadcast, setInputRecordingState as setRecordingState,
+  finishBarCapture, ownsRecordingJob, ownsHistoryJob, ownsBarCapture, mayUpdateRetainedCapture,
+  recordingJobCancelled, deliverInputTranscription, registerBarRecorderExit } from "./recording-jobs";
 import {
   calculateRMS,
   detectNativeInputFormat,
@@ -87,7 +90,7 @@ import {
   resamplePCM16,
 } from "./audio-utils";
 import { cleanupTranscriptionText } from "./stt-cleanup";
-import type { TextToSpeechEngine } from "./soundlayer";
+import type { STTAttemptEvidence, TextToSpeechEngine } from "./soundlayer";
 import { restoreSentencePunctuation } from "./stt-punctuation";
 import {
   correctTranscriptionText,
@@ -124,7 +127,6 @@ import type { MicCapture, MicCaptureOptions } from "./soundlayer";
 import {
   getEffectiveRecordingState,
   isRecordingConflictError,
-  setRecordingState,
 } from "./recording-state";
 import { appendControlLayerEvent } from "./control-layer-journal";
 import {
@@ -172,8 +174,10 @@ const PRE_ROLL_CHUNKS = Math.ceil(
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
-/** Absolute MCP VAD capture ceiling measured from first speech, even while held. */
-export const VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS = 30 * 60 * 1000;
+/** Allow already captured PCM a bounded chance to reach Silero at the no-answer edge. */
+export const NO_ANSWER_CLASSIFY_GRACE_MS = 2_000;
+const MIN_ASK_LISTEN_MS = 15_000;
+const LOCKED_SILENCE_TIMEOUT_MS = 10 * 60_000;
 
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
@@ -297,6 +301,7 @@ function archiveDiagnosticReason(error: unknown): string {
 }
 
 export function linkRetainedCaptureToArchive(archiveAudioPath: string): void {
+  if (!mayUpdateRetainedCapture()) return;
   const trimmedPath = archiveAudioPath.trim();
   if (!trimmedPath || !existsSync(retainedRecordingFilePath())) return;
 
@@ -435,6 +440,7 @@ export function retainLastCaptureForRecovery(
   wavData: Uint8Array,
   polishSurface: STTPolishSurface | null,
 ): void {
+  if (!mayUpdateRetainedCapture()) return;
   atomicWriteFile(retainedRecordingFilePath(), wavData);
   clearRetainedRecordingMetadata();
   persistRetainedPolishSurface(polishSurface, wavData);
@@ -673,8 +679,15 @@ export interface NoSpeechGateResult {
 }
 
 export interface RecordingCaptureState {
+  recorderExited?: Promise<void>;
   physicalPressStop?: boolean;
+  /** Locked PTT silence expiry keeps the complete archive and bounds only STT input. */
+  pttSilenceTimeout?: true;
+  /** End-exclusive sample offset of the last Silero speech chunk in captured mono 16 kHz PCM. */
+  pttLastSpeechEndSample?: number;
   vadSpeechDetected?: boolean;
+  noAnswerExpired?: "silence" | "unclassified";
+  noAnswerStartedAtMs?: number;
   onCaptureStart?: () => void;
   onSpeechStart?: () => void;
   onRecordingHoldChange?: (engaged: boolean) => void;
@@ -707,6 +720,8 @@ export function reportInputDeviceLost(reason: DeviceLossReason, captureId: numbe
 }
 
 export function consumeCancelSignalForRecording(): boolean {
+  const owned = recordingJobCancelled();
+  if (owned !== undefined) return owned;
   if (!hasCancelSignal()) return false;
   clearCancelSignal();
   return true;
@@ -732,7 +747,7 @@ export interface VoiceBarUntranscribedRecordingArchiveInput extends Omit<
   VoiceBarRecordingArchiveInput,
   "transcript"
 > {
-  reason: "cancelled" | "captured";
+  reason: "cancelled" | "captured" | "recording-failed";
 }
 
 export interface WaitForInputOptions {
@@ -749,9 +764,11 @@ export interface WaitForInputOptions {
   onSpeechStart?: () => void;
   onRecordingHoldChange?: (engaged: boolean) => void;
   onArchiveCreated?: (archivePath: string) => void;
-  onCaptureEnd?: () => void;
+  /** Decoded PCM duration, excluding silence omitted by the existing STT input rule. */
+  onCaptureEnd?: (transcribedDurationMs?: number) => void;
   onPhaseChange?: (phase: "transcribing") => void;
   onNoSpeech?: () => void;
+  onNoAnswer?: (unclassified: boolean) => void;
   signal?: AbortSignal;
   /** Monotonic clock seam for receipt tests; production uses performance.now(). */
   monotonicNow?: () => number;
@@ -767,7 +784,7 @@ function readReceiptMonotonicNow(clock?: () => number): number | undefined {
 }
 
 function invokeCaptureObserver(
-  observerName: "capture_start" | "speech_start" | "recording_hold" | "no_speech" | "phase_change",
+  observerName: "capture_start" | "speech_start" | "recording_hold" | "no_speech" | "no_answer" | "phase_change",
   observer: (() => void) | undefined,
 ): void {
   if (!observer) return;
@@ -873,7 +890,7 @@ interface VoiceBarRecordingMetadata {
   backend: string;
   language_mode: string;
   voicelayer_transcript_chars: number;
-  transcription_status: "transcribed" | "cancelled" | "captured";
+  transcription_status: "transcribed" | "cancelled" | "captured" | "recording-failed";
   audio_sha256: string;
   app_version: string | null;
   provenance: RecordingProvenance;
@@ -2270,11 +2287,11 @@ export function isPushToEndStopDrainComplete(
  *
  * Two modes:
  * - VAD mode (default): Silero VAD detects speech/silence, auto-stops on silence
- * - push-to-end mode (pushToEnd=true): Records until stop signal or timeout, no VAD
+ * - push-to-end mode (pushToEnd=true): Stop signal or speech-renewed silence deadline; no short VAD close
  *
  * @param timeoutMs - Recording limit; MCP VAD asks use it only before first speech
  * @param silenceMode - VAD silence threshold (ignored in push-to-end mode)
- * @param pushToEnd - If true, skip VAD — only stop on user signal or timeout
+ * @param pushToEnd - If true, use Silero for silence timing and decoder boundaries, preserving captured PCM
  */
 export async function recordToBuffer(
   timeoutMs: number,
@@ -2296,7 +2313,7 @@ export async function recordToBuffer(
   }
 
   const currentRecordingState = getEffectiveRecordingState();
-  if (currentRecordingState !== "idle") {
+  if (currentRecordingState !== "idle" && !ownsBarCapture()) {
     throw new Error(
       `Recording already in progress (state: ${currentRecordingState})`,
     );
@@ -2310,8 +2327,9 @@ export async function recordToBuffer(
     ? Infinity
     : silenceChunksForMode(silenceMode);
 
-  const voiceAskVad = !pushToEnd && captureState?.archiveSource === "voice_ask";
-  // MCP asks use the configured mic-open deadline, not the dictation chunk cap.
+  const voiceAsk = captureState?.archiveSource === "voice_ask";
+  const voiceAskVad = !pushToEnd && voiceAsk;
+  // MCP asks use the post-question no-answer deadline, not the dictation chunk cap.
   const preSpeechChunks = pushToEnd || voiceAskVad
     ? Infinity
     : Math.ceil(PRE_SPEECH_TIMEOUT_SECONDS * (SAMPLE_RATE / VAD_CHUNK_SAMPLES));
@@ -2349,14 +2367,18 @@ export async function recordToBuffer(
     );
   }
 
-  // Reset VAD state for fresh recording (skip in push-to-end mode — no VAD needed)
-  if (!pushToEnd) {
-    try {
-      await resetVAD();
-    } catch (err) {
+  // PTT keeps all captured PCM. Silero renews the deadline and records the decoder-only end boundary.
+  let pttSpeechDetectionAvailable = true;
+  try {
+    await resetVAD();
+  } catch (err) {
+    if (!pushToEnd) {
       setRecordingState("idle");
       throw err;
     }
+    // Missing speech evidence cannot authorize a mid-sentence timeout. Explicit Stop/Cancel still work.
+    pttSpeechDetectionAvailable = false;
+    console.error("[voicelayer] PTT speech detection unavailable; silence timeout disabled");
   }
   if (signal?.aborted) setRecordingState("idle");
   throwIfWaitForInputAborted(signal);
@@ -2367,6 +2389,7 @@ export async function recordToBuffer(
 
   return new Promise<Uint8Array | null>((resolve, reject) => {
     let totalChunksProcessed = 0;
+    let processedPcmBytes = 0;
     let hasSpeech = false;
     let firstSpeechChunkIndex = -1;
     let readBuffer: Uint8Array[] = [];
@@ -2375,6 +2398,7 @@ export async function recordToBuffer(
     const chunkQueue: Uint8Array[] = [];
     let resolved = false;
     let recorder: RecorderProcess | null = null;
+    let processingSettled: Promise<void> = Promise.resolve();
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
     let abortHandler: (() => void) | undefined;
     let pushToEndStopRequestedAtMs: number | null = null;
@@ -2459,12 +2483,18 @@ export async function recordToBuffer(
         );
       }
       clearTimeout(timer);
-      clearTimeout(speechSafetyTimer);
       if (stopSignalPoll) clearInterval(stopSignalPoll);
       if (abortHandler && signal) {
         signal.removeEventListener("abort", abortHandler);
       }
 
+      if (captureState) {
+        captureState.recorderExited = (recorder?.exited ?? Promise.resolve()).then(async () => { if (!voiceAsk) await processingSettled; });
+        // Observe rejection now without converting the original exit proof to success.
+        // The queue still receives that rejected promise and keeps admission closed.
+        void captureState.recorderExited.catch(() => {});
+        registerBarRecorderExit(captureState.recorderExited);
+      }
       if (recorder) {
         void terminateRecorderProcess(recorder).catch((err) => {
           console.error(
@@ -2503,7 +2533,8 @@ export async function recordToBuffer(
             : finishError,
         );
       } else if (capturedPcmBytes === 0) {
-        resolve(null);
+        // Even a stalled device's empty no-answer take gets an archive receipt.
+        resolve(captureState?.noAnswerExpired || captureState?.pttSilenceTimeout ? new Uint8Array() : null);
       } else if (!pushToEnd && !hasSpeech && !preserveNoSpeechCapture) {
         resolve(null);
       } else {
@@ -2518,6 +2549,11 @@ export async function recordToBuffer(
           (sum, chunk) => sum + chunk.byteLength,
           0,
         );
+        if (captureState?.pttLastSpeechEndSample !== undefined) {
+          // Ask pre-roll selection changes the origin of the shared D3b decode window.
+          captureState.pttLastSpeechEndSample = Math.max(0, captureState.pttLastSpeechEndSample -
+            (capturedPcmBytes - selectedPcmBytes) / BYTES_PER_SAMPLE);
+        }
         // Concatenate all PCM chunks
         const result = new Uint8Array(selectedPcmBytes);
         let offset = 0;
@@ -2544,20 +2580,36 @@ export async function recordToBuffer(
 
     // HOLD already suppresses VAD silence close. The wall-clock deadline must
     // obey the same lock, including when the recorder produces no PCM chunks.
-    // PTT's timeout and stop-tail behavior are deliberately unchanged.
+    // PTT has a silence deadline, renewed by detected speech; Stop still keeps its full tail.
+    let pttLastSpeechAtMs = Date.now();
+    let pttVadPending = false;
     let recordingHeld = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let speechSafetyTimer: ReturnType<typeof setTimeout> | undefined;
+    let noAnswerDeadlineAtMs = 0;
+    let noAnswerRemainingMs = timeoutMs;
+    let classificationGraceEndsAtMs: number | undefined;
+    const pttSilenceTimeoutMs = voiceAskVad || captureState?.archiveSource === "voicebar" ? LOCKED_SILENCE_TIMEOUT_MS : timeoutMs;
     const synchronizeRecordingHold = () => {
       if (pushToEnd || resolved) return false;
       const held = isRecordingHoldEngaged();
       if (held !== recordingHeld) {
         recordingHeld = held;
         clearTimeout(timer);
+        if (voiceAsk) {
+          if (held) {
+            noAnswerRemainingMs = Math.max(0, noAnswerDeadlineAtMs - Date.now());
+            pttLastSpeechAtMs = Date.now();
+            timer = setTimeout(onTimeout, pttSilenceTimeoutMs);
+          } else if (!hasSpeech) {
+            noAnswerDeadlineAtMs = Date.now() + noAnswerRemainingMs;
+            classificationGraceEndsAtMs = undefined;
+            timer = setTimeout(onTimeout, noAnswerRemainingMs);
+          }
+        }
         // Preserve speech detection, but discard silence accumulated before
         // either edge, even if no VAD chunk arrived while the lock was held.
         silencePolicy.observe({ speechDetected: false, holdEngaged: true });
-        if (!held && (!voiceAskVad || !hasSpeech)) {
+        if (!held && !voiceAsk) {
           timer = setTimeout(onTimeout, timeoutMs);
         }
         invokeCaptureObserver("recording_hold", () => captureState?.onRecordingHoldChange?.(held));
@@ -2566,12 +2618,43 @@ export async function recordToBuffer(
     };
     const onTimeout = () => {
       const previouslyHeld = recordingHeld;
-      if (resolved || synchronizeRecordingHold() || previouslyHeld ||
-          (voiceAskVad && hasSpeech)) return;
+      if (resolved) return;
+      const held = synchronizeRecordingHold();
+      if (!voiceAsk && (held || previouslyHeld)) return;
+      if (voiceAskVad && hasSpeech && !held) return;
+      if (voiceAsk && !hasSpeech && !held) {
+        if (!pttSpeechDetectionAvailable) return; // Missing VAD evidence cannot prove absence.
+        if (Date.now() < noAnswerDeadlineAtMs) {
+          timer = setTimeout(onTimeout, noAnswerDeadlineAtMs - Date.now());
+          return;
+        }
+        // Classify queued/in-flight PCM before concluding that no speech occurred.
+        const unclassified = pttVadPending || chunkQueue.length > 0;
+        if (unclassified) {
+          classificationGraceEndsAtMs ??= noAnswerDeadlineAtMs + NO_ANSWER_CLASSIFY_GRACE_MS;
+          if (Date.now() < classificationGraceEndsAtMs) {
+            timer = setTimeout(onTimeout, STOP_POLL_MS);
+            return;
+          }
+        }
+        if (captureState) captureState.noAnswerExpired = unclassified ? "unclassified" : "silence";
+        finish();
+        return;
+      }
+      if (pushToEnd || (voiceAskVad && held)) {
+        if (!pttSpeechDetectionAvailable) return;
+        // A slow inference or queued PCM may contain speech. Classify it before deciding it was silence.
+        const remaining = pttSilenceTimeoutMs - (Date.now() - pttLastSpeechAtMs);
+        if (pttVadPending || chunkQueue.length > 0 || remaining > 0) {
+          timer = setTimeout(onTimeout, pttVadPending || chunkQueue.length > 0 ? STOP_POLL_MS : remaining);
+          return;
+        }
+      }
+      if (captureState && (pushToEnd || held)) captureState.pttSilenceTimeout = true;
       finish();
     };
-    // Preserve dictation/PTT timing; MCP VAD starts only after the recorder opens.
-    if (!voiceAskVad) timer = setTimeout(onTimeout, timeoutMs);
+    // PTT and MCP VAD start their silence budget only once the microphone opens.
+    if (!voiceAskVad && !pushToEnd) timer = setTimeout(onTimeout, timeoutMs);
     if (signal) {
       abortHandler = () => finish(waitForInputAbortError(signal));
       if (signal.aborted) {
@@ -2627,6 +2710,12 @@ export async function recordToBuffer(
         { stdout: "pipe", stderr: "pipe" },
       );
       recorder = spawnedRecorder;
+      if (captureState) {
+        captureState.recorderExited = spawnedRecorder.exited.then(() => {});
+        void captureState.recorderExited.catch(() => {});
+        registerBarRecorderExit(captureState.recorderExited);
+      }
+      registerBarRecorderExit(spawnedRecorder.exited.then(() => {}));
       // Capture settlement and bounded kill attempts are not physical exit evidence.
       holdVoiceAdmission(spawnedRecorder.exited);
 
@@ -2635,7 +2724,15 @@ export async function recordToBuffer(
         return;
       }
 
-      if (voiceAskVad) timer = setTimeout(onTimeout, timeoutMs);
+      if (voiceAsk || (pushToEnd && pttSpeechDetectionAvailable)) {
+        pttLastSpeechAtMs = Date.now();
+        const remaining = voiceAsk
+          ? Math.max(Math.min(timeoutMs, MIN_ASK_LISTEN_MS), timeoutMs - (Date.now() - (captureState?.noAnswerStartedAtMs ?? Date.now())))
+          : pttSilenceTimeoutMs;
+        noAnswerDeadlineAtMs = Date.now() + remaining;
+        timer = setTimeout(onTimeout, remaining);
+      }
+      if (captureState?.archiveSource === "voicebar") userVoicePresent();
       invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
       if (resolved) return;
 
@@ -2747,6 +2844,7 @@ export async function recordToBuffer(
           const chunk = chunkQueue.shift()!;
 
           pcmChunks.push(chunk);
+          processedPcmBytes += chunk.byteLength;
           totalChunksProcessed++;
           recoveryWriter.appendCapturedChunk(chunk, pcmChunks);
 
@@ -2761,6 +2859,29 @@ export async function recordToBuffer(
           }
 
           if (pushToEnd) {
+            if (pttSpeechDetectionAvailable) {
+              pttVadPending = true;
+              try {
+                const detected = isSpeech(await processVADChunk(chunk));
+                if (resolved) continue;
+                if (detected) {
+                  pttLastSpeechAtMs = Date.now();
+                  if (!resolved) userVoicePresent();
+                  if (voiceAsk && !hasSpeech && !resolved) {
+                    hasSpeech = true;
+                    clearTimeout(timer);
+                    timer = setTimeout(onTimeout, pttSilenceTimeoutMs);
+                    invokeCaptureObserver("speech_start", captureState?.onSpeechStart);
+                  }
+                  if (captureState) captureState.pttLastSpeechEndSample = processedPcmBytes / BYTES_PER_SAMPLE;
+                }
+              } catch {
+                pttSpeechDetectionAvailable = false;
+                clearTimeout(timer);
+                console.error("[voicelayer] PTT speech detection failed; silence timeout disabled");
+              } finally { pttVadPending = false; }
+              if (resolved) continue;
+            }
             chunkedSession?.pushChunk(chunk, true);
             if (hasStopSignal()) {
               beginPushToEndStopDrain();
@@ -2771,10 +2892,13 @@ export async function recordToBuffer(
             }
           } else {
             // VAD: ONNX inference happens here, decoupled from pipe reader
-            const speechProb = await processVADChunk(chunk);
+            pttVadPending = true;
+            let speechProb: number;
+            try { speechProb = await processVADChunk(chunk); }
+            finally { pttVadPending = false; }
             // A continuation resuming after a capture with loss evidence finished must not touch the
             // session (rebuilt from the final PCM) or decide anything.
-            if (resolved && (micLossReason || deviceReport)) continue;
+            if (resolved) continue;
             const speechDetected = isSpeech(speechProb);
             chunkedSession?.pushChunk(chunk, speechDetected);
 
@@ -2794,18 +2918,15 @@ export async function recordToBuffer(
             hasSpeech = silenceObservation.hasSpeech;
 
             if (speechDetected) {
+              pttLastSpeechAtMs = Date.now();
+              classificationGraceEndsAtMs = undefined;
+              if (captureState) captureState.pttLastSpeechEndSample = processedPcmBytes / BYTES_PER_SAMPLE;
+              userVoicePresent();
               if (!hadSpeech) {
                 firstSpeechChunkIndex = pcmChunks.length - 1;
                 if (voiceAskVad && !resolved) {
                   clearTimeout(timer);
-                  timer = undefined;
-                  speechSafetyTimer = setTimeout(() => {
-                    if (resolved) return;
-                    console.error(
-                      `[voicelayer] voice_ask speech safety ceiling reached after ${VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS / 60_000} min — retaining recording`,
-                    );
-                    finish();
-                  }, VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS);
+                  timer = recordingHeld ? setTimeout(onTimeout, pttSilenceTimeoutMs) : undefined;
                   invokeCaptureObserver("speech_start", captureState?.onSpeechStart);
                 }
                 broadcast({ type: "speech", detected: true });
@@ -2847,14 +2968,14 @@ export async function recordToBuffer(
       };
 
       // Run reader and processor concurrently
-      Promise.all([
+      processingSettled = Promise.all([
         pipeReader().catch((err) =>
           finish(err instanceof Error ? err : new Error(String(err))),
         ),
         chunkProcessor().catch((err) =>
           finish(err instanceof Error ? err : new Error(String(err))),
         ),
-      ]);
+      ]).then(() => {});
     } catch (err) {
       finish(err instanceof Error ? err : new Error(String(err)));
     }
@@ -2882,7 +3003,7 @@ export async function waitForInput(
   return withCaptureVoiceAdmission(async () => {
   throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
-  if (currentRecordingState !== "idle") {
+  if (currentRecordingState !== "idle" && !ownsBarCapture()) {
     throw new Error(
       `Recording already in progress (state: ${currentRecordingState})`,
     );
@@ -2901,6 +3022,7 @@ export async function waitForInput(
   let pcmData: Uint8Array | null;
   const captureState: RecordingCaptureState = {
     archiveSource: options.archiveSource,
+    noAnswerStartedAtMs: Date.now(),
     onCaptureStart: options.onCaptureStart,
     onSpeechStart: options.onSpeechStart,
     onRecordingHoldChange: options.onRecordingHoldChange,
@@ -2954,6 +3076,7 @@ export async function waitForInput(
           }
         }
         invokeArchiveCreatedObserver(archivePath, options.onArchiveCreated);
+        if (ownsBarCapture()) await finishBarCapture(captureState.recorderExited ?? Promise.resolve(), archivePath, async () => {});
       } catch (archiveErr) {
         const detail =
           archiveErr instanceof Error ? archiveErr.message : String(archiveErr);
@@ -2975,6 +3098,15 @@ export async function waitForInput(
       push_to_end: pushToEnd,
       archive_source: options.archiveSource ?? null,
     });
+    if (ownsBarCapture() && !(err instanceof RecordingFailureWithCapturedPcm)) {
+      const failedArchive = archiveVoiceBarUntranscribedRecording({
+        audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
+        durationMs: 0, backend: "not-transcribed", reason: "recording-failed",
+      });
+      markArchivedRecordingNotTranscribed(join(failedArchive, "audio.wav"), "recording-failed");
+      invokeArchiveCreatedObserver(failedArchive, options.onArchiveCreated);
+      await finishBarCapture(captureState.recorderExited ?? Promise.resolve(), failedArchive, async () => {});
+    }
     if (options.signal?.aborted) throw err;
     // H4 fix: broadcast error + idle so Voice Bar doesn't get stuck
     broadcast({
@@ -2990,7 +3122,7 @@ export async function waitForInput(
     }
     throw err;
   }
-  // MICDROP2/3: the archive and the decoder both get the whole kept PCM; at_ms is the observed loss.
+  // MICDROP2/3 retain the whole capture; silence expiry may bound only decoder input below.
   const micDisconnect = captureState.micDisconnect ?? null;
   const unconfirmedDeviceLoss = captureState.unconfirmedDeviceLoss ?? null;
   if (unconfirmedDeviceLoss) {
@@ -3028,7 +3160,12 @@ export async function waitForInput(
     throwIfWaitForInputAborted(options.signal);
     clearCancelSignal();
     broadcast({ type: "state", state: "idle", source: "recording" });
-    return null;
+    const emptyArchive = ownsBarCapture() ? archiveVoiceBarUntranscribedRecording({
+      audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
+      durationMs: 0, backend: "not-transcribed", reason: recordingJobCancelled() ? "cancelled" : "captured",
+    }) : null;
+    if (emptyArchive) invokeArchiveCreatedObserver(emptyArchive, options.onArchiveCreated);
+    return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), emptyArchive, async () => null);
   }
 
   const postCaptureProcessingStartedAtMs =
@@ -3049,10 +3186,20 @@ export async function waitForInput(
   }
   // Physical-stop fallback must really keep everything. The legacy silence
   // trimmer could otherwise cut seconds before this feature's bounded window.
+  // D3b bounds only silence-expired STT input by Silero speech + 3s; the archive stays complete.
   // MICDROP3 R1 (Sol): any loss evidence (EOF, or a CoreAudio report confirmed or not) decodes the
   // complete kept capture: no trimmer, so the backend WAV, the rebuilt session and recovery are whole.
   const hasMicLossEvidence = micDisconnect !== null || unconfirmedDeviceLoss !== null;
-  const sttTrim = hasMicLossEvidence ? {
+  const pttNoSpeech = captureState.pttSilenceTimeout === true && captureState.pttLastSpeechEndSample === undefined;
+  const pttDecodeEndBytes = captureState.pttLastSpeechEndSample === undefined ? 0 : Math.min(
+    pcmData.byteLength, (captureState.pttLastSpeechEndSample + 3 * SAMPLE_RATE) * BYTES_PER_SAMPLE,
+  );
+  const pttDecodePcm = pcmData.subarray(0, pttDecodeEndBytes);
+  const sttTrim = captureState.pttSilenceTimeout ? {
+    pcmData: pttDecodePcm, trimmed: pttDecodePcm.byteLength < pcmData.byteLength,
+    rawDurationMs: pcmDurationMs(pcmData),
+    transcribedDurationMs: pcmDurationMs(pttDecodePcm),
+  } : hasMicLossEvidence ? {
     pcmData, trimmed: false,
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pcmData),
@@ -3094,6 +3241,7 @@ export async function waitForInput(
       });
       console.error(`[voicelayer] voicebar archive failed: ${archiveDiagnosticReason(err)}`);
       broadcast({ type: "error", message, recoverable: true });
+      if (ownsRecordingJob()) throw err;
     }
   }
   if (options.archiveSource === "voice_ask") {
@@ -3133,7 +3281,7 @@ export async function waitForInput(
     }
   }
   try {
-    options.onCaptureEnd?.();
+    options.onCaptureEnd?.(sttTrim.transcribedDurationMs);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     appendControlLayerEvent("capture.completion_callback_failed", {
@@ -3151,6 +3299,13 @@ export async function waitForInput(
     throw err;
   }
   throwIfWaitForInputAborted(options.signal);
+  if (captureState.noAnswerExpired) {
+    clearCancelSignal();
+    invokeCaptureObserver("no_answer", () => options.onNoAnswer?.(captureState.noAnswerExpired === "unclassified"));
+    if (captureState.noAnswerExpired === "silence") invokeCaptureObserver("no_speech", options.onNoSpeech);
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    return null; // Already archived above; never send a silent take to STT.
+  }
 
   // Check if recording was cancelled (X button) — keep a recovery WAV but don't transcribe.
   if (consumeCancelSignalForRecording()) {
@@ -3176,12 +3331,12 @@ export async function waitForInput(
       retained_recording: true,
     });
     broadcast({ type: "state", state: "idle" });
-    return null;
+    return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
   }
 
   if (sttTrim.trimmed) {
     console.error(
-      `[voicelayer] ${isPhysicalStop ? "Physical-stop cutoff" : "Trimmed trailing silence"} before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
+      `[voicelayer] ${captureState.pttSilenceTimeout ? "Silero speech window" : isPhysicalStop ? "Physical-stop cutoff" : "Trimmed trailing silence"} before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
     );
     appendControlLayerEvent("capture.stt_trim", {
       raw_duration_ms: sttTrim.rawDurationMs,
@@ -3195,7 +3350,7 @@ export async function waitForInput(
 
   const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
   const vadNoSpeech = !pushToEnd && captureState.vadSpeechDetected === false;
-  const transcriptionAllowed = noSpeechGate.allowed && !vadNoSpeech;
+  const transcriptionAllowed = captureState.pttSilenceTimeout ? !pttNoSpeech : noSpeechGate.allowed && !vadNoSpeech;
   console.error(
     `[voicelayer] Recording gate: duration=${noSpeechGate.durationMs}ms, ` +
       `rms=${noSpeechGate.rms.toFixed(0)}, ` +
@@ -3205,10 +3360,10 @@ export async function waitForInput(
       (sttTrim.trimmed ? `, raw_duration=${sttTrim.rawDurationMs}ms` : ""),
   );
   if (!transcriptionAllowed) {
-    const noSpeechReason = vadNoSpeech ? "vad-no-speech" : noSpeechGate.reason;
+    const noSpeechReason = pttNoSpeech ? "no-speech" : vadNoSpeech ? "vad-no-speech" : noSpeechGate.reason;
     // A device that was live and then lost is not a TCC failure: never respawn the daemon for it.
     // A never-live one keeps main's broken-mic classification (sox may exit on a TCC denial).
-    const captureFailure = vadNoSpeech || micDisconnect?.atMs != null
+    const captureFailure = pttNoSpeech || vadNoSpeech || micDisconnect?.atMs != null
       ? null
       : classifyCaptureFailure(noSpeechGate);
     console.error(
@@ -3220,7 +3375,7 @@ export async function waitForInput(
     if (voiceBarArchivePath) {
       markArchivedRecordingNotTranscribed(
         join(voiceBarArchivePath, "audio.wav"),
-        noSpeechArchiveReason(
+        pttNoSpeech ? "no-speech" : noSpeechArchiveReason(
           noSpeechReason === "vad-no-speech" ||
             noSpeechReason === "too-short" ||
             noSpeechReason === "too-quiet"
@@ -3254,13 +3409,13 @@ export async function waitForInput(
         show_during_bar_recording: true,
         capture_failure: captureFailure.type,
       });
-      return null;
+      return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
     }
     broadcast({ type: "state", state: "idle", source: "recording" });
-    return null;
+    return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
   }
 
-  if (pushToEnd) {
+  if (pushToEnd && !captureState.pttSilenceTimeout) {
     try {
       const pushToEndSpeechGate = await evaluatePushToEndSpeechGate(
         sttTrim.pcmData,
@@ -3281,7 +3436,7 @@ export async function waitForInput(
         }
         invokeCaptureObserver("no_speech", options.onNoSpeech);
         broadcast({ type: "state", state: "idle", source: "recording" });
-        return null;
+        return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => null);
       }
     } catch (err) {
       if (options.signal?.aborted) throw err;
@@ -3291,6 +3446,7 @@ export async function waitForInput(
     }
   }
 
+  return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), voiceBarArchivePath, async () => {
   throwIfWaitForInputAborted(options.signal);
   // Broadcast transcribing state to Voice Bar
   invokeCaptureObserver(
@@ -3300,7 +3456,9 @@ export async function waitForInput(
       : undefined,
   );
   setRecordingState("transcribing");
-  broadcast({ type: "state", state: "transcribing" });
+  // stt_audio_ms lets VoiceBar size its wait to the voice_ask return deadline
+  // (4x decoded audio) even if it missed this take's recording-start event.
+  broadcast({ type: "state", state: "transcribing", stt_audio_ms: sttTrim.transcribedDurationMs });
   broadcast({
     type: "transcription_status",
     status: "warming",
@@ -3341,6 +3499,12 @@ export async function waitForInput(
     let finalized: FinalizedTranscriptionResult;
     let sttBackendLabel = backend.name;
     const chunkBackendLabels = new Set<string>();
+    let gateRemoval: STTAttemptEvidence["gateRemoval"];
+    const noteGateRemoval = (evidence: STTAttemptEvidence | undefined) => {
+      if (evidence?.gateRemoval) gateRemoval = { gate: evidence.gateRemoval.gate,
+        removedSpans: (gateRemoval?.removedSpans ?? 0) + evidence.gateRemoval.removedSpans,
+        rawCharacters: (gateRemoval?.rawCharacters ?? 0) + evidence.gateRemoval.rawCharacters };
+    };
 
     if (useChunkedTranscription) {
       chunkedSession.finalize();
@@ -3359,6 +3523,7 @@ export async function waitForInput(
               promptOverride: prompt,
             });
             chunkBackendLabels.add(result.backend);
+            noteGateRemoval(result.attemptEvidence);
             throwIfWaitForInputAborted(options.signal);
             return result.text;
           } finally {
@@ -3381,6 +3546,7 @@ export async function waitForInput(
     } else {
       const result = await backend.transcribe(wavPath);
       sttBackendLabel = result.backend;
+      noteGateRemoval(result.attemptEvidence);
       throwIfWaitForInputAborted(options.signal);
       // Built BEFORE the finalize call, and abortable: the pause map is a
       // whole-file VAD pass, and a cancelled voice_ask must settle now rather
@@ -3449,6 +3615,8 @@ export async function waitForInput(
     }
 
     throwIfWaitForInputAborted(options.signal);
+    const gateArchive = voiceBarArchivePath ?? voiceAskArchivePath;
+    if (!text) recordArchivedGateRemoval(gateArchive ? join(gateArchive, "audio.wav") : null, gateRemoval);
     let archivedRecordingPath: string | null = null;
     if (text) {
       try {
@@ -3498,18 +3666,20 @@ export async function waitForInput(
       }
       if (archivedRecordingPath) {
         linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
+        recordArchivedGateRemoval(join(archivedRecordingPath, "audio.wav"), gateRemoval);
       }
     } else if (voiceBarArchivePath) {
       markArchivedRecordingNotTranscribed(
         join(voiceBarArchivePath, "audio.wav"),
         "empty-transcript",
+        {},
       );
     }
 
     throwIfWaitForInputAborted(options.signal);
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {
-      broadcast({
+      await deliverInputTranscription({
         type: "transcription",
         text,
         ...transcriptionPolishMetadata(finalized),
@@ -3525,6 +3695,14 @@ export async function waitForInput(
         dictationReceipt
           ? { dictation_receipt: dictationReceipt }
           : {}),
+      }, outcome => {
+        if (archivedRecordingPath) {
+          updateArchivedRecordingMetadata(join(archivedRecordingPath, "audio.wav"), metadata => {
+            metadata.delivery_status = outcome;
+            metadata.delivery_note = outcome === "not_inserted" ? "Not pasted: target changed" : "Paste unverified. Text kept in History.";
+          });
+          broadcast({ type: "archive_metadata_updated", recording_path: join(archivedRecordingPath, "audio.wav") });
+        }
       });
     }
     setRecordingState("idle");
@@ -3574,6 +3752,7 @@ export async function waitForInput(
       if (existsSync(wavPath)) unlinkSync(wavPath);
     } catch {}
   }
+  });
   });
 }
 
@@ -3666,11 +3845,12 @@ export function updateArchivedTranscript(
     metadata.transcription_status = "transcribed";
     delete metadata.not_transcribed_reason;
     delete metadata.not_transcribed_detail;
+    delete metadata.last_stt_gate_removal;
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
     }
-    // F1: the dictation's post-capture processing time (DictationReceipt). A re-transcription has no
-    // receipt and keeps the original dictation's value.
+    // The processing time belongs to the transcript now stored, including a
+    // new re-transcription attempt rather than the original capture's receipt.
     if (transcription.processingDurationMs !== undefined) {
       metadata.processing_duration_ms = transcription.processingDurationMs;
     }
@@ -3776,7 +3956,24 @@ export type ArchivedNotTranscribedReason =
   | "no-speech"
   | "vad-no-speech"
   | "empty-transcript"
+  | "recording-failed"
   | "transcription-failed";
+
+/** Phrase-free gate facts survive even when History keeps an older saved transcript. */
+function recordArchivedGateRemoval(audioPath: string | null, removal: STTAttemptEvidence["gateRemoval"]): string | undefined {
+  if (!audioPath || !removal) return undefined;
+  const detail = `Whisper ${removal.gate === "cjk-outro" ? "CJK " : ""}closing-phrase filter removed ${removal.removedSpans} span(s) from ${removal.rawCharacters} decoded characters.`;
+  updateArchivedRecordingMetadata(audioPath, metadata => {
+    metadata.last_stt_gate_removal = removal;
+    if (metadata.transcription_status === "transcribed") {
+      // A failed retry cannot relabel the saved transcript as not transcribed.
+      delete metadata.not_transcribed_reason;
+      delete metadata.not_transcribed_detail;
+    }
+  });
+  broadcast({ type: "archive_metadata_updated", recording_path: audioPath });
+  return detail;
+}
 
 /** At or below this the device delivered digital silence (a ±1 LSB floor reads ≈ -90 dBFS). */
 const SILENT_INPUT_DBFS = -85;
@@ -4185,13 +4382,13 @@ async function retranscribeVoiceAskArchiveAdmitted(
     if (voiceAskRetranscriptionOwner) {
       throw new Error("voice_ask archive retranscription is already in progress");
     }
-    operationReservation = reserveArchiveRetranscription();
-    if (!operationReservation) {
+    operationReservation = ownsHistoryJob() ? null : reserveArchiveRetranscription();
+    if (!ownsHistoryJob() && !operationReservation) {
       throw new Error(
         "voice_ask archive retranscription refused because another voice operation is in progress",
       );
     }
-    if (getEffectiveRecordingState() !== "idle") {
+    if (getEffectiveRecordingState() !== "idle" && !ownsHistoryJob()) {
       throw new Error(
         `voice_ask archive retranscription requires idle voice state (current: ${getEffectiveRecordingState()})`,
       );
@@ -4211,15 +4408,21 @@ async function retranscribeVoiceAskArchiveAdmitted(
     voiceAskRetranscriptionOwner = owner;
     setRecordingState("transcribing");
     broadcast({ type: "state", state: "transcribing" });
+    const processingStartedAtMs = performance.now();
     working = prepareFullVoiceAskWavForSTT(snapshot);
     const backend = await getBackend();
     const result = await backend.transcribe(working.path);
     const text = result.text.trim();
     if (!text) {
+      if (result.attemptEvidence?.gateRemoval) {
+        revalidateVoiceAskArchiveSnapshot(snapshot);
+        recordArchivedGateRemoval(snapshot.audioPath, result.attemptEvidence.gateRemoval);
+      }
       throw new Error(
         `voice_ask archive ${archiveId} produced an empty retranscription`,
       );
     }
+    if (recordingJobCancelled()) throw new Error("History retranscription cancelled; audio saved");
     revalidateVoiceAskArchiveSnapshot(snapshot);
     const languageMode = getLanguageModeFromEnv();
     const metadata: Record<string, unknown> = {
@@ -4227,6 +4430,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
       backend: result.backend,
       language_mode: languageMode,
       transcription_status: "transcribed",
+      processing_duration_ms: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
       transcribed_duration_ms: working.durationMs,
       voicelayer_transcript_chars: text.length,
       user_transcript_chars: text.length,
@@ -4242,7 +4446,11 @@ async function retranscribeVoiceAskArchiveAdmitted(
         },
       );
     }
+    delete metadata.last_stt_gate_removal;
+    delete metadata.not_transcribed_reason;
+    delete metadata.not_transcribed_detail;
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
+    recordArchivedGateRemoval(snapshot.audioPath, result.attemptEvidence?.gateRemoval);
     // MCP's return-only retry must evict the original Ask's cached History row
     // after the pair is durable, without delivering a dictation/paste event.
     if (options.delivery === "return-only") {
@@ -4252,7 +4460,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
       });
     }
     if (options.delivery === "history") {
-      broadcast({
+      await deliverInputTranscription({
         type: "transcription",
         text,
         recording_path: snapshot.audioPath,
@@ -4365,6 +4573,7 @@ async function retranscribeRecordingCaptureAdmitted(
     message: "Loading speech model",
   });
 
+  const processingStartedAtMs = performance.now();
   try {
     const backend = await getBackend();
     broadcast({
@@ -4403,15 +4612,19 @@ async function retranscribeRecordingCaptureAdmitted(
         );
       }
       console.error(`[voicelayer] Archived retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
+      if (!text) recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
 
+      if (recordingJobCancelled()) return null;
       if (text) {
         updateArchivedTranscript(wavPath, text, {
           backend: result.backend,
+          processingDurationMs: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
           languageMode: getLanguageModeFromEnv(),
           transcribedDurationMs,
           polishStatus: finalized.polishStatus,
         });
-        broadcast({
+        recordArchivedGateRemoval(wavPath, result.attemptEvidence?.gateRemoval);
+        await deliverInputTranscription({
           type: "transcription",
           text,
           recording_path: eventAudioPath,
@@ -4480,6 +4693,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
     message: "Loading speech model",
   });
 
+  const processingStartedAtMs = performance.now();
   try {
     const backend = await getBackend();
     broadcast({
@@ -4520,17 +4734,21 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
         );
       }
       console.error(`[voicelayer] Retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
+      if (!text) recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
 
+      if (recordingJobCancelled()) return null;
       if (text) {
         if (archivedAudioPath) {
           updateArchivedTranscript(archivedAudioPath, text, {
             backend: result.backend,
+            processingDurationMs: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
             languageMode: getLanguageModeFromEnv(),
             transcribedDurationMs,
             polishStatus: finalized.polishStatus,
           });
+          recordArchivedGateRemoval(archivedAudioPath, result.attemptEvidence?.gateRemoval);
         }
-        broadcast({
+        await deliverInputTranscription({
           type: "transcription",
           text,
           ...(archivedAudioPath ? {

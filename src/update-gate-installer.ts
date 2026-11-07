@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, type InstallerParticipant } from "./update-gate-installer-participant";
+import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, UnsafeSuccessorError, type InstallerParticipant } from "./update-gate-installer-participant";
 import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -106,6 +106,92 @@ function recoveryReceipt(lease: UpdateGateLease, reason: string, installerPid?: 
     try { fsyncSync(directory); } finally { closeSync(directory); }
   } catch (error) { console.error(`[update-gate] RECOVERY_RECEIPT_WRITE_FAILED: ${error}; durable lease remains at ${gate}`); }
 }
+type InstalledTarget = { sha: string; unchanged(): boolean };
+type CompletionEvidence = { participant: InstallerParticipant; installed(): InstalledTarget;
+  clock?: { now(): number; sleep(ms: number): Promise<void> } };
+/** Parse the installed bytes outside G1; compare those exact bytes inside G1. */
+export function readInstalledTarget(path = "/Applications/VoiceBar.app/Contents/Info.plist"): InstalledTarget {
+  if (path !== "/Applications/VoiceBar.app/Contents/Info.plist" && process.env.VOICELAYER_TEST_ISOLATED !== "1")
+    throw Error("UNKNOWN: noncanonical installed bundle");
+  const bytes = readFileSync(path);
+  const result = Bun.spawnSync(["/usr/bin/plutil", "-extract", "GitCommit", "raw", "-o", "-", "-"],
+    { env: process.env, stdin: bytes, stdout: "pipe", stderr: "pipe", timeout: 1000 });
+  const sha = result.stdout.toString().trim();
+  if (result.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(sha)) throw Error("UNKNOWN: installed GitCommit unavailable");
+  return { sha, unchanged: () => { try { return readFileSync(path).equals(bytes); } catch { return false; } } };
+}
+function harnessCompletionEvidence(): CompletionEvidence {
+  const read = () => {
+    harnessParticipantEvidence();
+    const value = JSON.parse(readFileSync(process.env.VOICELAYER_TEST_INSTALL_PROOF!, "utf8")).completion;
+    if (!value || typeof value.ready !== "boolean" || !/^[0-9a-f]{40}$/.test(value.installedSha ?? ""))
+      throw Error("UNKNOWN: missing qualified harness completion proof");
+    return value as { ready: boolean; installedSha: string };
+  };
+  return {
+    installed() { const sha = read().installedSha; return { sha, unchanged: () => read().installedSha === sha }; },
+    participant: {
+      async refresh(lease) { const p = read(), ack = { lease, activeOperations: 0 as const, openArchives: 0 as const };
+        return { phase: "synthetic successor", ready: p.ready, native: ack, daemon: ack }; },
+      verify: () => read().ready, quit: async () => {},
+    },
+  };
+}
+/** Only this controller completes. No successor startup writer or recovery bypass.
+ * RPC/ps/plist parsing precede G1; its callback checks fresh cached participant
+ * proof, unchanged installed bytes, and this process's durable controller custody. */
+export async function completeGatedInstall(lease: UpdateGateLease, exitCode: number, identity: string,
+  harness?: CompletionEvidence, previous?: InstallerParticipant, installerPid?: number): Promise<boolean> {
+  try {
+    assertGatePath();
+    if (harness) { harnessParticipantEvidence(); }
+    if (exitCode !== 0) throw Error(`installer exited ${exitCode}; completion not verified`);
+    if (installerProcessIdentity(process.pid) !== identity) throw Error("controller process identity changed");
+    const evidence = harness ?? (process.env.VOICELAYER_TEST_ISOLATED === "1" ? harnessCompletionEvidence() : {
+      installed: readInstalledTarget,
+      participant: previous?.successor ? previous.successor() : createInstallerParticipant(undefined, null),
+    });
+    const installed = evidence.installed();
+    if (installed.sha !== lease.targetSha) throw Error("installed GitCommit does not match lease.targetSha");
+    const successor = evidence.participant;
+    const clock = harness?.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
+    const deadline = clock.now() + 15_000;
+    for (let attempt = 1, backoff = 100; ; attempt++, backoff = Math.min(backoff * 2, 1000)) {
+      try {
+        // refresh invalidates cached evidence and authenticates a new round trip.
+        const proof = await successor.refresh(lease);
+        if (!proof.ready || !proof.native || !proof.daemon || !sameLease(proof.native.lease, lease) || !sameLease(proof.daemon.lease, lease))
+          throw Error(`new participants not verified: ${proof.phase}`);
+        if (clock.now() >= deadline) throw Error("successor readiness deadline passed");
+        break;
+      } catch (error) {
+        console.error(`[update-gate] Successor readiness attempt ${attempt} failed: ${error}`);
+        if (error instanceof UnsafeSuccessorError) throw error;
+        const remaining = deadline - clock.now();
+        if (remaining <= 0) throw Error(`successor readiness deadline passed: ${error}`);
+        await clock.sleep(Math.min(backoff, remaining));
+        if (clock.now() >= deadline) throw Error(`successor readiness deadline passed: ${error}`);
+      }
+    }
+    const apply = () => updateVoiceGate({ kind: "COMPLETE", lease, installerExitCode: 0,
+      installedSha: installed.sha, participantsVerified: true }, state => safeParticipantProof(() => {
+        const controller = readInstallerController(updateGateFilePath());
+        return { ready: state.kind === "COMMITTED" && sameLease(state.lease, lease) &&
+          controller?.pid === process.pid && controller.identity === identity &&
+          controller.lease.operationId === lease.operationId && controller.lease.generation === lease.generation &&
+          installed.unchanged() && successor.verify(state) };
+      }), process.env, { throwOnContention: true });
+    const result = successor.withCompletionProof ? await successor.withCompletionProof(apply) : await retryInstallerAcquisition(apply);
+    if (result.kind === "REFUSED") throw Error(`COMPLETE refused: ${result.reason}`);
+    console.error("[update-gate] COMPLETE: verified installed target and new participants; admission OPEN.");
+    return true;
+  } catch (error) {
+    recoveryReceipt(lease, `completion failed: ${error}`, installerPid);
+    console.error("After this updater exits, restore availability with: voicelayer setup --cask-postflight\n" +
+      "This does not recover a COMMITTED gate; retain all gate/controller/recovery evidence.");
+    return false;
+  }
+}
 async function cancelLease(lease: UpdateGateLease): Promise<void> {
   let failure: unknown;
   try {
@@ -150,7 +236,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
     ownerId: randomUUID(), targetSha: process.env.VOICELAYER_UPDATE_TARGET_SHA ?? "" };
   if (!updateGateLeaseSchema.safeParse(lease).success) throw Error("UNKNOWN: verified target SHA required");
-  let requested = false, committed = false, commitAttempted = false, commitUncertain = false, cancelled = false, displayedPhase = "";
+  let requested = false, committed = false, commitAttempted = false, commitUncertain = false, completed = false, cancelled = false, displayedPhase = "";
   const pastCommit = () => committed || commitUncertain;
   const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const;
   const handlers = signals.map(name => {
@@ -239,8 +325,8 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
         console.error("[update-gate] COMMITTED: Ctrl-C will not stop the installer; waiting for completion.");
         const child = Bun.spawn(command, { env, detached: true, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
         const result = await child.exited;
-        if (result !== 0) recoveryReceipt(lease, `installer exited ${result}; completion not verified`, child.pid);
-        return result;
+        completed = await completeGatedInstall(lease, result, controllerIdentity, undefined, participant, child.pid);
+        return completed ? 0 : result || 1;
       }
       await Bun.sleep(200);
     }
@@ -258,7 +344,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     if (pastCommit()) recoveryReceipt(lease, `installer failed: ${error}`);
     throw error;
   } finally {
-    if (pastCommit()) console.error("[update-gate] COMMITTED or uncertain: admission retained closed pending verified completion/recovery");
+    if (pastCommit() && !completed) console.error("[update-gate] COMMITTED or uncertain: admission retained closed pending verified completion/recovery");
     try { if (requested && !pastCommit()) await cancelLease(lease); }
     finally { for (const [name, handler] of handlers) process.off(name, handler); }
   }

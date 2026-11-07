@@ -31,7 +31,18 @@ export type VoiceLayerState =
   | "recording"
   | "transcribing";
 
-export interface StateEvent {
+export interface RecordingJobIdentity {
+  take_id?: string;
+  job_kind?: "live" | "history";
+}
+export interface RecordingJobsSnapshot {
+  recording_jobs?: { take_id: string; kind: "live" | "history"; phase: "capturing" | "draining" | "queued" | "processing" | "delivering" | "failed" }[];
+  capture_error?: string | null;
+  processing_count?: number;
+  mic_take_id?: string | null;
+}
+
+export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot {
   type: "state";
   state: VoiceLayerState;
   /** Present when state is "speaking" — the text being spoken. */
@@ -51,6 +62,8 @@ export interface StateEvent {
   generation?: number;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
+  /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
+  stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
   readback_duration_ms?: number;
   /** Chunk-local playback clock; additive global position for future seek clients. */
@@ -71,6 +84,8 @@ export interface StateEvent {
   };
   /** Fixed-window RMS truth for the audio file that just started playing. */
   playback_amplitude?: PlaybackAmplitudeEnvelope;
+  /** Atomic first-player timing; late measured subtitles replace startup estimates. */
+  initial_timing?: SubtitleEvent;
   /** Present when state is "recording" — the recording mode. */
   mode?: "vad" | "ptt";
   /** Present when state is "recording" with VAD — the silence mode. */
@@ -104,7 +119,8 @@ export interface SpeechEvent {
   detected: boolean;
 }
 
-export interface TranscriptionEvent {
+export interface TranscriptionEvent extends RecordingJobIdentity {
+  delivery_id?: string;
   type: "transcription";
   text: string;
   /** true = partial/streaming result, false = final result. */
@@ -196,7 +212,7 @@ export interface AlignedWordBoundary {
   /** Chunk-local playback milliseconds, already adjusted for the player rate. */
   offset_ms: number | null;
   duration_ms: number | null;
-  /** WORDTIME1 history only: interpolated or an Edge seek anchor (may be zero-length), not measured. */
+  /** Startup/interpolated timing or an Edge seek anchor (may be zero-length), not measured. */
   estimated?: true;
 }
 
@@ -204,7 +220,10 @@ export interface AlignedWordBoundary {
  * New events leave words empty so old apps safely render the chunk untimed.
  * New apps prefer aligned_words, matching exact display text and word_index.
  * The caller owns request/chunk/audio/rate freshness before publishing. */
-export type SubtitleEvent = { type: "subtitle" } & (
+export type SubtitleEvent = { type: "subtitle";
+  /** Compact startup estimate when full timing rows would crowd the state frame. */
+  estimated_duration_ms?: number;
+} & (
   | { words: WordBoundary[]; aligned_words?: never }
   | { words: []; aligned_words: AlignedWordBoundary[]; /** Chunk-local audio length: interpolation never passes it. */ duration_ms?: number }
 );
@@ -245,6 +264,7 @@ export type PlaybackOutcomeReason =
   | "expired"
   | "collapsed"
   | "refused"
+  | "resume-refused"
   | "player-error"
   | "replaced";
 
@@ -278,6 +298,7 @@ export interface PlaybackStateEvent {
   /** Global utterance position (chunk start + chunk-local offset). */
   offset_ms: number;
   chunk_offset_ms: number;
+  pause_owner?: "user" | "f5";
   duration_ms?: number;
   word_index?: number;
   word_count?: number;
@@ -337,6 +358,8 @@ export type AckCommand =
   | "delete_recognizer"
   | "download_recognizer"
   | "set_recognizer_residency"
+  | "set_model_unload_when_idle"
+  | "memory_pressure"
   | "cancel_recognizer_download"
   | "set_tts_setting"
   | "preview_tts_profile";
@@ -377,7 +400,8 @@ export interface ReadQueueEvent {
   current_request_id: string | null;
 }
 
-export type SocketEvent =
+export type SocketEvent = RecordingJobIdentity & (
+  | { type: "dictation_delivery_status"; delivery_id: string; outcome: "unverified"; recording_path?: string }
   | UpdateGateDrainEvent
   | HistoryPlaybackGateEvent
   | ReadQueueEvent
@@ -400,7 +424,7 @@ export type SocketEvent =
   | ClipMarkerEvent
   | AckEvent
   | ModelStatusEvent
-  | RecognizerStatusEvent;
+  | RecognizerStatusEvent);
 
 // --- Commands: Voice Bar → VoiceLayer ---
 
@@ -430,6 +454,8 @@ export interface ReadNextCommand extends SocketCommandBase {
 }
 
 export interface StopCommand extends SocketCommandBase {
+  scope?: "capture" | "speech";
+  take_id?: string;
   cmd: "stop";
   /** Opt-in for a physical stop press; never interpreted as a capture clock. */
   physical_press?: boolean;
@@ -450,6 +476,7 @@ export interface InputDeviceLostCommand extends SocketCommandBase {
 }
 
 export interface CancelCommand extends SocketCommandBase {
+  take_id?: string;
   cmd: "cancel";
   /** VoiceBar's teleprompter clock at the cancel edge. */
   playback_elapsed_ms?: number;
@@ -477,6 +504,8 @@ export interface ToggleCommand extends SocketCommandBase {
 }
 
 export interface RecordCommand extends SocketCommandBase {
+  playback_elapsed_ms?: number;
+  take_id?: string;
   cmd: "record";
   /** Recording timeout in seconds (default: 30, max: 3600). */
   timeout_seconds?: number;
@@ -562,6 +591,8 @@ export interface SetRecognizerResidencyCommand extends SocketCommandBase { cmd: 
 export interface DownloadRecognizerCommand extends SocketCommandBase { cmd: "download_recognizer" | "cancel_recognizer_download"; engine: import("./recognizer-state").Recognizer; }
 export interface DeleteRecognizerCommand extends SocketCommandBase { cmd: "delete_recognizer"; engine: import("./recognizer-state").Recognizer; }
 export interface GetRecognizerStatusCommand extends SocketCommandBase { cmd: "get_recognizer_status"; }
+export interface SetModelUnloadWhenIdleCommand extends SocketCommandBase { cmd: "set_model_unload_when_idle"; value: boolean; }
+export interface MemoryPressureCommand extends SocketCommandBase { cmd: "memory_pressure"; level: "warning" | "critical"; }
 
 export interface SetRecordingHoldCommand extends SocketCommandBase {
   cmd: "set_recording_hold";
@@ -590,6 +621,7 @@ export type SocketCommand =
   | SpeakTextCommand
   | ReadNextCommand
   | { cmd: "history_playback_ready"; id: string }
+  | { cmd: "dictation_delivered"; id?: string; take_id: string; delivery_id: string; outcome?: "unverified" | "not_inserted" }
   | StopCommand
   | CancelCommand
   | ReplayCommand
@@ -616,9 +648,11 @@ export type SocketCommand =
   | DeleteRecognizerCommand
   | DownloadRecognizerCommand
   | SetRecognizerResidencyCommand
+  | SetModelUnloadWhenIdleCommand
+  | MemoryPressureCommand
   | GetRecognizerStatusCommand;
 
-export interface HealthResponse {
+export interface HealthResponse extends RecordingJobsSnapshot {
   type: "health";
   uptime_seconds: number;
   queue_depth: number;
@@ -846,14 +880,24 @@ export function parseCommand(line: string): SocketCommand | null {
         // Next is always scoped to the read it was shown for; an unscoped Next is not a command.
         if (typeof parsed.request_id !== "string" || !parsed.request_id || parsed.request_id.length > 256) return null;
         return withCommandId<ReadNextCommand>({ cmd: "read_next", request_id: parsed.request_id }, id);
+      case "dictation_delivered":
+        if (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256 ||
+            typeof parsed.delivery_id !== "string" || !parsed.delivery_id || parsed.delivery_id.length > 256) return null;
+        if (parsed.outcome !== undefined && parsed.outcome !== "unverified" && parsed.outcome !== "not_inserted") return null;
+        return { cmd: "dictation_delivered", take_id: parsed.take_id, delivery_id: parsed.delivery_id,
+          ...(parsed.outcome !== undefined ? { outcome: parsed.outcome } : {}) };
       case "history_playback_ready":
         return id ? { cmd: "history_playback_ready", id } : null;
       case "stop":
+        if (parsed.scope !== undefined && parsed.scope !== "capture" && parsed.scope !== "speech") return null;
+        if (parsed.take_id !== undefined && (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256)) return null;
         if (parsed.physical_press !== undefined && typeof parsed.physical_press !== "boolean") return null;
         if (parsed.retain_read_queue !== undefined && typeof parsed.retain_read_queue !== "boolean") return null;
         return withCommandId<StopCommand>(
           {
             cmd: "stop",
+            ...(parsed.scope !== undefined ? { scope: parsed.scope } : {}),
+            ...(parsed.take_id !== undefined ? { take_id: parsed.take_id } : {}),
             ...(parsed.physical_press !== undefined ? { physical_press: parsed.physical_press } : {}),
             ...(parsed.retain_read_queue !== undefined ? { retain_read_queue: parsed.retain_read_queue } : {}),
             ...(playbackElapsedMs !== undefined
@@ -863,10 +907,12 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
       case "cancel":
+        if (parsed.take_id !== undefined && (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256)) return null;
         if (parsed.discard_read_queue !== undefined && typeof parsed.discard_read_queue !== "boolean") return null;
         return withCommandId<CancelCommand>(
           {
             cmd: "cancel",
+            ...(parsed.take_id !== undefined ? { take_id: parsed.take_id } : {}),
             ...(parsed.discard_read_queue !== undefined ? { discard_read_queue: parsed.discard_read_queue } : {}),
             ...(playbackElapsedMs !== undefined
               ? { playback_elapsed_ms: playbackElapsedMs }
@@ -1044,6 +1090,14 @@ export function parseCommand(line: string): SocketCommand | null {
         if (parsed.recognizer !== "parakeet" && parsed.recognizer !== "whisper") return null;
         return withCommandId<SetRecognizerCommand>({ cmd: "set_recognizer", recognizer: parsed.recognizer }, id);
       }
+      case "set_model_unload_when_idle": {
+        if (typeof parsed.value !== "boolean") return null;
+        return withCommandId<SetModelUnloadWhenIdleCommand>({ cmd: "set_model_unload_when_idle", value: parsed.value }, id);
+      }
+      case "memory_pressure": {
+        if (parsed.level !== "warning" && parsed.level !== "critical") return null;
+        return withCommandId<MemoryPressureCommand>({ cmd: "memory_pressure", level: parsed.level }, id);
+      }
       case "set_recognizer_residency": {
         if (parsed.engine !== "parakeet" && parsed.engine !== "whisper" || parsed.action !== "load" && parsed.action !== "unload") return null;
         return withCommandId<SetRecognizerResidencyCommand>({ cmd: "set_recognizer_residency", engine: parsed.engine, action: parsed.action }, id);
@@ -1099,9 +1153,11 @@ export function parseCommand(line: string): SocketCommand | null {
         );
       }
       case "record": {
+        if (parsed.take_id !== undefined && (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256)) return null;
         const command: RecordCommand = withCommandId(
           {
             cmd: "record",
+            ...(parsed.take_id !== undefined ? { take_id: parsed.take_id } : {}),
           },
           id,
         );
@@ -1118,6 +1174,8 @@ export function parseCommand(line: string): SocketCommand | null {
         ) {
           command.silence_mode = parsed.silence_mode;
         }
+        if (parsed.playback_elapsed_ms !== undefined && playbackElapsedMs === undefined) return null;
+        if (playbackElapsedMs !== undefined) command.playback_elapsed_ms = playbackElapsedMs;
         if (parsed.press_to_talk === true) {
           command.press_to_talk = true;
         }

@@ -24,6 +24,8 @@ export interface STTAttemptEvidence {
   decodeCoverage?: "FULL_INPUT" | "PARTIAL" | "UNKNOWN";
   tail?: "UNKNOWN" | "KNOWN_MISSING" | "VERIFIED_BY_EXTERNAL_EVIDENCE";
   timesValid?: boolean;
+  /** A successful decode was emptied by an acoustic gate, not lost in transport. No transcript words. */
+  gateRemoval?: { gate: "cjk-outro" | "closing-caption"; removedSpans: number; rawCharacters: number };
 }
 
 export type STTOutcome =
@@ -38,6 +40,7 @@ export type STTOutcome =
   | "UNRESOLVED_FALLBACK_INCOMPLETE"
   | "REFUSED_AUDIO_IDENTITY_MISMATCH"
   | "VERIFIED_ZERO_PCM"
+  | "ACOUSTIC_GATE_EMPTY"
   | "VAD_NO_SPEECH";
 
 export interface TranscribeAudioOptions {

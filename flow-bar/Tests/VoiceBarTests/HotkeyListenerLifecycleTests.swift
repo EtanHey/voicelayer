@@ -16,6 +16,7 @@ final class HotkeyListenerLifecycleTests: XCTestCase {
         let missingPermissions: [HotkeyPermission]
         private(set) var startCount = 0
         private(set) var stopCount = 0
+        var isEnabled = true
         private var tapped = false
 
         init(taps: Taps, startSucceeds: Bool, missing: [HotkeyPermission]) {
@@ -102,6 +103,19 @@ final class HotkeyListenerLifecycleTests: XCTestCase {
         XCTAssertEqual(taps.made.count, 1, "no listener is made while recording")
         XCTAssertFalse(lifecycle.isRunning)
         XCTAssertEqual(lifecycle.restart(isRecording: false), .started)
+    }
+
+    func testRestartRebuildsADisabledTapAndRefusesDuringRecording() {
+        let taps = Taps()
+        let lifecycle = lifecycle([true], taps: taps)
+        _ = lifecycle.start()
+        taps.made[0].isEnabled = false
+        XCTAssertEqual(lifecycle.restart(isRecording: true), .refusedWhileRecording)
+        XCTAssertEqual(taps.made.count, 1)
+        XCTAssertEqual(lifecycle.restart(isRecording: false), .started)
+        XCTAssertEqual(taps.made[0].stopCount, 1)
+        XCTAssertEqual(taps.made.count, 2)
+        XCTAssertEqual(taps.live, 1)
     }
 
     func testStopEndsTheRunningListener() {

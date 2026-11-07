@@ -33,13 +33,13 @@ describe("pure public Ask ingress", () => {
     const raw = " \tשלום🙂 fu… no, full\r\n  ";
     const request = { message: raw } satisfies NormalAskRequest;
     expect(parseVoiceAskIngress({ ...request, untrusted: "discard" })).toEqual({
-      kind: "normal", input: { message: raw.trim(), timeout_seconds: 30 },
+      kind: "normal", input: { message: raw.trim(), timeout_seconds: 120 },
       originalMessage: raw, legacyPressToTalk: false,
     });
   });
   it("keeps an explicitly undefined archive field in normal mode", () => {
     expect(parseVoiceAskIngress({ message: "prompt", retranscribe_archive_id: undefined })).toEqual({
-      kind: "normal", input: { message: "prompt", timeout_seconds: 30, retranscribe_archive_id: undefined },
+      kind: "normal", input: { message: "prompt", timeout_seconds: 120, retranscribe_archive_id: undefined },
       originalMessage: "prompt", legacyPressToTalk: false,
     });
   });
@@ -58,13 +58,13 @@ describe("pure public Ask ingress", () => {
   });
   for (const value of [false, undefined]) it(`detects own legacy flag with value ${value}`, () => {
     expect(parseVoiceAskIngress({ message: "prompt", press_to_talk: value })).toEqual({
-      kind: "normal", input: { message: "prompt", timeout_seconds: 30 },
+      kind: "normal", input: { message: "prompt", timeout_seconds: 120 },
       originalMessage: "prompt", legacyPressToTalk: true,
     });
   });
   it("ignores inherited legacy flags", () => {
     const args = Object.assign(Object.create({ press_to_talk: true }), { message: "prompt" });
-    expect(parseVoiceAskIngress(args)).toEqual({ kind: "normal", input: { message: "prompt", timeout_seconds: 30 },
+    expect(parseVoiceAskIngress(args)).toEqual({ kind: "normal", input: { message: "prompt", timeout_seconds: 120 },
       originalMessage: "prompt", legacyPressToTalk: false });
   });
   it("reads the original message twice before the one public parse and checks ownership afterwards", () => {
@@ -84,7 +84,7 @@ describe("pure public Ask ingress", () => {
     const parse = spyOn(VoiceAskSchema, "safeParse").mockImplementation(value => {
       events.push("safeParse"); return realParse(value);
     }); spies.push(parse);
-    expect(parseVoiceAskIngress(args)).toEqual({ kind: "normal", input: { message: "parsed", timeout_seconds: 30 },
+    expect(parseVoiceAskIngress(args)).toEqual({ kind: "normal", input: { message: "parsed", timeout_seconds: 120 },
       originalMessage: " raw ", legacyPressToTalk: false });
     expect(events).toEqual(["message", "message", "safeParse", "message", "ownership"]);
     expect(parse).toHaveBeenCalledTimes(1);

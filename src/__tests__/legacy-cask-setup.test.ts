@@ -17,8 +17,9 @@ const lease = { generation: 1, operationId: "11111111-1111-4111-8111-11111111111
 // Real shell/TS chain with relocated host paths and a fixture-only PATH. Brew's
 // env -i strips the operation and test flags. Only the fixture Bun launcher
 // reinstates host simulation/isolation keys, NEVER the stripped operation.
-function fixture(fault = "") {
-  const root = mkdtempSync(join(bundleFixtureRoot(), "cask-"));
+function fixture(fault = "", formula = false) {
+  const fixtureRoot = mkdtempSync(join(bundleFixtureRoot(), "cask-"));
+  const root = formula ? join(fixtureRoot, "opt/homebrew/Cellar/voicelayer/2.2.61/libexec/lib/node_modules/voicelayer-mcp") : fixtureRoot;
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "Applications/VoiceBar.app");
   const agents = join(home, "Library/LaunchAgents"), gate = join(root, "gate");
   for (const dir of [bin, app, agents, join(root, "src/cli"), join(root, "scripts/lib"), join(root, "launchd")]) mkdirSync(dir, { recursive: true });
@@ -27,9 +28,14 @@ function fixture(fault = "") {
   for (const file of ["src/update-gate-installer.ts", "src/update-gate-admission.ts", "src/update-gate-storage.ts", "src/paths.ts"])
     symlinkSync(join(process.cwd(), file), join(root, file));
   for (const file of ["src/cli/voicelayer.sh", "src/cli/setup.ts", "scripts/lib/update-gate.sh",
+    "scripts/voicelayer-dedupe-voicebar.sh", "scripts/lib/voicebar-launchagent.sh", "scripts/lib/voicebar-bundle-identity.sh",
     "scripts/install-voicebar-autostart.sh", "scripts/install-voicebar-f5-hidutil.sh", "scripts/apply-voicebar-f5-hidutil.sh",
     "launchd/com.voicelayer.voicebar.plist", "launchd/com.voicelayer.f5-to-f18-hidutil.plist"])
-    writeFileSync(join(root, file), readFileSync(file, "utf8").replaceAll("/Applications", join(root, "Applications")), { mode: 0o755 });
+    writeFileSync(join(root, file), readFileSync(file, "utf8")
+      .replaceAll("/Applications", join(root, "Applications"))
+      // Relocate the Cellar boundary together with the host filesystem. No
+      // production environment flag can turn an arbitrary root into a keg.
+      .replaceAll("^/(opt/homebrew|usr/local)/Cellar/", `^${fixtureRoot}/(opt/homebrew|usr/local)/Cellar/`), { mode: 0o755 });
   const proof = join(root, "proof"); writeFileSync(proof, JSON.stringify({ phase: "idle", ready: true }));
   process.env.VOICELAYER_UPDATE_GATE_PATH = gate; process.env.VOICELAYER_TEST_INSTALL_PROOF = proof;
   const simulation = { ROOT: root, APP: app, FAULT: fault, VOICEBAR_LEGACY_LOG_DIR: join(root, "legacy"),
@@ -40,7 +46,7 @@ function fixture(fault = "") {
   const stub = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/bash\n${preamble}\n${body}\n`, { mode: 0o755 });
   stub("bun", `[[ "$*" != *setup.ts* ]] || echo $$ > "$ROOT/setup-pid"\nexec ${quote(process.execPath)} "$@"`);
   stub("which", "exit 1");
-  stub("pgrep", '[[ "$FAULT" != inventory ]] || exit 2; [[ -s "$ROOT/running" ]] || exit 1; echo 101');
+  stub("pgrep", 'if [[ "$*" == *"-fl"* && -s "$ROOT/participant" ]]; then cat "$ROOT/participant"; exit 0; fi; [[ "$FAULT" != inventory ]] || exit 2; [[ -s "$ROOT/running" ]] || exit 1; echo 101');
   stub("ps", 'if [[ "$*" == *comm=* ]]; then cat "$ROOT/running"; else exec /bin/ps "$@"; fi');
   stub("plutil", '[[ "$FAULT" != persistent ]] || exit 7; if [[ ( "$FAULT" == plist || ( "$FAULT" == relay && "$*" == *f5-to-f18* ) ) && ! -f "$ROOT/failed-once" ]]; then : > "$ROOT/failed-once"; exit 7; fi');
   stub("xattr", "exit 1"); stub("hidutil", "exit 0");
@@ -96,7 +102,7 @@ exit "$status"`);
     VOICELAYER_SUPERVISED_BOOTSTRAP: "", VOICELAYER_UPDATE_TARGET_SHA: "", HOMEBREW_VOICELAYER_INSTALL_OPERATION: "" };
   const command = [join(bin, "brew"), "upgrade", "--cask", "voicebar"];
   const run = (extra: Record<string, string> = {}) => Bun.spawnSync(command, { env: { ...process.env, ...env, ...extra }, stdout: "pipe", stderr: "pipe", timeout: 25000 });
-  const setup = (extra: Record<string, string> = {}) => Bun.spawnSync([join(bin, "bun"), join(root, "src/cli/setup.ts"), root], { env: { ...process.env, ...env, ...extra }, stdout: "pipe", stderr: "pipe", timeout: 25000 });
+  const setup = (extra: Record<string, string> = {}, flag = "") => Bun.spawnSync([join(bin, "bun"), join(root, "src/cli/setup.ts"), root, ...(flag ? [flag] : [])], { env: { ...process.env, ...env, ...extra }, stdout: "pipe", stderr: "pipe", timeout: 25000 });
   return { root, gate, app, agents, bin, home, env, command, run, setup };
 }
 function restored(f: ReturnType<typeof fixture>, agentsLoaded = true) {
@@ -112,7 +118,9 @@ function restored(f: ReturnType<typeof fixture>, agentsLoaded = true) {
 for (const fault of ["", "open"]) for (const flag of ["", "--cask-postflight"]) caskTest(`cask ${fault || "absent"} gate upgrades with ${flag || "legacy no-flag"} after env -i`, () => {
   const f = fixture(fault), r = f.run({ HOMEBREW_TEST_POSTFLIGHT_FLAG: flag });
   expect({ exit: r.exitCode, err: r.stderr.toString() }).toMatchObject({ exit: 0 });
-  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN"); restored(f);
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual({ version: 1, kind: "OPEN", generation: 0, released: null });
+  expect(r.stderr.toString()).not.toContain("RECOVERY_REQUIRED");
+  expect(r.stderr.toString()).not.toContain("target SHA"); restored(f);
   const calls = readFileSync(join(f.root, "calls"), "utf8");
   expect(calls.lastIndexOf("remove ")).toBeLessThan(calls.indexOf("delete ")); expect(calls.lastIndexOf("delete ")).toBeLessThan(calls.indexOf("quit"));
 });
@@ -209,7 +217,13 @@ main "$@"
   const r = Bun.spawnSync(["/bin/bash", join(f.root, "updater-runner.sh")], {
     env: { ...process.env, ...f.env, VOICELAYER_UPDATE_TARGET_SHA: "a".repeat(40) }, stdout: "pipe", stderr: "pipe", timeout: 25000,
   });
-  expect({ exit: r.exitCode, err: r.stderr.toString() }).toMatchObject({ exit: 0 });
+  // G5: the child succeeds, but this fixture has no installed/new-pair proof.
+  expect(r.exitCode).toBe(1);
+  expect(r.stderr.toString()).toContain("missing qualified harness completion proof");
+  const state = JSON.parse(readFileSync(f.gate, "utf8"));
+  expect(state.kind).toBe("COMMITTED");
+  expect(existsSync(f.gate + ".controller")).toBe(true);
+  expect(existsSync(f.gate + `.recovery-${state.lease.operationId}.json`)).toBe(true);
   const calls = readFileSync(join(f.root, "calls"), "utf8");
   expect(calls.indexOf("mutations-done")).toBeGreaterThan(calls.indexOf("postflight"));
   expect(calls).not.toContain("EARLY_START");
@@ -241,4 +255,95 @@ caskTest("internal marker cannot restore while a live controller owns the host",
   });
   expect(r.exitCode).not.toBe(0);
   expect(readFileSync(join(f.root, "calls"), "utf8")).toBe("");
+});
+
+for (const flag of ["", "--cask-postflight"]) caskTest(`fresh stopped bundle bootstraps via ${flag || "old cask plain setup"} without target SHA`, () => {
+  const f = fixture();
+  writeFileSync(join(f.root, "running"), "");
+  const r = f.setup({}, flag);
+  expect({ exit: r.exitCode, err: r.stderr.toString() }).toMatchObject({ exit: 0 });
+  expect(r.stderr.toString()).not.toContain("RECOVERY_REQUIRED");
+  expect(JSON.parse(readFileSync(f.gate, "utf8"))).toEqual({ version: 1, kind: "OPEN", generation: 0, released: null });
+  expect(existsSync(f.gate + ".admissions")).toBe(true);
+});
+for (const participant of ["VoiceBar", "bun src/mcp-server-daemon.ts", "bun src/mcp-server.ts", "voicelayer-mcp", "whisper-server", "bun src/cli/ask.ts"])
+  caskTest(`absent gate with live ${participant} refuses bootstrap, retains availability`, () => {
+    const f = fixture();
+    writeFileSync(join(f.root, "participant"), `101 ${participant}\n`);
+    if (participant !== "VoiceBar") writeFileSync(join(f.root, "running"), "");
+    const r = f.setup({}, "--cask-postflight");
+    expect(r.exitCode).toBe(0); // G4d keeps the canonical bundle, but never initializes UNKNOWN.
+    expect(r.stderr.toString()).toContain("RECOVERY_REQUIRED");
+    expect(r.stderr.toString()).toContain("no live voice participants");
+    expect(existsSync(f.gate)).toBe(false);
+  });
+caskTest("participant born while acquiring bootstrap mutex refuses initialization", () => {
+  const f = fixture(); writeFileSync(join(f.root, "running"), "");
+  writeFileSync(join(f.bin, "pgrep"), `#!/bin/bash
+if [[ "$*" == *"-fl"* ]]; then
+  if [[ -f "$ROOT/probed" ]]; then echo '101 bun src/mcp-server-daemon.ts'; exit 0; fi
+  : > "$ROOT/probed"; exit 1
+fi
+[[ -s "$ROOT/running" ]] || exit 1; echo 101
+`, { mode: 0o755 });
+  const r = f.setup({}, "--cask-postflight");
+  expect(r.exitCode).toBe(0); expect(r.stderr.toString()).toContain("participant started");
+  expect(existsSync(f.gate)).toBe(false); expect(existsSync(f.gate + ".bootstrap-lock")).toBe(false);
+});
+
+caskTest("2.2.58 updater calls new Cellar dedupe then autostart without a lease or target", () => {
+  const f = fixture("open", true);
+  expect(f.root).toContain("/Cellar/voicelayer/2.2.61/libexec/lib/node_modules/voicelayer-mcp");
+  const before = readFileSync(f.gate, "utf8");
+  expect(f.run({ HOMEBREW_TEST_POSTFLIGHT_FLAG: "--cask-postflight" }).exitCode).toBe(0);
+  for (const [script, args] of [
+    ["voicelayer-dedupe-voicebar.sh", ["--apply", "--no-relaunch"]],
+    ["install-voicebar-f5-hidutil.sh", []],
+    ["install-voicebar-autostart.sh", ["--reload"]],
+  ] satisfies [string, string[]][]) {
+    const r = Bun.spawnSync(["/bin/bash", join(f.root, "scripts", script), ...args], {
+      env: { ...process.env, ...f.env }, stdout: "pipe", stderr: "pipe", timeout: 25000,
+    });
+    expect({ code: r.exitCode, err: r.stderr.toString() }).toMatchObject({ code: 0 });
+    expect(r.stderr.toString()).not.toContain("UNKNOWN");
+  }
+  restored(f);
+  expect(readFileSync(f.gate, "utf8")).toBe(before);
+  const calls = readFileSync(join(f.root, "calls"), "utf8").split("postflight\n")[1];
+  expect(calls).not.toMatch(/bootout .*com\.voicelayer\.voicebar|quit|revert/);
+  expect(existsSync(join(f.home, ".voicelayer/voicebar-dedupe-backup"))).toBe(false);
+});
+
+for (const entry of ["dedupe", "autostart"]) for (const operation of ["", "invalid"]) caskTest(`Cellar ${entry} cannot restore over a live controller, operation=${operation || "absent"}`, () => {
+  const f = fixture("open", true), ack = { lease, activeOperations: 0, openArchives: 0 };
+  writeFileSync(f.gate, JSON.stringify({ version: 1, kind: "COMMITTED", lease, native: ack, daemon: ack }));
+  writeFileSync(f.gate + ".controller", JSON.stringify({ version: 1, lease: { generation: 1, operationId: lease.operationId },
+    pid: process.pid, identity: installerProcessIdentity(process.pid) }));
+  writeFileSync(join(f.root, "running"), "");
+  writeFileSync(join(f.root, "lease-active"), "");
+  const before = readFileSync(f.gate, "utf8");
+  const args = entry === "dedupe" ? ["voicelayer-dedupe-voicebar.sh", "--apply", "--no-relaunch"] : ["install-voicebar-autostart.sh", "--reload"];
+  const r = Bun.spawnSync(["/bin/bash", join(f.root, "scripts", args[0]), ...args.slice(1)], {
+    env: { ...process.env, ...f.env, VOICELAYER_INSTALL_OPERATION: operation }, stdout: "pipe", stderr: "pipe", timeout: 25000,
+  });
+  expect(r.exitCode).toBe(operation ? 1 : 0); // Availability only writes plists; invalid leases refuse.
+  expect(readFileSync(join(f.root, "running"), "utf8")).toBe("");
+  expect(readFileSync(join(f.root, "calls"), "utf8")).not.toMatch(/enable|bootstrap|kickstart|open |bootout/);
+  expect(readFileSync(f.gate, "utf8")).toBe(before);
+  if (operation) expect(r.stderr.toString()).not.toContain("Legacy formula repair");
+});
+
+for (const target of ["", "a".repeat(40)]) caskTest(`legacy repair scope refuses checkout/missing target without mutation (target=${Boolean(target)})`, () => {
+  const f = fixture("open", Boolean(target));
+  // With a target this is a regular gated call: a missing participant proof
+  // must still refuse, never select the legacy availability exception.
+  rmSync(join(f.root, "proof"));
+  const r = Bun.spawnSync(["/bin/bash", join(f.root, "scripts/voicelayer-dedupe-voicebar.sh"), "--apply", "--no-relaunch"], {
+    env: { ...process.env, ...f.env, VOICELAYER_UPDATE_TARGET_SHA: target }, stdout: "pipe", stderr: "pipe", timeout: 25000,
+  });
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stderr.toString()).not.toContain("Legacy formula repair");
+  // Normal admission captures the observed launchd owner before refusing.
+  // Permit that read only; no bootout, startup or bundle effect is allowed.
+  expect(readFileSync(join(f.root, "calls"), "utf8")).toBe("list com.voicelayer.voicebar\n");
 });

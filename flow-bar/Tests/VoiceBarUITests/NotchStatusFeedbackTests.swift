@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Vision
 import OffscreenTestSupport
 @testable import VoiceBarUI
 import XCTest
@@ -19,11 +18,23 @@ final class NotchStatusFeedbackTests: XCTestCase {
         if view.accessibilityValue() as? String == text { return view }
         return view.subviews.compactMap { mountedText($0, matching: text) }.first
     }
+    /// N2 (formal/notch-presentation OldProcessingNote): nothing under the notch while transcribing, warm-up
+    /// status and every note (busy selection, quit refusal, rejection) included. The spinner and blue carry it.
     func testTranscribingNeverAddsAStatusBand() {
-        for text in ["Transcribing", long] {
-            let p = resolve(.init(mode: .transcribing, statusText: text))
-            XCTAssertNil(p.feedback)
-            XCTAssertEqual(p.geometry.lowerSurfaceHeight, 0)
+        let notes: [String?] = [nil, "Busy transcribing. Selection not read",
+                                "Finish voice work or cancel the update, then quit again.", "Already queued"]
+        for text in ["Transcribing", "Warming up the speech model…", long] {
+            for note in notes {
+                for history in [false, true] {
+                    var input = VoiceBarNotchOperationalInput(mode: .transcribing, statusText: text, transientNote: note)
+                    input.isHistoryPanelOpen = history
+                    let p = resolve(input)
+                    XCTAssertNil(p.feedback, "\(text) / \(note ?? "-")")
+                    XCTAssertNil(p.transientNoteRect, "\(text) / \(note ?? "-")")
+                    XCTAssertEqual(p.feedbackHeight, 0)
+                    XCTAssertEqual(p.ownBodyHeight, p.geometry.lowerSurfaceHeight)
+                }
+            }
         }
     }
     func testOverflowingWingCopyFitsWithoutLosingTheFullNote() throws {
@@ -44,9 +55,9 @@ final class NotchStatusFeedbackTests: XCTestCase {
                     ]).width
                     XCTAssertLessThanOrEqual(measured, max(0, available))
                     XCTAssertFalse(f.wingText.contains("…") || f.wingText.contains("..."))
-                    if text == cancelled && queueDepth == 0 {
-                        XCTAssertEqual(f.wingText, "Cancelled")
-                    }
+                    // N1: the notice is the tab; the wing carries no repeated, shortened or substitute label.
+                    XCTAssertEqual(f.wingText, "")
+                    XCTAssertTrue(f.replacesWingText)
                 }
             }
         }
@@ -56,9 +67,10 @@ final class NotchStatusFeedbackTests: XCTestCase {
         let f = try XCTUnwrap(p.feedback)
         XCTAssertEqual(f.statusText, long)
         XCTAssertTrue(f.opensHistory)
-        XCTAssertEqual(f.width, p.geometry.topWidth)
-        XCTAssertEqual(p.geometry.bodyLeadingExtent, p.geometry.leadingWingWidth)
-        XCTAssertEqual(p.geometry.bodyTrailingExtent, p.geometry.trailingWingWidth)
+        // N1: the note is the tab under the notch, not a band across the wings.
+        XCTAssertEqual(f.width, p.geometry.bodyWidth)
+        XCTAssertEqual(p.geometry.bodyWidth, p.geometry.coreWidth)
+        XCTAssertLessThan(p.geometry.bodyWidth, p.geometry.topWidth)
     }
     func testHistoryReservesInlineWidthWithoutAddingAnActionRow() throws {
         for core: CGFloat in [120, 185, 280] {
@@ -66,65 +78,28 @@ final class NotchStatusFeedbackTests: XCTestCase {
                 let p = resolve(.init(mode: .error, statusText: text, coreWidth: core))
                 let f = try XCTUnwrap(p.feedback)
                 let textWidth = VoiceBarNotchFeedback.messageWidth(f.width, opensHistory: true)
-                XCTAssertEqual(textWidth, f.width - 32 - 96 - 8)
+                XCTAssertEqual(textWidth, f.width - 32 - VoiceBarNotchFeedback.historyButtonWidth
+                    - VoiceBarNotchFeedback.historyButtonSpacing)
                 XCTAssertEqual(f.statusHeight, max(VoiceBarNotchContract.transientNoteBandHeight,
                     min(VoiceBarNotchFeedback.maximumTextHeight,
                         VoiceBarNotchFeedback.textHeight(text, width: textWidth)) + 10))
                 XCTAssertEqual(f.statusText, text)
-                XCTAssertEqual(f.width, p.geometry.topWidth)
+                XCTAssertEqual(f.width, p.geometry.bodyWidth)
                 if text == "Busy" {
                     XCTAssertEqual(f.statusHeight, VoiceBarNotchContract.transientNoteBandHeight)
                 }
             }
         }
     }
-    func testHistoryActionRendersBesideFullMessage() throws {
-        for text in ["Busy", long] {
-            let f = try XCTUnwrap(resolve(.init(mode: .error, statusText: text)).feedback)
-            let host = NSHostingView(rootView: VoiceBarNotchFeedbackBand(feedback: f, onOpenHistory: {})
-                .foregroundStyle(.white).background(.black))
-            host.frame = NSRect(x: 0, y: 0, width: f.width, height: f.height)
-            let window = NSWindow(contentRect: host.frame, styleMask: .borderless,
-                                  backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            window.contentView = host
-            VLOrderTestWindow(window)
-            defer { window.contentView = nil; window.close() }
-            host.layoutSubtreeIfNeeded()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.08))
-            host.layoutSubtreeIfNeeded()
-            let message = try XCTUnwrap(mountedText(host, matching: text))
-            let messageFrame = message.convert(message.bounds, to: host)
-            XCTAssertTrue(host.bounds.contains(messageFrame), "Full message stays in the compact shell")
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            let image = try XCTUnwrap(bitmap.cgImage)
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["en-US"]
-            try VNImageRequestHandler(cgImage: image).perform([request])
-            let candidates = (request.results ?? []).compactMap { $0.topCandidates(1).first }
-            // The diagnostic can itself say "Open History"; the action is the trailing occurrence.
-            let boxes = try candidates.compactMap { candidate -> CGRect? in
-                guard let range = candidate.string.range(of: "Open History", options: .backwards) else { return nil }
-                return try candidate.boundingBox(for: range)?.boundingBox
-            }
-            let box = try XCTUnwrap(boxes.max { $0.minX < $1.minX },
-                                   "Inline action must render legibly: \(candidates.map(\.string))")
-            let actionFrame = CGRect(x: box.minX * host.bounds.width,
-                y: (host.isFlipped ? 1 - box.maxY : box.minY) * host.bounds.height,
-                width: box.width * host.bounds.width, height: box.height * host.bounds.height)
-            XCTAssertLessThanOrEqual(messageFrame.maxX, actionFrame.minX, "History trails the message")
-            XCTAssertGreaterThan(min(messageFrame.maxY, actionFrame.maxY),
-                                 max(messageFrame.minY, actionFrame.minY), "Action shares the message row")
-        }
-    }
+    // N5's inline action is guarded by NotchCompactNoteTests.testOpenHistorySharesTheMessageRow: the action is
+    // now a compact glyph (named "Open History" for VoiceOver and on hover), so OCR of its label no longer applies.
     func testQuitRefusalWrapsDownwardWithoutWideningTheCompactShell() throws {
         let text = "Finish voice work or cancel the update, then quit again."
         let p = resolve(.init(mode: .idle, confirmationText: text, statusText: text, coreWidth: 120))
         let f = try XCTUnwrap(p.feedback)
         XCTAssertEqual(f.statusText, text)
-        XCTAssertEqual(f.width, p.geometry.topWidth)
+        XCTAssertEqual(f.width, p.geometry.bodyWidth)
+        XCTAssertLessThan(f.width, p.geometry.topWidth, "N1: a tab, not the shell-wide slab")
         XCTAssertGreaterThan(f.statusHeight, VoiceBarNotchContract.transientNoteBandHeight)
         XCTAssertFalse(f.opensHistory)
         let host = NSHostingView(rootView: VoiceBarNotchFeedbackBand(feedback: f, onOpenHistory: {}))
@@ -140,13 +115,14 @@ final class NotchStatusFeedbackTests: XCTestCase {
         let label = try XCTUnwrap(mountedText(host, matching: text), "Full quit instruction must be mounted")
         let font = NSFont.systemFont(ofSize: 12, weight: .medium)
         let lineHeight = ceil(font.ascender - font.descender + font.leading)
-        XCTAssertEqual(Int((label.bounds.height / lineHeight).rounded()), 2, "Rendered lines, independent of OCR")
+        XCTAssertGreaterThanOrEqual(Int((label.bounds.height / lineHeight).rounded()), 2,
+                                    "Rendered lines, independent of OCR: the refusal wraps down")
         XCTAssertTrue(host.bounds.contains(label.convert(label.bounds, to: host)))
     }
     func testAnyLongNoteStaysWithinExistingShellAcrossCoreSizesAndResidentModel() throws {
         let note = "Finish voice work or cancel the update, then quit again. " + long
         for core: CGFloat in [120, 185, 280] {
-            for mode in [VoiceMode.idle, .recording, .transcribing, .error, .speaking] {
+            for mode in [VoiceMode.idle, .recording, .error, .speaking] { // transcribing: N2, no note
                 var input = VoiceBarNotchOperationalInput(mode: mode, statusText: "Busy", coreWidth: core)
                 let plain = resolve(input)
                 input.transientNote = note
@@ -158,8 +134,9 @@ final class NotchStatusFeedbackTests: XCTestCase {
                 let rect = try XCTUnwrap(p.transientNoteRect)
                 XCTAssertEqual(p.geometry.leadingWingWidth, shell.leadingWingWidth)
                 XCTAssertEqual(p.geometry.trailingWingWidth, shell.trailingWingWidth)
-                XCTAssertEqual(p.geometry.bodyLeadingExtent, shell.bodyFlushWithWings.bodyLeadingExtent)
-                XCTAssertEqual(p.geometry.bodyTrailingExtent, shell.bodyFlushWithWings.bodyTrailingExtent)
+                let tab = VoiceBarNotchContract.noteBodyExtents(for: shell, ownBodyHeight: shell.lowerSurfaceHeight)
+                XCTAssertEqual(p.geometry.bodyLeadingExtent, tab.leading)
+                XCTAssertEqual(p.geometry.bodyTrailingExtent, tab.trailing)
                 XCTAssertLessThanOrEqual(rect.width, shell.totalWidth)
                 XCTAssertGreaterThan(f.noteHeight, VoiceBarNotchContract.transientNoteBandHeight)
                 XCTAssertEqual(f.noteText, note)
@@ -176,11 +153,48 @@ final class NotchStatusFeedbackTests: XCTestCase {
             }
         }
     }
-    func testFitTextKeepsOriginalWingAndNoExtraBand() {
-        for text in ["Typed", "Copied", "F5 to talk", "Not pasted\nIn History"] {
-            XCTAssertNil(resolve(.init(mode: .idle, confirmationText: text, statusText: text)).feedback)
+    /// N1/N4 (formal/notch-presentation Fixed): every idle confirmation and error diagnostic is a notice in the
+    /// tab, with no wing label; an empty diagnostic shows nothing rather than an invented "Error".
+    func testConfirmationsAreNoticesInTheTabNotTheWing() throws {
+        for text in ["Typed", "Copied", "Not pasted\nIn History", "Select text\nfirst"] {
+            let p = resolve(.init(mode: .idle, confirmationText: text, statusText: text))
+            let f = try XCTUnwrap(p.feedback, text)
+            XCTAssertEqual(f.statusText, text)
+            XCTAssertEqual(p.wingLabel(for: text), "", text)
+            XCTAssertFalse(f.opensHistory, text)
         }
-        XCTAssertEqual(resolve(.init(mode: .error, statusText: "Busy")).feedback?.replacesWingText, false)
+        let busy = try XCTUnwrap(resolve(.init(mode: .error, statusText: "Busy")).feedback)
+        XCTAssertEqual(busy.statusText, "Busy")
+        XCTAssertTrue(busy.statusOpensHistory)
+        XCTAssertEqual(busy.wingText, "")
+        // N4: an empty diagnostic is hidden, not replaced.
+        XCTAssertEqual(VoiceBarPresentation.errorStatusText(nil), "")
+        XCTAssertEqual(VoiceBarPresentation.errorStatusText("  "), "")
+        let empty = resolve(.init(mode: .error, statusText: VoiceBarPresentation.errorStatusText(nil)))
+        XCTAssertNil(empty.feedback)
+        XCTAssertEqual(empty.wingLabel(for: ""), "")
+        // Operational hints are not notices: "Hold to talk" stays the wing's own label.
+        let hint = resolve(.init(mode: .idle, hotkeyPhase: .pressing, statusText: "Hold to talk"))
+        XCTAssertNil(hint.feedback)
+        XCTAssertEqual(hint.wingLabel(for: "Hold to talk"), "Hold to talk")
+        // ...until a notice shows, when the wing carries no label at all.
+        let noted = resolve(.init(mode: .idle, hotkeyPhase: .pressing, statusText: "Hold to talk",
+                                  transientNote: "Busy with F5. Selection not read"))
+        XCTAssertEqual(noted.wingLabel(for: "Hold to talk"), "")
+    }
+
+    /// N5 (formal/notch-presentation OldBusyHistory): a busy-selection note carries Open History inline, like an
+    /// error diagnostic; other notes (quit refusal, rejection) do not.
+    func testBusySelectionNotesCarryInlineHistory() throws {
+        for (mode, phase) in [(VoiceMode.recording, HotkeyPhase.idle), (.idle, .pressing), (.speaking, .pressing)] {
+            let note = try XCTUnwrap(VoiceBarPresentation.selectionBusyNote(isRequested: true, mode: mode, hotkeyPhase: phase))
+            let f = try XCTUnwrap(resolve(.init(mode: mode, hotkeyPhase: phase, transientNote: note)).feedback, note)
+            XCTAssertTrue(f.noteOpensHistory, note)
+            XCTAssertEqual(f.noteHeight, VoiceBarNotchFeedback.bandHeight(note, width: f.width, opensHistory: true))
+        }
+        for note in ["Finish voice work or cancel the update, then quit again.", "Already queued"] {
+            XCTAssertNotEqual(resolve(.init(mode: .idle, transientNote: note)).feedback?.noteOpensHistory, true, note)
+        }
     }
     func testCancellationAndMultilineRecoveryWrapBelow() {
         for text in [long, "Recovery unavailable\nPlease open History", "fu… " + long] {
@@ -203,8 +217,9 @@ final class NotchStatusFeedbackTests: XCTestCase {
         for mode in [VoiceMode.transcribing, .error] {
             let p = resolve(.init(mode: mode, statusText: long, transientNote: "Busy transcribing. Selection not read"))
             if mode == .transcribing {
+                // N2: neither the status nor the selection note shows while transcribing.
                 XCTAssertNil(p.feedback)
-                XCTAssertNotNil(p.transientNoteRect, "The original compact selection note remains visible")
+                XCTAssertNil(p.transientNoteRect)
                 continue
             }
             let f = try XCTUnwrap(p.feedback)
@@ -225,7 +240,10 @@ final class NotchStatusFeedbackTests: XCTestCase {
                               transientNote: "Busy recording. Selection not read"))
         XCTAssertEqual(p.geometry.leadingWingWidth, plain.geometry.leadingWingWidth)
         XCTAssertEqual(p.geometry.trailingWingWidth, plain.geometry.trailingWingWidth)
-        XCTAssertEqual(p.geometry.lowerSurfaceHeight, 26)
+        // N1/N3: at notch width the busy note wraps onto a second line and the tab grows down for it.
+        XCTAssertEqual(p.geometry.lowerSurfaceHeight, p.feedbackHeight)
+        XCTAssertEqual(p.feedback?.noteText, "Busy recording. Selection not read")
+        XCTAssertGreaterThan(p.feedbackHeight, VoiceBarNotchContract.transientNoteBandHeight)
     }
     func testLongNoteUsesMultipleLinesAndLongDiagnosticsAreBounded() throws {
         for core: CGFloat in [120, 185, 280] {

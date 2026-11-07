@@ -185,6 +185,39 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertEqual(state.playbackElapsedMilliseconds(), 3500, "the clock runs again from the paused word")
     }
 
+    func testRefusedAutomaticResumeStopsTheReadRetainsTextAndShowsCompactNote() {
+        let (state, sent) = speakingState()
+        state.record(pressToTalk: true)
+        var pause = pausedEvent(offset: 2000)
+        pause["pause_owner"] = "f5"
+        state.handleEvent(pause)
+        state.handleEvent(["type": "playback_outcome", "playback_id": "playback-7", "status": "interrupted", "reason": "resume-refused"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        drainMainQueue()
+        XCTAssertFalse(state.isPlaybackPaused)
+        XCTAssertFalse(state.isF5SpeechPausedDuringCapture)
+        XCTAssertEqual(state.teleprompterText, "One two three four five six")
+        XCTAssertTrue(state.showsSelectionBusyNote)
+        XCTAssertEqual(state.selectionFeedbackNote, "Speech stopped")
+        XCTAssertFalse(sent().contains { $0["cmd"] as? String == "resume" })
+    }
+
+    func testVoiceBarRestartDuringF5PauseDropsTheReadWithoutResuming() {
+        let (state, sent) = speakingState()
+        state.record(pressToTalk: true)
+        var pause = pausedEvent()
+        pause["pause_owner"] = "f5"
+        state.handleEvent(pause)
+        state.setConnectionStatus(false)
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        drainMainQueue()
+        XCTAssertFalse(state.isPlaybackPaused)
+        XCTAssertFalse(state.isF5SpeechPausedDuringCapture)
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(sent().contains { $0["cmd"] as? String == "resume" })
+    }
+
     func testPlaybackIdleOrDisconnectRetiresThePark() {
         let (state, _) = speakingState()
         state.handleEvent(pausedEvent())
@@ -419,6 +452,74 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         XCTAssertTrue(state.isTeleprompterReadback)
         XCTAssertEqual(presentation(for: state).geometry.leadingWingWidth, 0, "a readback has nothing to pause")
+    }
+
+    func testManualSpeechPauseDuringCaptureUsesScopedExistingPauseCommand() {
+        let (state, sent) = speakingState()
+        state.record(pressToTalk: true)
+        var automatic = pausedEvent(offset: 2000)
+        automatic["pause_owner"] = "f5"
+        state.handleEvent(automatic)
+        XCTAssertTrue(state.isF5SpeechPausedDuringCapture)
+        state.pauseSpeechDuringCapture()
+        XCTAssertEqual(sent().last?["cmd"] as? String, "pause")
+        XCTAssertEqual(sent().last?["playback_id"] as? String, "playback-7")
+        XCTAssertEqual(sent().last?["generation"] as? Int, 3)
+        automatic["pause_owner"] = "user"
+        state.handleEvent(automatic)
+        XCTAssertFalse(state.isF5SpeechPausedDuringCapture)
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        drainMainQueue()
+        XCTAssertTrue(state.isPlaybackPaused)
+        XCTAssertFalse(sent().contains { $0["cmd"] as? String == "resume" })
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        drainMainQueue()
+        XCTAssertTrue(state.isPlaybackPaused)
+    }
+
+    func testF5SettlementOnlyDaemonResumesAndLateIdleIsNoop() {
+        let (state, sent) = speakingState()
+        state.record(pressToTalk: true)
+        var event = pausedEvent(offset: 2000)
+        event["pause_owner"] = "f5"
+        state.handleEvent(event)
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        drainMainQueue()
+        XCTAssertFalse(sent().contains { $0["cmd"] as? String == "resume" })
+        resume(state, offset: 2000)
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording", "recording_jobs": [], "mic_take_id": NSNull()])
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertFalse(state.isPlaybackPaused)
+    }
+
+    func testPreparingPauseOwnerIsControllableBeforeAFirstChunkExists() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.frontmostAppProvider = { nil }
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        let read: [String: Any] = ["id": "preparing-read", "chunk_index": 0, "chunk_count": 2,
+                                   "chunk_start_ms": 0, "preparing": true, "text": "One two"]
+        state.handleEvent(["type": "state", "state": "speaking", "text": "One two", "long_read": read])
+        state.record(pressToTalk: true)
+        var pause: [String: Any] = ["type": "playback_state", "state": "paused", "playback_id": "preparing-read",
+                                   "generation": 1, "offset_ms": 0, "chunk_offset_ms": 0, "pause_owner": "f5", "long_read": read]
+        state.handleEvent(pause)
+        XCTAssertTrue(state.isF5SpeechPausedDuringCapture)
+        state.pauseSpeechDuringCapture()
+        XCTAssertEqual(sent.last?["cmd"] as? String, "pause")
+        XCTAssertEqual(sent.last?["playback_id"] as? String, "preparing-read")
+        pause["pause_owner"] = "user"
+        state.handleEvent(pause)
+        pause["playback_id"] = "first-chunk-player"
+        pause["generation"] = 2
+        state.handleEvent(pause)
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        drainMainQueue()
+        XCTAssertTrue(state.isPlaybackPaused)
+        state.togglePlaybackPause()
+        XCTAssertEqual(sent.last?["playback_id"] as? String, "first-chunk-player")
     }
 
     // MARK: - Helpers

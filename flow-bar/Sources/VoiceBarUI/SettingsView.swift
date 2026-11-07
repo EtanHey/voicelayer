@@ -262,7 +262,7 @@ struct SettingsHistoryRowModel: Equatable {
                     transcribedDurationLabel: hasSpokenLength ? nil : durationLabels.transcribed,
                     spokenDurationLabel: hasSpokenLength ? durationLabels.transcribed : nil,
                     processingLabel: processingLabel(entry.processingDurationMs),
-                    micDisconnectLabel: entry.micDisconnectNote
+                    micDisconnectLabel: [entry.micDisconnectNote, entry.deliveryNote].compactMap { $0 }.joined(separator: " · ").settingsArchiveNilIfEmpty
                         ?? entry.micDisconnectedAtMs.map(MicDisconnectFeedback.historyNote(atMs:))
                 ),
             ]
@@ -441,6 +441,7 @@ public struct SettingsView: View {
     public let recognizerStatus: () -> RecognizerPickerState
     public let onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)?
     public let onSelectRecognizer: ((RecognizerPickerEngine) -> Void)?
+    public let onSetUnloadWhenIdle: ((Bool) -> Void)?
     public let speechControls: () -> SpeechControlsState?
     public let speechConnected: () -> Bool
     public let speechBusyReason: () -> String?
@@ -520,10 +521,15 @@ public struct SettingsView: View {
     @State private var historyLoadedEntryCount: Int
     @State private var historyLoadedEntryLimit: Int
     @State private var historyHasMore: Bool
-    @State private var selectedHistoryEntryID: String?
+    /// QA-06: selection, scroll target and details state for Dictations, kept across tab changes.
+    @State private var historyMemory: SettingsHistoryRecordingMemory
+    /// QA-06: where the Dictations list and detail pane were scrolled; not observed, so scrolling is free.
+    @State private var historyScroll = SettingsHistoryScrollMemory()
+    private var selectedHistoryEntryID: String? { historyMemory.selectedID }
     @State private var isHistoryLoading = false
     @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
+    @State private var historyChangesDuringLoad = SettingsHistoryArchiveChanges()
     private let historyDetailsInitiallyExpanded: Bool
     private let speechHistoryRoot: URL
     @State private var speechLoading = SettingsSpeechHistoryLoading()
@@ -538,11 +544,10 @@ public struct SettingsView: View {
     @State private var isAskHistoryLoading = false
     @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
+    @State private var askChangesDuringLoad = SettingsHistoryArchiveChanges()
     @State private var hasPrefetchedAskHistory = false
     /// History scopes shown at least once in this Settings session; they stay mounted (lane E).
     @State private var mountedHistoryScopes: Set<SettingsHistoryScope> = []
-    /// Set when History is (re)entered, so the next Dictations page selects the newest row (UI pass #9).
-    @State private var selectNewestOnNextHistoryPage = true
     @State private var searchPrewarmTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
@@ -599,6 +604,7 @@ public struct SettingsView: View {
         recognizerStatus: @escaping () -> RecognizerPickerState = { .unavailable },
         onSelectRecognizer: ((RecognizerPickerEngine) -> Void)? = nil,
         onManageRecognizer: ((RecognizerPickerEngine, RecognizerManagementAction) -> Void)? = nil,
+        onSetUnloadWhenIdle: ((Bool) -> Void)? = nil,
         speechControls: @escaping () -> SpeechControlsState? = { nil },
         speechConnected: @escaping () -> Bool = { false },
         speechBusyReason: @escaping () -> String? = { nil },
@@ -721,6 +727,7 @@ public struct SettingsView: View {
         self.recognizerStatus = recognizerStatus
         self.onManageRecognizer = onManageRecognizer
         self.onSelectRecognizer = onSelectRecognizer
+        self.onSetUnloadWhenIdle = onSetUnloadWhenIdle
         self.speechControls = speechControls
         self.speechConnected = speechConnected
         self.speechBusyReason = speechBusyReason
@@ -819,7 +826,8 @@ public struct SettingsView: View {
         let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
         _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
         _historyLoadedEntryCount = State(initialValue: initialHistoryPage?.loadedEntryCount ?? 0)
-        _selectedHistoryEntryID = State(initialValue: initialHistoryPage?.groups.first?.entries.first?.id)
+        _historyMemory = State(initialValue: SettingsHistoryRecordingMemory(
+            initialPage: initialHistoryPage.map { $0.groups.flatMap(\.entries).map(\.id) }))
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
@@ -885,7 +893,7 @@ public struct SettingsView: View {
             if tab == .history {
                 switch selectedHistoryScope {
                 case .recording:
-                    selectNewestOnNextHistoryPage = true
+                    // QA-06: the reload keeps the remembered row; it no longer jumps to the newest.
                     if !isHistoryLoading {
                         requestHistoryReload()
                     }
@@ -1075,9 +1083,11 @@ public struct SettingsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Divider()
-                    LabeledContent("VoiceBar build", value: SettingsDiagnosticSummary.versionLabel())
-                    SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
-                                       label: "build and diagnostic summary")
+                    // S1: the version lives once, in the sidebar footer. This row only copies the diagnostic summary.
+                    LabeledContent("Diagnostic summary") {
+                        SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
+                                           label: "build and diagnostic summary")
+                    }
                     Divider()
                     Text("Gestures").font(.headline)
                     LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
@@ -1316,7 +1326,8 @@ public struct SettingsView: View {
                 processingNotice: processingNotice(),
                 onToggleProcessing: onToggleProcessing,
                 recognizerState: recognizerStatus(),
-                onSelectRecognizer: onSelectRecognizer, onManageRecognizer: onManageRecognizer
+                onSelectRecognizer: onSelectRecognizer, onManageRecognizer: onManageRecognizer,
+                onSetUnloadWhenIdle: onSetUnloadWhenIdle
             )
             VStack(alignment: .leading, spacing: 4) {
                 if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {
@@ -1495,7 +1506,8 @@ public struct SettingsView: View {
                 SettingsSpeechHistoryArchive.load(from: root, limit: limit)
             }, apply: { speechEntries = $0 })
         }
-        .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
+            guard !(notification.object is SettingsHistoryArchiveChange) else { return }
             speechReload.archiveChanged()
         }
     }
@@ -1537,9 +1549,9 @@ public struct SettingsView: View {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 28))
                             .foregroundStyle(.secondary)
-                        Text("No transcript history yet")
+                        Text(SettingsHistoryRecordingCopy.emptyTitle)
                             .font(.headline)
-                        Text("Saved recordings, including failed or cancelled ones, will appear here. Select one to see Errors & runs.")
+                        Text(SettingsHistoryRecordingCopy.emptyHint)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1553,23 +1565,31 @@ public struct SettingsView: View {
                                     ForEach(historyDayGroups) { group in
                                         Section {
                                             ForEach(group.entries) { entry in
-                                                Button { selectedHistoryEntryID = entry.id } label: {
+                                                Button { historyMemory.select(entry.id) } label: {
                                                     recordingHistoryListRow(entry)
                                                 }.buttonStyle(.plain)
                                             }
                                         } header: { historyDayHeader(group.dayTitle()) }
                                     }
+                                    if historyHasMore {
+                                        Button(SettingsHistoryRecordingCopy.loadMoreTitle(isLoading: isHistoryLoading)) { loadOlderHistory() }
+                                            .disabled(isHistoryLoading)
+                                            .controlSize(.small)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.top, 8)
+                                    }
                                 }.padding(12)
+                                .background(SettingsHistoryScrollKeeper(memory: historyScroll, key: .list))
                             }.clipped()
                         } detail: {
                             if let entry = selectedHistoryEntry {
                                 SettingsHistoryAttemptDetailPane(entry: entry, load: historyDiagnostics,
                                     loadAttempts: historyAttempts, runs: historyRunLog().runs(for: entry.audioPath.path),
-                                    omittedCount: historyRunLog().omittedCount) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text("Selected dictation").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                        Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.headline)
-                                    }
+                                    omittedCount: historyRunLog().omittedCount,
+                                    detailsExpanded: historyMemory.detailsExpanded(for: entry.id),
+                                    scrollMemory: historyScroll,
+                                    onDetailsExpandedChange: { historyMemory.rememberDetailsExpanded($0, for: entry.id) }) {
+                                        EmptyView() // QA-16: the list highlight already says which row is shown.
                                 } content: { displayedEntry in
                                     recordingHistoryDetail(displayedEntry)
                                 } actions: { displayedEntry in
@@ -1577,7 +1597,7 @@ public struct SettingsView: View {
                                 }
                                 .id(entry.id)
                             } else {
-                                Text("Select a dictation to read its transcript.")
+                                Text(SettingsHistoryRecordingCopy.noSelection)
                                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                             }
                         }
@@ -1587,10 +1607,6 @@ public struct SettingsView: View {
                                 ? "\(historyLoadedEntryCount) matches shown"
                                 : "\(historyLoadedEntryCount) saved shown").foregroundStyle(.secondary)
                             Spacer()
-                            if historyHasMore {
-                                Button(isHistoryLoading ? "Loading…" : "Load more") { loadOlderHistory() }
-                                    .disabled(isHistoryLoading)
-                            }
                         }.font(.caption).padding(.horizontal, 18).padding(.vertical, 10)
                     }
 
@@ -1600,10 +1616,14 @@ public struct SettingsView: View {
                 // A preloaded page is unfiltered, so an active query must still search (#165 Macroscope).
                 if historyDayGroups.isEmpty || SettingsHistorySearch(historySearch).isActive, !isHistoryLoading {
                     requestHistoryReload(scrollProxy: proxy, animated: false)
-                }
+                } // Otherwise the list's SettingsHistoryScrollKeeper puts back where it was left (QA-06).
             }
-            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
-                requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
+                if let change = notification.object as? SettingsHistoryArchiveChange {
+                    historyChangesDuringLoad.receive(change, duringLoad: isHistoryLoading, apply: applyHistoryChange)
+                } else {
+                    requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+                }
             }
         }
     }
@@ -1749,8 +1769,12 @@ public struct SettingsView: View {
                     requestAskHistoryReload(scrollProxy: proxy, animated: false)
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
-                requestAskHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
+                if let change = notification.object as? SettingsHistoryArchiveChange {
+                    askChangesDuringLoad.receive(change, duringLoad: isAskHistoryLoading, apply: applyAskHistoryChange)
+                } else {
+                    requestAskHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+                }
             }
         }
     }
@@ -2132,7 +2156,7 @@ public struct SettingsView: View {
                 historyActionLabel("Copy", systemImage: "doc.on.doc", isEnabled: !disabled)
             }
             .disabled(disabled)
-            .help(reason ?? "Copy")
+            .help(reason ?? "Copy transcript") // QA-03: says which copy this is.
             .accessibilityHint(reason ?? "")
             .accessibilityLabel("Copy transcript")
 
@@ -2319,6 +2343,15 @@ public struct SettingsView: View {
             TextField("Search terms and variants", text: $dictionarySearch)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .search)
+            // QA-27: the same clear (X) the History search has. It follows the raw field, not the trimmed query:
+            // a lone space is not a search, but it is still text the X should clear.
+            if dictionarySearch != "" {
+                SettingsIconButton(spec: .clearSearch, layoutInset: 5) {
+                    dictionarySearch = ""
+                    focusedEditorField = .search
+                }
+                .foregroundStyle(.secondary)
+            }
         }
         .dictionaryFieldContainer()
         .contentShape(Rectangle())
@@ -2493,7 +2526,7 @@ public struct SettingsView: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard historyLoadFence.accepts(generation), !Task.isCancelled else { return }
-                applyHistoryPage(page)
+                historyChangesDuringLoad.publish(page, applyPage: applyHistoryPage, applyChange: applyHistoryChange)
                 isHistoryLoading = false
                 prefetchAskHistoryIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {
@@ -2505,14 +2538,29 @@ public struct SettingsView: View {
 
     private func applyHistoryPage(_ page: SettingsHistoryPage) {
         historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
-        selectedHistoryEntryID = SettingsHistoryLayout.selection(
-            current: selectedHistoryEntryID,
-            entries: historyDayGroups.flatMap(\.entries).map(\.id),
-            preferNewest: selectNewestOnNextHistoryPage
-        )
-        selectNewestOnNextHistoryPage = false
+        historyMemory.applyPage(historyDayGroups.flatMap(\.entries).map(\.id))
         historyLoadedEntryCount = page.loadedEntryCount
         historyHasMore = page.hasMore
+    }
+
+    private func applyHistoryChange(_ change: SettingsHistoryArchiveChange) {
+        let current = SettingsHistoryPage(groups: historyDayGroups, hasMore: historyHasMore)
+        let updated = change.applying(to: current, matching: historySearch)
+        guard updated != current else { return }
+        historyDayGroups = updated.groups
+        historyLoadedEntryCount = updated.loadedEntryCount
+        historyLoadedEntryLimit = max(historyLoadedEntryLimit, updated.loadedEntryCount)
+        // Keep the selection unless this row stopped matching the active search (then the newest row).
+        historyMemory.applyPage(updated.groups.flatMap(\.entries).map(\.id))
+    }
+
+    private func applyAskHistoryChange(_ change: SettingsHistoryArchiveChange) {
+        let current = SettingsAskHistoryPage(groups: askHistoryDayGroups, hasMore: askHistoryHasMore)
+        let updated = change.applying(to: current, matching: askHistorySearch)
+        guard updated != current else { return }
+        askHistoryDayGroups = updated.groups
+        askHistoryLoadedEntryCount = updated.loadedEntryCount
+        askHistoryLoadedEntryLimit = max(askHistoryLoadedEntryLimit, updated.loadedEntryCount)
     }
 
     /// Cancels both in-flight archive loads and clears their loading flags.
@@ -2525,10 +2573,12 @@ public struct SettingsView: View {
         historyRefreshTask = nil
         historyLoadFence.cancel()
         isHistoryLoading = false
+        _ = historyChangesDuringLoad.takePending()
         askHistoryRefreshTask?.cancel()
         askHistoryRefreshTask = nil
         askHistoryLoadFence.cancel()
         isAskHistoryLoading = false
+        _ = askChangesDuringLoad.takePending()
         searchPrewarmTask?.cancel()
         searchPrewarmTask = nil
     }
@@ -2611,7 +2661,7 @@ public struct SettingsView: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard askHistoryLoadFence.accepts(generation), !Task.isCancelled else { return }
-                applyAskHistoryPage(page)
+                askChangesDuringLoad.publish(page, applyPage: applyAskHistoryPage, applyChange: applyAskHistoryChange)
                 isAskHistoryLoading = false
                 startSearchPrewarmIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {

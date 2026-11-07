@@ -53,7 +53,7 @@ secure_input_owner() {
     owner="$(
         printf '%s\n' "$ioreg_output" \
             | sed -n 's/.*kCGSSessionSecureInputPID"[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
-            | head -n 1
+            | sed -n '1p'
     )"
     [[ "$owner" =~ ^[1-9][0-9]*$ ]] || return 1
     printf '%s\n' "$owner"
@@ -65,7 +65,7 @@ launchd_loaded_program() {
     program="$(
         printf '%s\n' "$launchd_output" \
             | sed -n 's/^[[:space:]]*program = //p' \
-            | head -n 1
+            | sed -n '1p'
     )"
     [[ -n "$program" ]] || return 1
     printf '%s\n' "$program"
@@ -183,8 +183,8 @@ actual_bundle_id="$("$PLIST_BUDDY" -c 'Print :CFBundleIdentifier' "$info_plist" 
 signature="$(
     codesign -dvvv "$CANONICAL_APP" 2>&1 || true
 )"
-team_id="$(printf '%s\n' "$signature" | awk -F= '/^TeamIdentifier=/{print $2; exit}')"
-authority="$(printf '%s\n' "$signature" | awk -F= '/^Authority=/{print $2; exit}')"
+team_id="$(awk -F= '/^TeamIdentifier=/{print $2; exit}' <<<"$signature")"
+authority="$(awk -F= '/^Authority=/{print $2; exit}' <<<"$signature")"
 [[ "$team_id" = "$REQUIRED_TEAM_ID" ]] || fail "canonical app Team ID is ${team_id:-<missing>}, expected $REQUIRED_TEAM_ID"
 [[ "$authority" = "$REQUIRED_AUTHORITY_PREFIX"* ]] || fail "canonical app is not Developer-ID signed"
 codesign --verify --deep --strict "$CANONICAL_APP" >/dev/null 2>&1 \
@@ -204,6 +204,8 @@ if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
     bundle_search_roots+=("$TMPDIR")
 fi
 while IFS= read -r bundle; do
+    # Both discovery sources include retained test runs; exclude only that component.
+    [[ "$bundle" == */.test-tmp/* ]] && continue
     [[ -d "$bundle" ]] || continue
     if voicebar_bundle_identity "$bundle"; then
         bundles+=("$bundle")

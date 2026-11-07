@@ -152,7 +152,10 @@ test("lock hold time with 15 ms process readers", async () => {
   times.sort((a, b) => a - b); base.sort((a, b) => a - b);
   console.log(`baseline (trivial verifier) ms: median ${base[25].toFixed(3)} p95 ${base[47].toFixed(3)} max ${base[49].toFixed(3)}`);
   console.log(`ack window ms: median ${times[25].toFixed(3)} p95 ${times[47].toFixed(3)} max ${times[49].toFixed(3)}`);
-  expect(times[25]).toBeLessThan(2);
+  // The property: no 15 ms process read runs inside the acknowledgement window.
+  // Half of one read still catches a single read moving inside; a tight 2 ms
+  // wall-clock bound failed on a loaded dev Mac (2.6 ms, #673).
+  expect(times[25]).toBeLessThan(15 / 2);
 }, 60000);
 
 // A held acquisition may consume only a small part of the original one-second

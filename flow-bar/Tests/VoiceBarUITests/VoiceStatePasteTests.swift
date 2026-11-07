@@ -148,7 +148,6 @@ final class VoiceStatePasteTests: XCTestCase {
             target = FakeRunningApplication(bundleIdentifier: bundle, processIdentifier: 51515)
             front = target
             state.sendCommand = { _ in }
-            state.minimumTranscribingDisplayDuration = 0
             state.pasteConfirmationDelay = 0.25
             state.frontmostAppProvider = { [unowned self] in front }
             state.targetAppActivator = { [unowned self] in activated.append($0.processIdentifier) }
@@ -230,7 +229,6 @@ final class VoiceStatePasteTests: XCTestCase {
         let state = VoiceState()
         let editor = FakeRunningApplication(bundleIdentifier: bundleIdentifier, processIdentifier: 51515)
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.frontmostAppProvider = { editor }
         state.targetAppActivator = { _ in }
@@ -1182,7 +1180,6 @@ final class VoiceStatePasteTests: XCTestCase {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1222,7 +1219,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
         state.recordStartLateRecoveryWindow = .milliseconds(20)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1268,7 +1264,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
         state.recordStartLateRecoveryWindow = .seconds(10)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1315,7 +1310,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
         state.recordStartLateRecoveryWindow = .seconds(10)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1358,7 +1352,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         state.recordStartAckTimeout = .milliseconds(20)
         state.recordStartLateRecoveryWindow = .seconds(10)
-        state.minimumTranscribingDisplayDuration = 0
         state.sendCommand = { _ in }
 
         var pastedTexts: [String] = []
@@ -1454,7 +1447,6 @@ final class VoiceStatePasteTests: XCTestCase {
     func testUnmarkedRecordingFailsClosedAndDoesNotAutoPaste() {
         let state = VoiceState()
         state.setConnectionStatus(true)
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.sendCommand = { _ in }
         var pastedTexts: [String] = []
@@ -1493,7 +1485,6 @@ final class VoiceStatePasteTests: XCTestCase {
         // must make this test fail even while the superseded-shadow term remains.
         let state = VoiceState()
         state.setConnectionStatus(true)
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.sendCommand = { _ in }
         var pastedTexts: [String] = []
@@ -1665,7 +1656,7 @@ final class VoiceStatePasteTests: XCTestCase {
     }
 
     func testFailedTranscriptionClearsRemoteOwnershipBeforeNextPttPaste() async {
-        let state = makeRemoteOwnedRecordingState()
+        let state = makeRemoteOwnedRecordingState(pinRecordingClock: true)
         state.transcriptionTimeout = .milliseconds(20)
 
         state.handleEvent(["type": "state", "state": "transcribing"])
@@ -1684,7 +1675,6 @@ final class VoiceStatePasteTests: XCTestCase {
     func testRejectedRecordAckClearsRemoteOwnershipBeforeNextPttPaste() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         var recordCommand: [String: Any]?
         state.sendCommand = { command in
@@ -1808,12 +1798,15 @@ final class VoiceStatePasteTests: XCTestCase {
     }
 
     private func makeRemoteOwnedRecordingState(
+        pinRecordingClock: Bool = false,
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> VoiceState {
         let state = VoiceState()
+        // A measured capture scales the transcription wait to >= 60 s (V17), so tests that
+        // inject a short timeout pin the clock BEFORE the recording event (capture length 0).
+        if pinRecordingClock { state.recordingTimingClock = { 1_000 } }
         state.setConnectionStatus(true)
-        state.minimumTranscribingDisplayDuration = 0
         state.pasteConfirmationDelay = 0
         state.sendCommand = { _ in }
         state.handleEvent([
@@ -1866,10 +1859,9 @@ final class VoiceStatePasteTests: XCTestCase {
         )
     }
 
-    func testFastFinalTranscriptionKeepsBlueStateUntilPendingRecordingIdleCanApply() async {
+    func testFastFinalTranscriptionDispatchesBeforeDisplayFloor() async {
         let state = VoiceState()
         state.sendCommand = { _ in }
-        state.minimumTranscribingDisplayDuration = 0.12
         state.pasteConfirmationDelay = 0
 
         var pastedTexts: [String] = []
@@ -1893,8 +1885,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "source": "recording",
         ])
 
-        XCTAssertEqual(state.mode, .transcribing)
-        XCTAssertEqual(pastedTexts, [])
+        XCTAssertEqual(pastedTexts, ["fast final transcript"])
 
         do {
             let settled = await settle { !pastedTexts.isEmpty && state.mode == .idle }
@@ -1910,7 +1901,6 @@ final class VoiceStatePasteTests: XCTestCase {
         state.sendCommand = { _ in }
         state.recordingIdleFinalTranscriptGrace = .milliseconds(20)
         state.pasteConfirmationDelay = 0
-        state.minimumTranscribingDisplayDuration = 0
 
         var pastedTexts: [String] = []
         state.pasteHandler = { text in
@@ -3113,11 +3103,33 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertTrue(state.confirmationText?.contains("Not pasted") == true)
     }
 
+    func testInjectedPasteboardProvidersAndRestoreStayOnTheirOwnBoard() {
+        let board = NSPasteboard.withUniqueName()
+        let otherBoard = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally(); otherBoard.releaseGlobally() }
+        otherBoard.clearContents()
+        otherBoard.setString("other owner", forType: .string)
+        let otherCount = otherBoard.changeCount
+        let state = VoiceState(pasteboard: board)
+
+        state.pasteboardWriter("first value")
+        XCTAssertEqual(state.pasteboardStringProvider(), "first value")
+        XCTAssertEqual(state.pasteboardChangeCountProvider(), board.changeCount)
+        let snapshot = state.pasteboardSnapshotter()
+        XCTAssertNotNil(snapshot)
+        state.pasteboardWriter("second value")
+        if let snapshot { state.pasteboardSnapshotRestorer(snapshot) }
+
+        XCTAssertEqual(state.pasteboardStringProvider(), "first value")
+        XCTAssertEqual(state.pasteboardChangeCountProvider(), board.changeCount)
+        XCTAssertEqual(otherBoard.string(forType: .string), "other owner")
+        XCTAssertEqual(otherBoard.changeCount, otherCount)
+    }
+
     func testDefaultFallbackPasteboardWriterMarksTranscriptAsTransientAndAutoGenerated() {
-        let pasteboard = NSPasteboard.general
-        let saved = Self.capturePasteboardForTest()
-        defer { Self.restorePasteboardForTest(saved) }
-        let state = VoiceState()
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let state = VoiceState(pasteboard: pasteboard)
 
         state.pasteboardWriter("fresh transcript")
 
@@ -3127,10 +3139,9 @@ final class VoiceStatePasteTests: XCTestCase {
     }
 
     func testDefaultPasteboardSnapshotSkipsDynamicAndNspasteboardTypes() {
-        let pasteboard = NSPasteboard.general
-        let saved = Self.capturePasteboardForTest()
-        defer { Self.restorePasteboardForTest(saved) }
-        let state = VoiceState()
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let state = VoiceState(pasteboard: pasteboard)
         pasteboard.clearContents()
         let item = NSPasteboardItem()
         item.setData(Data("keep".utf8), forType: .string)
@@ -3149,10 +3160,9 @@ final class VoiceStatePasteTests: XCTestCase {
     }
 
     func testDefaultPasteboardRestorerMarksRestoredContentAsTransientAndAutoGenerated() {
-        let pasteboard = NSPasteboard.general
-        let saved = Self.capturePasteboardForTest()
-        defer { Self.restorePasteboardForTest(saved) }
-        let state = VoiceState()
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let state = VoiceState(pasteboard: pasteboard)
 
         state.pasteboardSnapshotRestorer(
             PasteboardSnapshot(
@@ -3221,30 +3231,7 @@ final class VoiceStatePasteTests: XCTestCase {
         ])
     }
 
-    private static func capturePasteboardForTest() -> [[String: Data]] {
-        NSPasteboard.general.pasteboardItems?.map { item in
-            item.types.reduce(into: [String: Data]()) { result, type in
-                if let data = item.data(forType: type) {
-                    result[type.rawValue] = data
-                }
-            }
-        } ?? []
-    }
 
-    private static func restorePasteboardForTest(_ saved: [[String: Data]]) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        let items = saved.map { itemSnapshot -> NSPasteboardItem in
-            let item = NSPasteboardItem()
-            for (type, data) in itemSnapshot {
-                item.setData(data, forType: NSPasteboard.PasteboardType(type))
-            }
-            return item
-        }
-        if !items.isEmpty {
-            pasteboard.writeObjects(items)
-        }
-    }
 }
 
 enum ChromiumBundleFixture {

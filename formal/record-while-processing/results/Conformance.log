@@ -1,0 +1,46 @@
+[heavy.sh] G start 2026-11-02T11:33:10Z load { 16.25 19.58 19.53 }
+(pass) default pipeline corpus binds both policies to the checked spec [1.17ms]
+Current/record: replayed 26 TLC graph contexts; 10 divergences
+(pass) Current record: all graph contexts through the real socket handler [63.27ms]
+Current/cancel: replayed 245 TLC graph contexts; 324 divergences
+(pass) Current cancel: all graph contexts through the real socket handler [141.46ms]
+Fixed/record: replayed 13 TLC graph contexts; 0 divergences
+(pass) Fixed record: all graph contexts through the real socket handler [28.49ms]
+Fixed/cancel: replayed 107 TLC graph contexts; 0 divergences
+(pass) Fixed cancel: all graph contexts through the real socket handler [97.00ms]
+ 5 pass
+ 0 fail
+Test Suite 'Selected tests' started at 2026-11-02 13:33:42.220.
+Test Suite 'VoiceBarUITests.xctest' started at 2026-11-02 13:33:42.222.
+Test Suite 'VoiceBarUITests.xctest' passed at 2026-11-02 13:33:42.222.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-11-02 13:33:42.222.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.002) seconds
+Test Suite 'Selected tests' started at 2026-11-02 13:33:42.288.
+Test Suite 'VoiceBarTests.xctest' started at 2026-11-02 13:33:42.289.
+Test Suite 'LaneGFormalConformanceTests' started at 2026-11-02 13:33:42.289.
+Test Case '-[VoiceBarTests.LaneGFormalConformanceTests testBothPipelineGraphPathsAgainstNativeRouterAndDelivery]' started.
+Test Case '-[VoiceBarTests.LaneGFormalConformanceTests testBothPipelineGraphPathsAgainstNativeRouterAndDelivery]' passed (1.270 seconds).
+Test Suite 'LaneGFormalConformanceTests' passed at 2026-11-02 13:33:43.559.
+Test Suite 'LaneIFormalConformanceTests' started at 2026-11-02 13:33:43.559.
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCFinalIsImmediateAndSurvivesNewRecording]' started.
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCFinalIsImmediateAndSurvivesNewRecording]' passed (0.211 seconds).
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCFixedAdmissionThroughNativeRouter]' started.
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCFixedAdmissionThroughNativeRouter]' passed (0.001 seconds).
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCFixedCancellationEdges]' started.
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCFixedCancellationEdges]' passed (0.171 seconds).
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCImmediatePasteWhileBRecordsPreservesForegroundAndRawWords]' started.
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCImmediatePasteWhileBRecordsPreservesForegroundAndRawWords]' passed (0.001 seconds).
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCScopedCancelGuardAndEscape]' started.
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCScopedCancelGuardAndEscape]' passed (0.014 seconds).
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCStaleGuardCannotCancelLaterTake]' started.
+Test Case '-[VoiceBarTests.LaneIFormalConformanceTests testTLCStaleGuardCannotCancelLaterTake]' passed (0.021 seconds).
+Test Suite 'LaneIFormalConformanceTests' passed at 2026-11-02 13:33:43.978.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.418 (0.419) seconds
+Test Suite 'VoiceBarTests.xctest' passed at 2026-11-02 13:33:43.978.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 1.688 (1.689) seconds
+Test Suite 'Selected tests' passed at 2026-11-02 13:33:43.978.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 1.688 (1.690) seconds
+Replayed BOTH pipeline native corpora: 8 graph-derived paths
+Fixed replay: final A retained immediately and survives a new recording event
+[heavy.sh] G end rc=0 2026-11-02T11:33:44Z

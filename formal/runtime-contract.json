@@ -1,0 +1,11 @@
+{
+  "notchPolicy": "fixed",
+  "pipelinePolicy": "fixed",
+  "cancelIdField": "take_id",
+  "captureIds": {
+    "A": 101,
+    "B": 102,
+    "stale": 999
+  },
+  "note": "Lane A and Lane I set their policy to fixed after integration. This removes strict expected-failure wrappers; it never skips either corpus."
+}

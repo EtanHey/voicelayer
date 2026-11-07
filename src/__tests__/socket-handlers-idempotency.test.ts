@@ -1,3 +1,4 @@
+import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { TEST_TMP } from "./setup/test-tmp";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
@@ -6,6 +7,8 @@ import { TEST_TMP } from "./setup/test-tmp";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { unlinkSync, writeFileSync } from "fs";
 import * as input from "../input";
+import { recordingJobsSnapshot } from "../recording-jobs";
+import { deferredFixture as deferred } from "./long-read-fixture-barriers";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import { handleSocketCommand } from "../socket-handlers";
@@ -17,10 +20,18 @@ import * as modelStatus from "../model-status";
 const REPLAY_FILE = `${TEST_TMP}/voicelayer-socket-replay-${process.pid}.mp3`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
+// Deferred pause readiness precedes Lane I job creation; zero jobs alone is not settlement.
+async function settleCapture() {
+  await settleRecordingJobs(tts.hasF5Capture);
+  expect(tts.hasF5Capture()).toBe(false);
+  expect(recordingJobsSnapshot().recording_jobs).toEqual([]);
+}
+
 describe("socket handler idempotency matrix", () => {
   let stopPlaybackSpy: ReturnType<typeof spyOn>;
   let restartPlaybackSpy: ReturnType<typeof spyOn>;
   let waitForInputSpy: ReturnType<typeof spyOn>;
+  let captureStarted: ReturnType<typeof deferred<void>>;
   let broadcastSpy: ReturnType<typeof spyOn>;
   let setCancelSignalSpy: ReturnType<typeof spyOn>;
   let playAudioSpy: ReturnType<typeof spyOn>;
@@ -34,11 +45,12 @@ describe("socket handler idempotency matrix", () => {
   let setRecordingHoldSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
+    captureStarted = deferred<void>();
     stopPlaybackSpy = spyOn(tts, "stopPlayback").mockImplementation(() => true);
     restartPlaybackSpy = spyOn(tts, "restartPlayback").mockImplementation(
       () => true,
     );
-    waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue("");
+    waitForInputSpy = spyOn(input, "waitForInput").mockImplementation(() => { captureStarted.resolve(); return finishSyntheticCapture(async () => ""); });
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
@@ -82,24 +94,26 @@ describe("socket handler idempotency matrix", () => {
     ).mockImplementation(() => {});
   });
 
-  afterEach(() => {
-    stopPlaybackSpy.mockRestore();
-    restartPlaybackSpy.mockRestore();
-    waitForInputSpy.mockRestore();
-    broadcastSpy.mockRestore();
-    setCancelSignalSpy.mockRestore();
-    playAudioSpy.mockRestore();
-    queueDepthSpy.mockRestore();
-    recordingStateSpy.mockRestore();
-    historySpy.mockRestore();
-    try {
-      unlinkSync(REPLAY_FILE);
-    } catch {}
-    hasRetainedRecordingSpy.mockRestore();
-    retranscribeLastCaptureSpy.mockRestore();
-    setWhisperEffortSpy.mockRestore();
-    restartWhisperServerSpy.mockRestore();
-    setRecordingHoldSpy.mockRestore();
+  afterEach(async () => {
+    try { await settleCapture(); } finally {
+      stopPlaybackSpy.mockRestore();
+      restartPlaybackSpy.mockRestore();
+      waitForInputSpy.mockRestore();
+      broadcastSpy.mockRestore();
+      setCancelSignalSpy.mockRestore();
+      playAudioSpy.mockRestore();
+      queueDepthSpy.mockRestore();
+      recordingStateSpy.mockRestore();
+      historySpy.mockRestore();
+      try {
+        unlinkSync(REPLAY_FILE);
+      } catch {}
+      hasRetainedRecordingSpy.mockRestore();
+      retranscribeLastCaptureSpy.mockRestore();
+      setWhisperEffortSpy.mockRestore();
+      restartWhisperServerSpy.mockRestore();
+      setRecordingHoldSpy.mockRestore();
+    }
   });
 
   it("returns noop for stop while idle without broadcasting or stopping playback", () => {
@@ -196,30 +210,32 @@ describe("socket handler idempotency matrix", () => {
     expect(setRecordingHoldSpy).not.toHaveBeenCalled();
   });
 
-  it("stops playback before recording when record arrives while speaking", () => {
+  it("pauses before deferred recording while speaking and never stops playback", async () => {
     const calls: string[] = [];
-    stopPlaybackSpy.mockImplementation(() => {
-      calls.push("stopPlayback");
-      return true;
+    const ready = deferred<void>();
+    const originalPause = tts.pauseForF5Capture;
+    const pause = spyOn(tts, "pauseForF5Capture").mockImplementation((elapsedMs) => {
+      calls.push("pauseForF5Capture");
+      const held = originalPause(elapsedMs);
+      return { ...held, ready: held.ready.then(() => ready.promise) };
     });
-    waitForInputSpy.mockImplementation(async () => {
+    waitForInputSpy.mockImplementation(() => {
       calls.push("waitForInput");
-      return "";
+      captureStarted.resolve();
+      return finishSyntheticCapture(async () => "");
     });
     queueDepthSpy.mockReturnValue(1);
-
-    const response = handleSocketCommand({
-      cmd: "record",
-      id: "record-speaking",
-    });
-
-    expect(response).toEqual({
-      type: "ack",
-      command: "record",
-      outcome: "accept",
-      id: "record-speaking",
-    });
-    expect(calls).toEqual(["stopPlayback", "waitForInput"]);
+    try {
+      expect(handleSocketCommand({ cmd: "record", id: "record-speaking" })).toEqual({
+        type: "ack", command: "record", outcome: "accept", id: "record-speaking",
+      });
+      expect(calls).toEqual(["pauseForF5Capture"]);
+      expect(waitForInputSpy).not.toHaveBeenCalled();
+      ready.resolve();
+      await captureStarted.promise;
+      expect(calls).toEqual(["pauseForF5Capture", "waitForInput"]);
+      expect(stopPlaybackSpy).not.toHaveBeenCalled();
+    } finally { ready.resolve(); try { await settleCapture(); } finally { pause.mockRestore(); } }
   });
 
   it("persists whisper effort changes and restarts the whisper sidecar", async () => {
@@ -298,15 +314,16 @@ describe("socket handler idempotency matrix", () => {
   });
 
   it("does not broadcast idle when an accepted record hits a recording conflict", async () => {
-    waitForInputSpy.mockRejectedValue(
-      new Error("Recording already in progress (state: recording)"),
-    );
+    waitForInputSpy.mockImplementation(() => { captureStarted.resolve(); return finishSyntheticCapture(async () => {
+      throw new Error("Recording already in progress (state: recording)");
+    }); });
 
     const response = handleSocketCommand({
       cmd: "record",
       id: "record-late-busy",
     });
-    await Bun.sleep(0);
+    await captureStarted.promise;
+    await settleCapture();
 
     expect(response).toEqual({
       type: "ack",
@@ -316,7 +333,7 @@ describe("socket handler idempotency matrix", () => {
     });
     expect(
       broadcastSpy.mock.calls.filter(
-        ([event]: any[]) => event.type === "state" && event.state === "idle",
+        ([event]: any[]) => event.type === "state" && event.state === "idle" && event.recording_jobs === undefined,
       ),
     ).toHaveLength(0);
   });
@@ -406,7 +423,7 @@ describe("socket handler idempotency matrix", () => {
     });
     expect(
       broadcastSpy.mock.calls.filter(
-        ([event]: any[]) => event.type === "state" && event.state === "idle",
+        ([event]: any[]) => event.type === "state" && event.state === "idle" && event.recording_jobs === undefined,
       ),
     ).toHaveLength(0);
   });
@@ -445,6 +462,7 @@ describe("socket handler idempotency matrix", () => {
 // concurrency profile — unchanged.
 describe("socket-handlers record — cross-process booking (V1)", () => {
   let waitForInputSpy: ReturnType<typeof spyOn>;
+  let captureStarted: ReturnType<typeof deferred<void>>;
   let broadcastSpy: ReturnType<typeof spyOn>;
   let stopPlaybackSpy: ReturnType<typeof spyOn>;
   let queueDepthSpy: ReturnType<typeof spyOn>;
@@ -453,7 +471,8 @@ describe("socket-handlers record — cross-process booking (V1)", () => {
   let bookVoiceSessionSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue("");
+    captureStarted = deferred<void>();
+    waitForInputSpy = spyOn(input, "waitForInput").mockImplementation(() => { captureStarted.resolve(); return finishSyntheticCapture(async () => ""); });
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
@@ -472,17 +491,19 @@ describe("socket-handlers record — cross-process booking (V1)", () => {
     ).mockReturnValue({ success: true });
   });
 
-  afterEach(() => {
-    waitForInputSpy.mockRestore();
-    broadcastSpy.mockRestore();
-    stopPlaybackSpy.mockRestore();
-    queueDepthSpy.mockRestore();
-    recordingStateSpy.mockRestore();
-    isVoiceBookedSpy.mockRestore();
-    bookVoiceSessionSpy.mockRestore();
+  afterEach(async () => {
+    try { await settleCapture(); } finally {
+      waitForInputSpy.mockRestore();
+      broadcastSpy.mockRestore();
+      stopPlaybackSpy.mockRestore();
+      queueDepthSpy.mockRestore();
+      recordingStateSpy.mockRestore();
+      isVoiceBookedSpy.mockRestore();
+      bookVoiceSessionSpy.mockRestore();
+    }
   });
 
-  it("claims the voice-session lock before recording when nothing is booked", () => {
+  it("claims the voice-session lock before recording when nothing is booked", async () => {
     const response = handleSocketCommand({ cmd: "record", id: "rec-book" });
 
     expect(response).toEqual({
@@ -492,6 +513,7 @@ describe("socket-handlers record — cross-process booking (V1)", () => {
       id: "rec-book",
     });
     expect(bookVoiceSessionSpy).toHaveBeenCalledTimes(1);
+    await captureStarted.promise;
     expect(waitForInputSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -515,7 +537,7 @@ describe("socket-handlers record — cross-process booking (V1)", () => {
     expect(waitForInputSpy).not.toHaveBeenCalled();
   });
 
-  it("does not re-book when this process already owns the session", () => {
+  it("does not re-book when this process already owns the session", async () => {
     isVoiceBookedSpy.mockReturnValue({ booked: true, ownedByUs: true });
 
     const response = handleSocketCommand({ cmd: "record", id: "rec-owned" });
@@ -527,6 +549,7 @@ describe("socket-handlers record — cross-process booking (V1)", () => {
       id: "rec-owned",
     });
     expect(bookVoiceSessionSpy).not.toHaveBeenCalled();
+    await captureStarted.promise;
     expect(waitForInputSpy).toHaveBeenCalledTimes(1);
   });
 

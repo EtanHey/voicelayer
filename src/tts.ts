@@ -77,10 +77,11 @@ import { longReadDocument, runLongRead, type LongReadSeek, type SeekResult } fro
 import { PreparedReadStart, type PreparedChunk } from "./tts/selection-read-preparation";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
-import { CLONE_CHUNK_POLICY, createCloneChunkBudget, planProsody, type ProsodyPlan } from "./tts/prosody";
+import { STARTUP_CHUNK_MAX_CHARS, CLONE_CHUNK_POLICY, createCloneChunkBudget, planProsody, type ProsodyPlan } from "./tts/prosody";
 import { createProsodyRead, decodeAudioToPCM, encodePCMToMp3, isStructuredPlan, sliceProjection } from "./tts/prosody-read";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { getEffectiveRecordingState } from "./recording-state";
+import { initialPlaybackTiming } from "./tts/playback-timing";
 import { startCloneTiming } from "./tts/clone-timing";
 import { combineHistoryTimings, clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
 import {
@@ -429,7 +430,7 @@ export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "e
     }
     return chunks;
   }
-  if (text.length <= 100 || !text.trim()) return [text];
+  if (text.length <= STARTUP_CHUNK_MAX_CHARS || !text.trim()) return [text];
   const prefix = (remaining: string, budget: number): number => {
     const minimum = 40;
     const cap = TTS_CHUNK_MAX_CHARS;
@@ -447,12 +448,21 @@ export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "e
       : sentence;
     // Prefer a real clause over a bare word break. Short prefixes need enough speech
     // to cover preparation of the next request, including names and list markers.
+    const clauseLimit = Math.min(budget, sentence);
     for (const punctuation of [/[;:](?=\s|$)/gu, /[,،，](?=\s|$)/gu]) {
-      const boundary = [...remaining.slice(0, Math.min(budget, sentence)).matchAll(punctuation)]
-        .map(match => match.index + match[0].length).find(end => end >= minimum);
+      // The lookahead must see the real next character, not an artificial slice end.
+      const boundary = [...remaining.slice(0, clauseLimit + 1).matchAll(punctuation)]
+        .map(match => match.index + match[0].length).find(end => end >= minimum && end <= clauseLimit);
       if (boundary !== undefined) return boundary;
     }
-    if (sentence <= cap) return sentence;
+    if (budget !== STARTUP_CHUNK_MAX_CHARS && sentence <= cap) return sentence;
+    if (budget === STARTUP_CHUNK_MAX_CHARS) {
+      const end = [...remaining.slice(0, budget + 1).matchAll(/\s+/gu)]
+        .map(match => match.index).filter(end => end > 0 && !unsafeEnd(end)).at(-1);
+      // One oversized word remains atomic; never invent spaces or repeat fragments.
+      const firstWordEnd = remaining.search(/\s/u);
+      return end ?? (firstWordEnd > 0 ? firstWordEnd : remaining.length);
+    }
     // Pathological unpunctuated prose still has a bounded engine request.
     const words = [...remaining.slice(0, cap + 1).matchAll(/\s+/gu)]
       .map(match => match.index).filter(end => end >= minimum && end <= cap && !unsafeEnd(end));
@@ -460,7 +470,7 @@ export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "e
   };
   const chunks: string[] = [];
   let remaining = text.trim();
-  for (const budget of [100, 200]) {
+  for (const budget of [STARTUP_CHUNK_MAX_CHARS, 200]) {
     if (!remaining) break;
     const end = prefix(remaining, budget);
     chunks.push(remaining.slice(0, end).trimEnd());
@@ -926,6 +936,10 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   priority?: PlaybackPriority;
   /** CLICK2: admit this job already parked at its offset, with no player (Pause landed before it existed). */
   startPaused?: boolean;
+  startPauseOwner?: PlaybackPauseOwner;
+  /** Transfer a pause made between chunk players into the next queue job. */
+  readAdmission?: { id: string; generation: number; phase: "paused" | "resuming" };
+  onNaturalEnd?(identity: { id: string; generation: number }): void;
   durationMs?: number;
   collapseKey?: string;
   clipMarker?: {
@@ -960,10 +974,15 @@ interface PlaybackJob {
   exited: Promise<PlaybackOutcomeEvent>;
   /** Announce `resumed` when the next player for this job actually starts. */
   resuming?: boolean;
+  pausedWordIndex?: number;
 }
 
 /** One parked utterance: no player, no lease, no TTL; its cursor is frozen until Resume or Stop. */
+export type PlaybackPauseOwner = "user" | "f5";
+let f5CaptureActive = false;
+
 interface ParkedPlayback {
+  owner: PlaybackPauseOwner;
   job: PlaybackJob;
   offsetMs: number;
   controller: AbortController;
@@ -1090,6 +1109,8 @@ function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
   job.completed = true;
   job.lifecycle.complete();
   void job.lifecycle.playerExited.then(() => { disposeSeekSlice(job.sliceFile); job.sliceFile = undefined; }, () => {});
+  // Publish the next chunk's owner before any completion observer can start F5.
+  if (outcome.status === "completed") job.metadata?.onNaturalEnd?.({ id: job.id, generation: job.lifecycle.generation });
   broadcast(outcome);
   try {
     job.metadata?.speechArchive?.playerEnded();
@@ -1159,7 +1180,7 @@ class PlaybackQueueManager {
     });
 
     const job: PlaybackJob = {
-      id: nextPlaybackId(),
+      id: metadata?.readAdmission?.id ?? nextPlaybackId(),
       lifecycle: new PlaybackLifecycle(),
       alignments: new Set(),
       audioFile,
@@ -1173,10 +1194,16 @@ class PlaybackQueueManager {
       completed: false,
       exited,
     };
+    if (metadata?.readAdmission) {
+      // park() advances the paused generation once; a deferred resume already advanced it.
+      job.lifecycle.generation = metadata.readAdmission.generation - (metadata.startPaused ? 1 : 0);
+      job.resuming = metadata.readAdmission.phase === "resuming";
+    }
     this.jobs.set(job.id, job);
     // Capture/Stop fences include alignment children, never preparation or cleanup.
     const playerExited = job.lifecycle.playerExited.finally(async () => { await Promise.all(job.alignments); });
-    void playerExited.then(() => this.jobs.delete(job.id), () => this.jobs.delete(job.id));
+    const forgetJob = () => { if (this.jobs.get(job.id) === job) this.jobs.delete(job.id); };
+    void playerExited.then(forgetJob, forgetJob);
     const handle: QueuedPlaybackHandle = { id: job.id, exited,
       get generation() { return job.lifecycle.generation; },
       playerExited,
@@ -1187,7 +1214,7 @@ class PlaybackQueueManager {
     this.replaceParked();
     if (job.metadata?.startPaused) {
       job.metadata.startPaused = undefined;
-      this.park(job, job.metadata.localOffsetMs ?? 0);
+      this.park(job, job.metadata.localOffsetMs ?? 0, job.metadata.startPauseOwner);
       return handle;
     }
 
@@ -1199,8 +1226,9 @@ class PlaybackQueueManager {
     this.evictExpired();
     this.collapseBurstyLowPriority(job);
     this.insert(job);
-    this.emitQueueSnapshot();
+    // Select the current owner before publishing: the first read is not waiting.
     this.processNext();
+    this.emitQueueSnapshot();
     return handle;
   }
 
@@ -1225,12 +1253,12 @@ class PlaybackQueueManager {
     return true;
   }
 
-  cancelUtterance(id: string, elapsedMs?: number): boolean {
+  cancelUtterance(id: string, elapsedMs?: number, reason: PlaybackOutcomeReason = "stopped"): boolean {
     let cancelled = false;
     for (const job of this.jobs.values()) {
       if (job.metadata?.longRead?.id === id) {
         const localMs = elapsedMs === undefined ? undefined : Math.max(0, elapsedMs - job.metadata.longRead.chunk_start_ms);
-        cancelled = this.cancel({ id: job.id }, localMs) || cancelled;
+        cancelled = this.cancel({ id: job.id }, localMs, reason) || cancelled;
       }
     }
     return cancelled;
@@ -1352,8 +1380,16 @@ class PlaybackQueueManager {
   }
 
   /** Quiesce the owned player (never SIGSTOP) and keep the job, cursor and audio for Resume. */
-  pause(scope: ControlScope, elapsedMs?: number): SeekResult {
+  pause(scope: ControlScope, elapsedMs?: number, owner: PlaybackPauseOwner = "user"): SeekResult {
     const globalOffset = (job: PlaybackJob) => (job.metadata?.longRead?.chunk_start_ms ?? 0) + (job.metadata?.localOffsetMs ?? 0);
+    const preparingScope = f5CaptureActive && this.parked?.owner === "f5" && owner === "user" &&
+      scope.id !== undefined && scope.id === this.parked.job.metadata?.longRead?.id &&
+      this.parked.job.metadata.longRead.chunk_index === 0;
+    if (this.parked && (!this.isStale(this.parked.job, scope) || preparingScope) && owner === "user" && this.parked.owner === "f5") {
+      this.parked.owner = "user";
+      this.broadcastPlaybackState(this.parked.job, "paused");
+      return { outcome: "accept", reason: "manual pause", offset_ms: globalOffset(this.parked.job) };
+    }
     if (this.parked) {
       return this.isStale(this.parked.job, scope) ? { outcome: "reject", reason: "stale" }
         : { outcome: "noop", reason: "already paused", offset_ms: globalOffset(this.parked.job) };
@@ -1367,20 +1403,35 @@ class PlaybackQueueManager {
     const chunkStart = job.metadata.longRead?.chunk_start_ms ?? 0;
     const elapsed = !active ? job.metadata.localOffsetMs ?? 0
       : elapsedMs !== undefined ? elapsedMs - chunkStart : Date.now() - active.startedAt;
-    const offset = Math.min(Math.max(0, Math.round(elapsed)), job.metadata.durationMs ?? Infinity);
+    const cursor = Math.min(Math.max(0, Math.round(elapsed)), job.metadata.durationMs ?? Infinity);
+    // Rewind to the containing word, retaining its tail and every following word.
+    const tokens = displayTokens(job.metadata.text);
+    const timeline = combineHistoryTimings([{ text: job.metadata.text, durationMs: job.metadata.durationMs ?? 0,
+      aligned: job.metadata.alignedWords, words: job.metadata.wordBoundaries }]);
+    const words = timeline?.some(word => (word.duration_ms ?? 0) > 0) ? timeline
+      : tokens.map((token, i) => ({ text: token[0], word_index: i,
+          offset_ms: i * (job.metadata!.durationMs ?? 0) / tokens.length }));
+    const word = words.findLast(boundary => boundary.offset_ms !== null && boundary.offset_ms <= cursor);
+    job.pausedWordIndex = word?.word_index ?? 0;
+    // A chunk boundary is not the end of its read. Keep the containing word's
+    // tail when the UI clock reaches that boundary before the player exits.
+    const longRead = job.metadata.longRead;
+    const isLastChunk = !longRead || longRead.chunk_index === longRead.chunk_count - 1;
+    const offset = cursor === job.metadata.durationMs && isLastChunk ? cursor : Math.round(word?.offset_ms ?? 0);
     this.cancelSeekPreparation();
     if (active) { this.current = null; this.terminate(active); }
     if (this.preparing?.job === job) { const preparing = this.preparing; this.preparing = null; preparing.cancel(); }
     if (this.restartAfterTermination === job) this.restartAfterTermination = null;
     if (this.replayPreparingJob === job) this.replayPreparingJob = null;
     this.stopProgressTimer();
-    this.park(job, offset);
+    this.park(job, offset, owner);
     return { outcome: "accept", offset_ms: chunkStart + offset };
   }
 
   /** Hold `job` at `offset` with no player: Pause's own park, and a start-paused admission's. */
-  private park(job: PlaybackJob, offset: number): void {
+  private park(job: PlaybackJob, offset: number, owner: PlaybackPauseOwner = "user"): void {
     const metadata = job.metadata!;
+    job.pausedWordIndex ??= 0;
     job.lifecycle.generation++;
     disposeSeekSlice(job.sliceFile);
     job.sliceFile = undefined;
@@ -1388,7 +1439,7 @@ class PlaybackQueueManager {
     job.skipAmplitudeDecode = offset > 0 || job.decodedAmplitude !== undefined;
     metadata.localOffsetMs = offset;
     metadata.playbackOffsetMs = (metadata.longRead?.chunk_start_ms ?? 0) + offset;
-    const parked: ParkedPlayback = { job, offsetMs: offset, controller: new AbortController(),
+    const parked: ParkedPlayback = { owner, job, offsetMs: offset, controller: new AbortController(),
       ready: offset === 0, failed: false, resumeRequested: false };
     this.parked = parked;
     job.onParkedChange?.(true);
@@ -1399,11 +1450,29 @@ class PlaybackQueueManager {
     this.emitQueueSnapshot();
   }
 
+  capturePauseIdentity(): string | undefined {
+    const job = this.parked?.job;
+    return job ? job.metadata?.longRead?.id ?? job.id : undefined;
+  }
+
+  autoResumeCapture(identity?: string): void {
+    if (identity && this.parked?.owner === "f5" && this.capturePauseIdentity() === identity) {
+      const result = this.resume({});
+      if (result.outcome === "reject") cancelRefusedCaptureRead(identity);
+    }
+    this.processNext();
+  }
+
+  async quiesceForCapture(): Promise<void> {
+    // A logical pause is not proof that the old player has exited.
+    await Promise.all([...this.terminating.values()].map(active => active.proc.exited));
+  }
+
   resume(scope: ControlScope): SeekResult {
     const parked = this.parked;
     if (!parked) return { outcome: "noop", reason: "not paused" };
     if (this.isStale(parked.job, scope)) return { outcome: "reject", reason: "stale" };
-    if (getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) return { outcome: "reject", reason: "busy" };
+    if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) return { outcome: "reject", reason: "busy" };
     const offset_ms = (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
     if (parked.resumeRequested) return { outcome: "noop", reason: "resuming", offset_ms };
     parked.resumeRequested = true;
@@ -1441,11 +1510,14 @@ class PlaybackQueueManager {
     try {
       // A capture that began while the slice was cut keeps the item parked.
       assertSpeakerClear();
-      if (getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) throw new Error("Resume refused: voice is busy");
+      if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) throw new Error("Resume refused: voice is busy");
     } catch (error) {
       parked.resumeRequested = false;
-      broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
-      this.broadcastPlaybackState(parked.job, "paused");
+      if (parked.owner === "f5") cancelRefusedCaptureRead(parked.job.metadata?.longRead?.id ?? parked.job.id);
+      else {
+        broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
+        this.broadcastPlaybackState(parked.job, "paused");
+      }
       return false;
     }
     this.parked = undefined;
@@ -1456,8 +1528,8 @@ class PlaybackQueueManager {
     job.enqueuedAt = Date.now();
     job.expiresAt = Date.now() + ttlForPriority(job.priority);
     this.pending.unshift(job);
-    this.emitQueueSnapshot();
     this.processNext();
+    this.emitQueueSnapshot();
     return true;
   }
 
@@ -1467,8 +1539,9 @@ class PlaybackQueueManager {
     const duration = job.metadata?.getUtteranceDurationMs?.() ?? job.metadata?.utteranceDurationMs ?? job.metadata?.durationMs;
     broadcast({ type: "playback_state", state, playback_id: job.id, generation: job.lifecycle.generation,
       offset_ms: (job.metadata?.longRead?.chunk_start_ms ?? 0) + local, chunk_offset_ms: local,
+      ...(state === "paused" ? { pause_owner: this.parked?.owner ?? "user" } : {}),
       ...(duration !== undefined ? { duration_ms: duration } : {}),
-      ...(word_index !== undefined ? { word_index } : {}), ...(word_count !== undefined ? { word_count } : {}),
+      ...(word_count !== undefined ? { word_index: job.pausedWordIndex ?? word_index ?? 0, word_count } : {}),
       ...(job.metadata?.longRead ? { long_read: job.metadata.longRead } : {}) });
   }
 
@@ -1486,7 +1559,7 @@ class PlaybackQueueManager {
       job.skipAmplitudeDecode = job.decodedAmplitude !== undefined;
       job.metadata!.localOffsetMs = 0;
       job.metadata!.playbackOffsetMs = job.metadata!.longRead?.chunk_start_ms ?? 0;
-      const restarted: ParkedPlayback = { job, offsetMs: 0, controller: new AbortController(),
+      const restarted: ParkedPlayback = { owner: parked.owner, job, offsetMs: 0, controller: new AbortController(),
         ready: true, failed: false, resumeRequested: true };
       this.parked = restarted;
       return this.releaseParked(restarted);
@@ -1606,7 +1679,7 @@ class PlaybackQueueManager {
   }
 
   private processNext() {
-    if (this.current || this.preparing || this.terminating.size > 0 || this.orphanedWorkCount() > 0) return;
+    if (f5CaptureActive || this.current || this.preparing || this.terminating.size > 0 || this.orphanedWorkCount() > 0) return;
     // Paused freezes promotion for the whole queue; held items keep their ordinary TTL.
     if (this.parked) {
       if (this.depth() === 0) { this.emitQueueSnapshot(); this.resolveIfIdle(); }
@@ -1761,6 +1834,7 @@ class PlaybackQueueManager {
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
         ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),
         playback_amplitude: next.playbackAmplitude,
+        initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),
       });
       if (next.metadata.wordBoundaries?.length) {
         broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
@@ -1885,7 +1959,7 @@ class PlaybackQueueManager {
     }
 
     for (const active of this.terminating.values()) {
-      if (active.job === parked?.job) continue;
+      if (active.job === parked?.job || (active.job.resuming && this.pending.includes(active.job))) continue;
       items.push({
         text: active.job.metadata?.text ?? "",
         voice: active.job.metadata?.voice ?? "",
@@ -1910,7 +1984,7 @@ class PlaybackQueueManager {
         text: this.preparing.job.metadata?.text ?? "",
         voice: this.preparing.job.metadata?.voice ?? "",
         priority: this.preparing.job.priority,
-        is_current: false,
+        is_current: true,
         progress: 0,
       });
     }
@@ -1920,7 +1994,8 @@ class PlaybackQueueManager {
         text: job.metadata?.text ?? "",
         voice: job.metadata?.voice ?? "",
         priority: job.priority,
-        is_current: false,
+        // Resume owns the current slot even while its old player is exiting.
+        is_current: job.resuming === true,
         progress: 0,
       });
     }
@@ -2147,13 +2222,13 @@ export function getPlaybackQueueDepth(): number {
   // A parked chunk holds no player or lease, so its read does not count as playing.
   return (playbackQueueManager.getDepthForHealth() + cancelledLongReadTeardowns.size) ||
     (activeLongRead && !activeLongRead.controller.signal.aborted && !playbackQueueManager.isPaused(activeLongRead.id) &&
-      !activeLongRead.firstAdmission?.paused ? 1 : 0);
+      activeLongRead.pendingChunk?.phase !== "paused" ? 1 : 0);
 }
 
 /** CLICK2: the live read Pause parked before its first chunk existed (no queue job yet). */
 function preparationParkedRead(): OwnedLongRead | undefined {
   const read = activeLongRead;
-  return read?.firstAdmission?.paused && !read.controller.signal.aborted ? read : undefined;
+  return read?.pendingChunk?.phase === "paused" && !read.controller.signal.aborted ? read : undefined;
 }
 
 export function isPlaybackPaused(): boolean {
@@ -2166,36 +2241,74 @@ export function playbackTelemetrySnapshot(): CommandTelemetrySnapshot {
   if (queued) return queued;
   const read = activeLongRead;
   if (!read || read.controller.signal.aborted) return { phase: "none", generation: null };
-  return { phase: read.firstAdmission?.paused ? "paused" : "preparing", generation: null };
+  return { phase: read.pendingChunk?.phase === "paused" ? "paused" : "preparing",
+    generation: read.pendingChunk?.phase === "paused" && read.pendingChunk.info.chunk_index > 0 ? read.pendingChunk.identity.generation : null };
 }
 setCommandTelemetrySnapshot(playbackTelemetrySnapshot);
 
 /** Idempotent; the scope, when given, must name the current item. `elapsedMs` is the global client clock. */
-export function pausePlayback(scope: { id?: string; generation?: number } = {}, playbackElapsedMs?: number): SeekResult {
-  const result = playbackQueueManager.pause(scope, playbackElapsedMs);
+export function pausePlayback(scope: { id?: string; generation?: number } = {}, playbackElapsedMs?: number, owner: PlaybackPauseOwner = "user"): SeekResult {
+  const result = playbackQueueManager.pause(scope, playbackElapsedMs, owner);
   const read = activeLongRead;
-  if (result.outcome !== "noop" || result.reason !== "nothing playing" || !read?.firstAdmission ||
+  const admission = read?.pendingChunk;
+  if (result.outcome !== "noop" || result.reason !== "nothing playing" || !read || !admission ||
       read.controller.signal.aborted) return result;
-  // CLICK2: Pause before the first chunk exists parks the read; that chunk is admitted already parked at zero.
-  // No queue job exists yet, so a scope naming one is stale.
-  if (scope.id !== undefined || scope.generation !== undefined) return { outcome: "reject", reason: "stale" };
-  if (isCaptureAdmissionReserved()) return { outcome: "reject", reason: "unsupported" };
-  if (read.firstAdmission.paused) return { outcome: "noop", reason: "already paused", offset_ms: 0 };
-  read.firstAdmission.paused = true;
-  read.archive?.move("paused");
-  return { outcome: "accept", reason: "parked", offset_ms: 0 };
+  if ((scope.id !== undefined && scope.id !== admission.identity.id) ||
+      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return { outcome: "reject", reason: "stale" };
+  const publish = (parked: PendingReadChunk & { phase: "paused" }) => broadcast({ type: "playback_state", state: "paused",
+    playback_id: parked.identity.id, generation: parked.identity.generation, pause_owner: parked.owner,
+    offset_ms: parked.info.chunk_start_ms, chunk_offset_ms: 0, word_index: 0,
+    long_read: { ...parked.info, preparing: true } });
+  if (isCaptureAdmissionReserved() && owner !== "f5") return { outcome: "reject", reason: "unsupported" };
+  if (admission.phase === "paused") {
+    if (owner === "user" && admission.owner === "f5") {
+      admission.owner = "user"; publish(admission);
+      return { outcome: "accept", reason: "manual pause", offset_ms: admission.info.chunk_start_ms };
+    }
+    return { outcome: "noop", reason: "already paused", offset_ms: admission.info.chunk_start_ms };
+  }
+  const parked: PendingReadChunk & { phase: "paused" } = { ...admission, phase: "paused", owner,
+    identity: { id: admission.identity.id, generation: admission.identity.generation + (admission.info.chunk_index > 0 ? 1 : 0) } };
+  read.pendingChunk = parked;
+  read.archive?.move("paused"); publish(parked);
+  return { outcome: "accept", reason: "parked", offset_ms: admission.info.chunk_start_ms };
 }
+
+/** F5 owns only this read until capture settlement. A stale settlement never touches a replacement. */
+export function pauseForF5Capture(playbackElapsedMs?: number): { ready: Promise<void>; settle(): void } {
+  if (f5CaptureActive) throw new Error("busy");
+  const result = pausePlayback({}, playbackElapsedMs, "f5");
+  if (result.outcome === "reject") throw new Error(result.reason);
+  const read = activeLongRead;
+  const identity = playbackQueueManager.capturePauseIdentity() ??
+    (read?.pendingChunk?.phase === "paused" ? read.id : undefined);
+  f5CaptureActive = true;
+  let settled = false;
+  return { ready: playbackQueueManager.quiesceForCapture(), settle() {
+    if (settled) return;
+    settled = true;
+    f5CaptureActive = false;
+    if (identity && activeLongRead?.id === identity && activeLongRead.pendingChunk?.phase === "paused" && activeLongRead.pendingChunk.owner === "f5") {
+      if (resumePlayback().outcome === "reject") cancelRefusedCaptureRead(identity);
+    } else playbackQueueManager.autoResumeCapture(identity);
+  } };
+}
+export function hasF5Capture(): boolean { return f5CaptureActive; }
 
 /** Idempotent; never resumes a stopped/replaced item and never while a capture owns the voice. */
 export function resumePlayback(scope: { id?: string; generation?: number } = {}): SeekResult {
   const read = playbackQueueManager.isPaused() ? undefined : preparationParkedRead();
   if (!playbackQueueManager.isPaused() && !read) return { outcome: "noop", reason: "not paused" };
   if (!read) return playbackQueueManager.resume(scope);
-  if (getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
-  if (scope.id !== undefined || scope.generation !== undefined) return { outcome: "reject", reason: "stale" };
-  // Play before the first chunk exists: it is admitted normally, from zero.
-  read.firstAdmission!.paused = false;
-  return { outcome: "accept", offset_ms: 0 };
+  if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
+  const admission = read.pendingChunk;
+  if (!admission || admission.phase !== "paused") return { outcome: "noop", reason: "not paused" };
+  if ((scope.id !== undefined && scope.id !== admission.identity.id) ||
+      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return { outcome: "reject", reason: "stale" };
+  read.pendingChunk = { ...admission, phase: "resuming",
+    identity: { id: admission.info.chunk_index === 0 ? nextPlaybackId() : admission.identity.id,
+      generation: admission.identity.generation + 1 } };
+  return { outcome: "accept", offset_ms: admission.info.chunk_start_ms };
 }
 
 /** Current seeks never resurrect a stopped generation; readback is explicit and idle-only. */
@@ -2203,7 +2316,7 @@ export function seekPlayback(offsetMs: number, scope: "current" | "readback" = "
   if (!Number.isFinite(offsetMs) || offsetMs < 0) return { outcome: "reject", reason: "invalid offset" };
   if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
   // Paused seek (silent cursor move) belongs to P12; never restart a parked item here.
-  if (playbackQueueManager.isPaused()) return { outcome: "reject", reason: "paused" };
+  if (isPlaybackPaused()) return { outcome: "reject", reason: "paused" };
   if (scope === "readback") {
     if (getPlaybackQueueDepth() > 0 || activeLongRead || hasPendingSpeechPreparation() || hasActiveVoiceOperation()) return { outcome: "reject", reason: "busy" };
     try { return withFreshVoiceAdmission(() => replayReadback(offsetMs, readbackID)); }
@@ -2295,6 +2408,11 @@ export function cancelPlayback(scope: PlaybackScope, playbackElapsedMs?: number)
     if (scope.generation !== undefined && scope.generation !== read.generation) return false;
     return cancelLongRead(playbackElapsedMs, read);
   }
+  const pending = activeLongRead?.pendingChunk;
+  if (pending?.identity.id === scope.id) {
+    if (scope.generation !== undefined && scope.generation !== pending.identity.generation) return false;
+    return cancelLongRead(playbackElapsedMs);
+  }
   return playbackQueueManager.cancel(scope, playbackElapsedMs);
 }
 
@@ -2306,9 +2424,13 @@ export interface LongReadHandle {
   started: Promise<{ error?: string }>;
   completion: Promise<{ error?: string }>;
 }
+type PendingReadChunk = {
+  info: NonNullable<StateEvent["long_read"]>;
+  identity: { id: string; generation: number };
+} & ({ phase: "preparing" } | { phase: "paused"; owner: PlaybackPauseOwner } | { phase: "resuming" });
 type OwnedLongRead = LongReadHandle & { archive?: LiveSpeechArchive; controller: AbortController; seek?: LongReadSeek;
-  /** CLICK2: present until the first chunk is admitted; `paused` once Pause parked the preparing read. */
-  firstAdmission?: { paused: boolean };
+  /** The next chunk owns a pause even while synthesis has not produced a queue job. */
+  pendingChunk?: PendingReadChunk;
   /** QPRE1: the read's request identity, and every chunk synthesized (only playing out from here). */
   requestId?: string; synthesized?: Promise<void> };
 let activeLongRead: OwnedLongRead | undefined;
@@ -2343,7 +2465,14 @@ export function preemptLongRead(by: "external" | "successor" = "external"): bool
   return true;
 }
 
-function cancelLongRead(playbackElapsedMs?: number, read = activeLongRead): boolean {
+/** A refused automatic resume is terminal for this read, never for another queued read. */
+function cancelRefusedCaptureRead(identity: string): void {
+  const read = longReads.get(identity);
+  if (read) cancelLongRead(undefined, read, "resume-refused");
+  else playbackQueueManager.cancel({ id: identity }, undefined, "resume-refused");
+}
+
+function cancelLongRead(playbackElapsedMs?: number, read = activeLongRead, reason: PlaybackOutcomeReason = "stopped"): boolean {
   if (!read) return false;
   const done = read.done;
   if (!cancelledLongReadTeardowns.has(done)) {
@@ -2352,7 +2481,10 @@ function cancelLongRead(playbackElapsedMs?: number, read = activeLongRead): bool
   }
   if (read.controller.signal.aborted) return false;
   read.controller.abort();
-  playbackQueueManager.cancelUtterance(read.id, playbackElapsedMs);
+  const cancelled = playbackQueueManager.cancelUtterance(read.id, playbackElapsedMs, reason);
+  // Preparation has no chunk job to publish its terminal outcome yet.
+  if (!cancelled && reason === "resume-refused") broadcast({ type: "playback_outcome", playback_id: read.id,
+    status: "interrupted", reason, stopped_at_ms: 0, progress: 0 });
   return true;
 }
 
@@ -2624,7 +2756,8 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
   let resolveSynthesized!: () => void;
   const synthesized = new Promise<void>((resolve) => { resolveSynthesized = resolve; });
   const handle: OwnedLongRead = { id, get generation() { return generation; }, archive, controller, started, done: Promise.resolve(), playerExited: Promise.resolve(), completion: Promise.resolve({} as { error?: string }),
-    requestId: speechIdentity.request_id, synthesized, firstAdmission: { paused: false } };
+    requestId: speechIdentity.request_id, synthesized, pendingChunk: { phase: "preparing", identity: { id, generation },
+      info: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0 } } };
   activeLongRead = handle;
   longReads.set(id, handle);
   const signal = controller.signal;
@@ -2700,9 +2833,10 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
       play: (chunk, text, info, position) => {
         throwIfAbortedSafe(signal);
         prosodyRead?.chunkAdmitted(info.chunk_index);
-        // CLICK2: a Pause that landed during preparation admits this first chunk parked, before any player.
-        const startPaused = handle.firstAdmission?.paused === true;
-        handle.firstAdmission = undefined;
+        const admission = handle.pendingChunk?.info.chunk_index === info.chunk_index ? handle.pendingChunk : undefined;
+        const startPaused = admission?.phase === "paused";
+        const startPauseOwner = admission?.phase === "paused" ? admission.owner : undefined;
+        handle.pendingChunk = undefined;
         let started = false;
         let resolveStarted!: (value: boolean) => void;
         const start = new Promise<boolean>((resolve) => { resolveStarted = resolve; });
@@ -2712,7 +2846,9 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
         let playback: ReturnType<typeof playAudioNonBlocking>;
         try { playback = playAudioNonBlocking(chunk.audioFile, {
           speechArchive: archive,
-          ...(startPaused ? { startPaused: true } : {}),
+          ...(startPaused ? { startPaused: true, startPauseOwner } : {}),
+          ...(admission && admission.phase !== "preparing" && (info.chunk_index > 0 || admission.phase === "resuming") ? { readAdmission: {
+            ...admission.identity, phase: admission.phase } } : {}),
           text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs,
           longRead: { ...info, ...(displays[info.chunk_index] ? { display: displays[info.chunk_index] } : {}) }, speechIdentity,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
@@ -2735,6 +2871,13 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
             }
             started = true; resolveStarted(true); audioStarted = true; handleStarted();
             firstAudio?.firstAudioStarted(chunk.audioFile);
+          },
+          onNaturalEnd: identity => {
+            if (!signal.aborted && info.chunk_index + 1 < info.chunk_count) {
+              handle.pendingChunk = { phase: "preparing", identity,
+                info: { id, chunk_index: info.chunk_index + 1, chunk_count: info.chunk_count,
+                  chunk_start_ms: info.chunk_start_ms + chunk.durationMs } };
+            }
           },
           onCompleted: (outcome) => {
             if (!started) { resolveStarted(false); firstAudio?.firstAudioUnavailable(); }
@@ -2814,12 +2957,18 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
 export function restartPlayback(): boolean {
   // CLICK2: a read paused before its first chunk is already at zero; Replay means play it.
   const preparing = preparationParkedRead();
-  if (preparing) { preparing.firstAdmission!.paused = false; return true; }
+  if (preparing?.pendingChunk?.info.chunk_index === 0) {
+    const admission = preparing.pendingChunk;
+    preparing.pendingChunk = { ...admission, phase: "resuming",
+      identity: { id: nextPlaybackId(), generation: admission.identity.generation + 1 } };
+    return true;
+  }
   // A paused long read restarts through its runner at global zero, never only its parked chunk.
   if (activeLongRead && (!playbackQueueManager.isPaused() || playbackQueueManager.isPaused(activeLongRead.id))) {
     // Keep the utterance, synthesis, played ranges and physical exit fences owned by
     // the long-read runner. Restarting only its queued chunk loses global zero.
     const result = activeLongRead.seek?.restart();
+    if (result?.outcome === "accept") activeLongRead.pendingChunk = undefined;
     if (result?.outcome === "accept") return true;
     broadcast({ type: "error", source: "seek", message: result?.reason ?? "Replay prefix audio unavailable", recoverable: true });
     return false;

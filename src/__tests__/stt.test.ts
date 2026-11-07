@@ -139,6 +139,8 @@ describe("STT backends", () => {
     }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("transcribe resolves brew by absolute path for launchd-style PATHs", async () => {
+      const savedGate = process.env.VOICELAYER_STT_OUTRO_GATE;
+      process.env.VOICELAYER_STT_OUTRO_GATE = "0"; // This case isolates CLI environment/prompt wiring.
       const backend = new WhisperCppBackend();
       const originalSpawn = Bun.spawn;
       const originalSpawnSync = Bun.spawnSync;
@@ -230,12 +232,16 @@ describe("STT backends", () => {
           "whisper-cpp",
         ]);
       } finally {
+        if (savedGate === undefined) delete process.env.VOICELAYER_STT_OUTRO_GATE;
+        else process.env.VOICELAYER_STT_OUTRO_GATE = savedGate;
         Bun.spawn = originalSpawn;
         Bun.spawnSync = originalSpawnSync;
       }
     });
 
     it("transcribe uses the whisper-cli prompt flag for explicit language modes", async () => {
+      const savedGate = process.env.VOICELAYER_STT_OUTRO_GATE;
+      process.env.VOICELAYER_STT_OUTRO_GATE = "0"; // This case isolates CLI environment/prompt wiring.
       const backend = new WhisperCppBackend();
       const originalSpawn = Bun.spawn;
       const originalSpawnSync = Bun.spawnSync;
@@ -294,6 +300,8 @@ describe("STT backends", () => {
         expect(whisperCmd![promptIndex + 1]).toContain("Wispr Flow");
         expect(whisperCmd![promptIndex + 1]).toContain("VoiceLayer");
       } finally {
+        if (savedGate === undefined) delete process.env.VOICELAYER_STT_OUTRO_GATE;
+        else process.env.VOICELAYER_STT_OUTRO_GATE = savedGate;
         if (savedLang) process.env.QA_VOICE_WHISPER_LANG = savedLang;
         else delete process.env.QA_VOICE_WHISPER_LANG;
         Bun.spawn = originalSpawn;

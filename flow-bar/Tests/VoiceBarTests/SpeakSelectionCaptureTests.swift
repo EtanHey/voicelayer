@@ -332,10 +332,12 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         let pasteboardName = board.name.rawValue
         DispatchQueue.global(qos: .utility).async {
             let started = ProcessInfo.processInfo.systemUptime
+            var failureReason: String?
             let snapshot = SelectionPasteboardSnapshot.readInHelper(
                 name: pasteboardName, executable: URL(fileURLWithPath: "/bin/sleep"),
-                arguments: ["30"], timeout: 0.2)
+                arguments: ["30"], timeout: 0.2, startupTimeout: 0.2, onFailure: { failureReason = $0 })
             XCTAssertNil(snapshot)
+            XCTAssertEqual(failureReason, "startup_timeout", "owned helper never announced readiness")
             XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 2)
             finished.fulfill()
         }
@@ -343,6 +345,51 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         wait(for: [mainPulse, finished], timeout: 3)
         XCTAssertEqual(board.changeCount, count)
         XCTAssertEqual(contents(board), original)
+    }
+
+    func testSnapshotBudgetStillBoundsProvidersPartialOutputAndExit() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        seed(board)
+        let original = contents(board)
+        let count = board.changeCount
+        let finished = expectation(description: "snapshot phase remains bounded")
+        DispatchQueue.global(qos: .utility).async {
+            for script in ["printf '\\036'; exec /bin/sleep 30",
+                           "printf '\\036['; exec /bin/sleep 30",
+                           "printf '\\036[]'; exec 1>&-; exec /bin/sleep 30"] {
+                let started = ProcessInfo.processInfo.systemUptime
+                var reason: String?
+                let result = SelectionPasteboardSnapshot.readInHelper(name: board.name.rawValue,
+                    executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script],
+                    timeout: 0.1, startupTimeout: 2, onFailure: { reason = $0 })
+                XCTAssertNil(result)
+                XCTAssertEqual(reason, "snapshot_timeout", script)
+                XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 2)
+            }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 5)
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(contents(board), original)
+    }
+
+    func testSnapshotHelperRequiresReadinessValidPayloadAndSuccessfulExit() {
+        let finished = expectation(description: "invalid helper replies refused")
+        DispatchQueue.global(qos: .utility).async {
+            for (script, expected) in [("printf '[]'", "missing_ready"),
+                                       ("printf '\\036['", "decode_failed"),
+                                       ("printf '\\036[]'; exit 1", "helper_termination_1_1")] {
+                var reason: String?
+                let result = SelectionPasteboardSnapshot.readInHelper(name: "unused-private-fixture",
+                    executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script],
+                    onFailure: { reason = $0 })
+                XCTAssertNil(result)
+                XCTAssertEqual(reason, expected, script)
+            }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 3)
     }
 
     func testExhaustedRestoreFailureHasDedicatedResult() {
@@ -614,6 +661,14 @@ final class SpeakSelectionCaptureTests: XCTestCase {
     }
 
     func testAXAndCopyProvenanceCountsOnlyTheObservedStringAndNeverLogsPayload() {
+        assertAXAndCopyProvenance(startupDelay: 0)
+    }
+
+    func testColdStartupDoesNotConsumeTheCopySnapshotBudget() {
+        assertAXAndCopyProvenance(startupDelay: 1.2)
+    }
+
+    private func assertAXAndCopyProvenance(startupDelay: TimeInterval) {
         for usesAX in [true, false] {
             let board = NSPasteboard.withUniqueName()
             defer { board.releaseGlobally() }
@@ -621,7 +676,17 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             let original = contents(board)
             let count = board.changeCount
             let text = "PRIVATE_SENTINEL שלום👩🏽‍💻\r\n\r\n- first\n2. second\n| A | B |\na\tb\n\u{FFFC}"
-            let capture = makeCapture(readAXSelection: { usesAX ? text : nil }, pasteboard: board, postCopy: {
+            let executable = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
+                .appendingPathComponent("VoiceBar")
+            let boardName = board.name.rawValue
+            let delayedSnapshot: (() -> SpeakSelectionCapture.Snapshot?)? = startupDelay == 0 ? nil : {
+                SelectionPasteboardSnapshot.readInHelper(name: boardName,
+                    executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c",
+                        "sleep \"$1\"; shift; exec \"$@\"", "snapshot-startup", String(startupDelay),
+                        executable.path, SelectionPasteboardSnapshot.argument, boardName])
+            }
+            let capture = makeCapture(snapshotReader: delayedSnapshot,
+                readAXSelection: { usesAX ? text : nil }, pasteboard: board, postCopy: {
                 if usesAX { XCTFail("AX must not copy"); return false }
                 board.clearContents()
                 board.setString(text, forType: .string)
@@ -645,7 +710,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
                 XCTAssertEqual(report.commands, 1)
                 finished.fulfill()
             }
-            wait(for: [finished], timeout: 2)
+            wait(for: [finished], timeout: 7) // Bounded cold startup + snapshot + main-queue completion.
             if usesAX { XCTAssertEqual(board.changeCount, count) }
             XCTAssertEqual(contents(board), original)
         }

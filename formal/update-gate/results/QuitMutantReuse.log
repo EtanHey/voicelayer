@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NeverProceedOnReusedOrCompetitor",
+  "status": "EXPECTED_FAIL",
+  "generated": 11,
+  "distinct": 11,
+  "trace": [
+    "/\\ phase = \"poll\"\n/\\ available = 1\n/\\ scenario = \"reused\"\n/\\ creation = \"none\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"reused\"\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
+    "/\\ phase = \"decide\"\n/\\ available = 1\n/\\ scenario = \"reused\"\n/\\ creation = \"reused\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"reused\"\n/\\ evidence = TRUE\n/\\ mutex = TRUE",
+    "/\\ phase = \"proceed\"\n/\\ available = 2\n/\\ scenario = \"reused\"\n/\\ creation = \"reused\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"reused\"\n/\\ evidence = TRUE\n/\\ mutex = TRUE"
+  ]
+}

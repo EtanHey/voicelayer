@@ -18,8 +18,11 @@ enum SettingsCopyPayload {
 }
 
 /// Shared with the Speech lane: copying never runs a command or changes a setting.
+/// QA-20 (Etan, 2026-11-02: "We don't need a copy word. The copy icon is very known"): icon only;
+/// the tooltip and VoiceOver say what is copied.
 @MainActor
 struct SettingsCopyButton: View {
+    static func tooltip(_ label: String) -> String { "Copy \(label)" }
     let text: String?
     let label: String
     var onCopy: ((String) -> Bool)? = nil
@@ -29,11 +32,13 @@ struct SettingsCopyButton: View {
         if let payload = SettingsCopyPayload.nonempty(text) {
             Button {
                 copied = onCopy?(payload) ?? SettingsCopyPayload.write(payload)
+                if copied { AccessibilityNotification.Announcement("Copied \(label)").post() }
             } label: {
                 Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
-            .help("Copy \(label)")
+            .help(copied ? "Copied" : Self.tooltip(label))
             .accessibilityLabel(copied ? "Copied \(label)" : "Copy \(label)")
             .onChange(of: text) { _, _ in copied = false }
             .task(id: copied) {
@@ -51,9 +56,14 @@ enum SettingsDiagnosticSummary {
     }
 
     static func versionLabel(bundle: Bundle = .main) -> String {
-        let version = value(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
-        let build = value(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
-        return "\(version) (build \(build))"
+        versionLabel(version: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                     build: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+    }
+
+    /// QA-30: "2.2.60 (build 2.2.60)" says one number twice; equal values show once.
+    static func versionLabel(version: String?, build: String?) -> String {
+        let version = value(version), build = value(build)
+        return build == version ? version : "\(version) (build \(build))"
     }
 
     static func build(bundle: Bundle = .main, models: ModelsSettingsState) -> String {

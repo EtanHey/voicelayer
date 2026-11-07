@@ -75,7 +75,7 @@ describe("opt-in resident Parakeet router", () => {
   });
   test("truncated tails are retry signals, never trimmed", () => {
     const info = parakeetWavInfo(wav(20));
-    expect(parakeetOutputRisk({ ...response("one two three four five six seven", 20), last_token_end_s: 3 }, info)).toBe("uncovered-tail");
+    expect(parakeetOutputRisk({ ...response("one two three four five six seven", 20), last_token_end_s: 3 }, info, 20)).toBe("uncovered-tail");
     expect(parakeetOutputRisk(response("short", 20), info)).toBe("sparse-response");
     expect(parakeetWavInfo(wav(20)).frames).toBe(320000);
   });
@@ -85,7 +85,7 @@ describe("opt-in resident Parakeet router", () => {
   });
   test("a missing late section of a long file remains suspicious", () => {
     const info = parakeetWavInfo(wav(180));
-    expect(parakeetOutputRisk({ ...response(Array(60).fill("word").join(" "), 180), last_token_end_s: 160 }, info)).toBe("uncovered-tail");
+    expect(parakeetOutputRisk({ ...response(Array(60).fill("word").join(" "), 180), last_token_end_s: 160 }, info, 180)).toBe("uncovered-tail");
   });
   test("provider failure has one full-audio Whisper fallback", async () => {
     const { fallback, calls } = setup(); let vadCalls = 0;

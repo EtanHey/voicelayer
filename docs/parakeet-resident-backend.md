@@ -18,8 +18,8 @@ A manual Python override must provide the MLX runtime and `mlx_audio`. The integ
 tested with the SPEED lane's local Parakeet TDT 0.6b v3, mlx-audio 0.6.3, MLX 0.32.4
 and Python 3.12. Model configuration, weights and tokenizer must already exist
 locally; this backend never downloads assets. Whisper CLI and a local Whisper
-model are still needed for fallback. `VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS` and
-the existing Models idle setting also control Parakeet (default 600 seconds).
+model are still needed for fallback. Parakeet stays resident by default. Settings “Unload when idle (saves ~3 GB)”
+opts into the configured idle timeout (600 seconds by default).
 
 The native picker uses daemon-owned `recognizer=parakeet|whisper`, persisted in
 `stt-settings.json`, with `set_recognizer` / `get_recognizer_status` and
@@ -34,9 +34,10 @@ Selecting `parakeet-resident` in the environment is an alias for `parakeet`. `au
 VoiceBar owns its MCP daemon. After the daemon validates its parent and acquires
 its singleton process lock, it registers as the Parakeet owner. Registration
 and later launches require both the matching VoiceBar parent and current
-ownership of the daemon PID file. The first
-eligible request starts one Python child over private stdin/stdout pipes and
-waits for a PID-bound health reply. There is no shared TCP port, foreign-process
+ownership of the daemon PID file. After its command sockets are ready, the daemon
+warms the selected installed recognizer in the background. Capture remains
+available during warm-up; inference waits for that same load and PID-bound
+health reply. If sleeping, the next eligible request starts the private child. There is no shared TCP port, foreign-process
 adoption or separate service installation. A CLI invocation cannot quietly
 create a second resident; it takes the Whisper fallback instead.
 
@@ -218,9 +219,32 @@ choice, while effective and the result backend identify the actually restored
 provider. Later requests reuse that provider; legacy W load/effort controls
 cannot allocate W beside a restored P. Cleanup uncertainty blocks restoration.
 A failed restoration is Error with no effective engine, never a Ready claim.
+Selecting an already-ready desired engine is a no-op; sleeping and failed engines
+still warm on selection. Explicit desired-choice writes log the requested and
+previous engine enums so a later switch can be distinguished from recovery.
 
-The default idle timeout remains600seconds for either selected engine. The
-real lab daemon switch/idle checks use5seconds only to observe both unloads.
+Parakeet's idle eviction is OFF by default. The opt-in idle timeout remains 600
+seconds; Whisper and polish retain their existing idle policy. macOS warning or
+critical memory pressure unloads Parakeet only while capture, transcription and
+model transitions are idle. A busy event is skipped, never queued for later.
+The next dictation reloads normally. Explicit engine switches, unload/delete,
+shutdown and failure cleanup still release their owned model.
+
+The socket command `set_model_unload_when_idle {value:boolean,id?}` returns an
+ack with fresh `recognizer_status`, also broadcast at a new revision. Status
+adds `unload_when_idle`, `unload_when_idle_locked` and
+`unload_when_idle_env_var` (string or null); `idle_unload_seconds` is unchanged.
+The daemon persists `unload_when_idle` in `model-residency.json`; missing fields
+in older files read false and timeout/switch writes preserve each other.
+`VOICELAYER_MODEL_UNLOAD_WHEN_IDLE` wins when defined (1/true/on/yes enables,
+other values disable). Otherwise the existing
+`VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS` override opts into idle eviction. Either
+override locks the row and rejects writes with `set by <VAR>`.
+
+VoiceBar observes DispatchSource warning/critical memory pressure and sends
+`memory_pressure {level:"warning"|"critical",id?}`. The daemon acknowledges
+accept (unloaded), noop (already asleep), or reject (busy/cleanup failed), with
+fresh recognizer status. No view code is needed for this native event.
 
 ### Owner shutdown and capture priority
 Already admitted capture transcription waits for pending legacy Whisper maintenance,
@@ -241,14 +265,20 @@ no model load or network. `available` remains runtime evidence, independently.
 Socket commands: `download_recognizer {engine}`, `cancel_recognizer_download
 {engine}`, `delete_recognizer {engine}`, and `set_recognizer_residency
 {engine,action:"load"|"unload"}`. Engines are `whisper` and `parakeet`. Progress
-arrives in the existing `recognizer_status` events. Voice work excludes mutations;
-delete additionally requires an unloaded engine and another installed recognizer.
-Deleting the selected engine saves the other selection first. Only named regular
+arrives in the existing `recognizer_status` events. Downloads hold only per-engine
+ownership and never block recording or transcription. Selection, residency and
+delete require idle voice work; delete unloads the engine first and requires
+another installed recognizer.
+Deleting the selected engine saves the other selection first; that remaining
+engine loads on the next dictation unless already resident. Only named regular
 model files are removed; shared-cache links and unrelated files are preserved.
 
 Downloads use the immutable revisions and SHA256 pins in
 `src/recognizer-download-manifest.ts`, stage beside the destination, then rename
 after verification. Failed/cancelled staging never counts as installed. Parakeet
+can be explicitly re-downloaded/Set up even with complete weights present: it
+verifies their pinned bytes read-only and validates/repairs only the runtime.
+The weight bytes, inodes and modification times remain unchanged. Setup
 also installs and validates a VoiceLayer-owned venv from the wheel-only,
 hash-locked `src/parakeet-runtime.lock` (mlx-audio 0.6.3), then atomically records
 its Python path in `parakeet-runtime.json`. The Python override still wins.

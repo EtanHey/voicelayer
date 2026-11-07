@@ -1,0 +1,68 @@
+{
+  "module": "VoiceAskNoAnswer",
+  "sourceBaseline": "9861a2e7",
+  "sources": [
+    "src/input.ts",
+    "src/handlers.ts",
+    "src/voice-ask-no-answer.ts",
+    "src/voice-turn-result.ts",
+    "src/__tests__/input-durability.test.ts",
+    "src/__tests__/voice-ask-no-answer.test.ts",
+    "src/voice-away-policy.ts",
+    "src/__tests__/voice-away-policy.test.ts",
+    "src/__tests__/converse-resilience.test.ts",
+    "src/vad.ts",
+    "src/__tests__/barge-in-vad-isolation.test.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OldDeadlineMutant": {
+      "role": "mutant",
+      "target": "NoCutOffMidAnswer",
+      "kind": "invariant"
+    },
+    "NoPendingCheckMutant": {
+      "role": "mutant",
+      "target": "PendingSpeechProtected",
+      "kind": "invariant"
+    },
+    "UnboundedStallMutant": {
+      "role": "mutant",
+      "target": "StalledVadCloses",
+      "kind": "temporal"
+    },
+    "NeverCloseMutant": {
+      "role": "mutant",
+      "target": "NoAnswerCloses",
+      "kind": "temporal"
+    },
+    "DropRecordingMutant": {
+      "role": "mutant",
+      "target": "RecordingKept",
+      "kind": "invariant"
+    },
+    "SpeechCapMutant": {
+      "role": "mutant",
+      "target": "NoSpeechCap",
+      "kind": "invariant"
+    },
+    "NoLockedCloseMutant": {
+      "role": "mutant",
+      "target": "LockedSilenceCloses",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "NoCutOffMidAnswer",
+    "PendingSpeechProtected",
+    "RecordingKept",
+    "NoSpeechCap",
+    "NoAnswerCloses",
+    "StalledVadCloses",
+    "LockedSilenceCloses"
+  ]
+}

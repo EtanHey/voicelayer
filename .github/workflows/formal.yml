@@ -1,0 +1,117 @@
+name: Formal models and source conformance
+
+on:
+  push:
+    branches: [main]
+    paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
+  pull_request:
+    branches: [main, integration/2.2.61]
+    paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
+
+concurrency: { group: 'formal-${{ github.ref }}', cancel-in-progress: true }
+
+permissions:
+  contents: read
+
+jobs:
+  runners:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.runners.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: runners
+        run: |
+          python3 - <<'PYTHON'
+          import glob, json, math, os
+          from pathlib import Path
+          # Fresh-HOME M4 wall seconds, including each job's explicit replay steps.
+          seconds = {
+              "history-row-refresh": 1.349,
+              "idle-wings": 0.770,
+              "native-autopaste": 3.248,
+              "notch-presentation": 67.308,
+              "notch-tab-morph": 0.949,
+              "parakeet-residency": 8.722,
+              "ptt-silence-timeout": 3.258,
+              "record-while-processing": 211.178,
+              "record-while-processing-runtime": 77.673,
+              "selection-snapshot-startup": 1.607,
+              "speech-queue": 715.929,
+              "teleprompter-handoff": 16.460,
+              "update-gate": 4.825,
+              "voice-ask-no-answer": 2.115,
+              "wing-entry": 0.662,
+          }
+          found = {Path(path).parent.name for path in glob.glob("formal/*/check.sh")}
+          assert found == seconds.keys(), "Every formal runner needs a measured budget"
+          matrix = {"include": [{"runner": name, "minutes": max(15, math.ceil(wall * 3.6 * 1.5 / 60))}
+                                for name, wall in sorted(seconds.items())]}
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("matrix=" + json.dumps(matrix) + "\n")
+          PYTHON
+  formal:
+    needs: runners
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.runners.outputs.matrix) }}
+    name: TLC and conformance (${{ matrix.runner }})
+    runs-on: macos-26
+    timeout-minutes: ${{ matrix.minutes }}
+    env:
+      TLC: ${{ github.workspace }}/formal/tlc.sh
+      FORMAL_RUNNER: ${{ matrix.runner }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - name: Read TLC artifact identity
+        id: tlc-pin
+        run: python3 -c 'import json; print("sha256=" + json.load(open("formal/tlc.lock.json"))["sha256"])' >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/tla/v1.8.0
+          key: tlc-${{ steps.tlc-pin.outputs.sha256 }}
+      - name: Verify checksum-pinned TLC
+        run: python3 -B formal/setup-tlc.py
+      - uses: actions/cache@v4
+        with:
+          path: .build.noindex/swift
+          key: formal-swift-${{ runner.os }}-${{ matrix.runner }}-${{ hashFiles('flow-bar/Package.swift', 'flow-bar/Sources/**', 'flow-bar/Tests/**') }}
+      - name: Install dependencies and legacy speech-queue timeout
+        run: |
+          bun install --frozen-lockfile
+          if ! command -v timeout >/dev/null; then
+            brew list coreutils >/dev/null 2>&1 || brew install coreutils
+            mkdir -p "$HOME/.local/bin"
+            ln -s "$(brew --prefix coreutils)/bin/gtimeout" "$HOME/.local/bin/timeout"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Check formal runner, including exact-property mutants
+        run: bash "formal/$FORMAL_RUNNER/check.sh"
+      - name: Replay Current and Fixed against real Swift code (no skip gate)
+        if: matrix.runner == 'notch-presentation'
+        run: bash formal/notch-presentation/conformance.sh
+      - name: Replay Current and Fixed against real daemon admission and cancel
+        if: matrix.runner == 'record-while-processing'
+        run: bash formal/record-while-processing/conformance.sh
+      - name: Preserve raw TLC and replay diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-diagnostics-${{ matrix.runner }}
+          path: |
+            .build.noindex/*/*.log
+            .build.noindex/formal-speech-queue/**/*.log
+          if-no-files-found: warn

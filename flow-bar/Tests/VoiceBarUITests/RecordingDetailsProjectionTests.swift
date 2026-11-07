@@ -3,15 +3,13 @@ import XCTest
 final class RecordingDetailsProjectionTests: XCTestCase {
     func testOptionalExecutionFactsStayAttemptLocalAndBounded() {
         let absent = SettingsHistoryAttemptRecord(id: "legacy", status: .completed)
-        XCTAssertNil(absent.executionLabel); XCTAssertNil(absent.timingLabel)
-        XCTAssertTrue(absent.hasMissingExecutionDetails)
+        XCTAssertNil(absent.executionLabel); XCTAssertNil(absent.processingLabel)
         let actual = SettingsHistoryAttemptRecord(id: "retry", status: .completed, startedAt: Date(timeIntervalSince1970: 0),
             engine: "whisper.cpp", model: "large-v3", effort: "Accurate", audioDurationMs: 32000, processingDurationMs: 2750)
         XCTAssertEqual(actual.executionLabel, "whisper.cpp · large-v3 · Effort: Accurate")
-        XCTAssertEqual(actual.timingLabel, "0:32 audio → 2.8 s processing")
-        XCTAssertFalse(actual.hasMissingExecutionDetails)
+        XCTAssertEqual(actual.processingLabel, "processed in 2.8 s", "per-attempt processing only; audio length lives in the footer")
         let invalid = SettingsHistoryAttemptRecord(id: "invalid", status: .failed, engine: "  ", model: String(repeating: "x", count: 200), audioDurationMs: -1, processingDurationMs: -10)
-        XCTAssertNil(invalid.engine); XCTAssertEqual(invalid.model?.count, 80); XCTAssertNil(invalid.timingLabel)
+        XCTAssertNil(invalid.engine); XCTAssertEqual(invalid.model?.count, 80); XCTAssertNil(invalid.processingLabel)
     }
     func testLocalWhenUsesFoundationCurrentAndSupportsDifferentZones() throws {
         let date = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-01T10:02:00Z"))
@@ -26,7 +24,8 @@ final class RecordingDetailsProjectionTests: XCTestCase {
         let history = SettingsHistoryAttemptHistory(recordingPath: "/synthetic/audio.wav", attempts: rows, isComplete: true)
         let copy = SettingsHistoryDiagnosticsCopy(snapshot: nil, runs: [], omittedCount: 80, attemptHistory: history)
         XCTAssertEqual(copy.attempts.count, 45); XCTAssertFalse(copy.defaultExpanded)
-        XCTAssertEqual(copy.visibleSentences.filter { $0 == SettingsHistoryDiagnosticsCopy.olderDetails }.count, 1)
+        XCTAssertEqual(copy.logLines.count, 45, "every attempt keeps its own Log row past the session-request limit")
+        XCTAssertNil(copy.notice, "attempts without execution metrics are not evidence of missing history")
         let failed = SettingsHistoryAttemptHistory(recordingPath: history.recordingPath, attempts: rows + [.init(id: "failed", status: .failed)], isComplete: true)
         XCTAssertTrue(SettingsHistoryDiagnosticsCopy(snapshot: nil, runs: [], omittedCount: 0, attemptHistory: failed).defaultExpanded)
     }

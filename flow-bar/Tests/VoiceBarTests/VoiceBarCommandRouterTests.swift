@@ -3,6 +3,78 @@
 import XCTest
 
 final class VoiceBarCommandRouterTests: XCTestCase {
+    func testF5HeldDuringSpeechStartsCaptureAndReleaseNeverStopsSpeech() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.frontmostAppProvider = { nil }
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        state.handleEvent(["type": "state", "state": "speaking", "text": "One two", "playback_id": "read", "generation": 1])
+        let router = VoiceBarCommandRouter(voiceState: state)
+        router.handleHotkeyHoldStart()
+        XCTAssertEqual(sent.last?["cmd"] as? String, "record")
+        XCTAssertEqual(state.mode, .recording)
+        router.handleHotkeyHoldEnd(holdDuration: 1)
+        XCTAssertEqual(sent.last?["cmd"] as? String, "stop")
+        XCTAssertEqual(sent.last?["scope"] as? String, "capture")
+    }
+
+    func testF5ReleaseAfterSettlementNeverStopsResumedSpeech() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.frontmostAppProvider = { nil }
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        let router = VoiceBarCommandRouter(voiceState: state)
+        for outcome in ["timeout", "failed", "cancelled"] {
+            state.pendingIntent = nil
+            state.handleEvent(["type": "state", "state": "speaking", "text": outcome, "playback_id": outcome, "generation": 1])
+            router.handleHotkeyHoldStart()
+            state.handleEvent(["type": "state", "state": "speaking", "text": outcome, "playback_id": outcome, "generation": 3])
+            let count = sent.count
+            router.handleHotkeyHoldEnd(holdDuration: 10)
+            XCTAssertEqual(sent.count, count, outcome)
+            XCTAssertEqual(state.mode, .speaking)
+        }
+    }
+
+    func testF5DoubleTapKeepsCaptureLockedAcrossPhysicalRelease() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.frontmostAppProvider = { nil }
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        state.handleEvent(["type": "state", "state": "speaking", "text": "One two", "playback_id": "read", "generation": 1])
+        let router = VoiceBarCommandRouter(voiceState: state)
+        router.handleHotkeyHoldStart()
+        router.handleHotkeyDoubleTap()
+        let count = sent.count
+        router.handleHotkeyHoldEnd(holdDuration: 1)
+        XCTAssertEqual(sent.count, count)
+        XCTAssertEqual(state.mode, .recording)
+        router.handleHotkeySingleTap()
+        XCTAssertEqual(sent.last?["scope"] as? String, "capture")
+    }
+
+    func testLateKeyUpCannotStopANewerMouseStartedTake() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.frontmostAppProvider = { nil }
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        let router = VoiceBarCommandRouter(voiceState: state)
+        router.handleHotkeyHoldStart()
+        let first = state.activeCaptureTakeID
+        state.pendingIntent = nil
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Resumed", "playback_id": "read", "generation": 3])
+        state.record(pressToTalk: true)
+        XCTAssertNotEqual(state.activeCaptureTakeID, first)
+        let count = sent.count
+        router.handleHotkeyHoldEnd(holdDuration: 10)
+        XCTAssertEqual(sent.count, count)
+        XCTAssertEqual(state.mode, .recording)
+    }
+
     final class SpyCommandRouter: VoiceBarCommandRouter {
         var handledURLs: [URL] = []
         var holdStartCount = 0
@@ -58,7 +130,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         }
     }
 
-    func testDeliberateSecondPressAndEscapeCancelTranscribingWithRecoveryNotice() {
+    func testSecondPressQueuesCaptureAndEscapeStillCancelsWithRecoveryNotice() {
         for escape in [false, true] {
             let state = VoiceState(
                 recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
@@ -73,10 +145,21 @@ final class VoiceBarCommandRouterTests: XCTestCase {
             state.stop()
             let router = VoiceBarCommandRouter(voiceState: state)
             if escape { router.handleEscape() } else { router.handleHotkeySingleTap() }
-            XCTAssertEqual(commands.last, "cancel")
-            XCTAssertEqual(state.mode, .idle)
-            XCTAssertEqual(state.confirmationText,
-                           "Transcription cancelled. Audio saved. Re-transcribe it from History when processing finishes.")
+            XCTAssertEqual(commands.last, escape ? "cancel" : "stop")
+            XCTAssertEqual(state.mode, escape ? .idle : .recording)
+            if escape {
+                XCTAssertEqual(state.confirmationText,
+                               "Transcription cancelled. Audio saved. Re-transcribe it from History when processing finishes.")
+            } else {
+                XCTAssertNotNil(state.queuedRecordingTakeID)
+                XCTAssertNil(state.confirmationText)
+                XCTAssertEqual(commands, ["record", "stop"])
+                state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+                XCTAssertEqual(commands, ["record", "stop", "record"])
+                state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+                XCTAssertEqual(state.mode, .recording)
+                XCTAssertNil(state.confirmationText)
+            }
             XCTAssertTrue(state.latestReusableTranscript.isEmpty)
             XCTAssertNil(state.lastDictationCardEntry)
         }
@@ -317,7 +400,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertTrue(commands.isEmpty)
     }
 
-    func testToggleCancelsActiveTranscription() throws {
+    func testToggleLeavesUnscopedTranscriptionAlone() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.mode = .transcribing
@@ -328,9 +411,8 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
         try router.handle(url: XCTUnwrap(URL(string: "voicebar://toggle")))
 
-        XCTAssertEqual(state.mode, .idle)
-        XCTAssertEqual(commands.count, 1)
-        XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertTrue(commands.isEmpty)
     }
 
     func testHotkeyHoldStartUsesPressToTalkRecording() {
@@ -360,7 +442,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertTrue(commands.isEmpty)
     }
 
-    func testHotkeyHoldStartCancelsActiveTranscription() {
+    func testHotkeyHoldStartLeavesUnscopedTranscriptionAlone() {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.mode = .transcribing
@@ -371,9 +453,8 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
         router.handleHotkeyHoldStart()
 
-        XCTAssertEqual(state.mode, .idle)
-        XCTAssertEqual(commands.count, 1)
-        XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertTrue(commands.isEmpty)
     }
 
     func testPrimaryTapUsesPressToTalkRecording() {
@@ -398,6 +479,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
 
+        router.handleHotkeyHoldStart() // Physical key state survives capture settlement independently.
         router.handleHotkeyHoldEnd(holdDuration: 0.35)
 
         XCTAssertEqual(commands.count, 1)
@@ -461,7 +543,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(commands.first?["cmd"] as? String, "stop")
     }
 
-    func testHotkeySingleTapCancelsActiveTranscription() {
+    func testHotkeySingleTapLeavesActiveTranscriptionAlone() {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.mode = .transcribing
@@ -472,9 +554,8 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
         router.handleHotkeySingleTap()
 
-        XCTAssertEqual(state.mode, .idle)
-        XCTAssertEqual(commands.count, 1)
-        XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertTrue(commands.isEmpty)
     }
 
     func testCancelRunsGestureResetHookBeforeCancelIntent() {
@@ -712,6 +793,31 @@ final class VoiceBarCommandRouterTests: XCTestCase {
                 "engaged": NSNumber(value: 0),
             ])
         )
+    }
+
+    func testRealGestureStartsN6AfterALockedTakeBeginsTranscribing() throws {
+        let app = AppDelegate()
+        app.externalStartCommandGraceDeadline = nil
+        app.hotkeyEnabled = true
+        app.configureHotkeyCallbacksForTesting()
+        app.voiceState.isConnected = true
+        app.voiceState.frontmostAppProvider = { nil }
+        var commands: [[String: Any]] = []
+        app.voiceState.sendCommand = { commands.append($0) }
+        app.handleHotkeyKeyDown(from: .native)
+        app.handleHotkeyKeyUp(from: .native)
+        app.handleHotkeyKeyDown(from: .native)
+        app.handleHotkeyKeyUp(from: .native)
+        let a = try XCTUnwrap(commands.first?["take_id"] as? String)
+        app.voiceState.pendingIntent = nil
+        app.voiceState.handleEvent(["type": "state", "state": "transcribing", "source": "recording",
+                                    "recording_jobs": [["take_id": a, "kind": "live", "phase": "processing"]], "mic_take_id": NSNull()])
+        XCTAssertTrue(app.voiceState.canRecordDuringProcessing)
+        app.handleHotkeyKeyDown(from: .native)
+        runMainLoop(until: { commands.filter { $0["cmd"] as? String == "record" }.count == 2 }, timeout: 1)
+        XCTAssertEqual(commands.filter { $0["cmd"] as? String == "record" }.count, 2)
+        XCTAssertEqual(app.voiceState.mode, .recording)
+        app.handleHotkeyKeyUp(from: .native)
     }
 
     func testLocalControlHoldUsesHotkeyGestureCallbacksInsteadOfDirectURLs() {

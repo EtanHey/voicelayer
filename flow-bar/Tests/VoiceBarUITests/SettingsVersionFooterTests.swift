@@ -33,4 +33,29 @@ final class SettingsVersionFooterTests: XCTestCase {
         XCTAssertTrue(shell.contains(".lineLimit(1)"))
         XCTAssertTrue(shell.contains(".accessibilityValue(status?.message ?? \"\")"))
     }
+
+    /// S1 (Etan, 2026-11-02): "VoiceBar build is here and down here" — one quiet sidebar line, nowhere else.
+    func testSidebarLineReadsLikeAStatusBar() {
+        let installed = VoiceBarInstalledVersion(version: "2.2.61", commit: "abcdef0123")
+        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .latest), "VoiceBar 2.2.61 · Up to date")
+        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .available("2.2.62")),
+                       "VoiceBar 2.2.61 · Update available")
+        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: nil), "VoiceBar 2.2.61")
+    }
+
+    func testVersionAppearsOnceAcrossSettings() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI")
+        let files = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("Settings") && $0.pathExtension == "swift" }
+        var versionViews = 0
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            XCTAssertFalse(text.contains("\"VoiceBar build\""), file.lastPathComponent)
+            XCTAssertFalse(text.contains("value: SettingsDiagnosticSummary.versionLabel()"), file.lastPathComponent)
+            versionViews += text.components(separatedBy: "SettingsVersionFooter(installed:").count - 1
+        }
+        XCTAssertEqual(versionViews, 1, "exactly one on-screen version: the sidebar footer")
+    }
 }

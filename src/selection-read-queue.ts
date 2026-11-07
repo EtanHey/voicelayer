@@ -53,6 +53,7 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
   private current?: string;
   private currentIdentity?: string;
   private session = false;
+  private captureHeld = false;
   /** F5 interrupted the owner: its queued reads wait for Next, never auto-start. */
   private suspended = false;
   /** QPRE1: only items[0] may own a preparation; the generation fences late results. */
@@ -77,12 +78,12 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
   /** `append` reads queue behind the user's live read; anything else replaces it and forgets the queue.
    * After an F5 interruption a new selection plays now and the retained reads stay queued behind it. */
   submit(read: QueuedSelectionRead, append: boolean): "started" | "queued" | "full" {
-    if (this.suspended) {
+    if (this.suspended && !this.captureHeld) {
       this.suspended = false;
       this.launch(read);
       return "started";
     }
-    if (append && this.current !== undefined) {
+    if (this.captureHeld || (append && this.current !== undefined)) {
       if (this.items.length >= this.limit) return "full";
       this.items.push(read);
       this.session = true;
@@ -97,7 +98,7 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
 
   /** Next acts only on the read it was shown for; on the last item it stops (the caller stops playback). */
   next(requestId: string): "advanced" | "stopped" | "stale" {
-    if (!requestId || requestId !== this.current) return "stale";
+    if (this.captureHeld || !requestId || requestId !== this.current) return "stale";
     this.suspended = false;
     const following = this.items.shift();
     if (!following) { this.clear(); return "stopped"; }
@@ -123,6 +124,17 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
     if (this.current === undefined || !this.items.length) { this.clear(); return; }
     this.suspended = true;
     this.discardPreparation();
+  }
+
+  /** Capture borrows the current read, never suspends or replaces its queue ownership. */
+  holdForCapture(): void { this.captureHeld = true; }
+
+  releaseCapture(): void {
+    if (!this.captureHeld) return;
+    this.captureHeld = false;
+    if (this.current !== undefined) return;
+    const following = this.items.shift();
+    if (following) { try { this.launch(following); } catch { this.clear(); } }
   }
 
   /** A read ended. A natural end advances; Stop, preemption or failure ends the whole queue. */

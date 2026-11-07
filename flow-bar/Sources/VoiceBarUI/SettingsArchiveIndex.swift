@@ -9,7 +9,7 @@ import Foundation
 /// - the walk order and skip rules mirror `SettingsArchiveScanner.scan`, and a page is assembled by the SAME
 ///   `page(from:)` the scanner path uses, so an indexed page equals a scanned one (tested on a mixed archive);
 /// - every call re-checks the day directories' modification dates, so a new recording shows up;
-/// - an entry rewritten in place (a re-transcription) is dropped by `invalidate(entryPath:)`;
+/// - an entry rewritten in place (a re-transcription) is refreshed by `change(entryPath:)`;
 /// - `release()` drops everything when Settings closes (P09b follow-up 3, R1); decoding runs inside an
 ///   `autoreleasepool` so a large first page doesn't leave Foundation garbage behind (R2).
 public actor SettingsArchiveIndex {
@@ -50,8 +50,49 @@ public actor SettingsArchiveIndex {
     private var roots: [String: RootState] = [:]
     /// Bumped by `release()`, so a prewarm that was mid-walk when Settings closed stops instead of refilling.
     private var releaseEpoch = 0
+    private var changeRevision: UInt64 = 0
 
-    public init() {}
+    private let onDiskRead: @Sendable () -> Void
+
+    public init() { onDiskRead = {} }
+
+    init(onDiskRead: @escaping @Sendable () -> Void) {
+        self.onDiskRead = onDiskRead
+    }
+
+    /// Read only the event's directory on this actor, never the main actor or the rest of the page.
+    public func change(
+        entryPath: String,
+        from root: URL = SettingsHistoryArchive.defaultRoot
+    ) -> SettingsHistoryArchiveChange? {
+        // A closed Settings window has released this root. Do no filesystem work for its events.
+        guard let state = roots[root.standardizedFileURL.path] else { return nil }
+        onDiskRead()
+        let url = URL(fileURLWithPath: entryPath)
+        var directory = (url.pathExtension.isEmpty ? url : url.deletingLastPathComponent()).resolvingSymlinksInPath()
+        let day = directory.deletingLastPathComponent()
+        guard day.deletingLastPathComponent().path == root.resolvingSymlinksInPath().path,
+              let date = SettingsArchiveScanner.parseDayKey(day.lastPathComponent)
+        else { return nil }
+        let id = Self.key(forEntryDirectory: directory)
+        // Retain the exact published URL identity when an event spells /var differently.
+        if case let .entry(entry)? = state.dictations[id] {
+            directory = entry.audioPath.deletingLastPathComponent()
+        } else if case let .entry(entry)? = state.asks[id] {
+            directory = URL(fileURLWithPath: entry.id)
+        }
+        let dictation = SettingsHistoryArchive.loadEntry(from: directory, dayKey: day.lastPathComponent, fallbackDate: date)
+        let ask = dictation == nil
+            ? SettingsAskHistoryArchive.loadEntry(from: directory, dayKey: day.lastPathComponent, fallbackDate: date) : nil
+        state.dictations[id] = dictation.map { .entry($0) } ?? .skipped
+        state.asks[id] = ask.map { .entry($0) } ?? .skipped
+        state.dictationSearchText[id] = dictation.map { [SettingsHistorySearch.fold($0.transcript)] }
+        state.askSearchText[id] = ask.map {
+            [SettingsHistorySearch.fold($0.questionText), SettingsHistorySearch.fold($0.responseTranscript)]
+        }
+        changeRevision &+= 1
+        return SettingsHistoryArchiveChange(directory: directory, dictation: dictation, ask: ask, revision: changeRevision)
+    }
 
     /// The first `limit` Dictations, or with a non-blank `query` the first `limit` whose transcript matches it.
     public func dictationPage(
@@ -242,6 +283,7 @@ public actor SettingsArchiveIndex {
     // MARK: - Directory state
 
     private func refreshedState(for root: URL) -> RootState {
+        onDiskRead()
         let key = root.standardizedFileURL.path
         let state = roots[key] ?? RootState()
         roots[key] = state

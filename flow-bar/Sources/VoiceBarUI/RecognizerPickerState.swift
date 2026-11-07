@@ -10,6 +10,8 @@ public enum RecognizerPickerEngine: String, CaseIterable, Identifiable, Sendable
         case .whisper: "Whisper large-v3-turbo"
         }
     }
+    public var shortName: String { self == .parakeet ? "Parakeet" : "Whisper" }
+    public var other: Self { self == .parakeet ? .whisper : .parakeet }
 }
 
 public enum RecognizerPickerResidency: String, Sendable {
@@ -53,6 +55,46 @@ public struct RecognizerDownloadProgress: Equatable, Sendable {
     public var isActive: Bool { ["downloading", "verifying", "runtime"].contains(state) }
 }
 
+/// Keep-warm switch (Etan ruling: Parakeet stays resident; "Unload when idle" is OFF by default). Lane K2's contract
+/// (K2-CONTRACT.md): `recognizer_status` carries flat `unload_when_idle: Bool`, `unload_when_idle_locked: Bool` and
+/// `unload_when_idle_env_var: String?`; it governs Parakeet's idle eviction. Writes are
+/// `{"cmd": "set_model_unload_when_idle", "value": Bool, "id": …}`, acked with a fresh `recognizer_status`.
+/// An older daemon that omits `unload_when_idle` gets no row: a switch that changes nothing is worse than none.
+public struct RecognizerUnloadWhenIdle: Equatable, Sendable {
+    public static let command = "set_model_unload_when_idle"
+
+    public let effective: Bool
+    public let locked: Bool
+    /// The override the daemon named, verbatim (VOICELAYER_MODEL_UNLOAD_WHEN_IDLE or the legacy
+    /// VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS). Never guessed here.
+    public let environmentVariable: String?
+
+    public init(effective: Bool, locked: Bool = false, environmentVariable: String? = nil) {
+        self.effective = effective; self.locked = locked; self.environmentVariable = environmentVariable
+    }
+
+    /// Reads the three flat fields from a `recognizer_status` payload; nil when `unload_when_idle` is absent or any
+    /// present field has the wrong type.
+    public init?(status payload: [String: Any]) {
+        func boolean(_ value: Any?) -> Bool? {
+            guard let n = value as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() else { return nil }
+            return n.boolValue
+        }
+        guard let effective = boolean(payload["unload_when_idle"]) else { return nil }
+        let lockedValue = payload["unload_when_idle_locked"], variableValue = payload["unload_when_idle_env_var"]
+        guard lockedValue == nil || boolean(lockedValue) != nil,
+              variableValue == nil || variableValue is NSNull || variableValue is String else { return nil }
+        let variable = (variableValue as? String).flatMap { $0.isEmpty ? nil : $0 }
+        self.init(effective: effective, locked: boolean(lockedValue) ?? false, environmentVariable: variable)
+    }
+
+    /// "Set by <VAR>" with the daemon's own variable name, like the Processing rows.
+    public var lockedReason: String? {
+        guard locked else { return nil }
+        return environmentVariable.map { "Set by \($0)" } ?? "Set by the environment"
+    }
+}
+
 /// Exact PICKER-API v1 snapshot. Unknown availability remains nil, never false.
 public struct RecognizerStatusSnapshot: Equatable, Sendable {
     public struct Engine: Equatable, Sendable {
@@ -74,6 +116,8 @@ public struct RecognizerStatusSnapshot: Equatable, Sendable {
     public private(set) var switchRefusalReason: String?
     public let idleUnloadSeconds: Double
     public let source: String
+    /// Optional keep-warm switch; nil when this daemon does not report one.
+    public private(set) var unloadWhenIdle: RecognizerUnloadWhenIdle?
 
     public init?(payload: [String: Any]) {
         func boolean(_ value: Any?) -> Bool? {
@@ -125,6 +169,7 @@ public struct RecognizerStatusSnapshot: Equatable, Sendable {
         self.fallbackReason = payload["fallback_reason"] as? String
         self.switchAllowed = switchAllowed; self.switchRefusalReason = payload["switch_refusal_reason"] as? String
         self.idleUnloadSeconds = idle; self.source = source
+        self.unloadWhenIdle = RecognizerUnloadWhenIdle(status: payload)
     }
 
     /// Reads recompute busy permission without publishing a new engine revision.
@@ -137,6 +182,7 @@ public struct RecognizerStatusSnapshot: Equatable, Sendable {
         updated.whisper.diskBytes = currentRead.whisper.diskBytes
         updated.switchAllowed = currentRead.switchAllowed
         updated.switchRefusalReason = currentRead.switchRefusalReason
+        updated.unloadWhenIdle = currentRead.unloadWhenIdle
         return updated
     }
 }
@@ -156,20 +202,31 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public let whisperAssetsPresent: Bool
     public let diskBytes: [RecognizerPickerEngine: Int]
     public let downloads: [RecognizerPickerEngine: RecognizerDownloadProgress]
+    /// The daemon's idle-unload policy; nil when no snapshot reported one.
+    public let idleUnloadSeconds: Double?
+    /// The keep-warm switch; nil when the daemon does not report one.
+    public let unloadWhenIdle: RecognizerUnloadWhenIdle?
+    /// The keep-warm value sent to the daemon and not yet answered.
+    public let unloadWhenIdlePending: Bool?
 
     public init(selected: RecognizerPickerEngine?, effective: RecognizerPickerEngine?,
                 parakeet: RecognizerPickerResidency, whisper: RecognizerPickerResidency,
                 disabledReason: String? = nil, fallbackReason: String? = nil, notice: String? = nil,
                 parakeetAvailable: Bool? = nil, parakeetError: String? = nil,
                 parakeetAssetsPresent: Bool = false, whisperAssetsPresent: Bool = true,
-                diskBytes: [RecognizerPickerEngine: Int] = [:], downloads: [RecognizerPickerEngine: RecognizerDownloadProgress] = [:]) {
+                diskBytes: [RecognizerPickerEngine: Int] = [:], downloads: [RecognizerPickerEngine: RecognizerDownloadProgress] = [:],
+                idleUnloadSeconds: Double? = nil, unloadWhenIdle: RecognizerUnloadWhenIdle? = nil,
+                unloadWhenIdlePending: Bool? = nil) {
+        self.idleUnloadSeconds = idleUnloadSeconds; self.unloadWhenIdlePending = unloadWhenIdlePending
+        self.unloadWhenIdle = unloadWhenIdle
         self.selected = selected; self.effective = effective; self.parakeet = parakeet; self.whisper = whisper
         self.disabledReason = disabledReason; self.fallbackReason = fallbackReason; self.commandNotice = notice
         self.diskBytes = diskBytes; self.downloads = downloads
         self.parakeetAssetsPresent = parakeetAssetsPresent; self.whisperAssetsPresent = whisperAssetsPresent
         self.parakeetAvailable = parakeetAvailable; self.parakeetError = parakeetError
     }
-    public init(snapshot: RecognizerStatusSnapshot, pending: Bool = false, notice: String? = nil, busyReason: String? = nil) {
+    public init(snapshot: RecognizerStatusSnapshot, pending: Bool = false, notice: String? = nil, busyReason: String? = nil,
+                unloadWhenIdlePending: Bool? = nil) {
         self.init(selected: snapshot.desired, effective: snapshot.effective,
                   parakeet: snapshot.parakeet.phase, whisper: snapshot.whisper.phase,
                   disabledReason: busyReason ?? (pending ? "Waiting for VoiceLayer…" : (!snapshot.switchAllowed
@@ -177,7 +234,9 @@ public struct RecognizerPickerState: Equatable, Sendable {
                   fallbackReason: snapshot.fallbackReason, notice: notice, parakeetAvailable: snapshot.parakeet.available, parakeetError: snapshot.parakeet.error,
                   parakeetAssetsPresent: snapshot.parakeet.assetsPresent, whisperAssetsPresent: snapshot.whisper.assetsPresent,
                   diskBytes: [.parakeet: snapshot.parakeet.diskBytes, .whisper: snapshot.whisper.diskBytes],
-                  downloads: [.parakeet: snapshot.parakeet.download, .whisper: snapshot.whisper.download].compactMapValues { $0 })
+                  downloads: [.parakeet: snapshot.parakeet.download, .whisper: snapshot.whisper.download].compactMapValues { $0 },
+                  idleUnloadSeconds: snapshot.idleUnloadSeconds, unloadWhenIdle: snapshot.unloadWhenIdle,
+                  unloadWhenIdlePending: unloadWhenIdlePending)
     }
     public static let unavailable = RecognizerPickerState(selected: nil, effective: nil,
         parakeet: .unknown, whisper: .unknown, disabledReason: "Recognizer status unavailable")
@@ -189,22 +248,77 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public func assetsPresent(for engine: RecognizerPickerEngine) -> Bool {
         engine == .parakeet ? parakeetAssetsPresent : whisperAssetsPresent
     }
+    /// Something of this engine is on disk. CodeRabbit #672: a named model file can exist with zero bytes, which
+    /// `disk_bytes` cannot show; the daemon's "delete first" download refusal is the evidence it is there.
+    public func hasFilesOnDisk(_ engine: RecognizerPickerEngine) -> Bool {
+        assetsPresent(for: engine) || (diskBytes[engine] ?? 0) > 0
+            || downloads[engine]?.error == "assets-exist-delete-first"
+    }
+    /// S3: a download arrow when the model isn't on disk, a trash can when it is (both for an incomplete download).
     public func assetActions(for engine: RecognizerPickerEngine) -> [RecognizerManagementAction] {
         var actions: [RecognizerManagementAction] = assetsPresent(for: engine) ? [] : [.download]
-        if assetsPresent(for: engine) || (diskBytes[engine] ?? 0) > 0 { actions.append(.delete) }
+        if hasFilesOnDisk(engine) { actions.append(.delete) }
         return actions
+    }
+    /// The Load/Unload control both rows show: Unload when resident, otherwise Load (which, on the row that is not
+    /// selected, selects it — the daemon loads it and unloads the other).
+    public func residencyAction(for engine: RecognizerPickerEngine) -> RecognizerManagementAction {
+        residency(for: engine) == .loaded || residency(for: engine) == .error ? .unload : .load
     }
     public func canManage(_ engine: RecognizerPickerEngine, action: RecognizerManagementAction) -> Bool {
         if action == .cancelDownload { return downloads[engine]?.isActive == true }
-        guard !isSelectionDisabled, downloads.values.allSatisfy({ !$0.isActive }) else { return false }
+        // S4: a download owns only its own engine; the other row stays fully usable.
+        guard !isSelectionDisabled, downloads[engine]?.isActive != true else { return false }
         switch action {
-        case .load: return assetsPresent(for: engine) && selected == engine && residency(for: engine) != .loaded
+        case .load: return assetsPresent(for: engine) && residency(for: engine) != .loaded
+            && (selected == engine || canSelect(engine))
         case .unload: return residency(for: engine) == .loaded || residency(for: engine) == .error
         case .download: return !assetsPresent(for: engine)
-        case .delete: return (diskBytes[engine] ?? 0) > 0 && residency(for: engine) == .unloaded
-            && assetsPresent(for: engine == .parakeet ? .whisper : .parakeet)
+        case .delete: return hasFilesOnDisk(engine) && residency(for: engine) == .unloaded
+            && assetsPresent(for: engine.other)
         case .cancelDownload: return false
         }
+    }
+    /// Why the trash can't act right now, or nil when it can (a resident model is unloaded first). The button stays
+    /// clickable and says this instead of sitting greyed out with the reason hidden in a tooltip.
+    public func deleteBlockReason(for engine: RecognizerPickerEngine) -> String? {
+        if downloads[engine]?.isActive == true { return "Wait for the download to finish, or cancel it." }
+        if !assetsPresent(for: engine.other) {
+            return "Keep at least one downloaded recognizer. Download \(engine.other.shortName) before deleting \(engine.shortName)."
+        }
+        if isSelectionDisabled { return disabledReason ?? "Recognizer status unavailable" }
+        if residency(for: engine) == .loading { return "Wait for \(engine.shortName) to finish loading." }
+        return nil
+    }
+    /// The selected row's one line about residency (S3): loading is automatic, and so is the idle unload.
+    /// With the keep-warm switch reported, Parakeet's line follows it: off keeps it resident, on unloads when idle.
+    /// A Sleeping row says "loads when you dictate" in its status, so this line does not repeat it.
+    public func autoLoadLine(for engine: RecognizerPickerEngine) -> String? {
+        guard selected == engine, assetsPresent(for: engine) else { return nil }
+        if engine == .parakeet, let unloadWhenIdle {
+            if unloadWhenIdle.effective {
+                return idleUnloadSeconds.map { "Unloads after \(Self.idleText($0)) idle to free memory." }
+                    ?? "Unloads when idle to free memory."
+            }
+            return residency(for: engine) == .loaded ? "Stays loaded between dictations." : nil
+        }
+        guard let idleUnloadSeconds else { return "Loads automatically when selected." }
+        return "Loads automatically when selected; unloads after \(Self.idleText(idleUnloadSeconds)) idle."
+    }
+
+    /// Row 3 (lead 00:32Z): Sleeping on the SELECTED engine means unloaded (memory pressure, or the switch is on) and
+    /// loading on the next dictation, so Sleeping → Ready after a dictation reads as normal. Another engine that is
+    /// Sleeping does not load when you dictate, so it gets no hint.
+    public static let sleepingHint = "loads when you dictate"
+    public func showsSleepingHint(for engine: RecognizerPickerEngine) -> Bool {
+        selected == engine && residency(for: engine) == .unloaded && assetsPresent(for: engine)
+            && !(engine == .parakeet && parakeetAvailable == false)
+    }
+    static func idleText(_ seconds: Double) -> String {
+        let whole = Int(seconds.rounded())
+        if whole >= 3600, whole % 3600 == 0 { return "\(whole / 3600) h" }
+        if whole >= 60, whole % 60 == 0 { return "\(whole / 60) min" }
+        return "\(whole) s"
     }
     public var parakeetSetupReason: String? {
         parakeetNotSetUp ? "Needs a one-time setup" : nil
@@ -216,6 +330,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
             if parakeet == .loaded, parakeetAvailable != true { return "Unknown" }
             if parakeet == .unloaded, parakeetAvailable == false { return "Unavailable" }
         }
+        if residency(for: engine) == .unloaded { return showsSleepingHint(for: engine) ? "Sleeping (\(Self.sleepingHint))" : "Sleeping" }
         return residency(for: engine).title
     }
     public var isSelectionDisabled: Bool {
@@ -242,22 +357,41 @@ public struct RecognizerPickerState: Equatable, Sendable {
         if selected == .whisper, effective == .parakeet, fallbackReason == "whisper-startup-failed" {
             return "Using Parakeet — Whisper failed to load"
         }
-        if let fallbackReason, effective == .whisper { return Self.message(for: fallbackReason, fallback: true) }
+        if let notice = provenanceNotice { return notice }
         if let disabledReason { return disabledReason }
         if parakeet == .loading || whisper == .loading { return "Switching recognizer…" }
         if selected == .parakeet, parakeet == .error { return "Parakeet is unavailable; choose Whisper or try again later." }
         if selected == .whisper, whisper == .error { return "Whisper is unavailable; try again later." }
         return isSelectionDisabled ? "Recognizer status unavailable" : nil
     }
-    public static func message(for reason: String?, fallback: Bool = false) -> String {
-        if fallback {
-            switch reason {
-            // Legacy snapshots may carry these reasons. Report the observed provider
-            // without implying that language hints or prompts route away from the user's choice.
-            case "language", "prompt", "input-format", "input-identity": return "Using Whisper for this recording."
-            default: return "Using Whisper because Parakeet couldn't transcribe this recording."
-            }
+    /// Row 1: what really happened, naming the engine that wrote the text. The selected engine was asked first; the
+    /// effective one took over. The daemon publishes `effective` + `fallback_reason` BEFORE the fallback engine runs
+    /// (parakeet-backend.ts) and leaves them in place when it fails (stt.ts marks only the phase), so these fields alone
+    /// never prove a transcript was delivered. Only a ready or sleeping fallback engine has delivered one
+    /// (K-ui review round 2). Loading describes the current operation; error says it didn't finish.
+    var provenanceNotice: String? {
+        guard let fallbackReason, let effective else { return nil }
+        let first = RecognizerProvenance.Engine(selected ?? effective.other)
+        let provenance = RecognizerProvenance(firstEngine: first, writer: RecognizerProvenance.Engine(effective),
+                                              fallbackReason: fallbackReason)
+        guard first != provenance.writer else { return nil }
+        switch residency(for: effective) {
+        case .loaded, .unloaded: return provenance.notice(about: Self.pickerSubject)
+        // The whole recording goes to the fallback engine, not only its ending.
+        case .loading: return "Transcribing this recording with \(effective.shortName)…"
+        case .error: return "\(effective.shortName) couldn't finish this recording."
+        case .unknown: return nil
         }
+    }
+    static let pickerSubject = "your last recording"
+    /// Orange only for a hand-off that happened or failed; work in progress reads as a normal status line.
+    public var explanationIsWarning: Bool {
+        if let effective, fallbackReason != nil, residency(for: effective) == .loading,
+           commandNotice == nil, explanation == provenanceNotice { return false }
+        return fallbackReason != nil || parakeet == .error
+    }
+
+    public static func message(for reason: String?) -> String {
         switch reason {
         case "capture-active": return "Finish recording before switching recognizers."
         case "request-active": return "Wait for transcription before switching recognizers."

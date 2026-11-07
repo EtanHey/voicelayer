@@ -1,3 +1,4 @@
+// G5: these pre-completion fixtures retain COMMITTED; child exit 0 alone returns refusal (1).
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
@@ -7,6 +8,10 @@ import { type UpdateGateLease } from "../update-gate";
 import { createServer } from "node:net";
 
 const originalGate = process.env.VOICELAYER_UPDATE_GATE_PATH;
+const PROCESS_READ_MS = 15;
+// M4 baseline/stress8 cases <=3.53s; hosted case timed out at 14.243s.
+// 14.243s * 1.5 margin = 21.365s, rounded up for this process-reader fixture.
+const SLOW_PROCESS_READERS_TEST_TIMEOUT_MS = 30_000;
 afterEach(() => { process.env.VOICELAYER_UPDATE_GATE_PATH = originalGate; });
 function fixture() {
   const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "ip-")), gate = join(root, "g");
@@ -165,7 +170,7 @@ test.each([
     const command = [process.execPath, "-e", `await Bun.write(${JSON.stringify(marker)}, 'installed')`];
     // Injected participants require the same live preload capability and proof.
     const run = runGatedInstall(command, participant);
-    if (verified) expect(await run).toBe(0); else await expect(run).rejects.toThrow("UNKNOWN");
+    if (verified) expect(await run).toBe(1); else await expect(run).rejects.toThrow("UNKNOWN");
     expect(existsSync(marker)).toBe(verified);
     expect(actions).toEqual(["drain", "drain", "drain", "quit"]);
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
@@ -181,13 +186,13 @@ test("exit observer refuses replacement owners, PID reuse and unavailable proces
   const proof = { identities: f.identities, native: "native-birth", daemon: "daemon-birth" };
   expect(observeInstallerExit(proof, { identity: () => null, table: () => "123 /usr/bin/other\n" })).toBe(true);
   for (const table of ["123 /Applications/VoiceBar.app/Contents/MacOS/VoiceBar\n", "123 VoiceBar\n"]) {
-    expect(observeInstallerExit(proof, { identity: () => null, table: () => table })).toBe("UNKNOWN");
+    expect(observeInstallerExit(proof, { identity: () => null, table: () => table })).toBe("UNSAFE");
   }
   for (const table of ["", "malformed process row"]) {
     expect(observeInstallerExit(proof, { identity: () => null, table: () => table })).toBe("UNKNOWN");
   }
-  expect(observeInstallerExit(proof, { identity: () => "reused-birth", table: () => "" })).toBe("UNKNOWN");
-  expect(observeInstallerExit(proof, { identity: pid => pid === 101 ? proof.native : null, table: () => "" })).toBe(false);
+  expect(observeInstallerExit(proof, { identity: () => "reused-birth", table: () => "" })).toBe("UNSAFE");
+  expect(observeInstallerExit(proof, { identity: pid => pid === 101 ? proof.native : null, table: () => "123 /usr/bin/other\n" })).toBe(false);
   expect(observeInstallerExit(proof, { identity: () => null, table: () => { throw Error("ps failed"); } })).toBe("UNKNOWN");
   expect(observeInstallerExit(proof, { identity: () => { throw Error("permission denied"); }, table: () => "" })).toBe("UNKNOWN");
 });
@@ -294,7 +299,7 @@ test("post-COMMIT drain UNKNOWN is retried before one quit and installation", as
       verify: () => ready,
       async quit() { quits++; if (!ready) throw Error("UNKNOWN: not refreshed"); },
     });
-    expect(result).toBe(0); expect(existsSync(marker)).toBe(true);
+    expect(result).toBe(1); expect(existsSync(marker)).toBe(true);
     expect(committedRefreshes).toBe(3); expect(quits).toBe(1);
   } finally { process.env.VOICELAYER_TEST_INSTALL_PROOF = savedProof; process.env.VOICELAYER_UPDATE_TARGET_SHA = savedTarget; }
 });
@@ -326,7 +331,10 @@ test("slow process readers stay outside G1 lock and its 2 ms verifier budget", a
     });
   }
   windows.sort((a, b) => a - b);
-  expect(windows[12]).toBeLessThan(2);
+  // The property: no 15 ms process read runs inside the acknowledgement window.
+  // Half of one read (7.5 ms) still catches a single read moving inside, while a
+  // tight 2 ms wall-clock bound failed on a loaded dev Mac (2.2-3.0 ms, #673).
+  expect(windows[12]).toBeLessThan(PROCESS_READ_MS / 2);
   expect(windows[24]).toBeLessThan(50);
   f.deps.request = async () => { f.exit(); return { kind: "UNKNOWN" }; };
   f.deps.participantsExited = () => {
@@ -336,7 +344,7 @@ test("slow process readers stay outside G1 lock and its 2 ms verifier budget", a
   await f.participant.quit(f.lease);
   expect(readsUnderLock).toBe(0);
   expect(maximumVerifierMs).toBeLessThan(2);
-});
+}, SLOW_PROCESS_READERS_TEST_TIMEOUT_MS);
 
 test("same-birth defunct participant waits for reaping under the exit deadline", async () => {
   const { observeInstallerExit } = await import("../update-gate-installer-participant");
@@ -351,7 +359,85 @@ test("same-birth defunct participant waits for reaping under the exit deadline",
   });
   await f.participant.quit(f.lease);
   expect(polls).toBeGreaterThan(2);
-  expect(observeInstallerExit(proof, { identity: () => "Fri Oct 30 09:10:11 2026 <defunct>", table: () => "" })).toBe("UNKNOWN");
+  expect(observeInstallerExit(proof, { identity: () => "Fri Oct 30 09:10:11 2026 <defunct>", table: () => "" })).toBe("UNSAFE");
+});
+
+test.each(["empty-ps", "unreaped", "teardown", "defunct"])("healthy quit polls through %s before verified exit", async observation => {
+  const { observeInstallerExit } = await import("../update-gate-installer-participant");
+  const f = fixture(); await f.commit();
+  const birth = "Sat Oct 31 09:10:11 2026";
+  const proof = { identities: f.identities, native: `${birth} /Applications/VoiceBar.app/Contents/MacOS/VoiceBar`, daemon: `${birth} /opt/homebrew/bin/bun` };
+  let samples = 0, sleeps = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.sleep = async () => { sleeps++; };
+  f.deps.participantsExited = () => {
+    const exiting = samples++ < 2;
+    return observeInstallerExit(proof, {
+      identity: pid => {
+        if (!exiting) return null;
+        if (observation === "empty-ps") throw Error("UNKNOWN: participant process identity unavailable");
+        if (observation === "defunct") return `${birth} <defunct>`;
+        return `${birth} (${pid === 101 ? "VoiceBar" : "bun"})`;
+      },
+      table: () => "123 /usr/bin/other\n",
+    });
+  };
+  await f.participant.quit(f.lease);
+  expect(sleeps).toBe(1);
+  expect(samples).toBe(4);
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+});
+
+test("every exit poll rechecks the held COMMITTED lease before accepting gone", async () => {
+  const f = fixture(); await f.commit();
+  let polls = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.participantsExited = () => ++polls <= 2 ? "UNKNOWN" : true;
+  f.deps.sleep = async () => {
+    const state = JSON.parse(readFileSync(f.gate, "utf8"));
+    state.kind = "OPEN"; state.generation = 1; state.released = f.lease;
+    delete state.lease; delete state.native; delete state.daemon;
+    writeFileSync(f.gate, JSON.stringify(state));
+  };
+  await expect(f.participant.quit(f.lease)).rejects.toThrow("held lease");
+  expect(polls).toBe(4);
+});
+
+test("uncertain exit exhausts its deadline and names availability recovery", async () => {
+  const f = fixture(); await f.commit();
+  let sleeps = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.participantsExited = () => "UNKNOWN";
+  f.deps.sleep = async () => { sleeps++; f.advance(); };
+  await expect(f.participant.quit(f.lease)).rejects.toThrow("voicelayer setup --cask-postflight");
+  expect(sleeps).toBe(3);
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+});
+
+test("empty ps while the pid exists is unavailable identity, never gone", async () => {
+  const { installerProcessIdentity } = await import("../update-gate-installer-participant");
+  const sample = () => ({ exitCode: 1, stdout: "" });
+  expect(() => installerProcessIdentity(101, { sample, exists: () => true })).toThrow("identity unavailable");
+  expect(installerProcessIdentity(101, { sample, exists: () => false })).toBeNull();
+  expect(() => installerProcessIdentity(101, { sample, exists: () => { throw Error("EPERM"); } })).toThrow("EPERM");
+});
+
+test.each(["reuse", "competitor"])("%s refuses immediately even during uncertain teardown", async fault => {
+  const { observeInstallerExit } = await import("../update-gate-installer-participant");
+  const f = fixture(); await f.commit();
+  const proof = { identities: f.identities, native: "native-birth", daemon: "daemon-birth" };
+  let sleeps = 0;
+  f.deps.request = async () => ({ kind: "UNKNOWN" });
+  f.deps.sleep = async () => { sleeps++; };
+  f.deps.participantsExited = () => observeInstallerExit(proof, {
+    identity: pid => {
+      if (pid === 101) throw Error("identity unavailable");
+      return fault === "reuse" ? "birth /usr/bin/other" : proof.daemon;
+    },
+    table: () => "999 /Applications/VoiceBar.app/Contents/MacOS/VoiceBar\n",
+  });
+  await expect(f.participant.quit(f.lease)).rejects.toThrow("PID reused or competing VoiceBar");
+  expect(sleeps).toBe(0);
 });
 
 test("stale receipt never pins identities for a later fresh drain", async () => {
@@ -430,4 +516,44 @@ test("R2 participant COMMIT readback retries a 700ms holder without a post-sampl
   });
   expect(result.kind).toBe("APPLIED");
   expect(existsSync(f.gate + ".lock")).toBe(false);
+});
+
+test.each(["new", "old-native", "old-daemon", "old-birth", "wrong-bundle", "dead", "stale"])("G5 successor proof: %s", async fault => {
+  const f = fixture(); await f.commit();
+  const successor = f.participant.successor!();
+  const identities = { native: { pid: 201, incarnation: crypto.randomUUID() }, daemon: { pid: 202, incarnation: crypto.randomUUID() } };
+  if (fault === "old-native") identities.native.incarnation = f.identities.native.incarnation;
+  if (fault === "old-daemon") identities.daemon.incarnation = f.identities.daemon.incarnation;
+  if (fault === "old-birth") { identities.native.pid = 101; identities.native.incarnation = crypto.randomUUID(); }
+  f.reply({ kind: "ACKNOWLEDGED", native: f.ack, daemon: f.ack, identities });
+  f.deps.processParent = () => identities.native.pid;
+  f.deps.processIdentity = pid => fault === "dead" ? null : pid === identities.native.pid
+    ? `${fault === "old-birth" ? "birth" : "Tue Nov  3 15:54:30 2026"} /${fault === "wrong-bundle" ? "tmp/Copy.app" : "Applications/VoiceBar.app"}/Contents/MacOS/VoiceBar` : "birth /opt/homebrew/bin/bun";
+  if (fault === "stale") { const request = f.deps.request; f.deps.request = async (action, lease) => { const reply = await request(action, lease); f.advance(); return reply; }; }
+  if (fault === "new") {
+    expect((await successor.refresh(f.lease)).ready).toBe(true);
+    expect(successor.verify(JSON.parse(readFileSync(f.gate, "utf8")))).toBe(true);
+    f.advance(); expect(successor.verify(JSON.parse(readFileSync(f.gate, "utf8")))).toBe(false);
+  } else {
+    await expect(successor.refresh(f.lease)).rejects.toThrow("UNKNOWN");
+    expect(successor.verify(JSON.parse(readFileSync(f.gate, "utf8")))).toBe(false);
+  }
+});
+
+test("G5 completion samples identities before publication and never after OPEN", async () => {
+  const f = fixture(); await f.commit();
+  const successor = f.participant.successor!();
+  const identities = { native: { pid: 201, incarnation: crypto.randomUUID() }, daemon: { pid: 202, incarnation: crypto.randomUUID() } };
+  f.reply({ kind: "ACKNOWLEDGED", native: f.ack, daemon: f.ack, identities });
+  f.deps.processParent = () => 201;
+  f.deps.processIdentity = pid => {
+    if (JSON.parse(readFileSync(f.gate, "utf8")).kind === "OPEN") throw Error("post-COMPLETE identity sample forbidden");
+    expect(existsSync(f.gate + ".lock")).toBe(false);
+    return "Tue Nov  3 15:54:30 2026 " + (pid === 201 ? "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar" : "/opt/homebrew/bin/bun");
+  };
+  await successor.refresh(f.lease);
+  const result = await successor.withCompletionProof!(() => updateVoiceGate({ kind: "COMPLETE", lease: f.lease,
+    installerExitCode: 0, installedSha: f.lease.targetSha, participantsVerified: true }, successor.verify));
+  expect(result.kind).toBe("APPLIED");
+  expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
 });

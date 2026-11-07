@@ -1,0 +1,23 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "EveryEndedTakeRetained",
+  "status": "EXPECTED_FAIL",
+  "generated": 4836,
+  "distinct": 2023,
+  "trace": [
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"silence\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  wall |-> 2,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 3,\n  wall |-> 3,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 4,\n  wall |-> 4,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 5,\n  wall |-> 5,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 6,\n  wall |-> 6,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 7,\n  wall |-> 7,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 8,\n  wall |-> 8,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 9,\n  wall |-> 9,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 10,\n  wall |-> 10,\n  event |-> \"tick\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 10,\n  wall |-> 10,\n  event |-> \"end\",\n  pcm |-> <<FALSE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
+  ]
+}

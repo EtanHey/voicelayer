@@ -32,6 +32,17 @@ final class SynthesizedKeyEventsTests: XCTestCase {
         }
     }
 
+    func testOwnedBatchRechecksWindowAndElementAfterBuildingEvenWhenAppIsUnchanged() throws {
+        var matches = true, posted = 0
+        let events = try XCTUnwrap(SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: list), source: nil))
+        let result = SynthesizedKeyEvents.postGuardedBatch(
+            expectedPID: 51515, buildEvents: { matches = false; return events },
+            frontmostPID: { 51515 }, matchesCapturedTarget: { matches },
+            postEvent: { _ in posted += 1 })
+        XCTAssertEqual(result, .focusChanged)
+        XCTAssertEqual(posted, 0)
+    }
+
     func testGuardedBatchPostsOnceWithoutPerEventAbortIfFocusChangesInsidePost() throws {
         let events = try XCTUnwrap(SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: list), source: nil))
         var front: pid_t? = 51515

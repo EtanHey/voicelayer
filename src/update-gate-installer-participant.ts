@@ -16,6 +16,8 @@ const receiptSchema = z.strictObject({ kind: z.literal("ACKNOWLEDGED"), native: 
 type Receipt = z.infer<typeof receiptSchema>;
 type Identities = Receipt["identities"];
 type ProcessProof = { identities: Identities; native: string; daemon: string };
+export class UnsafeSuccessorError extends Error {}
+export type InstallerExitObservation = boolean | "UNKNOWN" | "UNSAFE";
 export type InstallerEvidence = { phase: string; ready: boolean; native?: Receipt["native"]; daemon?: Receipt["daemon"] };
 export interface InstallerParticipant {
   refresh(lease: UpdateGateLease): Promise<InstallerEvidence>;
@@ -23,13 +25,17 @@ export interface InstallerParticipant {
   /** Process-table reads bracket a locked operation; verify itself is memory-only. */
   withProcessProof?<T>(read: () => T): T;
   withAcquisitionProof?<T>(read: () => T): Promise<T>;
+  /** COMPLETE is durable on return; never re-read a gate the next updater may own. */
+  withCompletionProof?<T>(read: () => T): Promise<T>;
   quit(lease: UpdateGateLease): Promise<void>;
+  /** New receipt cache, fenced against BOTH retired participant incarnations. */
+  successor?(): InstallerParticipant;
 }
 export interface InstallerParticipantDependencies {
   request(action: "drain" | "quit", lease: UpdateGateLease): Promise<unknown>;
   processIdentity(pid: number): string | null;
   processParent(pid: number): number | null;
-  participantsExited(proof: ProcessProof): boolean | "UNKNOWN";
+  participantsExited(proof: ProcessProof): InstallerExitObservation;
   now(): number;
   sleep(ms?: number): Promise<void>;
 }
@@ -118,16 +124,23 @@ export function requestInstallerControl(action: "drain" | "quit", lease: UpdateG
   });
 }
 
-/** Birth plus executable name fence PID reuse. Unknown process-table reads refuse. */
-export function installerProcessIdentity(pid: number): string | null {
-  const result = Bun.spawnSync(["/bin/ps", "-p", String(pid), "-o", "lstart=", "-o", "comm="], { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 1000 });
-  const identity = result.stdout.toString().trim();
-  if (result.exitCode === 0 && identity) return identity;
-  if (result.exitCode === 1 && !identity) {
-    try { process.kill(pid, 0); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ESRCH") return null;
+const identityProbes = {
+  sample: (pid: number) => Bun.spawnSync(["/bin/ps", "-p", String(pid), "-o", "lstart=", "-o", "comm="], { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 1000 }),
+  exists: (pid: number) => {
+    try { process.kill(pid, 0); return true; } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+      throw error;
     }
-  }
+  },
+};
+/** Birth plus executable name fence PID reuse. Missing identity never proves exit. */
+export function installerProcessIdentity(pid: number, probes: {
+  sample(pid: number): { exitCode: number; stdout: { toString(): string } };
+  exists(pid: number): boolean;
+} = identityProbes): string | null {
+  const result = probes.sample(pid), identity = result.stdout.toString().trim();
+  if (result.exitCode === 0 && identity) return identity;
+  if (result.exitCode === 1 && !identity && !probes.exists(pid)) return null;
   throw Error("UNKNOWN: participant process identity unavailable");
 }
 function processParent(pid: number): number | null {
@@ -141,26 +154,37 @@ function readProcessTable(): string {
   if (result.exitCode !== 0) throw Error("UNKNOWN: process table unavailable");
   return result.stdout.toString();
 }
-export function observeInstallerExit(proof: ProcessProof, probes = { identity: installerProcessIdentity, table: readProcessTable }): boolean | "UNKNOWN" {
+export function observeInstallerExit(proof: ProcessProof, probes = { identity: installerProcessIdentity, table: readProcessTable }): InstallerExitObservation {
+  const observe = (pid: number, pinned: string): InstallerExitObservation => {
+    let current: string | null;
+    try { current = probes.identity(pid); } catch { return "UNKNOWN"; }
+    if (current === null) return true;
+    if (current === pinned) return false;
+    // Darwin can retain lstart while comm becomes <defunct> or (basename)
+    // during teardown/unreaped exit. A different birth or executable is unsafe.
+    const zombie = /^(.{24})\s+(?:<defunct>|\(([^()]+)\))$/.exec(current);
+    if (zombie && pinned.slice(0, 24) === zombie[1] &&
+      (!zombie[2] || pinned.replace(/^.{24}\s+/, "").split("/").at(-1) === zombie[2])) return false;
+    return "UNSAFE";
+  };
+  const native = observe(proof.identities.native.pid, proof.native);
+  const daemon = observe(proof.identities.daemon.pid, proof.daemon);
+  if (native === "UNSAFE" || daemon === "UNSAFE") return "UNSAFE";
   try {
-    const native = probes.identity(proof.identities.native.pid), daemon = probes.identity(proof.identities.daemon.pid);
-    const stillExiting = (current: string | null, pinned: string) => {
-      // macOS preserves lstart but replaces comm with <defunct> until reaping.
-      const zombie = current?.match(/^(.{24})\s+<defunct>$/);
-      return !!zombie && pinned.slice(0, 24) === zombie[1];
-    };
-    if ((native !== null && native !== proof.native && !stillExiting(native, proof.native)) ||
-      (daemon !== null && daemon !== proof.daemon && !stillExiting(daemon, proof.daemon))) return "UNKNOWN";
-    if (native !== null || daemon !== null) return false;
-    // A new/competing native owner is never evidence that replacement is safe.
+    // Check competitors even while one pinned process is still exiting.
     const rows = probes.table().split("\n").map(line => line.trim()).filter(Boolean);
     if (!rows.length) return "UNKNOWN";
     for (const row of rows) {
       const parsed = /^([1-9]\d*)\s+(.+)$/.exec(row);
       if (!parsed || !Number.isSafeInteger(Number(parsed[1]))) return "UNKNOWN";
-      if (/(?:^|\/)VoiceBar$/.test(parsed[2]!)) return "UNKNOWN";
+      if (Number(parsed[1]) !== proof.identities.native.pid && /(?:^|\/)VoiceBar$/.test(parsed[2]!)) return "UNSAFE";
+      // A pinned PID reappearing between identity and table samples needs a
+      // fresh identity sample; table absence alone never resolves uncertainty.
+      if (Number(parsed[1]) === proof.identities.native.pid && native === true) return "UNKNOWN";
+      if (Number(parsed[1]) === proof.identities.daemon.pid && daemon === true) return "UNKNOWN";
     }
-    return true;
+    if (native === "UNKNOWN" || daemon === "UNKNOWN") return "UNKNOWN";
+    return native === true && daemon === true;
   } catch { return "UNKNOWN"; }
 }
 
@@ -168,12 +192,22 @@ export function observeInstallerExit(proof: ProcessProof, probes = { identity: i
 export function createInstallerParticipant(deps: InstallerParticipantDependencies = {
   request: requestInstallerControl, processIdentity: installerProcessIdentity, processParent, participantsExited: observeInstallerExit,
   now: () => performance.now(), sleep: (ms = 100) => Bun.sleep(ms),
-}): InstallerParticipant {
+}, retired?: ProcessProof | null): InstallerParticipant {
   let evidence: Receipt | undefined, observedAt = 0, pinned: ProcessProof | undefined;
   const fresh = () => deps.now() - observedAt >= 0 && deps.now() - observedAt <= 1000;
   const processProof = (identities: Identities): ProcessProof => {
-    const native = deps.processIdentity(identities.native.pid), daemon = deps.processIdentity(identities.daemon.pid);
+    if (retired && (["native", "daemon"] as const).some(role =>
+      identities[role].incarnation === retired.identities[role].incarnation))
+      throw new UnsafeSuccessorError("UNKNOWN: successor reused retired participant identity");
+    const native = deps.processIdentity(identities.native.pid);
     const nativeExecutable = native?.replace(/^.{24}\s+/, ""); // Strip ps lstart, retaining the full comm.
+    if (retired !== undefined && native && nativeExecutable !== "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
+      throw new UnsafeSuccessorError("UNKNOWN: successor is not the installed VoiceBar");
+    if (retired && identities.native.pid === retired.identities.native.pid && native === retired.native)
+      throw new UnsafeSuccessorError("UNKNOWN: successor reused retired participant identity");
+    const daemon = deps.processIdentity(identities.daemon.pid);
+    if (retired && identities.daemon.pid === retired.identities.daemon.pid && daemon === retired.daemon)
+      throw new UnsafeSuccessorError("UNKNOWN: successor reused retired participant identity");
     if (!native || !daemon || !/(?:^|\/)VoiceBar$/.test(nativeExecutable ?? "") || /\s<defunct>$/.test(daemon) ||
       deps.processParent(identities.daemon.pid) !== identities.native.pid)
       throw Error("UNKNOWN: participant process identity or role unavailable");
@@ -214,6 +248,16 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
   };
   return {
     verify, withProcessProof, withAcquisitionProof,
+    async withCompletionProof(read) {
+      try {
+        sampleProcessProof();
+        return await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
+      } catch (error) { evidence = undefined; throw error; }
+    },
+    successor() {
+      if (!pinned) throw Error("UNKNOWN: retired participants unavailable");
+      return createInstallerParticipant(deps, pinned);
+    },
     async refresh(lease) {
       evidence = undefined; // A failed/new request invalidates the preceding receipt.
       const requestedAt = deps.now();
@@ -224,7 +268,8 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
       if (!parsed.success || !sameLease(parsed.data.native.lease, lease) || !sameLease(parsed.data.daemon.lease, lease) ||
         parsed.data.identities.native.pid === parsed.data.identities.daemon.pid)
         throw Error("UNKNOWN: malformed or mismatched participant acknowledgements");
-      if (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000) throw Error("UNKNOWN: stale participant round trip");
+      if (retired === undefined && (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000))
+        throw Error("UNKNOWN: stale participant round trip");
       const proof = processProof(parsed.data.identities);
       if (deps.now() - requestedAt < 0 || deps.now() - requestedAt > 1000) throw Error("UNKNOWN: stale participant round trip");
       if (pinned && JSON.stringify(proof) !== JSON.stringify(pinned)) throw Error("UNKNOWN: participant identity changed during drain");
@@ -244,11 +289,14 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
       } catch (error) { evidence = undefined; throw error; }
       if (!authorized || !pinned) throw Error("UNKNOWN: controlled quit not authorized");
       evidence = undefined;
+      const refusal = (reason: string) => Error(`UNKNOWN: ${reason}; gate retained closed for recovery. VoiceBar may be stopped.\n` +
+        "After this updater exits, restore availability with: voicelayer setup --cask-postflight\n" +
+        "This restarts the canonical bundle but does not reopen the COMMITTED gate; retain all gate/controller/recovery evidence.");
       let reply: unknown;
       try { reply = await deps.request("quit", lease); }
       catch (error) {
         if (!(error && typeof error === "object" && "issued" in error && error.issued === true && "replyLost" in error && error.replyLost === true))
-          throw Error("UNKNOWN: controlled quit delivery or reply invalid; gate retained closed");
+          throw refusal("controlled quit delivery or reply invalid");
         console.error("[update-gate] Controlled-quit reply lost; verifying participant exit and held lease.");
       }
       if (unknownSchema.safeParse(reply).success) {
@@ -261,20 +309,23 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
         const parsed = receiptSchema.safeParse(reply);
         if (!parsed.success || !sameLease(parsed.data.native.lease, lease) || !sameLease(parsed.data.daemon.lease, lease) ||
           JSON.stringify(parsed.data.identities) !== JSON.stringify(pinned.identities))
-          throw Error("UNKNOWN: controlled quit refused or mismatched; gate retained closed");
+          throw refusal("controlled quit refused or mismatched");
       }
       const deadline = deps.now() + 5000;
       for (;;) {
         // Both expensive process samples run outside the mkdir lock. Only the
         // lease/diagnostic/ledger snapshot is taken inside it.
         const before = deps.participantsExited(pinned);
-        const held = await retryAcquire(() => acknowledgeVoiceDrain(lease,
-          state => state.kind === "COMMITTED", { throwOnContention: true }), Math.min(deps.now() + 250, deadline));
+        let held: ReturnType<typeof acknowledgeVoiceDrain>;
+        try {
+          held = await retryAcquire(() => acknowledgeVoiceDrain(lease,
+            state => state.kind === "COMMITTED", { throwOnContention: true }), Math.min(deps.now() + 250, deadline));
+        } catch { throw refusal("held lease could not be verified under the lock"); }
         const after = deps.participantsExited(pinned);
-        if (!held || before === "UNKNOWN" || after === "UNKNOWN")
-          throw Error("UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery");
+        if (!held) throw refusal("held lease unverifiable");
+        if (before === "UNSAFE" || after === "UNSAFE") throw refusal("PID reused or competing VoiceBar observed");
         if (before === true && after === true) return;
-        if (deps.now() >= deadline) throw Error("UNKNOWN: participants did not exit; gate retained closed for recovery");
+        if (deps.now() >= deadline) throw refusal("participants did not verifiably exit before the deadline");
         await deps.sleep();
       }
     },

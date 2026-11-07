@@ -136,6 +136,8 @@ export function setRecordingState(state: RecordingState): void {
   notifyState(state);
 }
 
+export function hasConversationCaptureFence(): boolean { return captureFence !== undefined; }
+
 export function getRecordingState(): RecordingState {
   if (captureFence && recordingState === "idle") return "transcribing";
   return recordingState;

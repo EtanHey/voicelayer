@@ -495,7 +495,7 @@ final class TeleprompterScrubTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterView.swift"))
         XCTAssertTrue(source.contains(".onChange(of: playbackEpoch) { _, _ in\n                restart()\n                scrollToCurrentWord(with: proxy, animated: false)"))
-        XCTAssertTrue(source.contains("currentIndex = TeleprompterPlaybackPolicy.restartWordIndex("))
+        XCTAssertTrue(source.contains("cursor.land(\n            on: TeleprompterPlaybackPolicy.restartWordIndex("))
         XCTAssertTrue(source.contains("TeleprompterScrollPolicy.position(for: currentIndex)"))
     }
 

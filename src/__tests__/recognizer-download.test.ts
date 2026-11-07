@@ -1,12 +1,13 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, existsSync, readdirSync } from "fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import { testTmp } from "./setup/test-tmp";
 import { downloadRecognizer, cancelRecognizerDownload, type DownloadDeps } from "../recognizer-download";
 import { configureRecognizerBusyProbe, readRecognizerStatus, noteRecognizerEngine, beginRecognizerRequestAfterMaintenance, beginRecognizerRequest, finishRecognizerRequest } from "../recognizer-state";
 import { parseCommand } from "../socket-protocol";
-const root = testTmp("downloads"), keys = ["QA_VOICE_WHISPER_MODEL", "VOICELAYER_STATE_DIR", "QA_VOICE_STT_BACKEND", "VOICELAYER_PARAKEET_MODEL", "VOICELAYER_PARAKEET_PYTHON"] as const;
+import { getCacheDir } from "../paths";
+const root = testTmp("downloads"), keys = ["QA_VOICE_WHISPER_MODEL", "VOICELAYER_STATE_DIR", "QA_VOICE_STT_BACKEND", "VOICELAYER_PARAKEET_MODEL", "VOICELAYER_PARAKEET_PYTHON", "XDG_CACHE_HOME"] as const;
 let saved: (string | undefined)[];
 let prior: ReturnType<typeof readRecognizerStatus>;
 const bytes = Buffer.from("synthetic weights"), file = { name: "fixture.bin", bytes: bytes.length,
@@ -18,6 +19,7 @@ beforeEach(() => {
   prior = readRecognizerStatus();
   saved = keys.map(k => process.env[k]); mkdirSync(root, { recursive: true });
   process.env.QA_VOICE_WHISPER_MODEL = join(root, "model.bin"); process.env.VOICELAYER_STATE_DIR = join(root, "state"); delete process.env.QA_VOICE_STT_BACKEND;
+  process.env.XDG_CACHE_HOME = join(root, "cache");
   configureRecognizerBusyProbe(() => null); noteRecognizerEngine("whisper", { phase: "sleeping", error: null });
 });
 afterEach(() => { keys.forEach((k,i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); configureRecognizerBusyProbe(() => null);
@@ -62,6 +64,22 @@ test("disk refusal happens before any transfer", async () => {
   const d = deps(); d.freeBytes = () => 0; d.transfer = async () => { throw new Error("must-not-run"); };
   expect(await downloadRecognizer("whisper", d)).toMatchObject({ outcome: "reject", reason: "insufficient-disk-space" });
 });
+test("zero-byte Whisper placeholder is replaced by verified weights", async () => {
+  writeFileSync(process.env.QA_VOICE_WHISPER_MODEL!, "");
+  expect((await downloadRecognizer("whisper", deps())).outcome).toBe("accept");
+  expect(readRecognizerStatus().engines.whisper).toMatchObject({ assets_present: true, disk_bytes: bytes.length });
+});
+test("runtime reserve checks the cache volume before transfer or setup", async () => {
+  process.env.VOICELAYER_PARAKEET_MODEL = join(root, "parakeet");
+  delete process.env.VOICELAYER_PARAKEET_PYTHON;
+  noteRecognizerEngine("parakeet", { phase: "sleeping", error: null });
+  const checked: string[] = [], d = deps();
+  d.freeBytes = path => { checked.push(path); return path === getCacheDir() ? 0 : 20 * 1024 ** 3; };
+  d.transfer = async () => { throw new Error("must-not-transfer"); };
+  d.runtime = async () => { throw new Error("must-not-set-up"); };
+  expect(await downloadRecognizer("parakeet", d)).toMatchObject({ outcome: "reject", reason: "insufficient-disk-space" });
+  expect(checked).toEqual([root, getCacheDir()]);
+});
 test("download starts and publishes during recording or transcription", async () => {
   configureRecognizerBusyProbe(() => "capture-active");
   expect((await downloadRecognizer("whisper", deps())).outcome).toBe("accept");
@@ -80,20 +98,44 @@ test("Parakeet runtime failure publishes no model tree; retry records owned Pyth
   expect(existsSync(model)).toBe(false);
   d.runtime = async () => {
     const python = join(root, "owned-python"); writeFileSync(python, "fixture");
+    mkdirSync(process.env.VOICELAYER_STATE_DIR!, { recursive: true });
     writeFileSync(join(process.env.VOICELAYER_STATE_DIR!, "parakeet-runtime.json"), JSON.stringify({ version: 1, python }));
   };
   expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
   expect(readRecognizerStatus().engines.parakeet.assets_present).toBe(true);
 });
 
-test("runtime-only setup verifies existing weights read-only instead of downloading copies", async () => {
+test("Parakeet re-download repairs only runtime and leaves existing weight bytes and identity untouched", async () => {
   const model = join(root, "parakeet"); mkdirSync(model); process.env.VOICELAYER_PARAKEET_MODEL = model; delete process.env.VOICELAYER_PARAKEET_PYTHON;
   noteRecognizerEngine("parakeet", { phase: "sleeping", error: null }); const d = deps();
   d.files = () => ["config.json", "model.safetensors", "tokenizer.model"].map(name => ({ ...file, name }));
   for (const f of d.files("parakeet")) writeFileSync(join(model, f.name), bytes);
+  const before = d.files("parakeet").map(f => ({ path: join(model, f.name), info: statSync(join(model, f.name)) }));
   d.transfer = async () => { throw new Error("must-not-copy-weights"); }; d.runtime = async () => { const python = join(root, "python"); writeFileSync(python, "fixture"); process.env.VOICELAYER_PARAKEET_PYTHON = python; };
   expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
+  // A second explicit Set up reaches validation even after metadata says present.
+  expect(readRecognizerStatus().engines.parakeet.assets_present).toBe(true);
+  expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
+  for (const { path, info } of before) {
+    expect(readFileSync(path)).toEqual(bytes);
+    expect(statSync(path).ino).toBe(info.ino);
+    expect(statSync(path).mtimeMs).toBe(info.mtimeMs);
+  }
   expect(readdirSync(model).sort()).toEqual(["config.json", "model.safetensors", "tokenizer.model"]);
+});
+test("Set up reaches runtime repair after validation failed despite present model metadata", async () => {
+  const model = join(root, "parakeet"); mkdirSync(model); process.env.VOICELAYER_PARAKEET_MODEL = model;
+  const python = join(root, "owned-python"); writeFileSync(python, "invalid-runtime-fixture");
+  process.env.VOICELAYER_PARAKEET_PYTHON = python;
+  const d = deps(); d.files = () => ["config.json", "model.safetensors", "tokenizer.model"].map(name => ({ ...file, name }));
+  for (const f of d.files("parakeet")) writeFileSync(join(model, f.name), bytes);
+  noteRecognizerEngine("parakeet", { phase: "error", available: false, error: "parakeet-startup-failed" });
+  expect(readRecognizerStatus().engines.parakeet.assets_present).toBe(true);
+  let repaired = false;
+  d.transfer = async () => { throw new Error("must-not-download-again"); };
+  d.runtime = async () => { repaired = true; };
+  expect((await downloadRecognizer("parakeet", d)).outcome).toBe("accept");
+  expect(repaired).toBe(true);
 });
 
 test("unmocked downloader is denied before any test mutation or network", async () => {
@@ -128,7 +170,7 @@ for (const pendingStage of ["transfer", "runtime"] as const) test(`admitted requ
     const { deleteRecognizer } = await import("../recognizer-management");
     const { selectRecognizer, setRecognizerResidency } = await import("../recognizer-controller");
     expect(await downloadRecognizer("parakeet", d)).toMatchObject({ outcome: "reject", reason: "download-active" });
-    expect(deleteRecognizer("parakeet")).toMatchObject({ outcome: "reject", reason: "download-active" });
+    expect(await deleteRecognizer("parakeet")).toMatchObject({ outcome: "reject", reason: "download-active" });
     expect(await setRecognizerResidency("parakeet", "load")).toMatchObject({ outcome: "reject", reason: "download-active" });
     expect(await selectRecognizer("parakeet")).toMatchObject({ outcome: "reject", reason: "download-active" });
     // A different engine retains independent download ownership and cancellation.
@@ -163,4 +205,16 @@ test("publication succeeds while an admitted request remains active", async () =
     expect(existsSync(process.env.QA_VOICE_WHISPER_MODEL!)).toBe(true);
     expect(readRecognizerStatus().switch_refusal_reason).toBe("request-active");
   } finally { if (admitted) finishRecognizerRequest(); }
+});
+test("Whisper transfer never owns the maintenance promise an admitted dictation joins (S4)", async () => {
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const d = deps(), transfer = d.transfer;
+  d.transfer = async (...args) => { entered.resolve(); await release.promise; await transfer(...args); };
+  const downloading = downloadRecognizer("whisper", d); await entered.promise;
+  const abort = new AbortController(), timeout = setTimeout(() => abort.abort(), 500);
+  try {
+    await beginRecognizerRequestAfterMaintenance(abort.signal);
+    try { expect(readRecognizerStatus().engines.whisper.download.state).toBe("downloading"); }
+    finally { finishRecognizerRequest(); }
+  } finally { clearTimeout(timeout); release.resolve(); await downloading; }
 });

@@ -262,7 +262,7 @@ final class TeleprompterContentModelTests: XCTestCase {
 
         XCTAssertTrue(teleprompterSource.contains("public let playbackElapsedMilliseconds: () -> Int"))
         XCTAssertTrue(teleprompterSource.contains("elapsedMilliseconds: playbackElapsedMilliseconds()"))
-        XCTAssertTrue(teleprompterSource.contains("_currentIndex = State(initialValue: initialWordIndex)"))
+        XCTAssertTrue(teleprompterSource.contains("wordID: initialWordIndex, at: playbackElapsedMilliseconds()"))
         XCTAssertTrue(barViewSource.contains("playbackElapsedMilliseconds: state.playbackElapsedMilliseconds"))
     }
 

@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Read-only archive summary plus this app process's observed History requests.
-/// It intentionally offers no retry, playback, paste or raw-log export action.
+/// Read-only recording facts plus a compact Log of real attempts (archive take, this process's retry
+/// requests, or the attempt reader's rows). It offers no retry, playback or paste action; the only
+/// actions are copying the Recording ID and copying the Log with its provenance.
 public struct SettingsHistoryDiagnosticsPanel: View {
     public let snapshot: SettingsHistoryDiagnostics?
     public let runs: [SettingsHistoryRunLog.Run]
@@ -13,9 +14,10 @@ public struct SettingsHistoryDiagnosticsPanel: View {
     public let selectedAttemptID: String?
     public let shownAttemptID: String?
     private let onSelectAttempt: ((String) -> Void)?
+    private let onExpandedChange: ((Bool) -> Void)?
     @State private var disclosure: SettingsHistoryDiagnosticsDisclosure
 
-    public init(snapshot: SettingsHistoryDiagnostics?, runs: [SettingsHistoryRunLog.Run], omittedCount: Int = 0, initialDetailsExpanded: Bool = false, initiallyExpanded: Bool? = nil, attemptHistory: SettingsHistoryAttemptHistory? = nil, selectedAttemptID: String? = nil, shownAttemptID: String? = nil, onSelectAttempt: ((String) -> Void)? = nil, recordingID: String? = nil, recordingEntry: SettingsHistoryEntry? = nil) {
+    public init(snapshot: SettingsHistoryDiagnostics?, runs: [SettingsHistoryRunLog.Run], omittedCount: Int = 0, initialDetailsExpanded: Bool = false, initiallyExpanded: Bool? = nil, onExpandedChange: ((Bool) -> Void)? = nil, attemptHistory: SettingsHistoryAttemptHistory? = nil, selectedAttemptID: String? = nil, shownAttemptID: String? = nil, onSelectAttempt: ((String) -> Void)? = nil, recordingID: String? = nil, recordingEntry: SettingsHistoryEntry? = nil) {
         self.snapshot = snapshot
         self.runs = runs
         self.omittedCount = omittedCount
@@ -26,81 +28,29 @@ public struct SettingsHistoryDiagnosticsPanel: View {
         self.selectedAttemptID = selectedAttemptID
         self.shownAttemptID = shownAttemptID
         self.onSelectAttempt = onSelectAttempt
-        let copy = SettingsHistoryDiagnosticsCopy(snapshot: snapshot, runs: runs, omittedCount: omittedCount, attemptHistory: attemptHistory, recordingID: recordingID)
+        self.onExpandedChange = onExpandedChange
+        let copy = SettingsHistoryDiagnosticsCopy(snapshot: snapshot, runs: runs, omittedCount: omittedCount, attemptHistory: attemptHistory,
+                                                 recordingID: recordingID, recordingEntry: recordingEntry)
         var initial = SettingsHistoryDiagnosticsDisclosure(selection: snapshot?.selection ?? attemptHistory?.recordingPath, defaultExpanded: copy.defaultExpanded)
         initial.expanded = initiallyExpanded ?? (initialDetailsExpanded || copy.defaultExpanded)
-        initial.detailsExpanded = initialDetailsExpanded
         _disclosure = State(initialValue: initial)
     }
 
     public var body: some View {
         let copy = SettingsHistoryDiagnosticsCopy(snapshot: snapshot, runs: runs, omittedCount: omittedCount,
-                                                 attemptHistory: attemptHistory, recordingID: recordingID)
+                                                 attemptHistory: attemptHistory, recordingID: recordingID, recordingEntry: recordingEntry)
         VStack(alignment: .leading, spacing: 10) {
-            SettingsDisclosureHeader("Recording details", isExpanded: $disclosure.expanded,
-                                     animation: .timingCurve(0.23, 1, 0.32, 1, duration: 0.23)) {
-                Label("Recording details", systemImage: "list.bullet.rectangle").font(.callout.weight(.semibold))
-            }
+            header
             if disclosure.expanded {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     recordingFacts
                     if !copy.summary.isEmpty { Text(copy.summary).font(.callout).fixedSize(horizontal: false, vertical: true) }
-                    if let update = copy.latestUpdate {
-                        Text(update).font(.callout).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if !copy.attempts.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(copy.attempts.enumerated()), id: \.element.id) { index, attempt in
-                                Button { onSelectAttempt?(attempt.id) } label: {
-                                    ViewThatFits(in: .horizontal) {
-                                        HStack(spacing: 10) {
-                                            attemptIdentity(attempt, index: index)
-                                            executionDetails(attempt).fixedSize()
-                                            Spacer(minLength: 4)
-                                            shownBadge(attempt)
-                                        }
-                                        VStack(alignment: .leading, spacing: 5) {
-                                            HStack(spacing: 8) {
-                                                attemptIdentity(attempt, index: index)
-                                                Spacer(minLength: 4)
-                                                shownBadge(attempt)
-                                            }
-                                            executionDetails(attempt).padding(.leading, 22)
-                                        }
-                                    }
-                                    .padding(.horizontal, 8).padding(.vertical, 7)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(selectedAttemptID == attempt.id ? Color.accentColor.opacity(0.1) : Color.clear,
-                                                in: RoundedRectangle(cornerRadius: 6))
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(onSelectAttempt == nil)
-                                .accessibilityIdentifier("history-attempt-\(attempt.id)")
-                                .accessibilityLabel([SettingsHistoryAttemptRecord.title(at: index), attempt.statusTitle, attempt.localTimestamp(), attempt.failureReason, attempt.executionLabel, attempt.timingLabel].compactMap { $0 }.joined(separator: ", "))
-                                .accessibilityValue(shownAttemptID == attempt.id && attempt.hasSavedText ? "Shown" : (selectedAttemptID == attempt.id ? "Selected" : ""))
-                                .accessibilityAddTraits(selectedAttemptID == attempt.id ? .isSelected : [])
-                            }
-                        }
-                    }
-                    if let notice = copy.olderNotice ?? (snapshot?.languageSetting == nil || recordingEntry?.durationLabel == nil ? SettingsHistoryDiagnosticsCopy.olderDetails : nil) {
+                    if !copy.logLines.isEmpty { log(copy) }
+                    if let notice = copy.notice {
                         Text(notice).font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    SettingsDisclosureRow("Technical details", isExpanded: $disclosure.detailsExpanded, animation: .timingCurve(0.23, 1, 0.32, 1, duration: 0.23)) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ScrollView {
-                                Text(copy.technicalDetails).font(.caption.monospaced()).textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }.frame(maxHeight: 200)
-                            SettingsCopyButton(text: copy.technicalDetails, label: "technical details")
-                            if let entry = recordingEntry {
-                                SettingsCopyButton(text: SettingsDiagnosticSummary.historyMetadata(entry), label: "recording metadata")
-                            }
-                        }.padding(.top, 6)
-                    }.font(.caption)
-                }.padding(.top, 8)
+                }.padding(.top, 4)
                 .transition(.opacity)
             }
         }
@@ -109,8 +59,36 @@ public struct SettingsHistoryDiagnosticsPanel: View {
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
         .accessibilityIdentifier("history-recording-details")
         .onChange(of: expansionOverride) { _, value in if let value { disclosure.expanded = value } }
-        .onChange(of: snapshot?.selection ?? attemptHistory?.recordingPath) { _, key in disclosure.select(key, defaultExpanded: copy.defaultExpanded) }
-        .onChange(of: copy.defaultExpanded) { _, value in disclosure.select(snapshot?.selection ?? attemptHistory?.recordingPath, defaultExpanded: value) }
+        .onChange(of: disclosure.expanded) { _, value in onExpandedChange?(value) }
+        // A remembered open/closed choice (QA-06) outlives the archive read landing; only defaults move.
+        .onChange(of: snapshot?.selection ?? attemptHistory?.recordingPath) { _, key in
+            disclosure.select(key, defaultExpanded: copy.defaultExpanded)
+            if let kept = expansionOverride { disclosure.expanded = kept }
+        }
+        .onChange(of: copy.defaultExpanded) { _, value in
+            disclosure.select(snapshot?.selection ?? attemptHistory?.recordingPath, defaultExpanded: value)
+            if let kept = expansionOverride { disclosure.expanded = kept }
+        }
+    }
+
+    /// The Recording ID lives in the header, beside (never inside) the disclosure button, so copying it
+    /// does not toggle the section. It truncates in the middle before the title ever does.
+    private var header: some View {
+        HStack(alignment: .center, spacing: 6) {
+            SettingsDisclosureHeader("Recording details", isExpanded: $disclosure.expanded,
+                                     animation: .timingCurve(0.23, 1, 0.32, 1, duration: 0.23)) {
+                Label("Recording details", systemImage: "list.bullet.rectangle").font(.callout.weight(.semibold))
+            }
+            if let recordingID, !recordingID.isEmpty {
+                Text(recordingID).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(recordingID)
+                    .accessibilityLabel("Recording ID")
+                    .accessibilityValue(recordingID)
+                SettingsHistoryCopyIconButton(text: recordingID, label: "recording ID")
+            }
+        }
     }
 
     static func legacyRecognitionFacts(_ entry: SettingsHistoryEntry?, hasAttempts: Bool) -> [(String, String)] {
@@ -122,52 +100,168 @@ public struct SettingsHistoryDiagnosticsPanel: View {
     }
 
     @ViewBuilder private var recordingFacts: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if let created = snapshot?.capturedAt ?? recordingEntry?.createdAt {
-                fact("Created", created.formatted(.dateTime.day().month(.abbreviated).year().hour().minute()))
+        let facts = SettingsHistoryDiagnosticsCopy.facts(snapshot: snapshot, entry: recordingEntry,
+                                                        attemptHistory: attemptHistory, selectedAttemptID: selectedAttemptID)
+        let reserved = Self.reservedFactTitles(facts: facts, snapshotLoaded: snapshot != nil,
+                                               hasRecording: recordingEntry != nil || !(recordingID ?? "").isEmpty)
+        if !facts.isEmpty || !reserved.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(facts, id: \.title) { fact in
+                    factRow(fact.title, value: fact.value)
+                        .accessibilityElement(children: .combine)
+                }
+                // Holds the rows the archive read fills in, so the facts do not reflow when it lands.
+                // Invisible and silent: no label or value is shown before the archive says what it is.
+                ForEach(reserved, id: \.self) { title in
+                    factRow(title, value: " ").hidden().accessibilityHidden(true)
+                }
             }
-            // These are stored input_device_name values, never the currently selected microphone.
-            if let mic = snapshot?.inputDeviceName ?? recordingEntry?.inputDeviceLabel { fact("Microphone", mic) }
-            if let duration = recordingEntry?.durationLabel { fact("Audio length", duration) }
-            ForEach(Array(Self.legacyRecognitionFacts(recordingEntry, hasAttempts: !(attemptHistory?.attempts.isEmpty ?? true)).enumerated()), id: \.offset) { _, item in
-                fact(item.0, item.1)
-            }
-            if let language = snapshot?.languageSetting { fact("Language setting", language) }
-        }.padding(.bottom, 4)
+        }
     }
-    private func fact(_ title: String, _ value: String) -> some View {
+
+    private func factRow(_ title: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(title).font(.caption).foregroundStyle(.secondary).frame(width: 100, alignment: .leading)
+            Text(title).font(.caption).foregroundStyle(.secondary).frame(width: 110, alignment: .leading)
             Text(value).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
     }
-    private func attemptIdentity(_ attempt: SettingsHistoryAttemptRecord, index: Int) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: attempt.statusSymbol).frame(width: 14)
-                .foregroundStyle(attempt.status == .failed || attempt.status == .timedOut ? Color.orange : Color.secondary)
-            Text(SettingsHistoryAttemptRecord.title(at: index)).font(.callout.weight(.medium)).fixedSize()
-            if let time = attempt.localTimestamp() { Text(time).font(.caption).foregroundStyle(.secondary).fixedSize() }
-            Text(attempt.failureReason?.isEmpty == false ? attempt.failureReason! : attempt.statusTitle)
-                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+
+    /// Language setting and (without reader attempts) Engine come only from the archive read. Until it
+    /// lands, their space is held invisibly; once it lands nothing is reserved, so a recording whose
+    /// archive lacks them never shows a placeholder or a guessed value.
+    static func reservedFactTitles(facts: [SettingsHistoryFact], snapshotLoaded: Bool, hasRecording: Bool) -> [String] {
+        guard !snapshotLoaded, hasRecording else { return [] }
+        let shown = Set(facts.map(\.title))
+        return ["Language setting", "Engine"].filter { !shown.contains($0) }
+    }
+
+    /// One quiet row per real event: time, outcome, and that row's own processing time.
+    private func log(_ copy: SettingsHistoryDiagnosticsCopy) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("Log").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                SettingsHistoryCopyIconButton(text: copy.logCopyText, label: "log")
+            }
+            ForEach(copy.logLines) { line in
+                if let attemptID = line.attemptID {
+                    Button { onSelectAttempt?(attemptID) } label: {
+                        logRow(line)
+                            .background(selectedAttemptID == attemptID ? Color.accentColor.opacity(0.1) : Color.clear,
+                                        in: RoundedRectangle(cornerRadius: 6))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(onSelectAttempt == nil)
+                    .accessibilityIdentifier("history-attempt-\(attemptID)")
+                    .accessibilityLabel(line.accessibilityText)
+                    .accessibilityValue(isShown(line) ? "Shown" : (selectedAttemptID == attemptID ? "Selected" : ""))
+                    .accessibilityAddTraits(selectedAttemptID == attemptID ? .isSelected : [])
+                } else {
+                    logRow(line)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(line.accessibilityText)
+                        .accessibilityIdentifier("history-log-\(line.id)")
+                }
+            }
         }
     }
-    private func executionDetails(_ attempt: SettingsHistoryAttemptRecord) -> some View {
+
+    /// One line per attempt whenever the whole line fits. In a narrow pane the same text folds into two
+    /// lines (title and time, then outcome and processing) instead of pushing fixed-width times past the
+    /// edge; the title truncates before anything overflows. Both forms show exactly the same facts.
+    private func logRow(_ line: SettingsHistoryLogLine) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                if let execution = attempt.executionLabel { Text(execution).fixedSize() }
-                if let timing = attempt.timingLabel { Text(timing).fixedSize() }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                logSymbol(line)
+                Text(line.title).font(.callout).fixedSize()
+                logTime(line)
+                logOutcome(line).lineLimit(1).fixedSize()
+                Spacer(minLength: 8)
+                logProcessing(line)
+                logShown(line)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                if let execution = attempt.executionLabel { Text(execution) }
-                if let timing = attempt.timingLabel { Text(timing) }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                logSymbol(line)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(line.title).font(.callout).lineLimit(1).truncationMode(.tail)
+                        logTime(line)
+                        Spacer(minLength: 8)
+                        logShown(line)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        logOutcome(line).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        logProcessing(line)
+                    }
+                }
             }
-        }.font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 6).padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
-    @ViewBuilder private func shownBadge(_ attempt: SettingsHistoryAttemptRecord) -> some View {
-        if shownAttemptID == attempt.id, attempt.hasSavedText {
-            Text("Shown").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Color.secondary.opacity(0.12), in: Capsule())
+
+    private func logSymbol(_ line: SettingsHistoryLogLine) -> some View {
+        Image(systemName: line.symbol).font(.caption).frame(width: 14)
+            .foregroundStyle(line.isProblem ? Color.orange : Color.secondary)
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private func logTime(_ line: SettingsHistoryLogLine) -> some View {
+        if let time = line.time { Text(time).font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize() }
+    }
+
+    private func logOutcome(_ line: SettingsHistoryLogLine) -> some View {
+        Text(line.outcome).font(.caption).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private func logProcessing(_ line: SettingsHistoryLogLine) -> some View {
+        if let processing = line.processing {
+            Text(processing).font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize()
+        }
+    }
+
+    @ViewBuilder private func logShown(_ line: SettingsHistoryLogLine) -> some View {
+        if isShown(line) { Text("Shown").font(.caption).foregroundStyle(.secondary).fixedSize() }
+    }
+
+    private func isShown(_ line: SettingsHistoryLogLine) -> Bool {
+        guard let id = line.attemptID, shownAttemptID == id else { return false }
+        return attemptHistory?.attempts.first { $0.id == id }?.hasSavedText == true
+    }
+}
+
+/// Icon-only copy: the symbol is the affordance; the tooltip and VoiceOver carry the words.
+/// The checkmark swap is state feedback, not motion, and reverts after two seconds.
+struct SettingsHistoryCopyIconButton: View {
+    let text: String?
+    let label: String
+    @State private var copied = false
+
+    var body: some View {
+        if let payload = SettingsCopyPayload.nonempty(text) {
+            Button {
+                copied = SettingsCopyPayload.write(payload)
+                // Only a successful write is confirmed; the label swap alone is silent for VoiceOver.
+                if copied { AccessibilityNotification.Announcement("Copied \(label)").post() }
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.caption)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help(copied ? "Copied" : "Copy \(label)")
+            .accessibilityLabel(copied ? "Copied \(label)" : "Copy \(label)")
+            .onChange(of: text) { _, _ in copied = false }
+            .task(id: copied) {
+                guard copied else { return }
+                try? await Task.sleep(for: .seconds(2))
+                if !Task.isCancelled { copied = false }
+            }
         }
     }
 }
@@ -203,7 +297,6 @@ struct SettingsHistoryDiagnosticsView: View {
 struct SettingsHistoryDiagnosticsDisclosure: Equatable {
     private(set) var selection: String?
     var expanded: Bool
-    var detailsExpanded = false
     private var lastDefault: Bool
     init(selection: String?, defaultExpanded: Bool = false) {
         self.selection = selection; self.expanded = defaultExpanded; self.lastDefault = defaultExpanded
@@ -212,7 +305,6 @@ struct SettingsHistoryDiagnosticsDisclosure: Equatable {
         guard selection != key || lastDefault != defaultExpanded else { return }
         selection = key
         expanded = defaultExpanded
-        detailsExpanded = false
         lastDefault = defaultExpanded
     }
 }

@@ -28,6 +28,8 @@ import { handleConverse, handleVoiceAsk, runVoiceAskTurn, runAdmittedVoiceAsk } 
 import { formatAdmittedVoiceAskResult, type AdmittedVoiceAskResult } from "../voice-ask-admission";
 import { reserveArchiveRetranscription } from "../voice-operation-reservation";
 import { whisperLifecycleGate } from "../whisper-lifecycle-gate";
+import { STILL_AWAY } from "../voice-away-policy";
+import { createVoiceToolContext } from "../mcp-notifications";
 import { formatVoiceAskTurnResult } from "../voice-turn-result";
 import { withAsyncVoiceAdmission, updateVoiceGate } from "../update-gate-admission";
 
@@ -90,6 +92,44 @@ describe("handleConverse resilience — P0-2", () => {
     clearStopSpy = spyOn(sessionBooking, "clearStopSignal").mockImplementation(
       () => {},
     );
+  });
+
+  it("D5 two no-answers grant one follow-up, then refuse further voice work in that session", async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    waitSpy = spyOn(input, "waitForInput").mockImplementation(async (_t, _s, _p, options) => {
+      options?.onCaptureStart?.(); options?.onArchiveCreated?.("/isolated/paired");
+      options?.onCaptureEnd?.(); options?.onNoAnswer?.(false); return null;
+    });
+    const lifetime = new AbortController();
+    const nextContext = () => Object.assign(createVoiceToolContext(undefined), { disconnectSignal: lifetime.signal });
+    const first = await handleVoiceAsk({ message: "Question?" }, nextContext());
+    const second = await handleVoiceAsk({ message: "Are you there?" }, nextContext());
+    const third = await handleVoiceAsk({ message: "Again?" }, nextContext());
+    expect([first, second, third].map(r => r.content[0].text).join(" ").match(/ONE follow-up/g)).toHaveLength(1);
+    expect(second.content[0].text).toBe(STILL_AWAY);
+    expect(third.content[0].text).toBe(STILL_AWAY);
+    expect(speakSpy).toHaveBeenCalledTimes(2); expect(waitSpy).toHaveBeenCalledTimes(2);
+    const other = await handleVoiceAsk({ message: "Other session" }, createVoiceToolContext(undefined));
+    expect(other.content[0].text).toContain("ONE follow-up");
+  });
+
+  for (const speechOnly of [false, true]) it(`D5 ${speechOnly ? "speech" : "answer"} resets the session away guard`, async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    let call = 0;
+    waitSpy = spyOn(input, "waitForInput").mockImplementation(async (_t, _s, _p, options) => {
+      call++;
+      options?.onCaptureStart?.(); options?.onArchiveCreated?.("/isolated/paired");
+      if (call === 2) options?.onSpeechStart?.();
+      options?.onCaptureEnd?.();
+      if (call === 2 && !speechOnly) return "I'm here";
+      options?.onNoAnswer?.(false); return null;
+    });
+    const context = createVoiceToolContext(undefined);
+    expect((await handleVoiceAsk({ message: "Question?" }, context)).content[0].text).toContain("ONE follow-up");
+    const second = await handleVoiceAsk({ message: "Follow up?" }, context);
+    expect(second.content[0].text).toContain(speechOnly ? "ONE follow-up" : "I'm here");
+    const third = await handleVoiceAsk({ message: "Next?" }, context);
+    expect(third.content[0].text).toEqual(speechOnly ? STILL_AWAY : expect.stringContaining("ONE follow-up"));
   });
 
   it("voice_ask preempts unload maintenance and reaches capture", async () => {
@@ -252,7 +292,7 @@ describe("handleConverse resilience — P0-2", () => {
             ? { kind: "answered", transcript, archiveId: archived ? "paired" : null, promptPlayback: undefined }
             : silent ? { kind: "no-speech", recovery, promptPlayback: undefined }
             : recovery ? { kind: "retained", recovery, promptPlayback: undefined }
-            : { kind: "no-input", timeoutSeconds: 30, pushToEnd: false, promptPlayback: undefined });
+            : { kind: "no-input", timeoutSeconds: 120, pushToEnd: false, promptPlayback: undefined });
           waitSpy.mockRestore();
         }
       }
@@ -346,6 +386,120 @@ describe("handleConverse resilience — P0-2", () => {
       reservation?.release();
     } finally {
       finishInput?.();
+      jest.useRealTimers();
+    }
+  });
+
+  it("returns every word when a 342-second take needs more than 120 seconds of STT", async () => {
+    jest.useFakeTimers();
+    const captured = Promise.withResolvers<input.WaitForInputOptions>();
+    const decoded = Promise.withResolvers<string>();
+    let pending: ReturnType<typeof handleVoiceAsk> | undefined;
+    const transcript = "Synthetic answer: fu… no, full answer, including the final words.";
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      waitSpy = spyOn(input, "waitForInput").mockImplementation((_t, _s, _p, options) => {
+        if (!options) throw new Error("Expected capture options");
+        options.onCaptureStart?.();
+        options.onSpeechStart?.();
+        captured.resolve(options);
+        options.signal?.addEventListener("abort", () => decoded.reject(options.signal?.reason), { once: true });
+        return decoded.promise;
+      });
+      pending = handleVoiceAsk({ message: "Synthetic long-take question" });
+      const options = await captured.promise;
+      // Installed incident: 939 seconds retained; D3 sends only 342 seconds to STT.
+      jest.advanceTimersByTime(939_000);
+      options.onArchiveCreated?.("/isolated/long-take");
+      options.onCaptureEnd?.(342_000);
+      options.onPhaseChange?.("transcribing");
+      jest.advanceTimersByTime(300_000);
+      decoded.resolve(transcript);
+      const result = await pending;
+      expect(result.content[0].text).toContain(transcript);
+      expect(result.content[0].text).not.toContain("transcription did not complete");
+      expect(options.signal?.aborted).toBe(false);
+    } finally {
+      decoded.resolve(transcript);
+      await pending;
+      jest.useRealTimers();
+    }
+  });
+
+  for (const [audioMs, deadlineMs] of [
+    [30_000, 120_000],
+    [342_000, 1_368_000],
+    [600_000, 2_400_000],
+    [603_000, 2_412_000], // Ten minutes of speech plus D3's three-second margin.
+  ]) for (const completes of [false, true]) {
+    it(`${audioMs}ms decoded audio: ${completes ? "keeps a completed transcript" : "bounds stuck STT despite heartbeats"} at ${deadlineMs}ms`, async () => {
+      jest.useFakeTimers();
+      const captured = Promise.withResolvers<input.WaitForInputOptions>();
+      const decoded = Promise.withResolvers<string>();
+      let pending: ReturnType<typeof handleVoiceAsk> | undefined;
+      try {
+        speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+        waitSpy = spyOn(input, "waitForInput").mockImplementation((_t, _s, _p, options) => {
+          if (!options) throw new Error("Expected capture options");
+          options.onCaptureStart?.();
+          options.onArchiveCreated?.("/isolated/deadline-take");
+          options.onCaptureEnd?.(audioMs);
+          options.onPhaseChange?.("transcribing");
+          captured.resolve(options);
+          options.signal?.addEventListener("abort", () => decoded.reject(options.signal?.reason), { once: true });
+          return decoded.promise;
+        });
+        const events: unknown[] = [];
+        pending = handleVoiceAsk({ message: "Synthetic deadline question" }, { emit: event => events.push(event) });
+        const options = await captured.promise;
+        jest.advanceTimersByTime(deadlineMs - 1);
+        expect(options.signal?.aborted).toBe(false);
+        expect(events.length).toBeGreaterThan(1);
+        if (completes) {
+          decoded.resolve("Every synthetic word survived.");
+          expect((await pending).content[0].text).toContain("Every synthetic word survived.");
+          jest.advanceTimersByTime(deadlineMs);
+          expect(options.signal?.aborted).toBe(false);
+        } else {
+          jest.advanceTimersByTime(1);
+          expect(options.signal?.aborted).toBe(true);
+          const result = await pending;
+          expect(result.content[0].text).toContain("Audio captured and kept; transcription did not complete.");
+          expect(result.content[0].text).toContain(`return stage aborted after hard timeout (${deadlineMs}ms)`);
+          expect(result.content[0].text).toContain("Archive: deadline-take");
+        }
+      } finally {
+        decoded.resolve("cleanup");
+        await pending;
+        jest.useRealTimers();
+      }
+    });
+  }
+
+  it("returns kept-audio recovery after the scaled deadline even if long STT ignores abort", async () => {
+    jest.useFakeTimers();
+    const captured = Promise.withResolvers<void>();
+    const decoded = Promise.withResolvers<string>();
+    let pending: ReturnType<typeof handleVoiceAsk> | undefined;
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      waitSpy = spyOn(input, "waitForInput").mockImplementation((_t, _s, _p, options) => {
+        options?.onCaptureStart?.();
+        options?.onArchiveCreated?.("/isolated/stuck-long-take");
+        options?.onCaptureEnd?.(600_000);
+        captured.resolve();
+        return decoded.promise;
+      });
+      pending = handleVoiceAsk({ message: "Synthetic stuck-STT question" });
+      await captured.promise;
+      jest.advanceTimersByTime(2_400_000 + 15_000);
+      const result = await pending;
+      expect(result.content[0].text).toContain("Audio captured and kept; transcription did not complete.");
+      expect(result.content[0].text).toContain("Hard timeout during return stage after 2400s");
+      expect(result.content[0].text).toContain("Archive: stuck-long-take");
+    } finally {
+      decoded.resolve("cleanup");
+      await pending;
       jest.useRealTimers();
     }
   });

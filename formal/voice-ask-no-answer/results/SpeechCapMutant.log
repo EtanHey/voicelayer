@@ -1,0 +1,17 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoSpeechCap",
+  "status": "EXPECTED_FAIL",
+  "generated": 210,
+  "distinct": 144,
+  "trace": [
+    "/\\ pending = FALSE\n/\\ wall = 0\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = FALSE\n/\\ budget = 0\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = FALSE\n/\\ silence = 0\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 1\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = FALSE\n/\\ budget = 1\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = FALSE\n/\\ silence = 1\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 2\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = FALSE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = FALSE\n/\\ silence = 2\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 3\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = FALSE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = FALSE\n/\\ silence = 3\n/\\ cause = \"none\"",
+    "/\\ pending = TRUE\n/\\ wall = 3\n/\\ heard = FALSE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = TRUE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = TRUE\n/\\ silence = 3\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 3\n/\\ heard = TRUE\n/\\ grace = 0\n/\\ kept = FALSE\n/\\ stalled = FALSE\n/\\ frameSpeech = TRUE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = FALSE\n/\\ spoken = TRUE\n/\\ silence = 0\n/\\ cause = \"none\"",
+    "/\\ pending = FALSE\n/\\ wall = 3\n/\\ heard = TRUE\n/\\ grace = 0\n/\\ kept = TRUE\n/\\ stalled = FALSE\n/\\ frameSpeech = TRUE\n/\\ budget = 2\n/\\ held = FALSE\n/\\ closed = TRUE\n/\\ spoken = TRUE\n/\\ silence = 0\n/\\ cause = \"cap\""
+  ]
+}

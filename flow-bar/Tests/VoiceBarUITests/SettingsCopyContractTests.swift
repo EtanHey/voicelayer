@@ -17,8 +17,9 @@ final class SettingsCopyContractTests: XCTestCase {
                      "SettingsCopyButton(text: failure, label: \"processing error\")"] {
             XCTAssertTrue(source.contains(site), site)
         }
-        let details = try String(contentsOf: sourceRoot.appendingPathComponent("SettingsHistoryDiagnosticsView.swift"))
-        XCTAssertTrue(details.contains("SettingsDiagnosticSummary.historyMetadata(entry)"))
+        // L7 moved the copied Log's provenance into the details copy model.
+        let details = try String(contentsOf: sourceRoot.appendingPathComponent("SettingsHistoryAttemptHistory.swift"))
+        XCTAssertTrue(details.contains("SettingsDiagnosticSummary.historyMetadata(recordingEntry)"))
         let header = try XCTUnwrap(source.range(of: "private func dictionaryEntryHeader"))
         let body = source[header.lowerBound...]
         XCTAssertLessThan(try XCTUnwrap(body.range(of: "SettingsCopyButton(text: entry.canonical")).lowerBound,

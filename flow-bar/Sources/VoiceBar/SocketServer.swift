@@ -159,6 +159,8 @@ final class SocketServer {
     /// command daemon. Retain the latest speaking owner across playback idle so
     /// replay after completion returns to the process that owns its history.
     private var lastPlaybackClientFD: Int32?
+    private var recordingJobClientFDs: [String: Int32] = [:]
+    private var ownedCapturesAwaitingResult: Set<String> = []
     private var activePlaybackClientFD: Int32?
 
     // MARK: - Lifecycle
@@ -415,6 +417,15 @@ final class SocketServer {
             return
         }
 
+        if let fd, clients[fd]?.acceptsCommands == true {
+            if let jobs = dict["recording_jobs"] as? [[String: Any]] {
+                let ids = Set(jobs.compactMap { $0["take_id"] as? String }.filter { !$0.isEmpty && $0.count <= 256 })
+                for id in ids where recordingJobClientFDs[id] == nil || recordingJobClientFDs[id] == fd {
+                    recordingJobClientFDs[id] = fd
+                }
+            }
+        }
+
         if dict["type"] as? String == "state", let stateName = dict["state"] as? String {
             if stateName == "speaking", let fd, clients[fd] != nil {
                 lastPlaybackClientFD = fd
@@ -433,7 +444,11 @@ final class SocketServer {
 
         DispatchQueue.main.async { [weak self] in
             if dict["type"] as? String == "state", dict["state"] as? String == "recording" {
-                self?.capturesAwaitingPresentationResult.insert(presentationClient)
+                if let id = dict["take_id"] as? String, dict["mode"] != nil {
+                    self?.ownedCapturesAwaitingResult.insert(id)
+                } else if dict["recording_jobs"] == nil {
+                    self?.capturesAwaitingPresentationResult.insert(presentationClient)
+                }
             }
             if dict["type"] as? String == "error",
                let captureFailure = dict["capture_failure"] as? String {
@@ -445,7 +460,8 @@ final class SocketServer {
             if dict["type"] as? String == "transcription",
                let text = dict["text"] as? String,
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               self?.capturesAwaitingPresentationResult.remove(presentationClient) != nil {
+               (dict["take_id"] as? String).map({ self?.ownedCapturesAwaitingResult.remove($0) != nil })
+                ?? (self?.capturesAwaitingPresentationResult.remove(presentationClient) != nil) {
                 self?.onCaptureResolved?()
             }
             if dict["type"] as? String == "state", dict["state"] as? String == "idle",
@@ -478,6 +494,7 @@ final class SocketServer {
         let pid = payload["pid"] as? Int ?? (payload["pid"] as? NSNumber)?.intValue
 
         if acceptsCommands {
+            DispatchQueue.main.async { [weak self] in self?.state.prepareForCommandOwner() }
             for otherFD in clients.keys where otherFD != fd {
                 clients[otherFD]?.acceptsCommands = false
             }
@@ -542,6 +559,9 @@ final class SocketServer {
             : []
         let targetFDs: [Int32] = if let targetFD {
             [targetFD]
+        } else if let takeID = command["take_id"] as? String,
+                  isInterrupt || commandName == "dictation_delivered" {
+            recordingJobClientFDs[takeID].map { [$0] } ?? []
         } else if isInterrupt {
             Array(Set(commandFDs + legacyPlaybackFDs)).sorted()
         } else if commandName == "seek",
@@ -554,6 +574,11 @@ final class SocketServer {
             [playbackFD]
         } else {
             Array(commandFDs.prefix(1))
+        }
+
+        if commandName == "record", let takeID = command["take_id"] as? String, let fd = targetFDs.first {
+            // An immediate F5 release must reach this owner before the first mic-open snapshot arrives.
+            recordingJobClientFDs[takeID] = fd
         }
 
         guard !targetFDs.isEmpty else {
@@ -635,6 +660,7 @@ final class SocketServer {
     // MARK: - Client management
 
     private func removeClient(fd: Int32) {
+        recordingJobClientFDs = recordingJobClientFDs.filter { $0.value != fd }
         if lastPlaybackClientFD == fd { lastPlaybackClientFD = nil }
         if activePlaybackClientFD == fd { activePlaybackClientFD = nil }
         clients.removeValue(forKey: fd)
@@ -674,6 +700,7 @@ final class SocketServer {
             entry.source.cancel()
         }
         clients.removeAll()
+        recordingJobClientFDs.removeAll()
 
         if listenFD >= 0 {
             // listenSource's cancelHandler already calls close(fd), but guard

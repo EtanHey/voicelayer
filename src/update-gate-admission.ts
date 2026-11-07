@@ -138,7 +138,7 @@ export function initializeVoiceGate(env: NodeJS.ProcessEnv = process.env): Promi
  * A concurrent voice initializer wins without its state being adopted or deleted. */
 export function initializeSupervisedVoiceGate(env: NodeJS.ProcessEnv = process.env): boolean {
   return safeGateLock(path => {
-    for (const suffix of ["", ".admissions", ".controller", ".voice-diag.json"]) {
+    for (const suffix of ["", ".admissions", ".bootstrap", ".controller", ".voice-diag.json"]) {
       try { lstatSync(path + suffix); return false; }
       catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return false; }
     }
@@ -302,7 +302,8 @@ export function updateVoiceGate(command: unknown, verify?: ParticipantProof, env
     const current = snapshot(path);
     if (!current) return { kind: "REFUSED", reason: "UNKNOWN" };
     const result = transitionUpdateGate(current.state, command);
-    if (result.kind === "APPLIED" && (result.state.kind === "PREPARED" || result.state.kind === "COMMITTED") &&
+    if (result.kind === "APPLIED" && (result.state.kind === "PREPARED" || result.state.kind === "COMMITTED" ||
+      (current.state.kind === "COMMITTED" && result.state.kind === "OPEN")) &&
       (current.active.length !== 0 || verify?.(current.state) !== true)) return { kind: "REFUSED", reason: "UNKNOWN" };
     if (result.kind === "APPLIED") persistUpdateGateState(path, result.state);
     return result;

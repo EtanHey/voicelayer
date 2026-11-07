@@ -38,6 +38,36 @@ const defaults: RecognizerTransitionDeps = {
   },
   startP: () => parakeetServer.start(), startW: () => ensureServer(), reset: resetBackendCache,
 };
+
+/** Start after the daemon accepts commands. Maintenance makes inference wait
+ * for this same load; capture admission never waits for the boot task. */
+export async function warmSelectedRecognizer(deps: RecognizerTransitionDeps = defaults): Promise<void> {
+  const status = readRecognizerStatus();
+  if (!(deps.assetsPresent?.(status.desired) ?? status.engines[status.desired].assets_present)) return;
+  const result = await setRecognizerResidency(status.desired, "load", deps);
+  console.error("[voicelayer] " + JSON.stringify({ event: "recognizer_boot_warmup", engine: status.desired, outcome: result.outcome, reason: result.reason ?? null }));
+}
+
+export async function unloadParakeetForMemoryPressure() {
+  let acquired = false;
+  try {
+    beginRecognizerMaintenance(); acquired = true;
+    const unloaded = await parakeetServer.unloadForMemoryPressure();
+    return { outcome: unloaded ? "accept" as const : "noop" as const, recognizer_status: readRecognizerStatus() };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "residency-failed";
+    console.error("[voicelayer] " + JSON.stringify({ event: "parakeet_pressure_unload_skipped", reason }));
+    return { outcome: "reject" as const, reason, recognizer_status: readRecognizerStatus() };
+  } finally { if (acquired) finishRecognizerTransition(); }
+}
+/** Caller holds recognizer maintenance/transition ownership until cleanup completes. */
+export async function stopRecognizer(engine: Recognizer, deps: RecognizerTransitionDeps = defaults): Promise<void> {
+  try {
+    await (engine === "parakeet" ? deps.stopP() : deps.stopW());
+    confirmRecognizerCleanup(engine);
+    noteRecognizerEngine(engine, { phase: "sleeping", error: null });
+  } catch { markRecognizerCleanupUnconfirmed(engine); throw new Error("cleanup-unconfirmed"); }
+}
 const activeSelections = new Set<Promise<unknown>>();
 export async function joinRecognizerSelections(): Promise<void> { await Promise.allSettled([...activeSelections]); }
 export function selectRecognizer(value: Recognizer, deps: RecognizerTransitionDeps = defaults): ReturnType<typeof selectRecognizerOwned> {
@@ -49,17 +79,22 @@ export function selectRecognizer(value: Recognizer, deps: RecognizerTransitionDe
 async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransitionDeps = defaults): Promise<{ outcome: "accept" | "reject"; reason?: string; recognizer_status: RecognizerStatus }> {
   if (value !== "parakeet" && value !== "whisper") return { outcome: "reject", reason: "invalid-recognizer", recognizer_status: readRecognizerStatus() };
   const previous = readRecognizerStatus();
-  try { assertRecognizerNotDownloading(value); beginRecognizerTransition(); }
+  try {
+    assertRecognizerNotDownloading(value);
+    const other = value === "parakeet" ? "whisper" : "parakeet";
+    // A replayed/duplicate selection must not evict a ready engine and pay a
+    // second cold load. A sleeping/error engine still takes the ordinary path.
+    if (previous.switch_allowed && previous.desired === value && previous.effective === value &&
+        previous.engines[value].phase === "ready" && previous.engines[value].available === true &&
+        (deps.assetsPresent?.(value) ?? previous.engines[value].assets_present) && previous.engines[other].phase === "sleeping") {
+      return { outcome: "accept", recognizer_status: previous };
+    }
+    beginRecognizerTransition();
+  }
   catch (error) { return { outcome: "reject", reason: error instanceof Error ? error.message : "voice-busy", recognizer_status: readRecognizerStatus() }; }
   let outcome: "accept" | "reject" = "accept", reason: string | undefined;
   let preferenceChanged = false;
-  const stop = async (engine: Recognizer) => {
-    try {
-      await (engine === "parakeet" ? deps.stopP() : deps.stopW());
-      confirmRecognizerCleanup(engine);
-      noteRecognizerEngine(engine, { phase: "sleeping" });
-    } catch { markRecognizerCleanupUnconfirmed(engine); throw new Error("cleanup-unconfirmed"); }
-  };
+  const stop = (engine: Recognizer) => stopRecognizer(engine, deps);
   const start = (engine: Recognizer) => {
     assertRecognizerOwnerOpen();
     assertRecognizerNotDownloading(engine);
@@ -75,6 +110,8 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
     await stop("whisper");
     recheckRecognizerBusy();
     try { persistRecognizer(value); preferenceChanged = true; } catch { throw new Error("settings-write-failed"); }
+    console.error("[voicelayer] " + JSON.stringify({ event: "recognizer_selection_persisted",
+      requested: value, previous_desired: previous.desired, cause: "explicit-selection" }));
     setRecognizerRecovery(null); noteRecognizerEffective(null);
     noteRecognizerEngine(value, { phase: "loading", error: null });
     try {
@@ -134,14 +171,12 @@ export async function setRecognizerResidency(engine: Recognizer, action: "load" 
     const status = readRecognizerStatus();
     if (action === "load") {
       if (status.desired !== engine || status.effective !== null && status.effective !== engine) throw new Error("select-recognizer-first");
-      if (!status.engines[engine].assets_present) throw new Error("assets-not-present");
+      if (!(deps.assetsPresent?.(engine) ?? status.engines[engine].assets_present)) throw new Error("assets-not-present");
       loading = true; noteRecognizerEngine(engine, { phase: "loading", error: null });
       await (engine === "parakeet" ? deps.startP() : deps.startW());
       assertRecognizerOwnerOpen(); noteRecognizerEngine(engine, { phase: "ready", available: true, error: null }); noteRecognizerEffective(engine);
     } else {
-      try { await (engine === "parakeet" ? deps.stopP() : deps.stopW()); }
-      catch { markRecognizerCleanupUnconfirmed(engine); throw new Error("cleanup-unconfirmed"); }
-      confirmRecognizerCleanup(engine); noteRecognizerEngine(engine, { phase: "sleeping", error: null });
+      await stopRecognizer(engine, deps);
     }
   } catch (error) {
     outcome = "reject"; reason = error instanceof Error ? error.message : "residency-failed";
