@@ -360,7 +360,8 @@ test("recovered byte facts do not erase verification faults or mutate earlier di
   expect(owner.close()).toMatchObject({ fault: true, closureStatus: "closed" });
 });
 
-test.each(["before", "after", "persistent", "different-file", "same-inode"])("snapshot reader close %s remains ambiguous through later snapshots and terminal close", fault => {
+for (const allocation of ["unconstrained", "different-fd"]) {
+test.each(["before", "after", "persistent", "different-file", "same-inode"])(`snapshot reader close %s (${allocation}) remains ambiguous through later snapshots and terminal close`, fault => {
   const attempts: number[] = [];
   const replacements: { fd: number; original: number; identity: fs.Stats; bytes: Buffer }[] = [];
   const owner = make({ close: fd => {
@@ -372,8 +373,13 @@ test.each(["before", "after", "persistent", "different-file", "same-inode"])("sn
       const path = fault === "same-inode" ? owner.path : join(root, "replacement");
       if (fault === "different-file") fs.writeFileSync(path, B, { mode: 0o600 });
       const identity = fs.statSync(path);
-      const replacement = acquire(path, "r");
+      let replacement = acquire(path, "r");
       ambiguous.add(replacement);
+      if (allocation === "different-fd" && replacement === fd) {
+        // Keep the reused slot occupied so the replacement cannot use it.
+        replacement = acquire(path, "r");
+        ambiguous.add(replacement);
+      }
       replacements.push({ fd: replacement, original: fd, identity, bytes: fault === "same-inode" ? A : B });
     }
     throw new Error("ambiguous reader close");
@@ -399,7 +405,8 @@ test.each(["before", "after", "persistent", "different-file", "same-inode"])("sn
     expect(first.errors.length).toBe(1);
     expect(String(first.errors[0]?.cause)).toBe("Error: ambiguous reader close");
     for (const item of replacements) {
-      expect(item.fd).toBe(item.original);
+      // The kernel may hand out any free descriptor; identity is proven by fstat, never by fd number.
+      if (allocation === "different-fd") expect(item.fd).not.toBe(item.original);
       expect(fs.fstatSync(item.fd)).toMatchObject({ dev: item.identity.dev, ino: item.identity.ino, mode: item.identity.mode,
         size: item.identity.size, ctimeMs: item.identity.ctimeMs, mtimeMs: item.identity.mtimeMs });
       expect(fs.readFileSync(item.fd)).toEqual(item.bytes);
@@ -409,3 +416,4 @@ test.each(["before", "after", "persistent", "different-file", "same-inode"])("sn
   } finally { release(unrelated); }
   expect(fs.readFileSync(owner.path)).toEqual(A);
 });
+}
