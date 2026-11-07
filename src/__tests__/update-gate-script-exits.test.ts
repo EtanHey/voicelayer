@@ -62,7 +62,7 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
       "scripts/install-voicebar-f5-hidutil.sh", "scripts/apply-voicebar-f5-hidutil.sh", "launchd/com.voicelayer.f5-to-f18-hidutil.plist"])
       copyFileSync(file, join(root, file));
     relocate("launchd/install.sh");
-    for (const check of ["check-voicebar-qa-free.sh", "check-voicebar-test-free.sh"])
+    for (const check of ["check-voicebar-qa-free.sh", "check-voicebar-test-free.sh", "check-voicebar-python-cache-free.sh"])
       writeFileSync(join(root, "scripts", check), '#!/bin/bash\necho bundle-check >> "$TEST_ROOT/calls"\n', { mode: 0o755 });
     stub("swift", 'echo compiler >> "$TEST_ROOT/calls"; mkdir -p "$TEST_ROOT/built"; echo fixture > "$TEST_ROOT/built/VoiceBar"; [[ "$*" != *--show-bin-path* ]] || echo "$TEST_ROOT/built"');
     stub("bun", readFileSync(join(bin, "bun"), "utf8") + `
