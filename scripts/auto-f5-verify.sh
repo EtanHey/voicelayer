@@ -670,10 +670,12 @@ start_verify_process() {
   VERIFY_STDIN_OPEN=1
 
   (
+    # Own the whole pipeline: wait "$VERIFY_PID" must also wait for the log
+    # to drain before callers read it, and report a failed logger.
     VOICELAYER_VERIFY_TESTER="$VERIFY_TESTER" \
       VOICELAYER_VERIFY_REPO_ROOT="$REPO_ROOT" \
-      bash "$VERIFY_SCRIPT" --force <"$VERIFY_FIFO"
-  ) > >(tee -a "$LOG_FILE") 2>&1 &
+      bash "$VERIFY_SCRIPT" --force <"$VERIFY_FIFO" 2>&1 | tee -a "$LOG_FILE"
+  ) &
   VERIFY_PID="$!"
   log "started voicelayer-verify wrapper process pid=$VERIFY_PID"
 }
