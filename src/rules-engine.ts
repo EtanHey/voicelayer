@@ -1133,14 +1133,18 @@ function isProseOne(words: string[], index: number): boolean {
 
 function formatNumbersInLine(text: string): string {
   // Horizontal whitespace only — a \n never reaches here.
-  const words = text.split(/[^\S\n]+/).flatMap((token) => {
+  const words = text.split(/[^\S\n]+/).flatMap((token, index, tokens) => {
     // A decoder commonly attaches sentence punctuation to the final number.
     // Make it a boundary token so it cannot block a cardinal or merge sentences.
     const trailing = !/(?:\.{2,}|…)$/u.test(token) ? /^(.+?)([,.;:!?])$/u.exec(token) : null;
     const base = trailing?.[1] ?? token;
     const numericBase = NUMBER_WORDS.has(base.toLowerCase()) || /^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)-(?:one|two|three|four|five|six|seven|eight|nine)$/i.test(base) || base.toLowerCase() === "k";
-    const word = trailing && numericBase ? base : token;
-    const punctuation = trailing && numericBase ? [trailing[2]] : [];
+    const splitPunctuation = trailing && numericBase &&
+      (/[ -]/u.test(base) || base.toLowerCase() === "k" ||
+        (index > 0 && isTensThenUnit(tokens[index - 1].toLowerCase(), base.toLowerCase())) ||
+        /\b(?:hundred|thousand)\b/iu.test(text));
+    const word = splitPunctuation ? base : token;
+    const punctuation = splitPunctuation ? [trailing![2]] : [];
     // Split only complete tens-unit cardinals, never hyphenated prose/code.
     const match = /^(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)-(one|two|three|four|five|six|seven|eight|nine)$/i.exec(word);
     return [...(match ? [match[1], match[2]] : [word]), ...punctuation];
@@ -1154,7 +1158,7 @@ function formatNumbersInLine(text: string): string {
       if (num !== null) {
         // Keep the existing ungrouped exact-thousands format (1200/32000).
         // Group five-or-more-digit cardinals with a thousands remainder.
-        result.push(num >= 10000 && num % 1000 !== 0 && numBuffer.some(w => w.toLowerCase() === "thousand")
+        result.push(num >= 10000 && num < 1000000 && num % 1000 !== 0 && numBuffer.some(w => w.toLowerCase() === "thousand")
           ? String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : String(num));
       } else {
         result.push(...numBuffer);
