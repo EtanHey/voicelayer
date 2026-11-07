@@ -29,14 +29,22 @@ Secure fields are never read. If a safe clipboard backup is unavailable, the sho
 
 **macOS (recommended)** — the tap ships the CLI/MCP package and the notarized notch app:
 
+If `brew help trust` reports an unknown command, update Homebrew first.
+
 ```bash
 brew tap etanhey/layers
+brew trust etanhey/layers                     # allow Homebrew to load this tap
 brew install etanhey/layers/voicelayer         # CLI + MCP server
 brew install --cask etanhey/layers/voicebar    # VoiceBar notch app (owns the mic)
 voicelayer setup                               # one-time runtime setup
 ```
 
 Install the cask too — the formula alone gives you the CLI/MCP but no notch UI.
+
+`brew tap` adds the repository; `brew trust etanhey/layers` explicitly trusts its
+current and future formulae, casks and commands. Fully qualified installs trust
+only the named item. See [Homebrew tap trust](https://docs.brew.sh/Tap-Trust) for
+item-specific alternatives.
 
 **npm** — if you only want the MCP server:
 
