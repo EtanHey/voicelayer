@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
   pull_request:
-    branches: [main, integration/2.3]
+    branches: [main, integration/2.2.61, integration/2.3]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
 
 concurrency: { group: 'formal-${{ github.ref }}', cancel-in-progress: true }
