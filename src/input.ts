@@ -118,6 +118,7 @@ import {
   type RecordingProvenanceProbe,
 } from "./recording-provenance";
 import { resolveRecorderBinary } from "./recorder-binary";
+import { startRecordingInputDeviceSnapshots, type RecordingInputDevice } from "./recording-input-device";
 import {
   buildChunkPrompt,
   mergeChunkTranscripts,
@@ -680,6 +681,8 @@ export interface NoSpeechGateResult {
 }
 
 export interface RecordingCaptureState {
+  inputDevice?: RecordingInputDevice | null;
+  inputDeviceSnapshot?: Promise<RecordingInputDevice | null>;
   recorderExited?: Promise<void>;
   physicalPressStop?: boolean;
   /** Locked PTT silence expiry keeps the complete archive and bounds only STT input. */
@@ -729,6 +732,7 @@ export function consumeCancelSignalForRecording(): boolean {
 }
 
 export interface VoiceBarRecordingArchiveInput {
+  inputDevice?: RecordingInputDevice | null;
   audioBytes: Uint8Array;
   transcript: string | null;
   createdAt?: Date;
@@ -853,6 +857,7 @@ class RecordingFailureWithCapturedPcm extends Error {
 type STTFinalizeEnv = STTCorrectorEnv & STTPolishEnv;
 
 interface WaitForInputArchiveInput {
+  inputDevice?: RecordingInputDevice | null;
   options: WaitForInputOptions;
   audioBytes: Uint8Array;
   transcript: string | null;
@@ -865,6 +870,7 @@ interface WaitForInputArchiveInput {
 }
 
 export interface VoiceAskCaptureArchiveInput {
+  inputDevice?: RecordingInputDevice | null;
   options: WaitForInputOptions;
   audioBytes: Uint8Array;
   silenceMode: SilenceMode;
@@ -883,6 +889,8 @@ export interface VoiceAskArchiveFinalizationInput {
 }
 
 interface VoiceBarRecordingMetadata {
+  input_device_name?: string;
+  input_device_uid?: string | null;
   id: string;
   created_at: string;
   source: "voicebar";
@@ -911,6 +919,8 @@ const VOICE_ASK_ARTIFACT_NAMES = {
 } as const;
 
 interface VoiceAskRecordingMetadata {
+  input_device_name?: string;
+  input_device_uid?: string | null;
   id: string;
   created_at: string;
   source: "voice_ask";
@@ -1188,6 +1198,7 @@ function writeVoiceBarRecordingArchive(
     probe: input.provenanceProbe,
   });
   const metadata: VoiceBarRecordingMetadata = {
+    ...(input.inputDevice ? { input_device_name: input.inputDevice.name, input_device_uid: input.inputDevice.uid } : {}),
     id,
     created_at: createdAtIso,
     source: input.source,
@@ -1281,6 +1292,7 @@ export function archiveVoiceAskCapture(
     probe: input.provenanceProbe,
   });
   const metadata: VoiceAskRecordingMetadata = {
+    ...(input.inputDevice ? { input_device_name: input.inputDevice.name, input_device_uid: input.inputDevice.uid } : {}),
     id,
     created_at: createdAtIso,
     source: "voice_ask",
@@ -1442,6 +1454,7 @@ export function archiveWaitForInputRecording(
   if (input.options.archiveSource === "voicebar") {
     throwIfWaitForInputAborted(input.options.signal);
     return archiveVoiceBarRecording({
+      inputDevice: input.inputDevice,
       audioBytes: input.audioBytes,
       transcript: input.transcript,
       source: input.options.archiveSource,
@@ -1457,6 +1470,7 @@ export function archiveWaitForInputRecording(
   if (input.options.archiveSource !== "voice_ask") return null;
   if (!input.transcript?.trim()) return null;
   const archivePath = archiveVoiceAskCapture({
+    inputDevice: input.inputDevice,
     options: input.options,
     audioBytes: input.audioBytes,
     silenceMode: input.silenceMode,
@@ -2401,6 +2415,7 @@ export async function recordToBuffer(
     const pcmChunks: Uint8Array[] = [];
     const chunkQueue: Uint8Array[] = [];
     let resolved = false;
+    let deviceSnapshots: ReturnType<typeof startRecordingInputDeviceSnapshots> | undefined;
     let recorder: RecorderProcess | null = null;
     let processingSettled: Promise<void> = Promise.resolve();
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
@@ -2477,6 +2492,7 @@ export async function recordToBuffer(
     const finish = (error?: Error) => {
       if (resolved) return;
       resolved = true;
+      deviceSnapshots?.finish();
       if (activeDeviceLoss?.captureId === captureId) activeDeviceLoss = null;
       setRecordingState("idle");
       try {
@@ -2690,6 +2706,10 @@ export async function recordToBuffer(
 
     try {
       // Start mic recording via sox — raw PCM to stdout at device's native rate
+      if (captureState) {
+        deviceSnapshots = startRecordingInputDeviceSnapshots();
+        captureState.inputDeviceSnapshot = deviceSnapshots.settled;
+      }
       // AIDEV-NOTE: We record at native rate (not 16kHz) to avoid sox buffer overruns
       // when the device rate differs (e.g., AirPods at 24kHz). Resampling happens in JS.
       const spawnedRecorder = Bun.spawn(
@@ -2792,6 +2812,7 @@ export async function recordToBuffer(
       // causing Bun to recycle pipe buffers before JS consumes them → rms=0.
       // Split into: pipeReader (tight loop, no ONNX awaits) + chunkProcessor (VAD).
       let readerDone = false;
+      let inputDeviceChecked = false;
 
       // pipeReader: reads sox stdout as fast as possible, extracts 16kHz chunks
       const pipeReader = async () => {
@@ -2801,6 +2822,11 @@ export async function recordToBuffer(
           if (done && !resolved) noteMicLoss("recorder-ended");
           if (done || resolved) break;
           if (!value || value.length === 0) continue;
+          // Signal only: the observer schedules its child outside this hot loop.
+          if (!inputDeviceChecked && captureState) {
+            inputDeviceChecked = true;
+            deviceSnapshots?.firstPCM();
+          }
 
           // Defensive copy: Bun may recycle the underlying ArrayBuffer (R65)
           const safeCopy = new Uint8Array(value);
@@ -3054,8 +3080,10 @@ export async function waitForInput(
       captureState,
     );
     timings.captureEnded();
+    captureState.inputDevice = await captureState.inputDeviceSnapshot;
   } catch (err) {
     timings.captureEnded();
+    captureState.inputDevice = await captureState.inputDeviceSnapshot;
     if (
       err instanceof RecordingFailureWithCapturedPcm &&
       options.archiveSource !== undefined
@@ -3064,6 +3092,7 @@ export async function waitForInput(
       const durationMs = pcmDurationMs(err.pcmData);
       try {
         const capture = {
+          inputDevice: captureState.inputDevice,
           options,
           audioBytes: retainedWavData,
           silenceMode,
@@ -3115,6 +3144,7 @@ export async function waitForInput(
     });
     if (ownsBarCapture() && !(err instanceof RecordingFailureWithCapturedPcm)) {
       const failedArchive = archiveVoiceBarUntranscribedRecording({
+        inputDevice: captureState.inputDevice,
         audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
         durationMs: 0, backend: "not-transcribed", reason: "recording-failed",
       });
@@ -3176,6 +3206,7 @@ export async function waitForInput(
     clearCancelSignal();
     broadcast({ type: "state", state: "idle", source: "recording" });
     const emptyArchive = ownsBarCapture() ? archiveVoiceBarUntranscribedRecording({
+      inputDevice: captureState.inputDevice,
       audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
       durationMs: 0, backend: "not-transcribed", reason: recordingJobCancelled() ? "cancelled" : "captured",
     }) : null;
@@ -3231,6 +3262,7 @@ export async function waitForInput(
   if (options.archiveSource === "voicebar") {
     try {
       voiceBarArchivePath = archiveVoiceBarUntranscribedRecording({
+        inputDevice: captureState.inputDevice,
         audioBytes: retainedWavData,
         source: "voicebar",
         silenceMode,
@@ -3262,6 +3294,7 @@ export async function waitForInput(
   if (options.archiveSource === "voice_ask") {
     try {
       voiceAskArchivePath = archiveVoiceAskCapture({
+        inputDevice: captureState.inputDevice,
         options,
         audioBytes: retainedWavData,
         silenceMode,
