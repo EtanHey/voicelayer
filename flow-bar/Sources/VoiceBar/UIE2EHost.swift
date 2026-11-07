@@ -61,6 +61,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// QA-only: hold scheduled menu presentations so a test can open History in the gap (wings-u2 queued-cancel).
     var holdsMenuQueue = false
     var heldMenuPresentations: [() -> Void] = []
+    private var historyEscapeMonitors: [Any] = []
 #if VOICEBAR_UIE2E_GATE2245
     var gate2245: UIE2EGate2245?
 #endif
@@ -165,6 +166,8 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         bar.layer?.masksToBounds = true
         bar.frame = NSRect(x: 0, y: 0, width: 680, height: 180)
         pill = FloatingPillPanel(content: bar)
+        // This fixture paints a virtual notch. Use the resident app's configurePanelDragging decision.
+        pill.configureNotchDragging(screenKind: .flatDisplayFallback, allowsFreeDrag: false, mode: model.voice.mode)
         pill.title = "VoiceBar QA Pill"
         pill.setFrame(NSRect(x: 100, y: 20, width: 680, height: 180), display: false)
         model.voice.onPanelLayoutChange = { [weak self] in
@@ -184,6 +187,11 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pill.orderFront(nil)
         settings.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS"] != nil {
+            // U4 exercises the normal nonactivating click path with another app frontmost, not Settings' Esc.
+            settings.orderOut(nil)
+            installHistoryEscapeReceipts()
+        }
         configureStatusItem()
 #if VOICEBAR_UIE2E_GATE2245
         if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" || ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
@@ -194,6 +202,30 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onRunSetup = { [weak self] in self?.openWizard() }
         model.seedNotchHistoryIfRequested()
         model.receipt("launch")
+    }
+
+    private func installHistoryEscapeReceipts() {
+        func record(_ event: NSEvent, source: String) {
+            guard event.keyCode == 53 else { return }
+            sandbox.writeObject(["source": source, "eventWindowNumber": event.windowNumber,
+                           "eventTimestamp": event.timestamp,
+                           "eventWindowIsPill": event.window === pill,
+                           "eventWindowIsSettings": event.window === settings,
+                           "voiceBarKeyWindowNumber": NSApp.keyWindow?.windowNumber ?? 0,
+                           "voiceBarIsActive": NSApp.isActive] as [String: Any], file: "u4-escape-target.json")
+        }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { event in
+            MainActor.assumeIsolated { record(event, source: "global") }
+        }) { historyEscapeMonitors.append(monitor) }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in
+            MainActor.assumeIsolated { record(event, source: "local") }
+            return event
+        }) { historyEscapeMonitors.append(monitor) }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        historyEscapeMonitors.forEach(NSEvent.removeMonitor)
+        historyEscapeMonitors.removeAll()
     }
 
     /// Shared with the offscreen layout regression test; constructing this view starts no services.

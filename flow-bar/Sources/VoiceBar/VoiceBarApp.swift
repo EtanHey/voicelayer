@@ -2254,22 +2254,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ panel: FloatingPillPanel,
         for screenGeometry: VoiceBarNotchScreenGeometry
     ) {
-        if screenGeometry.kind == .flatDisplayFallback {
-            panel.isPillDragEnabled = false
-            panel.isMovableByWindowBackground = false
-            return
-        }
-        let usesPhysicalHousing = screenGeometry.kind == .hardwareNotch
-        let pillDragEnabled = !usesPhysicalHousing && anchorMode.allowsFreeDrag
-        let movableByWindowBackground = !usesPhysicalHousing
-            && anchorMode.allowsFreeDrag
-            && VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
-        if panel.isPillDragEnabled != pillDragEnabled {
-            panel.isPillDragEnabled = pillDragEnabled
-        }
-        if panel.isMovableByWindowBackground != movableByWindowBackground {
-            panel.isMovableByWindowBackground = movableByWindowBackground
-        }
+        panel.configureNotchDragging(screenKind: screenGeometry.kind,
+                                    allowsFreeDrag: anchorMode.allowsFreeDrag, mode: voiceState.mode)
     }
 
     private func configurePanelDiagnostics(_ panel: NSWindow) {

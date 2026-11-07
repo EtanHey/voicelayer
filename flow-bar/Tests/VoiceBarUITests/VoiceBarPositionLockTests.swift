@@ -71,6 +71,21 @@ final class VoiceBarPositionLockTests: XCTestCase {
         XCTAssertFalse(panel.shouldHandlePillDrag(startedInVisiblePill: false))
     }
 
+    func testBothNotchKindsReserveDraggingForTheirControls() {
+        let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 48)))
+        for kind in [VoiceBarNotchScreenKind.hardwareNotch, .flatDisplayFallback] {
+            for allowsFreeDrag in [true, false] {
+                for mode in VoiceMode.allCases {
+                    panel.isPillDragEnabled = true
+                    panel.isMovableByWindowBackground = true
+                    panel.configureNotchDragging(screenKind: kind, allowsFreeDrag: allowsFreeDrag, mode: mode)
+                    XCTAssertFalse(panel.shouldHandlePillDrag(startedInVisiblePill: true))
+                    XCTAssertFalse(panel.isMovableByWindowBackground)
+                }
+            }
+        }
+    }
+
     func testNativeNotchPanelUsesStatusBarLevelWithoutActivationOrShadow() {
         let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 209, height: 49)))
 
