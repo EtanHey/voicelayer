@@ -1073,6 +1073,12 @@ const MULTIPLIERS: Record<string, number> = {
   million: 1_000_000,
 };
 
+function isTensThenUnit(before: string, after: string): boolean {
+  const tens = WORD_TO_NUMBER[before];
+  const unit = WORD_TO_NUMBER[after];
+  return tens >= 20 && tens % 10 === 0 && unit >= 1 && unit <= 9;
+}
+
 function parseNumberWords(words: string[]): number | null {
   if (words.length === 0) return null;
   let total = 0;
@@ -1116,9 +1122,33 @@ const NUMBER_WORDS = new Set([
   ...Object.keys(MULTIPLIERS),
 ]);
 
+/** Prose uses of "one" are lexical; counted quantities still use digits. */
+function isProseOne(words: string[], index: number): boolean {
+  if (words[index]?.toLowerCase() !== "one") return false;
+  const before = words[index - 1]?.toLowerCase();
+  const after = words[index + 1]?.toLowerCase();
+  return (before === "the" && !NUMBER_WORDS.has(after ?? "")) || after === "of" ||
+    (after === "more" && /^time[,.!?]?$/i.test(words[index + 2] ?? ""));
+}
+
 function formatNumbersInLine(text: string): string {
   // Horizontal whitespace only — a \n never reaches here.
-  const words = text.split(/[^\S\n]+/);
+  const words = text.split(/[^\S\n]+/).flatMap((token, index, tokens) => {
+    // A decoder commonly attaches sentence punctuation to the final number.
+    // Make it a boundary token so it cannot block a cardinal or merge sentences.
+    const trailing = !/(?:\.{2,}|…)$/u.test(token) ? /^(.+?)([,.;:!?])$/u.exec(token) : null;
+    const base = trailing?.[1] ?? token;
+    const numericBase = NUMBER_WORDS.has(base.toLowerCase()) || /^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)-(?:one|two|three|four|five|six|seven|eight|nine)$/i.test(base) || base.toLowerCase() === "k";
+    const splitPunctuation = trailing && numericBase &&
+      (/[ -]/u.test(base) || base.toLowerCase() === "k" ||
+        (index > 0 && isTensThenUnit(tokens[index - 1].toLowerCase(), base.toLowerCase())) ||
+        /\b(?:hundred|thousand)\b/iu.test(text));
+    const word = splitPunctuation ? base : token;
+    const punctuation = splitPunctuation ? [trailing![2]] : [];
+    // Split only complete tens-unit cardinals, never hyphenated prose/code.
+    const match = /^(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)-(one|two|three|four|five|six|seven|eight|nine)$/i.exec(word);
+    return [...(match ? [match[1], match[2]] : [word]), ...punctuation];
+  });
   const result: string[] = [];
   let numBuffer: string[] = [];
 
@@ -1126,7 +1156,10 @@ function formatNumbersInLine(text: string): string {
     if (numBuffer.length > 0) {
       const num = parseNumberWords(numBuffer);
       if (num !== null) {
-        result.push(String(num));
+        // Keep the existing ungrouped exact-thousands format (1200/32000).
+        // Group five-or-more-digit cardinals with a thousands remainder.
+        result.push(num >= 10000 && num < 1000000 && num % 1000 !== 0 && numBuffer.some(w => w.toLowerCase() === "thousand")
+          ? String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : String(num));
       } else {
         result.push(...numBuffer);
       }
@@ -1134,18 +1167,40 @@ function formatNumbersInLine(text: string): string {
     }
   };
 
-  for (const word of words) {
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index];
     const lower = word.toLowerCase();
-    if (NUMBER_WORDS.has(lower)) {
+    const lastNumberWord = numBuffer.at(-1)?.toLowerCase();
+    if (lower === "and" && lastNumberWord && lastNumberWord in MULTIPLIERS) {
+      // Consume a conjunction only for a smaller, complete cardinal remainder.
+      // "thirty thousand and sixty thousand" remains two quantities.
+      let end = index + 1;
+      while (end < words.length && NUMBER_WORDS.has(words[end].toLowerCase()) && !isProseOne(words, end)) end++;
+      const tail = words.slice(index + 1, end).map(w => w.toLowerCase());
+      const remainder = parseNumberWords(tail);
+      const scale = MULTIPLIERS[lastNumberWord];
+      const hasSeparateValues = tail.some((value, i) => i > 0 &&
+        tail[i - 1] in WORD_TO_NUMBER && value in WORD_TO_NUMBER &&
+        !isTensThenUnit(tail[i - 1], value));
+      if (!hasSeparateValues && remainder !== null && remainder > 0 && remainder < scale) continue;
+    }
+    if (/^[,.;:!?]+$/u.test(word)) {
+      flushBuffer();
+      if (result.length > 0) result[result.length - 1] += word;
+      else result.push(word);
+    } else if (lower === "k" && numBuffer.length > 0) {
+      flushBuffer();
+      result[result.length - 1] += word;
+    } else if (isProseOne(words, index)) {
+      flushBuffer();
+      result.push(word);
+    } else if (NUMBER_WORDS.has(lower)) {
       const previous = numBuffer.at(-1)?.toLowerCase();
       if (previous && previous in WORD_TO_NUMBER && lower in WORD_TO_NUMBER) {
         // Only a tens word followed by a nonzero unit forms one cardinal.
         // Adjacent values in a list, repetition, or retraction are separate
         // speech: "two three" must stay "2 3", never their sum "5".
-        const before = WORD_TO_NUMBER[previous];
-        const after = WORD_TO_NUMBER[lower];
-        const tensThenUnit = before >= 20 && before % 10 === 0 && after >= 1 && after <= 9;
-        if (!tensThenUnit) flushBuffer();
+        if (!isTensThenUnit(previous, lower)) flushBuffer();
       }
       numBuffer.push(word);
     } else {
