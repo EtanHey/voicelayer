@@ -19,9 +19,10 @@ with different subword tokens (for example ` o` + `kay` + `?` versus ` Okay` +
 `.`). Token matching cannot align those IDs, and timestamp fallback can splice
 them into `o.`. Before either merge function runs, the guard checks the last
 complete word of the earlier chunk against the first of the later chunk. Only
-matching words with overlapping timestamps and starts less than half the overlap
-apart are collapsed. The earlier complete word, including its punctuation, is
-kept. Nonoverlapping repeats, differing words and multiword tokens use the existing
+matching words whose centers each lie inside the other word's span, with starts
+less than half the chunk overlap apart, are collapsed. Partial overlap alone can
+belong to two nearby repetitions and is not enough. The earlier complete word,
+including its punctuation, is kept. Nonoverlapping repeats, differing words and multiword tokens use the existing
 merge. No audio, runtime package or model assets are rewritten. This additional
 VoiceLayer guard still needs an upstream fix; #1125 covers the midpoint patch.
 
