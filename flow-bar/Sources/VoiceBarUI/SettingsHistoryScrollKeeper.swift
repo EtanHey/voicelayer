@@ -92,7 +92,14 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
                                                    name: NSScrollView.willStartLiveScrollNotification, object: scroll)
             NotificationCenter.default.addObserver(self, selector: #selector(userEndedLiveScroll),
                                                    name: NSScrollView.didEndLiveScrollNotification, object: scroll)
-            restore(attempt: 0)
+            // SwiftUI attaches the background before the rebuilt lazy document finishes layout.
+            // A synchronous live-scroll notification here re-enters that layout with its provisional
+            // extent. Start on the next scheduled turn, after attachment has unwound.
+            if (memory.offset(for: key) ?? 0) > 0 {
+                scheduleRestore(attempt: 0)
+            } else {
+                restore(attempt: 0)
+            }
         }
 
         private func detach() {
@@ -136,10 +143,14 @@ struct SettingsHistoryScrollKeeper: NSViewRepresentable {
                     return
                 }
             }
+            scheduleRestore(attempt: attempt + 1)
+        }
+
+        private func scheduleRestore(attempt: Int) {
             let generation = restoreGeneration
             scheduleRetry { [weak self] in
                 guard let self, self.restoreGeneration == generation else { return }
-                self.restore(attempt: attempt + 1)
+                self.restore(attempt: attempt)
             }
         }
 
