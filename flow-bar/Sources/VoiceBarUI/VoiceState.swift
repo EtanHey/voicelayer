@@ -1703,8 +1703,17 @@ public final class VoiceState {
     /// there is no periodic poll, and visibility is checked again before any send.
     public var recognizerSettingsIsVisible: () -> Bool = { false }
     var recognizerStatusReadClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    /// Scheduling and time are separate: a due read may wait for the main actor.
+    var scheduleRecognizerStatusRead: (TimeInterval, @escaping @MainActor () -> Void) -> (() -> Void) = { delay, read in
+        let task = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(max(0, delay))) } catch { return }
+            guard !Task.isCancelled else { return }
+            read()
+        }
+        return { task.cancel() }
+    }
     private var lastRecognizerStatusRead: TimeInterval?
-    private var coalescedRecognizerRead: Task<Void, Never>?
+    private var cancelCoalescedRecognizerRead: (() -> Void)?
     public static let recognizerStatusReadMinimumInterval: TimeInterval = 1
 
     public func refreshRecognizerStatus() { requestRecognizerStatus(coalesce: true) }
@@ -1714,18 +1723,17 @@ public final class VoiceState {
         let now = recognizerStatusReadClock()
         guard now.isFinite else { return }
         if let last = lastRecognizerStatusRead, now - last < Self.recognizerStatusReadMinimumInterval {
-            guard coalesce, coalescedRecognizerRead == nil else { return }
+            guard coalesce, cancelCoalescedRecognizerRead == nil else { return }
             let delay = Self.recognizerStatusReadMinimumInterval - (now - last)
-            coalescedRecognizerRead = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(max(0, delay))) } catch { return }
-                guard !Task.isCancelled, let self else { return }
-                self.coalescedRecognizerRead = nil
+            cancelCoalescedRecognizerRead = scheduleRecognizerStatusRead(delay) { [weak self] in
+                guard let self else { return }
+                self.cancelCoalescedRecognizerRead = nil
                 self.requestRecognizerStatus(coalesce: false)
             }
             return
         }
-        coalescedRecognizerRead?.cancel()
-        coalescedRecognizerRead = nil
+        cancelCoalescedRecognizerRead?()
+        cancelCoalescedRecognizerRead = nil
         lastRecognizerStatusRead = now
         let id = UUID().uuidString
         recognizerRefreshID = id
