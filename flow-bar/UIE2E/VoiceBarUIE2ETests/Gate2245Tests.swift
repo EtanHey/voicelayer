@@ -320,12 +320,27 @@ extension VoiceBarFlowTests {
                 attachJSON("GATE2245-SELECTION-" + name, receipt)
             }
         }
-        step("SEL1 busy note visible in real BarView") {
+        // Etan's 2.2.61 notch ledger N2: "no text band while transcribing; spinner+blue are enough — N2 wins".
+        // Shipped by 9df63566. Busy-while-transcribing shows the spinner only; the refusal is still recorded.
+        // Busy while recording or during F5 preview keeps its full note (Focused338GalleryTests asserts those).
+        step("SEL1 busy-transcribing refusal: N2 spinner, no note, refusal recorded") {
             let button = app.buttons["qa-fixture-gate-state-busy"]
             try mutate { button.click() }
-            let note = app.dialogs["VoiceBar QA Pill"].staticTexts["Busy transcribing. Selection not read"]
-            XCTAssertTrue(note.waitForExistence(timeout: 1))
-            if note.exists { XCTAssertGreaterThan(note.frame.height, 0) }
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            let spinner = pill.descendants(matching: .other).matching(NSPredicate(format: "label == %@", "Transcribing")).firstMatch
+            XCTAssertTrue(spinner.waitForExistence(timeout: 1), "N2 requires the accessible Transcribing spinner")
+            if spinner.exists { XCTAssertGreaterThan(spinner.frame.height, 0) }
+            XCTAssertFalse(pill.staticTexts["Busy transcribing. Selection not read"].exists, "N2 forbids the note text")
+            XCTAssertFalse(pill.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Selection not read", "Selection not read"))
+                .firstMatch.exists, "N2 forbids any busy note text")
+            let receipt = gateRead("gate-selection.json")
+            XCTAssertEqual(receipt["case"] as? String, "busy")
+            XCTAssertEqual(receipt["mode"] as? String, "transcribing")
+            XCTAssertEqual(receipt["showsBusy"] as? Bool, true, "Refusal must stay recorded in state")
+            XCTAssertEqual(receipt["note"] as? String, "Busy transcribing. Selection not read")
+            XCTAssertEqual((receipt["commands"] as? [[String: Any]])?.count, 0, "A refused read dispatches nothing")
+            attachJSON("GATE2245-SELECTION-busy", receipt.merging(["AX": pill.debugDescription]) { $1 })
         }
         if (testRun?.failureCount ?? 0) == selectionFailures {
             ledger.verifiedSurfaces.insert("gate:SEL1")
@@ -336,11 +351,14 @@ extension VoiceBarFlowTests {
             step("CLN1b " + kind + " word controls and timing notice") {
                 let pill = app.dialogs["VoiceBar QA Pill"]
                 XCTAssertTrue(pill.exists)
+                // 2.3 Teleprompter A renders every word as a "Jump to: <word>" button (TeleprompterAView); an untimed
+                // word has no seek target (no hit testing, hint "Not available right now"), which AX does not expose.
+                // Seekability is proven by clicks below: timed Charlie seeks, untimed Bravo dispatches nothing.
+                XCTAssertTrue(gate2246TeleprompterContains(pill, text: "Alpha Bravo Charlie Delta"), "words not rendered")
                 for word in ["Alpha", "Bravo", "Charlie", "Delta"] {
-                    let timed = kind == "edge" || kind == "partial" && ["Alpha", "Charlie"].contains(word)
-                    XCTAssertEqual(pill.buttons[word].exists, timed, word + " seekability")
-                    if timed { XCTAssertTrue(pill.buttons[word].isEnabled) }
-                    else { XCTAssertTrue(pill.staticTexts[word].exists, word + " untimed text missing") }
+                    let control = pill.buttons[gate2246JumpPrefix + word]
+                    XCTAssertTrue(control.exists, word + " word control missing")
+                    XCTAssertTrue(control.isEnabled, word + " word control disabled")
                 }
                 XCTAssertEqual(pill.staticTexts["Word timing unavailable"].exists, kind == "untimed")
                 attachJSON("GATE2245-TIMING-" + kind, ["AX": pill.debugDescription])
@@ -348,11 +366,21 @@ extension VoiceBarFlowTests {
             if kind == "partial" {
                 step("CLN1b timed Charlie dispatches exact 2000ms seek") {
                     let before = fixtureEvents().count
-                    let button = app.dialogs["VoiceBar QA Pill"].buttons["Charlie"]
+                    let button = app.dialogs["VoiceBar QA Pill"].buttons[gate2246JumpPrefix + "Charlie"]
                     try mutate { button.click() }
                     waitUntil { self.fixtureEvents().dropFirst(before).contains("command:seek") }
                     let messages = gateRead("commands.json")["messages"] as? [[String: Any]]
+                    XCTAssertEqual(messages?.last?["cmd"] as? String, "seek")
                     XCTAssertEqual(messages?.last?["offset_ms"] as? Int, 2000)
+                }
+                step("CLN1b untimed Bravo dispatches no seek") {
+                    let before = fixtureEvents().count
+                    // Untimed words opt out of hit testing, so click the rendered point rather than the AX element.
+                    let point = app.dialogs["VoiceBar QA Pill"].buttons[gate2246JumpPrefix + "Bravo"]
+                        .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                    try mutate { point.click() }
+                    Thread.sleep(forTimeInterval: 0.5)
+                    XCTAssertFalse(fixtureEvents().dropFirst(before).contains("command:seek"), "untimed word must not seek")
                 }
             }
         }
