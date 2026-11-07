@@ -186,9 +186,11 @@ async function main() {
     const originalFallback = matched.find(o => o.value.stage === "fallback-terminal")?.value.whisper?.text;
     results.push({ id: take.id, metadata, archived, ...decoded, tailEnergy, tailStartS: end, audioDurationS: duration,
       originalBoundaries: matched,
-      rawKind: decoded.native ? "same-backend re-decode; original raw unavailable" : "reference-raw stand-in",
-      pipelineInput: fallback ? originalFallback ? "hash-matched original post-gate Whisper" : "independent Whisper stand-in for historical fallback" : "same-backend re-decode",
+      rawKind: decoded.native ? "same-backend re-decode; historical boundaries listed separately" : "reference-raw stand-in",
+      pipelineInput: fallback ? originalFallback ? "hash-matched original post-gate Whisper" : "independent Whisper stand-in for historical fallback" : decoded.native ? "same-backend re-decode" : "reference-raw stand-in",
       inputText: fallback ? originalFallback ?? decoded.gated : raw,
+      backendSelectionEdge: stageEdges([{ name: "parakeet-raw", text: raw },
+        { name: fallback ? "fallback-selection" : "backend-output", text: fallback ? originalFallback ?? decoded.gated : raw }])[0],
       referenceComparison: { ...compareTranscriptToReference(archived, decoded.reference), source: "independent-reference-hypothesis" },
       seamCandidates, referenceVsFinal: alignLoss(decoded.reference, archived, seamCandidates.map(s => s.index)), rawVsFinal: alignLoss(raw, archived),
       gateEdges: stageEdges([{ name: "reference-raw", text: decoded.reference }, { name: "outro", text: decoded.outro }, { name: "caption", text: decoded.gated }]),
@@ -229,11 +231,11 @@ async function main() {
         const polish = await polishTranscriptionText({ rawText: take.inputText, cleanedText: cleaned, surface: "dictation",
           env: { ...config, QA_VOICE_STT_POLISH_ENDPOINT: endpoint + "/v1/chat/completions", QA_VOICE_STT_POLISH_MODEL: options.polish } });
         const paragraphs = applyCoherentParagraphFallback(polish.text);
+        const stages = [{ name: "backend-output", text: take.inputText }, { name: "dictionary_rules", text: cleaned },
+          { name: "polish", text: polish.text }, { name: "paragraphs", text: paragraphs }];
         replays.push({ status: polish.status, reason: polish.reason, reproducesArchive: paragraphs === take.archived,
-          stages: [{ name: "backend-output", text: take.inputText }, { name: "dictionary_rules", text: cleaned },
-            { name: "polish", text: polish.text }, { name: "paragraphs", text: paragraphs }],
-          edges: stageEdges([{ name: "backend-output", text: take.inputText }, { name: "dictionary_rules", text: cleaned },
-            { name: "polish", text: polish.text }, { name: "paragraphs", text: paragraphs }]) });
+          stages, rawVsStages: stages.map(stage => ({ stage: stage.name, edits: alignLoss(take.native?.text ?? take.reference, stage.text) })),
+          edges: stageEdges(stages) });
       }
       Object.assign(take, { replays });
     }
@@ -254,7 +256,7 @@ async function main() {
   for (const take of results) if ("rawVsFinal" in take) {
     for (const [label, edits] of [["raw → archived (historical stage unknown)", take.rawVsFinal], ["reference → archived (decoder disagreement)", take.referenceVsFinal]] as const) comparisons.set(label, [...(comparisons.get(label) ?? []), ...edits]);
     const replays = "replays" in take ? z.array(z.object({ edges: z.array(z.object({ from: z.string(), to: z.string(), edits: z.array(z.custom<ReturnType<typeof alignLoss>[number]>()) })) })).parse(take.replays) : [];
-    for (const edge of [...take.gateEdges, ...(replays[0]?.edges ?? [])]) {
+    for (const edge of [...take.gateEdges, take.backendSelectionEdge, ...(replays[0]?.edges ?? [])]) {
       const label = `replay ${edge.from} → ${edge.to}`; comparisons.set(label, [...(comparisons.get(label) ?? []), ...edge.edits]);
     }
   }

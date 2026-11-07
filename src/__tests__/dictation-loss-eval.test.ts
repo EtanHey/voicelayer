@@ -6,6 +6,10 @@ describe("offline loss alignment (synthetic public text)", () => {
     expect(lossWords("$42,016 42k 12%" )).toEqual(["$42016", "42k", "12%"]);
     expect(alignLoss("42k tasks are ready now today", "tasks are ready now today")[0]?.tags).toContain("number/unit");
   });
+  test("retains standalone currency and percent units", () => {
+    expect(lossWords("price $ 42 then 12 %")).toEqual(["price", "$", "42", "then", "12", "%"]);
+    expect(alignLoss("change 12 % today", "change 12 today").find(e => e.before === "%")?.tags).toContain("number/unit");
+  });
   test("classifies a repeated lost ending without deduplicating it", () => {
     const edits = alignLoss("go far far beyond", "go");
     expect(edits.filter(e => e.kind === "delete")).toHaveLength(3);

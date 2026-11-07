@@ -3,7 +3,7 @@ export const LOSS_CLASSES = ["number/unit", "ending/tail", "filler/hedge", "repe
 export type LossClass = typeof LOSS_CLASSES[number];
 export interface WordEdit { kind: "delete" | "insert" | "substitute"; before: string; after: string; index: number; tags: LossClass[] }
 export function lossWords(text: string): string[] {
-  return text.toLowerCase().match(/[$€£]?[\p{L}\p{N}]+(?:[,'’.][\p{L}\p{N}]+)*[%$€£]?/gu)?.map(w => w.replace(/(?<=\d),(?=\d)/g, "").replace(/’/g, "'")) ?? [];
+  return text.toLowerCase().match(/[$€£]?[\p{L}\p{N}]+(?:[,'’.][\p{L}\p{N}]+)*[%$€£]?|[$€£%]/gu)?.map(w => w.replace(/(?<=\d),(?=\d)/g, "").replace(/’/g, "'")) ?? [];
 }
 export function alignLoss(before: string, after: string, seamWords: number[] = [], tailWords = 8): WordEdit[] {
   const a = lossWords(before), b = lossWords(after), width = b.length + 1;
