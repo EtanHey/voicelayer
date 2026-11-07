@@ -205,10 +205,10 @@ enum UIE2EHistoryGeometry {
 enum UIE2EGalleryFrames {
     /// Credit is per variant; one clipped sibling still fails the page but cannot erase measured good variants.
     static func verifiedIDs(panels: [String: CGRect], texts: [String: CGRect], expected: [String: String],
-                            bounds: CGRect) -> Set<String> {
+                            bounds: CGRect, indicatorIDs: Set<String> = []) -> Set<String> {
         Set(expected.keys.filter { id in
             guard let panel = panels[id], let text = texts[id],
-                  problems(panels: [id: panel], texts: [id: text], expected: [id: expected[id]!], bounds: bounds).isEmpty
+                  problems(panels: [id: panel], texts: [id: text], expected: [id: expected[id]!], bounds: bounds, indicatorIDs: indicatorIDs.intersection([id])).isEmpty
             else { return false }
             return panels.allSatisfy { other, otherPanel in
                 guard other != id else { return true }
@@ -218,9 +218,10 @@ enum UIE2EGalleryFrames {
         })
     }
     static func problems(panels: [String: CGRect], texts: [String: CGRect], expected: [String: String],
-                         bounds: CGRect, fonts: [String: NSFont] = [:]) -> [String] {
+                         bounds: CGRect, fonts: [String: NSFont] = [:], indicatorIDs: Set<String> = []) -> [String] {
         var issues: [String] = []
         let ids = Set(expected.keys)
+        if !indicatorIDs.isSubset(of: ids) { issues.append("Unknown gallery indicator") }
         if ids.isEmpty || Set(panels.keys) != ids || Set(texts.keys) != ids {
             issues.append("Missing/extra gallery instance or text frame")
         }
@@ -235,6 +236,8 @@ enum UIE2EGalleryFrames {
             }
             if !bounds.insetBy(dx: -1, dy: -1).contains(panel) { issues.append(id + ": panel outside screen") }
             if !panel.insetBy(dx: -1, dy: -1).contains(text) { issues.append(id + ": text clipped by panel") }
+            // An AX-named spinner has a visible frame, not rendered label text. Containment still applies.
+            if indicatorIDs.contains(id) { continue }
             let font = fonts[id] ?? NSFont.systemFont(ofSize: 12, weight: .medium)
             let required = NSAttributedString(string: expected[id]!, attributes: [.font: font])
                 .boundingRect(with: CGSize(width: text.width, height: 10_000),

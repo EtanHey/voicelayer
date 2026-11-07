@@ -15,14 +15,20 @@ final class XCUIElement {
     let value: Any?
     let exists: Bool
     let children: [XCUIElement]
+    let buttonChildren: [XCUIElement]
     let renderedChildren: (() -> [XCUIElement])?
+    let renderedButtons: (() -> [XCUIElement])?
     init(_ label: String = "", value: Any? = nil, exists: Bool = true,
-         children: [XCUIElement] = [], renderedChildren: (() -> [XCUIElement])? = nil) {
+         children: [XCUIElement] = [], buttons: [XCUIElement] = [],
+         renderedChildren: (() -> [XCUIElement])? = nil, renderedButtons: (() -> [XCUIElement])? = nil) {
         self.label = label; self.value = value; self.exists = exists; self.children = children
-        self.renderedChildren = renderedChildren
+        self.buttonChildren = buttons; self.renderedChildren = renderedChildren; self.renderedButtons = renderedButtons
     }
     var staticTexts: XCUIElementQuery {
         .init(nodes: (renderedChildren?() ?? children).filter { $0.exists })
+    }
+    var buttons: XCUIElementQuery {
+        .init(nodes: (renderedButtons?() ?? buttonChildren).filter { $0.exists })
     }
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
 }
@@ -62,6 +68,35 @@ for (name, nodes, text, expected) in cases {
     let pill = XCUIElement(children: nodes)
     let actual = ASSERTION
     print("\(name):\(actual == expected ? "PASS" : "FAIL")")
+}
+// 2.3 Teleprompter A: each word is a "Jump to: <word>" button; other buttons are chrome.
+func jump(_ words: String...) -> [XCUIElement] { words.map { XCUIElement("Jump to: " + $0) } }
+let buttonCases: [(String, [XCUIElement], [XCUIElement], String, Bool)] = [
+    ("2.3 jump buttons", jump("Replacement", "selection", "B"), [], phrase, true),
+    ("2.3 surrounded by chrome buttons", [.init("Pause speech")] + jump("Agent", "Replacement", "selection", "B")
+        + [.init("Stop speaking")], [], phrase, true),
+    ("2.3 word prefix", jump("Replacement", "selection", "Bogus"), [], phrase, false),
+    ("2.3 wrong order", jump("B", "selection", "Replacement"), [], phrase, false),
+    ("2.3 chrome labels are not words", [.init("Replacement"), .init("selection"), .init("B")], [], phrase, false),
+    ("2.3 stale selection", jump("Own", "selection", "B"), [], "Own selection C", false),
+    ("2.3 sources never join", jump("Replacement", "selection"), [.init("B")], phrase, false)
+]
+for (name, buttons, texts, text, expected) in buttonCases {
+    let pill = XCUIElement(children: texts, buttons: buttons)
+    let actual = ASSERTION
+    print("\(name):\(actual == expected ? "PASS" : "FAIL")")
+}
+do {
+    let started = ProcessInfo.processInfo.systemUptime
+    var snapshots = 0
+    let pill = XCUIElement(renderedButtons: {
+        snapshots += 1
+        return ProcessInfo.processInfo.systemUptime - started < 0.15 ? jump("Wrong", "selection")
+            : jump("Replacement", "selection", "B")
+    })
+    let text = phrase
+    let actual = ASSERTION
+    print("2.3 jump buttons after render snapshots=\(snapshots):\(actual && snapshots > 1 ? "PASS" : "FAIL")")
 }
 let readinessCases: [(String, [XCUIElement], String, TimeInterval, Bool)] = [
     ("chrome before phrase", [.init("Agent"), .init("Stop")], phrase, 0.15, true),
@@ -109,7 +144,7 @@ class RenderedWords(unittest.TestCase):
             result = subprocess.run([str(path / 'probe')], capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = result.stdout.splitlines()
-            self.assertEqual(len(lines), 23, result.stdout)
+            self.assertEqual(len(lines), 31, result.stdout)
             print(result.stdout, end="")
             for line in lines:
                 with self.subTest(case=line.split(':')[0]):

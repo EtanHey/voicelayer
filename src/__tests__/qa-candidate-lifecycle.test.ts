@@ -9,10 +9,36 @@ const helper = join(import.meta.dir, "../../scripts/lib/qa-candidate-lifecycle.p
 const root = join(process.env.VOICELAYER_TEST_RUN_ROOT!, "qa23-safety");
 mkdirSync(root, { recursive: true });
 function python(body: string) {
-  const result = Bun.spawnSync(["python3", "-c", `import runpy,os,json,signal\nfrom pathlib import Path\nfrom types import SimpleNamespace\ng=runpy.run_path(${JSON.stringify(helper)})['main'].__globals__\ng['read_plist']=lambda path:g['plistlib'].loads(path.read_bytes())\nroot=Path(${JSON.stringify(root)})\n${body}`],
+  const result = Bun.spawnSync(["python3", "-c", `import runpy,os,json,signal\nfrom pathlib import Path\nfrom types import SimpleNamespace\ng=runpy.run_path(${JSON.stringify(helper)})['main'].__globals__\ng['read_plist']=lambda path:g['plistlib'].loads(path.read_bytes())\nroot=Path(${JSON.stringify(root)})\ng['HOME']=root/'fixture-home';g['BASE']=root/'fixture-candidate'\n${body}`],
     { env: process.env, stdout: "pipe", stderr: "pipe" });
   return { exit: result.exitCode, out: result.stdout.toString(), error: result.stderr.toString() };
 }
+test.each(["idle", "afplay", "foreign", "impostor", "recording", "open", "pending", "unknown", "qa", "qa-open", "dead", "wrong-parent", "wrong-session", "outside-bundle", "direct-argv"])("lifetime booking safety: %s", (mode) => {
+  const result = python(`mode=${JSON.stringify(mode)};d=root/mode;d.mkdir(exist_ok=True)
+g['HOME']=d/'home';g['BASE']=d/'candidate';g['RESIDENT']=d/'resident/VoiceBar.app';g['APP']=d/'qa/VoiceBar.app';app=g['APP'] if mode.startswith('qa') else g['RESIDENT']
+rows=[(10,1,str(app/'Contents/MacOS/VoiceBar')),(11,10,'/bin/bun')]
+if mode=='afplay':rows.append((12,11,'/usr/bin/afplay'))
+if mode=='foreign':rows.append((21,1,'/bin/bun'))
+if mode=='wrong-parent':rows[1]=(11,99,'/bin/bun')
+g['processes']=lambda:rows
+argv=[str(d/'.bun/bin/bun'),'run',str(app/'Contents/Resources/src/mcp-server-daemon.ts')]
+if mode=='outside-bundle':argv[2]=str(d/'foreign/Contents/Resources/src/mcp-server-daemon.ts')
+if mode=='direct-argv':argv.remove('run')
+g['command_line']=lambda pid:('/bin/bun /fixture/other.ts /fixture/src/mcp-server-daemon.ts' if mode=='impostor' else ' '.join(argv)) if pid==11 else 'afplay'
+g['os'].kill=lambda pid,sig:None if sig==0 else (_ for _ in ()).throw(AssertionError('signal'))
+if mode=='dead':g['os'].kill=lambda pid,sig:(_ for _ in ()).throw(ProcessLookupError('dead'))
+if mode=='unknown':g['command_line']=lambda pid:(_ for _ in ()).throw(OSError('unreadable process'))
+lock=d/'voicelayer-session-fixture.lock';pid=21 if mode=='foreign' else 11
+lock.write_text(json.dumps({'pid':pid,'sessionId':'other' if mode=='wrong-session' else 'mcp-'+str(pid)}));before=lock.read_bytes()
+(d/'recording-state.json').write_text(json.dumps({'state':'recording' if mode=='recording' else 'idle','pid':11}))
+if mode in ['open','pending','qa-open']:
+ index=(g['BASE']/'home' if mode.startswith('qa') else g['HOME'])/('.local/share/voicelayer/recordings.speech-'+mode.split('-')[-1]);index.mkdir(parents=True);(index/'active-ask').touch()
+health=(lambda:{'recording_state':'idle','queue_depth':0,'processing_count':0,'recording_jobs':[]}) if mode.startswith('qa') else None
+try:g['idle'](d,d,health);g['refuse_activity'](rows,[10],g['command_line'],lambda owned:False)
+finally:assert lock.read_bytes()==before`);
+  expect(result.exit).toBe(mode === "idle" || mode === "qa" ? 0 : 1);
+  if (mode === "dead") expect(result.error).toContain("REFUSED: lifetime booking owner exited");
+});
 test.skipIf(process.platform !== "darwin")("Apple parser accepts the installed template comment without rewriting it", () => {
   const result = python(`g['HOME']=root/'apple-plist-home'
 path=g['HOME']/'Library/LaunchAgents/com.voicelayer.voicebar.plist';path.parent.mkdir(parents=True,exist_ok=True)

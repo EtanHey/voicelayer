@@ -1,5 +1,12 @@
 #if VOICEBAR_QA
+import AppKit
 import Foundation
+
+/// HIDE1 measures app content; the QA menu-bar presence remains available while snoozed.
+@MainActor
+func uie2eVisibleContentWindows(_ windows: [NSWindow], statusWindow: NSWindow?) -> [NSWindow] {
+    windows.filter { $0 !== statusWindow && $0.isVisible && !$0.frame.isEmpty }
+}
 
 /// A marker created by the runner is required before even constructing the fixture delegate.
 /// There are no fallbacks to HOME, standard defaults, the archive, or resident sockets.

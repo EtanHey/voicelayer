@@ -85,7 +85,8 @@ final class UIE2EGate2245 {
             },
             "settingsVisible": host.settings.isVisible,
             "panelFrame": NSStringFromRect(panel.frame),
-            "ownedVisibleWindows": NSApp.windows.filter { $0.isVisible && !$0.frame.isEmpty }.map { ["title": $0.title, "number": $0.windowNumber, "frame": NSStringFromRect($0.frame)] as [String: Any] }], file: "gate-hide.json")
+            "ownedVisibleWindows": uie2eVisibleContentWindows(NSApp.windows, statusWindow: host.statusItem?.button?.window)
+                .map { ["title": $0.title, "number": $0.windowNumber, "frame": NSStringFromRect($0.frame)] as [String: Any] }], file: "gate-hide.json")
     }
 
     func hideAndDeliver(_ event: String) {

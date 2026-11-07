@@ -34,7 +34,7 @@ def descendants(rows, owners):
     return owned
 
 def command_line(pid):
-    return subprocess.check_output(['/bin/ps', '-p', str(pid), '-o', 'args='], text=True).strip()
+    return subprocess.check_output(['/bin/ps', '-p', str(pid), '-o', 'args='], text=True, timeout=2).strip()
 
 def qwen_connections(owned):
     result = subprocess.run(['/usr/sbin/lsof', '-nP', '-a', '-p', ','.join(map(str, sorted(owned))),
@@ -59,10 +59,35 @@ def refuse_activity(rows, owners, args, tcp):
         raise RuntimeError('REFUSED: Qwen request/connection is active')
     return owned
 
+def lifetime_booking(lock, app):
+    if lock.is_symlink():
+        return False
+    try: data = json.loads(lock.read_text())
+    except (OSError, ValueError) as error: raise RuntimeError('REFUSED: unknown session lock') from error
+    pid = data.get('pid') if isinstance(data, dict) else None
+    if type(pid) is not int or pid <= 0 or data.get('sessionId') != f'mcp-{pid}':
+        return False
+    rows = processes(); owners = [p for p, _, name in rows if name == str(app / 'Contents/MacOS/VoiceBar')]
+    if len(owners) != 1 or not any(p == pid and parent == owners[0] and Path(name).name == 'bun' for p, parent, name in rows):
+        return False
+    try: os.kill(pid, 0); os.kill(owners[0], 0)
+    except ProcessLookupError as error: raise RuntimeError('REFUSED: lifetime booking owner exited') from error
+    args = command_line(pid).split()
+    if len(args) != 3 or not Path(args[0]).is_absolute() or Path(args[0]).name != 'bun' or args[1] != 'run': return False
+    return Path(args[2]).is_absolute() and Path(args[2]).resolve() == app.resolve() / 'Contents/Resources/src/mcp-server-daemon.ts'
+
 def idle(tmp, state, health=None):
     for directory in [tmp, state]:
-        if any(directory.glob('voicelayer-session-*.lock')):
-            raise RuntimeError('REFUSED: voice session/ask lock exists')
+        for lock in directory.iterdir():
+            if lock.name.startswith('voicelayer-session-') and lock.name.endswith('.lock') and not lifetime_booking(lock, APP if health else RESIDENT):
+                raise RuntimeError('REFUSED: voice session/ask lock exists')
+    for suffix in ['speech-open', 'speech-pending']:
+        index = (BASE / 'home' if health else HOME) / ('.local/share/voicelayer/recordings.' + suffix)
+        if index.is_symlink():
+            raise RuntimeError('REFUSED: unknown speech index')
+        try:
+            if any(index.iterdir()): raise RuntimeError('REFUSED: open/pending speech or ask')
+        except FileNotFoundError: pass
     data = health() if health else json.loads((state / 'recording-state.json').read_text())
     if (data.get('recording_state') if health else data.get('state')) != 'idle' or (health and (data.get('queue_depth') != 0 or data.get('processing_count') != 0 or data.get('recording_jobs') != [] or data.get('capture_error'))):
         raise RuntimeError('REFUSED: recording/ask/speech/processing in progress')

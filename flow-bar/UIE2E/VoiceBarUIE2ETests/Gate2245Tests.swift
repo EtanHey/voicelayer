@@ -26,21 +26,32 @@ func uie2eReceiptIsFrom(_ receipt: [String: Any], count: Int, name: String) -> B
 // END UIE2E FIXTURE COMMANDS
 
 // BEGIN GATE2246 RENDERED WORDS
+/// 2.3 Teleprompter A renders each word as a "Jump to: <word>" button (TeleprompterAView); 2.2 used static texts.
+let gate2246JumpPrefix = "Jump to: "
+
 func gate2246TeleprompterContains(_ pill: XCUIElement, text: String) -> Bool {
     let expected = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
     guard !expected.isEmpty else { return false }
+    // Require contiguous whole words, so "B" cannot pass for a stale "Bogus". Each source is checked on its own,
+    // so words from one never join words from the other.
+    func contains(_ rendered: [String]) -> Bool {
+        rendered.count >= expected.count && (0...(rendered.count - expected.count)).contains { start in
+            Array(rendered[start..<(start + expected.count)]) == expected
+        }
+    }
     let deadline = ProcessInfo.processInfo.systemUptime + 3
     repeat {
-        let rendered = pill.staticTexts.allElementsBoundByIndex.flatMap { element -> [String] in
+        let jumpWords = pill.buttons.allElementsBoundByIndex.flatMap { element -> [String] in
+            guard element.label.hasPrefix(gate2246JumpPrefix) else { return [] }
+            return element.label.dropFirst(gate2246JumpPrefix.count).split(whereSeparator: { $0.isWhitespace })
+                .map(String.init)
+        }
+        let staticWords = pill.staticTexts.allElementsBoundByIndex.flatMap { element -> [String] in
             let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
             let content = label.isEmpty ? (element.value as? String ?? "") : label
             return content.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         }
-        // Require contiguous whole words, so "B" cannot pass for a stale "Bogus".
-        if rendered.count >= expected.count,
-           (0...(rendered.count - expected.count)).contains(where: { start in
-               Array(rendered[start..<(start + expected.count)]) == expected
-           }) { return true }
+        if contains(jumpWords) || contains(staticWords) { return true }
         let remaining = deadline - ProcessInfo.processInfo.systemUptime
         guard remaining > 0 else { return false }
         Thread.sleep(forTimeInterval: min(0.05, remaining))
