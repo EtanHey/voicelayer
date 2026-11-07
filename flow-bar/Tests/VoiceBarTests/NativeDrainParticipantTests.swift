@@ -148,7 +148,7 @@ import VoiceBarUI
         XCTAssertGreaterThanOrEqual(time, 2.5, "never conclude refusal before both daemon stop waits plus margin")
     }
 
-    func testLevelMeterCannotOpenInputDuringDrainAndReleasesAfterStop() throws {
+    func testLevelMeterRegistersDuringDrainAndRefusesPreparedBeforeInput() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -164,7 +164,16 @@ import VoiceBarUI
         XCTAssertTrue(gate.permitsTermination())
         try Data(#"{"version":1,"kind":"DRAINING","lease":{"generation":1,"operationId":"00000000-0000-0000-0000-000000000000","ownerId":"ffffffff-ffff-ffff-ffff-ffffffffffff","targetSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}"#.utf8).write(to: URL(fileURLWithPath: path))
         app.startAudioLevelMonitoring(gate: gate)
-        XCTAssertEqual(engine.starts, 1, "closed gate must refuse before opening the level input")
+        XCTAssertEqual(engine.starts, 2, "DRAINING must admit the device-free level fixture")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: path + ".admissions").count, 1)
+        app.stopAudioLevelMonitoring()
+        let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
+            "ownerId": UUID().uuidString, "targetSha": String(repeating: "a", count: 40)]
+        let ack: [String: Any] = ["lease": lease, "activeOperations": 0, "openArchives": 0]
+        try JSONSerialization.data(withJSONObject: ["version": 1, "kind": "PREPARED", "lease": lease,
+            "native": ack, "daemon": ack]).write(to: URL(fileURLWithPath: path))
+        app.startAudioLevelMonitoring(gate: gate)
+        XCTAssertEqual(engine.starts, 2, "PREPARED must refuse before opening the level input")
     }
 
     func testSignedDrainAndControlledQuitRequireLiveIdleAndExactCommittedLease() throws {

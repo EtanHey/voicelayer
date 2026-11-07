@@ -29,3 +29,18 @@ precommit-refusal path; the real-code regression asserts both remain absent,
 that the original admission ledger survives Cancel, and that later retry works.
 
 This is ordering proof, not installed VoiceBar or macOS availability proof.
+
+## 2.3 precommit voice availability
+
+`UserBlockFixed` models registered admission in OPEN/DRAINING, atomic locked
+PREPARE/COMMIT ledger checks, and cancellation at a three-tick logical deadline
+(implementation: 120 seconds). With weak fairness for clock, commit and cancel,
+every requested precommit drain commits or cancels within that logical bound,
+even when the participants never ACK or voice continues arriving. This assumes
+healthy storage and lock acquisition; `Fixed` separately models recoverable
+CANCEL contention. Permanent lock/storage faults still require recovery.
+
+`OldAdmission` fails NoEarlyVoiceRefusal; `NoLedger` fails NoSwapWithLedger;
+`UnboundedDrain` fails BoundedDrainResolves. NoEarlyVoiceRefusal observes actual
+admission attempts in OPEN/DRAINING; PREPARED/COMMITTED may refuse.
+Run `bash formal/update-gate-cancel/check.sh --record` to refresh receipts.

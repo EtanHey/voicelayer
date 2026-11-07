@@ -78,8 +78,9 @@ synchronous G2 verifier fences the same lease and receipt age under G1's lock.
 Process births, executable names and the daemon's native parent are sampled just
 before and after each locked proof; no process-table reads run inside the lock.
 A receipt may be at most one second old, including time in flight and sampling.
-Missing/UNKNOWN participants wait with Cancel; malformed/mismatched replies,
-identity changes and transport faults refuse. A timeout never proves idle.
+Missing/UNKNOWN participants and lost transport replies retry within the bounded
+precommit window; malformed/mismatched replies and identity changes refuse.
+A timeout never proves idle.
 
 After APPLIED COMMIT, the controller waits a 100 ms fault-publication grace period,
 refreshes G3 evidence (up to four drain attempts on UNKNOWN) and issues exactly
@@ -230,3 +231,36 @@ Settings calls the F5 installer via `/bin/bash` from bundle resources (Swift
 `runRelaySetup`). It must work without daemon sources or Bun on GUI PATH. The
 relay-only installer is excluded from update admission; an update still owns its
 gate across the whole job, including when it invokes this independent helper.
+
+## Bounded precommit drain and diagnostics
+
+REQUEST starts a monotonic 120-second deadline (`DEFAULT_DRAIN_TIMEOUT_MS`).
+`VOICELAYER_UPDATE_DRAIN_TIMEOUT_MS` may shorten it to 1..120000 ms for tests;
+invalid values refuse before REQUEST. New voice work remains registered during
+DRAINING. PREPARE retries the full evidence round when its locked empty-ledger
+check loses to a registration. PREPARED/COMMITTED remain closed for the swap.
+Every locked precommit mutation rechecks the deadline after asynchronous waits.
+Even an unsettled refresh yields to the deadline or SIGINT/SIGTERM cancellation;
+late refresh results cannot authorize mutation. A PREPARED refresh refusal cancels
+immediately; an unsettled PREPARED recheck also has a separate two-second cap
+to keep the swap window short. Postcommit recovery is unchanged.
+
+Progress and the timeout identify pending native/daemon roles, PIDs, incarnations
+when known, version and last reply, plus each open ledger token, kind and PID.
+Modern drain UNKNOWN replies carry informational per-role pending details, so a
+native-only timeout names native while an idle daemon is not blamed. A daemon
+precheck refusal names daemon and marks native as not requested. Legacy aggregate
+UNKNOWN names both roles because neither individual ACK is proven.
+For legacy peers, read-only process inventory and installed bundle version supply
+best-effort diagnostic metadata only; the installed version is not proof of a
+resident's version. Unknown fields stay explicit, never becoming idle evidence.
+An old resident can therefore time out with “participant did not acknowledge
+(version …)” and return to OPEN without being stopped or replaced.
+
+Expiry runs the existing owned CANCEL path and exits nonzero. Its fsynced private
+`<gate>.drain-<operationId>.json` receipt preserves the lease, timeout reason and
+participant/ledger status printed to stderr. CANCEL contention keeps its separate
+bounded retry and RECOVERY_REQUIRED behavior; no lock or registration is reaped.
+The TLA+ acceptance and exact-property mutants live in
+`formal/update-gate-cancel/` (also referenced by `formal/update-gate/`).
+Native/installed acceptance is NOT_RUN in this implementation lane.

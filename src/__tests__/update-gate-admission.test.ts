@@ -17,16 +17,17 @@ function fixture() {
   mkdirSync(updateGateFilePath() + ".admissions");
 }
 function prepare() { return updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, proof); }
-test("admission wins race, drain waits; closure wins, start refuses", async () => {
+test("admission and new voice survive drain; PREPARED refuses starts", async () => {
     fixture();
     let finish!: () => void;
     const done = new Promise<void>(resolve => { finish = resolve; });
     const operation = withVoiceAdmission(async () => { await done; });
     expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
     expect(prepare().kind).toBe("REFUSED");
-    expect(() => withVoiceAdmission(() => { throw Error("MUST NOT START"); })).toThrow("UPDATE_BUSY");
+    expect(withVoiceAdmission(() => "DRAINING admitted")).toBe("DRAINING admitted");
     finish(); await operation;
     expect(prepare().kind).toBe("APPLIED");
+    expect(() => withVoiceAdmission(() => {})).toThrow("UPDATE_BUSY");
     expect(updateVoiceGate({ kind: "COMMIT", lease }, proof).kind).toBe("APPLIED");
     expect(updateVoiceGate({ kind: "COMMIT", lease }, proof).kind).toBe("UNCHANGED");
 });
@@ -84,7 +85,7 @@ test("real ingress refuses before any media starts; Stop and Cancel remain avail
   const { handleVoiceAsk, handleVoiceSpeak, handleConverse } = await import("../handlers");
   const { speakLocally } = await import("../cli/speak");
   const tts = await import("../tts"), input = await import("../input");
-  updateVoiceGate({ kind: "REQUEST", lease });
+  updateVoiceGate({ kind: "REQUEST", lease }); prepare();
   for (const command of [{ cmd: "speak_text", text: "hello" }, { cmd: "record" },
     { cmd: "retranscribe_last" }, { cmd: "retranscribe_recording", audio_path: "absent.wav" },
     { cmd: "preview_tts_profile", profile: "short" }, { cmd: "replay" }]) {
@@ -119,7 +120,7 @@ test("real admitted Ask speaks, survives drain, captures answer; Stop still reac
     spyOn(tts, "speak").mockImplementation(async () => {
       expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
       expect(prepare().kind).toBe("REFUSED");
-      expect(await handleVoiceSpeak({ message: "unrelated start" })).toMatchObject({ isError: true });
+      expect(withVoiceAdmission(() => "unrelated registered start")).toBe("unrelated registered start");
       expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
       return { engine: "edge-tts", voice: "synthetic", displayText: "question",
         audioArtifact: { bytes: new Uint8Array([1]), format: "mp3" } };

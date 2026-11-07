@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoEarlyVoiceRefusal",
+  "status": "EXPECTED_FAIL",
+  "generated": 7,
+  "distinct": 7,
+  "trace": [
+    "/\\ result = \"none\"\n/\\ userGate = \"OPEN\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = TRUE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"never\""
+  ]
+}

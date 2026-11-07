@@ -36,7 +36,7 @@ test("fresh host voice bootstraps OPEN gen 0 exclusively; updater alone never bo
   expect(gate.withVoiceAdmission(() => "speak/record admitted")).toBe("speak/record admitted");
   expect(JSON.parse(fs.readFileSync(path, "utf8"))).toEqual(initial);
   expect(fs.readdirSync(path + ".admissions")).toEqual([]);
-  const closed = { version: 1, kind: "DRAINING", lease };
+  const closed = { version: 1, kind: "PREPARED", lease, native: ack, daemon: ack };
   fs.writeFileSync(path, JSON.stringify(closed));
   expect(() => gate.withVoiceAdmission(() => {})).toThrow("UPDATE_BUSY");
   expect(JSON.parse(fs.readFileSync(path, "utf8"))).toEqual(closed);
@@ -111,8 +111,9 @@ test("archive retry clears only its own uncertainty; deterministic drop does not
   await tick();
   expect(fs.readdirSync(path + ".admissions")).toEqual(ownUnresolved);
 });
-test("mute and think bypass drain admission, replay remains gated; paused replay is a control", async () => {
+test("mute and think bypass PREPARED admission; new replay refuses and paused replay is a control", async () => {
   fixture(); gate.updateVoiceGate({ kind: "REQUEST", lease });
+  expect(gate.updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, () => true).kind).toBe("APPLIED");
   mocks.push(spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(() => {}));
   expect((await handleVoiceSpeak({ enabled: false })).isError).not.toBe(true);
   expect((await handleVoiceSpeak({ message: "silent synthetic note", mode: "think" })).isError).not.toBe(true);
@@ -163,7 +164,8 @@ for (const entry of ["record", "speak"]) test(`fresh host actual ${entry} ingres
   }
   expect(JSON.parse(fs.readFileSync(path, "utf8"))).toEqual(initial);
 });
-test("readback seek refuses synchronously during drain rather than acknowledging a delayed start", () => {
+test("readback seek refuses synchronously during PREPARED rather than acknowledging a delayed start", () => {
   fixture(); gate.updateVoiceGate({ kind: "REQUEST", lease });
+  expect(gate.updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, () => true).kind).toBe("APPLIED");
   expect(tts.seekPlayback(0, "readback")).toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY") });
 });

@@ -4,7 +4,7 @@
   "hashes": {
     "formal/update-gate/FirstInstall.tla": "fa7771a1b77acb4f4ef2d0b4fd8f4b221538377462f1f4c26637deb0865be349",
     "formal/update-gate/checks.json": "8e900778822d6ebcbc0673bb2267772f39141f2a3821263bbb6af89a8eebe4d0",
-    "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
+    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/update-gate/QuitMutantReuse.cfg": "c588f7108cc70e0fc570aa6f3aab8fb19f20102851e578f30d5af0eeae34d4e1",
     "formal/update-gate/UpgradeOld.cfg": "11ad0ece993cf96794beb5b990144a152b9e4f9b79ac219c7d4ba063a8c96abe",
@@ -31,17 +31,17 @@
     "formal/update-gate/Fixed.cfg": "fa31127d1d9fd50b63cdb75a8a56ad38e0160082856aedff1df2f1e2f50d0704",
     "formal/update-gate/RecoveryMutantLive.cfg": "aae8a1603365d43f954e3fb326fad28f3f67ceb67a61dffdd8bd513a120c664a",
     "src/cli/setup.ts": "f45eee3baf6989070638cfd0bc22dbeb6a73cbbcdaef5aab0902bb0abbacbce9",
-    "src/update-gate-admission.ts": "675cdd7a8e9dc69c243cd58a97f8afde881cfbbcb3bc5d9304e3a304ce78262d",
+    "src/update-gate-admission.ts": "3a40646fe50a981fc14f50873bef9e6f85da04ab7a71bafa8fda05a43c07815b",
     "src/update-gate-storage.ts": "c33977d31799636a3a9292f4977827c52b6ab784f249512437f67b2553210476",
     "scripts/lib/update-gate.sh": "e30af5fdebc72200d55630795d8be1e2cc51a3c6848d8c1985f60fdd3334805d",
-    "scripts/voicelayer-dedupe-voicebar.sh": "ebd6239db4c66e2b922afa941e4102618631910641fef6a73de81031b55b34e3",
+    "scripts/voicelayer-dedupe-voicebar.sh": "51b515b9d92107f11f8e06d5f08edfa33fbdc5354987b12b1bd0574bfede50f0",
     "scripts/install-voicebar-autostart.sh": "58a4649aa3707a6382e521c626e7c58a480f64113ef4bdd2a3e084c61be62e7c",
     "scripts/promote-voicebar-release.sh": "0bbf4a2c3c357a6c743386422c02e968e3bed4d4331204cfeec1408c6836cd61",
-    "src/update-gate-installer-participant.ts": "a354401ee67aa478e0f03c90a1ab53126d012fa180284e6c8e6eae74cd6085f0",
+    "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
-    "src/update-gate-installer.ts": "b711bddd0f7edf7a26bf4f68f122c3e4c5ffe67e0fa62793629e15f4cfc9736f",
+    "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
     "src/mcp-server-daemon.ts": "a920961a9913ed8febcce8e83e4873676108142ea571f89a224eaa793eb8fdf8",
-    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "284b669743725274124a53511939659954e827b2cfa3aefda436bdedecc59770"
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "09462a3194b32f06ef801fa6e58c6fb28927c8d0536d3f5131887a07cb3b1add"
   },
   "mutants": {
     "BootstrapOnlyQuiescent": [
