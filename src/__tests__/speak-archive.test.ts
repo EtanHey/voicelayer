@@ -40,6 +40,69 @@ describe("private speak receipt creation", () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
+  for (const suffix of ["", ".speech-pending", ".speech-open"]) {
+    it(`accepts a concurrent private directory creator at archive${suffix}`, () => {
+      const target = root + suffix;
+      if (!suffix) fs.rmdirSync(root);
+      const mkdir = fs.mkdirSync;
+      let raced = false;
+      const spy = spyOn(fs, "mkdirSync").mockImplementation((path, options) => {
+        if (path === target && !raced) {
+          raced = true;
+          // Another thread wins after lstat(ENOENT), before our mkdir.
+          mkdir(path, { mode: 0o700 });
+        }
+        return mkdir(path, options);
+      });
+      restoreSpy = () => spy.mockRestore();
+      const result = createSpeakReceipt(request, seams);
+      expect(raced).toBe(true);
+      expect(result).toMatchObject({ kind: "created" });
+      const context = created(result);
+      expect(context.path.startsWith(root + "/")).toBe(true);
+      expect(fs.readFileSync(join(context.path, "input.txt"), "utf8")).toBe(request.input);
+    });
+  }
+
+  for (const winner of ["file", "symlink", "non-private directory"]) {
+    it(`refuses a concurrent ${winner} winner without adopting or modifying it`, () => {
+      const target = root + ".speech-pending";
+      const foreign = join(root, "foreign");
+      fs.mkdirSync(foreign, { mode: 0o700 });
+      fs.writeFileSync(join(foreign, "keep"), "untouched");
+      const mkdir = fs.mkdirSync;
+      let raced = false;
+      const spy = spyOn(fs, "mkdirSync").mockImplementation((path, options) => {
+        if (path === target && !raced) {
+          raced = true;
+          if (winner === "file") fs.writeFileSync(target, "keep");
+          else if (winner === "symlink") fs.symlinkSync(foreign, target);
+          else { mkdir(target, { mode: 0o755 }); fs.chmodSync(target, 0o755); }
+        }
+        return mkdir(path, options);
+      });
+      restoreSpy = () => spy.mockRestore();
+      try {
+        expect(createSpeakReceipt(request, seams)).toMatchObject({ kind: "failed", stage: "metadata", code: "UNSAFE_PATH" });
+        expect(raced).toBe(true);
+        expect(fs.readFileSync(join(foreign, "keep"), "utf8")).toBe("untouched");
+        if (winner === "file") expect(fs.readFileSync(target, "utf8")).toBe("keep");
+        if (winner === "symlink") expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
+        if (winner === "non-private directory") expect(fs.statSync(target).mode & 0o777).toBe(0o755);
+      } finally { fs.rmSync(target, { recursive: true, force: true }); }
+    });
+  }
+
+  it.skipIf(process.getuid?.() === 0)("retains IO_ERROR refusal when the pending index is genuinely unwritable", () => {
+    const pending = speechPendingIndex();
+    fs.mkdirSync(pending, { mode: 0o700 });
+    fs.chmodSync(pending, 0o500);
+    try {
+      expect(createSpeakReceipt(request, seams)).toMatchObject({ kind: "failed", stage: "metadata", code: "IO_ERROR" });
+      expect(fs.statSync(pending).mode & 0o777).toBe(0o500);
+    } finally { fs.chmodSync(pending, 0o700); }
+  });
+
   it("publishes exact Unicode whitespace input, hash and received metadata in the final private entry", () => {
     const context = created(createSpeakReceipt(request, seams));
     expect(context.path).toBe(join(root, "2026-10-23", id));
