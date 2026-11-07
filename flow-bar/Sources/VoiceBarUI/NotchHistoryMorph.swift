@@ -210,6 +210,13 @@ public enum NotchHistoryMorph {
 /// A spring in flight, as mass-1 physics: where SwiftUI is drawing it right now. SwiftUI never reports an in-flight
 /// value (the model already holds the target), so a press that grabs a moving panel reads it from here and the panel
 /// stays under the pointer instead of jumping to where the spring was headed (Codex review R1).
+/// The one clock History's springs and pointer samples share: monotonic (system uptime), the base NSEvent and
+/// SwiftUI gesture timestamps already use. A flight started on wall-clock Date() and read at a gesture's time
+/// clamped to its start, so a fully open panel read as progress 0 and refused the extend handle (2.3 U4 native, M1).
+public enum NotchHistoryClock {
+    public static func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
+}
+
 public struct NotchHistorySpringFlight: Equatable {
     public let from: CGFloat
     public let to: CGFloat
