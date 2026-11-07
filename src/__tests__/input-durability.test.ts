@@ -36,6 +36,7 @@ import * as sttPolish from "../stt-polish";
 import * as tts from "../tts";
 import * as vad from "../vad";
 import * as voiceBarLauncher from "../voice-bar-launcher";
+import * as inputDevice from "../recording-input-device";
 
 // Real subprocesses: standalone p95 <= 353 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
@@ -237,7 +238,10 @@ function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, befo
     return originalSpawnSync(cmd, { env: process.env });
   }) as typeof Bun.spawnSync;
 
-  Bun.spawn = (() => {
+  Bun.spawn = ((cmd: string[], options: Parameters<typeof Bun.spawn>[1]) => {
+    if (cmd[0] === process.execPath && cmd[1]?.endsWith("input-device-helper-fixture.ts")) {
+      return originalSpawn(cmd, { ...options, env: process.env });
+    }
     beforeMicOpen?.();
     spawned = true;
     return {
@@ -354,6 +358,7 @@ describe("input recording durability", () => {
       if (label !== "physical no click") for (let i = 0; i < 320; i++) view.setInt16((2150 * 16 + i) * 2, (i % 2 ? -1 : 1) * 9000 * Math.exp(-i / 55), true);
       const expectedArchive = makeWav(pcm);
       const recorder = installFakeRecorder([pcm], true);
+      const deviceSpy = spyOn(inputDevice, "snapshotRecordingInputDevice").mockResolvedValue({ name: "Fixture capture microphone", uid: "fixture-mic-uid" });
       const stopSpy = spyOn(tts, "stopPlayback").mockImplementation(() => {});
       const playbackSpy = spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined);
       const savedChunked = process.env.QA_VOICE_CHUNKED_STT;
@@ -372,6 +377,8 @@ describe("input recording durability", () => {
       });
       try {
         await recorder.waitForSpawn();
+        await waitUntil(() => deviceSpy.mock.calls.length >= 2, "capture device binding");
+        deviceSpy.mockResolvedValue({ name: "Later default microphone", uid: "later-mic-uid" });
         await Bun.sleep(20);
         if (timeoutClock) {
           await waitUntil(() => vadCallCount >= Math.floor(pcm.byteLength / VAD_CHUNK_BYTES), "timeout fixture PCM classified");
@@ -381,6 +388,9 @@ describe("input recording durability", () => {
         if (label !== "timeout") await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop", ...(physicalPress ? { physical_press: true } : {}) }))!);
         await recording;
         expect(readFileSync(join(archivePath, "audio.wav"))).toEqual(Buffer.from(expectedArchive));
+        expect(JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"))).toMatchObject({
+          input_device_name: "Fixture capture microphone", input_device_uid: "fixture-mic-uid",
+        });
         expect(backendTranscribedDataSize).toBe(label === "cancel" ? undefined :
           (label === "physical no click" ? durationMs : label.startsWith("physical") ? 2145 : 2400) * 32);
       } finally {
@@ -388,6 +398,7 @@ describe("input recording durability", () => {
         await recording.catch(() => null);
         timeoutClock?.restore();
         stopSpy.mockRestore(); playbackSpy.mockRestore();
+        deviceSpy.mockRestore();
         if (savedChunked === undefined) delete process.env.QA_VOICE_CHUNKED_STT;
         else process.env.QA_VOICE_CHUNKED_STT = savedChunked;
       }
@@ -490,6 +501,51 @@ describe("input recording durability", () => {
     clearStopSignal();
     clearCancelSignal();
   });
+
+  it("omits the microphone when the default changes while the recorder opens", async () => {
+    const { waitForInput } = await import("../input");
+    const deviceSpy = spyOn(inputDevice, "snapshotRecordingInputDevice")
+      .mockResolvedValueOnce({ name: "Opening microphone", uid: "opening-mic" })
+      .mockResolvedValue({ name: "Replacement microphone", uid: "replacement-mic" });
+    installFakeRecorder([makePcmChunk()], false);
+    let archivePath = "";
+    try {
+      await waitForInput(500, "standard", false, {
+        archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+      });
+      const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+      expect(metadata.input_device_name).toBeUndefined();
+      expect(metadata.input_device_uid).toBeUndefined();
+      expect(deviceSpy).toHaveBeenCalledTimes(2);
+    } finally { deviceSpy.mockRestore(); }
+  });
+
+  for (const failure of ["crash", "hang"] as const) {
+    it(`a ${failure} in the microphone metadata helper leaves the capture and archive intact`, async () => {
+      const { waitForInput } = await import("../input");
+      const helper = join(tmpRoot, "input-device-helper-fixture.ts");
+      writeFileSync(helper, failure === "crash" ? 'process.kill(process.pid, "SIGKILL");' : 'setInterval(() => {}, 1000);');
+      const snapshot = inputDevice.snapshotRecordingInputDevice;
+      let helperResults = 0;
+      const deviceSpy = spyOn(inputDevice, "snapshotRecordingInputDevice").mockImplementation(() =>
+        snapshot(helper).then(value => { helperResults++; return value; }));
+      const pcm = makePcmChunk();
+      const recorder = installFakeRecorder([pcm], false, () => { expect(helperResults).toBe(0); });
+      let archivePath = "";
+      try {
+        const recording = waitForInput(5000, "standard", false, {
+          archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+        });
+        await recorder.waitForSpawn(); // No helper result is awaited before the recorder opens.
+        await recording;
+        expect(readFileSync(join(archivePath, "audio.wav"))).toEqual(Buffer.from(makeWav(pcm)));
+        const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+        expect(metadata.input_device_name).toBeUndefined();
+        expect(metadata.input_device_uid).toBeUndefined();
+        expect(deviceSpy).toHaveBeenCalledTimes(2);
+      } finally { deviceSpy.mockRestore(); }
+    });
+  }
 
   afterEach(() => {
     vadProcessSpy?.mockRestore();

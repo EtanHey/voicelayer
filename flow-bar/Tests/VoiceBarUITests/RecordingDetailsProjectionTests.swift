@@ -32,14 +32,19 @@ final class RecordingDetailsProjectionTests: XCTestCase {
     func testStoredLanguageSettingAndMicrophoneMappingDoesNotUseDetectedOrCurrent() throws {
         guard let path = ProcessInfo.processInfo.environment["RECORDING_DETAILS_QA_ROOT"] else { throw XCTSkip("Set owned RECORDING_DETAILS_QA_ROOT for bounded archive fixture writes") }
         let root = URL(fileURLWithPath: path).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
         let entry = root.appendingPathComponent("2026-11-01/recording")
         try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
         let metadata: [String: Any] = ["id": "recording", "transcription_status": "transcribed", "language_mode": "auto", "detected_language": "Hebrew", "input_device_name": "Desk microphone"]
         try JSONSerialization.data(withJSONObject: metadata).write(to: entry.appendingPathComponent("metadata.json"))
         let snapshot = SettingsHistoryDiagnostics.load(audioPath: entry.appendingPathComponent("audio.wav"), root: root)
         XCTAssertEqual(snapshot.languageSetting, "auto"); XCTAssertEqual(snapshot.inputDeviceName, "Desk microphone")
+        let facts = SettingsHistoryDiagnosticsCopy.facts(snapshot: snapshot, entry: nil, attemptHistory: nil, selectedAttemptID: nil)
+        XCTAssertTrue(facts.contains { $0.title == "Microphone" && $0.value == "Desk microphone" })
         try JSONSerialization.data(withJSONObject: ["detected_language": "Hebrew"]).write(to: entry.appendingPathComponent("metadata.json"))
         let legacy = SettingsHistoryDiagnostics.load(audioPath: entry.appendingPathComponent("audio.wav"), root: root)
         XCTAssertNil(legacy.languageSetting); XCTAssertNil(legacy.inputDeviceName)
+        XCTAssertFalse(SettingsHistoryDiagnosticsCopy.facts(snapshot: legacy, entry: nil, attemptHistory: nil, selectedAttemptID: nil)
+            .contains { $0.title == "Microphone" })
     }
 }
