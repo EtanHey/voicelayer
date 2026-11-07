@@ -1,4 +1,5 @@
 import CoreGraphics
+import QuartzCore
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
@@ -283,6 +284,23 @@ final class NotchHistoryMorphTests: XCTestCase {
         let thrown = NotchHistorySpringFlight(from: 0.4, to: 1, velocity: 3, start: 0, response: 0.42, dampingFraction: 1.4)
         XCTAssertEqual(thrown.velocity(at: 0), 3, accuracy: 1e-9, "an overdamped spring keeps its release speed at t = 0")
         XCTAssertEqual(thrown.value(at: 6), 1, accuracy: 1e-4)
+    }
+
+    /// 2.3 U4 native (M1): the open spring started on Date() and the handle's samples came on the event clock, so a
+    /// panel that had finished opening read progress 0 and refused the drag. Both sides share NotchHistoryClock,
+    /// the system-event base: a drag beginning right after a completed open is accepted.
+    func testTheSpringsAndPointerSamplesShareOneMonotonicClock() throws {
+        // CACurrentMediaTime is the mach uptime base SwiftUI gesture times use (measured on the M1: value.time ==
+        // systemUptime within 2 ms); wall-clock Date() is ~7e8 s away from it.
+        XCTAssertEqual(NotchHistoryClock.now(), CACurrentMediaTime(), accuracy: 0.5, "the History clock is the event clock")
+        XCTAssertGreaterThan(abs(Date().timeIntervalSinceReferenceDate - NotchHistoryClock.now()), 1_000,
+                             "and not the wall clock the springs used before")
+        let opened = NotchHistorySpringFlight(
+            from: 0, to: 1, velocity: 0, start: NotchHistoryClock.now() - 1.5,
+            response: NotchHistoryMorph.openResponse, dampingFraction: NotchHistoryMorph.openDampingFraction
+        )
+        XCTAssertGreaterThan(opened.value(at: CACurrentMediaTime()), 0.98,
+                             "a drag sample right after a completed open passes the press check")
     }
 
     func testAGrabMidFlightContinuesFromWhatIsDrawnNotTheTarget() throws {

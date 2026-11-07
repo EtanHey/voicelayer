@@ -631,7 +631,7 @@ public struct BarView: View {
             return
         }
         // SwiftUI retargets from what is drawn and keeps its velocity; the flight records the same.
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = NotchHistoryClock.now()
         let drawn = renderedHistoryProgress(at: now)
         let carried = (historyFlight?.velocity(at: now) ?? 0) + velocity
         historyFlight = NotchHistorySpringFlight(
@@ -702,6 +702,17 @@ public struct BarView: View {
             .onEnded { _ in endHistoryPull(cancelled: false) }
     }
 
+    /// The handle's own drag (see NotchHistoryExtendHandle): the same press rules as the canvas path (the panel fully
+    /// open, no open/close pull in progress), then the same row follow.
+    private func dragHistoryHandle(y: CGFloat, time: TimeInterval) {
+        if case .idle = historyRowsPull.phase {
+            guard case .idle = historyPull.phase, isHistoryPresented,
+                  (historyFrozenProgress ?? renderedHistoryProgress(at: time)) > 0.98 else { return }
+            historyRowsPull.press(y: y, progress: historyRowsExtent, time: time)
+        }
+        dragHistoryRows(to: y, time: time)
+    }
+
     /// V6: the extend handle follows the pointer one row per 46 pt, stretching past 7 and the last row.
     private func dragHistoryRows(to y: CGFloat, time: TimeInterval) {
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
@@ -733,7 +744,7 @@ public struct BarView: View {
             return
         }
         historyRowsFlight = NotchHistorySpringFlight(
-            from: historyRowsExtent, to: CGFloat(rows), velocity: velocity, start: Date().timeIntervalSinceReferenceDate,
+            from: historyRowsExtent, to: CGFloat(rows), velocity: velocity, start: NotchHistoryClock.now(),
             response: NotchHistoryMorph.pullResponse, dampingFraction: NotchHistoryMorph.pullDampingFraction
         )
         withAnimation(NotchHistoryMorph.rowsAnimation(from: historyRowsExtent, to: rows, velocity: velocity)) {
@@ -1096,7 +1107,11 @@ public struct BarView: View {
                     palette: notchPalette,
                     rows: historyRows,
                     maximumRows: NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
-                    onAdjust: adjustHistoryRows
+                    onAdjust: adjustHistoryRows,
+                    onDrag: dragHistoryHandle,
+                    onDragEnd: { cancelled in
+                        if historyRowsPull.phase != .idle { endHistoryRowsPull(cancelled: cancelled) }
+                    }
                 )
             }
                 .frame(maxHeight: .infinity, alignment: .top)
