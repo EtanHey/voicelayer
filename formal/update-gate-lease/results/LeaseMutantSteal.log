@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "LeaseExclusive",
+  "status": "EXPECTED_FAIL",
+  "generated": 12,
+  "distinct": 10,
+  "trace": [
+    "/\\ pc = [c1 |-> \"idle\", c2 |-> \"idle\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"none\"\n/\\ releasedBy = \"none\"\n/\\ gate = [kind |-> \"OPEN\", owner |-> \"none\", gen |-> 0, released |-> \"none\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"drain\", c2 |-> \"idle\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"none\"\n/\\ releasedBy = \"none\"\n/\\ gate = [kind |-> \"DRAINING\", owner |-> \"c1\", gen |-> 1, released |-> \"none\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"drain\", c2 |-> \"drain\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"none\"\n/\\ releasedBy = \"none\"\n/\\ gate = [kind |-> \"DRAINING\", owner |-> \"c2\", gen |-> 2, released |-> \"none\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE"
+  ]
+}

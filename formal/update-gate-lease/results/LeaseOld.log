@@ -1,0 +1,23 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "VerifiedUpdateReleases",
+  "status": "EXPECTED_FAIL",
+  "generated": 4867,
+  "distinct": 1700,
+  "trace": [
+    "/\\ pc = [c1 |-> \"idle\", c2 |-> \"idle\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"none\"\n/\\ releasedBy = \"none\"\n/\\ gate = [kind |-> \"OPEN\", owner |-> \"none\", gen |-> 0, released |-> \"none\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"idle\", c2 |-> \"drain\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"none\"\n/\\ releasedBy = \"none\"\n/\\ gate = [kind |-> \"DRAINING\", owner |-> \"c2\", gen |-> 1, released |-> \"none\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"idle\", c2 |-> \"aborting\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"none\"\n/\\ releasedBy = \"none\"\n/\\ gate = [kind |-> \"DRAINING\", owner |-> \"c2\", gen |-> 1, released |-> \"none\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"idle\", c2 |-> \"cancelled\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"OPEN\", owner |-> \"none\", gen |-> 1, released |-> \"c2\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"drain\", c2 |-> \"cancelled\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"DRAINING\", owner |-> \"c1\", gen |-> 2, released |-> \"c2\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"prepared\", c2 |-> \"cancelled\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"PREPARED\", owner |-> \"c1\", gen |-> 2, released |-> \"c2\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"prepared\", c2 |-> \"exited\"]\n/\\ receipt = \"none\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"PREPARED\", owner |-> \"c1\", gen |-> 2, released |-> \"c2\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"committed\", c2 |-> \"exited\"]\n/\\ receipt = \"c1\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"COMMITTED\", owner |-> \"c1\", gen |-> 2, released |-> \"c2\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"none\", c2 |-> \"none\"]\n/\\ pair = \"old\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"installing\", c2 |-> \"exited\"]\n/\\ receipt = \"c1\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"COMMITTED\", owner |-> \"c1\", gen |-> 2, released |-> \"c2\"]\n/\\ installed = \"old\"\n/\\ child = [c1 |-> \"running\", c2 |-> \"none\"]\n/\\ pair = \"none\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"installing\", c2 |-> \"exited\"]\n/\\ receipt = \"c1\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"COMMITTED\", owner |-> \"c1\", gen |-> 2, released |-> \"c2\"]\n/\\ installed = \"target\"\n/\\ child = [c1 |-> \"exit0\", c2 |-> \"none\"]\n/\\ pair = \"starting\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"installing\", c2 |-> \"exited\"]\n/\\ receipt = \"c1\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"COMMITTED\", owner |-> \"c1\", gen |-> 2, released |-> \"c2\"]\n/\\ installed = \"target\"\n/\\ child = [c1 |-> \"exit0\", c2 |-> \"none\"]\n/\\ pair = \"ready\"\n/\\ voice = FALSE",
+    "/\\ pc = [c1 |-> \"exited\", c2 |-> \"exited\"]\n/\\ receipt = \"c1\"\n/\\ g1 = \"none\"\n/\\ reopen = \"precommit\"\n/\\ releasedBy = \"c2\"\n/\\ gate = [kind |-> \"COMMITTED\", owner |-> \"c1\", gen |-> 2, released |-> \"c2\"]\n/\\ installed = \"target\"\n/\\ child = [c1 |-> \"exit0\", c2 |-> \"none\"]\n/\\ pair = \"ready\"\n/\\ voice = FALSE",
+    "Finished checking temporal properties in 00s at 2026-11-03 23:46:17"
+  ]
+}
