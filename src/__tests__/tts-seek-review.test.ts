@@ -135,8 +135,13 @@ describe("seek review regressions", () => {
       recordingSpy.mockReturnValue("recording"); localSpy.mockReturnValue("recording"); captured.push(); return capture.promise;
     }));
     const ask = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+    const endedBeforeRecording = ask.then(result => {
+      throw new Error(`voice_ask ended before the recording fixture: ${JSON.stringify(result)}`);
+    });
     try {
-      const prompt = await players.at(0); prompt.exit.resolve(0); await captured.at(0);
+      const prompt = await Promise.race([players.at(0), endedBeforeRecording]);
+      prompt.exit.resolve(0);
+      await Promise.race([captured.at(0), endedBeforeRecording]);
       expect(handleSocketCommand({ cmd: "seek", offset_ms: 100 })).toMatchObject({ outcome: "reject", reason: "busy" });
       expect(cuts.values).toHaveLength(0);
     } finally { recordingSpy.mockReturnValue("idle"); localSpy.mockReturnValue("idle"); capture.resolve("Answer"); await ask; }
