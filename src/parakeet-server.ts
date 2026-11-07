@@ -224,7 +224,7 @@ export class ParakeetServer {
     if (process.env.VOICELAYER_TEST_ISOLATED === "1" && !this.options.command) {
       throw new Error("Real Parakeet loading is disabled under the unit-test preload");
     }
-    const proc = Bun.spawn(command, { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: process.env });
+    const proc = Bun.spawn(command, { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
     this.notify("loading");
     const child: Child = { proc, pending: new Map(), stdout: Promise.resolve(), stderr: Promise.resolve(), partial: "", raw: Buffer.alloc(0), fault: null, stopping: false, unexpectedNotified: false };
     this.child = child;

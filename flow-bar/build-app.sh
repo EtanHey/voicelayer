@@ -1179,6 +1179,7 @@ fi
 
 # Check our copied source; vendored dependencies are outside this privacy gate.
 bash "$REPO_ROOT/scripts/check-voicebar-test-free.sh" "$APP_DIR"
+bash "$REPO_ROOT/scripts/check-voicebar-python-cache-free.sh" "$APP_DIR"
 
 COMMIT_SHA="$(git_commit)"
 DESCRIBE_REF="$(git_describe)"
