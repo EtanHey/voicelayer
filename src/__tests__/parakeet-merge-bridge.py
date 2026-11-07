@@ -69,6 +69,15 @@ for left_text, right_text, right_start in [
     b = [token_class(id=2, text=right_text, start=right_start, duration=0.5)]
     assert bridge.merge_boundary_word(a, b, 2.0) is None
 
+# Partial overlap alone can be two nearby spoken repetitions. Exercise both
+# merge functions before asserting so the failing result identifies both.
+nearby_repeats = []
+for name in ("merge_longest_contiguous", "merge_longest_common_subsequence"):
+    a = [token_class(id=1, text=" okay?", start=10.0, duration=0.9)]
+    b = [token_class(id=2, text=" okay.", start=10.6, duration=0.5)]
+    nearby_repeats.append([t.text for t in getattr(alignment, name)(a, b, overlap_duration=2.0)])
+assert nearby_repeats == [[" okay?", " okay."], [" okay?", " okay."]], nearby_repeats
+
 fixed_function = alignment.merge_longest_contiguous
 bridge.apply_alignment_bridge(alignment)
 assert alignment.merge_longest_contiguous is fixed_function

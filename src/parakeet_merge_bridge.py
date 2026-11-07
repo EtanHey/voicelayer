@@ -36,7 +36,10 @@ def merge_boundary_word(a, b, overlap_duration):
         return None
     left_start, left_end = min(t.start for t in left), max(t.end for t in left)
     right_start, right_end = min(t.start for t in right), max(t.end for t in right)
-    if (max(left_start, right_start) >= min(left_end, right_end)
+    left_center = (left_start + left_end) / 2
+    right_center = (right_start + right_end) / 2
+    if (not (right_start <= left_center < right_end
+             and left_start <= right_center < left_end)
             or abs(left_start - right_start) >= overlap_duration / 2):
         return None
     return a + b[end:]
