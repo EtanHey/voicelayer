@@ -41,7 +41,8 @@ source bytes, and refusal of unfamiliar source without MLX or model loading.
 
 ## Cleanup
 
-When the upstream PR is merged **and a release contains it**, update
+When upstream releases contain **both** the midpoint fix and the retokenized
+boundary-word fix, update
 `src/parakeet-runtime.lock` and the runtime version checks through the normal
 runtime-upgrade workflow. Verify the regression against the unpatched released
 package, then remove `src/parakeet_merge_bridge.py`, its worker startup import and
