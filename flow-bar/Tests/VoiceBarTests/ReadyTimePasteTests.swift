@@ -124,6 +124,22 @@ final class ReadyTimePasteTests: XCTestCase {
         XCTAssertEqual(kit.writes, [])
         XCTAssertEqual(kit.typed, ["cmux:whole fu… שלום"])
     }
+
+    /// Companion to the pin above: the same terminal with a NON-text focused element is refused (P1 #683),
+    /// so the role is what decides delivery. Documents the known 2.3 behaviour for terminals whose focus is
+    /// not a text-role AX element: nothing is typed and the take stays in History.
+    func testTerminalNonTextFocusIsNotTyped() throws {
+        let kit = Kit(), id = try kit.start()
+        let cmux = App("com.cmuxterm.app", 10006)
+        kit.front = cmux; kit.field = "cmux"
+        kit.state.focusedTargetEligibilityProvider = {
+            DictationFocusedTargetEligibility(processIdentifier: cmux.processIdentifier, role: "AXGroup",
+                isEditable: false, isSecure: false, matchesCurrentFocus: { kit.field == "cmux" })
+        }
+        kit.final(id)
+        XCTAssertEqual(kit.writes, [])
+        XCTAssertEqual(kit.typed, [])
+    }
     func testFocusMoveAfterWriteNeverRetargetsOrRetries() throws {
         let kit = Kit(), id = try kit.start()
         kit.afterWrite = { kit.field = "elsewhere"; kit.front = App("test.other", 10004) }
