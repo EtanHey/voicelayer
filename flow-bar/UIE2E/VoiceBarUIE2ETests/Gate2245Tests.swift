@@ -157,7 +157,16 @@ extension VoiceBarFlowTests {
                         "Current teleprompter text missing: " + text)
                 }
                 if name == "busy" {
-                    XCTAssertTrue(app.staticTexts["Busy transcribing. Selection not read"].exists)
+                    // Etan's 2.2.61 notch ledger N2: "no text band while transcribing; spinner+blue are enough — N2
+                    // wins", shipped by 9df63566. The refusal is the empty command list and the selection:busy receipt.
+                    XCTAssertEqual((receipt["state"] as? [String: Any])?["mode"] as? String, "transcribing")
+                    let pill = app.dialogs["VoiceBar GATE2245 Product Pill"]
+                    let spinner = pill.descendants(matching: .other)
+                        .matching(NSPredicate(format: "label == %@", "Transcribing")).firstMatch
+                    XCTAssertTrue(spinner.waitForExistence(timeout: 1), "N2 requires the accessible Transcribing spinner")
+                    XCTAssertFalse(app.descendants(matching: .any)
+                        .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Selection not read", "Selection not read"))
+                        .firstMatch.exists, "N2 forbids the busy note text while transcribing")
                 }
                 attachJSON("GATE2246-selection-" + name, receipt)
             }
