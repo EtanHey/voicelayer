@@ -1161,6 +1161,10 @@ function formatNumbersInLine(text: string): string {
 // --- Stage 5: Tech vocabulary ---
 
 const TECH_VOCAB: [RegExp, string][] = [
+  // "a text edit" is ordinary prose. Normalize the app name only with an
+  // explicit app context, preserving every surrounding word and delimiter.
+  [/\b((?:open|launch|in|into|from|switch[ \t]+to|paste[ \t]+into|quit)[ \t]+(?:the[ \t]+)?)text[ \t]+edit\b/gi, "$1TextEdit"],
+  [/\btext[ \t]+edit(?=[ \t]+(?:app|window|document|doc)\b)/gi, "TextEdit"],
   [/\bPR\s*(\d+)(['’]s)\b/gi, "PR $1$2"],
   [/\bvision pro\b/gi, "Vision Pro"],
   [/\bsecond\s+dash\s+s\b/gi, "second-S"],

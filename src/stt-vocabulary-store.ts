@@ -86,7 +86,6 @@ export const BUILTIN_STT_DICTIONARY_ENTRIES: readonly STTDictionaryEntry[] = [
   { canonical: "Svelte", variants: ["סו ולט"] },
   { canonical: "Bubble", variants: ["בבל"] },
   { canonical: "Kubernetes", variants: ["קוברנטיס"] },
-  { canonical: "TextEdit", variants: ["text edit"] },
 ];
 
 export interface STTVocabularySnapshot {
