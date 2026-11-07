@@ -65,6 +65,8 @@ extension VoiceBarFlowTests {
         for record in records {
             XCTAssertEqual(record["appActive"] as? Bool, false, "\(control): VoiceBar was not active at click time: \(record)")
             XCTAssertEqual(record["pillKey"] as? Bool, false, "\(control): the pill was not key at click time: \(record)")
+            XCTAssertEqual(record["frontmost"] as? String, "com.apple.finder",
+                           "\(control): Finder was frontmost at mouse-down: \(record)")
         }
     }
 

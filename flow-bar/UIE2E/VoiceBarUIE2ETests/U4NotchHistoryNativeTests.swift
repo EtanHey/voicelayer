@@ -73,6 +73,8 @@ final class U4NotchHistoryNativeTests: XCTestCase {
             try require(!clicks.isEmpty, "the host recorded the mouse-down on the pill")
             try require(clicks.allSatisfy { $0["appActive"] as? Bool == false && $0["pillKey"] as? Bool == false },
                         "History never activates VoiceBar or keys the pill at click time: \(clicks)")
+            try require(clicks.allSatisfy { $0["frontmost"] as? String == "com.apple.finder" },
+                        "Finder was frontmost at each mouse-down: \(clicks)")
             try require(finder.state == .runningForeground, "History never activates VoiceBar")
             try require(handle.waitForExistence(timeout: 4), "the open panel shows its extend handle")
             try require(pill.descendants(matching: .any).matching(identifier: "notch-history-extend-handle").count == 1,
