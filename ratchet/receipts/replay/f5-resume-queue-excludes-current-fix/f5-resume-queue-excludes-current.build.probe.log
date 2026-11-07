@@ -1,0 +1,11 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+QueuedCountExcludesCurrent replayed 21 real queue scenarios
+(pass) long-read real runtime with owned synth/player fakes > F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots [145.07ms]
+
+ 1 pass
+ 142 filtered out
+ 0 fail
+ 236 expect() calls
+Ran 1 test across 1 file. [286.00ms]

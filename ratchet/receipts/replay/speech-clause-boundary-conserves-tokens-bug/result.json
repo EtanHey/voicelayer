@@ -1,0 +1,21 @@
+[
+  {
+    "row": "speech-clause-boundary-conserves-tokens",
+    "kind": "replay",
+    "value": 5,
+    "ceiling": 0,
+    "status": "FAIL",
+    "verdict": "FAIL",
+    "bug_sha": "6b07f56a18225244f22471e4655aac8b40d8a70d",
+    "fix_sha": "73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+    "measured_sha": "6b07f56a18225244f22471e4655aac8b40d8a70d",
+    "error": null,
+    "probe": {
+      "commit": "73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+      "path": "src/__tests__/tts-chunking.test.ts",
+      "cases": 5
+    },
+    "probe_sha256": "5e3af40d4e638e585051552b47707d4979edea0d19d9edf52b32a779ead5fbd7",
+    "platform": "linux"
+  }
+]

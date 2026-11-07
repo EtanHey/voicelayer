@@ -1,0 +1,21 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+[update-gate] Successor readiness attempt 1 failed: Error: new participants not verified: waiting for live participants
+[update-gate] Successor readiness attempt 2 failed: Error: new participants not verified: waiting for live participants
+[update-gate] COMPLETE: verified installed target and new participants; admission OPEN.
+(pass) G5 readiness retries fresh authenticated attempts: ready [26.30ms]
+[update-gate] Successor readiness attempt 1 failed: Error: new participants not verified: waiting for live participants
+[update-gate] Successor readiness attempt 2 failed: Error: UNKNOWN: stale participant round trip
+[update-gate] COMPLETE: verified installed target and new participants; admission OPEN.
+(pass) G5 readiness retries fresh authenticated attempts: stale [16.51ms]
+[update-gate] Successor readiness attempt 1 failed: Error: new participants not verified: waiting for live participants
+[update-gate] Successor readiness attempt 2 failed: Error: connection refused
+[update-gate] COMPLETE: verified installed target and new participants; admission OPEN.
+(pass) G5 readiness retries fresh authenticated attempts: disconnected [14.21ms]
+
+ 3 pass
+ 34 filtered out
+ 0 fail
+ 18 expect() calls
+Ran 3 tests across 1 file. [134.00ms]

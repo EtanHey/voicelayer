@@ -1,0 +1,41 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+101 |         f.plist(candidate, bundleId);
+102 |         if (source === "mdfind") f.stub("find", "exit 0");
+103 |         const result = f.run(scriptNames[0], {
+104 |           VB_TEST_SPOTLIGHT: source === "mdfind" ? `${f.app}\n${candidate}` : f.app,
+105 |         });
+106 |         expect(result.exitCode).toBe(ignored ? 0 : 1);
+                                      ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 1
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:106:33)
+(fail) health discovery via find: Gits/repo/.test-tmp/run/VoiceBar.app [212.33ms]
+(pass) health discovery via find: Gits/foo/VoiceBar.app [176.80ms]
+(pass) health discovery via find: Gits/foo.test-tmp-bar/VoiceBar.app [176.74ms]
+101 |         f.plist(candidate, bundleId);
+102 |         if (source === "mdfind") f.stub("find", "exit 0");
+103 |         const result = f.run(scriptNames[0], {
+104 |           VB_TEST_SPOTLIGHT: source === "mdfind" ? `${f.app}\n${candidate}` : f.app,
+105 |         });
+106 |         expect(result.exitCode).toBe(ignored ? 0 : 1);
+                                      ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 1
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:106:33)
+(fail) health discovery via mdfind: Gits/repo/.test-tmp/run/VoiceBar.app [162.51ms]
+(pass) health discovery via mdfind: Gits/foo/VoiceBar.app [185.54ms]
+(pass) health discovery via mdfind: Gits/foo.test-tmp-bar/VoiceBar.app [173.71ms]
+
+ 4 pass
+ 19 filtered out
+ 2 fail
+ 22 expect() calls
+Ran 6 tests across 1 file. [1134.00ms]

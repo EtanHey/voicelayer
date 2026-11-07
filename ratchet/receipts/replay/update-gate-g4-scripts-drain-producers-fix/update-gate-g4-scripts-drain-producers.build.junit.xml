@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="9" assertions="10" failures="0" skipped="4" time="0.243764311">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="9" assertions="10" failures="0" skipped="4" time="0.238996322" hostname="vm">
+    <testsuite name="update script SIGPIPE guards" file="src/__tests__/ratchet-replay-probe.test.ts" line="41" tests="9" assertions="10" failures="0" skipped="4" time="0.214" hostname="vm">
+      <testcase name="app_authority drains a codesign producer larger than the pipe buffer" classname="update script SIGPIPE guards" time="0.033738" file="src/__tests__/ratchet-replay-probe.test.ts" line="43" assertions="2" />
+      <testcase name="app_teamid drains a codesign producer larger than the pipe buffer" classname="update script SIGPIPE guards" time="0.030293" file="src/__tests__/ratchet-replay-probe.test.ts" line="43" assertions="2" />
+      <testcase name="unsigned copies return empty signature fields without aborting" classname="update script SIGPIPE guards" time="0.010878" file="src/__tests__/ratchet-replay-probe.test.ts" line="67" assertions="2" />
+      <testcase name="bun package-version reader drains output and keeps the first match" classname="update script SIGPIPE guards" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="84" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="npm package-version reader drains output and keeps the first match" classname="update script SIGPIPE guards" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="84" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="secure_input_owner consumes large matching health output" classname="update script SIGPIPE guards" time="0.081941" file="src/__tests__/ratchet-replay-probe.test.ts" line="118" assertions="2" />
+      <testcase name="launchd_loaded_program consumes large matching health output" classname="update script SIGPIPE guards" time="0.060623" file="src/__tests__/ratchet-replay-probe.test.ts" line="118" assertions="2" />
+      <testcase name="lint rejects early consumers of streaming producers" classname="update script SIGPIPE guards" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="137" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="update-path scripts have no early consumers of streaming producers" classname="update script SIGPIPE guards" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="155" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+  </testsuite>
+</testsuites>

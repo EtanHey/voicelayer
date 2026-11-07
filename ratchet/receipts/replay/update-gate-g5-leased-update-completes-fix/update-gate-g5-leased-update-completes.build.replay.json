@@ -1,0 +1,22 @@
+{
+  "row": "update-gate-g5-leased-update-completes",
+  "measured_sha": "5640698567a800fd61a60d7620f66360ccd29aa4",
+  "probe_commit": "5640698567a800fd61a60d7620f66360ccd29aa4",
+  "probe_path": "src/__tests__/update-gate-complete.test.ts",
+  "probe_sha256": "58e1f59e5e583fb129605245d6e50a851fae0632400278591abeb0b61f66a254",
+  "bun_exit": 0,
+  "elapsed_seconds": 0.516,
+  "semantic_violations": 0,
+  "problems": [],
+  "cases": [
+    {
+      "name": "G5 controller child lifecycle: verified",
+      "outcome": "pass"
+    },
+    {
+      "name": "G5 controller child lifecycle: sha",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}

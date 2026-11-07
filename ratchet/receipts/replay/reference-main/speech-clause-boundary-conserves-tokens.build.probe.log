@@ -1,0 +1,80 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+155 |       const lead = (language === "Hebrew" ? "שלום " : "word ").repeat(20).slice(0, 99 - token.indexOf(marker) - 1) + " ";
+156 |       const source = lead + token + " trailing words without a sentence break ".repeat(20);
+157 |       expect(source[99]).toBe(marker);
+158 |       for (const engine of ["edge", "clone"] as const) {
+159 |         const chunks = chunkTextForLongRead(source, engine);
+160 |         expect(source.slice(chunks[0].length, chunks[0].length + 1), "RealClauseBoundary head ends at whitespace").toMatch(/\s/u);
+                                                                                                                         ^
+error: RealClauseBoundary head ends at whitespace
+
+Expected substring or pattern: /\s/u
+Received: "/"
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:160:116)
+(fail) F-speech R2 real clause boundary > keeps https://example.test/path whole when : is at index 99 (English) [95.65ms]
+155 |       const lead = (language === "Hebrew" ? "שלום " : "word ").repeat(20).slice(0, 99 - token.indexOf(marker) - 1) + " ";
+156 |       const source = lead + token + " trailing words without a sentence break ".repeat(20);
+157 |       expect(source[99]).toBe(marker);
+158 |       for (const engine of ["edge", "clone"] as const) {
+159 |         const chunks = chunkTextForLongRead(source, engine);
+160 |         expect(source.slice(chunks[0].length, chunks[0].length + 1), "RealClauseBoundary head ends at whitespace").toMatch(/\s/u);
+                                                                                                                         ^
+error: RealClauseBoundary head ends at whitespace
+
+Expected substring or pattern: /\s/u
+Received: "0"
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:160:116)
+(fail) F-speech R2 real clause boundary > keeps 1,000 whole when , is at index 99 (English) [0.44ms]
+155 |       const lead = (language === "Hebrew" ? "שלום " : "word ").repeat(20).slice(0, 99 - token.indexOf(marker) - 1) + " ";
+156 |       const source = lead + token + " trailing words without a sentence break ".repeat(20);
+157 |       expect(source[99]).toBe(marker);
+158 |       for (const engine of ["edge", "clone"] as const) {
+159 |         const chunks = chunkTextForLongRead(source, engine);
+160 |         expect(source.slice(chunks[0].length, chunks[0].length + 1), "RealClauseBoundary head ends at whitespace").toMatch(/\s/u);
+                                                                                                                         ^
+error: RealClauseBoundary head ends at whitespace
+
+Expected substring or pattern: /\s/u
+Received: "t"
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:160:116)
+(fail) F-speech R2 real clause boundary > keeps inside;token whole when ; is at index 99 (English) [0.40ms]
+155 |       const lead = (language === "Hebrew" ? "שלום " : "word ").repeat(20).slice(0, 99 - token.indexOf(marker) - 1) + " ";
+156 |       const source = lead + token + " trailing words without a sentence break ".repeat(20);
+157 |       expect(source[99]).toBe(marker);
+158 |       for (const engine of ["edge", "clone"] as const) {
+159 |         const chunks = chunkTextForLongRead(source, engine);
+160 |         expect(source.slice(chunks[0].length, chunks[0].length + 1), "RealClauseBoundary head ends at whitespace").toMatch(/\s/u);
+                                                                                                                         ^
+error: RealClauseBoundary head ends at whitespace
+
+Expected substring or pattern: /\s/u
+Received: "ה"
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:160:116)
+(fail) F-speech R2 real clause boundary > keeps מילה،המשך whole when ، is at index 99 (Hebrew) [0.89ms]
+F-speech R2 fuzz: 6000 pairs; 146 head token splits; 0 character drops/duplicates
+175 |         if (head.length < source.length && !/\s/u.test(source[head.length])) splits++;
+176 |         if (chunks.join("").replace(/\s/gu, "") !== source.replace(/\s/gu, "")) changed++;
+177 |       }
+178 |     }
+179 |     console.log(`F-speech R2 fuzz: 6000 pairs; ${splits} head token splits; ${changed} character drops/duplicates`);
+180 |     expect(splits, "RealClauseBoundary fuzz").toBe(0);
+                                                    ^
+error: RealClauseBoundary fuzz
+
+Expected: 0
+Received: 146
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:180:47)
+(fail) F-speech R2 real clause boundary > fuzzes 6000 engine/text pairs with no head token splits or character drops/duplicates [887.88ms]
+
+ 0 pass
+ 23 filtered out
+ 5 fail
+ 9 expect() calls
+Ran 5 tests across 1 file. [1030.00ms]

@@ -1,0 +1,21 @@
+[
+  {
+    "row": "update-gate-g1-legacy-cellar-repair",
+    "kind": "replay",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "verdict": "PASS",
+    "bug_sha": "4c20d05534599a9f318dc02622bb625105a923a8",
+    "fix_sha": "d39461f2f28ff62d4346f13b839b873dda4f0bf7",
+    "measured_sha": "d39461f2f28ff62d4346f13b839b873dda4f0bf7",
+    "error": null,
+    "probe": {
+      "commit": "569b9f15029c3de475d41bc347e328c16c7e5187",
+      "path": "src/__tests__/legacy-cask-setup.test.ts",
+      "cases": 1
+    },
+    "probe_sha256": "a533bbff5b8a56d50226f28d3ded16b285d55153a9eb74b7d7b9888888dcb888",
+    "platform": "linux"
+  }
+]

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="25" assertions="22" failures="2" skipped="19" time="1.035017973">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="25" assertions="22" failures="2" skipped="19" time="1.02804864" hostname="vm">
+    <testcase name="health discovery via find: Gits/repo/.test-tmp/run/VoiceBar.app" classname="" time="0.163158" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="1">
+      <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 1&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 1&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:106:33&#10;</failure>
+    </testcase>
+    <testcase name="health discovery via find: Gits/foo/VoiceBar.app" classname="" time="0.179772" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="5" />
+    <testcase name="health discovery via find: Downloads/VoiceBar.app" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="health discovery via find: Gits/repo/.build.noindex/VoiceBar.app" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="health discovery via find: Gits/foo.test-tmp-bar/VoiceBar.app" classname="" time="0.178714" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="5" />
+    <testcase name="health discovery via mdfind: Gits/repo/.test-tmp/run/VoiceBar.app" classname="" time="0.164855" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="1">
+      <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 1&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 0&#10;Received: 1&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:106:33&#10;</failure>
+    </testcase>
+    <testcase name="health discovery via mdfind: Gits/foo/VoiceBar.app" classname="" time="0.152664" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="5" />
+    <testcase name="health discovery via mdfind: Downloads/VoiceBar.app" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="health discovery via mdfind: Gits/repo/.build.noindex/VoiceBar.app" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="health discovery via mdfind: Gits/foo.test-tmp-bar/VoiceBar.app" classname="" time="0.156618" file="src/__tests__/ratchet-replay-probe.test.ts" line="96" assertions="5" />
+    <testcase name="both discovery paths preserve inert directories and valid missing/other IDs" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="124" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="dedupe normalizes TMPDIR trailing slashes without duplicate plans" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="146" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="dedupe refuses failed inventory before effects (canonical prefix=false)" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="167" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="dedupe refuses failed inventory before effects (canonical prefix=true)" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="167" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="dedupe refuses occupied canonical regular-file before plans/effects" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="187" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="dedupe refuses occupied canonical dangling-link before plans/effects" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="187" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="dedupe refuses occupied canonical file-link before plans/effects" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="187" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="canonical directory symlink follows target identity and retains signature gates" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="222" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="matching ID remains a duplicate and dedupe-plan entry (Spotlight renamed=false)" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="240" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="matching ID remains a duplicate and dedupe-plan entry (Spotlight renamed=true)" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="240" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="both scripts refuse unknown malformed metadata before planning" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="261" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="both scripts refuse unknown unreadable metadata before planning" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="261" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="both scripts refuse unknown read-error metadata before planning" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="261" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="canonical identity and existing health signature gates remain strict" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="285" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="dedupe can select a renamed matching source but never a signed other-ID folder" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="309" assertions="0">
+      <skipped />
+    </testcase>
+  </testsuite>
+</testsuites>

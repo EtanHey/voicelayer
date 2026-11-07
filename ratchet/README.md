@@ -82,3 +82,78 @@ uses this provenance once this change reaches the default branch.
 Fresh row logs live under `baseline/<row>/<row>.build.log`; cache hits carry
 JSON receipts only, with the original run id, rather than copied build logs.
 Reusing an output directory is rejected explicitly to avoid stale results.
+
+### Historical replay rows (`kind: "replay"`)
+
+`REPLAY_ROWS` in `run.py` adds failure-sensitive replays for the 2026-11 recurring classes. These are opt-in:
+`--row <name>` or `--replay`. The default CI set, `comment.py` and `base_cache.py` stay pinned to the five
+behavior rows above. Most of these fixes exist only on `integration/2.2.61`, so on main they FAIL by design.
+Promote a row into the default set only after its fix reaches main, and only on a lead ruling.
+
+Each row pins three full SHAs: `bug` (the fix's first parent), `fix`, and `probe`, the commit whose test blob first
+exposed the bug. The runner creates a fresh detached worktree of the measured ref and runs `bun install --frozen-lockfile`.
+It writes the probe blob, byte-identical for every ref, beside its original path as `ratchet-replay-probe.test.ts`,
+so relative imports bind to the measured checkout. Then it runs `bun test -t <exact case names>` under that checkout's
+own preload isolation, with a minimal environment (synthetic HOME/TMPDIR). Nothing is built, patched or retried.
+Probe SHA-256, the JUnit report, the probe log (scratch root replaced by `$ISOLATED_ROOT`) and per-case outcomes are
+saved for every run.
+
+`value` counts only **semantic** failures among the named cases: an `AssertionError`, or a failure message
+anchored by the row's `semantic` patterns. Those patterns are either a named product refusal (G3) or a labelled
+property assertion that Bun reports as type `Error` (`QueuedCountExcludesCurrent …`, `RealClauseBoundary …`).
+Everything else is `verdict: BLOCKED` with `error` set, never a historical FAIL: a missing, skipped or extra case,
+an import or type error, a timeout (600 s), no JUnit report, or a nonzero exit with no semantic failure.
+`status` stays PASS only when `value == 0` and nothing blocked.
+Unit coverage: `python3 -m unittest ratchet/test_replay.py`. It is not a row receipt.
+
+| Row | Class | bug → fix | Probe (pinned blob) | bug | fix | 33650f87 | main 1cb914a2 |
+|---|---|---|---|---|---|---|---|
+| update-gate-g1-legacy-cellar-repair | G1 | 4c20d055 → d39461f2 | 569b9f15 legacy-cask-setup (1 case) | FAIL 1 | PASS | PASS | FAIL 1 |
+| update-gate-g2-health-ignores-test-runs | G2 | 301166b8 → 429ceea9 | 429ceea9 voicebar-bundle-discovery (6; 4 controls) | FAIL 2 | PASS | PASS | FAIL 2 |
+| update-gate-g3-quit-polls-transitional-exit | G3 | c2df739f → c257e19e | c2df739f installer-participant (5; defunct control) | FAIL 4 | PASS | PASS | FAIL 4 |
+| update-gate-g4-scripts-drain-producers | G4 | e5796a2d → db74b9fe | db74b9fe update-script-sigpipe (5) | FAIL 5 | PASS | PASS | FAIL 5 |
+| update-gate-g5-leased-update-completes | G5 | f401ae7b → 56406985 | 56406985 update-gate-complete (2) | FAIL 2 | PASS | PASS | FAIL 2 |
+| update-gate-g5-successor-readiness | G5 | db5c701e → 1479ea77 | 1479ea77 update-gate-complete (3) | FAIL 3 | PASS | PASS | BLOCKED (API absent) |
+| f5-refused-resume-releases-read | F5 | 2185fea6 → f82201f2 | 2185fea6 tts-pause (1) | FAIL 1 | PASS | PASS | BLOCKED (module absent) |
+| f5-resume-queue-excludes-current | F5 | 6b07f56a → 73d6ad01 | 73d6ad01 tts-long-read-runtime (1) | FAIL 1 | PASS | PASS | BLOCKED (module absent) |
+| speech-clause-boundary-conserves-tokens | F5 read text | 6b07f56a → 73d6ad01 | 73d6ad01 tts-chunking (5) | FAIL 5 | PASS | PASS | FAIL 5 |
+| transcript-seam-no-duplicated-phrase | duplication | cbe5c3c6 → b066c84f | b066c84f stt-marked-overlap (6; 4 controls) | FAIL 2 | PASS | PASS | PASS |
+
+Every bug cell above is a semantic FAIL with no harness error, and its failure message names the bug:
+- G1: legacy dedupe refuses with `REFUSED UNKNOWN: verified target SHA required`.
+- G2: a retained `.test-tmp` bundle makes health exit 1.
+- G3: a healthy quit is refused, `quit outcome or held lease unverifiable`.
+- G4: helpers exit 141 (SIGPIPE) under pipefail.
+- G5: the gate stays `COMMITTED` after a verified exit 0, and a wrong installed GitCommit still exits 0.
+- G5 readiness: a slow successor is refused one-shot.
+- F5 refused resume: `hasF5Capture()` stays true, stranding the read.
+- F5 Resume: the current read is published as queued.
+- Clause boundary: chunk heads split `https://…`, `1,000` and `inside;token` mid-token.
+- Duplication: the merge yields `please use the function functionname… and continue`.
+
+Committed receipts (Linux cloud container, Bun 1.4.4, Python 3.13): `receipts/replay/`. Harness hashes are in
+`receipts/replay/replay-harness.sha256`. A full repeat pass produced identical verdicts.
+
+Excluded cases, and why (each exclusion keeps a counted failure attributable to the named bug):
+- G4's two package-version readers fail at the bug as `ENOENT` from probe code, indistinguishable from a harness error.
+- G3 "uncertain exit…" and G5 "exit" fail at the bug only on new recovery-hint text.
+- G5 "dead" outlives Bun's 5 s case timeout once 1479ea77 retries readiness for 15 s (BLOCKED at 33650f87).
+
+```sh
+python3 ratchet/run.py --row update-gate-g5-leased-update-completes --ref f401ae7b2ba24313f9c0bc1ed113c5081da345fd --output .verified/ratchet/replay/g5-bug
+python3 ratchet/run.py --row update-gate-g5-leased-update-completes --ref 5640698567a800fd61a60d7620f66360ccd29aa4 --output .verified/ratchet/replay/g5-fix
+python3 ratchet/run.py --replay --ref 33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6 --output .verified/ratchet/replay/reference
+```
+
+The integration SHAs must be fetchable, for example `git fetch origin integration/2.2.61`. Otherwise the row
+reports BLOCKED, not FAIL.
+
+Platform boundary: these replays run the real TypeScript daemon modules, real shell scripts and a real controller
+child process. Any macOS-only effect inside them (launchctl, codesign, ioreg, plutil, players) is the probe's
+own fixture stub. They do not prove the installed app, Homebrew, AppKit teardown, real F5/HID events, audio or
+microphone behavior. Owed on the owner Mac:
+- Rerun with `python3 ratchet/run.py --replay --ref <sha>` on macOS (UNRUN there).
+- Native proof of exactly-one final delivery and History/Recents insertion (Swift `VoiceState`). No historical
+  bug→fix pair was identified for this class, so no row is claimed.
+- V17b (`lane/v17b-ask-return-deadline`, reported in 229337b4/bc7487d5) has no row: neither ref is fetchable,
+  so its fix SHA and proof are UNRUN.

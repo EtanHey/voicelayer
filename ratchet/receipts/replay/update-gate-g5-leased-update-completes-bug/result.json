@@ -1,0 +1,21 @@
+[
+  {
+    "row": "update-gate-g5-leased-update-completes",
+    "kind": "replay",
+    "value": 2,
+    "ceiling": 0,
+    "status": "FAIL",
+    "verdict": "FAIL",
+    "bug_sha": "f401ae7b2ba24313f9c0bc1ed113c5081da345fd",
+    "fix_sha": "5640698567a800fd61a60d7620f66360ccd29aa4",
+    "measured_sha": "f401ae7b2ba24313f9c0bc1ed113c5081da345fd",
+    "error": null,
+    "probe": {
+      "commit": "5640698567a800fd61a60d7620f66360ccd29aa4",
+      "path": "src/__tests__/update-gate-complete.test.ts",
+      "cases": 2
+    },
+    "probe_sha256": "58e1f59e5e583fb129605245d6e50a851fae0632400278591abeb0b61f66a254",
+    "platform": "linux"
+  }
+]

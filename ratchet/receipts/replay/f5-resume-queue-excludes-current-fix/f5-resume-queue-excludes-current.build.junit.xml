@@ -1,0 +1,438 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="143" assertions="236" failures="0" skipped="142" time="0.286488217">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="143" assertions="236" failures="0" skipped="142" time="0.281427239" hostname="vm">
+    <testsuite name="long-read real runtime with owned synth/player fakes" file="src/__tests__/ratchet-replay-probe.test.ts" line="40" tests="143" assertions="236" failures="0" skipped="142" time="0.145" hostname="vm">
+      <testcase name="F-speech QueuedCountExcludesCurrent real preparing/playing/parked/Resume snapshots" classname="long-read real runtime with owned synth/player fakes" time="0.145074" file="src/__tests__/ratchet-replay-probe.test.ts" line="129" assertions="236" />
+      <testcase name="F-speech first audio uses bounded startup synthesis for 20 words" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="194" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="F-speech first audio uses bounded startup synthesis for 60 words" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="194" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="F-speech first audio uses bounded startup synthesis for 200 words" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="194" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="F-speech edge structured startup preserves words within its budget" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="212" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="F-speech clone structured startup preserves words within its budget" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="212" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="F-speech TimingNeverBlankWhilePlaying first clone frame precedes delayed alignment" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="225" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="TLC F5 native command projection conforms to real daemon/player/take handlers" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="240" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2-01 refused automatic resume releases preparing read and retains its History text" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="342" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2-01 refused automatic resume releases playing read and retains its History text" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="342" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2-01 F5 holds a read before its first chunk (settle)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="373" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2-01 F5 holds a read before its first chunk (manual)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="373" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2-01 F5 holds a read before its first chunk (stop)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="373" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="S2 a later structured player launch failure cannot strand bounded prefetch" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="402" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R1C playback wait includes audio enqueued by captured short-speech preparation" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="415" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE playerEnded archive fault still delivers completion observer" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="440" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE finish archive fault still delivers completion observer" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="440" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE rejected player-end and terminal writes preserve exactly one caller outcome" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="449" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE short starts its first player while durable admission is held" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="469" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE long starts its first player while durable admission is held" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="469" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE live edge archive records actual generation and completion" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="487" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE live clone archive records actual generation and completion" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="487" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE player errors persist failed rather than stopped" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="501" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE Ask archives its real spoken question" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="509" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-WIRE real pause and resume persist the same output" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="528" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-PACING prepares the next waveform while current audio plays" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="541" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-PACING dismisses before slow History persistence" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="564" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-PACING final audio dismisses while clone alignment is still reaping" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="577" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPEECH-PACING measures clone startup separately from waveform preparation" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="591" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SEL11 preserves request identity and original-text hash in Preparing and player receipts" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="612" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b speak: playback starts before partial timings and preserves display indices" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="648" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b long: playback starts before partial timings and preserves display indices" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="648" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2 stop ack waits for alignment child reap after audio exits" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="676" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2 cancel ack waits for alignment child reap after audio exits" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="676" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2 scoped terminal and quiesced-attempt fences include alignment child reap; failed=false" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="684" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2 scoped terminal and quiesced-attempt fences include alignment child reap; failed=true" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="684" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2 Ask cannot start capture until its clone alignment child is reaped" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="694" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="INT1 Ask starts capture while cancelled binary lookup is still held, with no alignment child" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="703" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="INT1 Ask waits for the spawned child, then captures while adapter cleanup is still held" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="719" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="INT1 R2 P1 rejected child exit permits a second alignment and later Ask; confirmed=true" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="730" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="INT1 R2 P1 rejected child exit permits a second alignment and later Ask; confirmed=false" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="730" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R2 replacement audio starts while cancelled alignment cleanup is still held" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="756" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops requestId alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops chunkId alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops audioSha256 alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops playbackRate alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops text alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops audio alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops stop alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops seek alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops recording alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b drops transcribing alignment and cancels owned work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="763" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="CLN1b next chunk playback never waits for old alignment and publishes local offsets" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="780" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPK1 normalizes edge long reads while display/history stay original" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="797" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPK1 normalizes clone long reads while display/history stay original" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="797" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SPK1 normalizes fallback long reads while display/history stay original" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="797" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R1-1 stop ack waits for history and file disposal" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="813" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R1-1 cancel ack waits for history and file disposal" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="813" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R1-1 voice_ask waits for the captured cancelled generation before its prompt" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="827" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="HISTDUP1 stopped history keeps the whole text and names chunks with no audio" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="841" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R1-6 a replacement read cannot synthesize while the predecessor history job is running" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="851" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R1-6 ordinary speak cannot synthesize while cancelled history is running" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="862" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="R1-7 stop during amplitude preparation never starts afplay and completes as not-started" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="872" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="stop socket kills in-flight edge synthesis and player without retry or later spawns" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="891" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="FX-2.1 stop during initial synthesis preserves idle ownership (clear)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="904" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="FX-2.1 stop during initial synthesis preserves idle ownership (recording)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="904" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="FX-2.1 stop during initial synthesis preserves idle ownership (admission)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="904" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="FX-2.1 cancel during initial synthesis preserves idle ownership (clear)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="904" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="FX-2.1 cancel during initial synthesis preserves idle ownership (recording)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="904" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="FX-2.1 cancel during initial synthesis preserves idle ownership (admission)" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="904" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="TELE1 Preparing carries the whole display document and each chunk&apos;s first token, once" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="926" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="P14b structured reads attach layout to every player receipt and to retained replay" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="941" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="S3 F4 socket edge: completed Replay preserves the original structured document" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="979" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="S3 F4 socket clone: completed Replay preserves the original structured document" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="979" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="S3 F4 mcp edge: completed Replay preserves the original structured document" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="979" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="S3 F4 mcp clone: completed Replay preserves the original structured document" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="979" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="PLAYER0 new speakLongRead cannot stop another agent&apos;s active or queued job" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1007" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="new long read preempts the old generation and stale results never restart it" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1017" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="ordinary speak preempts a long read while retaining short-speech semantics" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1028" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 restarts edge one-chunk reads at global zero" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1035" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 restarts edge multi-chunk reads at global zero" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1035" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 restarts clone one-chunk reads at global zero" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1035" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 restarts clone multi-chunk reads at global zero" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1035" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 restarts fallback one-chunk reads at global zero" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1035" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 restarts fallback multi-chunk reads at global zero" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1035" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 replays the prefix after a cross-chunk seek without resynthesis" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1057" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 repeated clicks coalesce while reaping and preserve foreign queued work" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1068" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 Stop wins while the old replay player has not physically exited" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1083" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 restart during amplitude preparation preserves decoder ownership; Stop=false" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1094" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 restart during amplitude preparation preserves decoder ownership; Stop=true" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1094" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 FX-3 replay re-arms the replacement watchdog and retires the old deadline" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1113" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 explicitly rejects Replay before the prefix is synthesized" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1131" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 reports unavailable prefix chunk 0 and leaves its current player intact" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1140" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="REP1 reports unavailable prefix chunk 1 and leaves its current player intact" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1140" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="voice_ask preempts synthesis before waiting on its prompt and recording" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1152" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="records long-read first audio at player spawn once, including held preparation" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1164" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="records the actual edge engine when a long-read clone falls back" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1181" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="publishes all synthesized duration at player start after held preparation" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1187" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="current seek retains admission through drain across an async player restart" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1195" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="seeks across retained chunks through the real queue and converts global stop time" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1209" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="streams edge chunks with local subtitles, global metadata, no lost text, and one history entry" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1226" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="chunks the Qwen3 tier directly and supplies the same cancellable generation" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1240" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="history failure warns without failing a successful playback completion" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1254" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="exposes first playback and reports failed playback to CLI waiters" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1264" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="reports cancellation before playback through the start lifecycle" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1271" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="keeps the ring bounded at twenty entries" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1281" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="P16b parked long read: capture stop acknowledges without waiting for the park" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1288" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="P16b parked long read: capture cancel acknowledges without waiting for the park" classname="long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1288" assertions="0">
+        <skipped />
+      </testcase>
+      <testsuite name="QUEUE1 Option+F5 read queue on the real runner" file="src/__tests__/ratchet-replay-probe.test.ts" line="1304" tests="35" assertions="0" failures="0" skipped="35" time="0" hostname="vm">
+        <testcase name="R2-01 D2 two waiting reads survive F5 park and resume and play once in order" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1313" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="R2-01 refused automatic resume through socket capture releases Option+F5 admission" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1373" assertions="0">
+          <skipped />
+        </testcase>
+        <testsuite name="QPRE1 prepares the next read&apos;s first chunk in the background" file="src/__tests__/ratchet-replay-probe.test.ts" line="1398" tests="17" assertions="0" failures="0" skipped="17" time="0" hostname="vm">
+          <testcase name="G2c rejected archive settlement cannot strand prepared audio or release uncertain admission" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1402" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="G2c pending archive settlement cannot strand prepared audio or release uncertain admission" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1402" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="G2c confirmed archive settlement cannot strand prepared audio or release uncertain admission" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1402" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="S2 leaves prepared audio held until a predecessor finishes settling" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1460" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="S2 stop aborts clone prefetch while preparing" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1485" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="S2 read_next aborts clone prefetch while preparing" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1485" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="S2 stop aborts clone prefetch while playing" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1485" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="S2 read_next aborts clone prefetch while playing" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1485" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="S1 queued structured clone reads reuse one prepared request and start gapless" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1523" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="SEAT-A pronunciation changes during preparation must reject stale audio" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1557" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="pronunciation changes during clone→Edge preparation (clone) reject stale audio" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1579" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="pronunciation changes during clone→Edge preparation (edge) reject stale audio" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1579" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="never prepares while A still has chunks to synthesize; then only B&apos;s first chunk, never C" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1623" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="consumes the prepared chunk without resynthesis: B&apos;s first audio after A ends is ≈0 vs the synth latency" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1663" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="Stop while it is synthesizing deletes the prepared audio; B never plays or reaches history" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1680" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="Stop after B&apos;s chunk is ready deletes the prepared audio; B never plays or reaches history" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1680" assertions="0">
+            <skipped />
+          </testcase>
+          <testcase name="a failed prefetch is not retried in the background; B synthesizes normally when A ends" classname="QPRE1 prepares the next read&apos;s first chunk in the background &gt; QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1697" assertions="0">
+            <skipped />
+          </testcase>
+        </testsuite>
+        <testcase name="auto-advances at the natural end with no idle edge between reads, and records only reads that played" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1713" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="a paused read stays paused when a new selection queues; Next replaces the park with the queued read" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1737" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="SPEECH-WIRE terminal archive fault cannot strand the queued successor" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1751" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="SOL-2: a non-zero player exit settles as failed: queued B and C never start" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1766" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="SOL-2: a player launch failure settles as failed: queued B and C never start" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1777" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="D2: F5 over the playing read stops it; after the capture nothing plays, count 2, and Next starts B" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1788" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="capture Cancel preserves a prefetched queued archive through completed playback" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1805" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="QUEUE1b SOL-R2-1: the capture&apos;s release keeps the retained queue; Next(A) starts B" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1859" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="QUEUE1b SOL-R2-1: the capture&apos;s cancel keeps the retained queue; Next(A) starts B" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1859" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="QUEUE1b: a VAD or timeout end of the capture keeps the retained queue" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1868" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="QUEUE1b Q1B-SOL-1: Hide during the capture discards the retained queue; Next(A) is stale and a fresh D never runs into B" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1875" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="QUEUE1c: an idle Cancel (no capture) ends the retained chain; Next(A) is stale and a fresh D never runs into B" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1889" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="QUEUE1b: explicit Stop with no capture still clears the retained queue" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1901" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="QUEUE1b SOL-R2-2: agent voice_speak after teardown ends the retained queue; a fresh D never runs into B" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1907" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="QUEUE1b SOL-R2-2: Ask after teardown ends the retained queue; a fresh D never runs into B" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1919" assertions="0">
+          <skipped />
+        </testcase>
+        <testcase name="an agent voice_speak keeps its priority: it preempts the user&apos;s read as before and ends the user queue" classname="QUEUE1 Option+F5 read queue on the real runner &gt; long-read real runtime with owned synth/player fakes" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="1932" assertions="0">
+          <skipped />
+        </testcase>
+      </testsuite>
+    </testsuite>
+  </testsuite>
+</testsuites>

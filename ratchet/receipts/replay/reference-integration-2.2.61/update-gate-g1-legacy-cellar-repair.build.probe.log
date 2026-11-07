@@ -1,0 +1,10 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+(pass) 2.2.58 updater calls new Cellar dedupe then autostart without a lease or target [744.28ms]
+
+ 1 pass
+ 49 filtered out
+ 0 fail
+ 19 expect() calls
+Ran 1 test across 1 file. [828.00ms]

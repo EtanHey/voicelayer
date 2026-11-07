@@ -1,0 +1,11 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+(pass) G5 controller child lifecycle: verified [187.38ms]
+(pass) G5 controller child lifecycle: sha [209.21ms]
+
+ 2 pass
+ 27 filtered out
+ 0 fail
+ 12 expect() calls
+Ran 2 tests across 1 file. [472.00ms]

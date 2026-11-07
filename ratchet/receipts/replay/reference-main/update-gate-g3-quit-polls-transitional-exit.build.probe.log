@@ -1,0 +1,62 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+270 |         const before = deps.participantsExited(pinned);
+271 |         const held = await retryAcquire(() => acknowledgeVoiceDrain(lease,
+272 |           state => state.kind === "COMMITTED", { throwOnContention: true }), Math.min(deps.now() + 250, deadline));
+273 |         const after = deps.participantsExited(pinned);
+274 |         if (!held || before === "UNKNOWN" || after === "UNKNOWN")
+275 |           throw Error("UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery");
+                      ^
+error: UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery
+      at quit ($ISOLATED_ROOT/source/src/update-gate-installer-participant.ts:275:17)
+      at async <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:381:23)
+(fail) healthy quit polls through empty-ps before verified exit [25.00ms]
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+270 |         const before = deps.participantsExited(pinned);
+271 |         const held = await retryAcquire(() => acknowledgeVoiceDrain(lease,
+272 |           state => state.kind === "COMMITTED", { throwOnContention: true }), Math.min(deps.now() + 250, deadline));
+273 |         const after = deps.participantsExited(pinned);
+274 |         if (!held || before === "UNKNOWN" || after === "UNKNOWN")
+275 |           throw Error("UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery");
+                      ^
+error: UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery
+      at quit ($ISOLATED_ROOT/source/src/update-gate-installer-participant.ts:275:17)
+      at async <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:381:23)
+(fail) healthy quit polls through unreaped before verified exit [10.44ms]
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+270 |         const before = deps.participantsExited(pinned);
+271 |         const held = await retryAcquire(() => acknowledgeVoiceDrain(lease,
+272 |           state => state.kind === "COMMITTED", { throwOnContention: true }), Math.min(deps.now() + 250, deadline));
+273 |         const after = deps.participantsExited(pinned);
+274 |         if (!held || before === "UNKNOWN" || after === "UNKNOWN")
+275 |           throw Error("UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery");
+                      ^
+error: UNKNOWN: quit outcome or held lease unverifiable; gate retained closed for recovery
+      at quit ($ISOLATED_ROOT/source/src/update-gate-installer-participant.ts:275:17)
+      at async <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:381:23)
+(fail) healthy quit polls through teardown before verified exit [9.50ms]
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+(pass) healthy quit polls through defunct before verified exit [10.07ms]
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+394 |     state.kind = "OPEN"; state.generation = 1; state.released = f.lease;
+395 |     delete state.lease; delete state.native; delete state.daemon;
+396 |     writeFileSync(f.gate, JSON.stringify(state));
+397 |   };
+398 |   await expect(f.participant.quit(f.lease)).rejects.toThrow("held lease");
+399 |   expect(polls).toBe(4);
+                      ^
+error: expect(received).toBe(expected)
+
+Expected: 4
+Received: 2
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:399:17)
+(fail) every exit poll rechecks the held COMMITTED lease before accepting gone [9.89ms]
+
+ 1 pass
+ 40 filtered out
+ 4 fail
+ 35 expect() calls
+Ran 5 tests across 1 file. [181.00ms]

@@ -1,0 +1,20 @@
+{
+  "row": "update-gate-g1-legacy-cellar-repair",
+  "measured_sha": "4c20d05534599a9f318dc02622bb625105a923a8",
+  "probe_commit": "569b9f15029c3de475d41bc347e328c16c7e5187",
+  "probe_path": "src/__tests__/legacy-cask-setup.test.ts",
+  "probe_sha256": "a533bbff5b8a56d50226f28d3ded16b285d55153a9eb74b7d7b9888888dcb888",
+  "bun_exit": 1,
+  "elapsed_seconds": 0.416,
+  "semantic_violations": 1,
+  "problems": [],
+  "cases": [
+    {
+      "name": "2.2.58 updater calls new Cellar dedupe then autostart without a lease or target",
+      "outcome": "semantic-fail",
+      "type": "AssertionError",
+      "message": "expect(received).toMatchObject(expected)\n\n  {\n-   \"code\": 0,\n+   \"code\": 1,\n+   \"err\": \n+ \"[update-gate] REFUSED UNKNOWN: verified target SHA required\n+ \"\n+ ,\n  }\n\n- Expected  - 1\n+ Received  + 5\n"
+    }
+  ],
+  "platform": "linux"
+}

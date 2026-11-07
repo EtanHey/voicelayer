@@ -1,0 +1,21 @@
+[
+  {
+    "row": "f5-refused-resume-releases-read",
+    "kind": "replay",
+    "value": 1,
+    "ceiling": 0,
+    "status": "FAIL",
+    "verdict": "FAIL",
+    "bug_sha": "2185fea654e006df6ef6c70576dcd1ef459a173c",
+    "fix_sha": "f82201f266a34b099ccdc9cebf2f39b4add5658a",
+    "measured_sha": "2185fea654e006df6ef6c70576dcd1ef459a173c",
+    "error": null,
+    "probe": {
+      "commit": "2185fea654e006df6ef6c70576dcd1ef459a173c",
+      "path": "src/__tests__/tts-pause.test.ts",
+      "cases": 1
+    },
+    "probe_sha256": "0934fe297df35954c36e3be830c8789734c2e91366d8721d61d1f308ad8da093",
+    "platform": "linux"
+  }
+]

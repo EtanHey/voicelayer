@@ -1,0 +1,34 @@
+{
+  "row": "speech-clause-boundary-conserves-tokens",
+  "measured_sha": "33650f8784af9a8344a1d20e0f1ce8c7b7cdbbb6",
+  "probe_commit": "73d6ad01e5caa3c662a1a720ca81fc78bb6bc7e1",
+  "probe_path": "src/__tests__/tts-chunking.test.ts",
+  "probe_sha256": "5e3af40d4e638e585051552b47707d4979edea0d19d9edf52b32a779ead5fbd7",
+  "bun_exit": 0,
+  "elapsed_seconds": 0.968,
+  "semantic_violations": 0,
+  "problems": [],
+  "cases": [
+    {
+      "name": "keeps https://example.test/path whole when : is at index 99 (English)",
+      "outcome": "pass"
+    },
+    {
+      "name": "keeps 1,000 whole when , is at index 99 (English)",
+      "outcome": "pass"
+    },
+    {
+      "name": "keeps inside;token whole when ; is at index 99 (English)",
+      "outcome": "pass"
+    },
+    {
+      "name": "keeps \u05de\u05d9\u05dc\u05d4\u060c\u05d4\u05de\u05e9\u05da whole when \u060c is at index 99 (Hebrew)",
+      "outcome": "pass"
+    },
+    {
+      "name": "fuzzes 6000 engine/text pairs with no head token splits or character drops/duplicates",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}

@@ -1,0 +1,37 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+89 |     env: { ...process.env, VOICELAYER_UPDATE_TARGET_SHA: lease.targetSha, VOICELAYER_INSTALL_OPERATION: "" }, stdout: "pipe", stderr: "pipe",
+90 |   });
+91 |   const code = await child.exited, error = await new Response(child.stderr).text();
+92 |   const state = JSON.parse(readFileSync(f.gate, "utf8"));
+93 |   expect(code).toBe(fault === "verified" ? 0 : fault === "exit" ? 7 : 1);
+94 |   expect(state.kind).toBe(fault === "verified" ? "OPEN" : "COMMITTED");
+                          ^
+error: expect(received).toBe(expected)
+
+Expected: "OPEN"
+Received: "COMMITTED"
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:94:22)
+(fail) G5 controller child lifecycle: verified [201.97ms]
+88 |     `await Bun.write(process.env.VOICELAYER_TEST_INSTALL_PROOF!,JSON.stringify({phase:'idle',ready:true,completion:${JSON.stringify(completion)}}));process.exit(${fault === "exit" ? 7 : 0});`], {
+89 |     env: { ...process.env, VOICELAYER_UPDATE_TARGET_SHA: lease.targetSha, VOICELAYER_INSTALL_OPERATION: "" }, stdout: "pipe", stderr: "pipe",
+90 |   });
+91 |   const code = await child.exited, error = await new Response(child.stderr).text();
+92 |   const state = JSON.parse(readFileSync(f.gate, "utf8"));
+93 |   expect(code).toBe(fault === "verified" ? 0 : fault === "exit" ? 7 : 1);
+                    ^
+error: expect(received).toBe(expected)
+
+Expected: 1
+Received: 0
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:93:16)
+(fail) G5 controller child lifecycle: sha [180.65ms]
+
+ 0 pass
+ 27 filtered out
+ 2 fail
+ 3 expect() calls
+Ran 2 tests across 1 file. [480.00ms]

@@ -1,0 +1,15 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+(pass) health discovery via find: Gits/repo/.test-tmp/run/VoiceBar.app [159.40ms]
+(pass) health discovery via find: Gits/foo/VoiceBar.app [148.84ms]
+(pass) health discovery via find: Gits/foo.test-tmp-bar/VoiceBar.app [180.76ms]
+(pass) health discovery via mdfind: Gits/repo/.test-tmp/run/VoiceBar.app [155.20ms]
+(pass) health discovery via mdfind: Gits/foo/VoiceBar.app [160.91ms]
+(pass) health discovery via mdfind: Gits/foo.test-tmp-bar/VoiceBar.app [153.58ms]
+
+ 6 pass
+ 19 filtered out
+ 0 fail
+ 30 expect() calls
+Ran 6 tests across 1 file. [995.00ms]

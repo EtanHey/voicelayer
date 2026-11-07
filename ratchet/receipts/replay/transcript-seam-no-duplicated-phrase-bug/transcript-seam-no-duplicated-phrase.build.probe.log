@@ -1,0 +1,40 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+4 |  {name:"compact nonmatching marked base",first:"please use the function name",next:"please use the functionname… and continue",expected:"please use the function name and continue"},
+5 |  {name:"equal marked base survives",first:"please use the function name",next:"please use the function name… and continue",expected:"please use the function name… and continue"},
+6 |  {name:"current marked base survives",first:"please use the function name…",next:"please use the function name and continue",expected:"please use the function name… and continue"},
+7 | ];
+8 | for(const c of cases){
+9 |  test(c.name+" text",()=>{expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");expect(mergeChunkTranscripts([c.first,c.next])).toBe(c.expected);});
+                                                                                                                                     ^
+error: expect(received).toBe(expected)
+
+Expected: "please use the function name and continue"
+Received: "please use the function functionname… and continue"
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:9:130)
+(fail) compact nonmatching marked base text [1.90ms]
+ 5 |  {name:"equal marked base survives",first:"please use the function name",next:"please use the function name… and continue",expected:"please use the function name… and continue"},
+ 6 |  {name:"current marked base survives",first:"please use the function name…",next:"please use the function name and continue",expected:"please use the function name… and continue"},
+ 7 | ];
+ 8 | for(const c of cases){
+ 9 |  test(c.name+" text",()=>{expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");expect(mergeChunkTranscripts([c.first,c.next])).toBe(c.expected);});
+10 |  test(c.name+" timed",()=>{expect(mergeChunkTranscriptsWithSegments([{text:c.first,startSeconds:0,segments:[{text:c.first,startS:20,endS:30}]},{text:c.next,startSeconds:25,segments:[{text:c.next,startS:0,endS:10}]}]).text).toBe(c.expected);});
+                                                                                                                                                                                                                                    ^
+error: expect(received).toBe(expected)
+
+Expected: "please use the function name and continue"
+Received: "please use the function functionname… and continue"
+
+      at <anonymous> ($ISOLATED_ROOT/source/src/__tests__/ratchet-replay-probe.test.ts:10:224)
+(fail) compact nonmatching marked base timed [1.28ms]
+(pass) equal marked base survives text [0.20ms]
+(pass) equal marked base survives timed [0.21ms]
+(pass) current marked base survives text [0.04ms]
+(pass) current marked base survives timed [0.26ms]
+
+ 4 pass
+ 2 fail
+ 9 expect() calls
+Ran 6 tests across 1 file. [162.00ms]

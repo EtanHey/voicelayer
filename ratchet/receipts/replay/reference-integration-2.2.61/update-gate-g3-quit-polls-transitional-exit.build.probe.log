@@ -1,0 +1,19 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+(pass) healthy quit polls through empty-ps before verified exit [19.89ms]
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+(pass) healthy quit polls through unreaped before verified exit [9.94ms]
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+(pass) healthy quit polls through teardown before verified exit [9.72ms]
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+(pass) healthy quit polls through defunct before verified exit [9.30ms]
+[update-gate] Controlled-quit acknowledgement unavailable; verifying participant exit and held lease.
+(pass) every exit poll rechecks the held COMMITTED lease before accepting gone [9.59ms]
+
+ 5 pass
+ 40 filtered out
+ 0 fail
+ 44 expect() calls
+Ran 5 tests across 1 file. [153.00ms]

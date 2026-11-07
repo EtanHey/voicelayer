@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="6" assertions="9" failures="0" skipped="0" time="0.147154414">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="6" assertions="9" failures="0" skipped="0" time="0.142921953" hostname="vm">
+    <testcase name="compact nonmatching marked base text" classname="" time="0.001676" file="src/__tests__/ratchet-replay-probe.test.ts" line="9" assertions="2" />
+    <testcase name="compact nonmatching marked base timed" classname="" time="0.001054" file="src/__tests__/ratchet-replay-probe.test.ts" line="10" assertions="1" />
+    <testcase name="equal marked base survives text" classname="" time="0.000364" file="src/__tests__/ratchet-replay-probe.test.ts" line="9" assertions="2" />
+    <testcase name="equal marked base survives timed" classname="" time="0.00018" file="src/__tests__/ratchet-replay-probe.test.ts" line="10" assertions="1" />
+    <testcase name="current marked base survives text" classname="" time="0.000036" file="src/__tests__/ratchet-replay-probe.test.ts" line="9" assertions="2" />
+    <testcase name="current marked base survives timed" classname="" time="0.000128" file="src/__tests__/ratchet-replay-probe.test.ts" line="10" assertions="1" />
+  </testsuite>
+</testsuites>

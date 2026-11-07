@@ -1,0 +1,38 @@
+{
+  "row": "update-gate-g2-health-ignores-test-runs",
+  "measured_sha": "429ceea9f637fe6bed74c6d82869adfda41e1e20",
+  "probe_commit": "429ceea9f637fe6bed74c6d82869adfda41e1e20",
+  "probe_path": "src/__tests__/voicebar-bundle-discovery.test.ts",
+  "probe_sha256": "bb3cf41dfc910d9aa1b176959853bc85fa35e3ed8064d09230daad9c3529ea09",
+  "bun_exit": 0,
+  "elapsed_seconds": 1.026,
+  "semantic_violations": 0,
+  "problems": [],
+  "cases": [
+    {
+      "name": "health discovery via find: Gits/repo/.test-tmp/run/VoiceBar.app",
+      "outcome": "pass"
+    },
+    {
+      "name": "health discovery via find: Gits/foo/VoiceBar.app",
+      "outcome": "pass"
+    },
+    {
+      "name": "health discovery via find: Gits/foo.test-tmp-bar/VoiceBar.app",
+      "outcome": "pass"
+    },
+    {
+      "name": "health discovery via mdfind: Gits/repo/.test-tmp/run/VoiceBar.app",
+      "outcome": "pass"
+    },
+    {
+      "name": "health discovery via mdfind: Gits/foo/VoiceBar.app",
+      "outcome": "pass"
+    },
+    {
+      "name": "health discovery via mdfind: Gits/foo.test-tmp-bar/VoiceBar.app",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}

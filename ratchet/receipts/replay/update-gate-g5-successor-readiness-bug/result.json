@@ -1,0 +1,21 @@
+[
+  {
+    "row": "update-gate-g5-successor-readiness",
+    "kind": "replay",
+    "value": 3,
+    "ceiling": 0,
+    "status": "FAIL",
+    "verdict": "FAIL",
+    "bug_sha": "db5c701e06fd64f0b6c0a8d35af619ff2d9c487a",
+    "fix_sha": "1479ea77255ffaf80d4f131526040d7c7ed1d624",
+    "measured_sha": "db5c701e06fd64f0b6c0a8d35af619ff2d9c487a",
+    "error": null,
+    "probe": {
+      "commit": "1479ea77255ffaf80d4f131526040d7c7ed1d624",
+      "path": "src/__tests__/update-gate-complete.test.ts",
+      "cases": 3
+    },
+    "probe_sha256": "7823d692f959c476169c33eced613b6b827c1ee58f1a2ba5280a7ff5c0bfc259",
+    "platform": "linux"
+  }
+]

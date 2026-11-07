@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="6" assertions="9" failures="2" skipped="0" time="0.162119167">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="6" assertions="9" failures="2" skipped="0" time="0.157538974" hostname="vm">
+    <testcase name="compact nonmatching marked base text" classname="" time="0.001895" file="src/__tests__/ratchet-replay-probe.test.ts" line="9" assertions="2">
+      <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: &quot;please use the function name and continue&quot;&#10;Received: &quot;please use the function functionname… and continue&quot;&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: &quot;please use the function name and continue&quot;&#10;Received: &quot;please use the function functionname… and continue&quot;&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:9:130&#10;</failure>
+    </testcase>
+    <testcase name="compact nonmatching marked base timed" classname="" time="0.001277" file="src/__tests__/ratchet-replay-probe.test.ts" line="10" assertions="1">
+      <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: &quot;please use the function name and continue&quot;&#10;Received: &quot;please use the function functionname… and continue&quot;&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: &quot;please use the function name and continue&quot;&#10;Received: &quot;please use the function functionname… and continue&quot;&#10;&#10;      at src/__tests__/ratchet-replay-probe.test.ts:10:224&#10;</failure>
+    </testcase>
+    <testcase name="equal marked base survives text" classname="" time="0.000195" file="src/__tests__/ratchet-replay-probe.test.ts" line="9" assertions="2" />
+    <testcase name="equal marked base survives timed" classname="" time="0.000212" file="src/__tests__/ratchet-replay-probe.test.ts" line="10" assertions="1" />
+    <testcase name="current marked base survives text" classname="" time="0.000035" file="src/__tests__/ratchet-replay-probe.test.ts" line="9" assertions="2" />
+    <testcase name="current marked base survives timed" classname="" time="0.000263" file="src/__tests__/ratchet-replay-probe.test.ts" line="10" assertions="1" />
+  </testsuite>
+</testsuites>

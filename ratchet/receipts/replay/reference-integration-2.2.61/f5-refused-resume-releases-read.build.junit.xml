@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="38" assertions="6" failures="0" skipped="37" time="0.192221353">
+  <testsuite name="src/__tests__/ratchet-replay-probe.test.ts" file="src/__tests__/ratchet-replay-probe.test.ts" tests="38" assertions="6" failures="0" skipped="37" time="0.185741495" hostname="vm">
+    <testsuite name="P10 queue pause/resume" file="src/__tests__/ratchet-replay-probe.test.ts" line="85" tests="8" assertions="0" failures="0" skipped="8" time="0" hostname="vm">
+      <testcase name="R1C pause at duration resumes to a durable completed receipt without another player" classname="P10 queue pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="86" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="pause-resume-rewinds-to-containing-word: frozen clock, offset and envelope; one resume within 150 ms" classname="P10 queue pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="108" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="Stop is terminal while paused and a stale player exit never restarts playback" classname="P10 queue pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="146" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="Stop before the resume slice resolves disposes the late result with zero starts" classname="P10 queue pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="160" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="scoped controls reject stale identities without touching the paused item" classname="P10 queue pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="171" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="holds pending speech while paused, keeps no paused TTL, and replaces the parked item on new speech" classname="P10 queue pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="180" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="refuses to pause an Ask prompt and seeks while paused" classname="P10 queue pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="197" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="SEEK2 integration: a readback seek cannot replace a parked read, and resume keeps its readback identity" classname="P10 queue pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="207" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+    <testsuite name="P10 envelope and preparation" file="src/__tests__/ratchet-replay-probe.test.ts" line="220" tests="4" assertions="0" failures="0" skipped="4" time="0" hostname="vm">
+      <testcase name="R1C waveform resume redecodes cancelled prepared amplitude for a non-opening chunk" classname="P10 envelope and preparation" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="221" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="resumes with the original decoded envelope, rebased to the resume offset" classname="P10 envelope and preparation" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="256" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="pause during envelope preparation parks at zero; a late decoder never starts a player (stop)" classname="P10 envelope and preparation" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="270" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="pause during envelope preparation parks at zero; a late decoder never starts a player (resume)" classname="P10 envelope and preparation" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="270" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+    <testsuite name="P10 socket pause/resume" file="src/__tests__/ratchet-replay-probe.test.ts" line="308" tests="4" assertions="0" failures="0" skipped="4" time="0" hostname="vm">
+      <testcase name="acks pause/resume idempotently, refuses recorder-active Resume, and Stop ends the parked read" classname="P10 socket pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="309" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="pause with the teleprompter clock freezes at the client&apos;s word" classname="P10 socket pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="328" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="P16 e2e: VoiceBar&apos;s pause → resume wire continues the same utterance from the paused word" classname="P10 socket pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="334" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="P16: F5&apos;s stop/cancel during a capture end the capture, never the parked read" classname="P10 socket pause/resume" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="369" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+    <testcase name="admitted paused playback restarts during drain without new admission" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="393" assertions="0">
+      <skipped />
+    </testcase>
+    <testsuite name="R2-01 F5 capture ownership" file="src/__tests__/ratchet-replay-probe.test.ts" line="410" tests="11" assertions="0" failures="0" skipped="11" time="0" hostname="vm">
+      <testcase name="snaps an arbitrary pause to the containing word, including nonzero words" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="411" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="pasted: F5 pauses before capture; manual=false settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="pasted: F5 pauses before capture; manual=true settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="empty: F5 pauses before capture; manual=false settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="empty: F5 pauses before capture; manual=true settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="failed: F5 pauses before capture; manual=false settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="failed: F5 pauses before capture; manual=true settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="cancelled: F5 pauses before capture; manual=false settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="cancelled: F5 pauses before capture; manual=true settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="timeout: F5 pauses before capture; manual=false settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="timeout: F5 pauses before capture; manual=true settles exactly once" classname="R2-01 F5 capture ownership" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="419" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+    <testcase name="R2-01 N6 all takes and actual paste delivery settle before exactly one resume" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="454" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2-01 N6 actual early B failure keeps the read parked for processing A" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="508" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2-01 speech-scoped Stop wins without stopping an active take" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="545" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2-01 waits for actual player exit and preserves the early physical release" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="562" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2-01 refused automatic resume releases the read instead of stranding its F5 park" classname="" time="0.027789" file="src/__tests__/ratchet-replay-probe.test.ts" line="589" assertions="6" />
+    <testcase name="R2-01 stale capture settlement cannot unpause a later user pause" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="608" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2-01 retains the containing word at a nonzero chunk offset" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="625" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2-01 uses clone alignment and retains its display word index" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="638" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2-01 Lane I failed-take promise does not release the read before physical exit proof" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="655" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="R2-01 Lane I legacy delivery capability is passed through the single adapter" classname="" time="0" file="src/__tests__/ratchet-replay-probe.test.ts" line="675" assertions="0">
+      <skipped />
+    </testcase>
+  </testsuite>
+</testsuites>

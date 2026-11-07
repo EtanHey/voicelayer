@@ -1,0 +1,14 @@
+bun test v1.4.4 (38afee6c8)
+
+src/__tests__/ratchet-replay-probe.test.ts:
+(pass) compact nonmatching marked base text [1.68ms]
+(pass) compact nonmatching marked base timed [1.05ms]
+(pass) equal marked base survives text [0.36ms]
+(pass) equal marked base survives timed [0.18ms]
+(pass) current marked base survives text [0.04ms]
+(pass) current marked base survives timed [0.13ms]
+
+ 6 pass
+ 0 fail
+ 9 expect() calls
+Ran 6 tests across 1 file. [147.00ms]

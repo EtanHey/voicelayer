@@ -1,0 +1,38 @@
+{
+  "row": "transcript-seam-no-duplicated-phrase",
+  "measured_sha": "1cb914a23411de94007aeba463cdab1f3b6725c6",
+  "probe_commit": "b066c84f9421dfa111368fc147ac266eaf218476",
+  "probe_path": "src/__tests__/stt-marked-overlap.test.ts",
+  "probe_sha256": "33d291151f1c2f4f799e34e56db4ae3b6a946303e229d0673d321e3c41490427",
+  "bun_exit": 0,
+  "elapsed_seconds": 0.166,
+  "semantic_violations": 0,
+  "problems": [],
+  "cases": [
+    {
+      "name": "compact nonmatching marked base text",
+      "outcome": "pass"
+    },
+    {
+      "name": "compact nonmatching marked base timed",
+      "outcome": "pass"
+    },
+    {
+      "name": "equal marked base survives text",
+      "outcome": "pass"
+    },
+    {
+      "name": "equal marked base survives timed",
+      "outcome": "pass"
+    },
+    {
+      "name": "current marked base survives text",
+      "outcome": "pass"
+    },
+    {
+      "name": "current marked base survives timed",
+      "outcome": "pass"
+    }
+  ],
+  "platform": "linux"
+}
