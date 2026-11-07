@@ -90,9 +90,30 @@ extension VoiceBarFlowTests {
         step(name, body)
     }
 
+    // Etan's 2.2.61 notch ledger N2: "no text band while transcribing; spinner+blue are enough — N2 wins".
+    // Shipped by 9df63566. The refusal stays in state; recording/F5-preview still render their full notes.
+    func verifyTranscribingN2(in bar: XCUIElement, snapshot: [String: Any], refusalActive: Bool) throws -> XCUIElement {
+        let spinner = bar.descendants(matching: .other).matching(NSPredicate(format: "label == %@", "Transcribing")).firstMatch
+        XCTAssertTrue(spinner.exists, "N2 requires the accessible Transcribing spinner")
+        XCTAssertTrue(bar.buttons["History"].exists)
+        XCTAssertTrue(bar.buttons["Settings"].exists)
+        XCTAssertEqual(bar.descendants(matching: .staticText).count, 0, "N2 forbids a text band/note")
+        XCTAssertEqual(bar.descendants(matching: .textView).count, 0, "N2 forbids a text band/note")
+        let state = try XCTUnwrap(try galleryStates(snapshot).first { $0["id"] as? String == "busy-transcribing" })
+        XCTAssertEqual(state["mode"] as? String, "transcribing")
+        XCTAssertEqual(state["showsBusy"] as? Bool, refusalActive)
+        if refusalActive {
+            XCTAssertEqual(state["note"] as? String, Self.focused338Text["busy-transcribing"], "Refused Option+F5 remains recorded")
+        } else {
+            XCTAssertTrue(state["note"] is NSNull, "Refusal state must expire even without a visual note")
+        }
+        return spinner
+    }
+
     func verifyGalleryFrames(ids: [String], snapshot: [String: Any], family: Bool = false) throws {
         let bounds = NSRectFromString(try XCTUnwrap(snapshot["screenAXBounds"] as? String))
         var panels: [String: CGRect] = [:], texts: [String: CGRect] = [:], expected: [String: String] = [:]
+        var indicatorIDs: Set<String> = []
         for id in ids {
             let panel = galleryPanel(family ? "VoiceBar QA Pill" : "VoiceBar QA Gallery " + id)
             XCTAssertTrue(panel.exists, "Missing real production-view panel: " + id)
@@ -104,13 +125,19 @@ extension VoiceBarFlowTests {
             expected[id] = full
             let bar = panel.descendants(matching: .any).matching(identifier: "qa-gallery-bar-" + id).firstMatch
             XCTAssertTrue(bar.exists, "Missing production BarView scope: " + id)
-            if bar.exists, let note = galleryText(full, in: bar) { texts[id] = note.frame }
+            if id == "busy-transcribing", bar.exists {
+                let before = testRun?.failureCount ?? 0
+                let spinner = try verifyTranscribingN2(in: bar, snapshot: snapshot, refusalActive: true)
+                expected[id] = "Transcribing"
+                indicatorIDs.insert(id)
+                if spinner.exists, (testRun?.failureCount ?? 0) == before { texts[id] = spinner.frame }
+            } else if bar.exists, let note = galleryText(full, in: bar) { texts[id] = note.frame }
             else { XCTFail("Full rendered BarView text missing in " + id + ": " + panel.debugDescription) }
         }
         var feedbackExpected = expected
         if let terminal = feedbackExpected["terminal-confirmation"] { feedbackExpected["terminal-confirmation"] = String(terminal.prefix(2)) }
         let problems = feedbackExpected.isEmpty ? [] : UIE2EGalleryFrames.problems(
-            panels: panels, texts: texts, expected: feedbackExpected, bounds: bounds)
+            panels: panels, texts: texts, expected: feedbackExpected, bounds: bounds, indicatorIDs: indicatorIDs)
         XCTAssertTrue(problems.isEmpty, problems.joined(separator: "; "))
         if ids.contains("terminal-confirmation"), let previewFrame = texts["terminal-confirmation"],
            let panelFrame = panels["terminal-confirmation"] {
@@ -139,8 +166,9 @@ extension VoiceBarFlowTests {
         }
         attachJSON("UIE2E-FOCUSED-FRAMES", ["ids": ids, "family": family,
             "panels": panels.mapValues(NSStringFromRect), "textFrames": texts.mapValues(NSStringFromRect),
-            "expectedText": expected, "problems": problems, "oracle": "full text, actual AX frame, screen containment, sibling overlap; system12medium"])
-        for id in UIE2EGalleryFrames.verifiedIDs(panels: panels, texts: texts, expected: feedbackExpected, bounds: bounds) {
+            "expectedText": expected, "indicatorIDs": indicatorIDs.sorted(), "problems": problems,
+            "oracle": "full text or N2 spinner, actual AX frame, screen containment, sibling overlap; system12medium"])
+        for id in UIE2EGalleryFrames.verifiedIDs(panels: panels, texts: texts, expected: feedbackExpected, bounds: bounds, indicatorIDs: indicatorIDs) {
             if id != "terminal-confirmation" { ledger.verifiedSurfaces.insert("338:static:" + id) }
         }
         if family, let actual = panels.values.first {
@@ -262,6 +290,9 @@ extension VoiceBarFlowTests {
                     let panel = galleryPanel("VoiceBar QA Gallery " + id)
                     let bar = panel.descendants(matching: .any).matching(identifier: "qa-gallery-bar-" + id).firstMatch
                     XCTAssertTrue(panel.exists, "Expired instance panel must remain inspectable: " + id)
+                    if id == "busy-transcribing", bar.exists {
+                        _ = try verifyTranscribingN2(in: bar, snapshot: snapshot, refusalActive: false)
+                    }
                     XCTAssertTrue(UIE2EGalleryFrames.expired(renderer: bar.exists ? bar.frame : nil,
                         feedbackPresent: bar.exists && galleryText(Self.focused338Text[id]!, in: bar) != nil), id + ": missing renderer or stale visible feedback")
                 }
