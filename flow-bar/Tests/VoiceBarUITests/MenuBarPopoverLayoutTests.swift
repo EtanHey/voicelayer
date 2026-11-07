@@ -7,7 +7,13 @@ import XCTest
 final class MenuBarPopoverLayoutTests: XCTestCase {
     func testProductionPopoverRowsAndFooterGeometry() throws {
         var frames: [String: CGRect] = [:]
-        let (window, _) = makeHost(transcript: String(repeating: "A synthetic sentence. ", count: 8)) {
+        let broken = SettingsGeneralSetup(
+            permissions: SetupPermissionsStep(snapshot: SetupPermissionSnapshot(
+                microphone: .granted, accessibilityGranted: false, inputMonitoringGranted: true,
+                hotkeyListenerActive: true)).rows,
+            hotkeyListenerActive: true, f5CheckedAt: nil, voice: nil)
+        let (window, _) = makeHost(transcript: String(repeating: "A synthetic sentence. ", count: 8),
+                                   setupAlert: MenuBarSetupAlert(setup: broken)) {
             frames = $0
         }
         defer { window.contentView = nil }
@@ -33,10 +39,19 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         XCTAssertEqual(transcriptRow.minY - mic.maxY, 10, accuracy: 1)
         XCTAssertEqual(divider.minY - transcriptRow.maxY, 10, accuracy: 1)
         XCTAssertEqual(footer.minY - divider.maxY, 10, accuracy: 1)
-        // F3: "Run setup…" sits on its own row under Open Settings… / Quit, on the same 10 pt rhythm.
+        // A broken step's "Fix <step>…" row sits under Open Settings… / Quit, on the same 10 pt rhythm.
         let setup = try XCTUnwrap(frames["setup"])
         XCTAssertEqual(setup.minY - footer.maxY, 10, accuracy: 1)
         XCTAssertEqual(setup.minX, footer.minX, accuracy: 1)
+    }
+
+    /// Permission health: a healthy Mac's popover has no setup row at all.
+    func testAHealthyPopoverHasNoSetupRow() {
+        var frames: [String: CGRect] = [:]
+        let (window, _) = makeHost(transcript: "Hello") { frames = $0 }
+        defer { window.contentView = nil }
+        XCTAssertNotNil(frames["footer"])
+        XCTAssertNil(frames["setup"])
     }
 
     /// Source wiring only. Actual MenuBarExtra opening/keyboard-focus behavior is native acceptance.
@@ -110,13 +125,14 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         transcript: String,
         mode: VoiceMode = .idle,
         remoteSTTConfigured: Bool = false,
+        setupAlert: MenuBarSetupAlert? = nil,
         onLayout: @escaping ([String: CGRect]) -> Void = { _ in }
     ) -> (NSWindow, NSHostingView<MenuBarPopoverView>) {
         let view = MenuBarPopoverView(
             footer: .resolve(isConnected: true, mode: mode, captureLive: false,
                              errorMessage: nil, remoteSTTConfigured: remoteSTTConfigured, hasFreshHealth: true),
             hotkeyHint: "Hold F5 to dictate", defaultMicrophoneName: "Fixture Microphone",
-            transcript: transcript, onLayout: onLayout
+            transcript: transcript, setupAlert: setupAlert, onLayout: onLayout
         )
         let host = NSHostingView(rootView: view)
         host.frame = NSRect(x: 0, y: 0, width: 334, height: 300)

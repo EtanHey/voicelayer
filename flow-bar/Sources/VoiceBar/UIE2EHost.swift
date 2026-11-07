@@ -205,7 +205,6 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 #endif
 
-        model.onRunSetup = { [weak self] in self?.openWizard() }
         model.seedNotchHistoryIfRequested()
         model.receipt("launch")
     }
@@ -501,7 +500,14 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 transcript: UIE2EModel.transcript, onCopy: { self.model.copy(UIE2EModel.transcript) },
                 onSettings: { self.popoverPresenter?.close(); self.settings.makeKeyAndOrderFront(nil); self.model.receipt("popover-settings") },
                 onQuit: { self.model.receipt("popover-quit"); NSApp.terminate(nil) },
-                onRunSetup: { self.popoverPresenter?.close(); self.model.receipt("popover-setup"); self.openWizard() },
+                // A fixture broken step, so the popover's setup row exists; it opens General at Setup.
+                setupAlert: MenuBarSetupAlert(setup: SettingsGeneralSetup(
+                    permissions: SetupPermissionsStep(snapshot: SetupPermissionSnapshot(
+                        microphone: .granted, accessibilityGranted: false, inputMonitoringGranted: true,
+                        hotkeyListenerActive: true)).rows,
+                    hotkeyListenerActive: true, f5CheckedAt: nil, voice: nil)),
+                onFixSetup: { self.popoverPresenter?.close(); self.model.tab = .general; self.model.focus = .permissions
+                    self.model.requestID += 1; self.model.receipt("popover-setup") },
                 onChangeMicrophone: { self.popoverPresenter?.close(); self.model.tab = .general; self.model.requestID += 1; self.model.receipt("popover-microphone") }))
         }
         popoverPresenter = presenter
@@ -555,7 +561,6 @@ final class UIE2EModel {
     var commands: [[String: Any]] = []
     var selectionText = "QA original selection"
     private var holdsFixturePresentation = false
-    var onRunSetup: () -> Void = {}
     /// The QA host refreshes its notch presentation model after every fixture (U2×U4 review).
     var onFixtureApplied: () -> Void = {}
     var residency = "loaded"
@@ -846,7 +851,7 @@ private struct UIE2ESettings: View {
             onPasteHistoryTranscript: { model.pasteHistoryTranscript($0) }, onRetranscribeHistoryEntry: { _ in model.receipt("history-retranscribe") },
             onRevealHistoryFile: { _ in model.receipt("history-finder") },
             footerPresentation: { .resolve(isConnected: model.voice.isConnected, mode: model.voice.mode, captureLive: false,
-                                            errorMessage: nil, remoteSTTConfigured: false) }, onRunSetup: { model.receipt("run-setup"); model.onRunSetup() },
+                                            errorMessage: nil, remoteSTTConfigured: false) },
             tabRequest: .init(tab: model.tab, focus: model.focus, id: model.requestID), initialDictionaryPreview: model.preview,
             onSelectedTabChange: { model.tab = $0 },
             historyPlayback: .init(start: { _ in fatalError("UIE2E forbids playback") }, stop: {}))

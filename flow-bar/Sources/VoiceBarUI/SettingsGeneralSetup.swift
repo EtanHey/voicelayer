@@ -62,17 +62,17 @@ public struct SettingsSetupStep: Equatable, Sendable {
     var markKind: SettingsSetupMark.Kind { isDone ? .done : isPending ? .pending : .attention }
 }
 
-/// General › Setup (R2: setup is folded into General). Everything fine is one quiet row; anything missing lists the
-/// steps with the broken ones first, each with its single fix.
+/// General › Setup (R2: setup is folded into General), as permission health (Etan, 2026-11-07: "Why the fuck not just
+/// detect what needs to be re set????"). Healthy shows nothing at all: no header, no ready row. Anything broken shows
+/// only the broken steps, each with its single fix.
 public struct SettingsGeneralSetup: Equatable, Sendable {
-    public static let readyTitle = "VoiceBar is ready"
-    public static let readyDescription = "Permissions are on, F5 works and your voice is set up."
-    /// Without a clone-engine reading the ready line claims only what it knows.
-    public static let readyDescriptionWithoutVoice = "Permissions are on and F5 works."
-
-    /// Spec order; `steps` moves the broken ones to the top without reordering within each group.
+    /// Every step in spec order, healthy ones included. Only `steps` is shown.
+    public let allSteps: [SettingsSetupStep]
+    /// What General shows: the broken steps that have a fix, in spec order. A pending step (a voice engine loading
+    /// or recovering) fixes itself and a done step needs nothing, so neither shows. F5 off while a permission is
+    /// missing has no fix of its own (the permission row is the fix), so it waits until the permissions are on and
+    /// then offers "Restart F5 listener".
     public let steps: [SettingsSetupStep]
-    public let knowsVoice: Bool
 
     public init(
         permissions: [SetupPermissionRow],
@@ -94,16 +94,22 @@ public struct SettingsGeneralSetup: Equatable, Sendable {
             fix: hotkeyListenerActive ? .checkF5 : (permissionsDone ? .restartF5Listener : nil)
         ))
         if let voice { ordered.append(Self.voiceStep(voice)) }
-        steps = ordered.filter(\.isBroken) + ordered.filter(\.isPending) + ordered.filter(\.isDone)
-        knowsVoice = voice != nil
+        allSteps = ordered
+        steps = ordered.filter { $0.isBroken && $0.fix != nil }
     }
 
-    /// Every step done. A pending step keeps the list open (the voice isn't "set up" yet) without calling it broken.
-    public var isReady: Bool { steps.allSatisfy(\.isDone) }
-    public var header: String { steps.contains(where: \.isBroken) ? "Finish setup" : "Setup" }
-    public var readyDescription: String { knowsVoice ? Self.readyDescription : Self.readyDescriptionWithoutVoice }
+    /// Nothing to fix: General shows no Setup block at all.
+    public var isHealthy: Bool { steps.isEmpty }
+    /// Only shown when something is broken.
+    public var header: String? { isHealthy ? nil : "Finish setup" }
+    /// The Setup section exists only while something is broken, whatever restart feedback is pending.
+    public var showsSection: Bool { !isHealthy }
+    /// The last "Restart F5 listener" line (a failure keeps its Copy row) shows only while something is still broken.
+    public func visibleRestartLine(_ line: HotkeyListenerRestartLine?) -> HotkeyListenerRestartLine? {
+        isHealthy ? nil : line
+    }
     /// The step the notch's orange dot points at: the first broken one. A pending step is never a target.
-    public var firstBroken: SettingsSetupStepID? { steps.first(where: \.isBroken)?.id }
+    public var firstBroken: SettingsSetupStepID? { steps.first?.id }
 
     static func voiceStep(_ voice: SettingsSetupVoiceStatus) -> SettingsSetupStep {
         let (description, isDone, isPending): (String, Bool, Bool) = switch voice {
@@ -227,8 +233,6 @@ enum SettingsGeneralCopy {
     static let hideTitle = "Hide the notch"
     static let hideDescription = "VoiceBar keeps working. Click its Dock icon to bring the notch back."
     static let relayTitle = "F5 key helper"
-    static let setupAssistantTitle = "Setup assistant"
-    static let setupAssistantDescription = "Walks through permissions, the F5 key, your microphone and a test dictation."
     static let microphoneNote =
         "Drag to reorder. VoiceBar uses the first connected microphone. Disconnected ones keep their place."
 

@@ -25,7 +25,8 @@ public enum SetupWizardLaunchDecision: Equatable, Sendable {
 
 /// F3: the wizard opens by itself only for a genuinely new install. An unfinished first run resumes. A Mac that
 /// has dictated before is already set up — an upgrade must never pop the wizard there (#211 r1), even if a check
-/// is red now (Settings shows the permission rows, and Run setup… is in the menu). A new install that already
+/// is red now (permission health shows the broken row in Settings, the notch dot and the popover's "Fix <step>…"
+/// instead). A new install that already
 /// works is marked completed without showing.
 public enum SetupWizardLaunchPolicy {
     public static func decide(

@@ -27,7 +27,7 @@ final class SetupWizardLaunchPolicyTests: XCTestCase {
     }
 
     /// The lead's default: a Mac used before but now missing a permission isn't shown the wizard; Settings shows
-    /// the permission row, and Run setup… is in the menu.
+    /// the permission row, and the menu-bar popover names it ("Fix Accessibility…").
     func testAMacUsedBeforeButMissingAPermissionIsNotShownTheWizard() {
         let store = SetupWizardCompletionStore(defaults: defaults)
         let missingMicrophone = SetupLaunchReadiness(permissionsGranted: false, listenerActive: true)
@@ -143,15 +143,39 @@ final class SetupWizardEntryPointContractTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
     }
 
-    func testSettingsGeneralOffersRunSetupAgain() throws {
+    /// Etan, 2026-11-07: permission health replaces the generic re-run row; the first-run wizard itself stays.
+    func testSettingsGeneralNoLongerOffersRunSetupAgain() throws {
         let settings = try source("Sources/VoiceBarUI/SettingsView.swift")
-        XCTAssertTrue(settings.contains("public let onRunSetup: () -> Void"))
-        XCTAssertTrue(settings.contains("Button(\"Run setup again\") { onRunSetup() }"))
+        XCTAssertFalse(settings.contains("Run setup again"))
+        XCTAssertFalse(settings.contains("onRunSetup"))
+        let setup = try source("Sources/VoiceBarUI/SettingsGeneralSetup.swift")
+        XCTAssertFalse(setup.contains("VoiceBar is ready"), "no ready row when healthy")
     }
 
-    func testTheMenuBarPopoverOffersRunSetup() throws {
+    /// Lead ruling 2026-11-07: the popover's generic "Run setup…" goes too; only a broken step shows, by name.
+    func testTheMenuBarPopoverNamesTheBrokenStepInsteadOfRunSetup() throws {
         let popover = try source("Sources/VoiceBarUI/MenuBarPopoverView.swift")
-        XCTAssertTrue(popover.contains("public let onRunSetup: () -> Void"))
-        XCTAssertTrue(popover.contains("Button(\"Run setup…\", action: onRunSetup)"))
+        XCTAssertFalse(popover.contains("Run setup"))
+        XCTAssertFalse(popover.contains("onRunSetup"))
+        XCTAssertTrue(popover.contains("if let setupAlert {"))
+        let app = try source("Sources/VoiceBar/VoiceBarApp.swift")
+        XCTAssertFalse(app.contains("openSetupWizardFromMenuBar"))
+        XCTAssertTrue(app.contains("scheduleFirstRunSetupIfNeeded()"), "the first-run wizard stays")
+    }
+
+    func testTheSetupAlertIsTheFirstBrokenStepOrNothing() {
+        func setup(_ snapshot: SetupPermissionSnapshot, listener: Bool = true) -> SettingsGeneralSetup {
+            SettingsGeneralSetup(permissions: SetupPermissionsStep(snapshot: snapshot).rows,
+                                 hotkeyListenerActive: listener, f5CheckedAt: nil, voice: nil)
+        }
+        XCTAssertNil(MenuBarSetupAlert(setup: setup(.allGranted)), "healthy: no setup entry at all")
+        let accessibility = MenuBarSetupAlert(setup: setup(SetupPermissionSnapshot(
+            microphone: .granted, accessibilityGranted: false, inputMonitoringGranted: false,
+            hotkeyListenerActive: false), listener: false))
+        XCTAssertEqual(accessibility?.step, .accessibility)
+        XCTAssertEqual(accessibility?.title, "Fix Accessibility…")
+        let f5 = MenuBarSetupAlert(setup: setup(.allGranted, listener: false))
+        XCTAssertEqual(f5?.step, .f5Key, "permissions back but listener off: Restart F5 listener")
+        XCTAssertEqual(f5?.title, "Fix F5 key…")
     }
 }
