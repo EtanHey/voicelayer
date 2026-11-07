@@ -118,7 +118,7 @@ import {
   type RecordingProvenanceProbe,
 } from "./recording-provenance";
 import { resolveRecorderBinary } from "./recorder-binary";
-import { readRecordingInputDevice, type RecordingInputDevice } from "./recording-input-device";
+import { startRecordingInputDeviceSnapshots, type RecordingInputDevice } from "./recording-input-device";
 import {
   buildChunkPrompt,
   mergeChunkTranscripts,
@@ -682,6 +682,7 @@ export interface NoSpeechGateResult {
 
 export interface RecordingCaptureState {
   inputDevice?: RecordingInputDevice | null;
+  inputDeviceSnapshot?: Promise<RecordingInputDevice | null>;
   recorderExited?: Promise<void>;
   physicalPressStop?: boolean;
   /** Locked PTT silence expiry keeps the complete archive and bounds only STT input. */
@@ -2414,6 +2415,7 @@ export async function recordToBuffer(
     const pcmChunks: Uint8Array[] = [];
     const chunkQueue: Uint8Array[] = [];
     let resolved = false;
+    let deviceSnapshots: ReturnType<typeof startRecordingInputDeviceSnapshots> | undefined;
     let recorder: RecorderProcess | null = null;
     let processingSettled: Promise<void> = Promise.resolve();
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
@@ -2490,6 +2492,7 @@ export async function recordToBuffer(
     const finish = (error?: Error) => {
       if (resolved) return;
       resolved = true;
+      deviceSnapshots?.finish();
       if (activeDeviceLoss?.captureId === captureId) activeDeviceLoss = null;
       setRecordingState("idle");
       try {
@@ -2703,7 +2706,10 @@ export async function recordToBuffer(
 
     try {
       // Start mic recording via sox — raw PCM to stdout at device's native rate
-      const openingInputDevice = captureState ? readRecordingInputDevice() : null;
+      if (captureState) {
+        deviceSnapshots = startRecordingInputDeviceSnapshots();
+        captureState.inputDeviceSnapshot = deviceSnapshots.settled;
+      }
       // AIDEV-NOTE: We record at native rate (not 16kHz) to avoid sox buffer overruns
       // when the device rate differs (e.g., AirPods at 24kHz). Resampling happens in JS.
       const spawnedRecorder = Bun.spawn(
@@ -2816,13 +2822,10 @@ export async function recordToBuffer(
           if (done && !resolved) noteMicLoss("recorder-ended");
           if (done || resolved) break;
           if (!value || value.length === 0) continue;
-          // Metadata only. A default switch while sox opens makes the binding
-          // uncertain; omit it. Later switches must not relabel an ongoing take.
+          // Signal only: the observer schedules its child outside this hot loop.
           if (!inputDeviceChecked && captureState) {
             inputDeviceChecked = true;
-            const current = readRecordingInputDevice();
-            captureState.inputDevice = current && current.name === openingInputDevice?.name &&
-              current.uid === openingInputDevice?.uid ? openingInputDevice : null;
+            deviceSnapshots?.firstPCM();
           }
 
           // Defensive copy: Bun may recycle the underlying ArrayBuffer (R65)
@@ -3077,8 +3080,10 @@ export async function waitForInput(
       captureState,
     );
     timings.captureEnded();
+    captureState.inputDevice = await captureState.inputDeviceSnapshot;
   } catch (err) {
     timings.captureEnded();
+    captureState.inputDevice = await captureState.inputDeviceSnapshot;
     if (
       err instanceof RecordingFailureWithCapturedPcm &&
       options.archiveSource !== undefined
