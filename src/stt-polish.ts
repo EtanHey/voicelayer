@@ -1519,7 +1519,12 @@ function applyPolishCandidate(
   retried = false,
 ): STTPolishResult {
   const trimmedPolishedText = polishedText.trim();
-  const candidateText = trimmedPolishedText;
+  // A single-line prose reply is not a list. Remove only a dash polish
+  // introduced at that boundary; supplied/commanded dashes and lists survive.
+  const candidateText = !/^[ \t]*[-—][ \t]+/u.test(cleanedText) &&
+    !/[\r\n]/u.test(trimmedPolishedText)
+    ? trimmedPolishedText.replace(/^[-—][ \t]+(?=\S)/u, "")
+    : trimmedPolishedText;
   const rejectionReason = validatePolishCandidate(cleanedText, candidateText, env);
   if (mode === "shadow") {
     return buildResult(
