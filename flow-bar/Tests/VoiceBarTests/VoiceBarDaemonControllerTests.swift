@@ -12,6 +12,30 @@ private let testBundledDaemonPath = "/Applications/VoiceBar.app/Contents/Resourc
 private let testInstalledInfoPlistPath = "/Applications/VoiceBar.app/Contents/Info.plist"
 
 final class VoiceBarDaemonControllerTests: XCTestCase {
+    func testQA23CandidateInsideCheckoutRequiresBundledDaemonWithoutChangingDevSelection() throws {
+        let app = "/tmp/voicelayer/.build.noindex/qa/VoiceBar.app"
+        let bundled = app + "/Contents/Resources/src/mcp-server-daemon.ts"
+        let executable = URL(fileURLWithPath: app + "/Contents/MacOS/VoiceBar")
+        for candidate in [false, true] {
+            for hasBundle in [false, true] {
+                let config = VoiceBarDaemonLaunchConfiguration.configuration(
+                    for: executable,
+                    fileExists: { path in
+                        [testBunPath, testRepoDaemonPath, testRepoRoot + "/flow-bar/Package.swift",
+                         testHomebrewDaemonPath].contains(path) || (hasBundle && path == bundled)
+                    },
+                    fileData: { testVersionData[$0] },
+                    environment: candidate ? ["VOICEBAR_QA23_BUNDLED_DAEMON": "1"] : [:]
+                )
+                if candidate && !hasBundle {
+                    XCTAssertNil(config)
+                } else {
+                    XCTAssertEqual(try XCTUnwrap(config).arguments, ["run", candidate ? bundled : testRepoDaemonPath])
+                }
+            }
+        }
+    }
+
     func testQAHealthRequiresExplicitPreserveMode() {
         for preserves in [false, true] {
             var inherited = ["VOICELAYER_QA_HEALTH": "1"]

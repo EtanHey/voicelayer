@@ -14,6 +14,7 @@ mkdirSync(root, { recursive: true });
 test("generated writable environment has no resident paths", () => {
   const result = python(`env=m['environment'](Path('/qa-candidate'),Path('/nonexistent-qa-source'))\nassert env['VOICEBAR_USER_DEFAULTS_SUITE']=='com.voicelayer.voicebar.qa23'\nassert env['VOICEBAR_QA_PRESERVE_OVERRIDES']=='1'\nfor key,value in env.items():\n if value.startswith('/'):\n  assert value.startswith(('/qa-candidate/','/tmp/vl-qa23-')), (key,value)\nprint(json.dumps(env))`);
   expect(result.exit).toBe(0); expect(result.error).toBe("");
+  expect(JSON.parse(result.out).VOICEBAR_QA23_BUNDLED_DAEMON).toBe("1");
   expect(JSON.parse(result.out).VOICEBAR_QA_FIXTURE_RECORDER).toBeUndefined();
 });
 test("fixture recorder emits the WAV PCM through the existing recorder override", () => {

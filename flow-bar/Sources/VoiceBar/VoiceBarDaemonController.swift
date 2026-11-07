@@ -40,7 +40,8 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             return nil
         }
 
-        if let repoRoot = repositoryRoot(for: executableURL, fileExists: fileExists) {
+        let bundledCandidate = environment["VOICEBAR_QA23_BUNDLED_DAEMON"] == "1"
+        if !bundledCandidate, let repoRoot = repositoryRoot(for: executableURL, fileExists: fileExists) {
             return VoiceBarDaemonLaunchConfiguration(
                 launchPath: bunPath,
                 arguments: ["run", "\(repoRoot)/src/mcp-server-daemon.ts"],
@@ -57,7 +58,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             .appendingPathComponent("mcp-server-daemon.ts")
             .path
 
-        let isolatedQAMode = environment["VOICEBAR_QA_PRESERVE_OVERRIDES"]?
+        let isolatedQAMode = bundledCandidate || environment["VOICEBAR_QA_PRESERVE_OVERRIDES"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) == "1" ||
             environment["QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) == "1"

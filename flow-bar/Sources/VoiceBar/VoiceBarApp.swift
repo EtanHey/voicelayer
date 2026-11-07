@@ -785,7 +785,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         server.start()
         _ = daemonController.activateIfNeeded()
 
-        // Hotkey setup — F5 hold for push-to-talk.
+        // Socket control uses the same gestures even when QA skips the native event tap.
+        configureHotkeyCallbacks()
         if VoiceBarDefaults.shouldStartHotkey() {
             setupHotkey()
         }
@@ -1575,9 +1576,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Hotkey setup
 
-    /// Wire gesture callbacks to VoiceState and start the event tap.
+    /// Start the native event tap after the shared gesture callbacks are wired.
     private func setupHotkey() {
-        configureHotkeyCallbacks()
         applyHotkeyListenerOutcome(hotkeyListener.start())
     }
 

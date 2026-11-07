@@ -12,6 +12,9 @@ On the occupied M4, build only through the captain gate:
 Output: `.build.noindex/qa-2.3/VoiceBar-2.3-QA.app`, ad-hoc arm64,
 `com.voicelayer.voicebar.qa23`, display name `VoiceBar 2.3 QA`, version `2.3.0`.
 Rebuild on M1: the signed LSEnvironment contains absolute checkout paths.
+The signed `VOICEBAR_QA23_BUNDLED_DAEMON=1` selects Resources/src even inside
+a checkout, and refuses source/Homebrew fallback. Other dev and installed flows
+keep their existing daemon resolution.
 
 Signed overrides isolate HOME/CFFIXED_USER_HOME, preferences, state, archive,
 processing/tts/vocabulary/effort, think log, replay/tmp, both sockets, PID, heartbeat,
@@ -45,6 +48,10 @@ No speaker playback or M1 permission grants are part of the fixture test.
    resident for five seconds before launch and another five seconds after QA is ready. A respawn aborts the switch and attempts normal supervised
    restoration. Confirm status shows one QA, zero resident. Fixture mode must show no microphone,
    Accessibility or Input Monitoring prompts; stop/report any prompt, never grant it.
+   Switch verifies the live QA daemon's parent and bundled argv after readiness
+   and after the final down window. A mismatch aborts through normal safe rollback;
+   an unknown/outside-bundle lifetime lock may block rollback with
+   `RECOVERY_REQUIRED`. Only explicit `restore --force-resident` skips that evidence.
 5. Never use QA Settings > Relay setup or permission buttons. Use isolated socket
    control start-recording/stop-recording (F5 is skipped), allowing fixture duration
    plus one second before Stop. Match transcript to fixture; paste into a scratch
@@ -62,6 +69,15 @@ No speaker playback or M1 permission grants are part of the fixture test.
    do not escalate to SIGKILL. No open/unsupervised resident fallback is used.
 8. Test a delayed resident respawn and unhealthy-QA recovery on the M1 rig; keep
    failure receipts. M4 unit tests simulate these states and are not live proof.
+
+For a resident-preserving binary regression probe, build as above, then run
+`heavy.sh release-r1fu python3 scripts/test-qa-candidate-runtime.py`. It launches
+only the isolated QA bundle, sends socket start with SKIP_HOTKEY, checks authenticated
+recording and busy refusal, cancels its silence fixture without transcription,
+and retires QA through the same safe path ordinary restore uses. Idle restore
+accepts only the proven bundled QA daemon's lifetime booking; it still requires
+authenticated idle, queue 0 and no processing jobs. This probe does not run the
+resident LaunchAgent switch/restore acceptance procedure above.
 
 Before switch and after restore, run this with `before`/`after` output filenames:
 

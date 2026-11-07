@@ -120,6 +120,55 @@ test("think mode has an explicit isolated log destination", () => {
   const result = python("env=g['B']['environment'](Path('/qa'),Path('/nonexistent-qa-home'))\nassert env['QA_VOICE_THINK_FILE']=='/qa/tmp/thinking.md'");
   expect(result.exit).toBe(0);
 });
+
+test.each(["bundled", "outside", "unknown", "duplicate"])("post-launch daemon provenance: %s", (mode) => {
+  const result = python(`mode=${JSON.stringify(mode)};app=root/'provenance.app'
+rows=[(10,1,str(app/'Contents/MacOS/VoiceBar')),(11,10,'/bin/bun')]
+if mode=='duplicate':rows.append((12,10,'/bin/bun'))
+g['processes']=lambda:rows;g['os'].kill=lambda pid,sig:None
+g['command_line']=lambda pid:'/bin/bun run '+str((app if mode=='bundled' else root/'foreign.app')/'Contents/Resources/src/mcp-server-daemon.ts')
+if mode=='unknown':g['command_line']=lambda pid:(_ for _ in ()).throw(OSError('unreadable argv'))
+g['require_bundled_daemon'](app)`);
+  expect(result.exit).toBe(mode === "bundled" ? 0 : 1);
+});
+
+test.each([false, true])("provenance rollback never forces candidate retirement (blocked=%s)", (blocked) => {
+  const result = python(`blocked=${blocked ? "True" : "False"};g['job_info']=lambda **kw:None;g['pids']=lambda app:[]
+g['APP']=root/'provenance-rollback.app';info=g['APP']/'Contents/Info.plist';info.parent.mkdir(parents=True,exist_ok=True)
+info.write_bytes(g['plistlib'].dumps({'CFBundleIdentifier':g['B']['IDENTITY'],'CFBundleShortVersionString':'2.3.0','LSEnvironment':{}}))
+g['B']['prepare']=lambda env:None;g['quit_app']=lambda *a,**kw:None
+g['subprocess'].run=lambda *a,**kw:None;g['wait_ready']=lambda *a,**kw:None;g['stay_down']=lambda:None
+g['require_bundled_daemon']=lambda app:(_ for _ in ()).throw(RuntimeError('outside bundle'))
+forces=[]
+def restore(force=False):
+ forces.append(force)
+ if blocked:raise RuntimeError('voice session/ask lock exists')
+g['restore_resident']=restore
+try:g['switch']();raise AssertionError('accepted outside bundle')
+except RuntimeError as error:
+ assert ('RECOVERY_REQUIRED' if blocked else 'Switch aborted') in str(error)
+ if blocked:assert '--force-resident' in str(error)
+assert forces==[False]`);
+  expect(result.error).toBe(""); expect(result.exit).toBe(0);
+});
+
+test.each(["queue", "processing", "jobs", "capture-error", "missing", "unhealthy"])("QA lifetime booking refuses %s health", (mode) => {
+  const result = python(`mode=${JSON.stringify(mode)};d=root/('qa-health-'+mode);d.mkdir(exist_ok=True)
+app=g['APP'];g['processes']=lambda:[(10,1,str(app/'Contents/MacOS/VoiceBar')),(11,10,'/bin/bun')]
+g['os'].kill=lambda pid,sig:None;g['command_line']=lambda pid:'/bin/bun run '+str(app/'Contents/Resources/src/mcp-server-daemon.ts')
+(d/'voicelayer-session-health.lock').write_text(json.dumps({'pid':11,'sessionId':'mcp-11'}))
+data={'recording_state':'idle','queue_depth':0,'processing_count':0,'recording_jobs':[]}
+if mode=='queue':data['queue_depth']=1
+if mode=='processing':data['processing_count']=1
+if mode=='jobs':data['recording_jobs']=[{'take_id':'busy'}]
+if mode=='capture-error':data['capture_error']='unknown'
+if mode=='missing':data.pop('queue_depth')
+def health():
+ if mode=='unhealthy':raise RuntimeError('unavailable')
+ return data
+g['idle'](d,d,health)`);
+  expect(result.exit).toBe(1); expect(result.error).toContain(mode === "unhealthy" ? "unavailable" : "REFUSED");
+});
 test("KeepAlive qualification requires a proven clean stopped exit", () => {
   const result = python("g['HOME']=root/'clean-job';path=g['HOME']/'Library/LaunchAgents/com.voicelayer.voicebar.plist';path.parent.mkdir(parents=True,exist_ok=True)\nconfig={'Label':'com.voicelayer.voicebar','ProgramArguments':[str(g['RESIDENT']/'Contents/MacOS/VoiceBar')],'KeepAlive':{'SuccessfulExit':False},'RunAtLoad':True,'StandardOutPath':str(g['HOME']/'Library/Logs/voicelayer/voicebar.log'),'StandardErrorPath':str(g['HOME']/'Library/Logs/voicelayer/voicebar-err.log')}\npath.write_bytes(g['plistlib'].dumps(config))\noutput='\\n'.join(key+' = '+value for key,value in {'path':str(path),'program':config['ProgramArguments'][0],'stdout path':config['StandardOutPath'],'stderr path':config['StandardErrorPath']}.items())\ng['subprocess'].run=lambda *a,**k:SimpleNamespace(returncode=0,stdout=output+'\\nlast exit code = 1\\n')\ntry:g['job_info'](stopped=True);raise AssertionError('accepted crash')\nexcept RuntimeError:pass\ng['subprocess'].run=lambda *a,**k:SimpleNamespace(returncode=0,stdout=output+'\\nlast exit code = 0\\n')\nassert g['job_info'](stopped=True) is None");
   expect(result.exit).toBe(0); expect(result.error).toBe("");

@@ -27,6 +27,7 @@ def environment(base=BASE, home=Path.home()):
                VOICELAYER_STATE_DIR=str(state), XDG_CACHE_HOME=str(base / 'cache'),
                VOICELAYER_SOCKET_PATH=str(ipc / 'v.sock'), VOICELAYER_MCP_SOCKET_PATH=str(ipc / 'm.sock'),
                VOICEBAR_USER_DEFAULTS_SUITE=IDENTITY, VOICEBAR_QA_PRESERVE_OVERRIDES='1',
+               VOICEBAR_QA23_BUNDLED_DAEMON='1',
                VOICEBAR_QA_SKIP_LS_REGISTER='1', VOICELAYER_QA_HEALTH='1', PYTHONDONTWRITEBYTECODE='1', VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL='1',
                QA_VOICE_THINK_FILE=str(base / 'tmp/thinking.md'),
                VOICELAYER_PROCESSING_SETTINGS_PATH=str(state / 'processing-settings.json'),
