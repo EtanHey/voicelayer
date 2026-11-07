@@ -14,20 +14,21 @@ final class SettingsGeneralPaneShotsTests: XCTestCase {
         let working = SettingsGeneralSetup(
             permissions: SetupPermissionsStep(snapshot: .allGranted).rows, hotkeyListenerActive: true,
             f5CheckedAt: Date(), voice: .ready)
-        let steps = (broken.steps + working.steps).map {
+        let steps = (broken.steps + working.allSteps).map {
             SettingsRowCase(title: $0.title, description: $0.description, hasLead: true,
                             controls: $0.fix.map { SettingsRowCase.button($0.title) } ?? AnyView(EmptyView()))
         }
         return steps + [
-            SettingsRowCase(title: SettingsGeneralSetup.readyTitle, description: working.readyDescription, hasLead: true,
-                            controls: SettingsRowCase.button("Show steps")),
             SettingsRowCase(title: "Studio Display Microphone (USB-C hub)", description: "Not connected", hasLead: true,
                             controls: AnyView(Button("Make default") {}.controlSize(.small))),
             SettingsRowCase(title: "DJI Mic 2", description: "Connected", hasLead: true,
                             controls: AnyView(SettingsPill(text: "Used for dictation"))),
             SettingsRowCase(title: SettingsGeneralCopy.dictationKeyTitle,
                             description: SettingsGeneralCopy.dictationKeyDescription,
-                            controls: AnyView(Text("F5").padding(.horizontal, 7))),
+                            controls: AnyView(HStack(spacing: 8) {
+                                Text("F5").padding(.horizontal, 7)
+                                Button("Check") {}.buttonStyle(.bordered)
+                            })),
             SettingsRowCase(title: SettingsGeneralCopy.mouseTitle, description: SettingsGeneralCopy.mouseDescription,
                             controls: SettingsRowCase.toggle),
             SettingsRowCase(title: SettingsGeneralCopy.openAtLoginTitle, description: nil,
@@ -37,9 +38,6 @@ final class SettingsGeneralPaneShotsTests: XCTestCase {
             SettingsRowCase(title: SettingsGeneralCopy.relayTitle,
                             description: SettingsGeneralCopy.relayDescription(installed: true, listenerActive: true),
                             controls: SettingsRowCase.button("Reinstall")),
-            SettingsRowCase(title: SettingsGeneralCopy.setupAssistantTitle,
-                            description: SettingsGeneralCopy.setupAssistantDescription,
-                            controls: SettingsRowCase.button("Run setup again")),
         ]
     }
 

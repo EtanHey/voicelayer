@@ -723,9 +723,7 @@ extension VoiceBarFlowTests {
         click(app.buttons["Open Microphone"])
         click(app.buttons["Open Accessibility"])
         click(app.buttons["Open Input Monitoring"])
-        click(app.buttons["Run setup again"])
-        receipt("run-setup")
-        wizardFlow()
+        // "Run setup again" is gone (Etan, 2026-11-07, permission health); the popover flow still reaches the wizard.
         step("assert QA floating panel exists before Hide") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].waitForExistence(timeout: 3)) }
         click(app.buttons["Hide VoiceBar for 1 hour"])
         receipt("hide")

@@ -143,10 +143,13 @@ final class SetupWizardEntryPointContractTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
     }
 
-    func testSettingsGeneralOffersRunSetupAgain() throws {
+    /// Etan, 2026-11-07: permission health replaces the generic re-run row; the first-run wizard itself stays.
+    func testSettingsGeneralNoLongerOffersRunSetupAgain() throws {
         let settings = try source("Sources/VoiceBarUI/SettingsView.swift")
-        XCTAssertTrue(settings.contains("public let onRunSetup: () -> Void"))
-        XCTAssertTrue(settings.contains("Button(\"Run setup again\") { onRunSetup() }"))
+        XCTAssertFalse(settings.contains("Run setup again"))
+        XCTAssertFalse(settings.contains("onRunSetup"))
+        let setup = try source("Sources/VoiceBarUI/SettingsGeneralSetup.swift")
+        XCTAssertFalse(setup.contains("VoiceBar is ready"), "no ready row when healthy")
     }
 
     func testTheMenuBarPopoverOffersRunSetup() throws {

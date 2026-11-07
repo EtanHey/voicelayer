@@ -934,8 +934,8 @@ public final class VoiceState {
 
     /// Global hotkey availability and live gesture hint state.
     public var hotkeyEnabled: Bool = false
-    /// 2.3 U2: the permissions whose absence made the F5 listener fail. Non-empty badges the notch gear and names the
-    /// problem in its tooltip. Distinct from `hotkeyEnabled`, which is also false before the listener has started.
+    /// 2.3 U2 + permission health: the permissions that are off right now (re-read while VoiceBar runs, so a revoked
+    /// one shows up without a relaunch). Non-empty badges the notch gear and names the problem in its tooltip. Distinct from `hotkeyEnabled`, which is also false before the listener has started.
     public private(set) var setupMissingPermissions: [HotkeyPermission] = []
     public var hotkeyPhase: HotkeyPhase = .idle {
         didSet {

@@ -88,7 +88,8 @@ final class SetupWizardArtifactTests: XCTestCase {
         }
     }
 
-    /// The two ways back in: "Run setup…" in the menu-bar popover and General › Setup › Run setup again.
+    /// The way back in: "Run setup…" in the menu-bar popover (General's "Run setup again" was removed for permission
+    /// health, 2026-11-07).
     func testWritesTheEntryPointsInLightAndDark() throws {
         try VisualArtifactTestPolicy.requireRegeneration()
         let directory = URL(fileURLWithPath: #filePath)

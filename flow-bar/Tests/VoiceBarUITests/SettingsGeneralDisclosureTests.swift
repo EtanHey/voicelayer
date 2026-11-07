@@ -45,7 +45,8 @@ final class SettingsGeneralDisclosureTests: XCTestCase {
         XCTAssertTrue(row.contains("if let fix = step.fix"))
         let granted = SettingsGeneralSetup(permissions: SetupPermissionsStep(snapshot: .allGranted).rows,
                                            hotkeyListenerActive: true, f5CheckedAt: nil, voice: nil)
-        let permissionSteps = granted.steps.filter { [.microphone, .accessibility, .inputMonitoring].contains($0.id) }
+        XCTAssertEqual(granted.steps, [], "healthy General shows no setup rows at all")
+        let permissionSteps = granted.allSteps.filter { [.microphone, .accessibility, .inputMonitoring].contains($0.id) }
         XCTAssertEqual(permissionSteps.count, 3)
         XCTAssertTrue(permissionSteps.allSatisfy { $0.fix == nil })
     }

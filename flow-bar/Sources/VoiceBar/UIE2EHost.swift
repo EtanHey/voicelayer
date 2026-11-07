@@ -199,7 +199,6 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 #endif
 
-        model.onRunSetup = { [weak self] in self?.openWizard() }
         model.seedNotchHistoryIfRequested()
         model.receipt("launch")
     }
@@ -531,7 +530,6 @@ final class UIE2EModel {
     var commands: [[String: Any]] = []
     var selectionText = "QA original selection"
     private var holdsFixturePresentation = false
-    var onRunSetup: () -> Void = {}
     /// The QA host refreshes its notch presentation model after every fixture (U2×U4 review).
     var onFixtureApplied: () -> Void = {}
     var residency = "loaded"
@@ -822,7 +820,7 @@ private struct UIE2ESettings: View {
             onPasteHistoryTranscript: { model.pasteHistoryTranscript($0) }, onRetranscribeHistoryEntry: { _ in model.receipt("history-retranscribe") },
             onRevealHistoryFile: { _ in model.receipt("history-finder") },
             footerPresentation: { .resolve(isConnected: model.voice.isConnected, mode: model.voice.mode, captureLive: false,
-                                            errorMessage: nil, remoteSTTConfigured: false) }, onRunSetup: { model.receipt("run-setup"); model.onRunSetup() },
+                                            errorMessage: nil, remoteSTTConfigured: false) },
             tabRequest: .init(tab: model.tab, focus: model.focus, id: model.requestID), initialDictionaryPreview: model.preview,
             onSelectedTabChange: { model.tab = $0 },
             historyPlayback: .init(start: { _ in fatalError("UIE2E forbids playback") }, stop: {}))

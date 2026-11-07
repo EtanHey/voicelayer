@@ -513,8 +513,6 @@ public struct SettingsView: View {
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
     public let footerPresentation: () -> VoiceBarFooterPresentation
-    /// Opens the setup wizard (F3): General › Setup › Run setup again.
-    public let onRunSetup: () -> Void
     /// Setup's "Speaking voice" step; nil (not wired yet) leaves the step out.
     public let speakingVoiceStatus: () -> SettingsSetupVoiceStatus?
     /// Nil until the app exposes these: the rows then carry no switch.
@@ -601,7 +599,6 @@ public struct SettingsView: View {
     @State private var shortcutCheckRunning = false
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
-    @State private var showsSetupSteps = false
     @State private var hoveredMicrophoneIndex: Int?
     @State private var setupHighlight = SettingsArrivalHighlight()
     @FocusState private var focusedSetupFix: SettingsSetupStepID?
@@ -712,7 +709,6 @@ public struct SettingsView: View {
                 remoteSTTConfigured: nil
             )
         },
-        onRunSetup: @escaping () -> Void = {},
         speakingVoiceStatus: @escaping () -> SettingsSetupVoiceStatus? = { nil },
         openAtLogin: SettingsToggleInput? = nil,
         mouseSideButtons: SettingsToggleInput? = nil,
@@ -829,7 +825,6 @@ public struct SettingsView: View {
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
         self.footerPresentation = footerPresentation
-        self.onRunSetup = onRunSetup
         self.speakingVoiceStatus = speakingVoiceStatus
         self.openAtLogin = openAtLogin
         self.mouseSideButtons = mouseSideButtons
@@ -1081,10 +1076,6 @@ public struct SettingsView: View {
                             .font(.caption).foregroundStyle(SettingsPanePalette.helper)
                     }
                     Divider()
-                    SettingsRow(title: SettingsGeneralCopy.setupAssistantTitle,
-                                description: SettingsGeneralCopy.setupAssistantDescription) {
-                        Button("Run setup again") { onRunSetup() }
-                    }
                     // S1: the version lives once, in the sidebar footer. This row only copies the diagnostic summary.
                     SettingsRow(title: "Diagnostic summary") {
                         SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
@@ -1117,40 +1108,28 @@ public struct SettingsView: View {
 
     // MARK: - General setup (R2)
 
+    /// Permission health (Etan, 2026-11-07): nothing at all when every permission is on and F5 works; otherwise only
+    /// the broken steps, each with its fix. A listener-restart line stays visible after the restart that fixed it.
+    @ViewBuilder
     private var setupSection: some View {
         let setup = generalSetup
-        return Section {
-            if setup.isReady && !showsSetupSteps {
-                SettingsRow(title: SettingsGeneralSetup.readyTitle, description: setup.readyDescription,
-                            lead: { SettingsSetupMark(isDone: true) }) {
-                    Button("Show steps") { showsSetupSteps = true }
-                }
-            } else {
+        if !setup.isHealthy || hotkeyListenerRestartLine != nil {
+            Section {
                 ForEach(setup.steps, id: \.id) { step in
                     setupStepRow(step)
                 }
-                if setup.isReady {
-                    Button("Hide steps") { showsSetupSteps = false }
-                }
-            }
-            if let hotkeyListenerRestartLine {
-                HStack(alignment: .top) {
-                    HotkeyListenerRestartLineView(line: hotkeyListenerRestartLine)
-                    if !hotkeyListenerRestartLine.succeeded {
-                        SettingsCopyButton(text: hotkeyListenerRestartLine.text, label: "F5 listener error")
+                if let hotkeyListenerRestartLine {
+                    HStack(alignment: .top) {
+                        HotkeyListenerRestartLineView(line: hotkeyListenerRestartLine)
+                        if !hotkeyListenerRestartLine.succeeded {
+                            SettingsCopyButton(text: hotkeyListenerRestartLine.text, label: "F5 listener error")
+                        }
                     }
                 }
+            } header: {
+                Text(setup.header ?? "Setup")
+                    .id(SettingsFocus.permissions)
             }
-            if let shortcutCheckFeedback, shortcutCheckFeedback.message != SettingsShortcutCheck.readyMessage {
-                HStack(alignment: .top) {
-                    SettingsShortcutCheckLine(message: shortcutCheckFeedback.message,
-                                              checkedAt: shortcutCheckFeedback.checkedAt)
-                    SettingsCopyButton(text: shortcutCheckFeedback.message, label: "shortcut check result")
-                }
-            }
-        } header: {
-            Text(setup.header)
-                .id(SettingsFocus.permissions)
         }
     }
 
@@ -1216,11 +1195,25 @@ public struct SettingsView: View {
                         description: SettingsGeneralCopy.dictationKeyDescription) {
                 // The key itself; how macOS remaps it lives under Advanced › F5 key helper.
                 let key = "F5"
-                Text(key)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.tertiary))
-                    .accessibilityLabel("Dictation key: \(key)")
+                HStack(spacing: 8) {
+                    Text(key)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.tertiary))
+                        .accessibilityLabel("Dictation key: \(key)")
+                    // The F5 check moved here from the healthy F5 setup row, which permission health no longer shows.
+                    Button(SettingsSetupFix.checkF5.title) { perform(.checkF5) }
+                        .buttonStyle(.bordered)
+                        .disabled(shortcutCheckRunning)
+                        .accessibilityLabel("Check shortcut")
+                }
+            }
+            if let shortcutCheckFeedback {
+                HStack(alignment: .top) {
+                    SettingsShortcutCheckLine(message: shortcutCheckFeedback.message,
+                                              checkedAt: shortcutCheckFeedback.checkedAt)
+                    SettingsCopyButton(text: shortcutCheckFeedback.message, label: "shortcut check result")
+                }
             }
             SettingsRow(title: SettingsGeneralCopy.mouseTitle, description: SettingsGeneralCopy.mouseDescription) {
                 if let mouseSideButtons {

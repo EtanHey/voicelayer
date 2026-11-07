@@ -300,6 +300,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Whether the hotkey system is enabled.
     var hotkeyEnabled: Bool = false
     var missingHotkeyPermissions: [HotkeyPermission] = []
+    /// 2.3 permission health: re-reads Microphone, Accessibility and Input Monitoring while VoiceBar runs (status
+    /// reads only, never a prompt) so a revoked or reset permission reaches Settings and the notch's orange dot.
+    lazy var permissionHealth = PermissionHealthMonitor(read: { AppDelegate.readPermissionHealth() })
+    private var permissionHealthActivationObserver: NSObjectProtocol?
     /// Whether VoiceBar is snoozed (hidden for a timed period).
     var isSnoozed: Bool = false
     /// When "Hide for 1 hour" ends; Settings says "Hidden until HH:MM".
@@ -831,6 +835,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         hosting.onHoverChanged = { [weak self] hovering in
             guard let self else { return }
+            if hovering { refreshPermissionHealth(.notchHovered) }
             voiceState.setHoveringFromDebouncedPointer(hovering)
             notchPresentationModel.setHovered(hovering)
         }
@@ -1579,6 +1584,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Start the native event tap after the shared gesture callbacks are wired.
     private func setupHotkey() {
         applyHotkeyListenerOutcome(hotkeyListener.start())
+        startPermissionHealth()
+    }
+
+    // MARK: - Permission health (2.3)
+
+    /// Non-prompting reads only: `AVCaptureDevice.authorizationStatus`, `AXIsProcessTrusted()` and
+    /// `CGPreflightListenEventAccess()`. None of them can show a TCC dialog.
+    static func readPermissionHealth() -> PermissionHealthReading {
+        let hotkey = HotkeyManager.currentPermissionStatus()
+        return PermissionHealthReading(
+            microphone: setupMicrophoneAuthorization(AVCaptureDevice.authorizationStatus(for: .audio)),
+            accessibilityGranted: hotkey.accessibilityGranted,
+            inputMonitoringGranted: hotkey.listenEventGranted
+        )
+    }
+
+    /// Starts with the native F5 listener, so QA launches that skip the listener keep their seeded setup state.
+    private func startPermissionHealth() {
+        guard !permissionHealth.isPolling else { return }
+        permissionHealth.onChange = { [weak self] reading, trigger in
+            self?.applyPermissionHealth(reading, trigger: trigger)
+        }
+        permissionHealthActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.refreshPermissionHealth(.appActivated)
+        }
+        permissionHealth.refresh(.launch, force: true)
+        permissionHealth.startPolling()
+    }
+
+    /// A re-check from one of the seams (activation, Settings, notch hover, a capture ending). No-op until started.
+    func refreshPermissionHealth(_ trigger: PermissionHealthTrigger, force: Bool = false) {
+        guard permissionHealth.isPolling else { return }
+        permissionHealth.refresh(trigger, force: force)
+    }
+
+    /// Status only: the F5 listener's running state (`hotkeyEnabled`) is never changed here; a listener that is off
+    /// once the permissions are back offers "Restart F5 listener" in Settings.
+    private func applyPermissionHealth(_ reading: PermissionHealthReading, trigger: PermissionHealthTrigger) {
+        if trigger != .launch, trigger != .listenerChanged {
+            NSLog("[VoiceBar] Permission health changed (%@): missing %@", trigger.rawValue,
+                  reading.missingPermissions.map { "\($0)" }.joined(separator: ", "))
+        }
+        missingHotkeyPermissions = reading.missingHotkeyPermissions
+        voiceState.setSetupMissingPermissions(reading.missingPermissions)
+        refreshSettingsWindowAnchorState()
     }
 
     /// Settings' and the wizard's "Restart F5 listener": the launch start again, for permissions granted after
@@ -1650,6 +1702,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             voiceState.setSetupMissingPermissions([])
             NSLog("%@", VoiceBarHotkeyContract.activationLogMessage)
         }
+        refreshPermissionHealth(.listenerChanged, force: true)
     }
 
     func configureHotkeyCallbacksForTesting() {
@@ -1731,6 +1784,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            mode != .recording,
            mode != .transcribing {
             voiceState.refreshModelsSettingsStatus()
+        }
+        // A capture that ended (or failed) may have failed for a revoked permission: re-read, status only.
+        if mode == .error || (previousVoiceMode == .recording && mode != .recording) {
+            refreshPermissionHealth(.captureEnded)
         }
         let collapsesConverseHandoff = VoiceBarNotchPlaybackEdgeCommitPolicy
             .stagesContentBeforeGlass(from: previousVoiceMode, to: mode) &&
@@ -3010,6 +3067,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil, historyRecordingID: String? = nil) {
         voiceState.captureSettingsHistoryPasteTarget()
+        refreshPermissionHealth(.settingsOpened)
         NSApp.activate(ignoringOtherApps: true)
         if let tab {
             settingsTabRequest = SettingsTabRequest(
@@ -3465,7 +3523,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     remoteSTTConfigured: nil
                 )
             },
-            onRunSetup: { [weak self] in self?.openSetupWizard() },
             initialTab: lastSettingsTab,
             tabRequest: settingsTabRequest,
             onSelectedTabChange: { [weak self] tab in
