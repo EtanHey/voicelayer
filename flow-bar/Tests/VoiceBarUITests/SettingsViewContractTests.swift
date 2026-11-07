@@ -541,7 +541,8 @@ final class SettingsViewContractTests: XCTestCase {
         // 2.3 U2's gear badge target now carries Setup (its first broken step); permission health shows the section
         // only when something is broken.
         XCTAssertTrue(source.contains("Text(setup.header ?? \"Setup\")\n                    .id(SettingsFocus.permissions)"))
-        XCTAssertTrue(source.contains("if !setup.isHealthy || hotkeyListenerRestartLine != nil {"))
+        XCTAssertTrue(source.contains("if setup.showsSection {"))
+        XCTAssertTrue(source.contains("setup.visibleRestartLine(hotkeyListenerRestartLine)"))
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))
         XCTAssertEqual(SettingsGeneralCopy.relayTitle, "F5 key helper")

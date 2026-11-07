@@ -102,6 +102,12 @@ public struct SettingsGeneralSetup: Equatable, Sendable {
     public var isHealthy: Bool { steps.isEmpty }
     /// Only shown when something is broken.
     public var header: String? { isHealthy ? nil : "Finish setup" }
+    /// The Setup section exists only while something is broken, whatever restart feedback is pending.
+    public var showsSection: Bool { !isHealthy }
+    /// The last "Restart F5 listener" line (a failure keeps its Copy row) shows only while something is still broken.
+    public func visibleRestartLine(_ line: HotkeyListenerRestartLine?) -> HotkeyListenerRestartLine? {
+        isHealthy ? nil : line
+    }
     /// The step the notch's orange dot points at: the first broken one. A pending step is never a target.
     public var firstBroken: SettingsSetupStepID? { steps.first?.id }
 

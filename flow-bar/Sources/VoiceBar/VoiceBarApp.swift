@@ -945,6 +945,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func performTerminationCleanup() {
+        stopPermissionHealth()
         memoryPressureSource?.cancel()
         memoryPressureSource = nil
         microphonePriorityTimer?.invalidate()
@@ -1601,7 +1602,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Starts with the native F5 listener, so QA launches that skip the listener keep their seeded setup state.
-    private func startPermissionHealth() {
+    func startPermissionHealth() {
         guard !permissionHealth.isPolling else { return }
         permissionHealth.onChange = { [weak self] reading, trigger in
             self?.applyPermissionHealth(reading, trigger: trigger)
@@ -1613,6 +1614,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         permissionHealth.refresh(.launch, force: true)
         permissionHealth.startPolling()
+    }
+
+    /// Termination (and tests): stop the poll and the activation observer, so nothing reads or publishes afterwards.
+    func stopPermissionHealth() {
+        permissionHealth.stopPolling()
+        if let observer = permissionHealthActivationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            permissionHealthActivationObserver = nil
+        }
     }
 
     /// A re-check from one of the seams (activation, Settings, notch hover, a capture ending). No-op until started.
@@ -3234,7 +3244,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Setup wizard (F3)
 
-    /// Explicit Run setup stays available while hidden and consumes any automatic launch request.
+    /// Opens the wizard now (the first-run path once its readiness check says so; GATE2245 drives it in UIE2E). It
+    /// consumes any pending automatic launch request. There is no user-facing re-run entry since permission health.
     func openSetupWizard() {
         hasPresentedSetupWizard = true
         pendingAutomaticSetupCheck = nil

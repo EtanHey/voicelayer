@@ -1096,6 +1096,10 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        // A success line has nothing left to say once health is back; a later break starts clean.
+        .onChange(of: generalSetup.isHealthy) { _, healthy in
+            if healthy { hotkeyListenerRestartLine = nil }
+        }
         .onAppear(perform: refreshMicrophoneSnapshot)
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             refreshMicrophoneSnapshot()
@@ -1108,17 +1112,17 @@ public struct SettingsView: View {
 
     // MARK: - General setup (R2)
 
-    /// Permission health (Etan, 2026-11-07): nothing at all when every permission is on and F5 works; otherwise only
-    /// the broken steps, each with its fix. A listener-restart line stays visible after the restart that fixed it.
+    /// Permission health (Etan, 2026-11-07): nothing at all when every permission is on and F5 works, even right after
+    /// the restart that fixed it; otherwise only the broken steps, each with its fix, and the last restart's line.
     @ViewBuilder
     private var setupSection: some View {
         let setup = generalSetup
-        if !setup.isHealthy || hotkeyListenerRestartLine != nil {
+        if setup.showsSection {
             Section {
                 ForEach(setup.steps, id: \.id) { step in
                     setupStepRow(step)
                 }
-                if let hotkeyListenerRestartLine {
+                if let hotkeyListenerRestartLine = setup.visibleRestartLine(hotkeyListenerRestartLine) {
                     HStack(alignment: .top) {
                         HotkeyListenerRestartLineView(line: hotkeyListenerRestartLine)
                         if !hotkeyListenerRestartLine.succeeded {
