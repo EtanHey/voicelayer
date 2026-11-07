@@ -61,10 +61,20 @@ final class U4NotchHistoryNativeTests: XCTestCase {
             // The host orders Settings out for U4. As in U2, a real click from Finder must leave it frontmost.
             finder.activate()
             try require(finder.wait(for: .runningForeground, timeout: 5), "Finder receives keyboard events")
-            pill.hover()
+            // Hover and click through Finder's anchor: pill.hover()/history.click() would activate VoiceBar QA
+            // first, so neither Finder's state nor the host receipt could tell a product activation from XCUITest's.
+            try require(pill.exists, "the QA pill")
+            try XCTUnwrap(uie2eForegroundPoint(pill, via: finder), "Finder anchor").hover()
             let history = pill.buttons["History"]
             try require(history.waitForExistence(timeout: 4), "the launcher's History button")
-            history.click()
+            let beforeClicks = uie2eFirstClickReceipts(root).count
+            try XCTUnwrap(uie2eForegroundPoint(history, via: finder), "Finder anchor").click()
+            let clicks = Array(uie2eFirstClickReceipts(root).dropFirst(beforeClicks))
+            try require(!clicks.isEmpty, "the host recorded the mouse-down on the pill")
+            try require(clicks.allSatisfy { $0["appActive"] as? Bool == false && $0["pillKey"] as? Bool == false },
+                        "History never activates VoiceBar or keys the pill at click time: \(clicks)")
+            try require(clicks.allSatisfy { $0["frontmost"] as? String == "com.apple.finder" },
+                        "Finder was frontmost at each mouse-down: \(clicks)")
             try require(finder.state == .runningForeground, "History never activates VoiceBar")
             try require(handle.waitForExistence(timeout: 4), "the open panel shows its extend handle")
             try require(pill.descendants(matching: .any).matching(identifier: "notch-history-extend-handle").count == 1,
@@ -82,19 +92,24 @@ final class U4NotchHistoryNativeTests: XCTestCase {
         shot("1-open-7-rows")
         let initialOrigin = pill.frame.origin
 
-        let centre = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        // Gestures stay on the Finder-anchored path: a user drags the handle with another app frontmost, and an
+        // element-rooted gesture would activate VoiceBar QA mid-flow (8a36d965-era log: "Activate" before each).
+        func anchored(_ element: XCUIElement) throws -> XCUICoordinate {
+            try XCTUnwrap(uie2eForegroundPoint(element, via: finder), "Finder anchor")
+        }
+        let centre = try anchored(handle)
         centre.press(forDuration: 0.15, thenDragTo: centre.withOffset(CGVector(dx: 0, dy: 7 * 46)))
         try waitForRows("12 of 12 rows")
         shot("2-pulled-12-rows")
 
-        let extended = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let extended = try anchored(handle)
         extended.press(forDuration: 0.15, thenDragTo: extended.withOffset(CGVector(dx: 0, dy: -2.4 * 46)))
         try waitForRows("10 of 12 rows")
         shot("3-released-between-rows-snaps-10")
         try require(abs(pill.frame.minX - initialOrigin.x) < 2 && abs(pill.frame.minY - initialOrigin.y) < 2,
                     "extending History never drags the pill window")
 
-        handle.click()
+        try anchored(handle).click()
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         try require(rows() == "10 of 12 rows", "a click on the handle never moves it")
 
