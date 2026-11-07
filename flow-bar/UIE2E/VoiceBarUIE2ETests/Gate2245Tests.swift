@@ -361,8 +361,8 @@ extension VoiceBarFlowTests {
                 let pill = app.dialogs["VoiceBar QA Pill"]
                 XCTAssertTrue(pill.exists)
                 // 2.3 Teleprompter A renders every word as a "Jump to: <word>" button (TeleprompterAView); an untimed
-                // word has no seek target (no hit testing, hint "Not available right now"), which AX does not expose.
-                // Seekability is proven by clicks below: timed Charlie seeks, untimed Bravo dispatches nothing.
+                // word without a target has no hit testing and the hint "Not available right now", which AX does not
+                // expose. Seekability is proven by the clicks below: timed Charlie and interpolated Bravo.
                 XCTAssertTrue(gate2246TeleprompterContains(pill, text: "Alpha Bravo Charlie Delta"), "words not rendered")
                 for word in ["Alpha", "Bravo", "Charlie", "Delta"] {
                     let control = pill.buttons[gate2246JumpPrefix + word]
@@ -382,14 +382,16 @@ extension VoiceBarFlowTests {
                     XCTAssertEqual(messages?.last?["cmd"] as? String, "seek")
                     XCTAssertEqual(messages?.last?["offset_ms"] as? Int, 2000)
                 }
-                step("CLN1b untimed Bravo dispatches no seek") {
+                // WORDTIME1 (TeleprompterView.interpolated): a null word between timed neighbours gets an even share
+                // of the gap, "so every displayed word highlights and seeks". Bravo fills Alpha's end (900) to 2000.
+                step("CLN1b interpolated Bravo dispatches seek at Alpha's end (900ms)") {
                     let before = fixtureEvents().count
-                    // Untimed words opt out of hit testing, so click the rendered point rather than the AX element.
-                    let point = app.dialogs["VoiceBar QA Pill"].buttons[gate2246JumpPrefix + "Bravo"]
-                        .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-                    try mutate { point.click() }
-                    Thread.sleep(forTimeInterval: 0.5)
-                    XCTAssertFalse(fixtureEvents().dropFirst(before).contains("command:seek"), "untimed word must not seek")
+                    let button = app.dialogs["VoiceBar QA Pill"].buttons[gate2246JumpPrefix + "Bravo"]
+                    try mutate { button.click() }
+                    waitUntil { self.fixtureEvents().dropFirst(before).contains("command:seek") }
+                    let messages = gateRead("commands.json")["messages"] as? [[String: Any]]
+                    XCTAssertEqual(messages?.last?["cmd"] as? String, "seek")
+                    XCTAssertEqual(messages?.last?["offset_ms"] as? Int, 900)
                 }
             }
         }
