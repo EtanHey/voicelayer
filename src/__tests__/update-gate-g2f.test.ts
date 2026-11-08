@@ -94,15 +94,21 @@ for (const drop of [false, true]) test(`G2f durability re-drives repeated failur
 });
 test("G2f replay launches VoiceBar only after admission", async () => {
   const launch = spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(() => {}); mocks.push(launch);
+  // Invalid indices fall back to index 0; full-suite history may contain audio.
+  // Keep this launch-order fixture explicitly empty so replay cannot retain work.
+  const history = spyOn(tts, "getHistoryEntry").mockReturnValue(null); mocks.push(history);
   fs.mkdirSync(path + ".lock");
-  const replay = handleVoiceSpeak({ replay_index: 999999 });
+  const replay = handleVoiceSpeak({ replay_index: 0 });
   expect(launch).not.toHaveBeenCalled();
   fs.rmdirSync(path + ".lock"); await replay;
   expect(launch).toHaveBeenCalledTimes(1);
+  expect(history).toHaveBeenCalledWith(0);
+  expect(fs.readdirSync(path + ".admissions")).toEqual([]);
   gate.updateVoiceGate({ kind: "REQUEST", lease });
   expect(gate.updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, () => true).kind).toBe("APPLIED");
-  await handleVoiceSpeak({ replay_index: 999999 });
+  await handleVoiceSpeak({ replay_index: 0 });
   expect(launch).toHaveBeenCalledTimes(1);
+  expect(history).toHaveBeenCalledTimes(1);
 });
 test("G2f selection Next on last leaves pending capture alive", async () => {
   fakeReads(); await selection("owner", "last selection");

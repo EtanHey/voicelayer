@@ -54,7 +54,13 @@ caused 19 assertions in 3 quit tests; that adverse run is retained. Correcting
 only the harness environment produced the 20-test pass. Both runs used private
 preferences/state and fixture-only media paths. The lead authorized direct,
 serial `nice -n 10` Swift runs after the host load guard could not admit them.
-Fresh full pre-push results are recorded in the PR/handoff receipt. Native visual
+The first pre-push run passed the full Swift suite (2837 tests, 83 skipped,
+0 failures). Its Bun run found a replay-fixture failure: the out-of-range index
+999999 defaults to 0, so a full-suite history buffer could start retained audio
+and correctly keep PREPARE blocked. That fixture now uses valid index 0 with an
+explicit empty history backend, asserts an empty ledger before PREPARE, and
+verifies PREPARED never reaches history. The post-fix focused run remains
+180 pass / 0 fail. Fresh full pre-push results are recorded in the PR/handoff receipt. Native visual
 and installed qualification remain NOT_RUN. This is an implementation handoff,
 not a green release verdict.
 Native visual and installed acceptance are NOT_RUN by task boundary.
