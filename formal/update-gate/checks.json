@@ -21,7 +21,9 @@
     "src/cli/voicelayer.sh",
     "flow-bar/build-app.sh",
     "scripts/lib/qa-candidate-lifecycle.py",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift"
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
+    "src/update-gate-owner.ts",
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift"
   ],
   "checks": {
     "Fixed": {
@@ -143,6 +145,26 @@
       "role": "mutant",
       "target": "RecoveryOnlyVerified",
       "kind": "invariant"
+    },
+    "ReapFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "ReapMutantAge": {
+      "role": "mutant",
+      "target": "NeverReapLiveOwner",
+      "kind": "invariant"
+    },
+    "ReapOld": {
+      "role": "mutant",
+      "target": "DeadRegistrationsCanPrepare",
+      "kind": "temporal"
+    },
+    "ReapMutantUnknown": {
+      "role": "mutant",
+      "target": "NeverReapLiveOwner",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -160,6 +182,8 @@
     "LeasedUpdateReopensAdmission",
     "EventuallyOpenAfterAbandonedLease",
     "NeverRecoverLiveController",
-    "RecoveryOnlyVerified"
+    "RecoveryOnlyVerified",
+    "NeverReapLiveOwner",
+    "DeadRegistrationsCanPrepare"
   ]
 }

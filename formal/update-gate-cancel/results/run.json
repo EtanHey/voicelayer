@@ -14,9 +14,9 @@
     "formal/update-gate-cancel/Fixed.cfg": "35994917140bc8206c60115bac13ecb1d96c5e4e47c9aaf27b956b4fd7964212",
     "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
     "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
-    "src/update-gate-admission.ts": "3a40646fe50a981fc14f50873bef9e6f85da04ab7a71bafa8fda05a43c07815b",
+    "src/update-gate-admission.ts": "54ef26d430c9e02178111faab2c6cf18675827a0a72f6cdddd26f2030cce1fb4",
     "src/__tests__/update-gate-drain-readback.test.ts": "cfeebb18af5cc3fb5d856ddefaa17d6b82b73115986689cd415fd68f1b377051",
-    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "cc6212a14274d773d078fdab303e8edef5b8cd5a10b1317cc4f55d4ddb077659",
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "467763de15b00bc45940b695ad792914fdcc7e42dd414e6831e3b9604a47f11f",
     "src/update-gate-drain-status.ts": "05b34ac493ce81f2629240f21527283891dd061dfbdd73660050b0d6bc41118a",
     "src/__tests__/update-gate-user-block.test.ts": "eeb2587ffdcbdff90067fcad7a888f8260149d9d953711ac2ee50ac6921bb035",
     "src/update-gate-native-participant.ts": "ff8b16b965e44271ab62aafc85a83d200780f15a9ccd988579704ba5bdd1caa0"

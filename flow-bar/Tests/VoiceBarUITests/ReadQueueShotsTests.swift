@@ -1,4 +1,5 @@
 import AppKit
+import OffscreenTestSupport
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
@@ -24,6 +25,8 @@ final class ReadQueueShotsTests: XCTestCase {
         var lines = ["# QUEUE1 pill shots", "", "Synthetic state, offscreen production BarView at 2×.", ""]
         for (appearanceName, appearance) in [("dark", NSAppearance.Name.darkAqua), ("light", .aqua)] {
             for (name, count, queued, dismissed, paused) in [
+                ("processing-teleprompter-plus2", 2, true, false, false),
+                ("processing-compact-no-queue", 0, false, true, false),
                 ("teleprompter-no-queue", 0, false, false, false),
                 ("teleprompter-plus2", 2, true, false, false),
                 ("teleprompter-last-item", 0, true, false, false),
@@ -34,7 +37,7 @@ final class ReadQueueShotsTests: XCTestCase {
             ] {
                 let filename = "queue1-\(name)-\(appearanceName).png"
                 try shot(count: count, queued: queued, dismissed: dismissed, paused: paused,
-                         idleAfterF5: name.hasPrefix("idle"),
+                         idleAfterF5: name.hasPrefix("idle"), processing: name.hasPrefix("processing"),
                          appearance: appearance, to: directory.appendingPathComponent(filename))
                 lines.append("- [\(filename)](\(filename))")
             }
@@ -43,13 +46,14 @@ final class ReadQueueShotsTests: XCTestCase {
             to: directory.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
     }
 
-    private func shot(count: Int, queued: Bool, dismissed: Bool, paused: Bool, idleAfterF5: Bool,
+    private func shot(count: Int, queued: Bool, dismissed: Bool, paused: Bool, idleAfterF5: Bool, processing: Bool,
                       appearance: NSAppearance.Name, to url: URL) throws {
         let state = VoiceState()
         state.isConnected = true
         state.isCollapsed = false
         state.handleEvent(["type": "state", "state": "speaking", "request_id": "r-A", "playback_id": "p-A",
-                           "generation": 1, "text": "A synthetic selection read aloud while more selections wait."])
+                           "generation": 1, "utteranceId": "read-A", "text": "A synthetic selection read aloud while more selections wait."])
+        if processing { state.handleEvent(["type": "read_processing", "utterance_id": "read-A", "active": true]) }
         if queued { state.handleEvent(["type": "read_queue", "count": count, "current_request_id": "r-A"]) }
         if dismissed { state.dismissTeleprompter() }
         if idleAfterF5 {
@@ -65,7 +69,7 @@ final class ReadQueueShotsTests: XCTestCase {
             hasTeleprompterText: state.mode == .speaking && state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isPlaybackPaused: state.isPlaybackPaused,
-            readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+            readQueueLeadingSlotCount: VoiceBarPresentation.playbackLeadingSlotCount(for: state),
             statusText: VoiceBarPresentation.liveStatusText(
                 mode: state.mode, transcript: state.transcript, confirmationText: state.confirmationText,
                 hotkeyPhase: .idle, hotkeyEnabled: true, errorMessage: nil,
@@ -96,14 +100,28 @@ final class ReadQueueShotsTests: XCTestCase {
         window.backgroundColor = appearance == .aqua ? .white : NSColor(white: 0.18, alpha: 1)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        window.orderBack(nil)
+        if processing { VLOrderCompositorTestWindow(window) } else { window.orderBack(nil) }
         defer {
             window.orderOut(nil)
             window.contentView = nil
         }
         RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        if processing {
+            let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(captureWindowImage(windowNumber: window.windowNumber)))
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)
+            return
+        }
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)
+    }
+
+    private func captureWindowImage(windowNumber: Int) -> CGImage? {
+        typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let lookup = UnsafeMutableRawPointer(bitPattern: -2),
+              let symbol = dlsym(lookup, "CGWindowListCreateImage") else { return nil }
+        let capture = unsafeBitCast(symbol, to: Capture.self)
+        return capture(.null, CGWindowListOption.optionIncludingWindow.rawValue, UInt32(windowNumber),
+                       CGWindowImageOption.boundsIgnoreFraming.union(.bestResolution).rawValue)?.takeRetainedValue()
     }
 }

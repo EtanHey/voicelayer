@@ -11,10 +11,6 @@
     "/\\ phase = \"poll\"\n/\\ available = 2\n/\\ scenario = \"healthy\"\n/\\ creation = \"alive\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"exiting\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
     "/\\ phase = \"decide\"\n/\\ available = 2\n/\\ scenario = \"healthy\"\n/\\ creation = \"exiting\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"exiting\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
     "/\\ phase = \"refused\"\n/\\ available = 3\n/\\ scenario = \"healthy\"\n/\\ creation = \"exiting\"\n/\\ gate = \"COMMITTED\"\n/\\ created = FALSE\n/\\ participants = \"unreaped\"\n/\\ evidence = FALSE\n/\\ mutex = TRUE",
-<<<<<<< HEAD
-    "Finished checking temporal properties in 00s at 2026-11-08 13:26:07"
-=======
-    "Finished checking temporal properties in 00s at 2026-11-08 01:37:45"
->>>>>>> origin/integration/2.3
+    "Finished checking temporal properties in 00s at 2026-11-08 23:51:28"
   ]
 }

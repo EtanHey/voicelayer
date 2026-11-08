@@ -2,12 +2,8 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/update-gate/FirstInstall.tla": "fa7771a1b77acb4f4ef2d0b4fd8f4b221538377462f1f4c26637deb0865be349",
-<<<<<<< HEAD
-    "formal/update-gate/checks.json": "355126751a5195b8f59a5d2864ce6baff6e406204c7799b1c2125aa8f0b7643a",
-=======
-    "formal/update-gate/checks.json": "8e900778822d6ebcbc0673bb2267772f39141f2a3821263bbb6af89a8eebe4d0",
->>>>>>> origin/integration/2.3
+    "formal/update-gate/FirstInstall.tla": "bdaf715b331c70ddc17ab1bf5f29a55996da2b1625eb03266c3f23756b7324f2",
+    "formal/update-gate/checks.json": "3c7b82455dd81aa5d12a2b1bdba135eec3ff9ec56f9b9bd8fcb49efa2a20a124",
     "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/update-gate/QuitMutantReuse.cfg": "c588f7108cc70e0fc570aa6f3aab8fb19f20102851e578f30d5af0eeae34d4e1",
@@ -15,9 +11,11 @@
     "formal/update-gate/MutantLive.cfg": "fb8d6256aef099bb9f771ef77eb4a8e441f783382b7a1f7af3af23d0e682dedf",
     "formal/update-gate/CompleteOld.cfg": "43ae7c3f3c782a4a037395dfdf2f7e0be36bfd803df181c8718ffa71e8435f05",
     "formal/update-gate/RecoveryMutantTarget.cfg": "2051bc7a7e04712df3b05e21bc1edef18409ec187a9ef6ea865c0f17b5110f49",
+    "formal/update-gate/ReapOld.cfg": "f8847f26061650189e8923c71487c618e4adbdbc9bb494c3d368cb14474c2862",
     "formal/update-gate/QuitOld.cfg": "678f0103c569654842568c0b64d6513bc8d76d13607f423110d0d3d6f0501e76",
     "formal/update-gate/RecoveryOld.cfg": "0b21fa13c4565a61c2a128e7e9ebe5d29f768e7d8034e9fa821af9555a687a4c",
     "formal/update-gate/QuitFixed.cfg": "337fb47483788cfe44e144fd2754449e60e3850457758e5aaf6806b26b37c888",
+    "formal/update-gate/ReapMutantUnknown.cfg": "e6fa3bcf8cd0b4b64e6fde73a92a25a6c57f692ef9f649665c4b0b6b8bf6daf3",
     "formal/update-gate/CompleteMutantOwner.cfg": "02698124abe7a06134a05f97a4a771a604ac0a6f4fb7511bca12568b57afa918",
     "formal/update-gate/CompleteMutantSha.cfg": "7c5f1c775261ff4f9f286d4c08401ee5180cdfa9608477a5646e66c4675d2d47",
     "formal/update-gate/CompleteFixed.cfg": "8797f42e341d0d257f95b8081f685a7af89f2e2c2d68d738851e15423d219b33",
@@ -30,32 +28,24 @@
     "formal/update-gate/CompleteSlowFixed.cfg": "52b0d829188bcbe48429a8c767db415f135061dc7c01d1d774bc9e69b92d7933",
     "formal/update-gate/MutantUpgradeController.cfg": "3bfb879231c45babc70fa443d8d8fec69b1c31de9513aab2397c3afd4138f800",
     "formal/update-gate/CompleteSlowOneShot.cfg": "aa4ed39b74c94265245c49a9ecd02787cf684ab6c19554812d97b18045dd7ab3",
+    "formal/update-gate/ReapMutantAge.cfg": "1d982a1bdc5a2042135feae0d857c76decf61662408748db9ac5288b71f75277",
     "formal/update-gate/MutantMissingTarget.cfg": "572006f0bf813476d6053d57381e982c6f14ed4f8d990b8076fb81db1a83b872",
     "formal/update-gate/OldNoBootstrap.cfg": "1c4ec823d0815d73234dc3ea07ab644462b2fbdfd46b2b1311d9b5e53ba5d8e0",
+    "formal/update-gate/ReapFixed.cfg": "88ba937c1a6dd5419090d3b97fbffc0d5a9d41472cbe4480821a7e885400b433",
     "formal/update-gate/Fixed.cfg": "fa31127d1d9fd50b63cdb75a8a56ad38e0160082856aedff1df2f1e2f50d0704",
     "formal/update-gate/RecoveryMutantLive.cfg": "aae8a1603365d43f954e3fb326fad28f3f67ceb67a61dffdd8bd513a120c664a",
-<<<<<<< HEAD
     "src/cli/setup.ts": "2e238e79736b89eb514a44ffc8fd70dad645876f3eee6a1a85909ec78f3ce7ba",
-    "src/update-gate-admission.ts": "675cdd7a8e9dc69c243cd58a97f8afde881cfbbcb3bc5d9304e3a304ce78262d",
+    "src/update-gate-admission.ts": "54ef26d430c9e02178111faab2c6cf18675827a0a72f6cdddd26f2030cce1fb4",
     "src/update-gate-storage.ts": "c33977d31799636a3a9292f4977827c52b6ab784f249512437f67b2553210476",
-    "scripts/lib/update-gate.sh": "75bc737fd714282ad75de22406362e606f2b924e0f8c2b4dae6195556f22bdb6",
+    "scripts/lib/update-gate.sh": "29acc6bd7390826ce8f92cd7189971a0baa5e3b5bf58f28e6bd83948f1c49c05",
     "scripts/voicelayer-dedupe-voicebar.sh": "d7bb0b6d00c1e41203a0fe91603359b71ed457af039100c7ac8107976a07d4d4",
-    "scripts/install-voicebar-autostart.sh": "923a3881d04af38f7d3f3a4fcacd9f8aaff1b884e28919c115a305d0390aed0e",
-=======
-    "src/cli/setup.ts": "f45eee3baf6989070638cfd0bc22dbeb6a73cbbcdaef5aab0902bb0abbacbce9",
-    "src/update-gate-admission.ts": "3a40646fe50a981fc14f50873bef9e6f85da04ab7a71bafa8fda05a43c07815b",
-    "src/update-gate-storage.ts": "c33977d31799636a3a9292f4977827c52b6ab784f249512437f67b2553210476",
-    "scripts/lib/update-gate.sh": "e30af5fdebc72200d55630795d8be1e2cc51a3c6848d8c1985f60fdd3334805d",
-    "scripts/voicelayer-dedupe-voicebar.sh": "51b515b9d92107f11f8e06d5f08edfa33fbdc5354987b12b1bd0574bfede50f0",
-    "scripts/install-voicebar-autostart.sh": "58a4649aa3707a6382e521c626e7c58a480f64113ef4bdd2a3e084c61be62e7c",
->>>>>>> origin/integration/2.3
+    "scripts/install-voicebar-autostart.sh": "9cc045f380781fc18da57b6ca8e2e0dbda5f8b9aa1466272948be0b99fcbfcf8",
     "scripts/promote-voicebar-release.sh": "0bbf4a2c3c357a6c743386422c02e968e3bed4d4331204cfeec1408c6836cd61",
     "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
     "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
-    "src/mcp-server-daemon.ts": "a920961a9913ed8febcce8e83e4873676108142ea571f89a224eaa793eb8fdf8",
-<<<<<<< HEAD
-    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "09462a3194b32f06ef801fa6e58c6fb28927c8d0536d3f5131887a07cb3b1add",
+    "src/mcp-server-daemon.ts": "6a7dde04f7945902d57d621ea6c4a08ca76c7240d2d6159ff57f4f00f6819129",
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "2d9120f7a6343711697307d304c7b9db22f4e8303aedb0809ce3d3c77114972b",
     "scripts/lib/voicebar-launchagent.sh": "23c0322a25d69b5d08fcd33d5ff2aeab01c61995dad396160c145d83c802f07c",
     "scripts/start-voicebar.sh": "269d6aa117abe3ec3e738db1e0401c2e839a65f66ba46de6f758a67157a72f24",
     "src/update-gate-bootstrap.ts": "8c618f8ad96535597c6c9085b66f56fb0988b6a47b1d2680d2fccb2db1747457",
@@ -63,10 +53,9 @@
     "src/cli/voicelayer.sh": "2801421009c55a2254fa33d2dac7c4bbe93ad615927167e9cd4a467cbbc04f57",
     "flow-bar/build-app.sh": "7e633075bb4afdf5f0e934dcb763816ea9889fd6bbde02cf8f736c0c0200260c",
     "scripts/lib/qa-candidate-lifecycle.py": "2e4c8a850094e6fa397c13e42f5dff09a4646627b1d7481fe21cc862008d41eb",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "89af60b10b91e6f79359d299ad86eb7a5a22773e6de040344a0929172c354ac3"
-=======
-    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "09462a3194b32f06ef801fa6e58c6fb28927c8d0536d3f5131887a07cb3b1add"
->>>>>>> origin/integration/2.3
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "1b97d950468f549997018e79c8eb54a9ed75c0bc599792a4b1112267e9d0a2e7",
+    "src/update-gate-owner.ts": "94a6efef3240dc751a8600e15630127fcbd67009cca314ca65eb8d60f29ee8ea",
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "467763de15b00bc45940b695ad792914fdcc7e42dd414e6831e3b9604a47f11f"
   },
   "mutants": {
     "BootstrapOnlyQuiescent": [
@@ -116,6 +105,13 @@
     ],
     "RecoveryOnlyVerified": [
       "RecoveryMutantTarget"
+    ],
+    "NeverReapLiveOwner": [
+      "ReapMutantAge",
+      "ReapMutantUnknown"
+    ],
+    "DeadRegistrationsCanPrepare": [
+      "ReapOld"
     ]
   },
   "graphHashes": {
@@ -313,6 +309,38 @@
       "status": "EXPECTED_FAIL",
       "generated": 59,
       "distinct": 44
+    },
+    "ReapFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 2280,
+      "distinct": 1452
+    },
+    "ReapMutantAge": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverReapLiveOwner",
+      "status": "EXPECTED_FAIL",
+      "generated": 262,
+      "distinct": 259
+    },
+    "ReapOld": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "DeadRegistrationsCanPrepare",
+      "status": "EXPECTED_FAIL",
+      "generated": 640,
+      "distinct": 512
+    },
+    "ReapMutantUnknown": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverReapLiveOwner",
+      "status": "EXPECTED_FAIL",
+      "generated": 283,
+      "distinct": 270
     }
   }
 }

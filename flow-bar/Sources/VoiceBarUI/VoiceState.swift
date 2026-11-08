@@ -652,6 +652,10 @@ public final class VoiceState {
     /// text, timings and timeline at the moment it went quiet.
     private struct ReadSnapshot {
         var text: String
+        var epoch: Int
+        var speechWords: SpeechWordTable?
+        var selection: (id: String?, requestID: String?, text: String?, hash: String?, preparing: Bool)
+        var timelineChunks: [Int: (text: String, words: [TeleprompterBoundary])]
         var words: [TeleprompterBoundary]
         var durationMs: Int?
         var isDurationGrowing: Bool
@@ -679,6 +683,14 @@ public final class VoiceState {
     private var parkedRead: ParkedRead? {
         didSet { notifyPanelLayoutChangedIfNeeded((oldValue == nil) != (parkedRead == nil)) }
     }
+    private var processingReadID: String? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != processingReadID) }
+    }
+    var showsReadingProcessingSpinner: Bool {
+        mode == .speaking && processingReadID != nil && processingReadID == speechWords?.utteranceID
+    }
+    /// Ask has its own presentation/player; this snapshot stays silent until the read is returned.
+    private var askParkedRead: ParkedRead?
     /// The player the latest speaking frame named. Pause/Resume are scoped to it and its events must match it.
     private var currentPlayback: (id: String, generation: Int)?
     /// The read on screen when a capture took over, for a `paused` confirmation that lands mid-capture.
@@ -2235,6 +2247,10 @@ public final class VoiceState {
     }
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
+        if mode == .speaking, showsReadingProcessingSpinner {
+            sendCommand?(["cmd": "stop", "id": UUID().uuidString])
+            return
+        }
         if case let .queued(request) = deferredBarRecording {
             deferredBarRecording = nil
             locallyStartedDictationTakes.remove(request.takeID)
@@ -2570,6 +2586,10 @@ public final class VoiceState {
     private func currentReadSnapshot() -> ReadSnapshot {
         ReadSnapshot(
             text: statusText,
+            epoch: playbackEpoch,
+            speechWords: speechWords,
+            selection: (selectionReadID, selectionReadRequestID, selectionReadText, selectionReadHash, selectionReadIsPreparing),
+            timelineChunks: playbackTimelineChunks,
             words: wordBoundaries,
             durationMs: playbackDurationMilliseconds,
             isDurationGrowing: isPlaybackDurationGrowing,
@@ -2593,6 +2613,7 @@ public final class VoiceState {
     /// the paused read comes back. Never resumes audio by itself.
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
+        if mode == .disconnected { askParkedRead = nil; processingReadID = nil }
         if mode == .disconnected || (oldValue == .speaking && mode == .idle) {
             clearCurrentSelectionReadIdentity(advanceEpoch: false)
             retireParkedRead()
@@ -2618,6 +2639,11 @@ public final class VoiceState {
         let read = parked.read
         clearRetainedTeleprompter()
         statusText = read.text
+        playbackEpoch = read.epoch
+        speechWords = read.speechWords
+        (selectionReadID, selectionReadRequestID, selectionReadText, selectionReadHash, selectionReadIsPreparing) = read.selection
+        playbackTimelineReadID = read.longReadID
+        playbackTimelineChunks = read.timelineChunks
         restoreLongReadDocument(read.document)
         wordBoundaries = read.words
         playbackDurationMilliseconds = read.durationMs
@@ -3265,8 +3291,24 @@ public final class VoiceState {
 
         case "state":
             guard let stateStr = event["state"] as? String else { return }
+            if event["preserves_paused_read"] as? Bool == true, askParkedRead == nil { askParkedRead = parkedRead }
             switch stateStr {
             case "idle":
+                if event["restores_paused_read"] as? Bool == true {
+                    guard let parked = askParkedRead,
+                          event["playback_id"] as? String == parked.playbackID,
+                          (event["generation"] as? NSNumber)?.intValue == parked.generation else { return }
+                    askParkedRead = nil
+                    guard (mode == .idle || mode == .speaking), deferredBarRecording == nil else {
+                        parkedRead = parked
+                        return // Another capture owns the surface; its recording-idle restores this park.
+                    }
+                    enterIdleState(clearQueue: false)
+                    parkedRead = parked
+                    isCaptureSettlementPending = false
+                    restoreParkedReadIfSettled()
+                    return
+                }
                 if !supportsRecordingJobs, queuedRecordingTakeID != nil,
                    event["source"] as? String == "recording" {
                     microphoneTakeID = nil
@@ -3283,7 +3325,12 @@ public final class VoiceState {
                 // never ends a paused read: that is playback's Stop, outcome or replacement, not capture's idle.
                 if idleSource == "recording" {
                     isCaptureSettlementPending = false
-                    if mode == .speaking { return }
+                    if mode == .speaking {
+                        modelsRecordingBusy = false
+                        modelsRecordingReason = nil
+                        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
+                        return
+                    }
                     if parkedRead != nil { scheduleParkedReadRestore() }
                 }
                 if barInitiatedRecording, mode == .transcribing {
@@ -3331,6 +3378,7 @@ public final class VoiceState {
                     logSpeakingDrop(event, reason: "older-receipt")
                     return
                 }
+                if event["preserves_paused_read"] as? Bool != true { askParkedRead = nil }
                 if let submission {
                     selectionQueueSnapshotIsEmpty = false
                     selectionReceiptOrder = submission.order
@@ -3539,7 +3587,7 @@ public final class VoiceState {
                 if let sttAudioMs = (event["stt_audio_ms"] as? NSNumber)?.intValue, sttAudioMs > 0 {
                     daemonSttAudioMs = sttAudioMs
                 }
-                if deferredRecordingTakeID == nil { enterTranscribingMode() }
+                if deferredRecordingTakeID == nil && !showsReadingProcessingSpinner { enterTranscribingMode() }
             default:
                 break
             }
@@ -3551,6 +3599,11 @@ public final class VoiceState {
             if ["set_recognizer", "set_recognizer_residency", "download_recognizer", "delete_recognizer", "cancel_recognizer_download",
                 RecognizerUnloadWhenIdle.command].contains(event["command"] as? String ?? "") { handleRecognizerEvent(event) }
             handleAckEvent(event)
+
+        case "read_processing":
+            guard let id = event["utterance_id"] as? String else { return }
+            if event["active"] as? Bool == true { processingReadID = id }
+            else if processingReadID == id { processingReadID = nil }
 
         case "read_queue":
             readQueueCount = max(0, (event["count"] as? NSNumber)?.intValue ?? 0)
@@ -3570,6 +3623,8 @@ public final class VoiceState {
             handlePlaybackStateEvent(event)
 
         case "playback_outcome":
+            if let id = event["playback_id"] as? String, let parked = askParkedRead,
+               id == parked.playbackID || id == parked.read.longReadID { askParkedRead = nil }
             // Stop or replacement settled the parked job: there is nothing left to resume.
             if let id = event["playback_id"] as? String, let parked = parkedRead,
                id == parked.playbackID || id == parked.read.longReadID {
@@ -3585,6 +3640,9 @@ public final class VoiceState {
                     if mode == .speaking { enterIdleState(clearQueue: false) }
                     showSelectionBusyNote(message: "Speech stopped")
                 }
+                // A terminal paused player cannot become a running highlight clock while its
+                // replacement is still synthesizing. Freeze its readback before removing the park.
+                if mode == .speaking { enterIdleState(clearQueue: true) }
                 clearCurrentSelectionReadIdentity()
                 retireParkedRead()
             }
@@ -3626,6 +3684,20 @@ public final class VoiceState {
             }
 
         case "transcription":
+            // The remote Ask owns this result; the returned read keeps its clock and presentation.
+            if showsReadingProcessingSpinner {
+                if event["partial"] as? Bool != true {
+                    let text = (event["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let path = event["recording_path"] as? String
+                    if !text.isEmpty {
+                        rememberRecentTranscription(text, recordingPath: path)
+                        refreshTranscriptionVocabulary()
+                    }
+                    if let path, !path.isEmpty { onHistoryArchiveChange?(path) }
+                    releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
+                }
+                return
+            }
             if let text = event["text"] as? String {
                 let isPartial = (event["partial"] as? Bool) == true
                 let recordingPath = (event["recording_path"] as? String)?
@@ -3837,6 +3909,7 @@ public final class VoiceState {
                 else if isTeleprompterReadback { showConfirmation(event["message"] as? String ?? "Seek failed") }
                 return
             }
+            if showsReadingProcessingSpinner, event["source"] as? String != "playback" { return }
             let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
             let shouldShowError = showDuringBarRecording || !barInitiatedRecording
             if shouldShowError {
