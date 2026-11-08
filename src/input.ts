@@ -91,7 +91,7 @@ import {
   resamplePCM16,
 } from "./audio-utils";
 import { cleanupTranscriptionText } from "./stt-cleanup";
-import type { STTAttemptEvidence, TextToSpeechEngine } from "./soundlayer";
+import type { STTAttemptEvidence, TranscriptionResult, TextToSpeechEngine } from "./soundlayer";
 import { restoreSentencePunctuation } from "./stt-punctuation";
 import {
   correctTranscriptionText,
@@ -3547,6 +3547,8 @@ export async function waitForInput(
     let finalized: FinalizedTranscriptionResult;
     let sttBackendLabel = backend.name;
     const chunkBackendLabels = new Set<string>();
+    const tailAppends: (NonNullable<TranscriptionResult["tailAppend"]> & { chunkIndex?: number })[] = [];
+    let chunkIndex = 0;
     let gateRemoval: STTAttemptEvidence["gateRemoval"];
     const noteGateRemoval = (evidence: STTAttemptEvidence | undefined) => {
       if (evidence?.gateRemoval) gateRemoval = { gate: evidence.gateRemoval.gate,
@@ -3570,6 +3572,8 @@ export async function waitForInput(
             const result = await measureTakeStageAsync("decode", () => backend.transcribe(chunkPath, {
               promptOverride: prompt,
             }));
+            if (result.tailAppend) tailAppends.push({ ...result.tailAppend, chunkIndex });
+            chunkIndex++;
             chunkBackendLabels.add(result.backend);
             noteGateRemoval(result.attemptEvidence);
             throwIfWaitForInputAborted(options.signal);
@@ -3594,6 +3598,7 @@ export async function waitForInput(
     } else {
       const result = await measureTakeStageAsync("decode", () => backend.transcribe(wavPath));
       sttBackendLabel = result.backend;
+      if (result.tailAppend) tailAppends.push(result.tailAppend);
       noteGateRemoval(result.attemptEvidence);
       throwIfWaitForInputAborted(options.signal);
       // Built BEFORE the finalize call, and abortable: the pause map is a
@@ -3713,6 +3718,7 @@ export async function waitForInput(
         }
       }
       if (archivedRecordingPath) {
+        updateArchivedRecordingMetadata(join(archivedRecordingPath, "audio.wav"), metadata => { metadata.tail_appends = tailAppends; });
         linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
         recordArchivedGateRemoval(join(archivedRecordingPath, "audio.wav"), gateRemoval);
       }
@@ -3894,12 +3900,14 @@ export function updateArchivedTranscript(
     polishStatus?: STTPolishStatus | null;
     provenanceProbe?: RecordingProvenanceProbe;
     requireMetadataUpdate?: boolean;
+    tailAppends?: NonNullable<TranscriptionResult["tailAppend"]>[];
   },
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
   atomicWriteFile(transcriptPath, text);
 
   updateArchivedRecordingMetadata(audioPath, (metadata) => {
+    metadata.tail_appends = transcription.tailAppends ?? [];
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
@@ -4488,6 +4496,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
     const languageMode = getLanguageModeFromEnv();
     const metadata: Record<string, unknown> = {
       ...snapshot.metadata,
+      tail_appends: result.tailAppend ? [result.tailAppend] : [],
       backend: result.backend,
       language_mode: languageMode,
       transcription_status: "transcribed",
@@ -4678,6 +4687,7 @@ async function retranscribeRecordingCaptureAdmitted(
       if (recordingJobCancelled()) return null;
       if (text) {
         updateArchivedTranscript(wavPath, text, {
+          tailAppends: result.tailAppend ? [result.tailAppend] : [],
           backend: result.backend,
           processingDurationMs: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
           languageMode: getLanguageModeFromEnv(),
@@ -4801,6 +4811,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
       if (text) {
         if (archivedAudioPath) {
           updateArchivedTranscript(archivedAudioPath, text, {
+            tailAppends: result.tailAppend ? [result.tailAppend] : [],
             backend: result.backend,
             processingDurationMs: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
             languageMode: getLanguageModeFromEnv(),

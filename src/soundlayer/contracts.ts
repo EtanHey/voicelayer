@@ -14,6 +14,8 @@ export interface TranscriptionResult {
   /** Provider/transport facts, separate from acoustic accuracy. */
   attemptEvidence?: STTAttemptEvidence;
   outcome?: STTOutcome;
+  /** Appended decode span on this input's timeline; no transcript content. */
+  tailAppend?: { startS: number; endS: number; chars: number };
 }
 
 export interface STTAttemptEvidence {

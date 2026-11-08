@@ -27,7 +27,7 @@ function wav(noisyTail = false, tailPeak = 0): Buffer {
 }
 const nativeText = "Keep every raw word and the unfinished fu… no, the full thought from Codex Sol.";
 const native: ParakeetResponse = { text: nativeText, complete: true, input_frames: 79 * 16000,
-  covered_frames: 79 * 16000, sample_rate: 16000, last_token_end_s: 26, inference_s: 0.1, language: null };
+  covered_frames: 79 * 16000, sample_rate: 16000, last_token_end_s: 79, raw_token_times: [{ start: 0, end: 26 }, { start: 73, end: 79 }], inference_s: 0.1, language: null };
 const root = testTmp("lane-k-tail"), path = join(root, "audio.wav");
 const keys = ["VOICELAYER_STT_OUTRO_GATE", "QA_VOICE_WHISPER_LANG", "LANE_K_JSON", "LANE_K_ARGS"] as const;
 let saved: (string | undefined)[];
@@ -84,6 +84,55 @@ console.log("[00:00:00.000 --> 00:00:26.000] stdout is not the JSON text");\n`);
 }
 
 describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
+  test.each(["throws", "empty", "invalid", "wrong-hash"])("%s tail decode keeps every native word", async mode => {
+    let calls = 0;
+    const original = { ...native, text: nativeText + " fu…", last_token_end_s: 75.2, raw_token_times: [] };
+    const result = await router({ name: "fake", isAvailable: async () => true, transcribe: async () => {
+      calls++; if (mode === "throws") throw new Error("decode failed");
+      return { text: mode === "empty" ? "" : "full thought.", backend: "fake", durationMs: 0,
+        attemptEvidence: { status: mode === "invalid" ? "PARTIAL" : "RETURNED", inputSha256: mode === "wrong-hash" ? "wrong" : undefined } };
+    } }, async snapshot => { const e = evidence(snapshot, false); e.probabilities!.fill(0.9); return e; }, original).transcribe(path);
+    expect(calls).toBe(1); expect(result.text).toBe(original.text);
+    expect(result.backend).toBe("parakeet-resident"); expect(result.tailAppend).toBeUndefined();
+  });
+
+  test.each([
+    { duration: 79, gap: 3.8, speechAfterToken: 3, probe: true, retry: true },
+    { duration: 79, gap: 1, speechAfterToken: 0.9, probe: true, retry: true },
+    { duration: 2, gap: 1, speechAfterToken: 0.9, probe: true, retry: true },
+    { duration: 1.9, gap: 1, speechAfterToken: 0.9, probe: false, retry: false },
+    { duration: 79, gap: 0.9, speechAfterToken: 0.85, probe: false, retry: false },
+    { duration: 79, gap: 3.8, speechAfterToken: 0.7, probe: true, retry: false },
+    { duration: 79, gap: 3.8, speechAfterToken: 0, probe: true, retry: false },
+  ])("short uncovered-tail guard: %j", async ({ duration, gap, speechAfterToken, probe, retry }) => {
+    const bytes = Buffer.from(wav().subarray(0, 44 + Math.round(duration * 32000)));
+    bytes.writeUInt32LE(bytes.length - 8, 4); bytes.writeUInt32LE(bytes.length - 44, 40);
+    writeFileSync(path, bytes);
+    const lastToken = duration - gap;
+    const response = { ...native, text: nativeText + " fu…", input_frames: duration * 16000, covered_frames: duration * 16000,
+      last_token_end_s: lastToken, raw_token_times: [] };
+    const recovered = "Keep the full ending, too.";
+    let probes = 0, retries = 0;
+    const result = await router({ name: "fake", isAvailable: async () => true, transcribe: async snapshot => {
+      retries++;
+      const submitted = readFileSync(snapshot), tailInfo = parakeetWavInfo(submitted);
+      const startFrame = Math.ceil(lastToken * 16000);
+      expect(submitted.subarray(tailInfo.dataOffset)).toEqual(bytes.subarray(44 + startFrame * 2));
+      expect(tailInfo.frames).toBe(duration * 16000 - startFrame);
+      return { text: recovered, backend: "fake", durationMs: 0 };
+    } }, async snapshot => {
+      probes++;
+      const e = evidence(snapshot, false);
+      e.probabilities = e.probabilities!.map((_, i) =>
+        (i + 1) * VAD_CHUNK_SAMPLES / 16000 <= lastToken + speechAfterToken ? 0.9 : 0.01);
+      return e;
+    }, response).transcribe(path);
+    expect(probes).toBe(Number(probe)); expect(retries).toBe(Number(retry));
+    expect(result.backend.includes("+tail-whisper")).toBe(retry);
+    expect(result.text).toBe(retry ? response.text + " " + recovered : response.text);
+    expect(result.tailAppend).toEqual(retry ? { startS: lastToken, endS: duration, chars: recovered.length } : undefined);
+  });
+
   test("50 seconds of above-512 non-speech noise keeps Parakeet, ZERO Whisper calls", async () => {
     writeFileSync(path, wav(true));
     expect(parakeetWavInfo(readFileSync(path)).lastActiveSeconds).toBeGreaterThan(78);
@@ -110,19 +159,19 @@ describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
     }).transcribe(path);
     expect(result.text).toBe(nativeText); expect(whisperCalls).toBe(0);
   });
-  test("Silero-detected quiet tail speech still requests full-audio fallback", async () => {
+  test("Silero-detected quiet internal speech still requests full-audio fallback", async () => {
     writeFileSync(path, wav(false, 30)); let calls = 0;
     const result = await router({ name: "fake", isAvailable: async () => true, transcribe: async p => {
       calls++; expect(readFileSync(p)).toEqual(readFileSync(path));
       return { text: "All words including quiet tail speech.", backend: "fake", durationMs: 0 };
     } }, async p => evidence(p, true)).transcribe(path);
-    expect(calls).toBe(1); expect(result.backend).toContain("fallback-uncovered-tail");
+    expect(calls).toBe(1); expect(result.backend).toContain("fallback-uncovered-internal");
     expect(result.text).toBe("All words including quiet tail speech.");
   });
   test("CLI fallback removes an invented Thank you over silence using JSON segments", async () => {
     const cli = fakeCli();
     const result = await router(cli.backend, async p => evidence(p, true)).transcribe(path);
-    expect(result.text).toBe(nativeText); expect(result.backend).toContain("fallback-uncovered-tail->whisper.cpp+outro");
+    expect(result.text).toBe(nativeText); expect(result.backend).toContain("fallback-uncovered-internal->whisper.cpp+outro");
     const args: string[] = JSON.parse(readFileSync(cli.argsPath, "utf8"));
     expect(args).toContain("-oj"); expect(args).not.toContain("--no-timestamps");
     expect(existsSync(args[args.indexOf("-of") + 1]! + ".json")).toBe(false);

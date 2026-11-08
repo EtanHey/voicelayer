@@ -401,7 +401,11 @@ describe("older schema recordings stay loadable", () => {
       backend: "whisper-server+fallback-timeout->whisper.cpp",
       languageMode: "hebrew",
       provenanceProbe: CLI_PROBE,
+      tailAppends: [{ startS: 0.5, endS: 0.7, chars: 6 }],
     });
+
+    const metadataPath = join(archivedPath!, "metadata.json");
+    expect(JSON.parse(readFileSync(metadataPath, "utf8")).tail_appends).toEqual([{ startS: 0.5, endS: 0.7, chars: 6 }]);
 
     const provenance = (
       JSON.parse(
@@ -413,6 +417,8 @@ describe("older schema recordings stay loadable", () => {
     );
     expect(provenance.fallback_reason).toBe("timeout");
     expect(provenance.language_mode).toBe("hebrew");
+    updateArchivedTranscript(join(archivedPath!, "audio.wav"), "third pass", { backend: "parakeet-resident", languageMode: "en" });
+    expect(JSON.parse(readFileSync(metadataPath, "utf8")).tail_appends).toEqual([]);
     expect(provenance.whisper_cpp_version).toBe("1.8.0");
     expect(provenance.whisper_server_args).toBeNull();
     expect(provenance.whisper_server_pid).toBeNull();
