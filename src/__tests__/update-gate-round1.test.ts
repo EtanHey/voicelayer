@@ -83,6 +83,23 @@ for (const cmd of ["stop", "cancel"] as const) test(`SF1 ${cmd} prevents a pendi
     expect(wait).not.toHaveBeenCalled();
   } finally { clearTimeout(stopped); clearTimeout(unlock); if (fs.existsSync(path + ".lock")) fs.rmdirSync(path + ".lock"); }
 });
+// BARE-STOP counterpart of SF1: a pending VoiceBar take that carries its own take id survives an id-less stop,
+// while the same stop still cancels the anonymous record above. A cancel (Hide) still ends it.
+for (const cmd of ["stop", "cancel"] as const) test(`BARE-STOP id-less ${cmd} and a pending VoiceBar take with a take id`, async () => {
+  const wait = capture(); fs.mkdirSync(path + ".lock");
+  const pending = Promise.resolve(handleSocketCommand({ cmd: "record", take_id: `pending-${cmd}`, press_to_talk: true, timeout_seconds: 3600 }));
+  const stopped = setTimeout(() => { void handleSocketCommand({ cmd }); }, 3);
+  const unlock = setTimeout(() => fs.rmdirSync(path + ".lock"), 10);
+  try {
+    if (cmd === "stop") {
+      expect(await pending).toMatchObject({ outcome: "accept" });
+      expect(wait).toHaveBeenCalledTimes(1);
+    } else {
+      expect(await pending).toMatchObject({ outcome: "noop", reason: expect.stringContaining("cancelled") });
+      expect(wait).not.toHaveBeenCalled();
+    }
+  } finally { clearTimeout(stopped); clearTimeout(unlock); if (fs.existsSync(path + ".lock")) fs.rmdirSync(path + ".lock"); }
+});
 test("SF1 direct playback Stop invalidates pending async voice work", async () => {
   fs.mkdirSync(path + ".lock"); let starts = 0;
   const pending = gate.withAsyncVoiceAdmission(() => { starts++; });
