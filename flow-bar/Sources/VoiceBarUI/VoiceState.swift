@@ -683,7 +683,13 @@ public final class VoiceState {
     private var parkedRead: ParkedRead? {
         didSet { notifyPanelLayoutChangedIfNeeded((oldValue == nil) != (parkedRead == nil)) }
     }
-    /// Ask has its own presentation/player; this snapshot stays silent until admission is released.
+    private var processingReadID: String? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != processingReadID) }
+    }
+    var showsReadingProcessingSpinner: Bool {
+        mode == .speaking && processingReadID != nil && processingReadID == speechWords?.utteranceID
+    }
+    /// Ask has its own presentation/player; this snapshot stays silent until the read is returned.
     private var askParkedRead: ParkedRead?
     /// The player the latest speaking frame named. Pause/Resume are scoped to it and its events must match it.
     private var currentPlayback: (id: String, generation: Int)?
@@ -2241,6 +2247,10 @@ public final class VoiceState {
     }
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
+        if mode == .speaking, showsReadingProcessingSpinner {
+            sendCommand?(["cmd": "stop", "id": UUID().uuidString])
+            return
+        }
         if case let .queued(request) = deferredBarRecording {
             deferredBarRecording = nil
             locallyStartedDictationTakes.remove(request.takeID)
@@ -2603,7 +2613,7 @@ public final class VoiceState {
     /// the paused read comes back. Never resumes audio by itself.
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
-        if mode == .disconnected { askParkedRead = nil }
+        if mode == .disconnected { askParkedRead = nil; processingReadID = nil }
         if mode == .disconnected || (oldValue == .speaking && mode == .idle) {
             clearCurrentSelectionReadIdentity(advanceEpoch: false)
             retireParkedRead()
@@ -3315,7 +3325,12 @@ public final class VoiceState {
                 // never ends a paused read: that is playback's Stop, outcome or replacement, not capture's idle.
                 if idleSource == "recording" {
                     isCaptureSettlementPending = false
-                    if mode == .speaking { return }
+                    if mode == .speaking {
+                        modelsRecordingBusy = false
+                        modelsRecordingReason = nil
+                        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
+                        return
+                    }
                     if parkedRead != nil { scheduleParkedReadRestore() }
                 }
                 if barInitiatedRecording, mode == .transcribing {
@@ -3572,7 +3587,7 @@ public final class VoiceState {
                 if let sttAudioMs = (event["stt_audio_ms"] as? NSNumber)?.intValue, sttAudioMs > 0 {
                     daemonSttAudioMs = sttAudioMs
                 }
-                if deferredRecordingTakeID == nil { enterTranscribingMode() }
+                if deferredRecordingTakeID == nil && !showsReadingProcessingSpinner { enterTranscribingMode() }
             default:
                 break
             }
@@ -3584,6 +3599,11 @@ public final class VoiceState {
             if ["set_recognizer", "set_recognizer_residency", "download_recognizer", "delete_recognizer", "cancel_recognizer_download",
                 RecognizerUnloadWhenIdle.command].contains(event["command"] as? String ?? "") { handleRecognizerEvent(event) }
             handleAckEvent(event)
+
+        case "read_processing":
+            guard let id = event["utterance_id"] as? String else { return }
+            if event["active"] as? Bool == true { processingReadID = id }
+            else if processingReadID == id { processingReadID = nil }
 
         case "read_queue":
             readQueueCount = max(0, (event["count"] as? NSNumber)?.intValue ?? 0)
@@ -3664,6 +3684,20 @@ public final class VoiceState {
             }
 
         case "transcription":
+            // The remote Ask owns this result; the returned read keeps its clock and presentation.
+            if showsReadingProcessingSpinner {
+                if event["partial"] as? Bool != true {
+                    let text = (event["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let path = event["recording_path"] as? String
+                    if !text.isEmpty {
+                        rememberRecentTranscription(text, recordingPath: path)
+                        refreshTranscriptionVocabulary()
+                    }
+                    if let path, !path.isEmpty { onHistoryArchiveChange?(path) }
+                    releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
+                }
+                return
+            }
             if let text = event["text"] as? String {
                 let isPartial = (event["partial"] as? Bool) == true
                 let recordingPath = (event["recording_path"] as? String)?
@@ -3875,6 +3909,7 @@ public final class VoiceState {
                 else if isTeleprompterReadback { showConfirmation(event["message"] as? String ?? "Seek failed") }
                 return
             }
+            if showsReadingProcessingSpinner, event["source"] as? String != "playback" { return }
             let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
             let shouldShowError = showDuringBarRecording || !barInitiatedRecording
             if shouldShowError {

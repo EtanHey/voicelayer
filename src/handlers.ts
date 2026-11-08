@@ -33,6 +33,7 @@ import {
   getPlaybackQueueDepth,
   preemptLongRead,
   parkReadForAsk,
+  releaseAskReadSuccessor,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
   isPlaybackPaused,
@@ -527,8 +528,8 @@ async function executeAdmittedNormalAsk({ ingress, context }: {
     deferReleaseUntil: (settlement) => {
       releaseDeferred = true;
       void settlement.then(
-        () => reservation.release(),
-        () => reservation.release(),
+        () => { reservation.release(); releaseAskReadSuccessor(); },
+        () => { reservation.release(); releaseAskReadSuccessor(); },
       );
     },
   };
@@ -872,7 +873,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   };
   armTimeout(VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS, "playback-wait");
 
-  let returnInterruptedRead: (() => void) | undefined;
+  let returnInterruptedRead: ((processing?: boolean) => boolean) | undefined;
   const converseFlow = async (): Promise<VoiceAskTurnOutcome> => {
     // V1 policy: refuse instead of queueing while the user is recording.
     // Queueing a question would make the eventual prompt stale and can still
@@ -1008,6 +1009,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         },
         onPhaseChange: (phase) => {
           progressHeartbeat?.setStage(phase);
+          // The input phase follows bounded recorder-exit settlement; run after its transcribing state is published.
+          queueMicrotask(() => { if (returnInterruptedRead?.(true)) returnInterruptedRead = undefined; });
         },
         onNoAnswer: (unclassified) => { noAnswer = !unclassified; unclassifiedAnswer = unclassified; },
         onNoSpeech: () => {
@@ -1057,6 +1060,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     await promptTimeoutCleanup;
     captureAdmission?.release();
     returnInterruptedRead?.();
+    returnInterruptedRead = undefined;
+    if (!operationLifecycle) releaseAskReadSuccessor();
   });
   const confirmedTeardown = async () => {
     await Promise.all(promptPlayers.map(handle => handle.playerExited));

@@ -347,6 +347,10 @@ public enum VoiceBarPresentation {
         )
     }
 
+    public static func playbackLeadingSlotCount(for state: VoiceState) -> Int {
+        (readQueueControl(for: state)?.leadingSlotCount ?? 1) + (state.showsReadingProcessingSpinner ? 1 : 0)
+    }
+
     public static func readQueueControl(for state: VoiceState) -> VoiceBarReadQueueControl? {
         readQueueControl(
             mode: state.mode,
