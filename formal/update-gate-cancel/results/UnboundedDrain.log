@@ -1,0 +1,17 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "BoundedDrainResolves",
+  "status": "EXPECTED_FAIL",
+  "generated": 75,
+  "distinct": 37,
+  "trace": [
+    "/\\ result = \"none\"\n/\\ userGate = \"OPEN\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"OPEN\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 1\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 1\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = FALSE\n/\\ age = 1\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 1\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = FALSE\n/\\ age = 2\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 1\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = FALSE\n/\\ age = 3\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 1\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = FALSE\n/\\ age = 3\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 2\n/\\ schedule = \"never\"\n\nBack to state 6: <UserNext(TRUE,FALSE,TRUE) line 78, col 38 to line 79, col 105 of module CancelRetry>"
+  ]
+}

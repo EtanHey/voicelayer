@@ -557,3 +557,16 @@ test("G5 completion samples identities before publication and never after OPEN",
   expect(result.kind).toBe("APPLIED");
   expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
 });
+
+test("legacy drain RPC refusal remains retryable UNKNOWN with a version-mismatch reason", async () => {
+  const socketPath = join(process.env.VOICELAYER_TEST_RUN_ROOT!, "l.sock");
+  const server = createServer(socket => socket.once("data", data => {
+    const rpc = JSON.parse(data.toString());
+    socket.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "legacy method unavailable" } }) + "\n");
+  }));
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  try {
+    expect(await requestInstallerControl("drain", fixture().lease, { socketPath, token: "synthetic" }))
+      .toEqual({ kind: "UNKNOWN", reason: "version mismatch: drain protocol unsupported" });
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});

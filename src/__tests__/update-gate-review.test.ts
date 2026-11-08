@@ -117,7 +117,7 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       } finally { exit.resolve(0); await tick(); }
     });
   }
-  test("same-selection re-press advances and stops admitted reads during drain; new text refuses", async () => {
+  test("same-selection re-press advances and stops admitted reads during drain; new text registers", async () => {
     const starts: string[] = [], exits: ReturnType<typeof deferred<void>>[] = [];
     const stop = spyOn(tts, "stopPlayback").mockImplementation(() => { exits.forEach(exit => exit.resolve()); return true; }); spies.push(stop);
     spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(1),
@@ -137,8 +137,10 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       drain();
       expect(await command("A-next", "selection A")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
       expect(starts).toEqual(["A", "B"]);
-      expect(await command("C", "unadmitted selection")).toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY") });
-      expect(await command("B-stop", "selection B")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
+      expect(await command("C", "new selection", true)).toMatchObject({ outcome: "accept", reason: "queued" });
+      expect(await command("B-next", "selection B")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
+      expect(starts).toEqual(["A", "B", "C"]);
+      expect(await command("C-stop", "new selection")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
       expect(stop).toHaveBeenCalledTimes(1);
       await flushSpeechArchives(); await tick();
       expect(prepare().kind).toBe("APPLIED");

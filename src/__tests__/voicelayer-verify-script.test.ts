@@ -577,6 +577,7 @@ describe("voicelayer-verify.sh", () => {
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("explicitly starts a launchd VoiceBar after controlled quit", async () => {
+    copyFileSync(join(repoRoot, "scripts/lib/voicebar-launchagent.sh"), join(tempRoot, "scripts/lib/voicebar-launchagent.sh"));
     const changed = join(tempRoot, "changed.txt");
     const stateFile = join(tempRoot, "pgrep-state");
     const openCalls = join(tempRoot, "open-calls");
@@ -600,6 +601,7 @@ describe("voicelayer-verify.sh", () => {
       "pgrep",
       `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1" = "-U" ]; then shift 2; fi
 if [ "$1" = "-x" ] && [ "$2" = "VoiceBar" ]; then
   if [ "$(cat "${stateFile}")" = "before" ]; then
     printf '${oldPid}\\n'
@@ -627,6 +629,11 @@ printf 'after\\n' > "${stateFile}"
       "launchctl",
       `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1" = "enable" ]; then exit 0; fi
+if [ "$1" = "print" ]; then
+  printf "state = running\\npid = 222\\n"
+  exit 0
+fi
 if [ "$1" = "list" ] && [ "$2" = "com.voicelayer.voicebar" ]; then
   exit 0
 fi
@@ -645,12 +652,14 @@ echo "$*" >> "${openCalls}"
 exit 0
 `,
     );
+    writeFakeExecutable("ps", `#!/bin/bash\necho "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar"\n`);
     writeFakeExecutable("lsof", "#!/usr/bin/env bash\nexit 1\n");
 
     const result = run(["bash", scriptPath], {
       env: {
+        HOME: tempRoot,
         BASH_ENV: bashEnv,
-        VOICELAYER_GATE_RESTORE_APP: join(tempRoot, "VoiceBar.app"),
+        VOICELAYER_GATE_RESTORE_APP: "/Applications/VoiceBar.app",
         VOICELAYER_GATE_RESTORE_LAUNCHD: "1",
         VOICELAYER_GATE_RESTORE_CALLER: scriptPath,
         VOICELAYER_VERIFY_PRE_GATE_PIDS: oldPid,
