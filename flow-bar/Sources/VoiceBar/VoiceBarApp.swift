@@ -3642,7 +3642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         noteHotkeyActivity(from: source)
-        gestureStateMachine.handleKeyUp()
+        gestureStateMachine.handleKeyUp(deferAmbiguousHold: source == .native)
         if gestureStateMachine.state == .idle {
             activeHotkeySource = nil
         }

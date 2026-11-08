@@ -146,11 +146,13 @@ final class GesturePreviewTimingTests: XCTestCase {
         XCTAssertEqual(starts, 0)
         t.advance(to: 160)
         XCTAssertEqual(starts, 1)
-        t.advance(to: 200)
+        // AMBIGUOUS-TAP: a release before ambiguousHoldReleaseMs (250) waits out the double-tap window
+        // (SlowFirstTapGestureTests); a deliberate hold released at 250 ms still stops immediately.
+        t.advance(to: GestureStateMachine.ambiguousHoldReleaseMs)
         t.gesture.handleKeyUp()
         XCTAssertEqual(stops, 1)
         XCTAssertEqual(phases, [.pressing, .holding, .idle])
-        XCTAssertEqual(times, [0, 160, 200])
+        XCTAssertEqual(times, [0, 160, GestureStateMachine.ambiguousHoldReleaseMs])
         XCTAssertEqual(t.phases, [.idle, .holding, .idle])
     }
 

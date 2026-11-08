@@ -97,6 +97,11 @@ final class GestureStateMachine {
 
     static let doubleTapWindowMs: Int = 400
     static let holdThresholdMs: Int = 160
+    /// BARE-STOP H2: a press released before this is a slow first tap as much as a hold. It started the
+    /// take at 160 ms; its release now waits out the double-tap window instead of stopping at once, so a
+    /// second press locks that same take rather than leaving a header-only take and a fresh one.
+    /// 250 ms is the top of the reviewed 160-250 ms band and #811's measured whole double-tap (250 +/- 50 ms).
+    static let ambiguousHoldReleaseMs: Int = 250
     static let pressingPreviewDelayMs = 120
     static let awaitingSecondTapPreviewDelayMs = 350
     static let minimumPreviewVisibleMs = 150
@@ -143,13 +148,15 @@ final class GestureStateMachine {
                 startPressing(now: now)
                 return
             }
+            // A slow first tap already started the take; the second press only locks it.
+            let takeAlreadyStarted = doubleTapExpiryBehavior == .holdEnd
             clearDoubleTapTimer()
             doubleTapDeadline = nil
             doubleTapExpiryBehavior = nil
             keyDownTime = nil
             state = .locked
             publishPhase(.holding)
-            onHoldStart()
+            if !takeAlreadyStarted { onHoldStart() }
             onDoubleTap()
         case .locked:
             state = .idle
@@ -162,7 +169,9 @@ final class GestureStateMachine {
         }
     }
 
-    func handleKeyUp() {
+    /// `deferAmbiguousHold` is false for programmatic releases (the legacy local-control socket): only a human
+    /// key-up can be a slow first tap.
+    func handleKeyUp(deferAmbiguousHold: Bool = true) {
         if ignoringStopBounce {
             ignoringStopBounce = false
             return
@@ -179,6 +188,11 @@ final class GestureStateMachine {
             startDoubleTapWindow(expiryBehavior: .singleTap)
         case .holding:
             let releasedAt = clock()
+            if deferAmbiguousHold, let keyDownTime, (releasedAt - keyDownTime) * 1000 < Double(Self.ambiguousHoldReleaseMs) {
+                self.keyDownTime = nil
+                startDoubleTapWindow(expiryBehavior: .holdEnd)
+                return
+            }
             keyDownTime = nil
             state = .idle
             publishPhase(.idle)
@@ -228,7 +242,10 @@ final class GestureStateMachine {
         case .idle:
             reset()
         case .pressing, .waitingForDoubleTap:
+            // A deferred slow-tap release still owns a recording take; Escape cancels it like a hold.
+            let ownsTake = state == .waitingForDoubleTap && doubleTapExpiryBehavior == .holdEnd
             reset()
+            if ownsTake { onCancel() }
         case .holding, .locked:
             reset()
             onCancel()
@@ -274,7 +291,10 @@ final class GestureStateMachine {
         state = .waitingForDoubleTap
         doubleTapDeadline = clock() + Double(doubleTapWindow) / 1000
         doubleTapExpiryBehavior = expiryBehavior
-        publishPhase(.awaitingSecondTap, graceMs: Self.awaitingSecondTapPreviewDelayMs, windowMs: doubleTapWindow)
+        // A deferred hold release is still recording: it keeps showing `.holding`, never the lock hint.
+        if expiryBehavior == .singleTap {
+            publishPhase(.awaitingSecondTap, graceMs: Self.awaitingSecondTapPreviewDelayMs, windowMs: doubleTapWindow)
+        }
         let timer = DispatchWorkItem { [weak self] in
             guard let self, state == .waitingForDoubleTap, doubleTapTimerGeneration == generation else { return }
             expireDoubleTapWindow()

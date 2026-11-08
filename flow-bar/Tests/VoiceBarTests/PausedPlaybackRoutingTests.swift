@@ -45,6 +45,8 @@ final class PausedPlaybackRoutingTests: XCTestCase {
         XCTAssertEqual(sent().map { $0["cmd"] as? String }, ["record"], "F5 hold over a paused read records")
         XCTAssertEqual(state.mode, .recording)
 
+        // AMBIGUOUS-TAP: a deliberate hold is released at or past ambiguousHoldReleaseMs.
+        now += Double(GestureStateMachine.ambiguousHoldReleaseMs - GestureStateMachine.holdThresholdMs) / 1000
         gesture.handleKeyUp()
         XCTAssertTrue(scheduled.isEmpty, "hold release does not arm a double-tap timer")
         // Release stops the capture (the daemon keeps the parked read, tts-pause "F5's stop/cancel").

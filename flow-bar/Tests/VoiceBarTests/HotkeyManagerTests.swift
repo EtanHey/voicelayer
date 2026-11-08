@@ -1175,6 +1175,10 @@ final class HotkeyManagerTests: XCTestCase {
 
     func testGestureReleaseAfterHoldStopsImmediatelyWithoutWaitingForDoubleTap() {
         let gesture = GestureStateMachine()
+        // BARE-STOP H2: a deliberate hold is one released at or past `ambiguousHoldReleaseMs`; shorter holds
+        // are covered by SlowFirstTapGestureTests. The hold timer itself still runs on the real main queue.
+        var now: TimeInterval = 100
+        gesture.clock = { now }
         var holdStartCount = 0
         var holdEndCount = 0
         var phases: [HotkeyPhase] = []
@@ -1189,6 +1193,7 @@ final class HotkeyManagerTests: XCTestCase {
         while holdStartCount == 0, Date() < holdDeadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
+        now += Double(GestureStateMachine.ambiguousHoldReleaseMs) / 1000
         gesture.handleKeyUp()
 
         XCTAssertEqual(gesture.state, .idle)
