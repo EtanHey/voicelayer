@@ -1,4 +1,4 @@
-import { runBarCaptureWithPausedRead, bufferOpeningCaptureControl } from "./f5-capture";
+import { runBarCaptureWithPausedRead, bufferOpeningCaptureControl, hasScopedCapture } from "./f5-capture";
 import { runHistoryTranscription, canStartBarCapture, cancelRecordingJob,
   acknowledgeDictationDelivery, recordingJobsSnapshot, markBarCaptureDraining, isBarCaptureDraining } from "./recording-jobs";
 import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-download";
@@ -203,7 +203,8 @@ const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer
 const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", ...recognizerMutationCommands]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if ((args[0].cmd === "stop" || args[0].cmd === "cancel") && !args[0].take_id) {
-    const speechOnly = args[0].cmd === "stop" && args[0].scope === "speech";
+    // BARE-STOP: an id-less stop never cancels a pending capture start; only a capture-scoped one may.
+    const speechOnly = args[0].cmd === "stop" && args[0].scope !== "capture";
     const capture = speechOnly ? false : cancelPendingVoiceAdmissions("capture");
     const speech = args[0].cmd === "stop" && args[0].scope === "capture" ? false : cancelPendingVoiceAdmissions("speech");
     const result = handleSocketCommandAdmitted(...args);
@@ -344,6 +345,15 @@ function handleSocketCommandAdmitted(
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)));
     }
     case "stop":
+      // BARE-STOP (lead ruling, 2026-11-08): a stop without a take id targets speech/playback only.
+      // A client-named dictation take (every VoiceBar F5/Stop/PTT take) ends only on a stop carrying its
+      // own id, a cancel, or its own silence timeout, never on an id-less stop. While opening or capturing, an
+      // id-less stop is treated as a speech stop; scope:"capture" without an id has no take to end here.
+      if (!command.take_id && command.scope !== "speech" && hasScopedCapture(recordingJobsSnapshot().mic_take_id)) {
+        if (command.scope === "capture") return buildAck(command, "noop", "a dictation take stops only by its take id");
+        stopAll(command.playback_elapsed_ms, "clear");
+        return buildAck(command, "accept");
+      }
       if (command.scope === "speech") {
         stopAll(command.playback_elapsed_ms, "clear");
         return buildAck(command, "accept");
@@ -541,7 +551,8 @@ function handleSocketCommandAdmitted(
       let capture: Promise<string | null>;
       try {
         capture = runBarCaptureWithPausedRead(command.take_id ?? randomUUID(), record,
-          () => selectionReads.holdForCapture(), () => selectionReads.releaseCapture(), command.playback_elapsed_ms, { expectsAck: command.take_id !== undefined });
+          () => selectionReads.holdForCapture(), () => selectionReads.releaseCapture(), command.playback_elapsed_ms, { expectsAck: command.take_id !== undefined },
+          command.take_id !== undefined);
       } catch (error) {
         return buildAck(command, "reject", error instanceof Error ? error.message : String(error));
       }

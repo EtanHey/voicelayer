@@ -1382,7 +1382,8 @@ public final class VoiceState {
     private func stopSelectionRead() {
         invalidateSelectionSpeechIdentity()
         clearReadQueue()
-        sendCommand?(["cmd": "stop"])
+        // BARE-STOP: a read stop is speech-scoped; it must never land on a dictation take that just opened.
+        sendCommand?(["cmd": "stop", "scope": "speech"])
     }
 
     /// QUEUE1: the daemon's Option+F5 read queue, mirrored from `read_queue` events (counts only).
@@ -2357,9 +2358,10 @@ public final class VoiceState {
             if hasWaitingReads { payload["discard_read_queue"] = true }
             sendIntent(command: .cancel, payload: payload, trackPending: false)
         case .speaking:
-            sendIntent(command: .stop, payload: ["cmd": "stop"], trackPending: false)
+            // BARE-STOP: Hide over speech stops speech only; a capture it means to end goes through cancel above.
+            sendIntent(command: .stop, payload: ["cmd": "stop", "scope": "speech"], trackPending: false)
         default:
-            if hasWaitingReads { sendIntent(command: .stop, payload: ["cmd": "stop"], trackPending: false) }
+            if hasWaitingReads { sendIntent(command: .stop, payload: ["cmd": "stop", "scope": "speech"], trackPending: false) }
         }
         clearReadQueue()
         barInitiatedRecording = false
