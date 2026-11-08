@@ -1,7 +1,7 @@
 import { appendControlLayerEvent } from "./control-layer-journal";
 import { edgeVoiceForText } from "./tts-language";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withAsyncVoiceAdmission, withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
-import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
+import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive, type SynthesisDiagnostics } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
 import { structuredReadDisplay, type StructuredChunkDisplay } from "./tts/structured-display";
@@ -2604,15 +2604,16 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
   const projection = projected ?? projectSpeakableText(displayChunk, rules, profile.engine);
   const spoken = projection.speechText;
   try {
-    const synthesizeEdge = async (voice: string, rate: string): Promise<PreparedChunk> => {
+    const synthesizeEdge = async (voice: string, rate: string, fallbackReason: string | null = null): Promise<PreparedChunk> => {
       const edge = projected ?? (profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge"));
       const chunk = await synthesizeEdgeChunk(edge.speechText, voice, rate, audioFile,
         new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal, edgeRetries);
       chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, edge.speechText, chunk.wordBoundaries, edge.ranges);
-      return { chunk, voice, engine: "edge-tts", spokenText: edge.speechText };
+      return { chunk, voice, engine: "edge-tts", spokenText: edge.speechText,
+        synthesis: { rate, attempts: fallbackReason === "clone_synthesis_failed" ? ["qwen3-tts", "edge-tts"] : ["edge-tts"], unavailable: fallbackReason === "clone_profile_missing" ? ["clone-profile"] : [], fallbackReason } };
     };
     if (profile.engine === "edge") {
-      return await synthesizeEdge(profile.voice, profile.rate);
+      return await synthesizeEdge(profile.voice, profile.rate, profile.requestedClone ? "clone_profile_missing" : null);
     }
     const audio = await synthesizeCloned(spoken, profile.voice, signal);
     throwIfAbortedSafe(signal);
@@ -2620,7 +2621,7 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
       if (requireClone) throw new VoiceProfileUnavailableError(profile.voice, "synthesis-failed");
       const voice = resolveVoice(profile.fallbackVoice || loadProfile(profile.voice)?.fallback || defaultVoice(), "edge").voice;
       console.error(`[voicelayer] Cloned voice "${profile.voice}" unavailable — falling back to edge-tts (${voice})`);
-      return await synthesizeEdge(voice, edgeFallbackRate);
+      return await synthesizeEdge(voice, edgeFallbackRate, "clone_synthesis_failed");
     }
     writeFileSync(audioFile, audio);
     const speed = clonePlaybackSpeed(profile.rate);
@@ -2639,7 +2640,8 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
     throwIfAbortedSafe(signal);
     const durationMs = probeDuration ? probeAudioDurationMs(audioFile) : 0;
     if (probeDuration && (!durationMs || durationMs <= 0)) throw new Error("Cloned audio has no readable duration");
-    return { chunk: { audioFile, durationMs: durationMs ?? 0, wordBoundaries: [] }, voice: profile.voice, engine: "qwen3-tts", projection, spokenText: spoken };
+    return { chunk: { audioFile, durationMs: durationMs ?? 0, wordBoundaries: [] }, voice: profile.voice, engine: "qwen3-tts", projection, spokenText: spoken,
+      synthesis: { rate: profile.rate, attempts: ["qwen3-tts"], unavailable: [], fallbackReason: null } };
   } catch (error) {
     disposeLongReadChunkFiles(audioFile);
     throw error;
@@ -2705,7 +2707,7 @@ async function prepareSelectionReadStartAdmitted(
         spokenText: chunk.spokenText, ...read.provenance(0) };
     } finally { await read.close(); }
   } else prepared = await synthesizeLongReadChunk(displayChunk, profile, signal, policy, 0, rules);
-  archive?.synthesisConfiguredRate(profile.rate);
+  archive?.synthesisDiagnostics(prepared.synthesis);
   archive?.generated(prepared.chunk.audioFile, prepared.spokenText ?? displayChunk, prepared.voice, profile.kind ?? "long", prepared.engine, 0, prepared.chunk.durationMs);
   if (signal.aborted) { disposeLongReadChunkFiles(prepared.chunk.audioFile); throwIfAbortedSafe(signal); }
   return start = new PreparedReadStart(identity, prepared,
@@ -2756,18 +2758,19 @@ async function synthesizeProsodySegment(plan: ProsodyPlan, segment: ProsodyPlan[
   try {
     const chunk = await synthesizeEdgeChunk(segment.text, profile.voice, segment.emphasis ? emphasisRate(profile.rate) : profile.rate,
       audioFile, scriptPath, signal, edgeRetries, segment.emphasis ? EDGE_EMPHASIS : undefined);
-    return { chunk, voice: profile.voice, engine: "edge-tts", spokenText: segment.text };
+    return { chunk, voice: profile.voice, engine: "edge-tts", spokenText: segment.text,
+      synthesis: { rate: segment.emphasis ? emphasisRate(profile.rate) : profile.rate, attempts: ["edge-tts"], unavailable: [], fallbackReason: null } };
   } catch (error) { disposeLongReadChunkFiles(audioFile); throw error; }
 }
 
 function createStructuredProsodyRead(plan: ProsodyPlan, profile: LongReadProfile, signal: AbortSignal, policy: ChunkSynthesisPolicy,
   prepared?: PreparedReadStart, { lookahead, edgeRetries = 1 }: { lookahead?: number; edgeRetries?: number } = {}) {
-  const provenance = new Map<ProsodyPlan["segments"][number], Pick<PreparedChunk, "voice" | "engine">>();
+  const provenance = new Map<ProsodyPlan["segments"][number], Pick<PreparedChunk, "voice" | "engine" | "synthesis">>();
   const cached = prepared?.take(preparedStartIdentity(plan.chunks[0].text, profile, policy) + plan.renderIdentity);
   const read = createProsodyRead(plan, {
     synthesize: async (segment, signal) => {
       const result = await synthesizeProsodySegment(plan, segment, profile, signal, policy, edgeRetries);
-      provenance.set(segment, { voice: result.voice, engine: result.engine });
+      provenance.set(segment, { voice: result.voice, engine: result.engine, synthesis: result.synthesis });
       return { audioFile: result.chunk.audioFile, words: result.chunk.wordBoundaries, durationMs: result.chunk.durationMs };
     },
     decode: decodeAudioToPCM,
@@ -2783,10 +2786,18 @@ function createStructuredProsodyRead(plan: ProsodyPlan, profile: LongReadProfile
       words: cached.chunk.wordBoundaries, spokenText: cached.spokenText
         ?? plan.segments.slice(0, plan.chunks[0].end).map(segment => segment.text).join(" ") } : undefined });
   return { ...read, provenance(index: number) {
-    if (index === 0 && cached) return { voice: cached.voice, engine: cached.engine };
+    if (index === 0 && cached) return { voice: cached.voice, engine: cached.engine, synthesis: cached.synthesis };
     const sources = plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map(segment =>
-      provenance.get(segment) ?? { voice: profile.voice, engine: profile.engine === "clone" ? "qwen3-tts" : "edge-tts" });
-    return { voice: [...new Set(sources.map(source => source.voice))].join(","),
+      provenance.get(segment) ?? { voice: profile.voice, engine: profile.engine === "clone" ? "qwen3-tts" : "edge-tts", synthesis: undefined });
+    const diagnostics = sources.map(source => source.synthesis);
+    const rates = new Set(diagnostics.map(item => item?.rate ?? null));
+    const synthesis: SynthesisDiagnostics = {
+      rate: rates.size === 1 ? diagnostics[0]?.rate ?? null : null,
+      attempts: [...new Set(diagnostics.flatMap(item => item?.attempts ?? []))],
+      unavailable: [...new Set(diagnostics.flatMap(item => item?.unavailable ?? []))],
+      fallbackReason: diagnostics.find(item => item?.fallbackReason)?.fallbackReason ?? null,
+    };
+    return { synthesis, voice: [...new Set(sources.map(source => source.voice))].join(","),
       engine: [...new Set(sources.map(source => source.engine))].join("+") };
   } };
 }
@@ -2897,7 +2908,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
           : lease?.take(preparedStartIdentity(displayChunk, profile, policy))
           ?? await synthesizeLongReadChunk(displayChunk, profile, signal, policy);
         const { audioFile } = result.chunk;
-        archive.synthesisConfiguredRate(profile.rate);
+        archive.synthesisDiagnostics(result.synthesis);
         archive.generated(audioFile, result.spokenText ?? result.projection?.speechText ?? displayChunk,
           result.voice, profile.kind ?? "long", result.engine, index, result.chunk.durationMs);
         chunkVoices.set(audioFile, result.voice);
@@ -3187,6 +3198,8 @@ async function prepareSpeech(
     if (!(error instanceof VoiceProfileUnavailableError) || requireClone) throw error;
     const warning = `Cloned voice "${selectedVoice}" is missing — falling back to edge-tts (${TTS_DEFAULTS.voice})`;
     console.error(`[voicelayer] ${warning}`);
+    options?.speechArchive?.synthesisFallback("clone_profile_missing");
+    options?.speechArchive?.synthesisUnavailable("clone-profile");
     resolved = {voice: TTS_DEFAULTS.voice, engine: "edge-tts", warning};
   }
   // Keep engine-specific text and ranges together, including clone→Edge fallback.
@@ -3290,9 +3303,12 @@ async function prepareSpeech(
           ...playback,
         };
       }
+      options?.speechArchive?.synthesisFallback("clone_synthesis_failed");
       console.error(
         `[voicelayer] XTTS inference failed for "${resolved.voice}" -- trying F5-TTS`,
       );
+    } else {
+      options?.speechArchive?.synthesisUnavailable("xtts-v2");
     }
 
     // Tier 1a: F5-TTS MLX (local zero-shot, no daemon needed)
@@ -3332,9 +3348,12 @@ async function prepareSpeech(
           ...playback,
         };
       }
+      options?.speechArchive?.synthesisFallback("clone_synthesis_failed");
       console.error(
         `[voicelayer] F5-TTS synthesis failed for "${resolved.voice}" -- trying Qwen3 daemon`,
       );
+    } else {
+      options?.speechArchive?.synthesisUnavailable("f5-tts-mlx");
     }
 
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
@@ -3363,6 +3382,8 @@ async function prepareSpeech(
         ...playback,
       };
     }
+
+    options?.speechArchive?.synthesisFallback("clone_synthesis_failed");
 
     // All cloned engines failed. Fail-closed when the clone is mandated;
     // otherwise keep the resilient edge-tts fallback.

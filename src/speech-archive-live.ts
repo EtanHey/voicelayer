@@ -22,6 +22,12 @@ function releaseAudio(operation: Extract<ArchiveWrite, { kind: "audio" }>): void
   retainedAudio.delete(operation.file);
   if (cleanupRequested.delete(operation.file)) { try { unlinkSync(operation.file); } catch {} }
 }
+export interface SynthesisDiagnostics {
+  rate: string | null;
+  attempts: string[];
+  unavailable: string[];
+  fallbackReason: string | null;
+}
 export class LiveSpeechArchive {
   private readonly root = process.env.QA_VOICE_RECORDINGS_DIR;
   private state: SpeechState = "preparing";
@@ -146,22 +152,31 @@ export class LiveSpeechArchive {
   }
   get terminal(): boolean { return ["completed", "stopped", "cancelled", "failed", "interrupted"].includes(this.state); }
   finish(to: "completed" | "stopped" | "cancelled" | "failed", reason: string): void { this.move(to, reason); }
-  private synthesisAttempts: string[] = [];
-  private synthesisRate: string | null = null;
-  synthesisAttempt(engine: string): void { this.synthesisAttempts.push(engine); }
-  synthesisConfiguredRate(rate: string): void { this.synthesisRate = rate; }
+  private synthesis: SynthesisDiagnostics = { rate: null, attempts: [], unavailable: [], fallbackReason: null };
+  resetSynthesisDiagnostics(): void { this.synthesis = { rate: null, attempts: [], unavailable: [], fallbackReason: null }; }
+  synthesisAttempt(engine: string): void { this.synthesis.attempts.push(engine); }
+  synthesisUnavailable(engine: string): void { this.synthesis.unavailable.push(engine); }
+  synthesisFallback(reason: string): void { this.synthesis.fallbackReason = reason; }
+  synthesisConfiguredRate(rate: string): void { this.synthesis.rate = rate; }
+  synthesisDiagnostics(value?: SynthesisDiagnostics): void {
+    this.resetSynthesisDiagnostics();
+    if (value) this.synthesis = { ...value, attempts: [...value.attempts], unavailable: [...value.unavailable] };
+  }
   generated(file: string, text: string, voice: string, profile: string, engine: string, index = 0, duration_ms: number | null = null): void {
-    const words = text.trim() ? text.trim().split(/\s+/u).length : 0;
-    console.error(JSON.stringify({
-      event: "narration_generated", session_id: this.key,
-      kind: this.storedContext?.metadata.request_source === "ask_prompt" ? "ask" : profile === "long" ? "read" : "speak",
-      engine_chosen: engine, engine_tried: this.synthesisAttempts.length ? [...this.synthesisAttempts] : null, fallback_reason: this.synthesisAttempts.length > 1 ? "preceding_engine_unavailable_or_failed" : null,
-      voice, configured_rate: this.synthesisRate ?? this.storedContext?.metadata.requested.rate_raw ?? this.storedContext?.metadata.requested.rate ?? null,
-      word_count: words, audio_duration_ms: duration_ms,
-      wpm: duration_ms !== null && duration_ms > 0 ? words * 60000 / duration_ms : null,
-      build_sha: this.storedContext?.metadata.build.git_sha ?? null, chunk_index: index,
-    }));
     this.audio({ kind: "audio", file, duration_ms, generated: { text, voice, profile, engine, index, generated_at: new Date().toISOString() } });
+    try {
+      const words = text.trim() ? text.trim().split(/\s+/u).length : 0;
+      console.error(JSON.stringify({
+        event: "narration_generated", session_id: this.key,
+        kind: this.storedContext?.metadata?.request_source === "ask_prompt" ? "ask" : profile === "long" ? "read" : "speak",
+        engine_chosen: engine, engine_tried: this.synthesis.attempts.length ? [...this.synthesis.attempts] : null,
+        engine_unavailable: [...this.synthesis.unavailable], fallback_reason: this.synthesis.fallbackReason,
+        voice, configured_rate: this.synthesis.rate,
+        word_count: words, audio_duration_ms: duration_ms,
+        wpm: duration_ms !== null && duration_ms > 0 ? words * 60000 / duration_ms : null,
+        build_sha: this.storedContext?.metadata?.build?.git_sha ?? null, chunk_index: index,
+      }));
+    } catch { /* Diagnostics must not prevent audio archival or playback. */ }
   }
   keepAudio(file: string, duration_ms: number | null = null): void { this.audio({ kind: "audio", file, duration_ms }); }
   private audio(operation: Extract<ArchiveWrite, { kind: "audio" }>): void {
@@ -181,7 +196,7 @@ export async function settleSpeechArchivesForUpdate(owner: LiveSpeechArchive | S
   await archive?.waitForDurable();
 }
 export function beginSpeechArchive(text: string, context?: SpeakArchiveContext): LiveSpeechArchive {
-  if (context) { const current = liveArchives.get(context.id); if (current) return current; }
+  if (context) { const current = liveArchives.get(context.id); if (current) { current.resetSynthesisDiagnostics(); return current; } }
   const archive = new LiveSpeechArchive(context, text);
   liveArchives.set(archive.key, archive);
   return archive;
