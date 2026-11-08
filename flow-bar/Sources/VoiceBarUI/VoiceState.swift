@@ -392,7 +392,8 @@ private struct HistoryRetranscriptionRequest {
 
 @Observable
 public final class VoiceState {
-    private static let maxRecentTranscriptions = 8
+    /// Etan, 2026-11-08: History lists up to 20 rows, scrollable inside the panel.
+    private static let maxRecentTranscriptions = NotchHistoryMorph.loadedRows
     private static let recentTranscriptionsDefaultsKey = "VoiceBar.recentTranscriptions"
     private static let recentTranscriptionEntriesDefaultsKey = "VoiceBar.recentTranscriptionEntries.v1"
     private static let maxVocabularyTerms = 512

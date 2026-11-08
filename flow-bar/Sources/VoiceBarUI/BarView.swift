@@ -713,7 +713,7 @@ public struct BarView: View {
         dragHistoryRows(to: y, time: time)
     }
 
-    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past 7 and the last row.
+    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past either detent.
     private func dragHistoryRows(to y: CGFloat, time: TimeInterval) {
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
         guard let rows = historyRowsPull.move(
@@ -728,7 +728,7 @@ public struct BarView: View {
         withTransaction(follow) { historyRowsExtent = rows }
     }
 
-    /// A released (or cancelled) handle settles on the nearest whole row with the `pull` spring; the hit region and
+    /// A released (or cancelled) handle settles on the nearer detent with the `pull` spring; the hit region and
     /// the session's remembered height take the settled rows at once. A press that never moved changes nothing.
     private func endHistoryRowsPull(cancelled: Bool) {
         presentationModel?.setHistoryPullActive(false)
@@ -1523,7 +1523,8 @@ public struct BarView: View {
     /// VoiceOver's adjust on the extend handle: one row at a time, instantly.
     private func adjustHistoryRows(by delta: Int) {
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
-        let rows = NotchHistoryMorph.snappedRows(CGFloat(historyRows + delta), maximum: maximum)
+        // An assistive step moves between the two detents, like a pull.
+        let rows = delta > 0 ? max(NotchHistoryMorph.visibleRows, maximum) : NotchHistoryMorph.visibleRows
         guard rows != historyRows else { return }
         historyRows = rows
         presentationModel?.setHistoryRows(rows)
