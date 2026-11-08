@@ -18,5 +18,25 @@ for (const engine of ["edge", "clone"] as const) {
 
 test("AGY pronunciation is case sensitive and Unicode whole word", () => {
   expect(applyPronunciation("AGY agy XAGY AGY2 AGY_ שלוםAGY AGYשלום (AGY)"))
-    .toBe("antigravity agy XAGY AGY2 AGY_ שלוםAGY AGYשלום (antigravity)");
+    .toBe("antigravity aggy XAGY AGY2 AGY_ שלוםAGY AGYשלום (antigravity)");
+});
+
+for (const engine of ["edge", "clone"] as const) {
+  for (const [text, word] of [
+    ["I used AGY yesterday", "antigravity"], ["Agy is great", "antigravity"],
+    ["run `AGY --agent video-qa`", "aggy"], ["$ AGY run x", "aggy"],
+    ["```sh\nagy run x\n```", "aggy"], ["/opt/homebrew/bin/agy", "aggy"],
+    ["agy", "aggy"], ["AGY --agent x", "aggy"],
+  ]) test(`${engine}: context ${text}`, () => {
+    expect(projectSpeakableText(text, pronunciationRules(), engine).speechText).toContain(word);
+  });
+}
+
+import { updatePersonalPronunciation } from "../pronunciation";
+test("personal agy wins in prose, inline, paths and fences for both engines", () => {
+  updatePersonalPronunciation("agy", "custom command");
+  try {
+    for (const engine of ["edge", "clone"] as const) for (const text of ["AGY is great", "`agy -p`", "/bin/agy", "```sh\nAGY run\n```"])
+      expect(projectSpeakableText(text, pronunciationRules(), engine).speechText).toContain("custom command");
+  } finally { updatePersonalPronunciation("agy", undefined); }
 });

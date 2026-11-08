@@ -3,7 +3,7 @@ import { inlineCodeSpanEnds } from "./tts/inline-code-spans";
 import type { ProjectionRange } from "./tts/structured-speech";
 
 export type SpeakableEngine = "edge" | "clone";
-export interface PronunciationRule { pattern: RegExp; replacement: string }
+export interface PronunciationRule { pattern: RegExp; replacement: string; agyDefault?: boolean }
 export interface SpeakableText { displayText: string; speechText: string; ranges: ProjectionRange[] }
 interface Piece { start: number; end: number; text: string; protected?: boolean; atomic?: boolean; literal?: boolean }
 const ones = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split(" ");
@@ -248,8 +248,33 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   const pieces: Piece[] = displayText ? [{start: 0, end: displayText.length, text: displayText}] : [];
   const edit = (pattern: RegExp, replacement: string | ((m: RegExpExecArray) => string | undefined), protect = false, skip = false, skipLiteral = true) =>
     rewrite(pieces, pattern, typeof replacement === "string" ? () => replacement : replacement, protect, skip, skipLiteral);
+  // Resolve AGY against source context before markdown removal or global rules.
+  if (rules.some(rule => rule.agyDefault)) {
+    const spans = [...inlineCodeSpanEnds(displayText, true)];
+    const defaults = rules.filter(rule => !rule.agyDefault);
+    edit(/(?<![\p{L}\p{M}\p{N}_])(?:AGY|Agy|agy)(?![\p{L}\p{M}\p{N}_])/gu, m => {
+      let personal = m[0];
+      for (const rule of defaults) personal = personal.replace(rule.pattern, rule.replacement);
+      if (personal !== m[0]) return personal;
+      const before = displayText.slice(0, m.index);
+      const command = m[0] === "agy" || spans.some(([a, b]) => a <= m.index && m.index < b)
+        || /[\/\\]$/.test(before)
+        || /(?:^|[\n;|&])[ \t]*(?:[$%][ \t]+)?$/.test(before)
+          && /^[ \t]+(?:--?\w|[a-z][\w-]*(?:\s|$))/.test(displayText.slice(m.index + m[0].length))
+          && !/^[ \t]+(?:is|was|are|yesterday|today)\b/.test(displayText.slice(m.index + m[0].length));
+      return command ? "aggy" : "antigravity";
+    }, true);
+  }
   // Structural syntax first. No generated table headers or guessed capture structure.
-  if (/[`~]{3}/.test(displayText)) edit(/^\s{0,3}(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^\s{0,3}\1\s*$/gm, "code block", true);
+  if (/[`~]{3}/.test(displayText)) edit(/^\s{0,3}(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^\s{0,3}\1\s*$/gm, m => {
+    let at = 0;
+    const names = pieces.flatMap(piece => {
+      const start = at; at += piece.text.length;
+      return start >= m.index && at <= m.index + m[0].length && piece.protected
+        && /^(?:AGY|Agy|agy)$/.test(displayText.slice(piece.start, piece.end)) ? [piece.text] : [];
+    });
+    return ["code block", ...names].join(" ");
+  }, true);
   {
     const input = pieces.map(p => p.text).join("");
     const code = [...inlineCodeSpanEnds(input, true)];

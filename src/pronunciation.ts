@@ -32,6 +32,7 @@ export function pronunciationFilePath(
 export interface PronunciationEntry {
   pattern: RegExp;
   replacement: string;
+  agyDefault?: boolean;
 }
 
 let cachedEntries: PronunciationEntry[] | null = null;
@@ -150,14 +151,15 @@ export function pronunciationRules(): readonly PronunciationEntry[] {
   let personal: PronunciationEntry[] = [];
   try {
     personal = Object.entries(readPersonalPronunciations()).map(([term, replacement]) => ({
-      pattern: new RegExp(`(?<![\\p{L}\\p{M}\\p{N}_])${escapeRegex(term)}(?![\\p{L}\\p{M}\\p{N}_])`, "gu"),
+      pattern: new RegExp(`(?<![\\p{L}\\p{M}\\p{N}_])${escapeRegex(term)}(?![\\p{L}\\p{M}\\p{N}_])`, term.toLowerCase() === "agy" ? "giu" : "gu"),
       // Rules use String.replace syntax. User entries are literal speech.
       replacement: replacement.split("$").join("$$"),
     }));
   } catch { /* A malformed/unreadable private file must not break narration. */ }
-  return [...loadEntries(), ...personal, {
-    pattern: /(?<![\p{L}\p{M}\p{N}_])AGY(?![\p{L}\p{M}\p{N}_])/gu,
+  return [...loadEntries(), ...personal, { pattern: /(?<![\p{L}\p{M}\p{N}_])agy(?![\p{L}\p{M}\p{N}_])/gu, replacement: "aggy", agyDefault: true }, {
+    pattern: /(?<![\p{L}\p{M}\p{N}_])(?:AGY|Agy)(?![\p{L}\p{M}\p{N}_])/gu,
     replacement: "antigravity",
+    agyDefault: true,
   }];
 }
 
