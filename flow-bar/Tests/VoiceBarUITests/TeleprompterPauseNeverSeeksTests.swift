@@ -106,8 +106,8 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
                     let commands = sent()[before...].compactMap { $0["cmd"] as? String }
                     XCTAssertFalse(commands.contains("seek") || commands.contains("speech_seek"),
                                    "clock \(clock) s, click at Pause (\(dx), \(dy)) sent \(commands), not only a pause")
-                    XCTAssertTrue(commands.allSatisfy { $0 == "pause" },
-                                  "clock \(clock) s, click at Pause (\(dx), \(dy)) sent \(commands)")
+                    // Exactly one pause: a click on Pause that does nothing is also a bug (review P3).
+                    XCTAssertEqual(commands, ["pause"], "clock \(clock) s, click at Pause (\(dx), \(dy)) sent \(commands)")
                 }
             }
             XCTAssertTrue(sent().contains { $0["cmd"] as? String == "pause" }, "clock \(clock) s: Pause dispatched")
