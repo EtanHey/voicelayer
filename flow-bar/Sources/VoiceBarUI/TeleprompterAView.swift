@@ -114,6 +114,10 @@ public struct TeleprompterAView: View {
                 }
                 .foregroundStyle(ink)
                 .font(.system(size: TeleprompterA.fontSize, weight: layout.isHeading ? .semibold : .medium))
+                // QA 2026-11-08 ("Codex" showed as "cod…"): the model already wrapped whole words to the column, so a
+                // word never gives up width. Left flexible, the line's HStack tail-truncated a last word that fit
+                // (154 pt measured in a 160 pt column, "Codex." drawn 46.5 of its 55 pt).
+                .fixedSize()
                 .padding(.leading, word == model.lines[line].lowerBound || layout.gluesToPrevious ? 0 : model.spacing)
             }
         }

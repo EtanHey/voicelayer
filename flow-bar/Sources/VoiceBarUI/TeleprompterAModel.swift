@@ -182,9 +182,11 @@ struct TeleprompterAModel {
         }
         tokenOfWord = pieces.count == words.count ? pieces : nil
         spacing = Self.width(" ", heading: false)
+        // Each piece is its own Text in the view, rounded on its own; measure it the same way, so a decorated or
+        // separated word can never draw wider than the wrap counted.
         let widths = layouts.map { layout in
-            Self.width((layout.decoration.map { $0 + " " } ?? "") + (layout.separator ?? "") + layout.displayText,
-                       heading: layout.isHeading)
+            [layout.decoration.map { $0 + " " }, layout.separator, layout.displayText].compactMap { $0 }
+                .reduce(CGFloat(0)) { $0 + Self.width($1, heading: layout.isHeading) }
         }
         lines = TeleprompterA.lines(widths: widths, breaks: layouts.map { $0.lineBreak != .none },
                                     glues: layouts.map(\.gluesToPrevious), spacing: spacing, column: column)
