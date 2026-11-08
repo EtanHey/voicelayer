@@ -155,7 +155,10 @@ export function pronunciationRules(): readonly PronunciationEntry[] {
       replacement: replacement.split("$").join("$$"),
     }));
   } catch { /* A malformed/unreadable private file must not break narration. */ }
-  return [...loadEntries(), ...personal];
+  return [...loadEntries(), ...personal, {
+    pattern: /(?<![\p{L}\p{M}\p{N}_])AGY(?![\p{L}\p{M}\p{N}_])/gu,
+    replacement: "antigravity",
+  }];
 }
 
 /** Separate from the legacy YAML dictionary; never seeded or shipped. */
