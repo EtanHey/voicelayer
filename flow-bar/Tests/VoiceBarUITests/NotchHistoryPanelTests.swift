@@ -81,9 +81,10 @@ final class NotchHistoryPanelTests: XCTestCase {
         ).flushTop
         XCTAssertEqual(drawn.topWidth, 420, "the morph draws the top row as wide as the panel")
         XCTAssertEqual(layout.bodyRect.midX, layout.coreRect.midX, "centred on the housing")
-        XCTAssertEqual(history.lowerSurfaceHeight, 348)
-        XCTAssertEqual(history.totalHeight, 380)
-        XCTAssertEqual(NotchHistoryMorph.listHeight, 322)
+        // Collapsed six rows (Etan, 2026-11-08, superseding 11-03's seven).
+        XCTAssertEqual(history.lowerSurfaceHeight, 302)
+        XCTAssertEqual(history.totalHeight, 334)
+        XCTAssertEqual(NotchHistoryMorph.listHeight, 276)
         XCTAssertEqual(NotchHistoryMorph.bodyWidth - 2 * NotchHistoryMorph.listHorizontalInset, 404)
     }
 
