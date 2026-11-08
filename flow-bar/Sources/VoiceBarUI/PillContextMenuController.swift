@@ -219,6 +219,8 @@ public final class PillContextMenuController: NSObject {
         return menu
     }
 
+    public static let recentTranscriptsMenuLimit = 8
+
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
         let entries = recentTranscriptionEntriesProvider()
@@ -231,7 +233,8 @@ public final class PillContextMenuController: NSObject {
         }
 
         let now = now()
-        for entry in entries {
+        // History keeps 20 rows (Etan, 2026-11-08); the submenu keeps its eight (Etan: the right-click menu is fine).
+        for entry in entries.prefix(Self.recentTranscriptsMenuLimit) {
             let item = NSMenuItem(
                 title: Self.recentTranscriptMenuTitle(
                     for: entry.text,
