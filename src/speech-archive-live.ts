@@ -146,7 +146,21 @@ export class LiveSpeechArchive {
   }
   get terminal(): boolean { return ["completed", "stopped", "cancelled", "failed", "interrupted"].includes(this.state); }
   finish(to: "completed" | "stopped" | "cancelled" | "failed", reason: string): void { this.move(to, reason); }
+  private synthesisAttempts: string[] = [];
+  private synthesisRate: string | null = null;
+  synthesisAttempt(engine: string): void { this.synthesisAttempts.push(engine); }
+  synthesisConfiguredRate(rate: string): void { this.synthesisRate = rate; }
   generated(file: string, text: string, voice: string, profile: string, engine: string, index = 0, duration_ms: number | null = null): void {
+    const words = text.trim() ? text.trim().split(/\s+/u).length : 0;
+    console.error(JSON.stringify({
+      event: "narration_generated", session_id: this.key,
+      kind: this.storedContext?.metadata.request_source === "ask_prompt" ? "ask" : profile === "long" ? "read" : "speak",
+      engine_chosen: engine, engine_tried: this.synthesisAttempts.length ? [...this.synthesisAttempts] : null, fallback_reason: this.synthesisAttempts.length > 1 ? "preceding_engine_unavailable_or_failed" : null,
+      voice, configured_rate: this.synthesisRate ?? this.storedContext?.metadata.requested.rate_raw ?? this.storedContext?.metadata.requested.rate ?? null,
+      word_count: words, audio_duration_ms: duration_ms,
+      wpm: duration_ms !== null && duration_ms > 0 ? words * 60000 / duration_ms : null,
+      build_sha: this.storedContext?.metadata.build.git_sha ?? null, chunk_index: index,
+    }));
     this.audio({ kind: "audio", file, duration_ms, generated: { text, voice, profile, engine, index, generated_at: new Date().toISOString() } });
   }
   keepAudio(file: string, duration_ms: number | null = null): void { this.audio({ kind: "audio", file, duration_ms }); }

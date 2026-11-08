@@ -839,6 +839,7 @@ async function playClonedAudio(
     "audioArtifact" | "playbackId" | "playbackOutcome"
   >
 > {
+  options?.speechArchive?.synthesisConfiguredRate(options?.rate ?? "+0%");
   const percentage = parseInt(options?.rate ?? "+0%", 10);
   if (Number.isFinite(percentage) && percentage !== 0) {
     const adjusted = ttsFile.replace(/\.mp3$/, ".rate.mp3");
@@ -2704,6 +2705,7 @@ async function prepareSelectionReadStartAdmitted(
         spokenText: chunk.spokenText, ...read.provenance(0) };
     } finally { await read.close(); }
   } else prepared = await synthesizeLongReadChunk(displayChunk, profile, signal, policy, 0, rules);
+  archive?.synthesisConfiguredRate(profile.rate);
   archive?.generated(prepared.chunk.audioFile, prepared.spokenText ?? displayChunk, prepared.voice, profile.kind ?? "long", prepared.engine, 0, prepared.chunk.durationMs);
   if (signal.aborted) { disposeLongReadChunkFiles(prepared.chunk.audioFile); throwIfAbortedSafe(signal); }
   return start = new PreparedReadStart(identity, prepared,
@@ -2895,6 +2897,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
           : lease?.take(preparedStartIdentity(displayChunk, profile, policy))
           ?? await synthesizeLongReadChunk(displayChunk, profile, signal, policy);
         const { audioFile } = result.chunk;
+        archive.synthesisConfiguredRate(profile.rate);
         archive.generated(audioFile, result.spokenText ?? result.projection?.speechText ?? displayChunk,
           result.voice, profile.kind ?? "long", result.engine, index, result.chunk.durationMs);
         chunkVoices.set(audioFile, result.voice);
@@ -3257,6 +3260,7 @@ async function prepareSpeech(
 
     // Tier 0: XTTS-v2 fine-tuned (best quality -- captures cadence + timbre)
     if (isXTTSAvailable(profileAssetVoice) && profile?.reference_clip) {
+      options?.speechArchive?.synthesisAttempt("xtts-v2");
       const wavPath = await synthesizeXTTS(
         spokenText,
         profileAssetVoice,
@@ -3298,6 +3302,7 @@ async function prepareSpeech(
       profile.reference_clip &&
       profile.reference_text
     ) {
+      options?.speechArchive?.synthesisAttempt("f5-tts-mlx");
       const wavPath = await synthesizeF5TTS(
         spokenText,
         profile.reference_clip,
@@ -3333,6 +3338,7 @@ async function prepareSpeech(
     }
 
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
+    options?.speechArchive?.synthesisAttempt("qwen3-tts");
     const audioBuffer = await synthesizeCloned(spokenText, resolved.voice, signal);
     throwIfAbortedSafe(signal);
     if (audioBuffer) {
@@ -3418,6 +3424,8 @@ async function speakWithEdgeTTS(
 
   // Auto-slow for long text
   rate = adjustRateForLength(rate, spokenText.length);
+  options?.speechArchive?.synthesisConfiguredRate(rate);
+  options?.speechArchive?.synthesisAttempt("edge-tts");
 
   const ttsFile = ttsFilePath(process.pid, ttsCounter++);
   const scriptPath = new URL("../scripts/edge-tts-words.py", import.meta.url)
