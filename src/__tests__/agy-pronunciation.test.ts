@@ -27,6 +27,7 @@ for (const engine of ["edge", "clone"] as const) {
     ["run `AGY --agent video-qa`", "aggy"], ["$ AGY run x", "aggy"],
     ["```sh\nagy run x\n```", "aggy"], ["/opt/homebrew/bin/agy", "aggy"],
     ["agy", "aggy"], ["AGY --agent x", "aggy"],
+    ["AGY runs the review", "antigravity"], ["AGY handles it\nthen more", "antigravity"],
   ]) test(`${engine}: context ${text}`, () => {
     expect(projectSpeakableText(text, pronunciationRules(), engine).speechText).toContain(word);
   });

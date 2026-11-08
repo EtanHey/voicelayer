@@ -259,9 +259,9 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
       const before = displayText.slice(0, m.index);
       const command = m[0] === "agy" || spans.some(([a, b]) => a <= m.index && m.index < b)
         || /[\/\\]$/.test(before)
-        || /(?:^|[\n;|&])[ \t]*(?:[$%][ \t]+)?$/.test(before)
-          && /^[ \t]+(?:--?\w|[a-z][\w-]*(?:\s|$))/.test(displayText.slice(m.index + m[0].length))
-          && !/^[ \t]+(?:is|was|are|yesterday|today)\b/.test(displayText.slice(m.index + m[0].length));
+        // Uppercase AGY is prose unless a shell prompt precedes it or a flag follows it at line start.
+        || /(?:^|[\n;|&])[ \t]*[$%][ \t]+$/.test(before)
+        || /(?:^|[\n;|&])[ \t]*$/.test(before) && /^[ \t]+--?\w/.test(displayText.slice(m.index + m[0].length));
       return command ? "aggy" : "antigravity";
     }, true);
   }
