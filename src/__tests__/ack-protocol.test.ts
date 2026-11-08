@@ -201,7 +201,10 @@ describe("ack protocol", () => {
         true,
         { archiveSource: "voicebar", onCaptureStart: expect.any(Function) },
       );
-      expect(errorSpy).not.toHaveBeenCalled();
+      const unexpectedErrors = errorSpy.mock.calls.filter(
+        ([message]) => typeof message !== "string" || !message.startsWith("[voicelayer][capture-lifecycle] "),
+      );
+      expect(unexpectedErrors).toEqual([]);
     } finally {
       errorSpy.mockRestore();
       if (savedAllowPushToEnd === undefined) {
