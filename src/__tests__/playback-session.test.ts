@@ -198,26 +198,38 @@ describe("NoZombie, OneLiveSession, previous read, seek, Esc", () => {
     healthy(engine);
   });
 
-  it("previous read plays the earlier read from word 0 and puts the current one back in the queue", () => {
+  it("previous read holds the read on screen at its word; it returns paused there after the replay", () => {
     const engine = new PlaybackSessionEngine();
     playing(engine, "r1");
-    engine.end("r1");
+    engine.word("r1", 3);
+    engine.teleprompter(3, "r1");
+    expect(engine.previous()).toMatchObject({ ok: true, id: "r1", word: 3, state: "queued" });
+    expect(engine.live()).toBeUndefined();
+    expect(engine.begin("r1", "read", 10)).toEqual({ ok: false, reason: "held by previous read" });
     engine.playerExited("r1");
-    playing(engine, "r2");
-    engine.word("r2", 3);
-    expect(engine.previousOf("r2")).toBe("r1");
-    expect(engine.previous()).toMatchObject({ ok: true, id: "r1", word: 0 });
-    expect(engine.get("r2")!.state).toBe("queued");
-    expect(engine.live()!.id).toBe("r1");
-    engine.playerExited("r2");
-    expect(engine.ready("r1")).toMatchObject({ ok: true, word: 0 });
+    // The replay is its own session from word 0.
+    playing(engine, "replay-1", 6);
+    expect(engine.previousReturn()).toEqual({ ok: false, reason: "previous read still on screen" });
+    engine.word("replay-1", 6);
+    engine.end("replay-1");
+    expect(engine.previousReturn()).toMatchObject({ ok: true, id: "r1", word: 3, state: "paused" });
+    expect(engine.tele).toBe(3);
+    engine.playerExited("replay-1");
+    expect(engine.resume("r1")).toMatchObject({ word: 3 });
     healthy(engine);
   });
 
-  it("previous read with nothing before it is refused", () => {
+  it("a held read superseded by a new read ends", () => {
     const engine = new PlaybackSessionEngine();
     playing(engine, "r1");
-    expect(engine.previous()).toEqual({ ok: false, reason: "no previous read" });
+    engine.previous();
+    engine.dropPrevious();
+    expect(engine.get("r1")!.state).toBe("ended");
+  });
+
+  it("previous read with nothing on screen is refused by the engine (the driver replays without a hold)", () => {
+    const engine = new PlaybackSessionEngine();
+    expect(engine.previous()).toEqual({ ok: false, reason: "nothing on screen" });
   });
 
   it("a seek lands on its word and the teleprompter follows", () => {
@@ -290,6 +302,7 @@ describe("random walk: no operation order breaks an invariant", () => {
           () => engine.seekDone(id),
           () => engine.esc(random(2) ? id : undefined),
           () => engine.previous(),
+          () => engine.previousReturn(),
           () => engine.askBegin(random(3) ? undefined : engine.get(id)?.cursor),
           () => engine.askPromptStart(),
           () => engine.askPromptEnd(),
@@ -304,7 +317,7 @@ describe("random walk: no operation order breaks an invariant", () => {
         // Weighted toward the play/pause/resume/word edges so deep behaviours (resume after a
         // mid-read pause, an ask over a resumed read) are reached often, not by luck.
         // Odd walks are weighted, even walks uniform: together they reach both shallow and deep orders.
-        const weights = weighted ? [1, 4, 6, 6, 1, 4, 3, 4, 1, 2, 1, 1, 1, 2, 2, 1, 2, 2, 1, 2, 2, 1] : ops.map(() => 1);
+        const weights = weighted ? [1, 4, 6, 6, 1, 4, 3, 4, 1, 2, 1, 1, 1, 1, 2, 2, 1, 2, 2, 1, 2, 2, 1] : ops.map(() => 1);
         let pick = random(weights.reduce((a, b) => a + b, 0)), index = 0;
         while (pick >= weights[index]) pick -= weights[index++];
         ops[index]();

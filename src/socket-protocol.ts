@@ -1,3 +1,4 @@
+import { isPlaybackSpeed } from "./playback/session";
 import type { StructuredChunkDisplay } from "./tts/structured-display";
 /**
  * Socket protocol types for VoiceLayer <-> Voice Bar communication.
@@ -66,6 +67,8 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   duration_ms?: number;
   /** This player's whole audio (chunk or utterance), measured from long_read.chunk_start_ms (0 without one). */
   chunk_duration_ms?: number;
+  /** Lane B: audio ms per wall ms for this player (absent = 1×). The client clock runs at this speed. */
+  playback_rate?: number;
   /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
   stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
@@ -375,6 +378,8 @@ export type AckCommand =
   | "stop"
   | "cancel"
   | "replay"
+  | "previous_read"
+  | "set_playback_speed"
   | "retranscribe_last"
   | "retranscribe_recording"
   | "toggle"
@@ -548,6 +553,17 @@ export interface ReplayCommand extends SocketCommandBase {
   cmd: "replay";
 }
 
+/** Lane B: replay the previous finished narration from its first word; the read on screen waits, paused at its word. */
+export interface PreviousReadCommand extends SocketCommandBase {
+  cmd: "previous_read";
+}
+
+/** Lane B: the listening speed for every player (0.75, 1, 1.25, 1.5, 2). A playing read continues from its word. */
+export interface SetPlaybackSpeedCommand extends SocketCommandBase {
+  cmd: "set_playback_speed";
+  speed: number;
+}
+
 export interface RetranscribeLastCommand extends SocketCommandBase {
   cmd: "retranscribe_last";
 }
@@ -693,6 +709,8 @@ export type SocketCommand =
   | StopCommand
   | CancelCommand
   | ReplayCommand
+  | PreviousReadCommand
+  | SetPlaybackSpeedCommand
   | RetranscribeLastCommand
   | RetranscribeRecordingCommand
   | ToggleCommand
@@ -1002,6 +1020,11 @@ export function parseCommand(line: string): SocketCommand | null {
         );
       case "replay":
         return withCommandId<ReplayCommand>({ cmd: "replay" }, id);
+      case "previous_read":
+        return withCommandId<PreviousReadCommand>({ cmd: "previous_read" }, id);
+      case "set_playback_speed":
+        if (!isPlaybackSpeed(parsed.speed)) return null;
+        return withCommandId<SetPlaybackSpeedCommand>({ cmd: "set_playback_speed", speed: parsed.speed }, id);
       case "retranscribe_last":
         return withCommandId<RetranscribeLastCommand>(
           { cmd: "retranscribe_last" },

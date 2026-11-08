@@ -7,6 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, setSystemTime, spyOn } fro
 import * as tts from "../tts";
 import * as amplitude from "../playback-amplitude";
 import * as socket from "../socket-client";
+import * as input from "../input";
+import * as recording from "../recording-state";
+import * as booking from "../session-booking";
+import { handleVoiceAsk } from "../handlers";
+import { handleSocketCommand } from "../socket-handlers";
+import { addToHistory } from "../tts";
+import { playbackSessionViolations, resetPlaybackSessionLedger } from "../playback/ledger";
+import { writeFileSync } from "fs";
 import { TEST_TMP } from "./setup/test-tmp";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
@@ -24,6 +32,7 @@ let restore: (() => void)[];
 
 beforeEach(() => {
   at(0);
+  resetPlaybackSessionLedger();
   players = fixtureBarrier(); trims = fixtureBarrier(); events = []; restore = [];
   const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
     const exit = deferred<number>();
@@ -94,5 +103,180 @@ describe("Etan bug: pause jumps back (QA 2026-11-08, pause button → 0:00)", ()
     at(4300);
     // The client heard word 3 a moment ago; within tolerance, its clock wins over the spawn clock.
     expect(tts.pausePlayback({}, 3900)).toMatchObject({ outcome: "accept", offset_ms: 3000 });
+  });
+});
+
+const read = (id = "read-1", file = "read.mp3") => tts.playAudioNonBlocking(`${TEST_TMP}/${file}`, {
+  text, voice: "test", durationMs: 10_000, wordBoundaries: words,
+  longRead: { id, chunk_index: 0, chunk_count: 1, chunk_start_ms: 0 } });
+const states = (state: string) => events.filter(e => e.type === "playback_state" && e.state === state);
+
+describe("socket E2E: the playback engine through real commands (VoiceBar's wire)", () => {
+  it("pause → resume by socket lands on the paused word, even with VoiceBar's reset clock", async () => {
+    read();
+    await players.at(0);
+    at(4200);
+    expect(await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 0 })).toMatchObject({ outcome: "accept", offset_ms: 4000 });
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    expect(await handleSocketCommand({ cmd: "resume" })).toMatchObject({ outcome: "accept", offset_ms: 4000 });
+    await players.at(1); await fixtureCheckpoint();
+    expect(states("resumed").at(-1)).toMatchObject({ word_index: 4, offset_ms: 4000 });
+    expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "playing", session_id: "read-1", word_index: 4 });
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  it("Esc (stop) during a resumed read ends it and nothing restarts", async () => {
+    const handle = read();
+    await players.at(0);
+    at(2100);
+    await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 2100 });
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    await handleSocketCommand({ cmd: "resume" });
+    const resumed = await players.at(1); await fixtureCheckpoint();
+    at(3000);
+    const ack = handleSocketCommand({ cmd: "stop", playback_elapsed_ms: 2900 });
+    resumed.exit.resolve(143);
+    expect(await ack).toMatchObject({ outcome: "accept" });
+    expect((await handle.exited).status).toBe("interrupted");
+    await fixtureCheckpoint();
+    expect(players.values).toHaveLength(2);
+    expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "idle" });
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  it("seek lands on its word and the session follows", async () => {
+    read();
+    await players.at(0);
+    at(1500);
+    expect(await handleSocketCommand({ cmd: "seek", offset_ms: 6000 })).toMatchObject({ outcome: "accept", offset_ms: 6000 });
+    (await trims.at(0)).exit.resolve(0);
+    await players.at(1); await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 6000 });
+    expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "playing", word_index: 6 });
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  it("previous read replays the last narration from word 0; the read on screen returns paused at its word", async () => {
+    const earlier = `${TEST_TMP}/earlier.mp3`;
+    writeFileSync(earlier, "fake audio");
+    addToHistory("An earlier read about Codex", earlier, "test");
+    read();
+    await players.at(0);
+    at(5300);
+    expect(await handleSocketCommand({ cmd: "previous_read" })).toMatchObject({ outcome: "accept" });
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    const replay = await players.at(1); await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text: "An earlier read about Codex" });
+    expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "playing", word_index: 0 });
+    replay.exit.resolve(0); await fixtureCheckpoint(); await fixtureCheckpoint();
+    expect(states("paused").at(-1)).toMatchObject({ word_index: 5, offset_ms: 5000, pause_owner: "user" });
+    expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "paused", session_id: "read-1", word_index: 5 });
+    expect(await handleSocketCommand({ cmd: "resume" })).toMatchObject({ outcome: "accept", offset_ms: 5000 });
+    await players.at(2);
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  it("previous read with nothing on screen replays the last narration", async () => {
+    const earlier = `${TEST_TMP}/earlier-idle.mp3`;
+    writeFileSync(earlier, "fake audio");
+    addToHistory("The last thing read", earlier, "test");
+    expect(await handleSocketCommand({ cmd: "previous_read" })).toMatchObject({ outcome: "accept" });
+    await players.at(0);
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text: "The last thing read" });
+  });
+
+  it("set_playback_speed: 1.5× restarts the playing read at its word with afplay -r, and the clock scales", async () => {
+    read();
+    await players.at(0);
+    at(3400);
+    expect(await handleSocketCommand({ cmd: "set_playback_speed", speed: 1.5 })).toMatchObject({ outcome: "accept" });
+    (await trims.at(0)).exit.resolve(0);
+    const fast = await players.at(1); await fixtureCheckpoint();
+    expect(fast.argv).toContain("-r");
+    expect(fast.argv[fast.argv.indexOf("-r") + 1]).toBe("1.5");
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 3000, playback_rate: 1.5 });
+    // 2 s of wall time at 1.5× is 3 s of audio: 3000 + 3000 = word 6.
+    at(5400);
+    expect(tts.pausePlayback({})).toMatchObject({ outcome: "accept", offset_ms: 6000 });
+    expect(await handleSocketCommand({ cmd: "set_playback_speed", speed: 3 })).toBeNull;
+    await handleSocketCommand({ cmd: "set_playback_speed", speed: 1 });
+  });
+});
+
+describe("socket E2E: voice_ask over a read (parks and restores, twice back to back)", () => {
+  let asks: ReturnType<typeof spyOn>[] = [];
+  let captures = 0;
+  beforeEach(() => {
+    captures = 0;
+    asks = [
+      spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true } as any),
+      spyOn(booking, "clearStopSignal").mockImplementation(() => {}),
+      spyOn(input, "clearInput").mockImplementation(() => {}),
+      spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"),
+      spyOn(socket, "isConnected").mockReturnValue(true),
+      spyOn(input, "waitForInput").mockImplementation((async (_ms: number, _mode: unknown, _push: unknown, options: any) => {
+        captures++;
+        options?.onCaptureStart?.();
+        options?.onCaptureEnd?.(1000);
+        return `answer ${captures}`;
+      }) as any),
+      spyOn(tts, "speak").mockImplementation(async (message: string, options: any) => {
+        const handle = tts.playAudioNonBlocking(`${TEST_TMP}/prompt.mp3`, {
+          text: message, voice: "test", durationMs: 1000, priority: "critical", onQueued: options?.onPlaybackQueued,
+          wordBoundaries: [{ text: message, offset_ms: 0, duration_ms: 1000 }] });
+        return { playbackId: handle.id, playbackOutcome: await handle.exited, displayText: message,
+          engine: "edge-tts", voice: "test", audioArtifact: { bytes: new Uint8Array([1]), format: "mp3" } } as any;
+      }),
+    ];
+  });
+  afterEach(() => { for (const spy of asks) spy.mockRestore(); });
+
+  async function askOver(expectedPlayer: number, message: string, trim?: number) {
+    const answer = handleVoiceAsk({ message, timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    // The parked read's resume slice is cut while the ask drains the queue; the prompt follows it.
+    if (trim !== undefined) (await trims.at(trim)).exit.resolve(0);
+    await fixtureCheckpoint();
+    const prompt = await players.at(expectedPlayer);
+    await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text: message });
+    prompt.exit.resolve(0);
+    const result = await answer;
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0].text).toContain(`answer ${captures}`);
+    return result;
+  }
+
+  it("a playing read is parked at its word, restored playing from it, and the second ask does the same", async () => {
+    const handle = read();
+    await players.at(0);
+    at(3200);
+    await askOver(1, "First question?", 0);
+    await players.at(2); await fixtureCheckpoint();
+    expect(states("resumed").at(-1)).toMatchObject({ word_index: 3, offset_ms: 3000 });
+    // 1.1 s into the restored read the audio is on word 4; the second ask parks it there.
+    at(4300);
+    await askOver(3, "Second question?", 1);
+    const last = await players.at(4); await fixtureCheckpoint();
+    expect(states("resumed").at(-1)).toMatchObject({ word_index: 4, offset_ms: 4000 });
+    expect(captures).toBe(2);
+    expect(playbackSessionViolations()).toEqual([]);
+    last.exit.resolve(0);
+    expect((await handle.exited).status).toBe("completed");
+  });
+
+  it("a user-paused read stays paused across the ask and keeps its word", async () => {
+    read();
+    await players.at(0);
+    at(6400);
+    await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 6400 });
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    await askOver(1, "Question while paused?");
+    await fixtureCheckpoint();
+    expect(states("resumed")).toHaveLength(0);
+    expect(states("paused").at(-1)).toMatchObject({ word_index: 6, offset_ms: 6000, pause_owner: "user" });
+    expect(await handleSocketCommand({ cmd: "resume" })).toMatchObject({ outcome: "accept", offset_ms: 6000 });
+    await players.at(2);
+    expect(playbackSessionViolations()).toEqual([]);
   });
 });

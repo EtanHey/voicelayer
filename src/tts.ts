@@ -85,9 +85,10 @@ import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { getEffectiveRecordingState } from "./recording-state";
 import { initialPlaybackTiming } from "./tts/playback-timing";
 import { SpeechWordTimeline } from "./tts/speech-words";
-import { resolvePauseCursorMs } from "./playback/session";
+import { isPlaybackSpeed, resolvePauseCursorMs } from "./playback/session";
 import { ledgerAskBegin, ledgerAskRestore, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
-  ledgerResumed, ledgerSeek, ledgerStopAll, ledgerStopped, currentPlaybackSpeed } from "./playback/ledger";
+  ledgerPreviousHold, ledgerPreviousReturn, ledgerResumed, ledgerStopAll, ledgerStopped, currentPlaybackSpeed,
+  setLedgerPlaybackSpeed, setPreviousReadProbe } from "./playback/ledger";
 import { startCloneTiming } from "./tts/clone-timing";
 import { combineHistoryTimings, clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
 import {
@@ -286,9 +287,12 @@ export function buildPlaybackArgv(
   player: string,
   audioFile: string,
   isResidentStack: boolean = isDefaultVoiceBarSocketPath(),
+  rate = 1,
 ): string[] {
-  if (isResidentStack || player !== "afplay") return [player, audioFile];
-  return [player, "-v", "0", audioFile];
+  // Lane B: 1× is a real speed step. afplay scales the rate with its high-quality time-pitch (-q 1).
+  const speed = player === "afplay" && rate !== 1 && Number.isFinite(rate) && rate > 0 ? ["-r", String(rate), "-q", "1"] : [];
+  if (isResidentStack || player !== "afplay") return player === "afplay" ? [player, ...speed, audioFile] : [player, audioFile];
+  return [player, "-v", "0", ...speed, audioFile];
 }
 
 /** Get platform-appropriate audio player command for MP3 files. */
@@ -1021,7 +1025,10 @@ type ControlScope = { id?: string; generation?: number };
 interface ActivePlayback {
   job: PlaybackJob;
   proc: ReturnType<typeof Bun.spawn>;
+  /** `Date.now() - startedAt` scaled by `rate` is the chunk-local audio position. */
   startedAt: number;
+  /** Lane B: the playback speed this player was spawned with (1 = 1×). */
+  rate: number;
   watchdog?: ReturnType<typeof setTimeout>;
   watchdogTimedOut?: boolean;
   timing?: ReturnType<typeof startCloneTiming>;
@@ -1029,7 +1036,7 @@ interface ActivePlayback {
 
 /** Lane B: the daemon's own player clock (chunk-local ms). */
 function playerClockMs(active: ActivePlayback): number {
-  return Date.now() - active.startedAt;
+  return (Date.now() - active.startedAt) * active.rate;
 }
 
 /** Lane B: one session per logical read (all its chunks and seeks), else per job. */
@@ -1040,6 +1047,8 @@ function sessionIdOf(job: PlaybackJob): string {
 /** The chunk-local word whose start the cursor has reached, from this job's own timings (never a re-synthesised clip). */
 function wordAtLocalOffset(job: PlaybackJob, cursorMs: number): { word_index: number; offset_ms: number } {
   const metadata = job.metadata!;
+  // Without timings or a duration every estimate sits at 0 ms; the start is word 0, never the last word.
+  if (cursorMs <= 0) return { word_index: 0, offset_ms: 0 };
   const tokens = displayTokens(metadata.text);
   const timeline = combineHistoryTimings([{ text: metadata.text, durationMs: metadata.durationMs ?? 0,
     aligned: metadata.alignedWords, words: metadata.wordBoundaries }]);
@@ -1313,7 +1322,7 @@ class PlaybackQueueManager {
     if (this.replayPreparingJob === job) this.replayPreparingJob = null;
     this.pending = this.pending.filter(candidate => candidate !== job);
     completeJob(job, buildPlaybackOutcome(job, active || parked ? "interrupted" : "skipped", reason, parked?.offsetMs ??
-      this.normalizedPlaybackElapsed(elapsedMs) ?? (active ? Date.now() - active.startedAt : 0)));
+      this.normalizedPlaybackElapsed(elapsedMs) ?? (active ? playerClockMs(active) : 0)));
     if (!this.interrupting.has(job.id)) ledgerStopped(sessionIdOf(job));
     this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext();
     return true;
@@ -1387,7 +1396,7 @@ class PlaybackQueueManager {
         "interrupted",
         "stopped",
         this.normalizedPlaybackElapsed(playbackElapsedMs) ??
-          Date.now() - active.startedAt,
+          playerClockMs(active),
       );
       this.terminate(active);
       completeJob(active.job, outcome);
@@ -1404,7 +1413,7 @@ class PlaybackQueueManager {
           "stopped",
           this.normalizedPlaybackElapsed(playbackElapsedMs) ??
             (terminatingActive
-              ? Date.now() - terminatingActive.startedAt
+              ? playerClockMs(terminatingActive)
               : 0),
         ),
       );
@@ -1752,10 +1761,12 @@ class PlaybackQueueManager {
   }
 
   /** Lane B: voice_ask preempts the read on screen; it is parked at its exact word and held aside. */
-  holdForAsk(): { held: boolean; from?: "paused" | "playing"; sessionId?: string; word?: number } {
+  holdForAsk(options: { anySpeech?: boolean } = {}): { held: boolean; from?: "paused" | "playing"; sessionId?: string; word?: number } {
     if (this.askHeld) return { held: true, from: this.askHeld.from, sessionId: sessionIdOf(this.askHeld.parked.job) };
-    // Only reads are parked. Short agent speech keeps its contract: the ask waits for it (FX-2).
-    if (this.parked?.job.metadata?.longRead) {
+    // An ask parks only reads; short agent speech keeps its contract: the ask waits for it (FX-2).
+    // "Previous read" holds whatever narration is on screen.
+    const holdable = (job: PlaybackJob) => options.anySpeech ? job.metadata !== undefined : job.metadata?.longRead !== undefined;
+    if (this.parked && holdable(this.parked.job)) {
       const parked = this.parked;
       this.parked = undefined;
       parked.job.onParkedChange?.(false);
@@ -1764,7 +1775,7 @@ class PlaybackQueueManager {
       return { held: true, from: "paused", sessionId: sessionIdOf(parked.job), word: globalWord(parked.job, parked.job.pausedWordIndex ?? 0) };
     }
     const job = this.current?.job ?? this.restartAfterTermination ?? this.preparing?.job;
-    if (!job || job.completed || !job.metadata?.longRead || job.priority === "critical" || this.captureAdmission) return { held: false };
+    if (!job || job.completed || !holdable(job) || job.priority === "critical" || this.captureAdmission) return { held: false };
     this.askHeld = undefined;
     const result = this.pause({}, undefined, "ask");
     if (result.outcome !== "accept" || !this.askHeld) return { held: false };
@@ -1772,6 +1783,26 @@ class PlaybackQueueManager {
     held.from = "playing";
     this.resolveIfIdle(); this.processNext();
     return { held: true, from: "playing", sessionId: sessionIdOf(job), word: globalWord(job, job.pausedWordIndex ?? 0) };
+  }
+
+  /** Lane B: a speed change restarts the playing player at the word it is on, at the new rate. */
+  applySpeed(rate: number): SeekResult {
+    const active = this.current;
+    if (!active || active.job.completed || !active.job.metadata) return { outcome: "accept", reason: "applies to the next player" };
+    if (active.rate === rate) return { outcome: "noop", reason: "already at that speed" };
+    const word = wordAtLocalOffset(active.job, playerClockMs(active));
+    return this.seek(word.offset_ms);
+  }
+
+  onScreenText(): string | undefined {
+    return (this.current?.job ?? this.preparing?.job ?? this.parked?.job)?.metadata?.text;
+  }
+
+  /** Lane B: the held read was superseded; it ends without coming back. */
+  dropAskHold(): void {
+    const held = this.askHeld;
+    if (!held) return;
+    this.cancel({ id: held.parked.job.id }, undefined, "replaced");
   }
 
   isHeldForAsk(id?: string): boolean {
@@ -1928,9 +1959,10 @@ class PlaybackQueueManager {
     if (playbackAmplitude) next.decodedAmplitude = playbackAmplitude;
     next.playbackAmplitude = playbackAmplitude ?? (next.resuming
       ? envelopeFromOffset(next.decodedAmplitude, next.metadata?.localOffsetMs ?? 0) : undefined);
+    const rate = currentPlaybackSpeed();
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn(buildPlaybackArgv(getAudioPlayer(), next.sliceFile ?? next.audioFile), {
+      proc = Bun.spawn(buildPlaybackArgv(getAudioPlayer(), next.sliceFile ?? next.audioFile, undefined, rate), {
         stdout: "ignore",
         stderr: "ignore",
       });
@@ -1949,7 +1981,7 @@ class PlaybackQueueManager {
     }
 
     next.lifecycle.track(proc.exited);
-    this.current = { job: next, proc, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) };
+    this.current = { job: next, proc, rate, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) / rate };
     {
       // Lane B: the session ledger learns of every player first, before any completion observer runs.
       const sessionId = sessionIdOf(next);
@@ -1985,6 +2017,8 @@ class PlaybackQueueManager {
         ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),
         // T1: where this player's audio ends, from chunk_start_ms; the client clock never runs past it.
         ...(durationMs && durationMs > 0 ? { chunk_duration_ms: durationMs } : {}),
+        // Lane B: the client clock runs at this speed (audio ms per wall ms).
+        ...(rate !== 1 ? { playback_rate: rate } : {}),
         playback_amplitude: next.playbackAmplitude,
         initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),
       });
@@ -2044,7 +2078,7 @@ class PlaybackQueueManager {
     this.current.timing?.cancel();
     clearTimeout(this.current.watchdog);
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
-    const elapsedMs = Date.now() - this.current.startedAt;
+    const elapsedMs = playerClockMs(this.current);
     this.stopProgressTimer();
     this.current = null;
     const longRead = job.metadata?.longRead;
@@ -2220,13 +2254,14 @@ class PlaybackQueueManager {
   private playbackProgress(active: ActivePlayback): number {
     const durationMs = active.job.metadata?.durationMs ?? 0;
     if (durationMs <= 0) return 0;
-    const elapsedMs = Date.now() - active.startedAt;
+    const elapsedMs = playerClockMs(active);
     return Math.max(0, Math.min(1, elapsedMs / durationMs));
   }
 
   private armPlayerWatchdog(active: ActivePlayback, durationMs: number | null): void {
     if (!durationMs || !Number.isFinite(durationMs) || durationMs <= 0) return;
-    const remainingMs = Math.max(0, durationMs - (active.job.metadata?.localOffsetMs ?? 0));
+    // Wall time to the end is the remaining audio divided by the speed (0.75× takes longer).
+    const remainingMs = Math.max(0, durationMs - (active.job.metadata?.localOffsetMs ?? 0)) / active.rate;
     const budgetMs = remainingMs + PLAYER_WATCHDOG_MARGIN_MS;
     // Node/Bun overflow very long timers to 1 ms; never turn that into an early kill.
     if (!Number.isFinite(budgetMs) || budgetMs > 2_147_483_647) return;
@@ -2239,7 +2274,7 @@ class PlaybackQueueManager {
         this.current = null;
         this.stopProgressTimer();
         this.terminate(active, "SIGKILL");
-        completeJob(active.job, buildPlaybackOutcome(active.job, "failed", "player-error", Date.now() - active.startedAt));
+        completeJob(active.job, buildPlaybackOutcome(active.job, "failed", "player-error", playerClockMs(active)));
       } else {
         // A cancelled/replayed player can ignore SIGTERM. Keep its reap fence held.
         try { active.proc.kill("SIGKILL"); } catch {}
@@ -2404,6 +2439,7 @@ export function playbackTelemetrySnapshot(): CommandTelemetrySnapshot {
     generation: read.pendingChunk?.phase === "paused" && read.pendingChunk.info.chunk_index > 0 ? read.pendingChunk.identity.generation : null };
 }
 setCommandTelemetrySnapshot(playbackTelemetrySnapshot);
+setPreviousReadProbe(() => hasPreviousRead());
 
 /** T1 (QA 2026-11-08 S2-F9): a stale Pause/Resume names the player that IS current (the playback_id +
  * generation pair; generation restarts at 1 for every new player), the logical read it belongs to (utterance_id,
@@ -2477,7 +2513,96 @@ interface AskReadHold { from: "paused" | "playing"; longReadId?: string; restore
 let askHold: AskReadHold | undefined;
 
 function holdsLongRead(read: OwnedLongRead | undefined): boolean {
-  return askHold !== undefined && read !== undefined && askHold.longReadId === read.id;
+  if (!read) return false;
+  return (askHold !== undefined && askHold.longReadId === read.id) ||
+    (previousHold !== undefined && !previousHold.restored && previousHold.longReadId === read.id);
+}
+
+/** Lane B: the read "previous read" set aside while the previous narration replays. */
+interface PreviousHold { longReadId?: string; replayId?: string; restored: boolean }
+let previousHold: PreviousHold | undefined;
+
+function normalizedReadText(text: string): string { return text.replace(/\s+/g, " ").trim(); }
+
+/** The text on screen: the live read, else the playing or parked queue job. */
+function onScreenText(): string | undefined {
+  return activeLongRead && !activeLongRead.controller.signal.aborted ? activeLongRead.displayText
+    : playbackQueueManager.onScreenText();
+}
+
+/** The previous finished narration that is not the one on screen. */
+function previousHistoryEntry(): TTSHistoryEntry | undefined {
+  const live = onScreenText();
+  const current = live === undefined ? undefined : normalizedReadText(live);
+  // Most recent first, like getHistoryEntry; equal timestamps keep the later write first.
+  const entries = loadHistory().map((entry, index) => ({ entry, index }))
+    .sort((a, b) => b.entry.timestamp - a.entry.timestamp || b.index - a.index).map(({ entry }) => entry);
+  return entries.find(entry => existsSync(entry.file) && (current === undefined || normalizedReadText(entry.text) !== current));
+}
+
+export function hasPreviousRead(): boolean { return previousHistoryEntry() !== undefined; }
+
+/**
+ * Lane B (2.4): "previous read". Replays the previous finished narration from its first word,
+ * with its retained audio and word timings (no re-synthesis). The read on screen is held aside
+ * at its exact word and comes back PAUSED there when the replay ends or is stopped (model
+ * PreviousRead / PrevReturn). With nothing on screen it simply replays the last narration.
+ */
+export function playPreviousRead(): SeekResult {
+  if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
+  if (isReadHeldForAsk()) return { outcome: "reject", reason: "busy" };
+  if (previousHold && !previousHold.restored) return { outcome: "noop", reason: "previous read in progress" };
+  const entry = previousHistoryEntry();
+  if (!entry) return { outcome: "noop", reason: "no previous read" };
+  const live = onScreenText() !== undefined;
+  const read = activeLongRead && !activeLongRead.controller.signal.aborted ? activeLongRead : undefined;
+  const hold: PreviousHold = { ...(read ? { longReadId: read.id } : {}), restored: false };
+  if (live) {
+    previousHold = hold;
+    const held = playbackQueueManager.holdForAsk({ anySpeech: true });
+    if (!held.held) {
+      // A read between chunks has no player to hold for a few hundred ms; ask the user to retry.
+      previousHold = undefined;
+      return { outcome: "reject", reason: "busy" };
+    }
+    ledgerPreviousHold(held.word);
+  }
+  const metadata = historyReplayMetadata(entry);
+  try {
+    const handle = playAudioNonBlocking(entry.file, { ...metadata, onCompleted: (outcome) => {
+      try { metadata.onCompleted?.(outcome); } finally { if (live) restorePreviousHold(hold); }
+    } });
+    hold.replayId = handle.id;
+  } catch (error) {
+    if (live) restorePreviousHold(hold);
+    return { outcome: "reject", reason: error instanceof Error ? error.message : String(error) };
+  }
+  return { outcome: "accept", offset_ms: 0 };
+}
+
+function restorePreviousHold(hold: PreviousHold): void {
+  if (hold.restored || previousHold !== hold) return;
+  hold.restored = true;
+  previousHold = undefined;
+  // A new read took the screen meanwhile: the held read was superseded, so it ends.
+  const superseded = hold.longReadId !== undefined && activeLongRead !== undefined && activeLongRead.id !== hold.longReadId;
+  if (superseded || !playbackQueueManager.isHeldForAsk()) {
+    playbackQueueManager.dropAskHold();
+    ledgerPreviousReturn(true);
+    return;
+  }
+  playbackQueueManager.releaseAskHold("paused");
+  ledgerPreviousReturn(false);
+}
+
+/** Lane B: the listening speed (1× is a real step). A playing player continues from its word at the new rate. */
+export function setPlaybackSpeed(speed: number): SeekResult {
+  if (!isPlaybackSpeed(speed)) return { outcome: "reject", reason: "unsupported speed" };
+  const previous = currentPlaybackSpeed();
+  setLedgerPlaybackSpeed(speed);
+  if (previous === speed) return { outcome: "noop", reason: "already at that speed" };
+  const result = playbackQueueManager.applySpeed(speed);
+  return result.outcome === "reject" ? result : { outcome: "accept", reason: result.reason };
 }
 
 export function isReadHeldForAsk(): boolean { return askHold !== undefined && !askHold.restored; }
@@ -2498,6 +2623,8 @@ export interface AskReadHoldHandle {
 export function holdReadForAsk(): AskReadHoldHandle {
   const none: AskReadHoldHandle = { held: false, restore: () => ({ outcome: "noop", reason: "nothing held" }) };
   if (askHold && !askHold.restored) return none;
+  // An ask during a "previous read" replay ends the replay; the held read returns paused and is parked below.
+  if (previousHold && !previousHold.restored && previousHold.replayId) cancelPlayback({ id: previousHold.replayId });
   const read = activeLongRead && !activeLongRead.controller.signal.aborted ? activeLongRead : undefined;
   const hold: AskReadHold = { from: "playing", ...(read ? { longReadId: read.id } : {}), restored: false };
   // A user pause made before the ask is kept as a pause.
@@ -2704,7 +2831,9 @@ type OwnedLongRead = LongReadHandle & { archive?: LiveSpeechArchive; controller:
   pendingChunk?: PendingReadChunk;
   wordTimeline: SpeechWordTimeline;
   /** QPRE1: the read's request identity, and every chunk synthesized (only playing out from here). */
-  requestId?: string; synthesized?: Promise<void> };
+  requestId?: string; synthesized?: Promise<void>;
+  /** Lane B: the text on screen, so "previous read" can tell it from the history entry before it. */
+  displayText?: string };
 let activeLongRead: OwnedLongRead | undefined;
 // Retention registry is separate from the audible owner; P12 can detach a parked read.
 const longReads = new Map<string, OwnedLongRead>();
@@ -3031,7 +3160,8 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
   const synthesized = new Promise<void>((resolve) => { resolveSynthesized = resolve; });
   const handle: OwnedLongRead = { id, get generation() { return generation; }, archive, controller, started, done: Promise.resolve(), playerExited: Promise.resolve(), completion: Promise.resolve({} as { error?: string }),
     wordTimeline: new SpeechWordTimeline(id),
-    requestId: speechIdentity.request_id, synthesized, pendingChunk: { phase: "preparing", identity: { id, generation },
+    requestId: speechIdentity.request_id, synthesized, displayText: display?.text ?? displayText,
+    pendingChunk: { phase: "preparing", identity: { id, generation },
       info: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0 } } };
   activeLongRead = handle;
   longReads.set(id, handle);

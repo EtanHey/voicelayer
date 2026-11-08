@@ -34,9 +34,9 @@ Live == {"preparing", "playing", "paused", "seeking", "parked"}
 Positioned == {"preparing", "playing", "paused", "seeking"}
 
 VARIABLES st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
-          ask, parked, parkedFrom, mic, recorder, asks
+          ask, parked, parkedFrom, mic, recorder, asks, prevHeld
 vars == <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
-          ask, parked, parkedFrom, mic, recorder, asks>>
+          ask, parked, parkedFrom, mic, recorder, asks, prevHeld>>
 
 Dist(a, b) == IF a >= b THEN a - b ELSE b - a
 Quiet == players \cup exiting = {}
@@ -52,10 +52,10 @@ Init == /\ st = [r \in Reads |-> "queued"]
         /\ seekTo = [r \in Reads |-> 0]
         /\ tele = 0 /\ players = {} /\ exiting = {} /\ prep = {}
         /\ ask = "none" /\ parked = None /\ parkedFrom = "none"
-        /\ mic = FALSE /\ recorder = FALSE /\ asks = 0
+        /\ mic = FALSE /\ recorder = FALSE /\ asks = 0 /\ prevHeld = None
 
 \* Next queued read: read 2 only after read 1 ended.
-Start(r) == /\ st[r] = "queued" /\ NoLive /\ ask = "none"
+Start(r) == /\ st[r] = "queued" /\ NoLive /\ ask = "none" /\ r # prevHeld
             /\ (r = 1 \/ st[1] = "ended")
             /\ st' = [st EXCEPT ![r] = "preparing"]
             /\ cur' = [cur EXCEPT ![r] = 0] /\ tele' = 0
@@ -128,14 +128,29 @@ Esc(r) == /\ st[r] \in Positioned /\ ask = "none"
           /\ st' = [st EXCEPT ![r] = "ended"] /\ Leave(r)
           /\ UNCHANGED <<cur, pausedAt, mark, resumedAt, seekTo, tele, prep, ask, parked, parkedFrom, mic, recorder, asks>>
 
-\* Previous read: read 1 plays again from its first word; read 2 goes back to the queue.
-PreviousRead == /\ st[2] \in Positioned /\ st[1] = "ended" /\ ask = "none"
+\* Previous read: read 1 plays again from its first word. Read 2 is held off screen at its exact
+\* word (seeking holds its target) and comes back PAUSED there when read 1 is over (PrevReturn).
+PreviousRead == /\ st[2] \in Positioned /\ st[1] = "ended" /\ ask = "none" /\ prevHeld = None
+                /\ LET at == IF st[2] = "paused" THEN pausedAt[2] ELSE IF st[2] = "seeking" THEN seekTo[2] ELSE cur[2]
+                       truth == IF st[2] = "paused" THEN mark[2] ELSE at IN
+                   /\ pausedAt' = [pausedAt EXCEPT ![2] = at]
+                   /\ mark' = [mark EXCEPT ![2] = truth]
                 /\ st' = [st EXCEPT ![1] = "preparing", ![2] = IF PrevKeepsCurrent THEN st[2] ELSE "queued"]
-                /\ cur' = [cur EXCEPT ![1] = 0, ![2] = IF PrevKeepsCurrent THEN cur[2] ELSE 0]
+                /\ cur' = [cur EXCEPT ![1] = 0]
+                /\ resumedAt' = [resumedAt EXCEPT ![2] = NoPos]
                 /\ tele' = 0
                 /\ prep' = prep \cup {1}
+                /\ prevHeld' = IF PrevKeepsCurrent THEN None ELSE 2
                 /\ IF PrevKeepsCurrent THEN UNCHANGED <<players, exiting>> ELSE Leave(2)
-                /\ UNCHANGED <<pausedAt, mark, resumedAt, seekTo, ask, parked, parkedFrom, mic, recorder, asks>>
+                /\ UNCHANGED <<seekTo, ask, parked, parkedFrom, mic, recorder, asks>>
+
+\* The previous read is over (ended or stopped): the held read returns paused at its word.
+PrevReturn == /\ prevHeld # None /\ st[1] = "ended" /\ ask = "none"
+              /\ st' = [st EXCEPT ![prevHeld] = "paused"]
+              /\ cur' = [cur EXCEPT ![prevHeld] = pausedAt[prevHeld]]
+              /\ tele' = pausedAt[prevHeld]
+              /\ prevHeld' = None
+              /\ UNCHANGED <<pausedAt, mark, resumedAt, seekTo, players, exiting, prep, ask, parked, parkedFrom, mic, recorder, asks>>
 
 \* voice_ask preempts: whatever read is on screen is parked at its exact word.
 AskPreempt == /\ ask = "none" /\ asks < 2
@@ -205,10 +220,13 @@ StopAll == /\ (\E r \in Reads : st[r] \in Positioned) \/ ask \notin {"none", "cl
            /\ ask' = IF ask = "none" THEN "none" ELSE "closing"
            /\ UNCHANGED <<cur, pausedAt, mark, resumedAt, seekTo, tele, prep, parked, recorder, asks>>
 
-Next == \/ \E r \in Reads : Start(r) \/ Ready(r) \/ DropPrep(r) \/ Advance(r) \/ TeleSync(r) \/ End(r)
-                            \/ Pause(r) \/ Resume(r) \/ Seek(r) \/ SeekDone(r) \/ Esc(r)
-        \/ Reap \/ PreviousRead \/ AskPreempt \/ AskPromptStart \/ AskPromptEnd \/ MicOpen
-        \/ CaptureEnd \/ AskAbort \/ RecorderExit \/ AskRestore \/ StopAll
+Others == \/ \E r \in Reads : Start(r) \/ Ready(r) \/ DropPrep(r) \/ Advance(r) \/ TeleSync(r) \/ End(r)
+                              \/ Pause(r) \/ Resume(r) \/ Seek(r) \/ SeekDone(r) \/ Esc(r)
+          \/ Reap \/ AskPreempt \/ AskPromptStart \/ AskPromptEnd \/ MicOpen
+          \/ CaptureEnd \/ AskAbort \/ RecorderExit \/ AskRestore \/ StopAll
+
+Next == \/ Others /\ UNCHANGED prevHeld
+        \/ PreviousRead \/ PrevReturn
 
 Spec == Init /\ [][Next]_vars
 

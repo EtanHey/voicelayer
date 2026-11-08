@@ -49,7 +49,8 @@ function check(edge: string): void {
 
 function snapshotEvent(): PlaybackSessionEvent {
   const live = engine.live();
-  const previous = live ? engine.previousOf(live.id) : undefined;
+  let previous = false;
+  try { previous = previousProbe(); } catch {}
   return {
     type: "playback_session",
     session_id: live?.id ?? null,
@@ -59,7 +60,7 @@ function snapshotEvent(): PlaybackSessionEvent {
     ...(live?.pauseOwner ? { pause_owner: live.pauseOwner } : {}),
     ask: engine.ask,
     parked_by_ask: engine.parked?.id ?? null,
-    previous_available: previous !== undefined,
+    previous_available: previous,
     speed,
   };
 }
@@ -156,12 +157,21 @@ export function ledgerStopAll(): void {
   after("stop-all");
 }
 
-export function ledgerPreviousOf(id: string): string | undefined { return engine.previousOf(id); }
+let previousProbe: () => boolean = () => false;
+/** The daemon tells the ledger whether a previous narration exists (its history ring). */
+export function setPreviousReadProbe(probe: () => boolean): void { previousProbe = probe; }
 
-export function ledgerPrevious(): { id: string } | undefined {
-  const result = engine.previous();
-  after("previous");
-  return result.ok && result.id ? { id: result.id } : undefined;
+/** "Previous read": the session on screen is held off screen at its word. */
+export function ledgerPreviousHold(word?: number): void {
+  engine.previous(word);
+  after("previous-hold");
+}
+
+/** The replay is over: the held read returns paused at its word, or ends when it was superseded. */
+export function ledgerPreviousReturn(dropped: boolean): void {
+  if (dropped) engine.dropPrevious();
+  else engine.previousReturn();
+  after(dropped ? "previous-drop" : "previous-return");
 }
 
 export function ledgerAskBegin(word?: number): { id: string; word: number } | undefined {

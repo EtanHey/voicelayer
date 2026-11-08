@@ -47,6 +47,8 @@ import {
   seekPlayback,
   seekSpeechWord,
   pausePlayback,
+  playPreviousRead,
+  setPlaybackSpeed,
   hasF5Capture,
   resumePlayback,
   isPlaybackPaused,
@@ -200,7 +202,7 @@ function selectionControl(command: SocketCommand): SocketResponse | undefined {
   return undefined;
 }
 const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer", "download_recognizer", "set_recognizer_residency"]);
-const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", ...recognizerMutationCommands]);
+const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", "previous_read", ...recognizerMutationCommands]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if ((args[0].cmd === "stop" || args[0].cmd === "cancel") && !args[0].take_id) {
     const speechOnly = args[0].cmd === "stop" && args[0].scope === "speech";
@@ -422,6 +424,16 @@ function handleSocketCommandAdmitted(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
       );
+    case "previous_read": {
+      // Lane B: replay the previous narration from its first word; the read on screen waits, paused at its word.
+      if (recordingState !== "idle") return buildAck(command, "reject", "busy");
+      const result = playPreviousRead();
+      return buildAck(command, result.outcome, result.reason);
+    }
+    case "set_playback_speed": {
+      const result = setPlaybackSpeed(command.speed);
+      return buildAck(command, result.outcome, result.reason);
+    }
     case "replay": {
       if (recordingState === "recording" || recordingState === "transcribing") {
         return buildAck(command, "reject", "busy");

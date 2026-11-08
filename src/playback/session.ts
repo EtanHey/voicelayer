@@ -115,6 +115,7 @@ export class PlaybackSessionEngine {
   /** Start: a new session replaces whatever positioned session is on screen. Refused during an ask. */
   begin(id: string, kind: SessionKind, wordCount: number): EngineResult {
     if (this.ask !== "none") return no("ask in progress");
+    if (id === this.previousHeld) return no("held by previous read");
     const existing = this.sessions.get(id);
     if (existing && LIVE.has(existing.state)) return ok({ id, state: existing.state });
     for (const other of this.sessions.values()) {
@@ -258,25 +259,54 @@ export class PlaybackSessionEngine {
     return index > 0 ? this.history[index - 1] : undefined;
   }
 
-  /** Previous read: the earlier read starts again from its first word; the current read goes back to the queue. */
-  previous(): EngineResult {
+  /** The read held off screen by "previous read", if any. */
+  previousHeld?: string;
+
+  /**
+   * Previous read: the session on screen is held off screen at its exact word (state `queued`,
+   * its word kept) while the driver plays the previous narration from its first word as a new
+   * session. previousReturn() brings it back PAUSED at that word (model PreviousRead/PrevReturn).
+   */
+  previous(driverWord?: number): EngineResult {
     if (this.ask !== "none") return no("ask in progress");
+    if (this.previousHeld) return no("previous read in progress");
     const current = this.positioned();
     if (!current) return no("nothing on screen");
-    const previousId = this.previousOf(current.id);
-    if (!previousId) return no("no previous read");
-    const previous = this.sessions.get(previousId)!;
-    current.cursor = 0;
-    current.pausedAt = undefined;
+    const at = current.state === "paused" ? current.pausedAt ?? current.cursor
+      : driverWord !== undefined ? clampWord(driverWord, current.wordCount)
+        : current.state === "seeking" ? current.seekTo ?? current.cursor
+          : current.cursor;
+    current.cursor = at;
+    current.pausedAt = at;
     current.resumedAt = undefined;
-    this.move(current, "queued", "previous-requeue");
-    previous.cursor = 0;
-    previous.pausedAt = undefined;
-    previous.resumedAt = undefined;
-    this.move(previous, "preparing", "previous");
-    this.preparing.add(previous.id);
+    this.previousHeld = current.id;
+    this.move(current, "queued", "previous-hold");
     this.tele = 0;
-    return ok({ id: previous.id, word: 0, state: "preparing" });
+    return ok({ id: current.id, word: at, state: "queued" });
+  }
+
+  /** The held read was superseded by a new read: it ends without coming back. */
+  dropPrevious(): void {
+    const id = this.previousHeld;
+    this.previousHeld = undefined;
+    const session = id ? this.sessions.get(id) : undefined;
+    if (session && session.state === "queued") this.move(session, "ended", "previous-drop");
+  }
+
+  /** The previous narration is over (ended or stopped): the held read returns paused at its word. */
+  previousReturn(): EngineResult {
+    const id = this.previousHeld;
+    if (!id) return no("nothing held");
+    if (this.ask !== "none") return no("ask in progress");
+    if (this.positioned()) return no("previous read still on screen");
+    this.previousHeld = undefined;
+    const session = this.sessions.get(id);
+    if (!session || session.state !== "queued") return no("held read ended");
+    session.cursor = session.pausedAt ?? session.cursor;
+    session.pauseOwner = "user";
+    this.move(session, "paused", "previous-return");
+    this.tele = session.cursor;
+    return ok({ id, word: session.cursor, state: "paused" });
   }
 
   /** voice_ask preempts: the positioned read is parked at its exact word, keeping whether it was paused. */
