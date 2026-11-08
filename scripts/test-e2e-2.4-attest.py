@@ -8,10 +8,12 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('gate', Path(__file__).with_name('e2e-2.4.py'))
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
+BUILD_ROOT = Path(__file__).resolve().parents[1] / '.build.noindex'
+BUILD_ROOT.mkdir(exist_ok=True)
 
 class AttestTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(dir=BUILD_ROOT, suffix='.noindex')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.evidence = self.root / 'run.log'
