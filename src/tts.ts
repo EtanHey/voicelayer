@@ -2082,6 +2082,7 @@ class PlaybackQueueManager {
         ...(durationMs && durationMs > 0 ? { chunk_duration_ms: durationMs } : {}),
         // Lane B: the client clock runs at this speed (audio ms per wall ms).
         ...(rate !== 1 ? { playback_rate: rate } : {}),
+        narration_source: narrationSource().id,
         playback_amplitude: next.playbackAmplitude,
         initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),
       });

@@ -561,6 +561,17 @@ public final class VoiceState {
     public private(set) var playbackSpeed: Double = 1
     /// Lane B: a previous narration exists for "previous read" (`playback_session.previous_available`).
     public private(set) var previousReadAvailable = false
+    /// Lane B: who produced the narration on screen (the speaking edge's `narration_source`), for display.
+    public private(set) var narrationOrigin: String?
+
+    public static func narrationOriginName(_ source: String?) -> String? {
+        switch source {
+        case nil, "": nil
+        case "narrationlayer": "NarrationLayer"
+        case "voicelayer-engines": "VoiceLayer engines"
+        case let other?: other
+        }
+    }
     /// T1 (QA 2026-11-08 S1-F6r): no player exists while a read prepares, so there is no clock to run.
     public private(set) var isPlaybackPreparing = false
     /// T1: the player on screen ends here (global ms). Its position cannot pass the end of the audio it holds,
@@ -3426,6 +3437,7 @@ public final class VoiceState {
                 let offset = (event["playback_offset_ms"] as? NSNumber)?.doubleValue
                 let validOffset = offset.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
                 playbackRate = Self.playbackRate(event["playback_rate"])
+                narrationOrigin = Self.narrationOriginName(event["narration_source"] as? String)
                 playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000 / playbackRate
                 isPlaybackPreparing = isPreparing
                 playbackReadbackID = event["readback_id"] as? String

@@ -122,6 +122,8 @@ describe("socket E2E: the playback engine through real commands (VoiceBar's wire
     await players.at(1); await fixtureCheckpoint();
     expect(states("resumed").at(-1)).toMatchObject({ word_index: 4, offset_ms: 4000 });
     expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "playing", session_id: "read-1", word_index: 4 });
+    // The speaking edge names the NarrationSource (VoiceBar exposes it as narration-origin).
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ narration_source: "voicelayer-engines" });
     expect(playbackSessionViolations()).toEqual([]);
   });
 

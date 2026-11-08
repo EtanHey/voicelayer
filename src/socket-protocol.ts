@@ -69,6 +69,8 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   chunk_duration_ms?: number;
   /** Lane B: audio ms per wall ms for this player (absent = 1×). The client clock runs at this speed. */
   playback_rate?: number;
+  /** Lane B: the NarrationSource that produced this narration ("voicelayer-engines" today, "narrationlayer" later). */
+  narration_source?: string;
   /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
   stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */

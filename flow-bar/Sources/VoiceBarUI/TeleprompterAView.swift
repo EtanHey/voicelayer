@@ -28,6 +28,8 @@ public struct TeleprompterAView: View {
     public var onPrevious: (() -> Void)?
     /// Lane B: told how many lines the text wraps to at this column (for the shell's fitted height).
     public var onTextLinesChange: ((Int) -> Void)?
+    /// Lane B: who produced this narration (exposed to accessibility as `narration-origin`).
+    public var narrationOrigin: String?
 
     public init(text: String, wordBoundaries: [TeleprompterBoundary] = [], displayBlocks: [TeleprompterDisplayBlock] = [],
                 hasCompleteDisplay: Bool = false, speechWords: SpeechWordTable? = nil, isPaused: Bool = false,
@@ -37,7 +39,7 @@ public struct TeleprompterAView: View {
                 onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil,
                 speed: Double = 1, onCycleSpeed: (() -> Void)? = nil,
                 previousAvailable: Bool = false, onPrevious: (() -> Void)? = nil,
-                onTextLinesChange: ((Int) -> Void)? = nil) {
+                onTextLinesChange: ((Int) -> Void)? = nil, narrationOrigin: String? = nil) {
         self.text = text
         self.wordBoundaries = wordBoundaries
         self.displayBlocks = displayBlocks
@@ -58,6 +60,7 @@ public struct TeleprompterAView: View {
         self.previousAvailable = previousAvailable
         self.onPrevious = onPrevious
         self.onTextLinesChange = onTextLinesChange
+        self.narrationOrigin = narrationOrigin
     }
 
     @State private var cache = TeleprompterAModelCache()
@@ -137,6 +140,8 @@ public struct TeleprompterAView: View {
                         // Not `.disabled`: that would re-tint the tiers. No target = no hit and no seek.
                         .allowsHitTesting(target != nil)
                         .accessibilityLabel("Jump to: \(layout.displayText)")
+                        // The 2.4 E2E contract (REVIEW-813) finds word buttons by this identifier.
+                        .accessibilityIdentifier("qa-word-\(word)")
                         .accessibilityHint(target == nil ? "Not available right now" : "")
                 }
                 .foregroundStyle(ink)
@@ -189,6 +194,15 @@ public struct TeleprompterAView: View {
             Text(footerState)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(palette.secondary.color)
+            if let narrationOrigin {
+                // Accessibility only: which NarrationSource produced this read (not drawn; clear ink keeps it in the tree).
+                Text(narrationOrigin)
+                    .font(.system(size: 1))
+                    .foregroundStyle(.clear)
+                    .frame(width: 1, height: 1)
+                    .accessibilityIdentifier("narration-origin")
+                    .accessibilityLabel(narrationOrigin)
+            }
             Spacer(minLength: 0)
 
             if let chip = TeleprompterA.queuedChip(queuedCount) {
