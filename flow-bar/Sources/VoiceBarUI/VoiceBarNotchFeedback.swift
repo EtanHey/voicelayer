@@ -48,7 +48,8 @@ public struct VoiceBarNotchFeedback: Equatable {
     /// The notch's notice policy (formal/notch-presentation, Fixed):
     /// - N2: nothing is shown under the notch while transcribing; the spinner and blue carry it.
     /// - N1: a visible notice (an error diagnostic, an idle confirmation, a note) is always the compact tab under
-    ///   the notch and never also a wing label.
+    ///   the notch and never also a wing label. 2.3 N6: a one-line idle confirmation that fits the wing, alone
+    ///   in a compact notch ("Typed", "Copied"), is instead the right wing's own label.
     /// - N4: an empty diagnostic is hidden; no "Error" or "Details below" copy is invented.
     /// - N5: an error diagnostic and a busy-selection note each carry Open History inline.
     /// Operational labels (F5 hints, recording command/clip names) stay in the wing unless they overflow it.
@@ -68,7 +69,14 @@ public struct VoiceBarNotchFeedback: Equatable {
         let allowedLines = input.mode == .idle && TwoLineStatusFeedback.contains(input.confirmationText) ? 2 : 1
         let overflow = text.components(separatedBy: "\n").count > allowedLines || measured > available
         let confirmation = input.confirmationText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let isNotice = input.mode == .error || (input.mode == .idle && !confirmation.isEmpty)
+        let note = input.transientNote.flatMap { $0.isEmpty ? nil : $0 }
+        // 2.3 N1 (formal/notch-presentation N6ConfirmationInWing; Etan, QA round 1: "Typed" belongs in the right
+        // wing, not a lobe underneath): a one-line idle confirmation that fits the wing, alone in a compact
+        // notch, is the wing's own label. Multi-line recovery copy, overflowing copy and a confirmation that
+        // shares the notch with a note or History stay the tab.
+        let isWingConfirmation = input.mode == .idle && !confirmation.isEmpty && !confirmation.contains("\n") &&
+            !overflow && note == nil && presentation.visualState == .compactStatus
+        let isNotice = input.mode == .error || (input.mode == .idle && !confirmation.isEmpty && !isWingConfirmation)
         // Recording/teleprompter controls carry the primary state; expose their named status only when
         // it is long or explicitly a command/clip label.
         let eligible = presentation.visualState == .compactStatus || isNotice ||
@@ -77,7 +85,6 @@ public struct VoiceBarNotchFeedback: Equatable {
         // 2.3 U2: reading aloud has no wing label (the time and Stop carry it), so its status never overflows
         // into a tab under the notch; a note still shows.
         let status = !text.isEmpty && eligible && (overflow || isNotice) && input.mode != .speaking ? text : nil
-        let note = input.transientNote.flatMap { $0.isEmpty ? nil : $0 }
         let noteOpensHistory = note.map { input.transientNoteOffersHistory ?? VoiceBarPresentation.isSelectionBusyNote($0) } == true
         // N1: every note is the compact tab under the notch, never a band across the wings.
         let width = VoiceBarNotchContract.noteColumnWidth(

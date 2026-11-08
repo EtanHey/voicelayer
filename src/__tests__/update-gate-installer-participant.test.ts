@@ -8,9 +8,7 @@ import { type UpdateGateLease } from "../update-gate";
 import { createServer } from "node:net";
 
 const originalGate = process.env.VOICELAYER_UPDATE_GATE_PATH;
-const PROCESS_READ_MS = 15;
-// M4 baseline/stress8 cases <=3.53s; hosted case timed out at 14.243s.
-// 14.243s * 1.5 margin = 21.365s, rounded up for this process-reader fixture.
+// Allow subprocess scheduling on shared hosts; ordering is asserted without wall-clock bounds.
 const SLOW_PROCESS_READERS_TEST_TIMEOUT_MS = 30_000;
 afterEach(() => { process.env.VOICELAYER_UPDATE_GATE_PATH = originalGate; });
 function fixture() {
@@ -304,46 +302,42 @@ test("post-COMMIT drain UNKNOWN is retried before one quit and installation", as
   } finally { process.env.VOICELAYER_TEST_INSTALL_PROOF = savedProof; process.env.VOICELAYER_UPDATE_TARGET_SHA = savedTarget; }
 });
 
-test("slow process readers stay outside G1 lock and its 2 ms verifier budget", async () => {
-  const f = fixture(), read = f.deps.processIdentity;
-  let readsUnderLock = 0, maximumVerifierMs = 0;
-  f.deps.processIdentity = pid => {
+test("process readers stay outside G1 lock, acknowledgement and verifier (FLAKE-G1)", async () => {
+  const f = fixture(), read = f.deps.processIdentity, parent = f.deps.processParent;
+  let reads = 0, readsUnderLock = 0, readsInAcknowledgement = 0, readsInVerifier = 0;
+  let acknowledging = false, verifying = false, verifications = 0;
+  const noteRead = () => {
+    reads++;
     if (existsSync(f.gate + ".lock")) readsUnderLock++;
-    Bun.sleepSync(15); return read(pid);
+    if (acknowledging) readsInAcknowledgement++;
+    if (verifying) readsInVerifier++;
   };
+  f.deps.processIdentity = pid => { noteRead(); return read(pid); };
+  f.deps.processParent = pid => { noteRead(); return parent(pid); };
   const verify = f.participant.verify;
   f.participant.verify = state => {
-    const start = performance.now(), result = verify(state);
-    maximumVerifierMs = Math.max(maximumVerifierMs, performance.now() - start);
-    return result;
+    verifying = true;
+    verifications++;
+    try { return verify(state); }
+    finally { verifying = false; }
   };
   await f.commit();
-  // Measure the entire acknowledgement call (including acquisition/snapshot/release),
-  // excluding only the deliberately slow process samples bracketing it.
-  const windows: number[] = [];
   for (let i = 0; i < 25; i++) {
     await f.participant.refresh(f.lease);
     f.participant.withProcessProof!(() => {
-      const start = performance.now();
-      const ack = acknowledgeVoiceDrain(f.lease, f.participant.verify);
-      windows.push(performance.now() - start);
-      expect(ack).not.toBeNull();
+      acknowledging = true;
+      try { expect(acknowledgeVoiceDrain(f.lease, f.participant.verify)).not.toBeNull(); }
+      finally { acknowledging = false; }
     });
   }
-  windows.sort((a, b) => a - b);
-  // The property: no 15 ms process read runs inside the acknowledgement window.
-  // Half of one read (7.5 ms) still catches a single read moving inside, while a
-  // tight 2 ms wall-clock bound failed on a loaded dev Mac (2.2-3.0 ms, #673).
-  expect(windows[12]).toBeLessThan(PROCESS_READ_MS / 2);
-  expect(windows[24]).toBeLessThan(50);
   f.deps.request = async () => { f.exit(); return { kind: "UNKNOWN" }; };
-  f.deps.participantsExited = () => {
-    if (existsSync(f.gate + ".lock")) readsUnderLock++;
-    Bun.sleepSync(15); return true;
-  };
+  f.deps.participantsExited = () => { noteRead(); return true; };
   await f.participant.quit(f.lease);
+  expect(reads).toBeGreaterThan(0);
+  expect(verifications).toBeGreaterThan(0);
   expect(readsUnderLock).toBe(0);
-  expect(maximumVerifierMs).toBeLessThan(2);
+  expect(readsInAcknowledgement).toBe(0);
+  expect(readsInVerifier).toBe(0);
 }, SLOW_PROCESS_READERS_TEST_TIMEOUT_MS);
 
 test("same-birth defunct participant waits for reaping under the exit deadline", async () => {
@@ -556,4 +550,17 @@ test("G5 completion samples identities before publication and never after OPEN",
     installerExitCode: 0, installedSha: f.lease.targetSha, participantsVerified: true }, successor.verify));
   expect(result.kind).toBe("APPLIED");
   expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("OPEN");
+});
+
+test("legacy drain RPC refusal remains retryable UNKNOWN with a version-mismatch reason", async () => {
+  const socketPath = join(process.env.VOICELAYER_TEST_RUN_ROOT!, "l.sock");
+  const server = createServer(socket => socket.once("data", data => {
+    const rpc = JSON.parse(data.toString());
+    socket.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "legacy method unavailable" } }) + "\n");
+  }));
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  try {
+    expect(await requestInstallerControl("drain", fixture().lease, { socketPath, token: "synthetic" }))
+      .toEqual({ kind: "UNKNOWN", reason: "version mismatch: drain protocol unsupported" });
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
