@@ -101,7 +101,8 @@ final class TeleprompterScrubLiveCaseTests: XCTestCase {
         // The scrub row lives between the text viewport and the controls of the teleprompter body.
         let zoneTop = Int((VoiceBarNotchContract.topHeight + 16 + Theme.teleprompterViewportHeight) * s)
         let zoneBottom = min(height, Int((VoiceBarNotchContract.topHeight + 196 - 14 - 26) * s))
-        let bodyLeft = Int((render.width - 465) / 2 * s), bodyRight = Int((render.width + 465) / 2 * s)
+        let body = VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth
+        let bodyLeft = Int((render.width - body) / 2 * s), bodyRight = Int((render.width + body) / 2 * s)
 
         // Labels: bright ink in the trailing quarter of the body, inside the scrub zone.
         let labelLeft = bodyRight - Int(120 * s)

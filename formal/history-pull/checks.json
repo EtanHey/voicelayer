@@ -36,6 +36,11 @@
       "target": "NoStrandedRows",
       "kind": "invariant"
     },
+    "MutantWholeRow": {
+      "role": "mutant",
+      "target": "NoStrandedRows",
+      "kind": "invariant"
+    },
     "MutantNoPublish": {
       "role": "mutant",
       "target": "HitMatchesRows",

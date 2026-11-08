@@ -15,10 +15,10 @@ final class NotchHistoryExtendAccessibilityTests: XCTestCase {
     func testNativeAdapterExportsRowsAndAdjustsWithoutTakingPointerOrKeyFocus() throws {
         var adjustments: [Int] = []
         func handle(rows: Int) -> NotchHistoryExtendHandle {
-            NotchHistoryExtendHandle(palette: .resolve(for: .dark), rows: rows, maximumRows: 12,
+            NotchHistoryExtendHandle(palette: .resolve(for: .dark), rows: rows, maximumRows: 8,
                                      onAdjust: { adjustments.append($0) })
         }
-        let host = NSHostingView(rootView: handle(rows: 7))
+        let host = NSHostingView(rootView: handle(rows: 6))
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 100, height: 30),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -26,7 +26,7 @@ final class NotchHistoryExtendAccessibilityTests: XCTestCase {
         defer { window.contentView = nil; window.close() }
         VLOrderTestWindow(window)
 
-        for rows in [7, 12, 10] {
+        for rows in [6, 8, 7] {
             host.rootView = handle(rows: rows)
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -36,15 +36,15 @@ final class NotchHistoryExtendAccessibilityTests: XCTestCase {
             XCTAssertTrue(element.isAccessibilityElement())
             XCTAssertEqual(element.accessibilityRole(), .slider)
             XCTAssertEqual(element.accessibilityLabel(), "Show more rows")
-            XCTAssertEqual(element.accessibilityValue() as? String, "\(rows) of 12 rows")
+            XCTAssertEqual(element.accessibilityValue() as? String, "\(rows) of 8 rows")
             XCTAssertFalse(element.acceptsFirstResponder)
             XCTAssertFalse(element.needsPanelToBecomeKey)
             XCTAssertNil(element.hitTest(CGPoint(x: element.bounds.midX, y: element.bounds.midY)),
                          "the existing canvas gesture owns the pointer")
             adjustments.removeAll()
-            XCTAssertEqual(element.accessibilityPerformIncrement(), rows < 12)
-            XCTAssertEqual(element.accessibilityPerformDecrement(), rows > 7)
-            XCTAssertEqual(adjustments, (rows < 12 ? [1] : []) + (rows > 7 ? [-1] : []))
+            XCTAssertEqual(element.accessibilityPerformIncrement(), rows < 8)
+            XCTAssertEqual(element.accessibilityPerformDecrement(), rows > 6)
+            XCTAssertEqual(adjustments, (rows < 8 ? [1] : []) + (rows > 6 ? [-1] : []))
         }
     }
 }

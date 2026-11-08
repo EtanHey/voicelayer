@@ -86,14 +86,14 @@ final class VoiceBarNotchHitRegionTests: XCTestCase {
         )
 
         XCTAssertEqual(region.rects, [
-            CGRect(x: 177.5, y: 14, width: 20, height: 20),
-            CGRect(x: 207.5, y: 14, width: 20, height: 20),
-            CGRect(x: 237.5, y: 14, width: 20, height: 20),
-            CGRect(x: 267.5, y: 14, width: 20, height: 20),
+            CGRect(x: 217.5, y: 14, width: 20, height: 20),
+            CGRect(x: 247.5, y: 14, width: 20, height: 20),
+            CGRect(x: 277.5, y: 14, width: 20, height: 20),
+            CGRect(x: 307.5, y: 14, width: 20, height: 20),
         ])
-        XCTAssertTrue(region.contains(CGPoint(x: 187.5, y: 24)))
-        XCTAssertTrue(region.contains(CGPoint(x: 277.5, y: 24)))
-        XCTAssertFalse(region.contains(CGPoint(x: 232.5, y: 120)), "teleprompter body passes through")
+        XCTAssertTrue(region.contains(CGPoint(x: 227.5, y: 24)))
+        XCTAssertTrue(region.contains(CGPoint(x: 317.5, y: 24)))
+        XCTAssertFalse(region.contains(CGPoint(x: 272.5, y: 120)), "teleprompter body passes through")
         XCTAssertFalse(region.contains(CGPoint(x: 108, y: 212)), "former dictionary lane passes through")
         XCTAssertFalse(region.contains(CGPoint(x: 176.5, y: 24)), "one point outside the first control passes through")
     }
