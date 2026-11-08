@@ -32,6 +32,7 @@ import {
   awaitCurrentPlayback,
   getPlaybackQueueDepth,
   preemptLongRead,
+  parkReadForAsk,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
   isPlaybackPaused,
@@ -871,13 +872,15 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   };
   armTimeout(VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS, "playback-wait");
 
+  let returnInterruptedRead: (() => void) | undefined;
   const converseFlow = async (): Promise<VoiceAskTurnOutcome> => {
     // V1 policy: refuse instead of queueing while the user is recording.
     // Queueing a question would make the eventual prompt stale and can still
     // leak audio if the recording state changes while the caller waits.
     assertSpeakerClear();
 
-    // Wait for all queued playback to finish (P0-2: awaits full queue)
+    // Park the live read, then wait for physical playback exit before Ask borrows the speaker.
+    returnInterruptedRead = parkReadForAsk();
     preemptLongRead("ask");
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
@@ -885,6 +888,12 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     }
 
     captureAdmission = reserveCaptureAdmission();
+    if (!captureAdmission && returnInterruptedRead && isPlaybackPaused()) {
+      // A seek's runner can materialize its parked job/slice after the old player exit.
+      await awaitCurrentPlayback({ forCaptureAdmission: true });
+      if (timeoutSettled || inputAbortController.signal.aborted) return { kind: "ended-before-capture" };
+      captureAdmission = reserveCaptureAdmission();
+    }
     if (!captureAdmission) throw new Error("Playback changed before Ask could reserve capture admission; try again");
 
     // Speak the question aloud — BLOCKING for converse
@@ -1044,7 +1053,11 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         }
       }
     }
-  }).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
+  }).finally(async () => {
+    await promptTimeoutCleanup;
+    captureAdmission?.release();
+    returnInterruptedRead?.();
+  });
   const confirmedTeardown = async () => {
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
     await settleSpeechArchivesForUpdate(archiveContext);

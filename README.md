@@ -129,7 +129,8 @@ Daemon speech profiles, env overrides, and socket controls: [docs/tts-settings.m
 **How `voice_ask` works:** waits for any playing audio to finish → speaks the question via
 edge-tts → records the mic and resamples to 16kHz → Silero VAD detects when you stop talking →
 whisper.cpp transcribes locally (~200-400ms on Apple Silicon) → returns the text to your agent.
-A manually paused selection read stays parked while Ask speaks and records; afterwards it returns
+Ask parks a live read and resumes it at the parked word after answer transcription completes.
+A manually paused read stays parked while Ask speaks and records; afterwards it returns
 still paused, ready to resume at the same word.
 
 Predominantly Hebrew questions use `he-IL-HilaNeural` when an English Edge voice
