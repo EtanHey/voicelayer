@@ -42,8 +42,8 @@ test("waiting drain reconciles a death after REQUEST; real live registration sto
   withVoiceAdmission(() => {
     const names = readdirSync(path + ".admissions");
     const record = JSON.parse(readFileSync(join(path + ".admissions", names[0]!), "utf8"));
-    expect(record.startTime).toBe(admissionOwnerProbe.startTime(process.pid));
-    expect(typeof record.startTime).toBe("string");
+    expect(record.startTime ?? null).toBe(admissionOwnerProbe.startTime(process.pid));
+    expect(typeof record.startTime).toBe(process.platform === "darwin" ? "string" : "undefined");
   });
   writeFileSync(path + ".admissions/dead-later", JSON.stringify({ pid: 1234, token: "dead-later", incarnation: "old", generation: 0 }));
   const exists = spyOn(admissionOwnerProbe, "exists").mockReturnValue(true);
