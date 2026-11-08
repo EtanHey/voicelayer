@@ -125,6 +125,16 @@ Lane A's changes on top of Lane G's round-2 model (union, nothing dropped):
   work (`VoiceState.showsQuitRefusal`; only the update-gate part is rechecked), and `transientNoteRect` reports
   the note's own column rather than the full width of a teleprompter body it shares.
 
+## 2.3 N6: one-line confirmations in the right wing
+
+Etan, QA round 1 (S1-F4, S2-F2): "Typed" belongs in the right wing, not a lobe under the notch. Lane A had
+moved every idle confirmation into the tab, which was vetoable and is now vetoed for one-line copy.
+`N6ConfirmationInWing` (Fixed): a one-line idle confirmation alone in a compact or collapsed notch is the right
+wing's label, with no band and a wing within the 132 pt bound. Multi-line recovery copy, long copy and a
+confirmation sharing the notch with a note or History stay the tab (N1, N3). `MutTypedTab` restores the
+tab and fails exactly N6. The Swift ledger adds an `N6` family read from production geometry and the label
+`BarView` draws, and exempts exactly that wing label from the N1 notice check.
+
 ## Union with Lane G FIXED-2
 
 All nine notch acceptance properties and all 25 pipeline acceptance properties

@@ -102,7 +102,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
         return result
     }
     private func check(_ errors: [String], family: String, expectedFailure: Bool) {
-        let pinnedFamilies: Set<String> = ["FixedProjection", "FixedText", "N1", "N2", "N4", "N5", "N3NoticeBand", "Fixed NoteHasCause"]
+        let pinnedFamilies: Set<String> = ["FixedProjection", "FixedText", "N1", "N2", "N4", "N5", "N6", "N3NoticeBand", "Fixed NoteHasCause"]
         if pinnedFamilies.contains(family) || (expectedFailure && family == "Fixed native graph paths") {
             let bytes = Data(errors.sorted().joined(separator: "\n").utf8)
             let sha = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
@@ -145,7 +145,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
         let noteHistoryWired = noteBranch.contains("onOpenHistory")
         let label = try XCTUnwrap(renderer.range(of: "private var label: some View")).lowerBound
         let fullTextLabel = String(renderer[label...])
-        var errors = Dictionary(uniqueKeysWithValues: ["Current", "FixedProjection", "FixedText", "N1", "N2", "N3", "N4", "N5", "WingBounds", "Resident", "N3NoticeBand"].map { ($0, [String]()) })
+        var errors = Dictionary(uniqueKeysWithValues: ["Current", "FixedProjection", "FixedText", "N1", "N2", "N3", "N4", "N5", "N6", "WingBounds", "Resident", "N3NoticeBand"].map { ($0, [String]()) })
         var heights: [Int: CGFloat] = [:]
         let resident = VoiceBarNotchPresentationModel()
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -190,10 +190,18 @@ final class LaneGFormalConformanceTests: XCTestCase {
                 errors["FixedProjection"]!.append(tag + "/expected:" + expected + "/actual:\(p.visualState)/\(hasBand)/\(actualText)/\(visibleWing)/\(actualNote ?? "")/\(inlineHistory)")
             }
             // These constraints use production measurements/text/actions, not Project(Fixed)'s booleans.
-            let notice = hasBand || (!visibleWing.isEmpty && !(input.mode == .idle && row.input.status == "none" && row.input.preview && row.input.note == "none"))
+            // A wing label is a notice unless it is the F5 hint or (2.3 N6) a one-line idle confirmation alone in the notch.
+            let wingConfirmation = input.mode == .idle && row.input.status == "short" && row.input.lines == 1 &&
+                row.input.note == "none" && !row.input.history
+            let notice = hasBand || (!visibleWing.isEmpty && !(input.mode == .idle && row.input.status == "none" && row.input.preview && row.input.note == "none") &&
+                !wingConfirmation)
             let width = p.feedback?.width ?? p.transientNoteRect?.width ?? 0
             if p.geometry.leadingWingWidth > 132 || p.geometry.trailingWingWidth > 132 ||
                 (notice && (!candidateWing.isEmpty || !visibleWing.isEmpty || width > p.geometry.topWidth)) { errors["N1"]!.append(tag) }
+            // N6: read from production geometry and the label BarView draws, not from the model's wingText.
+            if wingConfirmation && p.visualState == .compactStatus &&
+                (visibleWing != input.statusText || hasBand || p.feedback != nil || p.geometry.trailingWingWidth > 132) { errors["N6"]!.append(tag) }
+            if wingConfirmation && p.visualState != .compactStatus { errors["N6"]!.append(tag + "/no compact shell") }
             if input.mode == .transcribing && (hasBand || p.feedback?.statusText != nil || p.feedback?.noteText != nil || p.transientNoteRect != nil) { errors["N2"]!.append(tag) }
             if actualText != expectedText || actualNote != expectedNote { errors["FixedText"]!.append(tag) } // Includes forbidden extra text when expected is none.
             if [p.feedback?.statusText ?? "", p.feedback?.noteText ?? "", candidateWing, visibleWing].contains(where: { ["Error", "Details below"].contains($0) }) { errors["N4"]!.append(tag) }
@@ -219,7 +227,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
             if current <= previous { errors["N3"]!.append("Line class \(line) did not grow down") }
         }
         check(errors["Current"]!, family: "Current projection (including absent text)", expectedFailure: contract.notchPolicy == "fixed")
-        for family in ["FixedProjection", "FixedText", "N1", "N2", "N4", "N5", "N3NoticeBand"] { check(errors[family]!, family: family, expectedFailure: contract.notchPolicy == "current") }
+        for family in ["FixedProjection", "FixedText", "N1", "N2", "N4", "N5", "N6", "N3NoticeBand"] { check(errors[family]!, family: family, expectedFailure: contract.notchPolicy == "current") }
         check(errors["Resident"]!, family: "Resident model agrees with real resolver", expectedFailure: false)
         check(errors["WingBounds"]!, family: "N1 numeric wing bounds in EVERY mode and BOTH corpora", expectedFailure: false)
         check(errors["N3"]!, family: "N3 real text geometry and untruncated renderer", expectedFailure: false)

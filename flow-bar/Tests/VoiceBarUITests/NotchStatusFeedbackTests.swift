@@ -153,10 +153,52 @@ final class NotchStatusFeedbackTests: XCTestCase {
             }
         }
     }
-    /// N1/N4 (formal/notch-presentation Fixed): every idle confirmation and error diagnostic is a notice in the
-    /// tab, with no wing label; an empty diagnostic shows nothing rather than an invented "Error".
+    /// 2.3 N1 (formal/notch-presentation N6ConfirmationInWing; Etan, QA round 1 S1-F4/S2-F2: "Typed" belongs in
+    /// the right wing, not a lobe underneath): a one-line idle confirmation is the right wing's label, with no
+    /// tab under the notch, from an expanded or a collapsed notch.
+    func testOneLineConfirmationIsTheRightWingLabelNotATab() throws {
+        for text in [PasteDeliveryFeedback.typed, "Copied"] {
+            for collapsed in [false, true] {
+                let p = resolve(.init(mode: .idle, confirmationText: text, statusText: text, isCollapsed: collapsed))
+                XCTAssertEqual(p.visualState, .compactStatus, "\(text) collapsed=\(collapsed)")
+                XCTAssertNil(p.feedback, "\(text): no tab under the notch")
+                XCTAssertNil(p.transientNoteRect, text)
+                XCTAssertEqual(p.geometry.lowerSurfaceHeight,
+                               VoiceBarNotchContract.geometry(for: .compactStatus).lowerSurfaceHeight, text)
+                XCTAssertEqual(p.wingLabel(for: text), text, "\(text) is the right wing's own label")
+                let available = p.geometry.trailingWingWidth - WaveformLayout.coreGap - WaveformLayout.outerInset -
+                    VoiceBarNotchContract.compactStatusTrailingSafetyInset
+                XCTAssertLessThanOrEqual((text as NSString).size(withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 12, weight: .medium)
+                ]).width, available, "\(text) fits the wing without an ellipsis")
+                XCTAssertLessThanOrEqual(p.geometry.trailingWingWidth, 132)
+            }
+        }
+    }
+
+    /// N6 is narrow: a confirmation sharing the notch with a note or History, multi-line recovery copy and copy
+    /// that overflows the wing all stay the tab (N1), with no wing label beside it.
+    func testConfirmationStaysTheTabWhenItCannotBeTheWingLabel() throws {
+        let typed = PasteDeliveryFeedback.typed
+        var noted = VoiceBarNotchOperationalInput(mode: .idle, confirmationText: typed, statusText: typed,
+                                                  transientNote: "Already queued")
+        XCTAssertEqual(resolve(noted).wingLabel(for: typed), "")
+        noted.transientNote = "Finish voice work or cancel the update, then quit again."
+        XCTAssertEqual(try XCTUnwrap(resolve(noted).feedback).statusText, typed)
+        var history = VoiceBarNotchOperationalInput(mode: .idle, confirmationText: typed, statusText: typed)
+        history.isHistoryPanelOpen = true
+        XCTAssertEqual(try XCTUnwrap(resolve(history).feedback).statusText, typed)
+        for text in ["Synthetic diagnostic retained.", "Couldn't restore the clipboard"] {
+            let p = resolve(.init(mode: .idle, confirmationText: text, statusText: text))
+            XCTAssertEqual(try XCTUnwrap(p.feedback, text).statusText, text)
+            XCTAssertEqual(p.wingLabel(for: text), "", text)
+        }
+    }
+
+    /// N1/N4 (formal/notch-presentation Fixed): a multi-line idle confirmation and every error diagnostic is a
+    /// notice in the tab, with no wing label; an empty diagnostic shows nothing rather than an invented "Error".
     func testConfirmationsAreNoticesInTheTabNotTheWing() throws {
-        for text in ["Typed", "Copied", "Not pasted\nIn History", "Select text\nfirst"] {
+        for text in ["Not pasted\nIn History", "Select text\nfirst"] {
             let p = resolve(.init(mode: .idle, confirmationText: text, statusText: text))
             let f = try XCTUnwrap(p.feedback, text)
             XCTAssertEqual(f.statusText, text)
