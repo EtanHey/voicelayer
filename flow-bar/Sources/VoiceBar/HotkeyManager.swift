@@ -11,6 +11,7 @@
 // keyboards where the top-row F5 key is hard-wired to Dictation, hidutil maps
 // it to the internal F18 relay.
 
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -724,6 +725,10 @@ final class TapContext {
     var pressedKeycodes: Set<Int64> = []
     var pressedMouseButtons: Set<Int64> = []
     var hasPendingPress: Bool { !pressedKeycodes.isEmpty || !pressedMouseButtons.isEmpty }
+    func clearPendingPresses() {
+        pressedKeycodes.removeAll()
+        pressedMouseButtons.removeAll()
+    }
     var readModifierFlags: () -> CGEventFlags = { CGEventSource.flagsState(.hidSystemState) }
     var reenableTap: (() -> Void)?
     var recovery = HotkeyTapRecovery()
@@ -782,6 +787,7 @@ func hotkeyCallback(
     let ctx = Unmanaged<TapContext>.fromOpaque(userInfo).takeUnretainedValue()
     guard ctx.isActive else { return Unmanaged.passUnretained(event) }
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        ctx.clearPendingPresses()
         let recovery = ctx.recovery.disabled(by: type)
         let reason = type == .tapDisabledByTimeout ? "timeout" : "user input"
         HotkeyDiagnostics.log("[HotkeyManager] Tap disabled by \(reason); count=\(recovery.count), retry=\(String(describing: recovery.delay))")
@@ -880,6 +886,7 @@ final class HotkeyManager {
 
     private var eventTap: CFMachPort?
     private var tapRunLoop: HotkeyTapRunLoop?
+    private var wakeObserver: NSObjectProtocol?
     private let driver: HotkeyTapDriver
     private let permissionProvider: () -> HotkeyPermissionStatus
     var activity: HotkeyActivitySnapshot { gesture.activity }
@@ -1032,6 +1039,7 @@ final class HotkeyManager {
             CFRunLoopAddSource(loop, source, .commonModes)
             driver.enable(tap, true)
         }, cleanup: { [ctx] loop in
+            ctx.clearPendingPresses()
             if let tap = createdTap {
                 driver.enable(tap, false)
                 driver.invalidate(tap)
@@ -1048,6 +1056,11 @@ final class HotkeyManager {
         }
         eventTap = tap
         tapRunLoop = runner
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
+        ) { [weak runner, weak ctx] _ in
+            runner?.perform { ctx?.clearPendingPresses() }
+        }
 
         NSLog("[HotkeyManager] Event tap started — keycodes: %@, modifier: %@",
               String(describing: targetKeycodes), useModifierMode ? "yes" : "no")
@@ -1056,6 +1069,8 @@ final class HotkeyManager {
 
     /// Stop the event tap and clean up.
     func stop() {
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        wakeObserver = nil
         tapContext?.invalidate()
         tapRunLoop?.stop()
         tapRunLoop = nil
