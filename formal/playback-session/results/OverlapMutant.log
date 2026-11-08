@@ -3,13 +3,13 @@
   "kind": "invariant",
   "target": "OneAudible",
   "status": "EXPECTED_FAIL",
-  "generated": 57,
-  "distinct": 43,
+  "generated": 69,
+  "distinct": 51,
   "trace": [
-    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<9, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"queued\", \"queued\">>\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ prevHeld = 0\n/\\ ask = \"none\"",
-    "/\\ cur = <<0, 0>>\n/\\ prep = {1}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<9, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"preparing\", \"queued\">>\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ prevHeld = 0\n/\\ ask = \"none\"",
-    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<9, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"playing\", \"queued\">>\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {1}\n/\\ prevHeld = 0\n/\\ ask = \"none\"",
-    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<0, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<0, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {1}\n/\\ asks = 1\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"parked\", \"queued\">>\n/\\ parked = 1\n/\\ parkedFrom = \"playing\"\n/\\ players = {}\n/\\ prevHeld = 0\n/\\ ask = \"waiting\"",
-    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<0, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<0, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {1}\n/\\ asks = 1\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"parked\", \"queued\">>\n/\\ parked = 1\n/\\ parkedFrom = \"playing\"\n/\\ players = {3}\n/\\ prevHeld = 0\n/\\ ask = \"prompt\""
+    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<9, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ notice = FALSE\n/\\ st = <<\"queued\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ prevHeld = 0\n/\\ ask = \"none\"",
+    "/\\ cur = <<0, 0>>\n/\\ prep = {1}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<9, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ notice = FALSE\n/\\ st = <<\"preparing\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ prevHeld = 0\n/\\ ask = \"none\"",
+    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<9, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ notice = FALSE\n/\\ st = <<\"playing\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {1}\n/\\ prevHeld = 0\n/\\ ask = \"none\"",
+    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<0, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<0, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {1}\n/\\ asks = 1\n/\\ seekTo = <<0, 0>>\n/\\ notice = FALSE\n/\\ st = <<\"parked\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 1\n/\\ parkedFrom = \"playing\"\n/\\ players = {}\n/\\ prevHeld = 0\n/\\ ask = \"waiting\"",
+    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<0, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<0, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {1}\n/\\ asks = 1\n/\\ seekTo = <<0, 0>>\n/\\ notice = FALSE\n/\\ st = <<\"parked\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 1\n/\\ parkedFrom = \"playing\"\n/\\ players = {3}\n/\\ prevHeld = 0\n/\\ ask = \"prompt\""
   ]
 }

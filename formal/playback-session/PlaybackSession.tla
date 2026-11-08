@@ -23,7 +23,8 @@ CONSTANTS
   SkipRecorderWait,  \* the read resumes before the recorder exited (capture-end r2)
   ClockReset,        \* resume/restore restarts the teleprompter clock at 0: wrong clock
   PrevKeepsCurrent,  \* "previous read" starts the old read without ending the current one: overlap
-  ZombieReady        \* a cancelled preparation still starts its player after Esc/Stop
+  ZombieReady,       \* a cancelled preparation still starts its player after Esc/Stop
+  SameQueues         \* Option+F5 on the text being read queues it again behind itself (Etan: dedupe and tell)
 
 Reads == {1, 2}
 Prompt == 3
@@ -34,9 +35,9 @@ Live == {"preparing", "playing", "paused", "seeking", "parked"}
 Positioned == {"preparing", "playing", "paused", "seeking"}
 
 VARIABLES st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
-          ask, parked, parkedFrom, mic, recorder, asks, prevHeld
+          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice
 vars == <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
-          ask, parked, parkedFrom, mic, recorder, asks, prevHeld>>
+          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice>>
 
 Dist(a, b) == IF a >= b THEN a - b ELSE b - a
 Quiet == players \cup exiting = {}
@@ -53,6 +54,7 @@ Init == /\ st = [r \in Reads |-> "queued"]
         /\ tele = 0 /\ players = {} /\ exiting = {} /\ prep = {}
         /\ ask = "none" /\ parked = None /\ parkedFrom = "none"
         /\ mic = FALSE /\ recorder = FALSE /\ asks = 0 /\ prevHeld = None
+        /\ optq = {} /\ notice = FALSE
 
 \* Next queued read: read 2 only after read 1 ended.
 Start(r) == /\ st[r] = "queued" /\ NoLive /\ ask = "none" /\ r # prevHeld
@@ -225,8 +227,28 @@ Others == \/ \E r \in Reads : Start(r) \/ Ready(r) \/ DropPrep(r) \/ Advance(r) 
           \/ Reap \/ AskPreempt \/ AskPromptStart \/ AskPromptEnd \/ MicOpen
           \/ CaptureEnd \/ AskAbort \/ RecorderExit \/ AskRestore \/ StopAll
 
-Next == \/ Others /\ UNCHANGED prevHeld
-        \/ PreviousRead \/ PrevReturn
+\* Option+F5 over a read that is playing or paused (Etan, 2026-11-08 4:40 pm). `optq` is the narration queue the
+\* press joins; `notice` is "Already reading this".
+OptF5Empty == \E r \in Reads :
+                /\ st[r] \in {"playing", "paused"} /\ ask = "none"
+                /\ IF st[r] = "playing" THEN Pause(r) ELSE Resume(r)
+                /\ UNCHANGED <<prevHeld, optq, notice>>
+OptF5Same == \E r \in Reads :
+               /\ st[r] \in {"playing", "paused"} /\ ask = "none"
+               /\ notice' = TRUE
+               /\ optq' = IF SameQueues THEN optq \cup {r} ELSE optq
+               /\ UNCHANGED <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
+                              ask, parked, parkedFrom, mic, recorder, asks, prevHeld>>
+OptF5Other == \E r, t \in Reads :
+                /\ r # t /\ st[r] \in {"playing", "paused"} /\ st[t] = "queued" /\ t \notin optq /\ ask = "none"
+                /\ optq' = optq \cup {t} /\ notice' = FALSE
+                /\ UNCHANGED <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
+                               ask, parked, parkedFrom, mic, recorder, asks, prevHeld>>
+
+Next == \/ Others /\ UNCHANGED <<prevHeld, notice>>
+           /\ optq' = optq \ {r \in Reads : st'[r] \in Live}
+        \/ (PreviousRead \/ PrevReturn) /\ UNCHANGED notice /\ optq' = optq \ {r \in Reads : st'[r] \in Live}
+        \/ OptF5Empty \/ OptF5Same \/ OptF5Other
 
 Spec == Init /\ [][Next]_vars
 
@@ -255,6 +277,10 @@ TeleTracksAudio == \A r \in Reads : st[r] \in Positioned => Dist(tele, cur[r]) <
 
 \* "Overlap": exactly one session owns the screen.
 OneLiveSession == Cardinality({r \in Reads : st[r] \in Live}) <= 1
+
+\* Etan: "if its on the same it should dedupe": the text being read (playing or paused) is never queued behind
+\* itself; the queue never holds a read that is on screen.
+NoSameQueued == \A r \in optq : st[r] \notin Live
 
 \* A stopped or replaced session never starts a player.
 NoZombie == /\ \A r \in Reads : r \in players => st[r] = "playing"

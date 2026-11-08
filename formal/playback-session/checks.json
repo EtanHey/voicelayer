@@ -56,6 +56,11 @@
       "role": "mutant",
       "target": "NoZombie",
       "kind": "invariant"
+    },
+    "SameQueuesMutant": {
+      "role": "mutant",
+      "target": "NoSameQueued",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -65,6 +70,7 @@
     "MicExclusive",
     "TeleTracksAudio",
     "OneLiveSession",
-    "NoZombie"
+    "NoZombie",
+    "NoSameQueued"
   ]
 }

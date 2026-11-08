@@ -49,16 +49,17 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(VoiceBarPresentation.readQueueControl(for: state)?.countLabel, "+1")
     }
 
-    func testEmptySelectionStopsAndClearsTheWholeQueue() {
+    /// Etan, 2026-11-08 4:40 pm: an empty Option+F5 over a read pauses it (resumes it when paused); the queue stays.
+    func testEmptySelectionPausesTheReadAndKeepsTheQueue() {
         for second in ["", nil] as [String?] {
             let (state, a) = readingA()
             press(state, "Bravo selection")
             state.handleEvent(queueEvent(1, a))
             commands = []
             press(state, second)
-            XCTAssertEqual(cmds, ["stop"], "same or empty selection is Stop: \(String(describing: second))")
-            XCTAssertEqual(state.readQueueCount, 0)
-            XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
+            XCTAssertEqual(cmds, ["pause"], "empty selection pauses: \(String(describing: second))")
+            XCTAssertEqual(state.readQueueCount, 1)
+            XCTAssertNotNil(VoiceBarPresentation.readQueueControl(for: state))
         }
     }
 
@@ -73,7 +74,9 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(state.selectionFeedbackNote, "Already queued")
     }
 
-    func testPlayingRepeatAdvancesWithoutClearingPendingReads() {
+    /// Etan, 2026-11-08 4:40 pm: the text already being read dedupes with a notice; it is never Next (that is the
+    /// button's job) and the queue is kept.
+    func testPlayingRepeatDedupesWithANoticeAndKeepsPendingReads() {
         for text in ["Alpha selection", "  Alpha \n selection ", "1. Alpha selection", "- [x] Alpha selection"] {
             let (state, a) = readingA()
             press(state, "Bravo selection")
@@ -81,8 +84,8 @@ final class ReadQueueTests: XCTestCase {
             state.handleEvent(queueEvent(2, a))
             commands = []
             press(state, text)
-            XCTAssertEqual(cmds, ["read_next"], text)
-            XCTAssertEqual(commands.last?["request_id"] as? String, a)
+            XCTAssertTrue(cmds.isEmpty, text)
+            XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote, text)
             XCTAssertEqual(state.readQueueCount, 2)
         }
     }
@@ -108,8 +111,8 @@ final class ReadQueueTests: XCTestCase {
         }
         commands = []
         press(state, "Projected display")
-        XCTAssertEqual(cmds, ["read_next"], "the playing read's own receipt still identifies it")
-        XCTAssertEqual(commands.last?["request_id"] as? String, "unretained-read")
+        XCTAssertTrue(cmds.isEmpty, "the playing read's own receipt still identifies it")
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
     func testEveryQueuedIdentityIsCheckedBeforeCapacityAndKeepsCaseAndTimerChanges() {
@@ -141,11 +144,13 @@ final class ReadQueueTests: XCTestCase {
         }
     }
 
-    func testCanonicalEquivalentSelectionsStopThePlayingReadAndHintForQueuedRead() {
+    func testCanonicalEquivalentSelectionsDedupeThePlayingReadAndHintForQueuedRead() {
         for (composed, decomposed) in [("café", "cafe\u{0301}"), ("ש\u{05b8}\u{05c1}", "ש\u{05c1}\u{05b8}")] {
             let (playing, _) = readingA(composed)
+            commands = []
             press(playing, decomposed)
-            XCTAssertEqual(cmds, ["stop"])
+            XCTAssertTrue(cmds.isEmpty)
+            XCTAssertEqual(playing.selectionFeedbackNote, VoiceState.alreadyReadingNote)
             let (queued, a) = readingA()
             press(queued, composed)
             queued.handleEvent(queueEvent(1, a))
@@ -182,7 +187,8 @@ final class ReadQueueTests: XCTestCase {
         state.handleEvent(speaking(id: inflight, text: "Projected display", read: "inflight-read"))
         commands = []
         press(state, "Inflight selection")
-        XCTAssertEqual(cmds, ["stop"], "a genuine unacknowledged submission still binds its receipt")
+        XCTAssertTrue(cmds.isEmpty, "a genuine unacknowledged submission still binds its receipt")
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
     func testClearedSnapshotAlreadyOverridesTheOldPlayingDisplayBeforeExternalSpeechArrives() {
@@ -260,7 +266,11 @@ final class ReadQueueTests: XCTestCase {
                     XCTAssertEqual(commands.last?["source"] as? String, "selection", label)
                     XCTAssertEqual(commands.last?["queue"] as? Bool == true, row.playing != 0 && !row.preempted, label)
                 }
-                if row.decision == "hint" { XCTAssertEqual(state.selectionFeedbackNote, "Already queued", label) }
+                // Etan, 2026-11-08: the read being played is "Already reading this"; a queued one "Already queued".
+                if row.decision == "hint" {
+                    let reading = row.selected == row.playing && !row.suspended && !row.pending.contains(row.selected)
+                    XCTAssertEqual(state.selectionFeedbackNote, reading ? VoiceState.alreadyReadingNote : "Already queued", label)
+                }
                 if row.decision == "read_next" { XCTAssertEqual(commands.last?["request_id"] as? String, owner, label) }
                 if row.event == "stop" { XCTAssertEqual(state.readQueueCount, 0, label) }
                 else { XCTAssertEqual(state.readQueueCount, row.preempted ? 0 : row.pending.count, label) }

@@ -182,8 +182,9 @@ test("G2g duplicate playing selection preserves VoiceBar wire contract", async (
   const second = selection("two", "same playing selection");
   fs.rmdirSync(path + ".lock");
   expect(await first).toMatchObject({ outcome: "accept" });
-  // VoiceState.swift:4529 retires duplicate submissions only for "Already queued".
-  expect(await second).toMatchObject({ outcome: "noop", reason: "Already queued" });
+  // Etan, 2026-11-08: a duplicate of the read being played is "Already reading this". VoiceState retires duplicate
+  // submissions (and shows the note) for both "Already queued" and "Already reading this".
+  expect(await second).toMatchObject({ outcome: "noop", reason: "Already reading this" });
 });
 for (const cmd of ["stop", "cancel"] as const) test(`G2g idle ${cmd} acknowledges cancelled admissions`, async () => {
   tts.stopPlayback(); fs.mkdirSync(path + ".lock");

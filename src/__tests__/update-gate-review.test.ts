@@ -117,7 +117,7 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       } finally { exit.resolve(0); await tick(); }
     });
   }
-  test("same-selection re-press advances and stops admitted reads during drain; new text refuses", async () => {
+  test("same-selection re-press dedupes during drain, Next and Stop still control admitted reads; new text refuses", async () => {
     const starts: string[] = [], exits: ReturnType<typeof deferred<void>>[] = [];
     const stop = spyOn(tts, "stopPlayback").mockImplementation(() => { exits.forEach(exit => exit.resolve()); return true; }); spies.push(stop);
     spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(1),
@@ -135,10 +135,16 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       expect(await command("A", "selection A")).toMatchObject({ outcome: "accept" });
       expect(await command("B", "selection B", true)).toMatchObject({ outcome: "accept", reason: "queued" });
       drain();
-      expect(await command("A-next", "selection A")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
+      // Etan, 2026-11-08: the same text dedupes with a notice; it starts no voice, so the drain never refuses it.
+      expect(await command("A-again", "selection A")).toMatchObject({ outcome: "noop", reason: "Already reading this" });
+      expect(starts).toEqual(["A"]);
+      // Next stays the user's control during drain: it advances the admitted queue.
+      expect(await handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
       expect(starts).toEqual(["A", "B"]);
       expect(await command("C", "unadmitted selection")).toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY") });
-      expect(await command("B-stop", "selection B")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
+      expect(await command("B-again", "selection B")).toMatchObject({ outcome: "noop", reason: "Already reading this" });
+      // Stop stays the user's control too.
+      expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
       expect(stop).toHaveBeenCalledTimes(1);
       await flushSpeechArchives(); await tick();
       expect(prepare().kind).toBe("APPLIED");

@@ -36,12 +36,15 @@ test("selection admission preserves unrelated reads and never emits QUEUE_CLEARE
   }
   expect(await handleSocketCommand({ cmd: "speak_text", text: "Bravo", source: "selection" })).toMatchObject({ outcome: "noop", reason: "Already queued" });
   expect(counts.at(-1)).toBe(2);
-  expect(await press("1. Alpha")).toMatchObject({ outcome: "accept" });
-  expect(started).toEqual(["Alpha", "Bravo"]);
-  expect(counts.at(-1)).toBe(1);
+  // Etan, 2026-11-08 4:40 pm: the read already playing dedupes and says so; it is never Next or a second read.
+  expect(await press("1. Alpha")).toMatchObject({ outcome: "noop", reason: "Already reading this" });
+  expect(started).toEqual(["Alpha"]);
+  expect(counts.at(-1)).toBe(2);
   expect(cleared).not.toHaveBeenCalled();
+  // Next stays the button's job.
   await handleSocketCommand({ cmd: "read_next", request_id: "q1-1" });
   expect(started).toEqual(["Alpha", "Bravo"]);
+  expect(counts.at(-1)).toBe(1);
   await handleSocketCommand({ cmd: "stop" });
   expect(counts.at(-1)).toBe(0);
   expect(cleared).toHaveBeenCalledTimes(1);
@@ -113,7 +116,7 @@ test("marker-only Markdown cannot enqueue empty speech or clear a valid followin
   expect(cleared).not.toHaveBeenCalled();
 });
 
-test("a parked same-text read starts fresh while paused queued duplicates still hint", async () => {
+test("a paused same-text read dedupes (keeps its position) while paused queued duplicates still hint", async () => {
   let paused = false;
   const started: string[] = [];
   spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"),
@@ -130,9 +133,10 @@ test("a parked same-text read starts fresh while paused queued duplicates still 
   paused = true;
   expect(await handleSocketCommand({ cmd: "speak_text", id: "duplicate", text: "Bravo", source: "selection", queue: true }))
     .toMatchObject({ outcome: "noop", reason: "Already queued" });
+  // Etan, 2026-11-08 4:40 pm: the same text over a paused read is "Already reading this"; nothing restarts.
   expect(await handleSocketCommand({ cmd: "speak_text", id: "fresh", text: "Alpha", source: "selection" }))
-    .toMatchObject({ outcome: "accept" });
-  expect(started).toEqual(["Alpha", "Alpha"]);
+    .toMatchObject({ outcome: "noop", reason: "Already reading this" });
+  expect(started).toEqual(["Alpha"]);
 });
 
 const modelPath = process.env.VOICELAYER_ADMISSION_CASES;
