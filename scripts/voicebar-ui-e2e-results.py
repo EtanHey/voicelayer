@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 
-SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow', 'wings-u2': 'testWingsU2Flow'}
+SCENARIOS = {'e2e24': 'testE2E24AllFlows', 'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow', 'wings-u2': 'testWingsU2Flow'}
 
 
 def selected_scenario(output, scenario=None):
@@ -381,7 +381,7 @@ def export(output, sandbox, scenario=None):
     steps, ledger, issues = receipts(directory, manifest)
     if ledger is not None:
         labels = [ledger.get('scenario'), ledger.get('scope'), ledger['coverage'].get('scenario')]
-        if ((scenario in {'focused-338', 'hide1', 'gate2246', 'wings-u2'} and labels != [scenario] * 3)
+        if ((scenario in {'e2e24', 'focused-338', 'hide1', 'gate2246', 'wings-u2'} and labels != [scenario] * 3)
                 or any(label is not None and label != scenario for label in labels)):
             raise ValueError('Ledger scenario/scope differs from selected scenario: ' + scenario)
     if scenario == 'focused-338':
@@ -446,7 +446,7 @@ def export(output, sandbox, scenario=None):
                     ledger.get('limitations', []) if ledger else [], scenario)
     write_scenario(output, scenario)
     qa = dict(version=1, scenario=scenario, scope=scenario, scenarioPassed=passed,
-              verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'focused-338', 'hide1', 'gate2246', 'wings-u2'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
+              verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'e2e24', 'focused-338', 'hide1', 'gate2246', 'wings-u2'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
               fullReleasePass=False, fullReleaseCoverage='NOT_PROVEN', issues=issues,
               # Steps with no proven QA window to capture: no frame was taken (never a desktop crop).
               visualNotProven=[s['number'] for s in steps if (s.get('capture') or {}).get('status') == 'NOT_PROVEN'])

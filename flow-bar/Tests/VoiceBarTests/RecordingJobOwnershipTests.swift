@@ -545,6 +545,13 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(state.recentTranscriptionEntries.first?.deliveryNote, expectTyped ? nil : "Nothing to paste into; kept in History", file: file, line: line)
     }
 
+    func testE2E24EveryTerminalDeliversTheWholeTakeExactlyOnce() throws {
+        for bundle in ["com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.apple.Terminal",
+                       "com.cmuxterm.app", "com.mitchellh.ghostty"] {
+            try assertIdentityDelivery(bundle: bundle, identity: { nil }, expectTyped: true)
+        }
+    }
+
     func testUnreadableIdentitySingleElectronTakeTypesExactlyOnce() throws {
         try assertIdentityDelivery(bundle: "com.todesktop.230313mzl4w4u92", identity: { nil }, expectTyped: true)
     }

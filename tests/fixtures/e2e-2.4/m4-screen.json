@@ -1,0 +1,24 @@
+[
+  {
+    "auxiliaryTopLeftArea" : {
+      "height" : 32,
+      "width" : 771.5,
+      "x" : 0,
+      "y" : 1085
+    },
+    "auxiliaryTopRightArea" : {
+      "height" : 32,
+      "width" : 771.5,
+      "x" : 956.5,
+      "y" : 1085
+    },
+    "frame" : {
+      "height" : 1117,
+      "width" : 1728,
+      "x" : 0,
+      "y" : 0
+    },
+    "name" : "Built-in Retina Display",
+    "safeAreaTop" : 32
+  }
+]
