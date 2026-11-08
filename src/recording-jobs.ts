@@ -9,6 +9,8 @@ import { getEffectiveRecordingState, hasConversationCaptureFence, setRecordingSt
 const ownership = new AsyncLocalStorage<RecordingTake<string>>();
 const exitProofs = new WeakMap<RecordingTake<string>, Promise<void>>();
 const deliveryOptions = new WeakMap<RecordingTake<string>, { expectsAck: boolean; timeoutMs: number }>();
+/** BARE-STOP: live takes whose client named them (VoiceBar). Their mic admission is scoped, so an id-less stop spares it. */
+const clientNamedTakes = new WeakSet<RecordingTake<string>>();
 let newestCapture: RecordingTake<string> | undefined;
 const pendingDeliveries = new Map<string, { event: TranscriptionEvent; resolve: () => void; mark: (outcome: "unverified" | "not_inserted") => void }>();
 const queue = new RecordingTakeQueue<string>(publishRecordingJobs);
@@ -39,6 +41,10 @@ export function canStartBarCapture(): boolean {
 
 export function ownsRecordingJob(): boolean { return ownership.getStore() !== undefined; }
 export function ownsHistoryJob(): boolean { return ownership.getStore()?.kind === "history"; }
+export function ownsClientNamedCapture(): boolean {
+  const take = ownership.getStore();
+  return take !== undefined && clientNamedTakes.has(take);
+}
 export function ownsBarCapture(): boolean {
   const take = ownership.getStore();
   return take?.kind === "live" && recordingJobsSnapshot().mic_take_id === take.id;
@@ -63,11 +69,12 @@ export function registerBarRecorderExit(proof: Promise<void>): void {
 }
 
 export async function runBarCapture(id: string, work: () => Promise<string | null>,
-  options: { expectsAck?: boolean; ackTimeoutMs?: number; failureSettlementMs?: number } = {}): Promise<string | null> {
+  options: { expectsAck?: boolean; ackTimeoutMs?: number; failureSettlementMs?: number; clientNamed?: boolean } = {}): Promise<string | null> {
   if (!canStartBarCapture()) throw new Error("Recording already in progress");
   const take = queue.beginCapture(id, id);
   newestCapture = take;
   deliveryOptions.set(take, { expectsAck: options.expectsAck ?? true, timeoutMs: options.ackTimeoutMs ?? 30_000 });
+  if (options.clientNamed === true) clientNamedTakes.add(take);
   try { return await ownership.run(take, work); }
   finally {
     if (queue.ownsCapture(take)) {
