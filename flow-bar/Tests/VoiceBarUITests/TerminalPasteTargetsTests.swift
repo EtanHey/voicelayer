@@ -5,6 +5,7 @@ final class TerminalPasteTargetsTests: XCTestCase {
     func testRecognisesKnownTerminalBundleIdentifiers() {
         XCTAssertTrue(TerminalPasteTargets.isTerminal("com.cmuxterm.app"))
         XCTAssertTrue(TerminalPasteTargets.isTerminal("com.apple.Terminal"))
+        XCTAssertTrue(TerminalPasteTargets.isTerminal("dev.warp.Warp-Stable"))
         XCTAssertTrue(TerminalPasteTargets.isTerminal("com.googlecode.iterm2"))
         XCTAssertTrue(TerminalPasteTargets.isTerminal("com.mitchellh.ghostty"))
         XCTAssertTrue(TerminalPasteTargets.isTerminal("net.kovidgoyal.kitty"))

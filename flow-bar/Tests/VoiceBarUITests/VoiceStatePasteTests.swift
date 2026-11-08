@@ -4,7 +4,7 @@ import XCTest
 
 final class VoiceStatePasteTests: XCTestCase {
     private static let guardedTerminals: Set<String> = [
-        "com.cmuxterm.app", "com.apple.Terminal", "com.googlecode.iterm2",
+        "com.cmuxterm.app", "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
         "com.mitchellh.ghostty", "net.kovidgoyal.kitty", "com.github.wez.wezterm", "org.alacritty",
     ]
 

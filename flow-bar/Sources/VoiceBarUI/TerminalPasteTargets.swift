@@ -25,6 +25,7 @@ public enum TerminalPasteTargets {
     public static let bundleIdentifiers: Set<String> = [
         "com.cmuxterm.app", // cmux (embeds Ghostty)
         "com.apple.Terminal",
+        "dev.warp.Warp-Stable",
         "com.googlecode.iterm2",
         "com.mitchellh.ghostty",
         "net.kovidgoyal.kitty",

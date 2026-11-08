@@ -223,6 +223,17 @@ public struct DictationFocusedTargetEligibility {
         typingRejectionReason(into: processIdentifier) == nil
     }
 
+    /// Terminal surfaces need identity/security evidence, but often expose AXGroup.
+    public func typingHostRejectionReason(into pid: pid_t, allowsNonTextRole: Bool = false) -> String? {
+        guard processIdentifier == pid else { return "focused_pid_mismatch" }
+        guard !isSecure else { return "secure_target" }
+        guard allowsNonTextRole || ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "") else { return "non_text_role" }
+        guard diagnosticDetails["enabledAttribute"] != "false" else { return "not_enabled" }
+        guard diagnosticDetails["enabledAttribute"] != "error" else { return "enabled_read_failed" }
+        guard matchesCurrentFocus() else { return "focus_revalidation_failed" }
+        return nil
+    }
+
     public func typingRejectionReason(into processIdentifier: pid_t) -> String? {
         guard self.processIdentifier == processIdentifier else { return "focused_pid_mismatch" }
         guard ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "") else { return "non_text_role" }
@@ -4660,11 +4671,8 @@ public final class VoiceState {
             || Self.richHostTypingBundleIdentifiers.contains($0.bundleIdentifier ?? "")
             || chromiumFamilyAppDetector($0) } ?? false
         let permitsTypingHost = usesTyping && eligibility.map {
-            $0.processIdentifier == app?.processIdentifier
-                && ["AXTextField", "AXTextArea", "AXComboBox"].contains($0.role ?? "")
-                && $0.diagnosticDetails["enabledAttribute"] != "false"
-                && $0.diagnosticDetails["enabledAttribute"] != "error"
-                && $0.matchesCurrentFocus()
+            $0.typingHostRejectionReason(into: app?.processIdentifier ?? -1,
+                allowsNonTextRole: TerminalPasteTargets.isTerminal(app?.bundleIdentifier)) == nil
         } == true
         guard let app, let eligibility,
               permitsTypingHost || eligibility.permitsTyping(into: app.processIdentifier) else {
