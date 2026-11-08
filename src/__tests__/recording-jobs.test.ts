@@ -3,7 +3,8 @@ import { afterEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { readFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { STOP_FILE, CANCEL_FILE } from "../paths";
 import * as input from "../input";
 import * as stt from "../stt";
 import * as socket from "../socket-client";
@@ -33,6 +34,40 @@ afterEach(() => {
 });
 
 describe("recording job runtime (isolated fake recorder, never real mic)", () => {
+  for (const gapMs of [0, 1000, 3000]) {
+    it(`back-to-back socket captures retain frames after ${gapMs}ms and reject old controls`, async () => {
+      const events: SocketEvent[] = [];
+      const logs: string[] = [];
+      spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(event); }));
+      spies.push(spyOn(console, "error").mockImplementation((...args) => { logs.push(args.join(" ")); }));
+      const first = randomUUID(), second = randomUUID();
+      for (const id of [first, second]) {
+        if (id === second) await Bun.sleep(gapMs);
+        writeFileSync(STOP_FILE, "stale previous stop");
+        writeFileSync(CANCEL_FILE, "stale previous cancel");
+        expect(await handleSocketCommand({ cmd: "record", id: randomUUID(), take_id: id, press_to_talk: true }))
+          .toMatchObject({ outcome: "accept" });
+        await until(() => events.some(e => e.type === "state" && e.take_id === id && e.capture_id !== undefined));
+        if (id === second) {
+          expect(await handleSocketCommand({ cmd: "stop", take_id: first })).toMatchObject({ outcome: "noop" });
+          expect(await handleSocketCommand({ cmd: "cancel", take_id: first })).toMatchObject({ outcome: "noop" });
+        }
+        await Bun.sleep(200);
+        expect(recordingJobsSnapshot().mic_take_id).toBe(id);
+        expect(await handleSocketCommand({ cmd: "stop", take_id: id })).toMatchObject({ outcome: "accept" });
+        await until(() => recordingJobsSnapshot().recording_jobs.length === 0);
+      }
+      const finished = logs.filter(line => line.startsWith("[voicelayer][capture-lifecycle] "))
+        .map(line => JSON.parse(line.slice(line.indexOf("{") ))).filter(row => row.event === "finish");
+      expect(finished).toHaveLength(2);
+      expect(finished.every(row => row.frames_written > 0 && row.stop_reason === "stop-signal")).toBe(true);
+      expect(finished[0].capture_id).not.toBe(finished[1].capture_id);
+      expect(finished.map(row => row.take_id)).toEqual([first, second]);
+      expect(finished.map(row => row.stop_take_id)).toEqual([first, second]);
+      expect(finished.every(row => typeof row.recorder_pid === "number")).toBe(true);
+    });
+  }
+
   it("keeps a running 3:03 History retranscription alive through socket F5 capture and its cancellation", async () => {
     const events: SocketEvent[] = [];
     spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(event); }));
