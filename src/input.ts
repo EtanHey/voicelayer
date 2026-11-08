@@ -1,3 +1,4 @@
+import { captureLifecycle } from "./capture-lifecycle";
 import { TakeStageTimings, withTakeStageTimings, measureTakeStage, measureTakeStageAsync } from "./take-stage-timings";
 import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
@@ -2466,18 +2467,25 @@ export async function recordToBuffer(
     };
 
     let consumedStopTakeID: string | null = null;
+    let controlCancelled = false, controlPhysicalPress = false;
+    let spawnedAt: number | null = null, firstPCMAt: number | null = null;
+    const traceConsumedStop = (applyPhysicalStop = false) => {
+      try {
+        const control = JSON.parse(readFileSync(STOP_FILE, "utf8"));
+        consumedStopTakeID = typeof control.take_id === "string" ? control.take_id : null;
+        controlCancelled = control.cancelled === true;
+        controlPhysicalPress = control.physical_press === true;
+        if (applyPhysicalStop && captureState?.archiveSource === "voicebar") captureState.physicalPressStop = controlPhysicalPress;
+      } catch { /* Legacy text controls have no structured flags. */ }
+      captureLifecycle("consume-stop", { capture_id: captureId, recorder_pid: recorder?.pid ?? null,
+        take_id: takeID, stop_take_id: consumedStopTakeID, signal_file: STOP_FILE,
+        control_cancelled: controlCancelled, physical_press: controlPhysicalPress,
+        job_cancelled: recordingJobCancelled() ?? false,
+        frames_at_stop: capturedPcmBytesSoFar / BYTES_PER_SAMPLE });
+    };
     const beginPushToEndStopDrain = () => {
       if (pushToEndStopRequestedAtMs !== null) return;
-      if (captureState?.archiveSource === "voicebar") {
-        try {
-          const control = JSON.parse(readFileSync(STOP_FILE, "utf8"));
-          consumedStopTakeID = typeof control.take_id === "string" ? control.take_id : null;
-          captureState.physicalPressStop = control.physical_press === true;
-        } catch { /* Legacy stop files have no physical-press opt-in. */ }
-      }
-      console.error("[voicelayer][capture-lifecycle] " + JSON.stringify({
-        event: "consume-stop", capture_id: captureId, recorder_pid: recorder?.pid ?? null, signal_file: STOP_FILE, take_id: consumedStopTakeID,
-      }));
+      traceConsumedStop(true);
       pushToEndStopRequestedAtMs = Date.now();
       console.error(
         `[voicelayer] Stop signal received — capturing ${PUSH_TO_END_STOP_CAPTURE_DRAIN_MS}ms push-to-end tail before ending recording`,
@@ -2540,14 +2548,16 @@ export async function recordToBuffer(
         (sum, chunk) => sum + chunk.byteLength,
         0,
       );
-      console.error("[voicelayer][capture-lifecycle] " + JSON.stringify({
-        event: "finish", capture_id: captureId, recorder_pid: recorderPid,
+      captureLifecycle("finish", { capture_id: captureId, recorder_pid: recorderPid,
         stop_reason: error ? stopReason === "abort" ? "abort" : "error" : pushToEndStopRequestedAtMs !== null ? "stop-signal" : stopReason,
         error: error?.message ?? null, take_id: takeID, stop_take_id: consumedStopTakeID,
         no_answer_expired: captureState?.noAnswerExpired ?? null, silence_timeout: captureState?.pttSilenceTimeout ?? false,
         frames_written: capturedPcmBytes / BYTES_PER_SAMPLE,
+        first_pcm_ms: firstPCMAt === null || spawnedAt === null ? null : firstPCMAt - spawnedAt,
+        control_cancelled: controlCancelled, physical_press: controlPhysicalPress,
+        job_cancelled: recordingJobCancelled() ?? false,
         stop_file: STOP_FILE, cancel_present: hasCancelSignal(),
-      }));
+      });
       if (capturedPcmBytes > 0) {
         try {
           recoveryWriter.flushSnapshot(capturedChunks);
@@ -2710,9 +2720,10 @@ export async function recordToBuffer(
         clearStopSignal();
         return;
       }
+      traceConsumedStop();
       clearStopSignal();
       console.error("[voicelayer] Stop signal received — ending recording");
-      finish();
+      finish(undefined, "stop-signal");
     }, STOP_POLL_MS);
     stopSignalPoll.unref?.();
     // MICDROP3: CoreAudio can name the wrong device (Sol R2 #1), so its report only notes evidence.
@@ -2752,13 +2763,13 @@ export async function recordToBuffer(
         { stdout: "pipe", stderr: "pipe" },
       );
       recorder = spawnedRecorder;
-      console.error("[voicelayer][capture-lifecycle] " + JSON.stringify({
-        event: "spawn", capture_id: captureId, take_id: takeID, recorder_pid: spawnedRecorder.pid, stop_file: STOP_FILE, cancel_file: CANCEL_FILE,
-      }));
+      const recorderSpawnedAt = performance.now();
+      spawnedAt = recorderSpawnedAt;
+      captureLifecycle("spawn", { capture_id: captureId, take_id: takeID, recorder_pid: spawnedRecorder.pid, stop_file: STOP_FILE, cancel_file: CANCEL_FILE,
+      });
       void spawnedRecorder.exited.then(code => {
-        console.error("[voicelayer][capture-lifecycle] " + JSON.stringify({
-          event: "exit", capture_id: captureId, take_id: takeID, recorder_pid: spawnedRecorder.pid, exit_code: code,
-        }));
+        captureLifecycle("exit", { capture_id: captureId, take_id: takeID, recorder_pid: spawnedRecorder.pid, exit_code: code, signal_code: spawnedRecorder.signalCode,
+        });
       }, () => {});
       if (captureState) {
         captureState.recorderExited = spawnedRecorder.exited.then(() => {});
@@ -2848,6 +2859,11 @@ export async function recordToBuffer(
           if (done && !resolved) noteMicLoss("recorder-ended");
           if (done || resolved) break;
           if (!value || value.length === 0) continue;
+          if (firstPCMAt === null) {
+            firstPCMAt = performance.now();
+            captureLifecycle("first-pcm", { capture_id: captureId, take_id: takeID,
+              recorder_pid: spawnedRecorder.pid, first_pcm_ms: firstPCMAt - recorderSpawnedAt });
+          }
           // Signal only: the observer schedules its child outside this hot loop.
           if (!inputDeviceChecked && captureState) {
             inputDeviceChecked = true;
@@ -2990,11 +3006,12 @@ export async function recordToBuffer(
             }
 
             if (hasStopSignal()) {
+              traceConsumedStop();
               clearStopSignal();
               console.error(
                 "[voicelayer] Stop signal received — ending recording",
               );
-              finish();
+              finish(undefined, "stop-signal");
               return;
             }
 

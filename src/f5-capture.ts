@@ -1,20 +1,23 @@
-import { STOP_FILE, safeWriteFileSync } from "./paths";
+import { beginCaptureTrace, captureLifecycle, writeCaptureStop } from "./capture-lifecycle";
 import { canStartBarCapture, runBarCapture, cancelRecordingJob, markBarCaptureDraining, recordingJobsSnapshot } from "./recording-jobs";
 import { onRecordingStateChange } from "./recording-state";
 import { pauseForF5Capture } from "./tts";
 
 /** Lane I owns mic, transcription, delivery and cancellation. This adapter only lends it the read. */
-const opening = new Map<string, { control?: "stop" | "cancel"; physicalPress?: boolean }>();
+const opening = new Map<string, { control?: "stop" | "cancel"; physicalPress?: boolean; origin?: Record<string, unknown> }>();
 /** Preserve a physical up-edge that arrives while the old speech player is still exiting. */
-export function bufferOpeningCaptureControl(id: string | undefined, control: "stop" | "cancel", physicalPress = false): boolean {
+export function bufferOpeningCaptureControl(id: string | undefined, control: "stop" | "cancel", physicalPress = false, origin: Record<string, unknown> = {}): boolean {
+  const commandTakeID = id;
   id ??= opening.keys().next().value;
   if (!id) return false;
   const pending = opening.get(id);
   if (!pending) return false;
   if (pending.control !== "cancel") {
     pending.control = control;
+    pending.origin = { ...origin, command_take_id: commandTakeID ?? null };
     pending.physicalPress = pending.physicalPress === true || physicalPress;
   }
+  captureLifecycle("buffer-control", { ...origin, take_id: id, command_take_id: commandTakeID ?? null, route: "buffered-in-opening", cancelled: control === "cancel" });
   return true;
 }
 
@@ -44,6 +47,7 @@ export function runBarCaptureWithPausedRead(id: string, record: (opened: () => v
   held: () => void, settled: () => void, playbackElapsedMs?: number,
   options?: Parameters<typeof runBarCapture>[2]): Promise<string | null> {
   if (!canStartBarCapture() || loan?.takes.has(id)) return Promise.reject(new Error("Recording already in progress"));
+  beginCaptureTrace(id);
   if (!loan) {
     const pause = pauseForF5Capture(playbackElapsedMs);
     loan = { pause, takes: new Set(), finished: new Set(), settled };
@@ -51,15 +55,15 @@ export function runBarCaptureWithPausedRead(id: string, record: (opened: () => v
   }
   const current = loan;
   current.takes.add(id);
-  const pending: { control?: "stop" | "cancel"; physicalPress?: boolean } = {};
+  const pending: { control?: "stop" | "cancel"; physicalPress?: boolean; origin?: Record<string, unknown> } = {};
   opening.set(id, pending);
   return current.pause.ready.then(() => runBarCapture(id, () => record(() => {
     if (opening.get(id) !== pending) return;
     opening.delete(id);
     if (pending.control === "cancel") cancelRecordingJob(id);
     else if (pending.control === "stop") markBarCaptureDraining(id);
-    if (pending.control) safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: id,
-      ...(pending.control === "cancel" ? { cancelled: true } : { physical_press: pending.physicalPress === true }) }));
+    if (pending.control) writeCaptureStop(JSON.stringify({ take_id: id,
+      ...(pending.control === "cancel" ? { cancelled: true } : { physical_press: pending.physicalPress === true }) }), "buffered-in-opening", pending.origin ?? {}, id);
   }), options)).finally(() => {
     opening.delete(id);
     current.finished.add(id);
