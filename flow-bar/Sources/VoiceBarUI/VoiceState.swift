@@ -3137,6 +3137,10 @@ public final class VoiceState {
                           event["playback_id"] as? String == parked.playbackID,
                           (event["generation"] as? NSNumber)?.intValue == parked.generation else { return }
                     askParkedRead = nil
+                    guard (mode == .idle || mode == .speaking), deferredBarRecording == nil else {
+                        parkedRead = parked
+                        return // Another capture owns the surface; its recording-idle restores this park.
+                    }
                     enterIdleState(clearQueue: false)
                     parkedRead = parked
                     isCaptureSettlementPending = false

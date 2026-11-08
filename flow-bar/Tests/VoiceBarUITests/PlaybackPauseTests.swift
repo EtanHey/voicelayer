@@ -115,6 +115,25 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertEqual(state.playbackElapsedMilliseconds(), 0)
     }
 
+    func testW1RestoreWaitsForAnotherCaptureToSettle() {
+        for captureMode in [VoiceMode.recording, .transcribing] {
+            let (state, _) = speakingState()
+            state.handleEvent(pausedEvent())
+            var prompt = speakingEvent(text: "Question?", playbackID: "ask-1", generation: 1)
+            prompt["preserves_paused_read"] = true
+            state.handleEvent(prompt)
+            state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+            state.mode = captureMode
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback",
+                               "restores_paused_read": true, "playback_id": "playback-7", "generation": 3])
+            XCTAssertEqual(state.mode, captureMode)
+            state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+            drainMainQueue()
+            XCTAssertTrue(state.isPlaybackPaused)
+            XCTAssertEqual(state.playbackElapsedMilliseconds(), 2500)
+        }
+    }
+
     func testW1StoppedBorrowedReadCannotBeRestored() {
         let (state, _) = speakingState()
         state.handleEvent(pausedEvent())
