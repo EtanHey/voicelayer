@@ -14,7 +14,8 @@ import { handleVoiceAsk } from "../handlers";
 import { handleSocketCommand } from "../socket-handlers";
 import { addToHistory } from "../tts";
 import { playbackSessionViolations, resetPlaybackSessionLedger } from "../playback/ledger";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { TTS_HISTORY_FILE } from "../paths";
 import { dirname, join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
@@ -34,6 +35,8 @@ let restore: (() => void)[];
 beforeEach(() => {
   at(0);
   resetPlaybackSessionLedger();
+  // History is process-wide in a combined run: another file's later-stamped narration must not become "previous".
+  rmSync(TTS_HISTORY_FILE, { force: true });
   players = fixtureBarrier(); trims = fixtureBarrier(); events = []; restore = [];
   const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
     const exit = deferred<number>();
