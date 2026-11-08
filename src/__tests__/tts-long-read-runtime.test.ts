@@ -1068,6 +1068,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
     const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
+    tts.preemptLongRead(); // This case explicitly owns cancellation; Ask now parks a playing read.
     const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
     const history = await historyBarrier.at(0); await fixtureCheckpoint();
     expect(synths).toHaveLength(2); expect(capture).not.toHaveBeenCalled();
@@ -1386,16 +1387,16 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     stopPlayback(100); await h.done;
   });
 
-  it("voice_ask preempts synthesis before waiting on its prompt and recording", async () => {
+  it("voice_ask parks a playing read and keeps its in-flight synthesis for return", async () => {
     holdSynth = true; const old = start(); await synthBarrier.at(1); await playerBarrier.at(0);
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
     const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
     const answer = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
-    await old.done;
     expect(answer.isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
-    expect(synths[1].killed).toBe(true); expect(players[0].killed).toBe(true);
-    expect(players).toHaveLength(2);
+    expect(synths[1].killed).toBe(false); expect(players[0].killed).toBe(true);
+    synths[1].exit.resolve(0); await old.done;
+    expect(players.length).toBeGreaterThan(2);
   });
 
   it("records long-read first audio at player spawn once, including held preparation", async () => {
@@ -1978,6 +1979,28 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       const texts = loadHistory().map(e => e.text).join(" | ");
       expect(texts).toContain("Alpha");
       expect(texts).not.toContain("Charlie");
+    });
+
+    it.each(["playing", "user-paused", "stopped"])("W1 Ask returns the interrupted read according to its prior state (%s)", async prior => {
+      select("A", "Alpha interrupted selection."); await playerBarrier.at(0);
+      clockMs += 500;
+      const original = events.filter(e => e.state === "speaking").at(-1);
+      if (prior === "user-paused") tts.pausePlayback();
+      autoPlay = true;
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => {
+        expect(events.filter(e => e.state === "speaking" && e.playback_id === original.playback_id)).toHaveLength(1);
+        if (prior === "stopped") stopPlayback();
+        autoPlay = false;
+        return "an answer";
+      })));
+      await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 }); await settle();
+      const parked = events.find(e => e.type === "playback_state" && e.state === "paused" && e.playback_id === original.playback_id);
+      expect(parked).toBeDefined();
+      const resumed = events.filter(e => e.state === "speaking" && e.playback_id === original.playback_id).slice(1);
+      expect(resumed).toHaveLength(prior === "playing" ? 1 : 0);
+      expect(tts.isPlaybackPaused()).toBe(prior === "user-paused");
+      if (prior === "playing") expect(resumed[0]).toMatchObject({ playback_offset_ms: parked.offset_ms, utteranceId: original.utteranceId });
     });
 
     it.each(["playing", "preparing", "capture-error", "prompt-pause", "prompt-preparation"])("W1 Ask borrows playback without replacing the paused selection or its queue (%s)", async phase => {

@@ -1514,6 +1514,10 @@ class PlaybackQueueManager {
     this.emitQueueSnapshot();
   }
 
+  pauseReadForAsk(id: string): boolean {
+    return this.current?.job.metadata?.longRead?.id === id && this.pause({ id: this.current.job.id }).outcome === "accept";
+  }
+
   capturePauseIdentity(): string | undefined {
     const job = this.parked?.job;
     return job ? job.metadata?.longRead?.id ?? job.id : undefined;
@@ -2549,6 +2553,16 @@ let externalSpeechListener: (() => void) | undefined;
 /** QUEUE1b: told when agent speech or Ask preempts, so the user's read chain ends even with no read live. */
 export function setExternalSpeechPreemptionListener(listener: typeof externalSpeechListener): void {
   externalSpeechListener = listener;
+}
+
+/** Only a playing selection lends Ask an automatic return; a user's existing pause never does. */
+export function parkSelectionReadForAsk(): (() => void) | undefined {
+  const read = activeLongRead;
+  if (!read?.requestId || !playbackQueueManager.pauseReadForAsk(read.id)) return;
+  return () => {
+    if (activeLongRead === read && !read.controller.signal.aborted &&
+        playbackQueueManager.capturePauseIdentity() === read.id) resumePlayback();
+  };
 }
 
 /** Preempt only a long read; ordinary short speech retains its existing queue policy.
