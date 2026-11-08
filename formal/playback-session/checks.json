@@ -32,6 +32,11 @@
       "target": "AskParksOne",
       "kind": "invariant"
     },
+    "CancelPreparingMutant": {
+      "role": "mutant",
+      "target": "AskKeepsRead",
+      "kind": "invariant"
+    },
     "EarlyMicMutant": {
       "role": "mutant",
       "target": "MicExclusive",
@@ -77,6 +82,7 @@
     "ResumeExact",
     "OneAudible",
     "AskParksOne",
+    "AskKeepsRead",
     "MicExclusive",
     "TeleTracksAudio",
     "OneLiveSession",

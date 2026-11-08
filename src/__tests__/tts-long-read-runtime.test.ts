@@ -1413,6 +1413,32 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(playbackSessionViolations()).toEqual([]);
   });
 
+  // Lane B night item 3 (the N4 guard's limit): a read that replaced another waits for that read's teardown
+  // before its runner exists. An ask arriving then must park it in preparation, never cancel it, and the read
+  // plays from its first word once its audio exists. The paused-ask stack (30de9c06) cancelled it here.
+  it("Lane B: voice_ask over a read still preparing (no runner yet) parks it and plays it once its audio exists", async () => {
+    holdPlayerExit = true;
+    start("edge", "Alpha replaced read."); await playerBarrier.at(0);
+    const bravo = start("edge", "Bravo preparing read.");
+    await fixtureCheckpoint();
+    // Bravo waits on Alpha's teardown (its player has not exited): no runner, no synthesis, no player yet.
+    expect(players).toHaveLength(1); expect(synths).toHaveLength(1);
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    // Alpha's player exits; only now can Bravo's runner start.
+    holdPlayerExit = false; players[0].exit.resolve(143); autoPlay = true;
+    expect((await answer).isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 20; i++) await fixtureCheckpoint();
+    const bravoSpeaking = events.filter(e => e.type === "state" && e.state === "speaking" && /Bravo/.test(e.text ?? ""));
+    expect(bravoSpeaking.length, "the read the ask found preparing plays after the ask").toBeGreaterThan(0);
+    expect(events.some(e => e.type === "playback_outcome" && e.reason === "replaced" && /Bravo/.test(e.text ?? ""))).toBe(false);
+    expect(bravoSpeaking.at(-1)).toMatchObject({ playback_offset_ms: 0 });
+    await bravo.done;
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
   it("records long-read first audio at player spawn once, including held preparation", async () => {
     recordFirstAudio("long", 9999); recordFirstAudio("short", 1234);
     const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);

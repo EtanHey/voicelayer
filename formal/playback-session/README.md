@@ -35,6 +35,6 @@ steps (prompt start/end, mic open, capture end, recorder exit, reap, restore).
 
 `W == 2` keeps Fixed at 655,402 states (teleprompter-handoff checks 677k); every mutant still trips. "Previous read" holds the read on screen (prevHeld) and PrevReturn brings it back paused at its word.
 
-Stop during an ask ends the ask, never the read it parked: the read comes back paused at its word.
+Stop during an ask ends the ask and the read it parked: Stop means stop (the paused-ask stack's W1 "stopped" contract).
 
 Run: `bash formal/playback-session/check.sh` (recorded evidence in `results/`).

@@ -1,5 +1,6 @@
 | Property | Exact-property failing mutant configs |
 | --- | --- |
+| AskKeepsRead | CancelPreparingMutant |
 | AskParksOne | StrandMutant |
 | MicExclusive | EarlyMicMutant, RecorderWaitMutant |
 | NoSameQueued | SameQueuesMutant |

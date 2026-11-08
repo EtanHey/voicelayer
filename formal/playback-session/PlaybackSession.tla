@@ -25,7 +25,8 @@ CONSTANTS
   PrevKeepsCurrent,  \* "previous read" starts the old read without ending the current one: overlap
   ZombieReady,       \* a cancelled preparation still starts its player after Esc/Stop
   SameQueues,        \* Option+F5 on the text being read queues it again behind itself (Etan: dedupe and tell)
-  NoRestore          \* the ask's end never restores the read it parked (liveness mutant)
+  NoRestore,         \* the ask's end never restores the read it parked (liveness mutant)
+  CancelPreparing    \* an ask over a read still preparing cancels it instead of parking it (the N4 guard's limit)
 
 Reads == {1, 2}
 Prompt == 3
@@ -36,9 +37,9 @@ Live == {"preparing", "playing", "paused", "seeking", "parked"}
 Positioned == {"preparing", "playing", "paused", "seeking"}
 
 VARIABLES st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
-          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice
+          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice, askFound
 vars == <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
-          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice>>
+          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice, askFound>>
 
 Dist(a, b) == IF a >= b THEN a - b ELSE b - a
 Quiet == players \cup exiting = {}
@@ -55,7 +56,7 @@ Init == /\ st = [r \in Reads |-> "queued"]
         /\ tele = 0 /\ players = {} /\ exiting = {} /\ prep = {}
         /\ ask = "none" /\ parked = None /\ parkedFrom = "none"
         /\ mic = FALSE /\ recorder = FALSE /\ asks = 0 /\ prevHeld = None
-        /\ optq = {} /\ notice = FALSE
+        /\ optq = {} /\ notice = FALSE /\ askFound = None
 
 \* Next queued read: read 2 only after read 1 ended.
 Start(r) == /\ st[r] = "queued" /\ NoLive /\ ask = "none" /\ r # prevHeld
@@ -155,23 +156,31 @@ PrevReturn == /\ prevHeld # None /\ st[1] = "ended" /\ ask = "none"
               /\ prevHeld' = None
               /\ UNCHANGED <<pausedAt, mark, resumedAt, seekTo, players, exiting, prep, ask, parked, parkedFrom, mic, recorder, asks>>
 
-\* voice_ask preempts: whatever read is on screen is parked at its exact word.
+\* voice_ask preempts: whatever read is on screen is parked at its exact word, in every positioned state:
+\* playing, paused, seeking, and preparing (its first audio or a resume not ready yet; it plays once its audio
+\* exists, after the ask). CancelPreparing is the paused-ask stack's N4 guard, which cancelled a read whose
+\* runner had not started yet.
+ParkForAsk(r) == /\ LET truth == CASE st[r] = "seeking" -> seekTo[r]
+                                   [] OTHER -> cur[r]
+                        stored == CASE st[r] = "paused" -> pausedAt[r]
+                                    [] st[r] = "preparing" /\ ParkResumeAtZero -> 0
+                                    [] OTHER -> truth
+                    IN /\ pausedAt' = [pausedAt EXCEPT ![r] = stored]
+                       /\ mark' = [mark EXCEPT ![r] = IF st[r] = "paused" THEN mark[r] ELSE truth]
+                 /\ parkedFrom' = IF st[r] = "paused" THEN "paused" ELSE "playing"
+                 /\ st' = [st EXCEPT ![r] = "parked"] /\ parked' = r
+                 /\ resumedAt' = [resumedAt EXCEPT ![r] = NoPos]
+                 /\ Leave(r)
+
+CancelForAsk(r) == /\ st' = [st EXCEPT ![r] = "ended"] /\ parked' = None /\ parkedFrom' = "none"
+                   /\ UNCHANGED <<pausedAt, mark, resumedAt>> /\ Leave(r)
+
 AskPreempt == /\ ask = "none" /\ asks < 2
               /\ ask' = "waiting" /\ asks' = asks + 1
               /\ IF \E r \in Reads : st[r] \in Positioned
                  THEN \E r \in Reads :
                         /\ st[r] \in Positioned
-                        /\ LET truth == CASE st[r] = "seeking" -> seekTo[r]
-                                          [] OTHER -> cur[r]
-                               stored == CASE st[r] = "paused" -> pausedAt[r]
-                                           [] st[r] = "preparing" /\ ParkResumeAtZero -> 0
-                                           [] OTHER -> truth
-                           IN /\ pausedAt' = [pausedAt EXCEPT ![r] = stored]
-                              /\ mark' = [mark EXCEPT ![r] = IF st[r] = "paused" THEN mark[r] ELSE truth]
-                        /\ parkedFrom' = IF st[r] = "paused" THEN "paused" ELSE "playing"
-                        /\ st' = [st EXCEPT ![r] = "parked"] /\ parked' = r
-                        /\ resumedAt' = [resumedAt EXCEPT ![r] = NoPos]
-                        /\ Leave(r)
+                        /\ IF CancelPreparing /\ st[r] = "preparing" THEN CancelForAsk(r) ELSE ParkForAsk(r)
                  ELSE UNCHANGED <<st, pausedAt, mark, parkedFrom, parked, resumedAt, players, exiting>>
               /\ UNCHANGED <<cur, seekTo, tele, prep, mic, recorder>>
 
@@ -213,15 +222,15 @@ AskRestore == /\ ask = "closing" /\ (~recorder \/ SkipRecorderWait) /\ ~NoRestor
                       /\ prep' = IF parkedFrom = "paused" THEN prep ELSE prep \cup {p}
               /\ UNCHANGED <<pausedAt, mark, seekTo, players, exiting, mic, recorder, asks>>
 
-\* Stop: every positioned read ends and an ask in flight closes. The read an ask parked is
-\* never lost: it survives and the ask's end restores it PAUSED at its word.
-StopAll == /\ (\E r \in Reads : st[r] \in Positioned) \/ ask \notin {"none", "closing"}
-           /\ st' = [r \in Reads |-> IF st[r] \in Positioned THEN "ended" ELSE st[r]]
+\* Stop: every positioned read ends and an ask in flight closes, together with the read it parked: Stop
+\* means stop (paused-ask stack W1 "stopped", merged into Lane B on the M1, 2026-11-08 night).
+StopAll == /\ (\E r \in Reads : st[r] \in Positioned) \/ ask \notin {"none", "closing"} \/ parked # None
+           /\ st' = [r \in Reads |-> IF st[r] \in Positioned \/ r = parked THEN "ended" ELSE st[r]]
            /\ players' = {} /\ exiting' = exiting \cup players
-           /\ parkedFrom' = (IF parked # None THEN "paused" ELSE parkedFrom)
+           /\ parked' = None /\ parkedFrom' = "none"
            /\ mic' = FALSE
            /\ ask' = IF ask = "none" THEN "none" ELSE "closing"
-           /\ UNCHANGED <<cur, pausedAt, mark, resumedAt, seekTo, tele, prep, parked, recorder, asks>>
+           /\ UNCHANGED <<cur, pausedAt, mark, resumedAt, seekTo, tele, prep, recorder, asks>>
 
 Others == \/ \E r \in Reads : Start(r) \/ Ready(r) \/ DropPrep(r) \/ Advance(r) \/ TeleSync(r) \/ End(r)
                               \/ Pause(r) \/ Resume(r) \/ Seek(r) \/ SeekDone(r) \/ Esc(r)
@@ -246,16 +255,25 @@ OptF5Other == \E r, t \in Reads :
                 /\ UNCHANGED <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
                                ask, parked, parkedFrom, mic, recorder, asks, prevHeld>>
 
-Next == \/ Others /\ UNCHANGED <<prevHeld, notice>>
+\* History: the read the ask found on screen, until the ask restores it or a Stop ends both.
+TrackAsk == askFound' = CASE ask = "none" /\ ask' = "waiting" ->
+                               (IF \E r \in Reads : st[r] \in Positioned THEN CHOOSE r \in Reads : st[r] \in Positioned ELSE None)
+                          [] ask' = "none" \/ (parked # None /\ parked' = None) -> None
+                          [] OTHER -> askFound
+
+TrackStep ==
+        \/ Others /\ UNCHANGED <<prevHeld, notice>>
            /\ optq' = optq \ {r \in Reads : st'[r] \in Live}
         \/ (PreviousRead \/ PrevReturn) /\ UNCHANGED notice /\ optq' = optq \ {r \in Reads : st'[r] \in Live}
         \/ OptF5Empty \/ OptF5Same \/ OptF5Other
+
+Next == TrackStep /\ TrackAsk
 
 Spec == Init /\ [][Next]_vars
 
 \* #818 review: liveness. Once an ask has begun, its machinery keeps moving (prompt, capture, recorder exit, the
 \* player reaping, the restore) unless something else changes the state; nothing waits forever.
-Progress(A) == A /\ UNCHANGED <<prevHeld, notice>> /\ optq' = optq \ {r \in Reads : st'[r] \in Live}
+Progress(A) == A /\ UNCHANGED <<prevHeld, notice>> /\ optq' = optq \ {r \in Reads : st'[r] \in Live} /\ TrackAsk
 FairSpec == Spec /\ WF_vars(Progress(AskPromptStart)) /\ WF_vars(Progress(AskPromptEnd)) /\ WF_vars(Progress(MicOpen))
                  /\ WF_vars(Progress(CaptureEnd)) /\ WF_vars(Progress(RecorderExit)) /\ WF_vars(Progress(AskRestore))
                  /\ WF_vars(Progress(Reap))
@@ -292,6 +310,10 @@ OneLiveSession == Cardinality({r \in Reads : st[r] \in Live}) <= 1
 \* Etan: "if its on the same it should dedupe": the text being read (playing or paused) is never queued behind
 \* itself; the queue never holds a read that is on screen.
 NoSameQueued == \A r \in optq : st[r] \notin Live
+
+\* Lane B night item 3: the read an ask found on screen (preparing included) stays parked for the whole ask; the ask
+\* never cancels it. Only the ask's restore or a Stop releases it.
+AskKeepsRead == askFound # None => st[askFound] = "parked"
 
 \* A stopped or replaced session never starts a player.
 NoZombie == /\ \A r \in Reads : r \in players => st[r] = "playing"
