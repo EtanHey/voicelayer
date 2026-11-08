@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 
 /// Copy, metrics and actions for the notch History panel. 2.3 lane U4 (approved mock 5-history): two-line rows,
-/// seven visible, the dictation over "when · length"; Copy / Paste / Transcribe again on hover; no footer.
+/// six visible collapsed and eight expanded (Etan, 2026-11-08), the dictation over "when · length"; Copy / Paste / Transcribe again on hover; no footer.
 public enum NotchHistoryPresentation {
     // Row metrics (mock.css `.row.two`).
     public static let rowLeadingPadding: CGFloat = 10

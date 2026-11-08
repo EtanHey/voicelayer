@@ -42,6 +42,6 @@ final class UIE2EHostNotchModelTests: XCTestCase {
         AppDelegate.refreshNotchPresentationModel(model, for: state)
         XCTAssertEqual(model.presentation.visualState, .recording)
         XCTAssertEqual(model.presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
-        XCTAssertEqual(model.presentation.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        XCTAssertEqual(model.presentation.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
     }
 }
