@@ -553,6 +553,10 @@ public enum VoiceBarNotchContract {
     /// body is 465 × 196 pt). 2.3 lane U4 (approved mock 5-history): 420 pt wide, seven 46 pt two-line rows.
     public static let historyBodyWidth: CGFloat = NotchHistoryMorph.bodyWidth
     public static let historyLowerSurfaceHeight: CGFloat = NotchHistoryMorph.lowerSurfaceHeight
+    /// 2.4 Lane A (the 2.4 list: "widening the teleprompter"; Etan: "less empty space in the teleprompter"): the
+    /// body reaches 180 pt past each side of the core (545 pt at a 185 pt core, was 465), so a read wraps onto fewer
+    /// lines. Lane B's text column follows the body's width.
+    public static let teleprompterBodyExtent: CGFloat = 180
     public static let teleprompterLeadingContentWidth: CGFloat = 50
     public static let teleprompterTrailingContentWidth = WaveformLayout.viewportWidth
 
@@ -661,8 +665,8 @@ public enum VoiceBarNotchContract {
                 topHeight: resolvedTopHeight,
                 leadingWingWidth: 0,
                 trailingWingWidth: fixedWingWidth,
-                bodyLeadingExtent: 140,
-                bodyTrailingExtent: 140,
+                bodyLeadingExtent: teleprompterBodyExtent,
+                bodyTrailingExtent: teleprompterBodyExtent,
                 lowerSurfaceHeight: teleprompterLowerSurfaceHeight(lines: TeleprompterA.lineRange.lowerBound)
             )
         case .history:

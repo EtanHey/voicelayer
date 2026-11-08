@@ -248,7 +248,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         XCTAssertTrue(screen.screenFrame.contains(layout.windowFrame(anchoredTo: screen)))
                         let geometry = presentation.geometry
                         XCTAssertLessThanOrEqual(geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
-                        XCTAssertEqual(canvas.canvasGeometry.totalWidth, 465, "Keep the ordinary canvas")
+                        XCTAssertEqual(canvas.canvasGeometry.totalWidth, 545, "Keep the ordinary canvas")
                         XCTAssertEqual(geometry.leadingWingWidth, VoiceBarNotchContract.compactIndicatorLaneWidth)
                         XCTAssertEqual(geometry.topHeight, 32)
                         let size = layout.panelSize
@@ -526,7 +526,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                     XCTAssertEqual(layout.panelSize.height, 49 + VoiceBarNotchContract.transientNoteCanvasReserve)
                     XCTAssertTrue(screen.screenFrame.contains(frame))
                     XCTAssertLessThanOrEqual(geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
-                    XCTAssertEqual(canvas.canvasGeometry.totalWidth, 465)
+                    XCTAssertEqual(canvas.canvasGeometry.totalWidth, 545)
                 }
             }
         }
