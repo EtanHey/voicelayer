@@ -93,7 +93,7 @@ import { createNarrationSource } from "./narration/adapter";
 import { planUtterances, synthesizeBounded, type AssembleNarration } from "./narration/utterances";
 import type { NarrationAudio } from "./narration/source";
 import { ledgerAskBegin, ledgerAskRestore, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
-  ledgerPreviousHold, ledgerPreviousReturn, ledgerResumed, ledgerStopAll, ledgerStopped, ledgerWord, currentPlaybackSpeed,
+  ledgerPreviousHold, ledgerPreviousReturn, ledgerReplayFromStart, ledgerResumed, ledgerStopAll, ledgerStopped, ledgerWord, currentPlaybackSpeed,
   setLedgerPlaybackSpeed, setPreviousReadProbe } from "./playback/ledger";
 import { startCloneTiming } from "./tts/clone-timing";
 import { combineHistoryTimings, clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
@@ -1595,7 +1595,7 @@ class PlaybackQueueManager {
       return;
     }
     this.parked = parked;
-    ledgerPaused(sessionIdOf(job), globalWord(job, job.pausedWordIndex ?? 0), owner);
+    ledgerPaused(sessionIdOf(job), globalWord(job, job.pausedWordIndex ?? 0), owner, metadata.playbackOffsetMs ?? offset);
     job.onParkedChange?.(true);
     if (offset < (metadata.durationMs ?? Infinity)) metadata.speechArchive?.move("paused");
     else metadata.speechArchive?.playerEnded();
@@ -1713,6 +1713,7 @@ class PlaybackQueueManager {
       // The job (and its blocking handle) is kept; a capture keeps it parked and untouched.
       if (getEffectiveRecordingState() !== "idle" || this.captureAdmission) return false;
       const { job } = parked;
+      ledgerReplayFromStart(sessionIdOf(job));
       parked.controller.abort();
       disposeSeekSlice(job.sliceFile);
       job.sliceFile = undefined;
@@ -2061,7 +2062,8 @@ class PlaybackQueueManager {
       const sessionId = sessionIdOf(next);
       const isPrompt = this.captureAdmission?.has(next.id) === true;
       const local = next.metadata ? wordAtLocalOffset(next, next.metadata.localOffsetMs ?? 0).word_index : 0;
-      ledgerPlayerStarted(sessionId, next.metadata?.longRead ? "read" : "speak", globalWord(next, local), sessionWordCount(next), isPrompt);
+      ledgerPlayerStarted(sessionId, next.metadata?.longRead ? "read" : "speak", globalWord(next, local), sessionWordCount(next), isPrompt,
+        (next.metadata?.longRead?.chunk_start_ms ?? 0) + (next.metadata?.localOffsetMs ?? 0));
       const exited = () => ledgerPlayerExited(sessionId, isPrompt);
       void proc.exited.then(exited, exited);
     }

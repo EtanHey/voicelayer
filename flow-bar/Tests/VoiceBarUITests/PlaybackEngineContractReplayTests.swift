@@ -2,12 +2,18 @@
 import XCTest
 
 /// Lane B (2.4), QA 11:47 Row 1 and Row 3: the REAL daemon event stream for a read on its second chunk (starting at
-/// 0:30) parked by two voice_asks back to back (recorded by src/__tests__/playback-engine.test.ts "Row 1" with
-/// LANEB_RECORD_STREAM=1), replayed into VoiceState on the same virtual clock. The capture states the recorder
+/// 0:30) parked by two voice_asks back to back, then paused (recorded by src/__tests__/playback-engine.test.ts "Row 1"
+/// with LANEB_RECORD_STREAM=1), replayed into VoiceState on the same virtual clock. The capture states the recorder
 /// broadcasts (mocked in that daemon test) are inserted between each prompt and its restore, as input.ts sends them.
+///
+/// #818 review: the read's clock is checked for monotonicity ACROSS edges (asks, restores, the pause), per read. Only
+/// a seek or replay may move it back; a resume may rewind at most to the start of the word it paused on (the daemon
+/// keeps that word's tail, by design). The final Pause is checked against the daemon's own answer.
 @MainActor
 final class PlaybackEngineContractReplayTests: XCTestCase {
     private var now: TimeInterval = 100
+    /// One word of the fixture (words every 2 s): the most a resume may rewind, to the paused word's start.
+    private static let oneWordMs = 2000
 
     private struct Stream {
         let text: String
@@ -37,30 +43,45 @@ final class PlaybackEngineContractReplayTests: XCTestCase {
         state.sendCommand = { sent.append($0) }
 
         var restores: [Int] = []
-        var lastClock: Int?
-        var lastEdge: String?
+        // The highest clock the READ has shown so far, kept across every edge (never reset by an ask or a restore).
+        var readHigh: Int?
+        var readShowing: Bool { state.mode == .speaking && state.statusText == stream.text }
+        func checkRead(_ context: String, allowRewind: Int = 0) {
+            guard readShowing else { return }
+            let clock = state.playbackElapsedMilliseconds()
+            if let high = readHigh {
+                XCTAssertGreaterThanOrEqual(clock, high - allowRewind, "\(context): the read's clock ran backwards (\(high) → \(clock))")
+                // A permitted rewind (to the paused word's start) re-bases the high-water mark; nothing else does.
+                readHigh = allowRewind > 0 ? clock : max(high, clock)
+            } else {
+                readHigh = clock
+            }
+        }
+        var pausedShown: Int?
         for (index, raw) in stream.events.enumerated() {
             var event = raw
             let t = (event.removeValue(forKey: "__t") as? NSNumber)?.doubleValue ?? 0
-            // Row 3a: sample the clock at 30 Hz up to this event; between two edges of one read it never decreases.
+            // Row 3a: sample at 30 Hz up to this event.
             while state.mode == .speaking, !state.isPlaybackPaused, now + 1.0 / 30 < 100 + t / 1000 {
                 now += 1.0 / 30
-                let clock = state.playbackElapsedMilliseconds()
-                if let lastClock { XCTAssertGreaterThanOrEqual(clock, lastClock, "clock ran backwards at \(now)") }
-                lastClock = clock
+                checkRead("30 Hz sample at \(now)")
             }
             now = max(now, 100 + t / 1000)
+            let type = event["type"] as? String
+            if type == "playback_state", event["state"] as? String == "paused", readShowing {
+                pausedShown = state.playbackElapsedMilliseconds()
+            }
             state.handleEvent(event)
-            if event["type"] as? String == "state" {
-                let edge = "\(event["state"] ?? "")|\(event["playback_offset_ms"] ?? "")|\(event["text"] ?? "")"
-                if edge != lastEdge { lastClock = nil; lastEdge = edge }
-            }
+            let reanchor = event["reanchor"] as? String
+            if reanchor == "seek" || reanchor == "replay" { readHigh = nil }
+            // A resume (and the paused response) may land on the paused word's start: at most one word back.
+            let rewind = reanchor == "resume" || reanchor == "resync" || type == "playback_state" ? Self.oneWordMs : 0
+            checkRead("after event \(index) (\(type ?? "?") \(event["state"] ?? ""))", allowRewind: rewind)
             // The prompt's idle hands the pill to the capture.
-            if event["type"] as? String == "state", event["state"] as? String == "idle", event["source"] == nil {
+            if type == "state", event["state"] as? String == "idle", event["source"] == nil {
                 for step in Self.capture { state.handleEvent(step) }
-                lastClock = nil
             }
-            if event["type"] as? String == "playback_state", event["state"] as? String == "resumed" {
+            if type == "playback_state", event["state"] as? String == "resumed" {
                 restores.append(index)
                 let edge = stream.events[..<index].last { $0["state"] as? String == "speaking" && $0["text"] as? String == stream.text }
                 let offset = try XCTUnwrap((edge?["playback_offset_ms"] as? NSNumber)?.intValue)
@@ -73,15 +94,19 @@ final class PlaybackEngineContractReplayTests: XCTestCase {
                                "restore \(restores.count): the clock is the player's position (0:40/0:42), never 0:10")
                 XCTAssertGreaterThanOrEqual(offset, 30_000, "never a chunk-local clock")
             }
+            if type == "playback_state", event["state"] as? String == "paused" {
+                // Row 3b, response-driven: the daemon's answer is where the clock now stands; it never jumps forward
+                // past what was shown, and steps back at most to the paused word's start.
+                let answer = try XCTUnwrap((event["offset_ms"] as? NSNumber)?.intValue)
+                XCTAssertTrue(state.isPlaybackPaused)
+                XCTAssertEqual(state.playbackElapsedMilliseconds(), answer, "the paused clock is the daemon's word start")
+                let shown = try XCTUnwrap(pausedShown)
+                XCTAssertLessThanOrEqual(answer, shown, "Pause moved the clock forward (\(shown) → \(answer))")
+                XCTAssertGreaterThanOrEqual(answer, shown - Self.oneWordMs, "Pause rewound more than a word (\(shown) → \(answer))")
+            }
         }
         XCTAssertEqual(restores.count, 2, "two asks, two restores")
-
-        // Row 3b: a Pause after the second restore sends the clock it shows: no jump.
-        now += 2.3
-        let shown = state.playbackElapsedMilliseconds()
-        state.togglePlaybackPause()
-        let pause = try XCTUnwrap(sent.last { $0["cmd"] as? String == "pause" })
-        XCTAssertEqual(pause["playback_elapsed_ms"] as? Int, shown)
-        XCTAssertEqual(shown, 42_000 + 2_300)
+        XCTAssertNotNil(pausedShown, "the stream ends with the daemon's answer to a Pause")
+        XCTAssertTrue(sent.allSatisfy { $0["cmd"] as? String != "resync_playback" }, "no edge was lost, so no resync")
     }
 }

@@ -333,8 +333,10 @@ describe("pause cursor resolution", () => {
     [{ clientMs: 0, daemonMs: 4200 }, 4200, "daemon"],
     [{ clientMs: -3500, daemonMs: 6500 }, 6500, "daemon"],
     [{ clientMs: 3900, daemonMs: 4300 }, 3900, "client"],
-    [{ clientMs: 4200, daemonMs: 0 }, 4200, "client"],
-    [{ clientMs: 9000, daemonMs: 1000, durationMs: 5000 }, 5000, "client"],
+    // #818: a client clock AHEAD of the player never moves the pause word forward.
+    [{ clientMs: 4200, daemonMs: 0 }, 0, "daemon"],
+    [{ clientMs: 9000, daemonMs: 1000, durationMs: 5000 }, 1000, "daemon"],
+    [{ clientMs: 4300, daemonMs: 4300 }, 4300, "client"],
     [{ daemonMs: 2500 }, 2500, "daemon"],
     [{ clientMs: 1200 }, 1200, "client"],
     [{}, 0, "none"],

@@ -292,6 +292,12 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     await players.at(4); await fixtureCheckpoint();
     expect(events.filter(e => e.state === "speaking" && e.text === text).at(-1)).toMatchObject({ playback_offset_ms: 42_000 });
     expect(events.filter(e => e.type === "state").at(-1)).toMatchObject({ state: "speaking", text });
+    // #818: a Pause after the second restore, answered by the daemon, so the Swift replay checks the response too.
+    at(15_300);
+    const restored = events.filter(e => e.state === "speaking" && e.text === text).at(-1);
+    expect(await handleSocketCommand({ cmd: "pause", playback_id: restored.playback_id, generation: restored.generation,
+      playback_elapsed_ms: 43_000 })).toMatchObject({ outcome: "accept", offset_ms: 42_000 });
+    expect(states("paused").at(-1)).toMatchObject({ offset_ms: 42_000, word_index: 6 });
     expect(playbackSessionViolations()).toEqual([]);
     // Normalized stream for the Swift contract replay: process-specific ids become stable tokens.
     const ids = new Map<string, string>();

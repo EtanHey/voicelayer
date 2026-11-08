@@ -20,7 +20,7 @@
    "utteranceId": "playback-1",
    "text": "One two three four five six seven eight nine ten",
    "voice": "test",
-   "readback_id": "ee7d244f-45cc-442b-86d3-9d35793abd44",
+   "readback_id": "b7feea22-4a6a-4146-9600-0a6869b53c17",
    "readback_duration_ms": 0,
    "playback_id": "playback-1",
    "generation": 1,
@@ -240,7 +240,7 @@
    "utteranceId": "playback-2",
    "text": "Quick check for your recording?",
    "voice": "test",
-   "readback_id": "aa7337bb-a428-43d3-b632-a8557804d0d5",
+   "readback_id": "9d9f5a55-db7a-45f5-b915-c6123bba7a9b",
    "readback_duration_ms": 0,
    "playback_id": "playback-2",
    "generation": 1,
@@ -382,7 +382,7 @@
    "utteranceId": "playback-1",
    "text": "One two three four five six seven eight nine ten",
    "voice": "test",
-   "readback_id": "8d70f525-3640-4b66-9975-32c6af262441",
+   "readback_id": "0ac22820-206a-4e29-9029-9325b69a1e11",
    "readback_duration_ms": 0,
    "playback_id": "playback-1",
    "generation": 3,
@@ -396,6 +396,7 @@
    "duration_ms": 50000,
    "chunk_duration_ms": 20000,
    "narration_source": "voicelayer-engines",
+   "reanchor": "resume",
    "playback_amplitude": {
     "source": "unavailable",
     "sample_interval_ms": 50,
@@ -622,7 +623,7 @@
    "utteranceId": "playback-3",
    "text": "Second check: did the read pause?",
    "voice": "test",
-   "readback_id": "bffa3345-5b88-4bde-921f-c509cdcfde28",
+   "readback_id": "44ced164-9941-42a7-a839-1718d0e603b0",
    "readback_duration_ms": 0,
    "playback_id": "playback-3",
    "generation": 1,
@@ -769,7 +770,7 @@
    "utteranceId": "playback-1",
    "text": "One two three four five six seven eight nine ten",
    "voice": "test",
-   "readback_id": "c1af856f-aba1-4745-af88-85d22b747cbe",
+   "readback_id": "fc4b59e3-18d2-48a9-a878-e16ab693109f",
    "readback_duration_ms": 0,
    "playback_id": "playback-1",
    "generation": 5,
@@ -783,6 +784,7 @@
    "duration_ms": 50000,
    "chunk_duration_ms": 20000,
    "narration_source": "voicelayer-engines",
+   "reanchor": "resume",
    "playback_amplitude": {
     "source": "unavailable",
     "sample_interval_ms": 50,
@@ -978,6 +980,39 @@
     "chunk_start_ms": 30000
    },
    "__t": 14300
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "paused",
+   "word_index": 6,
+   "word_count": 10,
+   "pause_owner": "user",
+   "ask": "none",
+   "parked_by_ask": null,
+   "previous_available": false,
+   "speed": 1,
+   "__t": 15300
+  },
+  {
+   "type": "playback_state",
+   "state": "paused",
+   "playback_id": "playback-1",
+   "generation": 6,
+   "offset_ms": 42000,
+   "chunk_offset_ms": 12000,
+   "pause_owner": "user",
+   "duration_ms": 50000,
+   "chunk_duration_ms": 20000,
+   "word_index": 6,
+   "word_count": 10,
+   "long_read": {
+    "id": "row1-read",
+    "chunk_index": 1,
+    "chunk_count": 2,
+    "chunk_start_ms": 30000
+   },
+   "__t": 15300
   }
  ]
 }

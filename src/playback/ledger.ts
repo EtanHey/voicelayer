@@ -27,13 +27,27 @@ export function resetPlaybackSessionLedger(): void {
   engine = new PlaybackSessionEngine();
   speed = 1;
   reported.clear();
+  driverViolations.length = 0;
+  pausedOffsets.clear();
 }
 
 export function playbackSessionEngine(): PlaybackSessionEngine { return engine; }
-export function playbackSessionViolations(): string[] { return engine.violations(); }
+export function playbackSessionViolations(): string[] { return [...engine.violations(), ...driverViolations]; }
 
 export function currentPlaybackSpeed(): number { return speed; }
 export function setLedgerPlaybackSpeed(value: number): void { speed = value; publish(); }
+
+function reportViolation(edge: string, violation: string): void {
+  const key = `${edge}:${violation}`;
+  if (reported.has(key)) return;
+  reported.add(key);
+  const payload = { edge, violation };
+  try { appendControlLayerEvent("playback_session_violation", payload, { topic: "voice.playback" }); } catch {}
+  console.error(`[voicelayer] ${JSON.stringify({ event: "playback_session_violation", timestamp: new Date().toISOString(), ...payload })}`);
+  driverViolations.push(violation);
+}
+
+const driverViolations: string[] = [];
 
 function check(edge: string): void {
   for (const violation of engine.violations()) {
@@ -77,7 +91,14 @@ function publish(): void {
 function after(edge: string): void { check(edge); publish(); }
 
 /** A player for session `id` started at read-global word `word`. Begins, continues or resumes the session. */
-export function ledgerPlayerStarted(id: string, kind: SessionKind, word: number, wordCount: number, isPrompt = false): void {
+/** The read-global audio offset each session paused at, for the driver's ResumeExact check. */
+const pausedOffsets = new Map<string, number>();
+
+export function ledgerPlayerStarted(id: string, kind: SessionKind, word: number, wordCount: number, isPrompt = false,
+  startOffsetMs?: number): void {
+  // The driver spawns only once every earlier player has exited (processNext waits on termination), so the ledger
+  // mirrors that guarantee instead of keeping a stale "exiting" entry that would refuse this player.
+  for (const exiting of [...engine.exiting]) engine.playerExited(exiting);
   if (isPrompt) {
     if (engine.ask === "none") engine.askBegin();
     engine.askPromptStart();
@@ -93,11 +114,22 @@ export function ledgerPlayerStarted(id: string, kind: SessionKind, word: number,
     else if (session.state === "paused") engine.resume(id);
   }
   session = engine.get(id);
+  // Driver conformance (ResumeExact): a resumed player starts its audio exactly where the pause stored it. (The
+  // word index alone can shift by one when a clone alignment lands after the pause; the audio offset cannot.)
+  const pausedAt = pausedOffsets.get(id);
+  if (session?.state === "preparing" && session.resumedAt !== undefined && pausedAt !== undefined &&
+      startOffsetMs !== undefined && Math.round(startOffsetMs) !== Math.round(pausedAt)) {
+    reportViolation("player-started", `ResumeExact(driver): ${id} resumed at ${Math.round(startOffsetMs)} ms, paused at ${Math.round(pausedAt)} ms`);
+  }
+  if (session?.state === "preparing" && session.resumedAt !== undefined) pausedOffsets.delete(id);
   if (session?.state === "preparing" && session.cursor !== word && session.resumedAt === undefined) {
     // A seek or an unmodelled jump: the driver's player is the truth for where audio starts.
     (session as PlaybackSession).cursor = Math.max(0, word);
   }
   engine.ready(id);
+  // The resume landing is checked once, on the player that resumed; later chunks continue from it.
+  const started = engine.get(id) as PlaybackSession | undefined;
+  if (started?.state === "playing") started.resumedAt = undefined;
   engine.word(id, word);
   engine.teleprompter(word, id);
   after("player-started");
@@ -113,6 +145,7 @@ function nextChunk(id: string): void {
 }
 
 export function ledgerWord(id: string, word: number): void {
+  if (engine.get(id)?.state !== "playing") return;
   engine.word(id, word);
   engine.teleprompter(word, id);
   after("word");
@@ -124,8 +157,14 @@ export function ledgerPlayerExited(id: string, isPrompt = false): void {
   check("player-exited");
 }
 
-export function ledgerPaused(id: string, word: number, owner: PauseOwner): void {
+/** Replay while paused restarts the read from its first word: the stored pause offset no longer applies. */
+export function ledgerReplayFromStart(id: string): void { pausedOffsets.delete(id); }
+
+export function ledgerPaused(id: string, word: number, owner: PauseOwner, offsetMs?: number): void {
+  if (offsetMs !== undefined) pausedOffsets.set(id, offsetMs);
   engine.pause(id, word, owner);
+  // The paused playback_state tells VoiceBar this word: that is what its teleprompter shows now.
+  engine.teleprompter(word, id);
   after("pause");
 }
 

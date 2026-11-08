@@ -483,9 +483,9 @@ export const PAUSE_CLIENT_TOLERANCE_MS = 750;
  * chunks, right after a resume), and a chunk-local value minus the chunk start goes negative;
  * both rewound the read to the chunk's first word.
  *
- * The client clock is still preferred (it follows what was heard), EXCEPT when it is behind the
- * daemon's own player clock by more than the tolerance: then the daemon's clock wins, so a pause
- * can never rewind the read. Never past the chunk's audio.
+ * The daemon's player clock is where the audio is. A client clock refines it only BACK, by at most
+ * the tolerance (it follows what was heard); a client clock ahead of the player, or far behind it,
+ * is overruled. The pause word is the last word whose start that position reached.
  */
 export function resolvePauseCursorMs(input: {
   clientMs?: number;
@@ -499,7 +499,9 @@ export function resolvePauseCursorMs(input: {
   const daemon = finite(input.daemonMs);
   const bound = (value: number) => Math.round(Math.min(Math.max(0, value), input.durationMs ?? Infinity));
   if (client === undefined) return daemon === undefined ? { cursorMs: 0, source: "none" } : { cursorMs: bound(daemon), source: "daemon" };
-  if (daemon !== undefined && client < daemon - tolerance) return { cursorMs: bound(daemon), source: "daemon" };
+  // #818 review: the word comes from where the audio actually is. The daemon's player clock is that; a client clock
+  // may refine it BACK within the tolerance (it follows what was heard), never ahead of it, never far behind it.
+  if (daemon !== undefined && (client < daemon - tolerance || client > daemon)) return { cursorMs: bound(daemon), source: "daemon" };
   return { cursorMs: bound(client), source: "client" };
 }
 

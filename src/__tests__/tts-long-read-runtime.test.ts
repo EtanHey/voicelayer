@@ -309,7 +309,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         .toEqual({ engine: "qwen3-tts", origin: "speak", fallback: false });
       // The native cursor can reach a chunk boundary before its owned player exits.
       // Its physical process is still alive in both rows; no completion is delivered here.
-      clockMs += 2000;
+      // #818: the player's own clock is at the press too (a client clock ahead of the player never moves a pause).
+      clockMs += localPress;
       holdPlayerExit = ending === "slow-exit";
       expect(handleSocketCommand({ cmd: "record", take_id: crypto.randomUUID(), press_to_talk: true,
         playback_elapsed_ms: playing.long_read.chunk_start_ms + localPress })).toMatchObject({ outcome: "accept" });
