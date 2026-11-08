@@ -1,0 +1,23 @@
+name: 2.4 isolated E2E
+on:
+  pull_request:
+    branches: [integration/2.4]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated:
+    runs-on: macos-14
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bash scripts/e2e-2.4.sh --report .build.noindex/e2e-2.4/report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-2.4-isolated
+          path: .build.noindex/e2e-2.4/report.json
