@@ -2301,7 +2301,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 coreWidth: coreWidth,
                 visibleCoreOcclusionInset: visibleCoreOcclusionInset,
                 transientNote: state?.selectionFeedbackNote,
-                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory
+                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory,
+                showsEarlierTakeProcessing: state.map(VoiceBarPresentation.showsEarlierTakeProcessing(for:)) ?? false
             )
         )
     }
