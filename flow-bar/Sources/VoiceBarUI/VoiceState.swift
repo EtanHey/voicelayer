@@ -1106,7 +1106,13 @@ public final class VoiceState {
     private var historyJobIDs: Set<String> = []
     private var ownedPasteOperations: [UUID: (takeID: String, deliveryID: String, path: String?, text: String)] = [:]
     private var completedDictationDeliveries: Set<String> = []
-    public private(set) var processingTakeCount = 0
+    public private(set) var processingTakeCount = 0 {
+        didSet {
+            // N1 review D2: the recording wing's earlier-take spinner slot follows the job count, which changes with
+            // no mode edge (completion, cancel, failure). Tell the resident presentation so the slot collapses too.
+            if mode == .recording, (oldValue > 0) != (processingTakeCount > 0) { notifyPanelLayoutChangedIfNeeded(true) }
+        }
+    }
     public private(set) var microphoneTakeID: String?
     public private(set) var supportsRecordingJobs = false
     public var canRecordDuringProcessing: Bool { supportsRecordingJobs && microphoneTakeID == nil && !remoteOwnedRecording }
