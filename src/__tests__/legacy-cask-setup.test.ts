@@ -353,3 +353,22 @@ for (const target of ["", "a".repeat(40)]) caskTest(`legacy repair scope refuses
   // Permit that read only; no bootout, startup or bundle effect is allowed.
   expect(readFileSync(join(f.root, "calls"), "utf8")).toBe("list com.voicelayer.voicebar\n");
 });
+
+caskTest("restore availability ignores another user's VoiceBar", () => {
+  const f = fixture();
+  writeFileSync(join(f.root, "running"), "");
+  const other = process.getuid!() + 1;
+  writeFileSync(join(f.root, "bin/pgrep"), `#!/bin/bash
+echo "pgrep $*" >> "${f.root}/calls"
+if [[ "$1" == -U && "$2" == ${other} ]]; then echo 999; exit 0; fi
+if [[ "$1" == -U && -s "${f.root}/running" ]]; then echo 101; exit 0; fi
+exit 1
+`, { mode: 0o755 });
+  const r = Bun.spawnSync(["/bin/bash", join(f.root, "scripts/install-voicebar-autostart.sh"), "--restore-availability"], {
+    env: { ...process.env, ...f.env, VOICELAYER_SETUP_AVAILABILITY: "1" }, stdout: "pipe", stderr: "pipe",
+  });
+  expect({ exit: r.exitCode, err: r.stderr.toString() }).toMatchObject({ exit: 0 });
+  const calls = readFileSync(join(f.root, "calls"), "utf8");
+  expect(calls).toContain(`pgrep -U ${process.getuid!()} -x VoiceBar`);
+  expect(calls).toContain("kickstart");
+});

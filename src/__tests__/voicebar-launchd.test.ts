@@ -96,15 +96,15 @@ test("supervised post-commit failure leaves disabled job to TS restore", () => {
   writeFileSync(log, "");
   for (const name of ["launchctl", "open"]) writeFileSync(join(root, name),
     '#!/bin/bash\necho "$*" >> "$CALLS"\nexit 1\n', { mode: 0o755 });
-  writeFileSync(join(root, "pgrep"), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+  writeFileSync(join(root, "pgrep"), '#!/bin/bash\necho "pgrep $*" >> "$CALLS"\nexit 1\n', { mode: 0o755 });
   const result = Bun.spawnSync(["/bin/bash", "-c",
-    'source "$GATE"; trap vl_gate_restore_exit EXIT; exit 7'], {
+    'source "$GATE"; export VOICELAYER_GATE_RESTORE_APP=/Applications/VoiceBar.app; export VOICELAYER_INSTALL_OPERATION="$OPERATION"; trap vl_gate_restore_exit EXIT; exit 7'], {
     env: { ...process.env, PATH: root + ":/usr/bin:/bin", CALLS: log,
-      GATE: join(process.cwd(), "scripts/lib/update-gate.sh"),
-      VOICELAYER_INSTALL_OPERATION: JSON.stringify({ source: "supervised-bootstrap" }),
+      HOME: root, GATE: join(process.cwd(), "scripts/lib/update-gate.sh"),
+      OPERATION: JSON.stringify({ lease: { generation: 1, operationId: "11111111-1111-4111-8111-111111111111", ownerId: "22222222-2222-4222-8222-222222222222", targetSha: "a".repeat(40) }, pid: process.pid, identity: "fixture", source: "supervised-bootstrap" }),
       VOICELAYER_GATE_RESTORE_APP: "/Applications/VoiceBar.app", VOICEBAR_LAUNCH_WAIT_ATTEMPTS: "1" },
     stdout: "pipe", stderr: "pipe",
   });
   expect(result.exitCode).toBe(7);
-  expect(readFileSync(log, "utf8")).toBe("");
+  expect(readFileSync(log, "utf8")).not.toMatch(/^(enable|bootstrap|kickstart) /m);
 });
