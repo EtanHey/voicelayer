@@ -177,7 +177,7 @@ restore_last_known_good_main_build() {
 
   local restored=0
   kickstart_launchd_service "$MCP_DAEMON_LAUNCHD_LABEL" || restored=1
-  kickstart_launchd_service "$VOICEBAR_LAUNCHD_LABEL" || restored=1
+  bash "$main_root/scripts/start-voicebar.sh" || restored=1
   return "$restored"
 }
 

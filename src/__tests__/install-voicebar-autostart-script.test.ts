@@ -118,7 +118,7 @@ xattr() {
 `}
 `;
   writeFileSync(join(stubDir, "launchctl"), `#!/bin/bash\n  printf 'launchctl %s\\n' "$*" >> "$STUB_LOG"
-  if [ "\${1:-}" = "kickstart" ]; then : > "$STUB_STATE.started"; fi
+  if [ "\${1:-}" = "kickstart" ] || [ "\${1:-}" = "bootstrap" ]; then : > "$STUB_STATE.started"; fi
   if [ "\${1:-}" = "print" ]; then
     if [ -f "$STUB_STATE.started" ]; then printf 'state = running\\npid = 42\\n'; exit 0; fi
     count=0

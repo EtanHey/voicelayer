@@ -195,12 +195,14 @@ test("unreadable process inventory stays UNKNOWN despite human confirmation", as
   try { await f.waitForPhase("UNKNOWN process evidence", c); expect(readFileSync(f.log, "utf8")).toBe(""); expect(await cancel(c)).toContain("UNKNOWN process evidence"); }
   finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
 });
-test("busy to idle resumes, installer failure retains closed gate and restores managed voice", async () => {
+test("busy to idle resumes, installer failure retains closed gate and disabled autostart", async () => {
   const f = fixture(); writeFileSync(join(f.root, "active"), "456 rec\n"); writeFileSync(join(f.root, "fail-install"), "yes"); const c = f.start();
   try {
     await f.waitForPhase("audio/decoding", c); expect(readFileSync(f.log, "utf8")).toBe(""); writeFileSync(join(f.root, "active"), "");
     expect(await c.exited).toBe(7); expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
-    expect(readFileSync(f.log, "utf8").match(/^enable .*$/gm)).toEqual([`enable gui/${process.getuid!()}/com.voicelayer.voicebar`]);
+    expect(readFileSync(f.log, "utf8")).not.toContain("enable ");
+    expect(readFileSync(f.log, "utf8")).toContain(`open ${f.root}/VoiceBar.app`);
+    expect(readFileSync(join(f.root, "disabled"), "utf8").trim()).toBe("true");
   } finally { f.server.stop(true); }
 });
 test("concurrent bootstrap cannot restore the first controller's autostart", async () => {
@@ -232,10 +234,10 @@ test("R1 restoration attempts every service and releases only its bootstrap mute
   try {
     expect(await c.exited).toBe(1);
     const calls = readFileSync(f.log, "utf8"), err = await new Response(c.stderr).text();
-    expect(calls.match(/^enable /gm)?.length).toBe(3);
-    // Failed canonical enable cannot authorize a startup or an open fallback.
+    expect(calls.match(/^enable /gm)?.length).toBe(2);
+    // Every job restore is attempted; observed noncanonical voice availability is independent.
     expect(calls.match(/^bootstrap /gm)?.length).toBe(2);
-    expect(calls).not.toMatch(/^open /m);
+    expect(calls).toContain(`open ${f.root}/VoiceBar.app`);
     expect(err).toContain("restoration incomplete");
     expect(err).toContain("enable"); expect(err).toContain("bootstrap");
     expect(existsSync(f.gate + ".bootstrap-lock")).toBe(false);
@@ -284,13 +286,14 @@ test("R1 durable COMMIT survives a post-acquisition sample failure without legac
     const calls = readFileSync(f.log, "utf8"), err = await new Response(c.stderr).text();
     expect(calls).toContain("postcommit-sample");
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
-    // Canonical availability is restored through its own job. The retired
-    // legacy daemon/job must stay disabled and must never be bootstrapped.
-    expect(calls.match(/^enable .*$/gm)).toEqual([`enable gui/${process.getuid!()}/com.voicelayer.voicebar`]);
+    // A committed fault restores only the observed bundle; both jobs stay disabled.
+    expect(calls).not.toContain("enable ");
+    expect(calls).toContain(`open ${f.root}/VoiceBar.app`);
+    expect(readFileSync(join(f.root, "disabled"), "utf8").trim()).toBe("true");
     expect(calls).not.toContain("actual-job.plist");
     expect(calls).not.toContain("loaded-mcp.plist");
     expect(readFileSync(join(f.root, "disabled-mcp"), "utf8").trim()).toBe("true");
-    expect(calls).toContain("kickstart -k");
+    expect(calls).not.toContain("kickstart ");
     expect(calls).not.toMatch(/^install$/m);
     expect(err).toContain("admission retained closed");
     expect(err).not.toContain("precommit Cancel");
@@ -363,7 +366,9 @@ test("R2 successful COMMIT finalizer never reads G1 again", async () => {
   try {
     expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 1 });
     expect(readFileSync(f.log, "utf8")).toMatch(/^install$/m);
-    expect(readFileSync(f.log, "utf8").match(/^enable .*$/gm)).toEqual([`enable gui/${process.getuid!()}/com.voicelayer.voicebar`]);
+    expect(readFileSync(f.log, "utf8")).not.toContain("enable ");
+    expect(readFileSync(f.log, "utf8")).toContain(`open ${f.root}/VoiceBar.app`);
+    expect(readFileSync(join(f.root, "disabled"), "utf8").trim()).toBe("true");
     await waitFor(f.root, () => !existsSync(f.gate + ".lock"), "finalizer lock release");
   } finally { f.server.stop(true); }
 });

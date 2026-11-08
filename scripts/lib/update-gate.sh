@@ -50,7 +50,15 @@ vl_gate_wait_voicebar() {
 vl_gate_restore_voicebar() {
     local status
     [[ -n "${VOICELAYER_GATE_RESTORE_APP:-}" ]] || return 0
-    if pgrep -x VoiceBar >/dev/null 2>&1; then return 0; else status=$?; fi
+    if pgrep -U "$(id -u)" -x VoiceBar >/dev/null 2>&1; then
+        if [[ "$VOICELAYER_GATE_RESTORE_APP" == /Applications/VoiceBar.app ]]; then
+            source "$(dirname "${BASH_SOURCE[0]}")/voicebar-launchagent.sh"
+            voicebar_verify_launchd "$VOICELAYER_GATE_RESTORE_APP" || {
+                echo 'ERROR: running VoiceBar is not owned by launchd' >&2; return 1;
+            }
+        fi
+        return 0
+    else status=$?; fi
     [[ "$status" -eq 1 ]] || return 1
     if [[ "$VOICELAYER_GATE_RESTORE_APP" != /Applications/VoiceBar.app ]]; then
         open "$VOICELAYER_GATE_RESTORE_APP" || return 1 # Separate, isolated QA identity.

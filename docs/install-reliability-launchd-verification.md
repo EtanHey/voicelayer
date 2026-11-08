@@ -1,10 +1,19 @@
 # Resident launchd ownership: local verification
 
 Base: `849483ae6f04f0edc8310fcab1793c6e7614c0d0` (`origin/integration/2.3`).
-The shared starter enables the canonical job, bootstraps its installed plist if missing,
-kickstarts `-k gui/$UID/com.voicelayer.voicebar`, and requires running state plus the
-sole VoiceBar PID and expected executable. Every failure is loud; resident startup
-has no LaunchServices fallback. Nonresident QA paths retain their existing launches.
+The shared starter returns without mutation for an already verified resident. Otherwise
+it enables the canonical job and bootstraps its installed plist if missing. RunAtLoad
+owns a newly bootstrapped instance; the helper never kicks it a second time. A loaded
+stopped job receives plain `kickstart`, never `-k`. Verification requires running state,
+the current user's sole VoiceBar PID, expected executable, and two consecutive good
+samples of the same PID. The default 250 × 100 ms budget exceeds the native
+acceptedQuitWait (2 × 1 s + 1 s). Every failure is loud.
+
+Supervised-bootstrap recovery preserves the original policy: after a committed
+installer fault or non-OPEN gate, jobs stay disabled and admission stays closed.
+Availability recovery opens the observed bundle, including old installs outside
+/Applications. Only precommit OPEN recovery of the canonical bundle uses the
+launchd helper. Nonresident QA paths retain their existing launches.
 
 ## Start inventory
 
@@ -43,3 +52,39 @@ recordings were touched. Tests use preload/private fixtures/fake tools. After th
 capacity ruling, focused runs use nice 10; app builds check the exact push-hook process
 and wait at 60-second intervals if present. No full suite was started.
 The lead must regenerate formal receipts after integrating both branches and P0.
+
+## Round 2
+
+Fail-first against 4bd0f7c0: 0 pass / 10 fail across the ten selected R2 cases.
+By defect: B1 recording no-op and bootstrap no-rekick (2); B2 committed failure
+and durable-COMMIT sample failure preserve disabled jobs and restore the observed
+noncanonical bundle (2); B3 current-user PID scope (1); B4 delayed readiness,
+immediate crash and PID churn (3); unmanaged gate restore and auto-F5 helper
+routing/native timeout contract (2). The recording test's fixture retains its
+capture marker and asserts no enable/bootstrap/kickstart mutation.
+
+The gate restore now refuses an already running unmanaged canonical VoiceBar;
+it does not restart it. Auto-F5 restores VoiceBar through start-voicebar.sh.
+Existing explicit restart of the retired MCP service is outside the VoiceBar helper.
+Restoration tests now assert the original disabled-autostart policy and the exact
+observed bundle path. Shell fixtures model RunAtLoad starting at bootstrap, and
+the fake build uses the real shared helper rather than inventing an unmanaged PID.
+No deadlines are raised.
+
+Round 2 formal refresh: 24/24 expected outcomes (6 positive / 18 exact-property
+mutants). This branch does not contain A's reap model. Both branches retain their
+own source-consistent receipts; lead regenerates after integration with P0.
+Source/typecheck and Bash syntax checks pass. Installed/native/live and full
+pre-push qualification remain NOT_RUN under the no-live-state brief.
+
+Final R2 receipts: nine targeted files ran 251 cases: 249 pass / 2 fixture
+failures (1058 assertions). The failures were both in update-gate-script-exits:
+its fake build manufactured an unmanaged PID and its missing-job bootstrap
+ignored RunAtLoad. After correcting those fixtures, the complete caller and
+autostart suites pass 62/62 (226 assertions). All ten R2 cases that fail against
+4bd0f7c0 pass in the broader run, matched by exact test name. The remaining
+189 cases in that run passed; no product source changed after that run started.
+The earlier 43 pass / 1 stale enable-count expectation failure is also retained;
+the broader run passes that corrected recovery assertion. Neither failed run
+is relabeled green. The latest caller recheck covers both failures and every
+changed shell fixture. No full pre-push or unified nine-file rerun is claimed.

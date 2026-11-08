@@ -275,14 +275,19 @@ export async function runSupervisedBootstrap(command: string[], confirm = confir
     // committed installer fault. Admission stays closed; no synthetic reopen.
     if (restoreApp) {
       try {
-        if (!processes(native)) checked(["bash", fileURLToPath(new URL("../scripts/start-voicebar.sh", import.meta.url)), restoreApp]);
+        if (!processes(native)) {
+          if (restorePrecommit && restoreApp === "/Applications/VoiceBar.app")
+            checked(["bash", fileURLToPath(new URL("../scripts/start-voicebar.sh", import.meta.url)), restoreApp]);
+          else checked(["open", restoreApp]);
+        }
         let restored = false;
         for (let attempt = 0; attempt < 50; attempt++) {
           if (processes(native)) { restored = true; break; }
           await Bun.sleep(100);
         }
         if (!restored) throw Error("RECOVERY_REQUIRED: observed VoiceBar did not return");
-        checked(["bash", fileURLToPath(new URL("../scripts/start-voicebar.sh", import.meta.url)), "--verify-only", restoreApp]);
+        if (restorePrecommit && restoreApp === "/Applications/VoiceBar.app")
+          checked(["bash", fileURLToPath(new URL("../scripts/start-voicebar.sh", import.meta.url)), "--verify-only", restoreApp]);
       } catch (error) { failures.push(error); }
     }
     attempt(() => rmdirSync(mutex)); // Only our own empty supervisor lock, never G1's or another owner's.
