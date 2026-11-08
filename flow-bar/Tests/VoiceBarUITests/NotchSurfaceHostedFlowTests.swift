@@ -220,3 +220,15 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         XCTAssertEqual(harness.surface.send(.openHistory), .refused(.recording))
     }
 }
+
+extension NotchSurfaceHostedFlowTests {
+    /// 2.4 #813 (E2E `testE2E24HistoryDragUpCloses`): pushing the bottom edge (the extend handle) up past the
+    /// collapsed rows closes History, the mirror of pulling it down.
+    func testDraggingTheHandleUpPastCollapsedClosesHistory() throws {
+        XCTAssertEqual(NotchHistoryMorph.handleCloseRows, 4.75)
+        XCTAssertTrue(NotchHistoryMorph.handleClosesHistory(rawRows: 4.5))
+        XCTAssertFalse(NotchHistoryMorph.handleClosesHistory(rawRows: 5.5), "a short push only collapses")
+        XCTAssertEqual(NotchHistoryPresentation.rowAccessibilityIdentifier(index: 0), "history-row-1")
+        XCTAssertEqual(NotchHistoryPresentation.rowAccessibilityIdentifier(index: 19), "history-row-20")
+    }
+}

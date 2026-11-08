@@ -85,6 +85,9 @@ public enum NotchHistoryPresentation {
     }
 
     public static let openHint = "Opens this recording in the History window"
+
+    /// "history-row-1" for the newest row: one-based, by position in the list.
+    public static func rowAccessibilityIdentifier(index: Int) -> String { "history-row-\(index + 1)" }
     public static let extendHandleLabel = "Show more rows"
 
     // V12: what a row's text column can show while its hover actions are out (the 404 pt list, the row's insets,

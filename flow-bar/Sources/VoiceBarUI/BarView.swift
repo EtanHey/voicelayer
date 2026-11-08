@@ -847,8 +847,16 @@ public struct BarView: View {
     /// the session's remembered height take the settled rows at once. A press that never moved changes nothing.
     private func endHistoryRowsPull(cancelled: Bool) {
         presentationModel?.setHistoryPullActive(false)
+        let rawRows = historyRowsPull.rawProgress
         guard case let .settle(_, velocity) = historyRowsPull.release(progress: historyRowsExtent, cancelled: cancelled)
         else { return }
+        // 2.4 Lane A: pushing the bottom edge up past the collapsed rows closes History (the mirror of pulling it
+        // down); the rows spring back to the detent for the next open.
+        if !cancelled, NotchHistoryMorph.handleClosesHistory(rawRows: rawRows) {
+            surface.send(.dismiss(.dragUp))
+            settleHistoryRowsExtent(to: historyRows, velocity: 0)
+            return
+        }
         let detent = NotchHistoryDetent.nearest(rows: historyRowsExtent)
         let previous = historyRows
         surface.send(.setHistoryDetent(detent))

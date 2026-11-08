@@ -92,6 +92,13 @@ public enum NotchHistoryMorph {
         return rows
     }
 
+    /// 2.4 Lane A: a handle released this far above the collapsed rows (1.25 rows, about 58 pt) closes History.
+    public static let handleCloseRows: CGFloat = CGFloat(visibleRows) - 1.25
+
+    public static func handleClosesHistory(rawRows: CGFloat) -> Bool {
+        rawRows > 0 && rawRows <= handleCloseRows
+    }
+
     /// Where a released handle settles: the nearer detent (6 collapsed, or the expanded rows), never between.
     public static func snappedRows(_ rows: CGFloat, maximum: Int) -> Int {
         let expanded = max(visibleRows, min(maximumRows, maximum))

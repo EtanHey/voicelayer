@@ -26,9 +26,9 @@ final class UIE2EHostLayoutTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
         XCTAssertEqual(view.bounds.size, NSSize(width: 820, height: 700))
 #if VOICEBAR_UIE2E_GATE2245
-        XCTAssertEqual(Set(frames.keys), ["baseline", "gate", "paste", "silent", "wings", "settings", "settings-viewport"])
+        XCTAssertEqual(Set(frames.keys), ["baseline", "gate", "paste", "silent", "wings", "e2e24-lane-a", "settings", "settings-viewport"])
 #else
-        XCTAssertEqual(Set(frames.keys), ["baseline", "paste", "silent", "wings", "settings", "settings-viewport"])
+        XCTAssertEqual(Set(frames.keys), ["baseline", "paste", "silent", "wings", "e2e24-lane-a", "settings", "settings-viewport"])
 #endif
         // SwiftUI .global inside NSHostingView is hosting-view-relative, not window-relative.
         let bounds = CGRect(x: 0, y: 0, width: 820, height: 700)
