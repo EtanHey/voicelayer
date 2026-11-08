@@ -1,0 +1,84 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/f5-gesture-preview/F5GesturePreview.tla": "a4f30aede552ef0f19d9a72ea7b361e9a5a2dccae0639a970c821e21600bf2b2",
+    "formal/f5-gesture-preview/checks.json": "03ba1550d335da6996942c183e6bcce8974e7122b7a032b532d68ada43e848fe",
+    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/f5-gesture-preview/ImmediateAwaitMutant.cfg": "3400c6fff4298f673b5de37d9f2f3442fbb9ae6db5ac90cf32b3686c6bd293ae",
+    "formal/f5-gesture-preview/FutureHintWitness.cfg": "a7567ea86517c211c2e8cba4a93cae3ff1783fbf301bd639cae343f44345a877",
+    "formal/f5-gesture-preview/FutureLongWindow.cfg": "d1eac8d0ce8c4e2badeb91dd45203d2d21e651d68906c74324ae789b6d76d323",
+    "formal/f5-gesture-preview/ImmediatePressMutant.cfg": "541a0f85c1421e9a3e9c1b8be3f2896af39aea53dde502f86da9686568fa28e2",
+    "formal/f5-gesture-preview/BriefHintMutant.cfg": "7cd9f8ca04d16ed6b2b3aa117b420a2227334c27d61ea147fade4fe32c38fc5f",
+    "formal/f5-gesture-preview/Fixed.cfg": "15e3a39707ddf0f6e101b74e12d129f1896691b92c4fd859adfb2d5ae10e9d49",
+    "flow-bar/Sources/VoiceBar/HotkeyManager.swift": "a598f46ea9bde4565cfda473260fdc114510cc7e9a9edcbf6245dfa41b31e5c1",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e836d91a7f10d27ecf7e53f1df986f3382584748ea7bf23b92359b2c87557fe8",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "3c7e2cfedde3d5cf6fd19d0b37c8450f275ddb86b7c301280dc069d01214a713",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "7a076d828909aa8f92e65602edadcb6fb5ce98744b548232e557ef2828274ea5"
+  },
+  "mutants": {
+    "NoQuickDoubleTapHint": [
+      "ImmediateAwaitMutant"
+    ],
+    "NoShortTapHoldHint": [
+      "ImmediatePressMutant"
+    ],
+    "NoBriefHint": [
+      "BriefHintMutant"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "0eb6b8bf24546b152c3599d6c4b65cd4e9b8b1e92335a934ce7e3ea55c8bba43"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 5139,
+      "distinct": 5135
+    },
+    "FutureLongWindow": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 16539,
+      "distinct": 15335
+    },
+    "ImmediateAwaitMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoQuickDoubleTapHint",
+      "status": "EXPECTED_FAIL",
+      "generated": 8,
+      "distinct": 8
+    },
+    "ImmediatePressMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoShortTapHoldHint",
+      "status": "EXPECTED_FAIL",
+      "generated": 3,
+      "distinct": 3
+    },
+    "BriefHintMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoBriefHint",
+      "status": "EXPECTED_FAIL",
+      "generated": 729,
+      "distinct": 729
+    },
+    "FutureHintWitness": {
+      "role": "witness",
+      "kind": "invariant",
+      "target": "FutureHintUnreachable",
+      "status": "EXPECTED_FAIL",
+      "generated": 3475,
+      "distinct": 3475
+    }
+  }
+}
