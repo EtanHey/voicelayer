@@ -2003,6 +2003,67 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       if (prior === "playing") expect(resumed[0]).toMatchObject({ playback_offset_ms: parked.offset_ms, utteranceId: original.utteranceId });
     });
 
+    it.each(["resumed-decode", "seek-reaping", "between-chunks"])("W1 Ask returns a live read through %s", async phase => {
+      holdDecoder = phase === "resumed-decode";
+      holdSynth = phase === "between-chunks";
+      select("A", phase === "between-chunks" ? text : "Alpha interrupted selection.");
+      if (phase === "resumed-decode") {
+        await decoderBarrier.at(0); tts.pausePlayback(); tts.resumePlayback(); await decoderBarrier.at(1);
+      } else {
+        await playerBarrier.at(0);
+        if (phase === "seek-reaping") { holdPlayerExit = true; tts.seekPlayback(200); }
+        else { await synthBarrier.at(1); players[0].exit.resolve(0); }
+        await settle();
+      }
+      const parked = deferred<any>();
+      spies.push(spyOn(socket, "broadcast").mockImplementation(event => {
+        events.push(structuredClone(event));
+        if (event.type === "playback_state" && event.state === "paused") parked.resolve(event);
+      }), spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }),
+      spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => { autoPlay = false; return "an answer"; })));
+      holdSynth = holdDecoder = false; autoPlay = true;
+      const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      const pause = await parked.promise;
+      if (phase === "seek-reaping") { holdPlayerExit = false; players[0].exit.resolve(143); }
+      if (phase === "between-chunks") synths[1].exit.resolve(0);
+      const response = await answer;
+      expect(response.isError).not.toBe(true); await settle();
+      expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ request_id: "A", playback_offset_ms: pause.offset_ms });
+      expect(tts.isPlaybackPaused()).toBe(false);
+    });
+
+    it("REVIEW-PROBE2 back-to-back asks keep the interrupted read", async () => {
+      select("A", "Alpha interrupted selection."); await playerBarrier.at(0);
+      clockMs += 500;
+      const original = events.filter(e => e.state === "speaking").at(-1);
+      autoPlay = true;
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => { autoPlay = false; return "an answer"; })));
+      const r1 = await handleVoiceAsk({ message: "Question one?", timeout_seconds: 5 });
+      autoPlay = true;
+      const r2 = await handleVoiceAsk({ message: "Question two?", timeout_seconds: 5 });
+      expect(r1.isError || r2.isError).not.toBe(true); await settle();
+      const speaking = events.filter(e => e.state === "speaking").map(e => `${e.text}|${e.playback_id === original.playback_id}`);
+      expect(speaking.at(-1)).toBe(`Alpha interrupted selection.|true`);
+    });
+
+    it.each(["synth-preparing", "decode-preparing", "resumed-synth"])("REVIEW-PROBE Ask over a not-yet-playing read (%s) keeps it", async phase => {
+      holdFirstSynth = holdSynth = phase !== "decode-preparing";
+      holdDecoder = phase === "decode-preparing";
+      select("A", "Alpha interrupted selection.");
+      if (phase !== "decode-preparing") await synthBarrier.at(0); else await decoderBarrier.at(0);
+      await settle();
+      expect(players).toHaveLength(0);
+      if (phase === "resumed-synth") { tts.pausePlayback(); tts.resumePlayback(); }
+      holdSynth = false; holdDecoder = false; autoPlay = true;
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => { autoPlay = false; return "an answer"; })));
+      const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      if (phase !== "decode-preparing") synths[0].exit.resolve(0); else for (const d of decoders) d.exit.resolve(0);
+      await answer; await settle();
+      expect(events.filter(e => e.state === "speaking").map(e => e.text).at(-1)).toContain("Alpha");
+    });
+
     it.each(["playing", "preparing", "capture-error", "prompt-pause", "prompt-preparation"])("W1 Ask borrows playback without replacing the paused selection or its queue (%s)", async phase => {
       holdFirstSynth = holdSynth = phase === "preparing";
       select("A", "Alpha paused selection.");

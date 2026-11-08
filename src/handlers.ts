@@ -32,7 +32,7 @@ import {
   awaitCurrentPlayback,
   getPlaybackQueueDepth,
   preemptLongRead,
-  parkSelectionReadForAsk,
+  parkReadForAsk,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
   isPlaybackPaused,
@@ -879,8 +879,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // leak audio if the recording state changes while the caller waits.
     assertSpeakerClear();
 
-    // Wait for all queued playback to finish (P0-2: awaits full queue)
-    returnInterruptedRead = parkSelectionReadForAsk();
+    // Park the live read, then wait for physical playback exit before Ask borrows the speaker.
+    returnInterruptedRead = parkReadForAsk();
     preemptLongRead("ask");
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
@@ -888,6 +888,12 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     }
 
     captureAdmission = reserveCaptureAdmission();
+    if (!captureAdmission && returnInterruptedRead && isPlaybackPaused()) {
+      // A seek's runner can materialize its parked job/slice after the old player exit.
+      await awaitCurrentPlayback({ forCaptureAdmission: true });
+      if (timeoutSettled || inputAbortController.signal.aborted) return { kind: "ended-before-capture" };
+      captureAdmission = reserveCaptureAdmission();
+    }
     if (!captureAdmission) throw new Error("Playback changed before Ask could reserve capture admission; try again");
 
     // Speak the question aloud — BLOCKING for converse
