@@ -14,7 +14,7 @@ class GateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             report = Path(folder) / 'report.json'
             argv = ['gate', '--report', str(report)] + (['--release'] if release else [])
-            with patch('sys.argv', argv), patch.object(gate.subprocess, 'run', return_value=subprocess.CompletedProcess([], returncode, stdout=output, stderr="")):
+            with patch('sys.argv', argv), patch.object(gate, 'run_bounded', return_value=subprocess.CompletedProcess([], returncode, stdout=output, stderr="")):
                 result = gate.main()
             return result, report.read_text()
 
@@ -23,6 +23,12 @@ class GateTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn('PASS_WITH_SKIPS', report)
         self.assertIn('"releaseReady": false', report)
+
+    def test_deadline_stops_owned_process_group(self):
+        import sys
+        with self.assertRaises(subprocess.TimeoutExpired):
+            gate.run_bounded([sys.executable, '-c', 'import time; time.sleep(30)'],
+                             timeout=0.05, text=True)
 
     def test_every_declared_suite_exists(self):
         for suites in gate.CASES.values():

@@ -2,6 +2,8 @@
 """Bounded isolated regression gate. Pending native coverage never counts as PASS."""
 import argparse
 import json
+import os
+import signal
 import re
 from pathlib import Path
 import subprocess
@@ -35,6 +37,30 @@ PENDING = [
     'NarrationLayer speak, ask and read contract',
 ]
 
+def run_bounded(command, **kwargs):
+    timeout = kwargs.pop('timeout')
+    kwargs.pop('capture_output', None)
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          start_new_session=True, **kwargs) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.communicate()
+            raise
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--report', required=True, type=Path)
@@ -53,7 +79,7 @@ def main():
             remaining = 900 - (time.monotonic() - start)
             if remaining <= 0:
                 raise subprocess.TimeoutExpired('e2e deadline', 900)
-            result = subprocess.run(['bun', 'test', *paths], cwd=ROOT, timeout=remaining, capture_output=True, text=True)
+            result = run_bounded(['bun', 'test', *paths], cwd=ROOT, timeout=remaining, capture_output=True, text=True)
             output = (getattr(result, 'stdout', None) or '') + (getattr(result, 'stderr', None) or '')
             print(output, end='')
             skips = sum(int(n) for n in re.findall(r'(?m)^\s*(\d+) skip\s*$', output))
@@ -65,7 +91,7 @@ def main():
         classes = sorted({case.split('/')[0] for row in coverage for case in row['cases']})
         remaining = 900 - (time.monotonic() - start)
         try:
-            result = subprocess.run(['swift', 'test', '--package-path', 'flow-bar',
+            result = run_bounded(['swift', 'test', '--package-path', 'flow-bar',
                 '--scratch-path=.build.noindex/swift', '--filter', '|'.join(classes)],
                 cwd=ROOT, timeout=max(0.01, remaining), capture_output=True, text=True)
             output = (result.stdout or '') + (result.stderr or '')
