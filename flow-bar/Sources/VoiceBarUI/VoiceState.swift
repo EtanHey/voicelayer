@@ -429,9 +429,29 @@ public final class VoiceState {
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
+                stampRecordingWing(isRecording: mode == .recording)
             }
             notifyPanelLayoutChangedIfNeeded(oldValue != mode)
         }
+    }
+
+    /// 2.3 N1 (Etan, QA round 1, S2-F3): the recording wings name the microphone and show a live time.
+    /// Presentation only: the app wires this to the CoreAudio default input's name, the device sox opens; it is
+    /// read once as a recording starts. Never opens, selects or routes a device.
+    @ObservationIgnored public var recordingMicrophoneNameProvider: () -> String? = { nil }
+    public private(set) var recordingMicrophoneName: String?
+    @ObservationIgnored private var recordingStartedAt: TimeInterval?
+
+    /// Milliseconds since this recording started on the panel's uptime clock; 0 when not recording.
+    public func recordingElapsedMilliseconds() -> Int {
+        guard let recordingStartedAt else { return 0 }
+        return max(0, Int(((playbackAmplitudeClock() - recordingStartedAt) * 1000).rounded()))
+    }
+
+    private func stampRecordingWing(isRecording: Bool) {
+        recordingStartedAt = isRecording ? playbackAmplitudeClock() : nil
+        let name = isRecording ? recordingMicrophoneNameProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        recordingMicrophoneName = name?.isEmpty == false ? name : nil
     }
 
     public var statusText: String = ""

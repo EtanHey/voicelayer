@@ -103,3 +103,45 @@ public struct VoiceBarReadingTimeLabel: View {
         }
     }
 }
+
+/// 2.3 N1 (Etan, QA round 1, S2-F3): the recording wing's live time over the capturing microphone's name, on the
+/// notch side of the level meter. A long name truncates at the tail (Etan: long mic-name truncation is fine).
+public struct VoiceBarRecordingWingLabel: View {
+    /// Fits "9:59" at 12 pt and about a dozen 9 pt characters of the name.
+    public static let width: CGFloat = 56
+
+    let elapsedMilliseconds: () -> Int
+    let microphoneName: String?
+    let color: Color
+    let secondaryColor: Color
+
+    public init(elapsedMilliseconds: @escaping () -> Int, microphoneName: String?, color: Color, secondaryColor: Color) {
+        self.elapsedMilliseconds = elapsedMilliseconds
+        self.microphoneName = microphoneName
+        self.color = color
+        self.secondaryColor = secondaryColor
+    }
+
+    public var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+            VStack(alignment: .leading, spacing: 0) {
+                Text(time)
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(color)
+                if let microphoneName {
+                    Text(microphoneName)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(secondaryColor)
+                        .truncationMode(.tail)
+                }
+            }
+            .lineLimit(1)
+            .frame(width: Self.width, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Recording time")
+            .accessibilityValue(microphoneName.map { "\(time), \($0)" } ?? time)
+        }
+    }
+}

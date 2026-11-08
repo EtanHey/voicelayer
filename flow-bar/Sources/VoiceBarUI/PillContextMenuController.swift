@@ -460,6 +460,11 @@ public enum MicrophoneDeviceManager {
             transportType == kAudioDeviceTransportTypeVirtual
     }
 
+    /// 2.3 N1: the default input's name, the device a recording captures from. A property read only.
+    public static func selectedInputDeviceName() -> String? {
+        selectedInputDeviceID().flatMap(AudioDeviceID.init).flatMap(deviceName(for:))
+    }
+
     public static func selectedInputDeviceID() -> String? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,

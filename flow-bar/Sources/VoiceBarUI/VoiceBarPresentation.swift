@@ -270,7 +270,7 @@ public enum VoiceBarPresentation {
                 showsRecordingHold: input.showsRecordingHold
             ),
             recordingTrailingWingWidth: input.mode == .recording
-                ? VoiceBarNotchContract.fixedWingWidth
+                ? VoiceBarNotchContract.recordingTrailingWingWidth
                 : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
                 ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)

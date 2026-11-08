@@ -152,8 +152,9 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            // 2.3 U2: an Ask's hold lock widens the left wing by one slot (99.5); the right wing stays 73.5.
-            NSSize(width: 358, height: 32)
+            // 2.3 U2: an Ask's hold lock widens the left wing by one slot (99.5). 2.3 N1: the right wing hugs the
+            // time, the microphone name and the level meter (124).
+            NSSize(width: 409, height: 32)
         )
 
         let teleprompter = VoiceState()
