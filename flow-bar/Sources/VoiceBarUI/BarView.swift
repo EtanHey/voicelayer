@@ -577,7 +577,8 @@ public struct BarView: View {
             isKeyboardFocused: keepsLauncherMounted,
             isCollapsed: state.isCollapsed,
             visibleCoreOcclusionInset: 0,
-            transientNote: state.selectionFeedbackNote
+            transientNote: state.selectionFeedbackNote,
+            showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
         )
         input.isHistoryPanelOpen = isHistoryMounted
         input.historyRows = historyRows
@@ -854,6 +855,20 @@ public struct BarView: View {
             }
         case .recording:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                if VoiceBarPresentation.showsEarlierTakeProcessing(for: state) {
+                    // 2.3 N1 (Etan, queued-recording clip F1): an earlier take is still transcribing. Its spinner
+                    // sits left of Stop, beside the recording controls and never instead of them. It is not a
+                    // control, so it registers no tooltip; VoiceOver reads it.
+                    ProcessingSpinner()
+                        .frame(
+                            width: VoiceBarNotchContract.material.compactControlSize,
+                            height: VoiceBarNotchContract.material.compactControlSize
+                        )
+                        .accessibilityElement()
+                        .accessibilityLabel("Earlier recording still transcribing")
+                        .accessibilityAddTraits(.updatesFrequently)
+                        .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
+                }
                 notchButton(
                     icon: "stop.fill",
                     isDestructive: true,
