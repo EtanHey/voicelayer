@@ -1052,11 +1052,7 @@ public struct BarView: View {
     }
 
     private var playbackPauseControl: VoiceBarPlaybackPauseControl? {
-        VoiceBarPresentation.playbackPauseControl(
-            mode: state.mode,
-            isPaused: state.isPlaybackPaused,
-            isReadback: state.isTeleprompterReadback
-        )
+        VoiceBarPresentation.playbackPauseControl(for: state)
     }
 
     /// QUEUE1: pause/play, then Next and the "+N" count toward the core; one control slot each so the hit rects match.
@@ -1090,7 +1086,11 @@ public struct BarView: View {
             accessibilityLabel: control.accessibilityLabel,
             accessibilityHint: control.accessibilityHint
         ) {
-            state.togglePlaybackPause()
+            if state.isParkedReadAwaitingFeedback {
+                state.restoreParkedReadNow()
+            } else {
+                state.togglePlaybackPause()
+            }
         }
         .contentTransition(.symbolEffect(.replace))
     }

@@ -674,6 +674,20 @@ public final class VoiceState {
         mode == .speaking && parkedRead != nil
     }
 
+    /// 2.4 Lane A (QA row 4): a read the user paused is parked while a dictation's own feedback ("Typed") holds the
+    /// notch; it comes back the moment that feedback clears (`restoreParkedReadIfSettled`). For that moment the
+    /// wing keeps the paused read's layout (Play, Next, +N) instead of reshuffling to the idle queue layout.
+    public var isParkedReadAwaitingFeedback: Bool {
+        mode == .idle && parkedRead?.owner == .user && !isCaptureSettlementPending
+    }
+
+    /// Play pressed during that moment: end the dictation's feedback now, so the paused read comes back at once
+    /// (still paused; the same restore path, nothing else changes).
+    public func restoreParkedReadNow() {
+        guard isParkedReadAwaitingFeedback, confirmationText != nil else { return }
+        confirmationText = nil
+    }
+
     public var teleprompterText: String? {
         if mode == .speaking, !statusText.isEmpty {
             return isShowingLongReadDocument ? longReadDocument?.text ?? statusText : statusText
