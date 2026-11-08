@@ -117,7 +117,7 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       } finally { exit.resolve(0); await tick(); }
     });
   }
-  test("same-selection re-press dedupes during drain, Next and Stop still control admitted reads; new text refuses", async () => {
+  test("same-selection re-press dedupes during drain, Next and Stop still control admitted reads; new text registers", async () => {
     const starts: string[] = [], exits: ReturnType<typeof deferred<void>>[] = [];
     const stop = spyOn(tts, "stopPlayback").mockImplementation(() => { exits.forEach(exit => exit.resolve()); return true; }); spies.push(stop);
     spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(1),
@@ -141,8 +141,11 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       // Next stays the user's control during drain: it advances the admitted queue.
       expect(await handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
       expect(starts).toEqual(["A", "B"]);
-      expect(await command("C", "unadmitted selection")).toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY") });
+      // integration/2.3: new text admitted during drain registers in the queue.
+      expect(await command("C", "new selection", true)).toMatchObject({ outcome: "accept", reason: "queued" });
       expect(await command("B-again", "selection B")).toMatchObject({ outcome: "noop", reason: "Already reading this" });
+      expect(await handleSocketCommand({ cmd: "read_next", request_id: "B" })).toMatchObject({ outcome: "accept" });
+      expect(starts).toEqual(["A", "B", "C"]);
       // Stop stays the user's control too.
       expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
       expect(stop).toHaveBeenCalledTimes(1);

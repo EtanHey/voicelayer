@@ -65,7 +65,7 @@ test("live evidence rechecks G2 after the native round trip and never quits befo
     expect(calls).toBe(0);
     expect(await control(lease, "drain")).toMatchObject({ kind: "ACKNOWLEDGED", native: { lease }, daemon: { lease } });
     fault = true;
-    expect(await control(lease, "drain")).toEqual({ kind: "UNKNOWN" });
+    expect(await control(lease, "drain")).toMatchObject({ kind: "UNKNOWN", pending: [{ participant: "daemon", pid: process.pid }] });
     expect(calls).toBe(2);
   } finally { process.env.VOICELAYER_UPDATE_GATE_PATH = saved; }
 });
@@ -82,7 +82,8 @@ test("one second without a native reply returns UNKNOWN", async () => {
     expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
     const participant = createNativeDrainParticipant({ secret: "synthetic", nativePid: 123, send() {} });
     const start = performance.now();
-    expect(await createVoiceDrainControl(participant, () => true)(lease, "drain")).toEqual({ kind: "UNKNOWN" });
+    expect(await createVoiceDrainControl(participant, () => true)(lease, "drain")).toMatchObject({ kind: "UNKNOWN",
+      pending: [{ participant: "native", pid: 123, reply: "no reply: native did not acknowledge drain" }] });
     expect(performance.now() - start).toBeGreaterThanOrEqual(990);
   } finally { process.env.VOICELAYER_UPDATE_GATE_PATH = saved; }
 });

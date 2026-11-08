@@ -5815,6 +5815,9 @@ public final class VoiceState {
     }
 
     private func handleAckEvent(_ event: [String: Any]) {
+        let updateBusy = event["outcome"] as? String == "reject"
+            && (event["reason"] as? String)?.hasPrefix("UPDATE_BUSY") == true
+        defer { if updateBusy { showConfirmation(NativeUpdateGate.busyMessage) } }
         if let command = event["command"] as? String, command == "pause" || command == "resume" {
             handlePlaybackPauseAck(event, command: command)
             return

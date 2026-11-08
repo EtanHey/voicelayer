@@ -144,3 +144,11 @@ deadline. The model abstracts fresh round trips and the empty ledger as predicat
 and G1 publication as atomic. It does not prove partial-write recovery, detached
 installer quiescence, actual launch latency, IPC availability or installed macOS
 behavior. R5 half-state repair and rollback to a different build remain deferred.
+
+## Precommit user-block correction
+
+The admission/deadline extension is checked alongside CANCEL retry in
+[`../update-gate-cancel/`](../update-gate-cancel/README.md): `UserBlockFixed`,
+`OldAdmission`, `UnboundedDrain`, and `NoLedger`. These prove separate availability,
+locked-ledger and bounded-resolution properties; installed acceptance remains a
+separate gate. The bootstrap/completion models here keep their existing scope.

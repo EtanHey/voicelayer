@@ -12,8 +12,12 @@ import { fileURLToPath } from "node:url";
 
 // Real subprocesses: standalone p95 <= 26 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
-// Real subprocesses: standalone p95 <= 3963 ms; 4x rounded up, with a 5 s scheduling floor.
-const SLOW_SUBPROCESS_TEST_TIMEOUT_MS = 16_000;
+// This fixture runs four full scans: clean, two executable strays, stale loaded program.
+// Each scan launches Python plist readers repeatedly; it has no sleep/poll loop.
+const HEALTH_SCAN_TIMEOUT_MS = 10_000;
+const HEALTH_SCAN_COUNT = 4;
+const SLOW_SUBPROCESS_TEST_TIMEOUT_MS =
+  HEALTH_SCAN_COUNT * HEALTH_SCAN_TIMEOUT_MS + SUBPROCESS_TEST_TIMEOUT_MS;
 
 const healthScript = join(
   import.meta.dir,
@@ -334,6 +338,7 @@ print(value)
         "bash",
         [healthScript, "--allow-stopped"],
         {
+          timeout: HEALTH_SCAN_TIMEOUT_MS,
           encoding: "utf8",
           env: {
             ...process.env,
@@ -361,6 +366,7 @@ print(value)
       ]) {
         writeAgent(file, "com.golems.tts-daemon-copy", program, arg0);
         const stray = spawnSync("bash", [healthScript, "--allow-stopped"], {
+          timeout: HEALTH_SCAN_TIMEOUT_MS,
           encoding: "utf8", env: { ...process.env, HOME: tempHome,
             PATH: `${binDir}:${process.env.PATH ?? ""}`, VOICEBAR_CANONICAL_APP: appDir,
             VOICEBAR_PLIST_BUDDY: join(binDir, "PlistBuddy"), VOICEBAR_TEST_LIVE_PROBE_LOG: probeLog },
@@ -388,6 +394,7 @@ print(value)
         "bash",
         [healthScript, "--allow-stopped"],
         {
+          timeout: HEALTH_SCAN_TIMEOUT_MS,
           encoding: "utf8",
           env: {
             ...process.env,
