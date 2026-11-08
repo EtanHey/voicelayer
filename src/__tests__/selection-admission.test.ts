@@ -9,7 +9,7 @@ import * as tts from "../tts";
 import * as input from "../input";
 import * as client from "../socket-client";
 import * as archive from "../speech-archive-live";
-import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
+import { ALREADY_READING, handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
 
 const spies: { mockRestore(): void }[] = [];
 afterEach(() => { resetSelectionReadQueueForTests(); for (const spy of spies.splice(0)) spy.mockRestore(); });
@@ -175,7 +175,8 @@ for (let offset = 0; offset < rows.length; offset += batchSize) {
       const response = await (row.event === "selection" ? press(row.selected, "- [x] ")
         : handleSocketCommand({ cmd: "stop", ...(row.event === "f5" ? { retain_read_queue: true } : {}) }));
       expect(response, `row ${index}`).toMatchObject(row.decision === "hint"
-        ? { outcome: "noop", reason: "Already queued" } : { outcome: row.event === "stop" && (!row.playing || row.suspended) ? "noop" : "accept" });
+        // Etan 2026-11-08: the read on screen (playing or paused) answers "Already reading this"; a pending one "Already queued".
+        ? { outcome: "noop", reason: row.selected === row.playing ? ALREADY_READING : "Already queued" } : { outcome: row.event === "stop" && (!row.playing || row.suspended) ? "noop" : "accept" });
       expect(count, `row ${index}`).toBe(row.afterPending.length);
       const launch = row.decision === "read_next" ? row.afterPlaying
         : row.decision === "speak_text" && (row.preempted || row.suspended || !row.playing) ? row.selected : 0;
