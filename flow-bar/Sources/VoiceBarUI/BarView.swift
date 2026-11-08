@@ -1028,7 +1028,8 @@ public struct BarView: View {
                 VoiceBarReadingTimeLabel(
                     elapsedMilliseconds: { state.playbackElapsedMilliseconds() },
                     // The palette's secondary ink (the mock's ink-2), which holds its contrast on the light glass.
-                    color: notchPalette.secondary.color
+                    color: notchPalette.secondary.color,
+                    showsClock: { state.showsPlaybackClock }
                 )
             }
             notchTeleprompterButton(
