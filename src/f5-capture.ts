@@ -80,7 +80,7 @@ export function runBarCaptureWithPausedRead(id: string, record: (opened: () => v
     else if (pending.control === "stop") markBarCaptureDraining(id);
     if (pending.control) writeCaptureStop(JSON.stringify({ take_id: id,
       ...(pending.control === "cancel" ? { cancelled: true } : { physical_press: pending.physicalPress === true }) }), "buffered-in-opening", pending.origin ?? {}, id);
-  }), options)).finally(() => {
+  }), { ...options, clientNamed: scoped })).finally(() => {
     opening.delete(id);
     scopedTakes.delete(id);
     current.finished.add(id);

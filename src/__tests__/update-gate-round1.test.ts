@@ -10,6 +10,8 @@ import * as input from "../input";
 import * as tts from "../tts";
 import * as booking from "../session-booking";
 import * as socket from "../socket-client";
+import * as stt from "../stt";
+import { recordingJobsSnapshot } from "../recording-jobs";
 import { setRecordingState } from "../recording-state";
 import { VOICE_DISABLED_FILE, MIC_DISABLED_FILE } from "../paths";
 const original = process.env.VOICELAYER_UPDATE_GATE_PATH;
@@ -99,6 +101,47 @@ for (const cmd of ["stop", "cancel"] as const) test(`BARE-STOP id-less ${cmd} an
       expect(wait).not.toHaveBeenCalled();
     }
   } finally { clearTimeout(stopped); clearTimeout(unlock); if (fs.existsSync(path + ".lock")) fs.rmdirSync(path + ".lock"); }
+});
+// BARE-STOP (Bugbot on #831): the MIC admission inside waitForInput, not just the socket record admission. The
+// record's own admission is released at its synchronous ack; the lock then appears (as the previous take's admission
+// release holds it in record-after-record) before waitForInput admits the mic. Real waitForInput, stub recorder.
+for (const named of [true, false]) test(`BARE-STOP id-less stop vs a ${named ? "client-named" : "anonymous"} take's pending MIC admission`, async () => {
+  mocks.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }), spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
+  const events: Array<Record<string, unknown>> = [];
+  mocks.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(event as never); }));
+  mocks.push(spyOn(stt, "getBackend").mockResolvedValue({ name: "synthetic", isAvailable: async () => true,
+    transcribe: async () => ({ text: "", backend: "synthetic", durationMs: 0 }) }));
+  const original = gate.withCaptureVoiceAdmission;
+  const pendingMic = deferred<boolean>();
+  mocks.push(spyOn(gate, "withCaptureVoiceAdmission").mockImplementation(((work: () => unknown, options?: { scoped?: boolean }) => {
+    let started = false;
+    const result = original(() => { started = true; return work(); }, options);
+    pendingMic.resolve(!started); // true only if acquire(true) hit the held lock and the admission is pending
+    return result;
+  }) as never));
+  const take = `mic-pending-${named}`;
+  expect(handleSocketCommand({ cmd: "record", ...(named ? { take_id: take } : {}), press_to_talk: true, timeout_seconds: 3600 }))
+    .toMatchObject({ outcome: "accept" });
+  fs.mkdirSync(path + ".lock");
+  let unlock: ReturnType<typeof setTimeout> | undefined;
+  try {
+    expect(await pendingMic.promise).toBe(true);
+    await handleSocketCommand({ cmd: "stop" });
+    unlock = setTimeout(() => fs.rmdirSync(path + ".lock"), 5);
+    const captured = () => events.some(e => e.type === "state" && e.capture_id !== undefined);
+    const deadline = performance.now() + 3000;
+    while (performance.now() < deadline && !captured() && recordingJobsSnapshot().recording_jobs.length > 0) await Bun.sleep(5);
+    if (named) {
+      expect(captured()).toBe(true); // the take reached its recorder
+      expect(recordingJobsSnapshot().mic_take_id).toBe(take);
+      expect(await handleSocketCommand({ cmd: "stop", take_id: take })).toMatchObject({ outcome: "accept" });
+    } else {
+      expect(captured()).toBe(false); // SF1 semantics: the anonymous record is cancelled before its mic opens
+    }
+    const settle = performance.now() + 10_000;
+    while (performance.now() < settle && recordingJobsSnapshot().recording_jobs.length > 0) await Bun.sleep(10);
+    expect(recordingJobsSnapshot().recording_jobs).toEqual([]);
+  } finally { if (unlock) clearTimeout(unlock); if (fs.existsSync(path + ".lock")) fs.rmdirSync(path + ".lock"); }
 });
 test("SF1 direct playback Stop invalidates pending async voice work", async () => {
   fs.mkdirSync(path + ".lock"); let starts = 0;

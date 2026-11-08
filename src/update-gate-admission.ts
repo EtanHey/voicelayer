@@ -267,8 +267,8 @@ export function withAsyncVoiceAdmission<T>(work: () => T, options?: VoiceAdmissi
   catch (error) { return Promise.reject(error); }
 }
 /** All capture starts have a <=20ms contention budget, before any microphone opens. */
-export function withCaptureVoiceAdmission<T>(work: () => T): Promise<Awaited<T>> {
-  return withAsyncVoiceAdmission(work, { maxWaitMs: 20, kind: "capture" });
+export function withCaptureVoiceAdmission<T>(work: () => T, options: { scoped?: boolean } = {}): Promise<Awaited<T>> {
+  return withAsyncVoiceAdmission(work, { maxWaitMs: 20, kind: "capture", scoped: options.scoped === true });
 }
 export function withFreshAsyncVoiceAdmission<T>(work: () => T, options?: VoiceAdmissionOptions): Promise<Awaited<T>> {
   return context.exit(() => withAsyncVoiceAdmission(work, options));
