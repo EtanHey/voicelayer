@@ -392,7 +392,8 @@ private struct HistoryRetranscriptionRequest {
 
 @Observable
 public final class VoiceState {
-    private static let maxRecentTranscriptions = 8
+    /// Etan, 2026-11-08: History lists up to 20 rows, scrollable inside the panel.
+    private static let maxRecentTranscriptions = NotchHistoryMorph.loadedRows
     private static let recentTranscriptionsDefaultsKey = "VoiceBar.recentTranscriptions"
     private static let recentTranscriptionEntriesDefaultsKey = "VoiceBar.recentTranscriptionEntries.v1"
     private static let maxVocabularyTerms = 512
@@ -429,9 +430,35 @@ public final class VoiceState {
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
+                // N1 review D1: leaving (or optimistically entering) recording clears the wing's time and microphone;
+                // only the capture-open edge (`captureLive`) stamps them.
+                stampRecordingWing(isCaptureOpen: false)
             }
             notifyPanelLayoutChangedIfNeeded(oldValue != mode)
         }
+    }
+
+    /// 2.3 N1 (Etan, QA round 1, S2-F3): the recording wings name the microphone and show a live time.
+    /// Presentation only: the app wires this to the CoreAudio default input's name, the device sox opens. It is read
+    /// once, when capture actually opens (N1 review D1: `captureLive`, the daemon's first audio frame), never at the
+    /// optimistic press. Never opens, selects or routes a device.
+    @ObservationIgnored public var recordingMicrophoneNameProvider: () -> String? = { nil }
+    public private(set) var recordingMicrophoneName: String?
+    private var recordingStartedAt: TimeInterval?
+    /// True from this take's capture-open edge until it leaves recording: the wing's clock runs only then.
+    public var isRecordingCaptureOpen: Bool { recordingStartedAt != nil }
+
+    /// Milliseconds since this take's capture opened, on the panel's uptime clock; 0 before it opens and after.
+    public func recordingElapsedMilliseconds() -> Int {
+        guard let recordingStartedAt else { return 0 }
+        return max(0, Int(((playbackAmplitudeClock() - recordingStartedAt) * 1000).rounded()))
+    }
+
+    /// The capture-open edge stamps the clock and reads the microphone once; anything else clears both.
+    private func stampRecordingWing(isCaptureOpen: Bool) {
+        recordingStartedAt = isCaptureOpen ? playbackAmplitudeClock() : nil
+        let name = isCaptureOpen ? recordingMicrophoneNameProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        recordingMicrophoneName = name?.isEmpty == false ? name : nil
     }
 
     public var statusText: String = ""
@@ -585,7 +612,12 @@ public final class VoiceState {
     // starts hearing the room at that same instant, so neither is evidence the
     // capture path is live. Only the daemon's first `audio_level` frame is.
     // `.recording` + false = booting; `.recording` + true = live.
-    public private(set) var captureLive = false
+    public private(set) var captureLive = false {
+        didSet {
+            guard captureLive != oldValue else { return }
+            stampRecordingWing(isCaptureOpen: captureLive && mode == .recording)
+        }
+    }
     /// Presentation-only guard for the brief idle frame before playback hands off to capture.
     public private(set) var isRecordingHandoffPending = false
     public var recordingTimingClock: () -> TimeInterval = {
@@ -1106,7 +1138,13 @@ public final class VoiceState {
     private var historyJobIDs: Set<String> = []
     private var ownedPasteOperations: [UUID: (takeID: String, deliveryID: String, path: String?, text: String)] = [:]
     private var completedDictationDeliveries: Set<String> = []
-    public private(set) var processingTakeCount = 0
+    public private(set) var processingTakeCount = 0 {
+        didSet {
+            // N1 review D2: the recording wing's earlier-take spinner slot follows the job count, which changes with
+            // no mode edge (completion, cancel, failure). Tell the resident presentation so the slot collapses too.
+            if mode == .recording, (oldValue > 0) != (processingTakeCount > 0) { notifyPanelLayoutChangedIfNeeded(true) }
+        }
+    }
     public private(set) var microphoneTakeID: String?
     public private(set) var supportsRecordingJobs = false
     public var canRecordDuringProcessing: Bool { supportsRecordingJobs && microphoneTakeID == nil && !remoteOwnedRecording }

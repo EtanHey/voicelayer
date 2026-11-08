@@ -13,6 +13,7 @@ SelectionBusy(x) == x.mode \in {"recording", "transcribing"} \/ x.preview
 StatusVisible(x) == x.mode = "error" \/ (x.mode = "idle" /\ (x.status # "none" \/ x.preview))
 StatusText(x) == IF x.mode = "error" /\ x.status = "none" THEN IF Fault = "details-substitute" /\ x.details THEN "Details below" ELSE IF Variant = "fixed" /\ Fault # "error-substitute" THEN "none" ELSE "Error"
                  ELSE IF x.mode = "idle" /\ x.status = "none" /\ x.preview THEN "preview" ELSE x.status
+WingConfirmation(x) == x.mode = "idle" /\ x.status = "short" /\ x.lines = 1
 HasStatusBand(x, shell) == x.mode = "error" \/
                          (x.mode = "idle" /\ shell \in {"compactStatus", "history"} /\
                           (x.status = "long" \/ (x.status = "short" /\ x.lines > 1) \/ (x.status = "select" /\ shell = "history")))
@@ -31,9 +32,14 @@ Project(x) ==
                ELSE IF x.engaged \/ note \/ (x.mode = "idle" /\ ~x.collapsed) THEN "hoverLauncher" ELSE "idle"
       status == StatusVisible(x) /\ (StatusText(x) # "none")
                 /\ (Variant = "fixed" \/ HasStatusBand(x, baseShell) \/ baseShell = "compactStatus")
-      visible == note \/ (status /\ StatusText(x) # "preview")
+      \* 2.3 N1 (Etan, QA round 1: "Typed" belongs in the right wing, not a lobe underneath): a one-line idle
+      \* confirmation with no note beside it is the right wing's own label, in a compact (or collapsed) notch.
+      \* Multi-line recovery copy, long copy and anything sharing the notch with a note or History stay the tab.
+      wingConfirm == Variant = "fixed" /\ Fault # "confirmation-tab" /\ status /\ ~note
+                     /\ WingConfirmation(x) /\ baseShell \in {"compactStatus", "idle"}
+      visible == note \/ (status /\ StatusText(x) # "preview" /\ ~wingConfirm)
       shell == IF Fault = "no-shell" THEN "idle"
-               ELSE IF Variant = "fixed" /\ Fault # "no-collapsed-shell" /\ visible /\ baseShell = "idle" THEN "compactStatus"
+               ELSE IF Variant = "fixed" /\ Fault # "no-collapsed-shell" /\ (visible \/ wingConfirm) /\ baseShell = "idle" THEN "compactStatus"
                ELSE baseShell
       band == IF Fault = "outside-band" THEN visible /\ ~note ELSE IF Variant = "fixed" THEN visible ELSE HasStatusBand(x, shell) \/ note
       \* Lane A refinement: the F5 hint is an operational label, not a notice. Fixed draws it only as the sole
@@ -93,6 +99,10 @@ N1CompactNote == /\ shown.leading <= 132 /\ shown.trailing <= 132
                  /\ (shown.visible => shown.wingText = "none" /\
                      shown.feedbackWidth <= shown.core + shown.leading + shown.trailing)
 VisibleHasShell == shown.visible => shown.shell # "idle"
+\* 2.3 N1: a one-line idle confirmation alone in a compact or collapsed notch is the right wing's label, with no
+\* band under the notch.
+N6ConfirmationInWing == (WingConfirmation(s) /\ s.note = "none" /\ ~s.history /\ shown.shell = "compactStatus")
+                        => shown.wingText = s.status /\ ~shown.band /\ shown.trailing <= 132
 N2NoProcessingBand == s.mode = "transcribing" => ~shown.band
 TextLines(x) == (IF x.mode = "error" /\ StatusText(x) # "none" THEN IF x.status \in {"long", "short"} THEN x.lines ELSE IF x.status = "select" THEN 2 ELSE 1
                 ELSE IF x.mode = "idle" /\ x.status # "none" THEN IF x.status \in {"long", "short"} THEN x.lines ELSE IF x.status = "select" THEN 2 ELSE 1 ELSE 0) +

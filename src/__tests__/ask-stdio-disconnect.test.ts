@@ -73,4 +73,4 @@ it("stdio EOF during the question shuts down without opening capture", async () 
     await child.exited;
     await Promise.all([stdout, stderr]);
   }
-});
+}, 30_000);

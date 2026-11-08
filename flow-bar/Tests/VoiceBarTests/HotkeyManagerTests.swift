@@ -1,9 +1,34 @@
+import Foundation
 import CoreGraphics
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
 
 final class HotkeyManagerTests: XCTestCase {
+    func testBackToBackMouseTakesAndTapAgainLockKeepSecondTakeAlive() {
+        let gesture = GestureStateMachine()
+        var scheduled: [DispatchWorkItem] = []
+        gesture.schedule = { _, work in scheduled.append(work) }
+        var starts = 0, stops = 0
+        gesture.onHoldStart = { starts += 1 }
+        gesture.onHoldEnd = { stops += 1 }
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        XCTAssertEqual(starts, 1)
+        XCTAssertEqual(gesture.state, .locked)
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        XCTAssertEqual(stops, 1)
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        for work in scheduled { work.perform() }
+        XCTAssertEqual(starts, 2)
+        XCTAssertEqual(stops, 1)
+        XCTAssertEqual(gesture.state, .locked)
+        gesture.handleMouseButtonDown()
+        XCTAssertEqual(stops, 2)
+    }
+
     func testConsumesMatchedKeyDownEvents() {
         XCTAssertTrue(
             shouldConsumeHotkeyEvent(

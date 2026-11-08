@@ -1,10 +1,12 @@
 import { reserveStandardVoiceOperation } from "../voice-operation-reservation";
 import { afterEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
+import { STOP_FILE, CANCEL_FILE, getRecordingsArchiveRoot } from "../paths";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { readFileSync, existsSync } from "node:fs";
+import { readdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import * as input from "../input";
+import * as tts from "../tts";
 import * as stt from "../stt";
 import * as socket from "../socket-client";
 import { handleSocketCommand } from "../socket-handlers";
@@ -33,6 +35,135 @@ afterEach(() => {
 });
 
 describe("recording job runtime (isolated fake recorder, never real mic)", () => {
+  it("review817 VAD stop signals have consumption provenance and an explicit stop label", async () => {
+    const logs: string[] = [];
+    spies.push(spyOn(console, "error").mockImplementation((...args) => { logs.push(args.join(" ")); }));
+    const capture = input.recordToBuffer(2000, "quick", false);
+    await until(() => logs.some(line => line.includes('"event":"first-pcm"')));
+    writeFileSync(STOP_FILE, JSON.stringify({ physical_press: true, cancelled: true }));
+    await capture;
+    await until(() => logs.some(line => line.includes('"event":"exit"')));
+    const trace = logs.filter(line => line.startsWith("[voicelayer][capture-lifecycle] ")).map(line => JSON.parse(line.slice(line.indexOf("{"))));
+    expect(trace.find(row => row.event === "consume-stop")).toMatchObject({ control_cancelled: true, physical_press: true });
+    expect(trace.find(row => row.event === "finish")).toMatchObject({ stop_reason: "stop-signal", control_cancelled: true });
+    expect(trace.filter(row => row.event === "first-pcm")).toHaveLength(1);
+    expect(trace.find(row => row.event === "finish").first_pcm_ms).toBeGreaterThanOrEqual(0);
+    expect(trace.find(row => row.event === "exit")).toHaveProperty("signal_code");
+  });
+
+  for (const scenario of ["capturing-bare", "opening-bare", "opening-scoped", "opening-cancel"]) {
+    // BARE-STOP: the bare scenarios now pin the fix. The bare stop is traced as ignored, writes no stop and the take
+    // keeps recording; only its own scoped stop ends it. The scoped scenarios are unchanged.
+    it(`review817 characterizes ${scenario} control provenance${scenario.endsWith("bare") ? " and the bare stop leaves the take recording" : " without changing routing"}`, async () => {
+      const events: SocketEvent[] = [], logs: string[] = [];
+      spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(event); }));
+      spies.push(spyOn(console, "error").mockImplementation((...args) => { logs.push(args.join(" ")); }));
+      const open = deferred<void>();
+      if (scenario.startsWith("opening")) {
+        const pause = tts.pauseForF5Capture;
+        spies.push(spyOn(tts, "pauseForF5Capture").mockImplementation(ms => {
+          const loan = pause(ms);
+          return { ...loan, ready: loan.ready.then(() => open.promise) };
+        }));
+        const spawn = Bun.spawn;
+        spies.push(spyOn(Bun, "spawn").mockImplementation((...args: Parameters<typeof Bun.spawn>) => {
+          const command = args[0];
+          if (Array.isArray(command) && command.includes("signed")) {
+            return spawn([process.execPath, "-e", "await Bun.sleep(600); process.stdout.write(new Uint8Array(32000)); await Bun.sleep(60000)"],
+              { stdout: "pipe", stderr: "pipe", env: process.env });
+          }
+          if (Array.isArray(command)) {
+            return spawn(command, { ...args[1], env: { ...process.env, ...args[1]?.env } });
+          }
+          return spawn({ ...command, env: { ...process.env, ...command.env } });
+        }));
+      }
+      const root = getRecordingsArchiveRoot();
+      const before = new Set(existsSync(root) ? readdirSync(root, { recursive: true }) : []);
+      const id = randomUUID(), controlID = randomUUID();
+      expect(await handleSocketCommand({ cmd: "record", id: randomUUID(), take_id: id, press_to_talk: true })).toMatchObject({ outcome: "accept" });
+      if (scenario === "capturing-bare") await until(() => events.some(e => e.type === "state" && e.capture_id !== undefined));
+      const scoped = scenario === "opening-scoped" || scenario === "opening-cancel";
+      const bare = !scoped;
+      const rows = () => logs.filter(line => line.startsWith("[voicelayer][capture-lifecycle] ")).map(line => JSON.parse(line.slice(line.indexOf("{"))));
+      expect(await handleSocketCommand({ cmd: scenario === "opening-cancel" ? "cancel" : "stop", id: controlID,
+        ...(scoped ? { take_id: id, physical_press: true } : {}) })).toMatchObject({ outcome: "accept" });
+      open.resolve();
+      if (bare) {
+        expect(rows().find(row => row.event === "ignore-unscoped-stop")).toMatchObject({ route: "unscoped-speech-only",
+          command_id: controlID, command_take_id: null, take_id: id });
+        // The take is still live 600 ms on (and past the opening fixture's first PCM); nothing wrote a stop.
+        await until(() => recordingJobsSnapshot().mic_take_id === id);
+        if (scenario === "opening-bare") await until(() => rows().some(row => row.event === "first-pcm"));
+        await Bun.sleep(600);
+        expect(recordingJobsSnapshot().mic_take_id).toBe(id);
+        expect(rows().filter(row => row.event === "write-stop" || row.event === "buffer-control")).toEqual([]);
+        expect(await handleSocketCommand({ cmd: "stop", take_id: id, physical_press: true })).toMatchObject({ outcome: "accept" });
+      }
+      await until(() => recordingJobsSnapshot().recording_jobs.length === 0 && logs.some(line => line.includes('"event":"finish"')));
+      const trace = rows();
+      const writer = trace.find(row => row.event === "write-stop");
+      if (bare) {
+        // The only writer is the take's own scoped stop.
+        expect(writer).toMatchObject({ route: "scoped", command_take_id: id, stamped_take_id: id });
+        expect(trace.find(row => row.event === "finish")).toMatchObject({ take_id: id, control_cancelled: false, job_cancelled: false });
+        expect(trace.every(row => Number.isFinite(row.t_ms) && Number.isFinite(row.monotonic_ms) && Number.isFinite(row.since_accept_ms) && row.since_accept_ms >= 0)).toBe(true);
+        if (scenario === "opening-bare") {
+          const audio = readdirSync(root, { recursive: true }).filter(name => typeof name === "string" && name.endsWith("audio.wav") && !before.has(name));
+          expect(audio).toHaveLength(1);
+          expect(readFileSync(join(root, String(audio[0]))).byteLength).toBeGreaterThan(44); // no header-only take
+        }
+        return;
+      }
+      expect(writer).toMatchObject({ route: "buffered-in-opening", command_id: controlID, command_take_id: id, stamped_take_id: id });
+      const finish = trace.find(row => row.event === "finish");
+      expect(finish).toMatchObject({ take_id: id, control_cancelled: scenario === "opening-cancel", job_cancelled: scenario === "opening-cancel" });
+      expect(trace.every(row => Number.isFinite(row.t_ms) && Number.isFinite(row.monotonic_ms) && Number.isFinite(row.since_accept_ms) && row.since_accept_ms >= 0)).toBe(true);
+      if (scenario.startsWith("opening")) {
+        expect(finish).toMatchObject({ first_pcm_ms: null, frames_written: 0 });
+        expect(trace.filter(row => row.event === "first-pcm")).toHaveLength(0);
+        const audio = readdirSync(root, { recursive: true }).filter(name => typeof name === "string" && name.endsWith("audio.wav") && !before.has(name));
+        expect(audio).toHaveLength(1);
+        expect(readFileSync(join(root, String(audio[0]))).byteLength).toBe(44);
+      }
+      expect(recordingJobsSnapshot().mic_take_id).toBeNull();
+    });
+  }
+
+  for (const gapMs of [0, 1000, 3000]) {
+    it(`back-to-back socket captures retain frames after ${gapMs}ms and reject old controls`, async () => {
+      const events: SocketEvent[] = [];
+      const logs: string[] = [];
+      spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(event); }));
+      spies.push(spyOn(console, "error").mockImplementation((...args) => { logs.push(args.join(" ")); }));
+      const first = randomUUID(), second = randomUUID();
+      for (const id of [first, second]) {
+        if (id === second) await Bun.sleep(gapMs);
+        writeFileSync(STOP_FILE, "stale previous stop");
+        writeFileSync(CANCEL_FILE, "stale previous cancel");
+        expect(await handleSocketCommand({ cmd: "record", id: randomUUID(), take_id: id, press_to_talk: true }))
+          .toMatchObject({ outcome: "accept" });
+        await until(() => events.some(e => e.type === "state" && e.take_id === id && e.capture_id !== undefined));
+        if (id === second) {
+          expect(await handleSocketCommand({ cmd: "stop", take_id: first })).toMatchObject({ outcome: "noop" });
+          expect(await handleSocketCommand({ cmd: "cancel", take_id: first })).toMatchObject({ outcome: "noop" });
+        }
+        await Bun.sleep(200);
+        expect(recordingJobsSnapshot().mic_take_id).toBe(id);
+        expect(await handleSocketCommand({ cmd: "stop", take_id: id })).toMatchObject({ outcome: "accept" });
+        await until(() => recordingJobsSnapshot().recording_jobs.length === 0);
+      }
+      const finished = logs.filter(line => line.startsWith("[voicelayer][capture-lifecycle] "))
+        .map(line => JSON.parse(line.slice(line.indexOf("{") ))).filter(row => row.event === "finish");
+      expect(finished).toHaveLength(2);
+      expect(finished.every(row => row.frames_written > 0 && row.stop_reason === "stop-signal")).toBe(true);
+      expect(finished[0].capture_id).not.toBe(finished[1].capture_id);
+      expect(finished.map(row => row.take_id)).toEqual([first, second]);
+      expect(finished.map(row => row.stop_take_id)).toEqual([first, second]);
+      expect(finished.every(row => typeof row.recorder_pid === "number")).toBe(true);
+    });
+  }
+
   it("keeps a running 3:03 History retranscription alive through socket F5 capture and its cancellation", async () => {
     const events: SocketEvent[] = [];
     spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(event); }));

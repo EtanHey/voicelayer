@@ -219,6 +219,8 @@ public final class PillContextMenuController: NSObject {
         return menu
     }
 
+    public static let recentTranscriptsMenuLimit = 8
+
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
         let entries = recentTranscriptionEntriesProvider()
@@ -231,7 +233,8 @@ public final class PillContextMenuController: NSObject {
         }
 
         let now = now()
-        for entry in entries {
+        // History keeps 20 rows (Etan, 2026-11-08); the submenu keeps its eight (Etan: the right-click menu is fine).
+        for entry in entries.prefix(Self.recentTranscriptsMenuLimit) {
             let item = NSMenuItem(
                 title: Self.recentTranscriptMenuTitle(
                     for: entry.text,
@@ -458,6 +461,11 @@ public enum MicrophoneDeviceManager {
         else { return nil }
         return transportType == kAudioDeviceTransportTypeAggregate ||
             transportType == kAudioDeviceTransportTypeVirtual
+    }
+
+    /// 2.3 N1: the default input's name, the device a recording captures from. A property read only.
+    public static func selectedInputDeviceName() -> String? {
+        selectedInputDeviceID().flatMap(AudioDeviceID.init).flatMap(deviceName(for:))
     }
 
     public static func selectedInputDeviceID() -> String? {

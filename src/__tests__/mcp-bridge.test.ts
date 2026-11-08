@@ -134,6 +134,7 @@ test("real MCP SDK client keeps its stdio session across backend replacement", a
   await withChildFixtureEnv({ VOICELAYER_MCP_SOCKET_PATH: path }, () => client.connect(transport));
   await until(() => old.messages.length === 2); await old.stop();
   const next = await daemon(path, "replacement");
+  await until(() => next.messages.length === 2);
   const result = await client.request({ method: "tools/call", params: { name: "test", arguments: {} } }, z.object({ initialized: z.boolean(), version: z.string() }));
   expect(result).toEqual({ initialized: true, version: "replacement" }); expect(next.messages.length).toBe(3);
 });
