@@ -959,20 +959,19 @@ public struct BarView: View {
                 settingsButton
             }
         case .recording:
-            // 2.3 N1 (Etan, QA round 1): the live time, 2.2.61's 46 × 24 pt level meter, then the capturing
-            // microphone, in symmetric regions so the meter stays centred in its wing (review D3). Time and name show
-            // only once capture has opened (review D1).
-            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+            // 2.3 N1 (Etan, QA round 1; real M4): the live time 8 pt clear of the physical notch, then 2.2.61's
+            // 46 × 24 pt level meter, centred in the visible wing by an equal empty region outside it (review D3). The
+            // time shows only once capture has opened (review D1); the capturing microphone is its tooltip and VoiceOver
+            // value, never wing text.
+            HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
                 VoiceBarRecordingTimeRegion(
                     elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
                     isCaptureOpen: state.isRecordingCaptureOpen,
+                    microphoneName: state.recordingMicrophoneName,
                     color: notchPrimaryLabelColor
                 )
                 notchWaveform
-                VoiceBarRecordingMicrophoneRegion(
-                    microphoneName: state.recordingMicrophoneName,
-                    color: notchPalette.secondary.color
-                )
+                Color.clear.frame(width: VoiceBarRecordingWingLabel.outerRegionWidth, height: 1)
             }
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {

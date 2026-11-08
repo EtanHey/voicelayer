@@ -57,14 +57,14 @@ final class WingsU2Tests: XCTestCase {
     }
 
     /// 2.3 N1 (Etan, QA round 1, S2-F3): recording keeps Stop + Cancel in the fixed left wing; the right wing grows
-    /// to hold the live time, 2.2.61's level meter and the microphone name, the meter centred between them.
+    /// to hold the live time and 2.2.61's level meter, the meter centred in the visible wing.
     func testRecordingKeepsTheFixedLeftWingAndARightWingThatHugsItsPayload() {
         let recording = resolve(.recording)
         XCTAssertEqual(recording.visualState, .recording)
         XCTAssertEqual(recording.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
         XCTAssertEqual(recording.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth,
                        accuracy: 0.001)
-        XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 130, accuracy: 0.001)
+        XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 120, accuracy: 0.001)
     }
 
     func testReadingAloudWithTheTeleprompterKeepsTheFixedWings() {
