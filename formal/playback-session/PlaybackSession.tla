@@ -27,7 +27,7 @@ CONSTANTS
 
 Reads == {1, 2}
 Prompt == 3
-W == 2   \* two words keep Fixed near 400k states (teleprompter-handoff checks 677k); every mutant still trips
+W == 2   \* two words keep Fixed at 275k states (teleprompter-handoff checks 677k); every mutant still trips
 NoPos == 9
 None == 0
 Live == {"preparing", "playing", "paused", "seeking", "parked"}

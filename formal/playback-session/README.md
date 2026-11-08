@@ -22,7 +22,7 @@ the read left the speaker); `pausedAt` is what the engine stored; a resume must 
 | OneLiveSession | "overlap": previous read starting without ending the current one | PrevOverlapMutant |
 | NoZombie | a stopped or replaced preparation still starting its player | ZombieMutant |
 
-`W == 2` keeps Fixed near 400k states (teleprompter-handoff checks 677k); every mutant still trips.
+`W == 2` keeps Fixed at 275,479 states (teleprompter-handoff checks 677k); every mutant still trips. "Previous read" holds the read on screen (prevHeld) and PrevReturn brings it back paused at its word.
 
 Stop during an ask ends the ask, never the read it parked: the read comes back paused at its word.
 

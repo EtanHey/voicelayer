@@ -2,7 +2,7 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/playback-session/PlaybackSession.tla": "622877d740f2f361a6b5fad4d1192779dafe26a051073905655883940e08bcd2",
+    "formal/playback-session/PlaybackSession.tla": "b68a3c8a11c111372849dd0c28ed496707fb05b10144feea90c1fda41bb2602f",
     "formal/playback-session/checks.json": "05b917813b28ab7451da18caca76895ff263a909a69c309bd93d8f335e4d9aff",
     "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
@@ -16,9 +16,9 @@
     "formal/playback-session/ClockResetMutant.cfg": "25d870ad5b49c9b4e74d6d229f08a44b649c701b60eb4878c64c6dd69bfc02ab",
     "formal/playback-session/SecondAskMutant.cfg": "a22ae278564fea445c1e98504e9099322ca97c32cfed72a2ab6fbeb014055391",
     "formal/playback-session/Fixed.cfg": "da742649343ef14e47becd491bf7d1131f521d61f6d809f2aa2980d363af918a",
-    "src/playback/session.ts": "e6f3c76f706aecf7502ec9a317e3b87fe59055740b66aba8f9b1db3ccccd0060",
-    "src/playback/ledger.ts": "573231d69e23d0c6268c32b7e8a83ae4d6519bf1a18118bf0d73c6c5cb1968ef",
-    "src/__tests__/playback-session.test.ts": "8f06442c941bb7d087a604911efe8c31850ad0db3e04f25088a64f49ad6ce67d"
+    "src/playback/session.ts": "a859e2bce64b395814775b18fba97f2b05d14c128f7176806951b2bd5d05a658",
+    "src/playback/ledger.ts": "876c9d96df4c3ff676fccee53b0e4deca20a3d8734a6bc0b778d205e736f70bc",
+    "src/__tests__/playback-session.test.ts": "1ce3827f73c13ffc9fea0c1e72eccaa4aaf6a3e7a6597ad32df0b0d9cf9d04e5"
   },
   "mutants": {
     "ResumeExact": [
@@ -46,7 +46,7 @@
     ]
   },
   "graphHashes": {
-    "Fixed": "b58485c744135eb928c47b7df5ac7bdc45a7a94bfaab991f451f084bc56eea46"
+    "Fixed": "e680f39c3e76f913d5568a996d74c49a771c7f09779d1253b0ea90eaae1039d9"
   },
   "checks": {
     "Fixed": {
@@ -54,8 +54,8 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 1390329,
-      "distinct": 399405
+      "generated": 929406,
+      "distinct": 275479
     },
     "JumpBackMutant": {
       "role": "mutant",
@@ -70,8 +70,8 @@
       "kind": "invariant",
       "target": "ResumeExact",
       "status": "EXPECTED_FAIL",
-      "generated": 962,
-      "distinct": 550
+      "generated": 961,
+      "distinct": 546
     },
     "OverlapMutant": {
       "role": "mutant",
@@ -102,24 +102,24 @@
       "kind": "invariant",
       "target": "MicExclusive",
       "status": "EXPECTED_FAIL",
-      "generated": 8190,
-      "distinct": 3612
+      "generated": 7630,
+      "distinct": 3307
     },
     "ClockResetMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "TeleTracksAudio",
       "status": "EXPECTED_FAIL",
-      "generated": 734,
-      "distinct": 434
+      "generated": 733,
+      "distinct": 431
     },
     "PrevOverlapMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "OneLiveSession",
       "status": "EXPECTED_FAIL",
-      "generated": 78,
-      "distinct": 57
+      "generated": 80,
+      "distinct": 58
     },
     "ZombieMutant": {
       "role": "mutant",
