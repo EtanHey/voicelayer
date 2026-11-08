@@ -439,9 +439,8 @@
       "NotchHistoryPanelTests/testHistoryIsNarrowerAndTallerThanTheTeleprompterAndKeepsTheLauncherWings",
       "NotchHistoryPanelTests/testEveryLowerSurfaceEnclosesItsWingsOnEveryNotchWidth",
       "NotchHistoryPanelTests/testTheHistoryPanelMatchesTheMock",
-      "NotchHistoryPanelTests/testTheOpenPanelClosesOnAnOutsideClickAndOnEscapeAimedAtIt",
-      "NotchHistoryPanelTests/testEscapeInAnotherVoiceBarWindowIsNotConsumed",
-      "NotchHistoryPanelTests/testDismissalMonitorsAreInstalledOnlyWhileOpen",
+      "NotchHistoryPanelTests/testTheOpenPanelClosesOnAnOutsideClickAndOnEscape",
+      "NotchHistoryPanelTests/testEscapeOwnedByASettingsSheetIsNotConsumed",
       "NotchHistoryPanelTests/testRowsAreKeyedByAStableIdentity",
       "NotchHistoryPanelTests/testIdenticalTextEntriesWithoutAudioGetDistinctRows",
       "NotchHistoryPanelTests/testHistoryYieldsToTheTeleprompterAndRecordingButBeatsStatusAndHover",
@@ -459,7 +458,7 @@
     "flow": "History outside close and drag close",
     "source": "flow-bar/Tests/VoiceBarUITests/NotchHistoryHandleDragHostTests.swift",
     "cases": [
-      "NotchHistoryHandleDragHostTests/testDraggingTheExtendHandleDownSevenRowsCommitsTwelveRows"
+      "NotchHistoryHandleDragHostTests/testDraggingTheExtendHandleDownSettlesOnTheExpandedDetent"
     ],
     "deferred": {},
     "kind": "unit/offscreen"
