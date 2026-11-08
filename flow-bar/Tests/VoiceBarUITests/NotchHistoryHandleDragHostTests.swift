@@ -102,7 +102,7 @@ final class NotchHistoryHandleDragHostTests: XCTestCase {
         drain(1.2) // the open spring settles; the handle takes presses only above 98 % progress
         host.layoutSubtreeIfNeeded()
         let handle = try XCTUnwrap(adapters(in: host).first, "the open panel mounts its extend handle")
-        XCTAssertEqual(handle.accessibilityValue() as? String, "7 of 12 rows")
+        XCTAssertEqual(handle.accessibilityValue() as? String, "6 of 8 rows")
         let frame = handle.convert(handle.bounds, to: nil)
         let start = NSPoint(x: frame.midX, y: frame.midY)
 
@@ -111,15 +111,16 @@ final class NotchHistoryHandleDragHostTests: XCTestCase {
 
         try send(.leftMouseDown, at: start, to: panel)
         drain()
-        for step in 1 ... 14 {
-            // Window space is unflipped: down the screen is a smaller y. 7 rows x 46 pt.
+        for step in 1 ... 3 {
+            // Window space is unflipped: down the screen is a smaller y. 1.5 rows x 46 pt, past halfway.
             try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - CGFloat(step) * 23), to: panel)
             drain(0.02)
         }
-        try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 322), to: panel)
+        try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 69), to: panel)
         drain(1)
 
-        XCTAssertEqual(model.historyRows, 12, "pulling the handle 7 rows down commits 12 rows (hit view: \(hitName))")
-        XCTAssertEqual(handle.accessibilityValue() as? String, "12 of 12 rows")
+        // Etan, 2026-11-08 ("it only adds one more row"): one pull goes all the way, collapsed 6 to expanded 8.
+        XCTAssertEqual(model.historyRows, 8, "one pull past halfway commits the expanded 8 rows (hit view: \(hitName))")
+        XCTAssertEqual(handle.accessibilityValue() as? String, "8 of 8 rows")
     }
 }

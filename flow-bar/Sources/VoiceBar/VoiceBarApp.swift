@@ -754,6 +754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         configurePillContextMenu()
+        configureRecordingWing()
 
         server.onUpdateGateDrain = { [weak self] request in
             guard let self else { return nil }
@@ -993,6 +994,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         workspaceNotificationObservers.removeAll()
         terminationSignalSource?.cancel()
         terminationSignalSource = nil
+    }
+
+    /// 2.3 N1: the recording wing names the default input, the device sox opens (a property read only).
+    private func configureRecordingWing() {
+        voiceState.recordingMicrophoneNameProvider = { MicrophoneDeviceManager.selectedInputDeviceName() }
     }
 
     private func configurePillContextMenu() {
@@ -2298,7 +2304,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 coreWidth: coreWidth,
                 visibleCoreOcclusionInset: visibleCoreOcclusionInset,
                 transientNote: state?.selectionFeedbackNote,
-                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory
+                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory,
+                showsEarlierTakeProcessing: state.map(VoiceBarPresentation.showsEarlierTakeProcessing(for:)) ?? false
             )
         )
     }
