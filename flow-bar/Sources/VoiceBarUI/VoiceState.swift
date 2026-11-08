@@ -1769,6 +1769,7 @@ public final class VoiceState {
             recognizerNotice = nil; onRecognizerStatusChange?()
         }
         sendCommand(command)
+        if action != .cancelDownload { scheduleRecognizerTimeout(id) }
     }
 
     /// Keep-warm switch (row 2). Refused while the daemon does not report the setting or the environment owns it.
@@ -1782,12 +1783,27 @@ public final class VoiceState {
         recognizerNotice = nil
         onRecognizerStatusChange?()
         sendCommand(["cmd": RecognizerUnloadWhenIdle.command, "value": value, "id": id])
+        scheduleRecognizerTimeout(id)
+    }
+
+    /// A missing terminal reply must not hold controls forever. Each deadline belongs
+    /// to one request ID; a settled or disconnected request cannot clear a later one.
+    private func scheduleRecognizerTimeout(_ id: String) {
         let timeout = processingAckTimeout
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
-            guard let self, self.recognizerUnloadWhenIdleID == id else { return }
-            self.recognizerUnloadWhenIdleID = nil; self.recognizerUnloadWhenIdlePending = nil
-            self.recognizerNotice = "Couldn't confirm the Unload when idle change; showing VoiceLayer's current setting."
+            guard let self else { return }
+            if self.recognizerUnloadWhenIdleID == id {
+                self.recognizerUnloadWhenIdleID = nil; self.recognizerUnloadWhenIdlePending = nil
+                self.recognizerNotice = "Couldn't confirm the Unload when idle change; showing VoiceLayer's current setting."
+            } else if self.recognizerSelectionID == id {
+                self.recognizerSelectionID = nil; self.recognizerSelectionTarget = nil
+                self.recognizerPendingCommand = nil
+                self.recognizerNotice = "Couldn't confirm the recognizer change; refreshing VoiceLayer's status."
+            } else if self.recognizerDownloadID == id {
+                self.recognizerDownloadID = nil
+                self.recognizerNotice = "Couldn't confirm the download; refreshing VoiceLayer's status."
+            } else { return }
             self.refreshRecognizerStatus()
             self.onRecognizerStatusChange?()
         }
@@ -1818,6 +1834,7 @@ public final class VoiceState {
         recognizerNotice = nil
         onRecognizerStatusChange?()
         sendCommand(["cmd": "set_recognizer", "recognizer": engine.rawValue, "id": id])
+        scheduleRecognizerTimeout(id)
     }
 
     private func handleRecognizerEvent(_ event: [String: Any]) {

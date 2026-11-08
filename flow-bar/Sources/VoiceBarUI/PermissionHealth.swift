@@ -76,6 +76,8 @@ public final class PermissionHealthMonitor {
     private let schedule: Schedule
     public private(set) var reading: PermissionHealthReading?
     public var onChange: ((PermissionHealthReading, PermissionHealthTrigger) -> Void)?
+    /// Always called after a read, including unchanged permissions, for live listener health.
+    public var onRefresh: (() -> Void)?
     private var ticker: PermissionHealthTicker?
     public var isPolling: Bool { ticker != nil }
 
@@ -97,6 +99,7 @@ public final class PermissionHealthMonitor {
         let next = read()
         let changed = next != reading
         reading = next
+        onRefresh?()
         guard changed || force else { return false }
         onChange?(next, trigger)
         return changed
@@ -118,5 +121,6 @@ public final class PermissionHealthMonitor {
         ticker?.invalidate()
         ticker = nil
         onChange = nil
+        onRefresh = nil
     }
 }

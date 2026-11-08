@@ -16,6 +16,13 @@ final class PermissionHealthAppPropagationTests: XCTestCase {
         func invalidate() { invalidated = true }
     }
 
+    private final class FakeListener: HotkeyListening {
+        var isEnabled = true
+        var missingPermissions: [HotkeyPermission] { [] }
+        func start() -> Bool { true }
+        func stop() { isEnabled = false }
+    }
+
     private var windows: [NSWindow] = []
 
     override func tearDown() {
@@ -33,7 +40,8 @@ final class PermissionHealthAppPropagationTests: XCTestCase {
         let app = AppDelegate()
         app.permissionHealth = PermissionHealthMonitor(read: { reads += 1; return reading },
                                                        schedule: { _, tick in ticker.tick = tick; return ticker })
-        app.hotkeyEnabled = true // the listener as launched; this test never starts the real event tap
+        app.hotkeyListener = HotkeyListenerLifecycle { FakeListener() }
+        XCTAssertEqual(app.hotkeyListener.start(), .started) // no real event tap
         app.startPermissionHealth()
         defer { app.stopPermissionHealth() }
 
