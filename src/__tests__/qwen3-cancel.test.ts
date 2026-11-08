@@ -1,7 +1,19 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+import { waitForJsonFile } from "./setup/wait-for-json";
+
+test("readiness waits through a slow writer publishing partial JSON", async () => {
+  const root = mkdtempSync(join(tmpdir(), "qwen-ready-"));
+  const path = join(root, "ready.json");
+  writeFileSync(path, '{"port":');
+  const pending = waitForJsonFile(path);
+  const writer = Bun.sleep(30).then(() => writeFileSync(path, '{"port":1234}'));
+  try { expect(await pending).toEqual({ port: 1234 }); }
+  finally { await writer; rmSync(root, { recursive: true, force: true }); }
+}, 30_000);
 
 const pythonDependencies = Bun.spawnSync({
   cmd: ["python3", "-c", "import fastapi, uvicorn"],
@@ -29,21 +41,21 @@ test.skipIf(!hasPythonDependencies)("aborting clone synthesis releases the Pytho
     cmd: [process.execPath, "-e", `
       import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
       import { join } from "node:path";
+      const { waitForJsonFile } = await import("./src/__tests__/setup/wait-for-json");
       const root = process.env.QWEN_CANCEL_TEST_ROOT;
       const daemon = Bun.spawn({
         cmd: ["python3", "tests/fixtures/qwen_cancel_daemon.py", root],
         env: process.env, stdout: "ignore", stderr: "inherit",
       });
       const waitFor = async (predicate) => {
-        const deadline = Date.now() + 5000;
+        const deadline = Date.now() + 20000;
         while (!await predicate()) {
           if (Date.now() >= deadline) throw new Error("stub daemon timed out");
           await Bun.sleep(10);
         }
       };
       try {
-        await waitFor(() => existsSync(join(root, "ready.json")));
-        const { port } = JSON.parse(readFileSync(join(root, "ready.json"), "utf8"));
+        const { port } = await waitForJsonFile(join(root, "ready.json"));
         const base = "http://127.0.0.1:" + port;
         const token = readFileSync(join(root, "secret"), "utf8").trim();
         const realFetch = globalThis.fetch;
@@ -97,4 +109,4 @@ test.skipIf(!hasPythonDependencies)("aborting clone synthesis releases the Pytho
     await child.exited;
     rmSync(root, { recursive: true, force: true });
   }
-}, 20000);
+}, 30000);
