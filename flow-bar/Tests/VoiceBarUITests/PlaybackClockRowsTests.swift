@@ -44,50 +44,91 @@ final class PlaybackClockRowsTests: XCTestCase {
     private func play(_ state: VoiceState, from start: Int, to end: Int, chunkStart: Int, chunkMs: Int, total: Int) {
         var t = start
         while t < end {
-            t = min(end, t + 250)
-            now += 0.25
+            let next = min(end, t + 250)
+            now += Double(next - t) / 1000
+            t = next
             state.handleEvent(position(t, chunkStart: chunkStart, chunkMs: chunkMs, total: total))
         }
     }
 
-    // MARK: - Frozen "Reading" (k04-49, k04-58, k06-22, k07-64)
+    // MARK: - Row kinds (#818 review: one test per row id, each reproducing its own kind)
 
-    func testK04_49_K04_58_K06_22_K07_64_aMissedChunkEdgeNeverFreezesTheClock() {
+    /// FROZEN LABEL: "Reading" with the clock stuck at a stale chunk end while the audio plays on.
+    private func assertFrozenLabelRow(_ row: String, frozenAt stale: Int, forMs span: Int, total: Int,
+                                      file: StaticString = #filePath, line: UInt = #line) {
         let (state, _) = makeState()
-        // k04-49: chunk 0 is 0:00-0:09 of a 0:59 read; the next chunk's edge never lands.
-        state.handleEvent(chunkEdge(chunkMs: 9000, total: 59_000))
-        now += 9
-        XCTAssertEqual(state.playbackElapsedMilliseconds(), 9000)
-        play(state, from: 9000, to: 19_000, chunkStart: 9000, chunkMs: 20_000, total: 59_000)
-        XCTAssertEqual(state.playbackElapsedMilliseconds(), 19_000, "k04-49: 'Reading' frozen at 0:09 for 10 s")
-        // The highlight follows the same clock (the words of the table come from it).
-        XCTAssertTrue(state.showsPlaybackClock)
+        state.handleEvent(chunkEdge(chunkMs: stale, total: total))
+        now += Double(stale) / 1000
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), stale, "\(row): setup", file: file, line: line)
+        play(state, from: stale, to: stale + span, chunkStart: stale, chunkMs: total - stale, total: total)
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: state.isPlaybackPaused, isPausedForDictation: false), "Reading",
+                       file: file, line: line)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), stale + span,
+                       "\(row): \"Reading\" froze at \(stale) ms for \(span) ms", file: file, line: line)
     }
 
-    // MARK: - Pause jumps (k03-45, k04-54, k07-46, k07-61, k04-66)
-
-    func testK03_45_K04_54_K07_46_K07_61_K04_66_pauseShowsThePositionItAlreadyShowed() {
-        // (row, the stale chunk end the notch was frozen at, where the audio really was when Pause landed)
-        let rows: [(String, Int, Int)] = [("k03-45/k04-54", 9000, 43_000), ("k07-46", 10_000, 41_000),
-                                          ("k07-61", 10_000, 38_000), ("k04-66", 1000, 4000)]
-        for (row, stale, real) in rows {
-            let (state, sent) = makeState()
-            state.handleEvent(chunkEdge(chunkMs: stale, total: 64_000))
-            now += Double(stale) / 1000
-            play(state, from: stale, to: real, chunkStart: stale, chunkMs: 64_000 - stale, total: 64_000)
-            let shown = state.playbackElapsedMilliseconds()
-            XCTAssertLessThanOrEqual(abs(shown - real), 300, "\(row): showed \(shown) ms while the audio was at \(real) ms")
-            state.togglePlaybackPause()
-            XCTAssertEqual(sent().last { $0["cmd"] as? String == "pause" }?["playback_elapsed_ms"] as? Int, shown)
-            state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-2", "generation": 2,
-                               "offset_ms": real, "chunk_offset_ms": real - stale, "pause_owner": "user"])
-            XCTAssertLessThanOrEqual(abs(state.playbackElapsedMilliseconds() - shown), 300, "\(row): Pause moved the clock")
-        }
+    /// FORWARD JUMP: Pause showed the daemon's real position after the clock had been stuck behind it.
+    private func assertForwardJumpRow(_ row: String, shown stale: Int, real: Int, total: Int,
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        let (state, sent) = makeState()
+        state.handleEvent(chunkEdge(chunkMs: stale, total: total))
+        now += Double(stale) / 1000
+        play(state, from: stale, to: real, chunkStart: stale, chunkMs: total - stale, total: total)
+        let shown = state.playbackElapsedMilliseconds()
+        XCTAssertLessThanOrEqual(abs(shown - real), 300, "\(row): showed \(shown) ms while the audio was at \(real) ms",
+                                 file: file, line: line)
+        state.togglePlaybackPause()
+        XCTAssertEqual(sent().last { $0["cmd"] as? String == "pause" }?["playback_elapsed_ms"] as? Int, shown, file: file, line: line)
+        state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-2", "generation": 2,
+                           "offset_ms": real, "chunk_offset_ms": real - stale, "pause_owner": "user"])
+        XCTAssertLessThanOrEqual(abs(state.playbackElapsedMilliseconds() - shown), 300,
+                                 "\(row): Pause jumped the clock \(shown) → \(state.playbackElapsedMilliseconds())", file: file, line: line)
     }
+
+    /// TRANSITION REWIND: an edge of the same read, lower, with no re-anchor, ran the clock (and highlight) back.
+    private func assertTransitionRewindRow(_ row: String, at shownMs: Int, staleEdge: Int, total: Int,
+                                           file: StaticString = #filePath, line: UInt = #line) {
+        let (state, _) = makeState()
+        state.handleEvent(chunkEdge(chunkMs: total, total: total))
+        now += Double(shownMs) / 1000
+        // The daemon reports its player (4 Hz) before the stale edge arrives.
+        state.handleEvent(position(shownMs, chunkStart: 0, chunkMs: total, total: total, playbackID: "p-1"))
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), shownMs, file: file, line: line)
+        state.handleEvent(chunkEdge(offset: staleEdge, chunkMs: total, total: total))
+        XCTAssertGreaterThanOrEqual(state.playbackElapsedMilliseconds(), shownMs,
+                                    "\(row): the clock ran back \(shownMs) → \(state.playbackElapsedMilliseconds())", file: file, line: line)
+        now += 0.5
+        XCTAssertGreaterThanOrEqual(state.playbackElapsedMilliseconds(), shownMs + 500, file: file, line: line)
+    }
+
+    // MARK: - Frozen label (k04-49, k04-58, k06-22, k07-64)
+
+    /// k04-49: "Reading · 1×" frozen at 0:09 / 0:59 so far, "scrub." highlighted 666.1 → 676.4 (≈10 s).
+    func testK04_49_readingFrozenAt0m09For10s() { assertFrozenLabelRow("k04-49", frozenAt: 9000, forMs: 10_000, total: 59_000) }
+    /// k04-58: "Reading · 1×" frozen at 0:53 after the resume, knob unmoved 683.7 → 692.4.
+    func testK04_58_readingFrozenAgainAt0m53() { assertFrozenLabelRow("k04-58", frozenAt: 53_000, forMs: 7000, total: 66_000) }
+    /// k06-22: "Reading · 1×" + pause icon frozen at 0:06 between toggles, 979.9 → 987.9.
+    func testK06_22_readingFrozenAt0m06BetweenToggles() { assertFrozenLabelRow("k06-22", frozenAt: 6000, forMs: 8000, total: 13_000 + 8000) }
+    /// k07-64: "Reading" frozen at 0:49 on "going." 1663.15 → 1680.9 (17.7 s) while "so far" grows 1:04 → 1:09.
+    func testK07_64_readingFrozenAt0m49For17s() { assertFrozenLabelRow("k07-64", frozenAt: 49_000, forMs: 17_700, total: 69_000) }
+
+    // MARK: - Forward jump on Pause (k03-45, k04-54, k04-66, k07-46, k07-61)
+
+    /// k03-45: 0:09 / 0:59 so far (487.3) → Paused 0:43 (487.7).
+    func testK03_45_pauseJumped0m09To0m43() { assertForwardJumpRow("k03-45", shown: 9000, real: 43_000, total: 59_000) }
+    /// k04-54: 0:09 "scrub." (676.40) → Paused 0:43 (676.55).
+    func testK04_54_pauseJumped0m09To0m43Again() { assertForwardJumpRow("k04-54", shown: 9000, real: 43_000, total: 59_000) }
+    /// k04-66: short read 0:01 "a" / 0:07 so far → Paused 0:04 "antigravity." / 0:10.
+    func testK04_66_shortReadPauseJumped0m01To0m04() { assertForwardJumpRow("k04-66", shown: 1000, real: 4000, total: 10_000) }
+    /// k07-46: 0:10 / 1:04 so far, "and" → Paused 0:41 / 1:04, "and" still highlighted.
+    func testK07_46_pauseJumped0m10To0m41() { assertForwardJumpRow("k07-46", shown: 10_000, real: 41_000, total: 64_000) }
+    /// k07-61: 0:10 → Paused 0:38 (1658.1); reopened at 0:49.
+    func testK07_61_pauseJumped0m10To0m38() { assertForwardJumpRow("k07-61", shown: 10_000, real: 38_000, total: 64_000) }
 
     // MARK: - Resume (k04-57)
 
-    func testK04_57_resumeLandsWhereItPausedAndRunsOn() {
+    /// k04-57: 0:43 (681.2) → 0:53 "Reading" right after Play. Resume lands where it paused and runs on.
+    func testK04_57_resumeShowed0m53ForA0m43Pause() {
         let (state, _) = makeState()
         state.handleEvent(chunkEdge(offset: 40_000, chunkStart: 40_000, chunkMs: 20_000, total: 60_000))
         now += 3
@@ -103,28 +144,29 @@ final class PlaybackClockRowsTests: XCTestCase {
         XCTAssertEqual(state.playbackElapsedMilliseconds(), 44_000)
     }
 
-    // MARK: - Backwards (k03-21, k07-29, k04-63)
+    // MARK: - Transition rewind (k03-21, k04-63, k07-29)
 
-    func testK03_21_K07_29_K04_63_aStaleEdgeNeverRunsTheClockBackwards() {
+    /// k03-21: 0:02 / 0:13 so far, "the" → 0:01, title highlighted, with no click or seek target.
+    func testK03_21_clockRewound0m02To0m01WithoutASeek() { assertTransitionRewindRow("k03-21", at: 2000, staleEdge: 0, total: 13_000) }
+    /// k04-63: short read 0:02 "narration"/"with" → 0:01 "fixes:" while "Reading · 1×".
+    func testK04_63_shortReadClockRewound0m02To0m01() { assertTransitionRewindRow("k04-63", at: 2000, staleEdge: 1000, total: 7000) }
+    /// k07-29: wing/panel 0:08 "was" → 0:04 "itself:"; also 0:09 → 0:08 earlier in the read.
+    func testK07_29_clockRewound0m08To0m04() { assertTransitionRewindRow("k07-29", at: 8000, staleEdge: 4000, total: 64_000) }
+
+    /// A real seek still moves the clock back (it carries reanchor "seek").
+    func testASeekStillMovesTheClockBack() {
         let (state, _) = makeState()
         state.handleEvent(chunkEdge(chunkMs: 20_000, total: 20_000))
         now += 8
-        XCTAssertEqual(state.playbackElapsedMilliseconds(), 8000)
-        // k07-29: 0:08 → 0:04 with no click. An edge of the same read, lower, with no re-anchor, is stale.
-        state.handleEvent(chunkEdge(offset: 4000, chunkMs: 20_000, total: 20_000, generation: 1))
-        XCTAssertGreaterThanOrEqual(state.playbackElapsedMilliseconds(), 8000, "k07-29: the clock ran backwards")
-        now += 1
-        XCTAssertGreaterThanOrEqual(state.playbackElapsedMilliseconds(), 9000)
-        // A real seek still moves it back.
         state.handleEvent(chunkEdge(offset: 2000, chunkMs: 20_000, total: 20_000, generation: 2, reanchor: "seek"))
-        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2000, "a seek is a real re-anchor")
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2000)
     }
 
     // MARK: - Completion (k06-31)
 
-    func testK06_31_completionNeverShrinksTheElapsedOrTheTotal() {
+    /// k06-31: "0:10 / 0:13" (1011.483) → "0:06 / 0:06" (1011.617) at completion.
+    func testK06_31_completionDroppedElapsedAndTotalTo0m06() {
         let (state, _) = makeState()
-        // The last chunk (0:07-0:13 of a 0:13 read) carries a retained span covering only 6 s.
         var edge = chunkEdge(offset: 7000, chunkStart: 7000, chunkMs: 6000, total: 13_000)
         edge["readback_id"] = "rb-1"
         edge["readback_duration_ms"] = 6000
@@ -147,7 +189,6 @@ final class PlaybackClockRowsTests: XCTestCase {
         state.handleEvent(position(41_250, chunkStart: 30_000, chunkMs: 20_000, total: 64_000, playbackID: "p-9"))
         let resyncs = sent().filter { $0["cmd"] as? String == "resync_playback" }
         XCTAssertEqual(resyncs.count, 1, "S-01: one resync per playback, not one per heartbeat")
-        // The daemon re-sends the read at its live position; the read UI is attached again.
         state.handleEvent(chunkEdge(offset: 41_250, chunkStart: 30_000, chunkMs: 20_000, total: 64_000, playbackID: "p-9",
                                     generation: 3, reanchor: "resync"))
         XCTAssertEqual(state.mode, .speaking)

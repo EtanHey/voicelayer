@@ -2845,6 +2845,8 @@ public final class VoiceState {
 
     /// Lane B (S-01): the playback a resync was asked for, so a heartbeat asks once, not four times a second.
     private var resyncRequestedFor: String?
+    /// Lane B: this daemon sends `playback_position` (and marks re-anchoring edges). Older daemons never set it.
+    private var daemonReportsPosition = false
 
     /// Lane B (QA 11:47 clock rows): the daemon's player says where the audio is. The clock re-anchors to it with
     /// that player's bounds, so a missed chunk edge can never freeze it ("Reading" stuck at 0:09) and a Pause shows
@@ -2853,6 +2855,7 @@ public final class VoiceState {
     private func handlePlaybackPosition(_ event: [String: Any]) {
         guard let playbackID = event["playback_id"] as? String,
               let offset = (event["offset_ms"] as? NSNumber)?.intValue, offset >= 0 else { return }
+        daemonReportsPosition = true
         let utterance = event["utterance_id"] as? String
         let generation = (event["generation"] as? NSNumber)?.intValue
         let showsThisRead = mode == .speaking
@@ -3494,7 +3497,9 @@ public final class VoiceState {
                 // backwards without a re-anchor (seek, resume, replay, resync) is stale: the clock it shows is kept.
                 let continuesRead = mode == .speaking && !isPlaybackPaused && edgeUtteranceID != nil
                     && edgeUtteranceID == currentUtteranceID && playbackStartedAt != nil && !isPlaybackPreparing
-                let keepsClock = continuesRead && event["reanchor"] == nil
+                // Only a daemon that reports its player's position also marks its re-anchors; an older one's seek
+                // edges carry no `reanchor`, so the guard never refuses them.
+                let keepsClock = continuesRead && daemonReportsPosition && event["reanchor"] == nil
                     && ((event["playback_offset_ms"] as? NSNumber)?.intValue).map { $0 < shownPosition - 300 } == true
                 if keepsClock { logDiagnostic("stale_speaking_edge_clock_kept", details: ["shown_ms": String(shownPosition)]) }
                 let keptClock = keepsClock ? (startedAt: playbackStartedAt, start: playbackChunkStartMilliseconds,
@@ -4580,8 +4585,12 @@ public final class VoiceState {
                 // An older daemon sends no retained range; its duration is the best it can say.
                 // Lane B (QA 11:47 k06-31: completion showed "0:10 / 0:13" then "0:06 / 0:06"): the end state never
                 // shows less than the read it just finished. A partial retained span is the seekable part, not the total.
-                let readbackDuration = [playbackReadbackDurationMilliseconds, playbackDurationMilliseconds]
-                    .compactMap { $0 }.filter { $0 > 0 }.max() ?? playbackReadbackDurationMilliseconds
+                // A read that played to its whole total completed; one stopped earlier shows only its retained range.
+                let total = playbackDurationMilliseconds ?? 0
+                let completed = total > 0 && playbackElapsedMilliseconds() >= total - 250
+                let readbackDuration = completed
+                    ? max(playbackReadbackDurationMilliseconds ?? 0, total)
+                    : playbackReadbackDurationMilliseconds ?? playbackDurationMilliseconds
                 retainedPlaybackDurationMilliseconds = readbackDuration
                 retainedPlaybackPositionMilliseconds = min(playbackElapsedMilliseconds(), readbackDuration ?? 0)
                 retainedTeleprompterText = teleprompterText ?? statusText

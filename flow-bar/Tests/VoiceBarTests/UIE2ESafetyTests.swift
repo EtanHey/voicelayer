@@ -165,7 +165,17 @@ final class UIE2EFixtureCommandTests: XCTestCase {
         model.fixture("preparing")
         model.selectionText = "QA original selection"
         model.fixture("selection-replace")
-        XCTAssertEqual(model.commands.last?["cmd"] as? String, "stop")
+        // Etan, 2026-11-08 4:40 pm: the same selection over a read dedupes with a notice instead of stopping it. The
+        // daemon owns that dedupe (it knows the read's identity), so VoiceBar sends the ORIGINAL selection and shows
+        // the daemon's "Already reading this" answer; no Stop is ever sent.
+        let last = try XCTUnwrap(model.commands.last)
+        XCTAssertEqual(last["cmd"] as? String, "speak_text")
+        XCTAssertEqual(last["text"] as? String, "QA original selection")
+        XCTAssertFalse(model.commands.contains { $0["cmd"] as? String == "stop" })
+        model.voice.handleEvent(["type": "ack", "command": "speak_text", "id": last["id"] as? String ?? "",
+                                 "outcome": "noop", "reason": "Already reading this"])
+        XCTAssertEqual(model.voice.selectionFeedbackNote, VoiceState.alreadyReadingNote)
+        XCTAssertEqual(model.voice.mode, .speaking)
     }
 
     func testPreparingSelectionProbeUsesTheRealSelectionMethodWithNoNativeCapture() throws {
