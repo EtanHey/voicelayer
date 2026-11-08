@@ -56,6 +56,7 @@ import type {
   PlaybackOutcomeStatus,
   PlaybackPriority,
   PlaybackStateEvent,
+  PlaybackPositionEvent,
   QueueItemSnapshot,
   WordBoundary,
   StateEvent,
@@ -92,7 +93,7 @@ import { createNarrationSource } from "./narration/adapter";
 import { planUtterances, synthesizeBounded, type AssembleNarration } from "./narration/utterances";
 import type { NarrationAudio } from "./narration/source";
 import { ledgerAskBegin, ledgerAskRestore, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
-  ledgerPreviousHold, ledgerPreviousReturn, ledgerResumed, ledgerStopAll, ledgerStopped, currentPlaybackSpeed,
+  ledgerPreviousHold, ledgerPreviousReturn, ledgerResumed, ledgerStopAll, ledgerStopped, ledgerWord, currentPlaybackSpeed,
   setLedgerPlaybackSpeed, setPreviousReadProbe } from "./playback/ledger";
 import { startCloneTiming } from "./tts/clone-timing";
 import { combineHistoryTimings, clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
@@ -1051,6 +1052,11 @@ interface PlaybackJob {
   exited: Promise<PlaybackOutcomeEvent>;
   /** Announce `resumed` when the next player for this job actually starts. */
   resuming?: boolean;
+  /** Lane B: why the next player re-anchors the client clock (a backward move needs one of these). */
+  reanchor?: "seek" | "resume" | "replay";
+  /** Lane B: the last speaking edge and word table sent for this job, re-sent by resync_playback. */
+  lastSpeakingEdge?: Record<string, unknown>;
+  lastSpeechWords?: Record<string, unknown>;
   resumeOwner?: PlaybackPauseOwner;
   pausedWordIndex?: number;
 }
@@ -1140,6 +1146,8 @@ const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
 };
 
 const LOW_PRIORITY_TTL_MS = 10_000;
+/** Lane B: how often the playing player's authoritative position is sent. */
+const POSITION_HEARTBEAT_MS = 250;
 const NORMAL_PRIORITY_TTL_MS = 30_000;
 // Allow player startup/teardown without mistaking synthesis or decoder time for playback.
 const PLAYER_WATCHDOG_MARGIN_MS = 5_000;
@@ -1672,6 +1680,7 @@ class PlaybackQueueManager {
     job.onParkedChange?.(false);
     job.lifecycle.generation++;
     job.resuming = true;
+    job.reanchor = "resume";
     job.resumeOwner = parked.owner;
     job.enqueuedAt = Date.now();
     job.expiresAt = Date.now() + ttlForPriority(job.priority);
@@ -1742,6 +1751,7 @@ class PlaybackQueueManager {
       return false;
     });
 
+    active.job.reanchor = "replay";
     this.restartAfterTermination = active.job;
     this.stopProgressTimer();
     this.terminate(active);
@@ -1800,6 +1810,7 @@ class PlaybackQueueManager {
     }
     disposeSeekSlice(job.sliceFile);
     job.lifecycle.generation++;
+    job.reanchor = "seek";
     job.sliceFile = slice;
     job.skipAmplitudeDecode = true;
     job.metadata!.localOffsetMs = offset;
@@ -2063,7 +2074,7 @@ class PlaybackQueueManager {
     if (next.metadata) {
       const utteranceMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ??
         next.metadata.durationMs;
-      broadcast({
+      const edge: Record<string, unknown> = {
         type: "state",
         state: "speaking",
         utteranceId: next.wordTimeline.utteranceId,
@@ -2083,11 +2094,18 @@ class PlaybackQueueManager {
         // Lane B: the client clock runs at this speed (audio ms per wall ms).
         ...(rate !== 1 ? { playback_rate: rate } : {}),
         narration_source: narrationSource().id,
+        // Lane B (QA 11:47 k03-21/k07-29/k04-63): a client clock may move backwards only on a real re-anchor.
+        ...(next.reanchor ? { reanchor: next.reanchor } : {}),
         playback_amplitude: next.playbackAmplitude,
         initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),
-      });
-      broadcast(next.wordTimeline.update(next.metadata.wordTimeline ? next.metadata.longRead?.chunk_index ?? 0 : 0, next.metadata.text, durationMs ?? 0,
-        displayTokenBoundaries(next.metadata.text, next.metadata.wordBoundaries ?? []), next.metadata.alignedWords));
+      };
+      next.reanchor = undefined;
+      next.lastSpeakingEdge = edge;
+      broadcast(edge as unknown as StateEvent);
+      const words = next.wordTimeline.update(next.metadata.wordTimeline ? next.metadata.longRead?.chunk_index ?? 0 : 0, next.metadata.text, durationMs ?? 0,
+        displayTokenBoundaries(next.metadata.text, next.metadata.wordBoundaries ?? []), next.metadata.alignedWords);
+      next.lastSpeechWords = words as unknown as Record<string, unknown>;
+      broadcast(words);
       if (next.metadata.wordBoundaries?.length) {
         broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
       }
@@ -2302,11 +2320,52 @@ class PlaybackQueueManager {
 
   private startProgressTimer() {
     this.stopProgressTimer();
+    let lastPosition = 0;
     this.progressTimer = setInterval(() => {
       if (!this.current) return;
+      // Lane B: the authoritative position, about 4 times a second, whatever edges the client saw.
+      if (Date.now() - lastPosition >= POSITION_HEARTBEAT_MS) { lastPosition = Date.now(); this.broadcastPosition(this.current); }
       if ((this.current.job.metadata?.durationMs ?? 0) <= 0) return;
       this.emitQueueSnapshot();
     }, 100);
+  }
+
+  /**
+   * Lane B (QA 11:47: "Reading" frozen at 0:09 for 10-18 s, then Pause jumped to 0:43): the client clock was
+   * clamped to the bounds of a chunk whose speaking edge it last applied. The daemon's player is the truth, so it
+   * says where the audio is (read-global), which player holds it and that player's bounds, several times a second.
+   */
+  private broadcastPosition(active: ActivePlayback): void {
+    const job = active.job;
+    const metadata = job.metadata;
+    if (!metadata || job.completed) return;
+    const chunkStart = metadata.longRead?.chunk_start_ms ?? 0;
+    const chunkDuration = metadata.durationMs && metadata.durationMs > 0 ? metadata.durationMs : undefined;
+    const local = Math.max(0, Math.min(playerClockMs(active), chunkDuration ?? Infinity));
+    const total = metadata.getUtteranceDurationMs?.() ?? metadata.utteranceDurationMs ?? metadata.durationMs;
+    const word = globalWord(job, wordAtLocalOffset(job, local).word_index);
+    ledgerWord(sessionIdOf(job), word);
+    broadcast({ type: "playback_position", playback_id: job.id, generation: job.lifecycle.generation,
+      utterance_id: job.wordTimeline.utteranceId, offset_ms: Math.round(chunkStart + local), chunk_start_ms: chunkStart,
+      ...(chunkDuration !== undefined ? { chunk_duration_ms: chunkDuration } : {}),
+      ...(total !== undefined ? { duration_ms: total } : {}),
+      ...(active.rate !== 1 ? { playback_rate: active.rate } : {}), word_index: word });
+  }
+
+  /** Lane B (S-01): re-send what is playing now (its speaking edge at the live position, and its word table). */
+  resyncCurrent(): SeekResult {
+    const active = this.current;
+    const job = active?.job;
+    if (!active || !job || job.completed || !job.lastSpeakingEdge) return { outcome: "noop", reason: "nothing playing" };
+    const chunkStart = job.metadata?.longRead?.chunk_start_ms ?? 0;
+    const offset = Math.round(chunkStart + Math.max(0, playerClockMs(active)));
+    broadcast({ ...job.lastSpeakingEdge, generation: job.lifecycle.generation, playback_offset_ms: offset,
+      reanchor: "resync" } as unknown as StateEvent);
+    if (job.lastSpeechWords) broadcast(job.lastSpeechWords as unknown as Parameters<typeof broadcast>[0]);
+    // A client that still shows this read paused learns it plays.
+    this.broadcastPlaybackState(job, "resumed");
+    this.broadcastPosition(active);
+    return { outcome: "accept", offset_ms: offset };
   }
 
   private stopProgressTimer() {
@@ -2660,6 +2719,9 @@ function restorePreviousHold(hold: PreviousHold): void {
 }
 
 /** Lane B: the listening speed (1× is a real step). A playing player continues from its word at the new rate. */
+/** Lane B (S-01): VoiceBar heard a read it is not showing; re-send the playing read's edge and word table. */
+export function resyncPlayback(): SeekResult { return playbackQueueManager.resyncCurrent(); }
+
 export function setPlaybackSpeed(speed: number): SeekResult {
   if (!isPlaybackSpeed(speed)) return { outcome: "reject", reason: "unsupported speed" };
   const previous = currentPlaybackSpeed();

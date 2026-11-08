@@ -324,3 +324,56 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     expect(playbackSessionViolations()).toEqual([]);
   });
 });
+
+describe("Lane B P0 (QA 11:47 clock rows): the daemon reports its player's position and re-anchors honestly", () => {
+  const positions = () => events.filter(e => e.type === "playback_position");
+  const tick = () => new Promise(resolve => setTimeout(resolve, 160));
+
+  it("k04-49/k07-64: playback_position carries the read-global position, the player's bounds and the word", async () => {
+    tts.playAudioNonBlocking(`${TEST_TMP}/position.mp3`, { text, voice: "test", durationMs: 10_000, utteranceDurationMs: 40_000,
+      wordBoundaries: words, longRead: { id: "position-read", chunk_index: 1, chunk_count: 3, chunk_start_ms: 10_000 } });
+    await players.at(0);
+    at(3200);
+    await tick();
+    expect(positions().at(-1)).toMatchObject({ offset_ms: 13_200, chunk_start_ms: 10_000, chunk_duration_ms: 10_000,
+      duration_ms: 40_000, word_index: 3 });
+    at(6500);
+    await tick();
+    expect(positions().at(-1)).toMatchObject({ offset_ms: 16_500, word_index: 6 });
+    // The ledger's cursor follows the player too (TeleTracksAudio is now checked on real word progress).
+    expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "playing", word_index: 6 });
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  it("S-01: resync_playback re-sends the playing read at its live position with its word table", async () => {
+    tts.playAudioNonBlocking(`${TEST_TMP}/resync.mp3`, { text, voice: "test", durationMs: 10_000, wordBoundaries: words,
+      longRead: { id: "resync-read", chunk_index: 0, chunk_count: 1, chunk_start_ms: 0 } });
+    await players.at(0);
+    at(4100);
+    const before = events.length;
+    expect(await handleSocketCommand({ cmd: "resync_playback" })).toMatchObject({ outcome: "accept" });
+    const sent = events.slice(before);
+    expect(sent.find(e => e.state === "speaking")).toMatchObject({ text, playback_offset_ms: 4100, reanchor: "resync" });
+    expect(sent.some(e => e.type === "speech_words")).toBe(true);
+    expect(sent.find(e => e.type === "playback_state")).toMatchObject({ state: "resumed" });
+    expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+    expect(await handleSocketCommand({ cmd: "resync_playback" })).toMatchObject({ outcome: "noop" });
+  });
+
+  it("k03-21/k07-29: only a seek, resume or replay edge may move the client clock back (edges say why)", async () => {
+    tts.playAudioNonBlocking(`${TEST_TMP}/reanchor.mp3`, { text, voice: "test", durationMs: 10_000, wordBoundaries: words });
+    await players.at(0);
+    expect(events.filter(e => e.state === "speaking").at(-1).reanchor).toBeUndefined();
+    at(5000);
+    await handleSocketCommand({ cmd: "seek", offset_ms: 2000 });
+    (await trims.at(0)).exit.resolve(0);
+    await players.at(1); await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 2000, reanchor: "seek" });
+    at(6000);
+    tts.pausePlayback({}, undefined);
+    (await trims.at(1)).exit.resolve(0); await fixtureCheckpoint();
+    tts.resumePlayback();
+    await players.at(2); await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ reanchor: "resume" });
+  });
+});

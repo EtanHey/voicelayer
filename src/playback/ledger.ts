@@ -115,6 +115,7 @@ function nextChunk(id: string): void {
 export function ledgerWord(id: string, word: number): void {
   engine.word(id, word);
   engine.teleprompter(word, id);
+  after("word");
 }
 
 export function ledgerPlayerExited(id: string, isPrompt = false): void {

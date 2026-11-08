@@ -71,6 +71,9 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   playback_rate?: number;
   /** Lane B: the NarrationSource that produced this narration ("voicelayer-engines" today, "narrationlayer" later). */
   narration_source?: string;
+  /** Lane B: why this edge moves the clock (a seek, a resume, a replay, or a resync of a lost edge). A client clock
+   * never moves backwards for an edge without one. */
+  reanchor?: "seek" | "resume" | "replay" | "resync";
   /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
   stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
@@ -326,6 +329,22 @@ export interface PlaybackStateEvent {
   long_read?: StateEvent["long_read"];
 }
 
+/** Lane B (2.4): the playing player's authoritative position, about 4 times a second (QA 11:47 clock rows). */
+export interface PlaybackPositionEvent {
+  type: "playback_position";
+  playback_id: string;
+  generation: number;
+  utterance_id: string;
+  /** Read-global audio position (chunk start + chunk-local). */
+  offset_ms: number;
+  chunk_start_ms: number;
+  chunk_duration_ms?: number;
+  /** The whole read's known total. */
+  duration_ms?: number;
+  playback_rate?: number;
+  word_index: number;
+}
+
 /** Lane B (2.4): the one PlaybackSession on screen, from the daemon's engine (formal/playback-session).
  * Additive: an older VoiceBar ignores it. Positions are read-global word indices. */
 export interface PlaybackSessionEvent {
@@ -382,6 +401,7 @@ export type AckCommand =
   | "replay"
   | "previous_read"
   | "set_playback_speed"
+  | "resync_playback"
   | "retranscribe_last"
   | "retranscribe_recording"
   | "toggle"
@@ -486,6 +506,7 @@ export type SocketEvent = RecordingJobIdentity & (
   | PlaybackOutcomeEvent
   | PlaybackStateEvent
   | PlaybackSessionEvent
+  | PlaybackPositionEvent
   | PlaybackDurationEvent
   | CommandModeEvent
   | ClipMarkerEvent
@@ -558,6 +579,11 @@ export interface ReplayCommand extends SocketCommandBase {
 /** Lane B: replay the previous finished narration from its first word; the read on screen waits, paused at its word. */
 export interface PreviousReadCommand extends SocketCommandBase {
   cmd: "previous_read";
+}
+
+/** Lane B (S-01): VoiceBar heard a read it is not showing; the daemon re-sends that read's edge and word table. */
+export interface ResyncPlaybackCommand extends SocketCommandBase {
+  cmd: "resync_playback";
 }
 
 /** Lane B: the listening speed for every player (0.75, 1, 1.25, 1.5, 2). A playing read continues from its word. */
@@ -713,6 +739,7 @@ export type SocketCommand =
   | ReplayCommand
   | PreviousReadCommand
   | SetPlaybackSpeedCommand
+  | ResyncPlaybackCommand
   | RetranscribeLastCommand
   | RetranscribeRecordingCommand
   | ToggleCommand
@@ -1024,6 +1051,8 @@ export function parseCommand(line: string): SocketCommand | null {
         return withCommandId<ReplayCommand>({ cmd: "replay" }, id);
       case "previous_read":
         return withCommandId<PreviousReadCommand>({ cmd: "previous_read" }, id);
+      case "resync_playback":
+        return withCommandId<ResyncPlaybackCommand>({ cmd: "resync_playback" }, id);
       case "set_playback_speed":
         if (!isPlaybackSpeed(parsed.speed)) return null;
         return withCommandId<SetPlaybackSpeedCommand>({ cmd: "set_playback_speed", speed: parsed.speed }, id);
