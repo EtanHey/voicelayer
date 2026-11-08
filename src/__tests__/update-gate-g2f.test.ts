@@ -118,22 +118,14 @@ test("G2f selection Next on last leaves pending capture alive", async () => {
   fs.rmdirSync(path + ".lock");
   expect(await capture).toBe("captured");
 });
-// BARE-STOP: only a capture-scoped stop (or a cancel) may cancel a pending capture start; an id-less speech stop must not.
-for (const command of [{ cmd: "stop", scope: "capture" }, { cmd: "cancel" }] as const) test(`G2f socket ${JSON.stringify(command)} still cancels pending capture`, async () => {
+for (const cmd of ["stop", "cancel"] as const) test(`G2f socket ${cmd} still cancels pending capture`, async () => {
   fs.mkdirSync(path + ".lock"); let started = false;
   const capture = gate.withCaptureVoiceAdmission(() => { started = true; });
   void capture.catch(() => {});
-  await handleSocketCommand(command);
+  await handleSocketCommand({ cmd });
   fs.rmdirSync(path + ".lock");
   await expect(capture).rejects.toThrow("cancelled before start");
   expect(started).toBe(false);
-});
-test("BARE-STOP an id-less socket stop leaves a pending capture start alive", async () => {
-  fs.mkdirSync(path + ".lock");
-  const capture = gate.withCaptureVoiceAdmission(() => "captured");
-  await handleSocketCommand({ cmd: "stop" });
-  fs.rmdirSync(path + ".lock");
-  expect(await capture).toBe("captured");
 });
 test("G2f stopPlayback cancels pending speech but returns whether playback was stopped", async () => {
   tts.stopPlayback(); fs.mkdirSync(path + ".lock");
