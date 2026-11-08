@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// 2.3 lane U4 (approved mock 5-history): the History panel that grows out of the notch. Rows are two lines,
-/// seven visible (Etan, 2026-11-03: "2 lines, 7 visible"): the dictation on the first line, when and how long on
-/// the second. Tight insets, no footer prose, a thin scroll indicator only while scrolling, and a row highlight
+/// 2.3 lane U4 (approved mock 5-history): the History panel that grows out of the notch. Rows are two lines, six
+/// visible collapsed and eight expanded, up to 20 scrolling inside (Etan, 2026-11-08, superseding 11-03's "7
+/// visible"): the dictation on the first line, when and how long on the second. Tight insets, no footer prose, a thin scroll indicator only while scrolling, and a row highlight
 /// that follows the pointer on the same frame from ONE container hover tracker (no per-row `.onHover`).
 /// Hovering a row shows Copy / Paste / Transcribe again on its right. It draws on the notch's own contrast
 /// palette and adds no material of its own.
@@ -16,7 +16,7 @@ struct NotchHistoryPanel: View {
     let onRetranscribe: (String) -> Void
     /// A click on a row's text opens it in the History window (SPEC open question 1). Copy / Paste stay on hover.
     var onOpen: (RecentTranscriptionEntry) -> Void = { _ in }
-    /// The visible list: seven rows, or more once the extend handle pulled it down (V6).
+    /// The visible list: six rows, or eight once the extend handle pulled it down (V6).
     var listHeight: CGFloat = NotchHistoryMorph.listHeight
     /// Shots only: render one row as hovered without a pointer.
     var forcedHoverIndex: Int?
