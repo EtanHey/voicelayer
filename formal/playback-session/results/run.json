@@ -2,24 +2,26 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/playback-session/PlaybackSession.tla": "85ababaa9419825d6c106c471f04f1f6a87653a68827a9d187b7220e01492bad",
-    "formal/playback-session/checks.json": "32a50c04a2dc552687d5b4b51212b0f95e2c3f63ca87277c050655d38ad74900",
+    "formal/playback-session/PlaybackSession.tla": "d72371287baa527ca5922bd72460c29f025cf2feb03c2b4f62bde8a9e3779a37",
+    "formal/playback-session/checks.json": "eea040b2be1b9df18b63a901c7cff154f0ccbe8fd8ae68ada20d0e74a4eef98a",
     "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
-    "formal/playback-session/ZombieMutant.cfg": "c8b137d90789977b56eb767a04f656f93a03c0243cff7564f7a1f3cf6130a594",
-    "formal/playback-session/RecorderWaitMutant.cfg": "98c073a90eb3ac11fca48e485307feb8f2c1585af6bb65276947ec7912e174e2",
-    "formal/playback-session/StrandMutant.cfg": "9e443c2cb6dff1afdb26781efa70a95a5911a928dbc9a608eed003a9bdcb2de9",
-    "formal/playback-session/PrevOverlapMutant.cfg": "83944bc07cd70099a0bbe0477fff8c48a435b86a6e54869f0c3a30315b845e0b",
-    "formal/playback-session/JumpBackMutant.cfg": "48a60feb270e2b7ef4520362da91ac46fc3df77240eb5a3c366a81f97d183174",
-    "formal/playback-session/SameQueuesMutant.cfg": "c8a7658c7758c899d03caedfefd9ba293bdd362bc787ea804e64876963c759d0",
-    "formal/playback-session/OverlapMutant.cfg": "6faea4a2e2a2443c52a5780bc4a53cc26ab3034093f4283772a47fb143c8002e",
-    "formal/playback-session/EarlyMicMutant.cfg": "be154a3df058ba8828d42a83f2b5e757ce81d49465985b0d0b5a4c4d628322d4",
-    "formal/playback-session/ClockResetMutant.cfg": "ab5adc9156084bb2c4acd0b5b070764c3ef30709feeefd2c33d61fc066ccc9e1",
-    "formal/playback-session/SecondAskMutant.cfg": "2ac8709d4dddd3c67b5773ebb94d8e955e276507a11a9927044ccb1c9d4b24e9",
-    "formal/playback-session/Fixed.cfg": "f5997760f31912248a09b4fbf0b90fc8aa3402f0176c70b27d6a4b8faf378866",
-    "src/playback/session.ts": "a859e2bce64b395814775b18fba97f2b05d14c128f7176806951b2bd5d05a658",
-    "src/playback/ledger.ts": "79a808924cc042e24513e70cc874c0a9dcfdde9e0034a704fe21bef2dddbe50e",
-    "src/__tests__/playback-session.test.ts": "1ce3827f73c13ffc9fea0c1e72eccaa4aaf6a3e7a6597ad32df0b0d9cf9d04e5"
+    "formal/playback-session/ZombieMutant.cfg": "f63f066962105c21fa8cee284144e7ded58a5f4b24d7e0db8996370e5591bec2",
+    "formal/playback-session/RecorderWaitMutant.cfg": "6a34e4f0810927aa2acfb7710176071910b731322b3d880fac33ec6385130a50",
+    "formal/playback-session/StrandMutant.cfg": "078fe080c759ab15e8f4e59b445397170eb50f116f9889f0d6392ad0cd023434",
+    "formal/playback-session/PrevOverlapMutant.cfg": "5cf92a7bbded7bf03c766e043c5c1a0da9bf638b3a23735f5b98e8829c6f3608",
+    "formal/playback-session/JumpBackMutant.cfg": "b31036b58b77650f934355dbe19bb080dccb691bb2b7369d4f8b067dc7dc6c88",
+    "formal/playback-session/NoRestoreMutant.cfg": "df8263659cb5c93119aef9eaa04707a7e2228d4fd4372d9ce688e06febef7524",
+    "formal/playback-session/SameQueuesMutant.cfg": "c7dbd97bdbd77f2422fb6f260483ee3758bcc08c9c64380a055d1ff408d1c79b",
+    "formal/playback-session/OverlapMutant.cfg": "c750ed7086ded95d4105667c6d95de79144f3e57f4d56c3caad63f35e584d081",
+    "formal/playback-session/EarlyMicMutant.cfg": "9c0a332c15b3fb1aba54a22759414fa2009bd93121acdd0a0b3b3ee2b548cb7e",
+    "formal/playback-session/Liveness.cfg": "de39397cb55e5703a53f059ca91cd39735568f931a65d3084af8bbe35d712a19",
+    "formal/playback-session/ClockResetMutant.cfg": "8b9761edb4f59e62c575fa4de2085ef0a27205f4e17c1060b7cbe9f4ce0a03b2",
+    "formal/playback-session/SecondAskMutant.cfg": "66b7bb217eb24fea136ce39d59f4d53948158555aa02f171c147bf7d6c1556f8",
+    "formal/playback-session/Fixed.cfg": "6a300993b4c07bb6870f290063775fec5d9b6e8b79bca160e34f89c9d2fc0906",
+    "src/playback/session.ts": "05dbf12164d9ee58aa5421ad210eb9d317c3cce100b10df1d68e366c07df95d9",
+    "src/playback/ledger.ts": "75ae37daa58a80a1c119303bee59ccd3d82ec6f7a108b7ea176a038cb6e68d29",
+    "src/__tests__/playback-session.test.ts": "c84407ff5be7579e485202c8a79d33b073fc651cdcf00f8caeac476e0995d3c6"
   },
   "mutants": {
     "ResumeExact": [
@@ -47,6 +49,9 @@
     ],
     "NoSameQueued": [
       "SameQueuesMutant"
+    ],
+    "ParkedEventuallyReleased": [
+      "NoRestoreMutant"
     ]
   },
   "graphHashes": {
@@ -140,6 +145,22 @@
       "status": "EXPECTED_FAIL",
       "generated": 19,
       "distinct": 15
+    },
+    "Liveness": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 2329163,
+      "distinct": 655402
+    },
+    "NoRestoreMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "ParkedEventuallyReleased",
+      "status": "EXPECTED_FAIL",
+      "generated": 248471,
+      "distinct": 86497
     }
   }
 }

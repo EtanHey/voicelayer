@@ -6,5 +6,6 @@
 | NoZombie | ZombieMutant |
 | OneAudible | OverlapMutant |
 | OneLiveSession | PrevOverlapMutant |
+| ParkedEventuallyReleased | NoRestoreMutant |
 | ResumeExact | JumpBackMutant, SecondAskMutant |
 | TeleTracksAudio | ClockResetMutant |

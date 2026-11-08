@@ -24,7 +24,8 @@ CONSTANTS
   ClockReset,        \* resume/restore restarts the teleprompter clock at 0: wrong clock
   PrevKeepsCurrent,  \* "previous read" starts the old read without ending the current one: overlap
   ZombieReady,       \* a cancelled preparation still starts its player after Esc/Stop
-  SameQueues         \* Option+F5 on the text being read queues it again behind itself (Etan: dedupe and tell)
+  SameQueues,        \* Option+F5 on the text being read queues it again behind itself (Etan: dedupe and tell)
+  NoRestore          \* the ask's end never restores the read it parked (liveness mutant)
 
 Reads == {1, 2}
 Prompt == 3
@@ -200,7 +201,7 @@ RecorderExit == /\ recorder /\ ~mic /\ recorder' = FALSE
                 /\ UNCHANGED <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep, ask, parked, parkedFrom, mic, asks>>
 
 \* Ask end restores exactly the parked read, to its exact word, in the state it had.
-AskRestore == /\ ask = "closing" /\ (~recorder \/ SkipRecorderWait)
+AskRestore == /\ ask = "closing" /\ (~recorder \/ SkipRecorderWait) /\ ~NoRestore
               /\ ask' = "none" /\ parked' = None /\ parkedFrom' = "none"
               /\ IF parked = None \/ StrandOnFail
                  THEN UNCHANGED <<st, cur, resumedAt, tele, prep>>
@@ -252,6 +253,13 @@ Next == \/ Others /\ UNCHANGED <<prevHeld, notice>>
 
 Spec == Init /\ [][Next]_vars
 
+\* #818 review: liveness. Once an ask has begun, its machinery keeps moving (prompt, capture, recorder exit, the
+\* player reaping, the restore) unless something else changes the state; nothing waits forever.
+Progress(A) == A /\ UNCHANGED <<prevHeld, notice>> /\ optq' = optq \ {r \in Reads : st'[r] \in Live}
+FairSpec == Spec /\ WF_vars(Progress(AskPromptStart)) /\ WF_vars(Progress(AskPromptEnd)) /\ WF_vars(Progress(MicOpen))
+                 /\ WF_vars(Progress(CaptureEnd)) /\ WF_vars(Progress(RecorderExit)) /\ WF_vars(Progress(AskRestore))
+                 /\ WF_vars(Progress(Reap))
+
 TypeOK == /\ st \in [Reads -> {"queued", "preparing", "playing", "paused", "seeking", "parked", "ended"}]
           /\ players \subseteq Reads \cup {Prompt} /\ exiting \subseteq Reads \cup {Prompt}
 
@@ -274,6 +282,9 @@ MicExclusive == (mic \/ recorder) => Quiet
 
 \* "Wrong clock": the teleprompter word is the audio word, within one word event.
 TeleTracksAudio == \A r \in Reads : st[r] \in Positioned => Dist(tele, cur[r]) <= 1
+
+\* #818 review: a read an ask parked is eventually restored (or explicitly ended); it is never left parked forever.
+ParkedEventuallyReleased == \A r \in Reads : [](st[r] = "parked" => <>(st[r] # "parked"))
 
 \* "Overlap": exactly one session owns the screen.
 OneLiveSession == Cardinality({r \in Reads : st[r] \in Live}) <= 1

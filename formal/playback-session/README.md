@@ -21,8 +21,19 @@ the read left the speaker); `pausedAt` is what the engine stored; a resume must 
 | TeleTracksAudio | "wrong clock": the teleprompter restarting at 0 on resume/restore | ClockResetMutant |
 | OneLiveSession | "overlap": previous read starting without ending the current one | PrevOverlapMutant |
 | NoZombie | a stopped or replaced preparation still starting its player | ZombieMutant |
+| NoSameQueued | Etan (2026-11-08): Option+F5 on the text being read must dedupe, never queue it behind itself | SameQueuesMutant |
+| ParkedEventuallyReleased (temporal, under FairSpec) | #818 review: a read an ask parked is eventually restored or ended, never left parked | NoRestoreMutant |
 
-`W == 2` keeps Fixed at 275,479 states (teleprompter-handoff checks 677k); every mutant still trips. "Previous read" holds the read on screen (prevHeld) and PrevReturn brings it back paused at its word.
+TeleTracksAudio allows one word event of lag on purpose: the teleprompter learns each word after the audio speaks it
+(Advance then TeleSync). It is exact after every TeleSync, and a resume/restore resets it to the stored word.
+
+Option+F5 over a read (OptF5Empty / OptF5Same / OptF5Other, Etan 2026-11-08): an empty selection pauses or
+resumes the read, the same text sets the "Already reading this" notice, different text joins the narration queue.
+
+Liveness: `Liveness.cfg` checks ParkedEventuallyReleased under FairSpec, weak fairness on the ask's progress
+steps (prompt start/end, mic open, capture end, recorder exit, reap, restore).
+
+`W == 2` keeps Fixed at 655,402 states (teleprompter-handoff checks 677k); every mutant still trips. "Previous read" holds the read on screen (prevHeld) and PrevReturn brings it back paused at its word.
 
 Stop during an ask ends the ask, never the read it parked: the read comes back paused at its word.
 

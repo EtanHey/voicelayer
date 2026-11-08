@@ -61,6 +61,16 @@
       "role": "mutant",
       "target": "NoSameQueued",
       "kind": "invariant"
+    },
+    "Liveness": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "NoRestoreMutant": {
+      "role": "mutant",
+      "target": "ParkedEventuallyReleased",
+      "kind": "temporal"
     }
   },
   "acceptance": [
@@ -71,6 +81,7 @@
     "TeleTracksAudio",
     "OneLiveSession",
     "NoZombie",
-    "NoSameQueued"
+    "NoSameQueued",
+    "ParkedEventuallyReleased"
   ]
 }
