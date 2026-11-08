@@ -1,3 +1,4 @@
+import { writeCaptureStop, captureLifecycle } from "./capture-lifecycle";
 import { runBarCaptureWithPausedRead, bufferOpeningCaptureControl } from "./f5-capture";
 import { runHistoryTranscription, canStartBarCapture, cancelRecordingJob,
   acknowledgeDictationDelivery, recordingJobsSnapshot, markBarCaptureDraining, isBarCaptureDraining } from "./recording-jobs";
@@ -31,7 +32,7 @@ import {
   TTS_DISABLED_FILE,
   MIC_DISABLED_FILE,
   VOICE_DISABLED_FILE,
-  STOP_FILE,
+  CANCEL_FILE,
   safeWriteFileSync,
 } from "./paths";
 import {
@@ -349,18 +350,18 @@ function handleSocketCommandAdmitted(
         stopAll(command.playback_elapsed_ms, "clear");
         return buildAck(command, "accept");
       }
-      if (bufferOpeningCaptureControl(command.take_id, "stop", command.physical_press === true)) return buildAck(command, "accept");
+      if (bufferOpeningCaptureControl(command.take_id, "stop", command.physical_press === true, stopOrigin(command))) return buildAck(command, "accept");
       if (command.take_id) {
         if (recordingJobsSnapshot().mic_take_id !== command.take_id) return buildAck(command, "noop", "take is not recording");
         markBarCaptureDraining(command.take_id);
-        safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: command.take_id, physical_press: command.physical_press === true }));
+        writeCaptureStop(JSON.stringify({ take_id: command.take_id, physical_press: command.physical_press === true }), "scoped", stopOrigin(command), command.take_id);
         return buildAck(command, "accept");
       }
       if (hasF5Capture()) {
         const takeID = recordingJobsSnapshot().mic_take_id;
         if (takeID) {
           markBarCaptureDraining(takeID);
-          safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: takeID, physical_press: command.physical_press === true }));
+          writeCaptureStop(JSON.stringify({ take_id: takeID, physical_press: command.physical_press === true }), "fallback-to-live", stopOrigin(command), takeID);
         }
         return buildAck(command, "accept");
       }
@@ -372,11 +373,10 @@ function handleSocketCommandAdmitted(
       if (recordingState === "transcribing" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
         return buildAck(command, "noop", "already transcribing");
       }
-      safeWriteFileSync(
-        STOP_FILE,
+      writeCaptureStop(
         command.physical_press === true && recordingState === "recording"
           ? JSON.stringify({ physical_press: true })
-          : `stop from voice-bar at ${new Date().toISOString()}`,
+          : `stop from voice-bar at ${new Date().toISOString()}`, "legacy-text", stopOrigin(command),
       );
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
@@ -391,12 +391,12 @@ function handleSocketCommandAdmitted(
       );
     case "cancel":
       if (command.discard_read_queue === true) selectionReads.clear();
-      if (bufferOpeningCaptureControl(command.take_id, "cancel")) return buildAck(command, "accept");
+      if (bufferOpeningCaptureControl(command.take_id, "cancel", false, stopOrigin(command, true))) return buildAck(command, "accept");
       if (command.take_id || recordingJobsSnapshot().recording_jobs.length > 0) {
         const cancelled = cancelRecordingJob(command.take_id);
         if (!cancelled) return buildAck(command, "noop", "take is not active");
         if (cancelled === "delivery") return buildAck(command, "reject", "delivery is already in progress");
-        if (cancelled === "capture") safeWriteFileSync(STOP_FILE, JSON.stringify({ take_id: command.take_id ?? recordingJobsSnapshot().mic_take_id, cancelled: true }));
+        if (cancelled === "capture") writeCaptureStop(JSON.stringify({ take_id: command.take_id ?? recordingJobsSnapshot().mic_take_id, cancelled: true }), "cancel", stopOrigin(command, true), command.take_id ?? recordingJobsSnapshot().mic_take_id);
         return buildAck(command, "accept");
       }
       // Hide (QUEUE1b ruling) and an idle Cancel with no capture (QUEUE1c ruling) end the user read chain,
@@ -408,9 +408,9 @@ function handleSocketCommandAdmitted(
       // AIDEV-NOTE: Cancel differs from stop — it sets the cancel signal
       // so waitForInput() discards the recording instead of transcribing.
       setCancelSignal();
-      safeWriteFileSync(
-        STOP_FILE,
-        `cancel from voice-bar at ${new Date().toISOString()}`,
+      captureLifecycle("write-cancel", { ...stopOrigin(command, true), route: "cancel", signal_file: CANCEL_FILE, take_id: null });
+      writeCaptureStop(
+        `cancel from voice-bar at ${new Date().toISOString()}`, "cancel", stopOrigin(command, true),
       );
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
@@ -1065,4 +1065,9 @@ function buildAck(
     ...(command.id ? { id: command.id } : {}),
     ...(reason ? { reason } : {}),
   };
+}
+
+function stopOrigin(command: { id?: unknown; take_id?: unknown; scope?: unknown; physical_press?: unknown }, cancelled = false) {
+  return { command_id: command.id ?? null, command_take_id: command.take_id ?? null,
+    scope: command.scope ?? null, physical_press: command.physical_press === true, cancelled };
 }
