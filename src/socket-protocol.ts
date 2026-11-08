@@ -62,6 +62,10 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   /** The playing job and its control generation, so pause/resume and their events bind to this exact player (P16). */
   playback_id?: string;
   generation?: number;
+  /** Ask's real player temporarily owns the surface; the paused read stays parked. */
+  preserves_paused_read?: boolean;
+  /** Capture admission released: restore only the named paused presentation, without audio. */
+  restores_paused_read?: boolean;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
   /** This player's whole audio (chunk or utterance), measured from long_read.chunk_start_ms (0 without one). */
