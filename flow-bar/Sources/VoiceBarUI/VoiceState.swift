@@ -555,6 +555,14 @@ public final class VoiceState {
     public private(set) var isPlaybackDurationGrowing = false
     public private(set) var playbackDurationMilliseconds: Int?
     private var playbackStartedAt: TimeInterval?
+    /// T1 (QA 2026-11-08 S1-F6r): no player exists while a read prepares, so there is no clock to run.
+    public private(set) var isPlaybackPreparing = false
+    /// T1: the player on screen ends here (global ms). Its position cannot pass the end of the audio it holds,
+    /// so neither can the clock while the next chunk is still on its way (S2-F5, S4-F4).
+    private var playbackChunkEndMilliseconds: Int?
+    /// T1: the next chunk continues the page from where the last one ended; the clock never steps back for it
+    /// (S3-F2, S1-F6r). Only a seek, a resume or a new read re-anchors it lower.
+    private var playbackClockFloorMilliseconds = 0
     private var playbackLongReadID: String?
     /// What a readback seek can reach once this read ends: the retained chunks, not the synthesized lookahead.
     private var playbackReadbackDurationMilliseconds: Int?
@@ -616,6 +624,7 @@ public final class VoiceState {
         var durationMs: Int?
         var isDurationGrowing: Bool
         var chunkStartMs: Int
+        var chunkEndMs: Int?
         var longReadID: String?
         var readbackID: String?
         var readbackDurationMs: Int?
@@ -648,6 +657,8 @@ public final class VoiceState {
     /// A daemon whose speaking frame carries no identity: only this read's own Pause confirmation counts.
     private var pendingPauseEpoch: Int?
     private var pendingPlaybackPauseIDs: Set<String> = []
+    /// T1 (S2-F9): Pause/Resume clicks already re-sent once with the daemon's current player identity.
+    private var resyncedPlaybackControlIDs: Set<String> = []
 
     public var isPlaybackPaused: Bool {
         mode == .speaking && parkedRead != nil
@@ -2469,8 +2480,9 @@ public final class VoiceState {
     }
 
     /// Playback controls are scoped to the player on screen and use its teleprompter clock.
-    public func togglePlaybackPause() {
-        guard mode == .speaking, let sendCommand else { return }
+    @discardableResult
+    public func togglePlaybackPause() -> String? {
+        guard mode == .speaking, let sendCommand else { return nil }
         let id = UUID().uuidString
         var command: [String: Any] = ["id": id]
         let scope = parkedRead.map { ($0.playbackID, $0.generation) } ?? (currentPlayback?.id, currentPlayback?.generation)
@@ -2485,6 +2497,7 @@ public final class VoiceState {
         }
         pendingPlaybackPauseIDs.insert(id)
         sendCommand(command)
+        return id
     }
 
     private func currentReadSnapshot() -> ReadSnapshot {
@@ -2494,6 +2507,7 @@ public final class VoiceState {
             durationMs: playbackDurationMilliseconds,
             isDurationGrowing: isPlaybackDurationGrowing,
             chunkStartMs: playbackChunkStartMilliseconds,
+            chunkEndMs: playbackChunkEndMilliseconds,
             longReadID: playbackLongReadID,
             readbackID: playbackReadbackID,
             readbackDurationMs: playbackReadbackDurationMilliseconds,
@@ -2542,6 +2556,9 @@ public final class VoiceState {
         playbackDurationMilliseconds = read.durationMs
         isPlaybackDurationGrowing = read.isDurationGrowing
         playbackChunkStartMilliseconds = read.chunkStartMs
+        playbackChunkEndMilliseconds = read.chunkEndMs
+        playbackClockFloorMilliseconds = parked.offsetMs
+        isPlaybackPreparing = false
         playbackLongReadID = read.longReadID
         playbackReadbackID = read.readbackID
         playbackReadbackDurationMilliseconds = read.readbackDurationMs
@@ -2646,10 +2663,32 @@ public final class VoiceState {
             "command": command, "command_id": ClickTelemetry.identifier(id) ?? "null", "owned": String(owned),
             "outcome": ClickTelemetry.outcome(event["outcome"]), "reason": ClickTelemetry.reason(event["reason"]),
         ])
-        guard owned, event["outcome"] as? String == "reject" else { return }
+        let retried = id.map { resyncedPlaybackControlIDs.remove($0) != nil } ?? false
+        guard owned else { return }
+        // T1 (S2-F9): no player exists right now (a scrub's slice or the next chunk is still being made). That is
+        // not the end of the read, so never settle it here; but a click must never look dead.
+        if command == "pause", event["outcome"] as? String == "noop", event["reason"] as? String == "nothing playing",
+           mode == .speaking, !isPlaybackPaused {
+            showConfirmation("Speech is loading. Try again")
+            return
+        }
+        guard event["outcome"] as? String == "reject" else { return }
         switch event["reason"] as? String {
         case "stale":
-            return // The read moved on; the next speaking edge already says so.
+            // T1 (S2-F9): the player on screen was replaced without this app adopting its identity (a scrub's new
+            // player). The reject names the current player: adopt it and send the same click once more.
+            if !retried, mode == .speaking, (command == "pause") == !isPlaybackPaused,
+               let playbackID = event["playback_id"] as? String, let generation = (event["generation"] as? NSNumber)?.intValue {
+                adoptPlaybackIdentity(playbackID, generation: generation)
+                logClick("playback_control_resync", ["command": command, "reason": "stale", "outcome": "reject",
+                                                     "playback_id": ClickTelemetry.identifier(playbackID) ?? "null",
+                                                     "generation": String(generation)])
+                if let retry = togglePlaybackPause() { resyncedPlaybackControlIDs.insert(retry) }
+                return
+            }
+            if mode == .speaking {
+                showConfirmation(command == "pause" ? "Pause unavailable" : "Resume unavailable")
+            }
         case "unsupported":
             showConfirmation("This prompt can't be paused")
         case "busy":
@@ -2659,17 +2698,33 @@ public final class VoiceState {
         }
     }
 
+    private func adoptPlaybackIdentity(_ playbackID: String, generation: Int) {
+        if let parked = parkedRead {
+            parkedRead = ParkedRead(owner: parked.owner, playbackID: playbackID, generation: generation,
+                                    offsetMs: parked.offsetMs, read: parked.read)
+        }
+        currentPlayback = (playbackID, generation)
+    }
+
     public func reportWordTimingUnavailable() {
         showConfirmation("Word timing unavailable")
     }
 
+    /// T1 clock rule (QA 2026-11-08): the player's position. It starts with the player, never runs while a
+    /// read prepares, freezes on pause, follows seeks, and never passes the end of the audio the player holds.
     public func playbackElapsedMilliseconds() -> Int {
-        guard mode == .speaking, let playbackStartedAt else { return 0 }
-        if isPlaybackPaused, let parkedRead { return parkedRead.offsetMs }
-        return max(
-            0,
-            Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000).rounded())
-        )
+        guard mode == .speaking, let playbackStartedAt, !isPlaybackPreparing else { return 0 }
+        if isPlaybackPaused, let parkedRead { return clampedPlaybackPosition(parkedRead.offsetMs) }
+        let running = Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000).rounded())
+        return clampedPlaybackPosition(max(running, playbackClockFloorMilliseconds))
+    }
+
+    /// Whether the reading time is a live player position (not preparing, not ended).
+    public var showsPlaybackClock: Bool { mode == .speaking && !isPlaybackPreparing }
+
+    private func clampedPlaybackPosition(_ milliseconds: Int) -> Int {
+        let ends = [playbackChunkEndMilliseconds, playbackDurationMilliseconds].compactMap { $0 }.filter { $0 > 0 }
+        return min(max(0, milliseconds), ends.min() ?? Int.max)
     }
 
     func playbackAudioLevel(atSystemUptime systemUptime: TimeInterval) -> Double {
@@ -3165,13 +3220,19 @@ public final class VoiceState {
                 if idleSource == "recording" { refreshModelsBusy() }
             case "speaking":
                 let requestID = event["request_id"] as? String
-                if let requestID, selectionRetiredRequestIDs.contains(requestID) { return }
+                if let requestID, selectionRetiredRequestIDs.contains(requestID) {
+                    logSpeakingDrop(event, reason: "retired-request")
+                    return
+                }
                 if let requestID { selectionUnacknowledgedRequestIDs.remove(requestID) }
                 let submission = requestID.flatMap { selectionSubmissions[$0] }
                 // An external read changes the current read, but cannot supersede pending own
                 // submissions. Only an acknowledged newer own request establishes their order.
                 // Receipts may arrive out of order; never roll a newer read back to an older one.
-                if let submission, submission.order < selectionReceiptOrder { return }
+                if let submission, submission.order < selectionReceiptOrder {
+                    logSpeakingDrop(event, reason: "older-receipt")
+                    return
+                }
                 if let submission {
                     selectionQueueSnapshotIsEmpty = false
                     selectionReceiptOrder = submission.order
@@ -3219,11 +3280,13 @@ public final class VoiceState {
                 let previousLongRead = mode == .speaking ? playbackLongReadID.map {
                     (id: $0, duration: playbackDurationMilliseconds, growing: isPlaybackDurationGrowing)
                 } : nil
+                let shownPosition = mode == .speaking && !isPlaybackPaused ? playbackElapsedMilliseconds() : 0
                 resetAudioLevels()
                 let playbackStart = playbackAmplitudeClock()
                 let offset = (event["playback_offset_ms"] as? NSNumber)?.doubleValue
                 let validOffset = offset.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
                 playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000
+                isPlaybackPreparing = isPreparing
                 playbackReadbackID = event["readback_id"] as? String
                 playbackReadbackDurationMilliseconds = (event["readback_duration_ms"] as? NSNumber)?.intValue
                 playbackChunkStartMilliseconds = (event["long_read"] as? [String: Any])?["chunk_start_ms"] as? Int ?? 0
@@ -3248,6 +3311,9 @@ public final class VoiceState {
                     (longRead?["chunk_index"] as? Int).map { $0 == (longReadDocumentChunkIndex ?? -2) + 1 } == true &&
                     validOffset.map { Int($0.rounded()) == playbackChunkStartMilliseconds } == true
                 if !advancesDocument { playbackEpoch += 1 }
+                playbackClockFloorMilliseconds = advancesDocument ? shownPosition : 0
+                let chunkDuration = (event["chunk_duration_ms"] as? NSNumber)?.intValue
+                playbackChunkEndMilliseconds = chunkDuration.flatMap { $0 > 0 ? playbackChunkStartMilliseconds + $0 : nil }
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
                 clearRetainedTeleprompter()
@@ -4126,6 +4192,9 @@ public final class VoiceState {
         playbackLongReadID = nil
         playbackReadbackDurationMilliseconds = nil
         playbackChunkStartMilliseconds = 0
+        playbackChunkEndMilliseconds = nil
+        playbackClockFloorMilliseconds = 0
+        isPlaybackPreparing = false
         isPlaybackDurationGrowing = false
     }
 
@@ -5421,6 +5490,15 @@ public final class VoiceState {
     }
 
     /// CLICK2: allowlisted click records only; no layout notification and no control-layer mirror.
+    /// T1 (S2-F9): a dropped speaking edge leaves the app on a stale player; record it so the next QA can see it.
+    private func logSpeakingDrop(_ event: [String: Any], reason: String) {
+        logClick("speaking_drop", [
+            "reason": reason,
+            "playback_id": ClickTelemetry.identifier(event["playback_id"]) ?? "null",
+            "generation": (event["generation"] as? NSNumber).map { String($0.intValue) } ?? "null",
+        ])
+    }
+
     private func logClick(_ event: String, _ details: [String: String]) {
         guard let diagnosticLogger else { return }
         diagnosticLogger(event, details.merging(["timestamp": ClickTelemetry.timestamp()]) { _, new in new })
