@@ -959,8 +959,9 @@ public struct BarView: View {
                 settingsButton
             }
         case .recording:
-            // 2.3 U2: six level bars in the fixed right wing.
-            notchWaveform(style: .wingLevels)
+            // 2.3 N1 (Etan, QA round 1: "thin, much shorter than before"): 2.2.61's 46 × 24 pt level meter,
+            // centred in the fixed right wing.
+            notchWaveform
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
                 notchSpeakingTrailingContent
@@ -1044,18 +1045,13 @@ public struct BarView: View {
     }
 
     private var notchWaveform: some View {
-        notchWaveform(style: .standard)
-    }
-
-    private func notchWaveform(style: WaveformBarStyle) -> some View {
         VoiceBarNotchWaveform(
             mode: state.mode,
             isListening: !state.speechDetected,
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() },
-            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused,
-            style: style
+            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused
         )
         .help("Input level")
         .accessibilityLabel("Input level")

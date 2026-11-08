@@ -75,18 +75,6 @@ final class WingsU2Tests: XCTestCase {
                        VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001, "the right wing never grows")
     }
 
-    func testTheRecordingWingLevelMeterIsSixThinBars() {
-        let style = WaveformBarStyle.wingLevels
-        XCTAssertEqual(style.barCount, 6)
-        XCTAssertEqual(style.barWidth, 3)
-        XCTAssertEqual(style.barSpacing, 3)
-        XCTAssertEqual(style.maxHeight, 16)
-        XCTAssertEqual(style.viewportWidth, 33)
-        let lane = VoiceBarNotchContract.fixedWingWidth - 2 * VoiceBarNotchContract.fixedWingContentInset
-        XCTAssertLessThanOrEqual(style.viewportWidth, lane)
-        XCTAssertEqual(WaveformBarStyle.standard.barCount, WaveformLayout.barCount, "the standard meter is unchanged")
-    }
-
     func testTheReadingTimeAndStopFillTheFixedRightWingExactly() {
         let material = VoiceBarNotchContract.material
         XCTAssertEqual(VoiceBarReadingTimeLabel.width, 31.5, accuracy: 0.001)
