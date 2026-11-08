@@ -68,6 +68,8 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   restores_paused_read?: boolean;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
+  /** This player's whole audio (chunk or utterance), measured from long_read.chunk_start_ms (0 without one). */
+  chunk_duration_ms?: number;
   /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
   stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
@@ -316,6 +318,8 @@ export interface PlaybackStateEvent {
   chunk_offset_ms: number;
   pause_owner?: "user" | "f5";
   duration_ms?: number;
+  /** This player's whole audio, from long_read.chunk_start_ms (0 without one). */
+  chunk_duration_ms?: number;
   word_index?: number;
   word_count?: number;
   long_read?: StateEvent["long_read"];
@@ -390,6 +394,14 @@ export interface AckEvent {
   reason?: string;
   offset_ms?: number;
   clamped?: boolean;
+  /** A stale Pause/Resume reject: the player that is actually current (T1, S2-F9) — identity is the
+   * (playback_id, generation) pair — its logical read (utterance_id) and where its audio sits in that read. */
+  playback_id?: string;
+  generation?: number;
+  utterance_id?: string;
+  chunk_start_ms?: number;
+  chunk_duration_ms?: number;
+  duration_ms?: number;
   model_status?: WhisperModelStatus;
   residency?: WhisperModelResidency;
   tts_controls?: import("./tts-controls-status").TTSControlsStatus;

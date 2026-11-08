@@ -18,6 +18,13 @@ export interface SeekResult {
   reason?: string;
   offset_ms?: number;
   clamped?: boolean;
+  /** A stale Pause/Resume: the player that is actually current, its logical read and where its audio sits. */
+  playback_id?: string;
+  generation?: number;
+  utterance_id?: string;
+  chunk_start_ms?: number;
+  chunk_duration_ms?: number;
+  duration_ms?: number;
 }
 export interface LongReadSeek { seek(offsetMs: number): SeekResult; restart(): SeekResult }
 

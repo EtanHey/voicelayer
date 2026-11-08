@@ -268,7 +268,13 @@ function handleSocketCommandAdmitted(
         : recordingState !== "idle" && isPlaybackPaused() ? { outcome: "reject" as const, reason: "busy" }
         : resumePlayback(scope);
       return { ...buildAck(command, result.outcome, result.reason),
-        ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms } : {}) };
+        ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms } : {}),
+        ...(result.reason === "stale" && result.playback_id !== undefined && result.generation !== undefined
+          ? { playback_id: result.playback_id, generation: result.generation,
+              ...(result.utterance_id !== undefined ? { utterance_id: result.utterance_id } : {}),
+              ...(result.chunk_start_ms !== undefined ? { chunk_start_ms: result.chunk_start_ms } : {}),
+              ...(result.chunk_duration_ms !== undefined ? { chunk_duration_ms: result.chunk_duration_ms } : {}),
+              ...(result.duration_ms !== undefined ? { duration_ms: result.duration_ms } : {}) } : {}) };
     }
     case "speak_text": {
       const identity = command.source === "selection" ? selectionIdentity(command.text) : undefined;
