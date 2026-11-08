@@ -86,6 +86,8 @@ import { getEffectiveRecordingState } from "./recording-state";
 import { initialPlaybackTiming } from "./tts/playback-timing";
 import { SpeechWordTimeline } from "./tts/speech-words";
 import { isPlaybackSpeed, resolvePauseCursorMs } from "./playback/session";
+import { narrationSource, setNarrationSource } from "./narration/source";
+import { createNarrationSource } from "./narration/adapter";
 import { ledgerAskBegin, ledgerAskRestore, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
   ledgerPreviousHold, ledgerPreviousReturn, ledgerResumed, ledgerStopAll, ledgerStopped, currentPlaybackSpeed,
   setLedgerPlaybackSpeed, setPreviousReadProbe } from "./playback/ledger";
@@ -571,6 +573,28 @@ async function synthesizeEdgeChunk(
     wordBoundaries: result.wordBoundaries || [],
     durationMs,
   };
+}
+
+const EDGE_WORDS_SCRIPT = new URL("../scripts/edge-tts-words.py", import.meta.url).pathname;
+
+// Lane B: every synthesis goes through the one NarrationSource; today's engines are its default adapter.
+setNarrationSource(createNarrationSource({
+  edge: (text, voice, rate, outFile, signal, retries, prosody) =>
+    synthesizeEdgeChunk(text, voice, rate, outFile, EDGE_WORDS_SCRIPT, signal, retries, prosody),
+  clone: (text, voice, signal) => synthesizeCloned(text, voice, signal),
+}));
+
+/** An edge voice through the narration source, in the chunk shape the readers use. */
+async function narrateEdge(text: string, voice: string, rate: string, outFile: string, signal?: AbortSignal,
+  retries = 1, prosody?: EdgeProsody): Promise<SynthesizedChunk> {
+  const audio = await narrationSource().synthesize({ text, engine: "edge", voice, rate, outFile, signal, retries, prosody });
+  if (!audio) throw new EdgeSynthesisUnavailableError("the narration source has no edge voice");
+  return { audioFile: audio.audioFile, wordBoundaries: audio.wordBoundaries, durationMs: audio.durationMs };
+}
+
+/** A cloned voice through the narration source; null when the clone is unavailable (callers fall back). */
+async function narrateClone(text: string, voice: string, rate: string, outFile: string, signal?: AbortSignal): Promise<boolean> {
+  return (await narrationSource().synthesize({ text, engine: "clone", voice, rate, outFile, signal })) !== null;
 }
 
 export function mergeWordBoundaryChunks(
@@ -2927,23 +2951,21 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
   try {
     const synthesizeEdge = async (voice: string, rate: string): Promise<PreparedChunk> => {
       const edge = projected ?? (profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge"));
-      const chunk = await synthesizeEdgeChunk(edge.speechText, voice, rate, audioFile,
-        new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal, edgeRetries);
+      const chunk = await narrateEdge(edge.speechText, voice, rate, audioFile, signal, edgeRetries);
       chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, edge.speechText, chunk.wordBoundaries, edge.ranges);
       return { chunk, voice, engine: "edge-tts", spokenText: edge.speechText };
     };
     if (profile.engine === "edge") {
       return await synthesizeEdge(profile.voice, profile.rate);
     }
-    const audio = await synthesizeCloned(spoken, profile.voice, signal);
+    const cloned = await narrateClone(spoken, profile.voice, profile.rate, audioFile, signal);
     throwIfAbortedSafe(signal);
-    if (!audio) {
+    if (!cloned) {
       if (requireClone) throw new VoiceProfileUnavailableError(profile.voice, "synthesis-failed");
       const voice = resolveVoice(profile.fallbackVoice || loadProfile(profile.voice)?.fallback || defaultVoice(), "edge").voice;
       console.error(`[voicelayer] Cloned voice "${profile.voice}" unavailable — falling back to edge-tts (${voice})`);
       return await synthesizeEdge(voice, edgeFallbackRate);
     }
-    writeFileSync(audioFile, audio);
     const speed = clonePlaybackSpeed(profile.rate);
     if (Number.isFinite(speed) && speed !== 1) {
       const filters: string[] = [];
@@ -3074,8 +3096,8 @@ async function synthesizeProsodySegment(plan: ProsodyPlan, segment: ProsodyPlan[
   const scriptPath = new URL("../scripts/edge-tts-words.py", import.meta.url).pathname;
   const audioFile = ttsFilePath(process.pid, ttsCounter++).replace(".mp3", `.${plan.renderIdentity}.mp3`);
   try {
-    const chunk = await synthesizeEdgeChunk(segment.text, profile.voice, segment.emphasis ? emphasisRate(profile.rate) : profile.rate,
-      audioFile, scriptPath, signal, edgeRetries, segment.emphasis ? EDGE_EMPHASIS : undefined);
+    const chunk = await narrateEdge(segment.text, profile.voice, segment.emphasis ? emphasisRate(profile.rate) : profile.rate,
+      audioFile, signal, edgeRetries, segment.emphasis ? EDGE_EMPHASIS : undefined);
     return { chunk, voice: profile.voice, engine: "edge-tts", spokenText: segment.text };
   } catch (error) { disposeLongReadChunkFiles(audioFile); throw error; }
 }
@@ -3656,12 +3678,12 @@ async function prepareSpeech(
     }
 
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
-    const audioBuffer = await synthesizeCloned(spokenText, resolved.voice, signal);
+    const ttsFile = ttsFilePath(process.pid, ttsCounter++);
+    // A cloned voice keeps its own pace today; the profile rate is passed for the source to own later.
+    const cloned = await narrateClone(spokenText, resolved.voice, options?.rate ?? "+0%", ttsFile, signal);
     throwIfAbortedSafe(signal);
-    if (audioBuffer) {
+    if (cloned) {
       audioEngine = "qwen3-tts";
-      const ttsFile = ttsFilePath(process.pid, ttsCounter++);
-      writeFileSync(ttsFile, audioBuffer);
       const playback = await playClonedAudio(
         ttsFile,
         displayText,
@@ -3751,14 +3773,7 @@ async function speakWithEdgeTTS(
   const textChunks = chunkTextForTTS(spokenText);
   try {
     if (textChunks.length === 1) {
-      const synthesized = await synthesizeEdgeChunk(
-        textChunks[0],
-        voice,
-        rate,
-        ttsFile,
-        scriptPath,
-        signal,
-      );
+      const synthesized = await narrateEdge(textChunks[0], voice, rate, ttsFile, signal);
       throwIfAbortedSafe(signal);
       wordBoundaries = synthesized.wordBoundaries;
     } else {
@@ -3768,7 +3783,7 @@ async function speakWithEdgeTTS(
         const chunkFile = ttsFile.replace(".mp3", `.chunk${index}.mp3`);
         tempChunkFiles.push(chunkFile);
         synthesizedChunks.push(
-          await synthesizeEdgeChunk(chunk, voice, rate, chunkFile, scriptPath, signal),
+          await narrateEdge(chunk, voice, rate, chunkFile, signal),
         );
         throwIfAbortedSafe(signal);
         options?.speechArchive?.generated(chunkFile, chunk, voice, options?.profile ?? "short", "edge-tts", index, synthesizedChunks.at(-1)?.durationMs ?? null);
