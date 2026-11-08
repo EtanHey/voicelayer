@@ -30,6 +30,25 @@ class GateTests(unittest.TestCase):
             gate.run_bounded([sys.executable, '-c', 'import time; time.sleep(30)'],
                              timeout=0.05, text=True)
 
+    def test_combined_runtime_over_fifteen_minutes_refuses_release(self):
+        import itertools
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            native = Path(folder)
+            (native / 'qa-report.json').write_text(json.dumps({'scenario': 'e2e24', 'scenarioPassed': True}))
+            (native / 'ledger.json').write_text(json.dumps({'scenario': 'e2e24', 'completed': True,
+                'failures': 0, 'coverage': {'verifiedSurfaces': ['e2e24'], 'missing': [], 'missingSurfaces': []}}))
+            (native / 'recording.json').write_text(json.dumps({'valid': True, 'runPassed': True,
+                'durationSeconds': 200, 'path': 'run.mov'}))
+            (native / 'run.mov').write_text('controlled receipt fixture')
+            report = native / 'report.json'
+            with patch('sys.argv', ['gate', '--release', '--swift', '--native-output', str(native), '--report', str(report)]), \
+                 patch.object(gate, 'run_bounded', return_value=subprocess.CompletedProcess([], 0, '', '')), \
+                 patch.object(gate.time, 'monotonic', side_effect=itertools.chain([0], itertools.repeat(800))):
+                self.assertEqual(gate.main(), 1)
+            self.assertIn('combined 15 minute runtime', report.read_text())
+            self.assertIn('"releaseReady": false', report.read_text())
+
     def test_every_declared_suite_exists(self):
         for suites in gate.CASES.values():
             for suite in suites:

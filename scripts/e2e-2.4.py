@@ -2,6 +2,7 @@
 """Bounded isolated regression gate. Pending native coverage never counts as PASS."""
 import argparse
 import json
+import math
 import os
 import signal
 import re
@@ -102,24 +103,39 @@ def main():
         except subprocess.TimeoutExpired:
             rows.append(dict(flow='scoped Swift flow coverage deadline', status='FAIL'))
     native_passed = False
+    native_seconds = 0.0
+    isolated_failed = any(row["status"] == "FAIL" for row in rows)
     if args.native_output:
         try:
             qa = json.loads((args.native_output / 'qa-report.json').read_text())
             ledger = json.loads((args.native_output / 'ledger.json').read_text())
-            native_passed = (qa.get('scenario') == 'e2e24' and qa.get('scenarioPassed') is True
+            recording = json.loads((args.native_output / 'recording.json').read_text())
+            native_seconds = float(recording['durationSeconds'])
+            movie = recording['path']
+            native_passed = (math.isfinite(native_seconds) and native_seconds > 0
+                and recording.get('valid') is True and recording.get('runPassed') is True
+                and isinstance(movie, str) and Path(movie).name == movie
+                and (args.native_output / movie).is_file()
+                and qa.get('scenario') == 'e2e24' and qa.get('scenarioPassed') is True
                 and ledger.get('scenario') == 'e2e24' and ledger.get('completed') is True
                 and ledger.get('failures') == 0
                 and 'e2e24' in ledger.get('coverage', {}).get('verifiedSurfaces', [])
                 and not ledger.get('coverage', {}).get('missing')
                 and not ledger.get('coverage', {}).get('missingSurfaces'))
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, KeyError):
             native_passed = False
         if not native_passed:
+            native_seconds = 0.0
             rows.append(dict(flow='native e2e24 receipt', status='FAIL'))
     rows.extend(dict(flow=flow, status='PASS' if native_passed else 'M1-pending') for flow in PENDING)
+    local_seconds = time.monotonic() - start
+    combined_seconds = local_seconds + native_seconds
+    if native_passed and combined_seconds > 900:
+        rows.append(dict(flow='combined 15 minute runtime', status='FAIL'))
     failed = any(row['status'] == 'FAIL' for row in rows)
-    report = dict(seconds=round(time.monotonic()-start, 2), rows=rows,
-                  releaseReady=not failed and native_passed and args.swift and not any(row.get('skips', 0) for row in rows), isolatedPassed=not failed)
+    report = dict(seconds=round(local_seconds, 2), nativeSeconds=round(native_seconds, 2),
+                  combinedSeconds=round(combined_seconds, 2), rows=rows,
+                  releaseReady=not failed and native_passed and args.swift and not any(row.get('skips', 0) for row in rows), isolatedPassed=not isolated_failed)
     args.report.write_text(json.dumps(report, indent=2)+'\n')
     return 1 if failed or (args.release and not report["releaseReady"]) else 0
 
