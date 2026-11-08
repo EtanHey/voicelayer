@@ -1415,6 +1415,43 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     stopPlayback(1200); await h.done;
   });
 
+  it.each(["plain", "structured"])("D1 narration telemetry uses the actual long clone fallback rate for %s", async kind => {
+    const previous = process.env.QA_VOICE_TTS_RATE;
+    process.env.QA_VOICE_TTS_RATE = "+7%";
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(null));
+    autoPlay = true;
+    try {
+      const h = speakLongRead(kind === "plain" ? "A plain fallback sentence." : "**Heading**\n\nA plain fallback sentence.", {kind: "long", engine: "clone", voice: "fixture", rate: "-10%"});
+      handles.push(h); await h.done;
+      expect(synths[0].argv).toContain("--rate=+7%");
+      const line = logs.mock.calls.map(([line]) => String(line)).find(line => line.startsWith('{"event":"narration_generated"'));
+      expect(JSON.parse(line!)).toMatchObject({engine_chosen: "edge-tts", configured_rate: "+7%", engine_tried: ["qwen3-tts", "edge-tts"], fallback_reason: "clone_synthesis_failed"});
+    } finally { if (previous === undefined) delete process.env.QA_VOICE_TTS_RATE; else process.env.QA_VOICE_TTS_RATE = previous; }
+  });
+
+  it("D5 narration telemetry uses the actual short clone fallback Edge rate", async () => {
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    spies.push(spyOn(qwen, "hasClonedProfile").mockReturnValue(true));
+    spies.push(spyOn(qwen, "loadProfile").mockReturnValue({name: "fixture", engine: "qwen3-tts", reference_clips: [], reference_clip: "", fallback: "jenny", created: "", model_path: "fixture"}));
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(null));
+    autoPlay = true;
+    await speak("A simple fallback sentence.", {voice: "fixture", rate: "+12%", waitForPlayback: true});
+    const actual = synths[0].argv.find(arg => arg.startsWith("--rate="))!.slice(7);
+    const line = logs.mock.calls.map(([line]) => String(line)).find(line => line.startsWith('{"event":"narration_generated"'));
+    expect(JSON.parse(line!)).toMatchObject({engine_chosen: "edge-tts", configured_rate: actual, engine_tried: ["qwen3-tts", "edge-tts"], engine_unavailable: ["xtts-v2", "f5-tts-mlx"], fallback_reason: "clone_synthesis_failed"});
+  });
+
+  it("D3 narration telemetry identifies a missing clone profile fallback", async () => {
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({kind: "short", engine: "clone", voice: "missing-fixture", rate: "-10%", rateSource: "settings", engineSource: "settings"}));
+    spies.push(spyOn(qwen, "loadProfile").mockReturnValue(null));
+    autoPlay = true;
+    await speak("A missing profile sentence.", {waitForPlayback: true});
+    const line = logs.mock.calls.map(([line]) => String(line)).find(line => line.startsWith('{"event":"narration_generated"'));
+    expect(JSON.parse(line!)).toMatchObject({engine_chosen: "edge-tts", engine_tried: ["edge-tts"], engine_unavailable: ["clone-profile"], fallback_reason: "clone_profile_missing"});
+  });
+
   it("records the actual edge engine when a long-read clone falls back", async () => {
     spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(null));
     autoPlay = true; await start("clone", "A sentence.").done;

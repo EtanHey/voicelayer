@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoSwapWithLedger",
+  "status": "EXPECTED_FAIL",
+  "generated": 29,
+  "distinct": 19,
+  "trace": [
+    "/\\ result = \"none\"\n/\\ userGate = \"OPEN\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = TRUE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = TRUE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"DRAINING\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = TRUE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 1\n/\\ schedule = \"never\"",
+    "/\\ result = \"none\"\n/\\ userGate = \"PREPARED\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"done\"\n/\\ ack = TRUE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 1\n/\\ schedule = \"never\""
+  ]
+}
