@@ -939,10 +939,20 @@ public final class VoiceState {
     public private(set) var setupMissingPermissions: [HotkeyPermission] = []
     public var hotkeyPhase: HotkeyPhase = .idle {
         didSet {
+            if hotkeyPhase == .idle { hotkeyPreviewPhase = nil }
             clearSelectionBusyNoteIfSessionEnded()
             if hotkeyPhase != .idle, selectionCaptureInFlight { selectionCaptureCancelled = true }
             notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase)
         }
+    }
+    /// Display-only override. Selection admission/cancellation continues to use hotkeyPhase.
+    private var hotkeyPreviewPhase: HotkeyPhase? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPreviewPhase) }
+    }
+    public var presentedHotkeyPhase: HotkeyPhase { hotkeyPreviewPhase ?? hotkeyPhase }
+
+    public func setHotkeyPreviewPhase(_ phase: HotkeyPhase) {
+        hotkeyPreviewPhase = hotkeyEnabled && (phase == .idle || phase == hotkeyPhase) ? phase : .idle
     }
 
     /// Whether the pill is collapsed (idle for too long).
