@@ -37,6 +37,7 @@ jobs:
               "notch-surfaces": 1.713,
               "notch-tab-morph": 0.934,
               "parakeet-residency": 8.592,
+              "playback-session": 25.744,
               "ptt-silence-timeout": 3.492,
               "ready-time-paste": 1.075,
               "record-while-processing": 213.794,

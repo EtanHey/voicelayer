@@ -3,6 +3,7 @@
   "sourceBaseline": "849483ae",
   "sources": [
     "src/playback/session.ts",
+    "src/playback/ledger.ts",
     "src/__tests__/playback-session.test.ts"
   ],
   "checks": {

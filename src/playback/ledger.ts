@@ -98,7 +98,7 @@ export function ledgerPlayerStarted(id: string, kind: SessionKind, word: number,
   }
   engine.ready(id);
   engine.word(id, word);
-  engine.teleprompter(word);
+  engine.teleprompter(word, id);
   after("player-started");
 }
 
@@ -113,7 +113,7 @@ function nextChunk(id: string): void {
 
 export function ledgerWord(id: string, word: number): void {
   engine.word(id, word);
-  engine.teleprompter(word);
+  engine.teleprompter(word, id);
 }
 
 export function ledgerPlayerExited(id: string, isPrompt = false): void {

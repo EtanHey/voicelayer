@@ -167,14 +167,16 @@ export class PlaybackSessionEngine {
     session.cursor = clampWord(word, session.wordCount);
   }
 
-  /** TeleSync: the teleprompter now shows `word` for the session on screen. */
-  teleprompter(word: number): void { this.tele = Math.max(0, Math.trunc(word)); }
+  /** TeleSync: the teleprompter now shows `word`. With an id, only for that session while it is on screen. */
+  teleprompter(word: number, id?: string): void {
+    if (id !== undefined && !POSITIONED.has(this.sessions.get(id)?.state ?? "ended")) return;
+    this.tele = Math.max(0, Math.trunc(word));
+  }
 
-  /** End: the player played past its last word. */
+  /** End: the player played past its last word (model End: only a playing session ends). */
   end(id: string): EngineResult {
     const session = this.sessions.get(id);
-    if (!session || session.state === "ended") return no("not live");
-    if (session.state === "parked") return no("parked");
+    if (!session || session.state !== "playing") return no(session ? `session is ${session.state}` : "unknown session");
     session.cursor = session.wordCount;
     this.move(session, "ended", "end");
     return ok();

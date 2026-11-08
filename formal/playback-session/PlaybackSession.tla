@@ -200,7 +200,8 @@ AskRestore == /\ ask = "closing" /\ (~recorder \/ SkipRecorderWait)
 StopAll == /\ (\E r \in Reads : st[r] \in Positioned) \/ ask \notin {"none", "closing"}
            /\ st' = [r \in Reads |-> IF st[r] \in Positioned THEN "ended" ELSE st[r]]
            /\ players' = {} /\ exiting' = exiting \cup players
-           /\ parkedFrom' = IF parked # None THEN "paused" ELSE parkedFrom /\ mic' = FALSE
+           /\ parkedFrom' = (IF parked # None THEN "paused" ELSE parkedFrom)
+           /\ mic' = FALSE
            /\ ask' = IF ask = "none" THEN "none" ELSE "closing"
            /\ UNCHANGED <<cur, pausedAt, mark, resumedAt, seekTo, tele, prep, parked, recorder, asks>>
 

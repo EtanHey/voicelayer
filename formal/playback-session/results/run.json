@@ -1,0 +1,133 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/playback-session/PlaybackSession.tla": "622877d740f2f361a6b5fad4d1192779dafe26a051073905655883940e08bcd2",
+    "formal/playback-session/checks.json": "05b917813b28ab7451da18caca76895ff263a909a69c309bd93d8f335e4d9aff",
+    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/playback-session/ZombieMutant.cfg": "719ec260e395f58e2c81f6a2400c8ad68a85d0407060852487bc5a3d52b6eee3",
+    "formal/playback-session/RecorderWaitMutant.cfg": "a1d6a8da8c5036d4f622ae110d3fed34c630072962f15e26b318d8855f7a1ae0",
+    "formal/playback-session/StrandMutant.cfg": "05821379e4a79d4002bf44a7b31a15fc7ef0d6615a89ed82df31d9c7f3aa6a51",
+    "formal/playback-session/PrevOverlapMutant.cfg": "611e91c491dcf5eefa5a19573f1f204022737227cf5f8a1ad10a257878ffcb6c",
+    "formal/playback-session/JumpBackMutant.cfg": "d0b5bbf945d243133f88faff8929b783e356578f7eeea36cea8038be2c47e103",
+    "formal/playback-session/OverlapMutant.cfg": "f6f50795f13e1cd0ea268c0888499d8c8021e212a259dd8c47eb56da3e99b555",
+    "formal/playback-session/EarlyMicMutant.cfg": "2e1ec1ca6880774cbc11feeea8b6f85e8633bc51d975497826ce02d7c509c89c",
+    "formal/playback-session/ClockResetMutant.cfg": "25d870ad5b49c9b4e74d6d229f08a44b649c701b60eb4878c64c6dd69bfc02ab",
+    "formal/playback-session/SecondAskMutant.cfg": "a22ae278564fea445c1e98504e9099322ca97c32cfed72a2ab6fbeb014055391",
+    "formal/playback-session/Fixed.cfg": "da742649343ef14e47becd491bf7d1131f521d61f6d809f2aa2980d363af918a",
+    "src/playback/session.ts": "e6f3c76f706aecf7502ec9a317e3b87fe59055740b66aba8f9b1db3ccccd0060",
+    "src/playback/ledger.ts": "573231d69e23d0c6268c32b7e8a83ae4d6519bf1a18118bf0d73c6c5cb1968ef",
+    "src/__tests__/playback-session.test.ts": "8f06442c941bb7d087a604911efe8c31850ad0db3e04f25088a64f49ad6ce67d"
+  },
+  "mutants": {
+    "ResumeExact": [
+      "JumpBackMutant",
+      "SecondAskMutant"
+    ],
+    "OneAudible": [
+      "OverlapMutant"
+    ],
+    "AskParksOne": [
+      "StrandMutant"
+    ],
+    "MicExclusive": [
+      "EarlyMicMutant",
+      "RecorderWaitMutant"
+    ],
+    "TeleTracksAudio": [
+      "ClockResetMutant"
+    ],
+    "OneLiveSession": [
+      "PrevOverlapMutant"
+    ],
+    "NoZombie": [
+      "ZombieMutant"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "b58485c744135eb928c47b7df5ac7bdc45a7a94bfaab991f451f084bc56eea46"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1390329,
+      "distinct": 399405
+    },
+    "JumpBackMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ResumeExact",
+      "status": "EXPECTED_FAIL",
+      "generated": 110,
+      "distinct": 78
+    },
+    "SecondAskMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ResumeExact",
+      "status": "EXPECTED_FAIL",
+      "generated": 962,
+      "distinct": 550
+    },
+    "OverlapMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "OneAudible",
+      "status": "EXPECTED_FAIL",
+      "generated": 57,
+      "distinct": 43
+    },
+    "StrandMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "AskParksOne",
+      "status": "EXPECTED_FAIL",
+      "generated": 93,
+      "distinct": 67
+    },
+    "EarlyMicMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MicExclusive",
+      "status": "EXPECTED_FAIL",
+      "generated": 97,
+      "distinct": 70
+    },
+    "RecorderWaitMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MicExclusive",
+      "status": "EXPECTED_FAIL",
+      "generated": 8190,
+      "distinct": 3612
+    },
+    "ClockResetMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TeleTracksAudio",
+      "status": "EXPECTED_FAIL",
+      "generated": 734,
+      "distinct": 434
+    },
+    "PrevOverlapMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "OneLiveSession",
+      "status": "EXPECTED_FAIL",
+      "generated": 78,
+      "distinct": 57
+    },
+    "ZombieMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoZombie",
+      "status": "EXPECTED_FAIL",
+      "generated": 19,
+      "distinct": 15
+    }
+  }
+}

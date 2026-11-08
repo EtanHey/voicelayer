@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoZombie",
+  "status": "EXPECTED_FAIL",
+  "generated": 19,
+  "distinct": 15,
+  "trace": [
+    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<9, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"queued\", \"queued\">>\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ ask = \"none\"",
+    "/\\ cur = <<0, 0>>\n/\\ prep = {1}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<9, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"preparing\", \"queued\">>\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ ask = \"none\"",
+    "/\\ cur = <<0, 0>>\n/\\ prep = {1}\n/\\ mic = FALSE\n/\\ mark = <<0, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<0, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"paused\", \"queued\">>\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ ask = \"none\"",
+    "/\\ cur = <<0, 0>>\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<0, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ pausedAt = <<0, 9>>\n/\\ recorder = FALSE\n/\\ exiting = {}\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ st = <<\"paused\", \"queued\">>\n/\\ parked = 0\n/\\ parkedFrom = \"none\"\n/\\ players = {1}\n/\\ ask = \"none\""
+  ]
+}
