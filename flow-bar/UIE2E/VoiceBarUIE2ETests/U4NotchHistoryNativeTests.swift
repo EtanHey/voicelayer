@@ -3,10 +3,10 @@ import XCTest
 
 /// 2.3 lane U4, native only (pointer events): run on the M1 test rig, never on the M4. Not part of any
 /// voicebar-ui-e2e.sh scenario (the runner's -only-testing names VoiceBarFlowTests); run it from that build's
-/// xctestrun with -only-testing:VoiceBarUIE2ETests/U4NotchHistoryNativeTests. Fourteen seeded rows let the
-/// extend handle reach its 12-row maximum.
+/// xctestrun with -only-testing:VoiceBarUIE2ETests/U4NotchHistoryNativeTests. 2.4 Lane A: History rests at two
+/// detents, 6 collapsed and 8 expanded; fourteen seeded rows let the handle reach 8.
 final class U4NotchHistoryNativeTests: XCTestCase {
-    func testTheExtendHandlePullsHistoryToTwelveRowsSnapsAndReopensAtItsHeight() throws {
+    func testTheExtendHandlePullsHistoryToEightRowsSnapsAndReopensAtItsHeight() throws {
         let env = ProcessInfo.processInfo.environment
         let root = URL(fileURLWithPath: try XCTUnwrap(env["VOICEBAR_UIE2E_ROOT"]))
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent(".uie2e-sandbox")), "voicebar-ui-e2e-v1\n")
@@ -88,8 +88,8 @@ final class U4NotchHistoryNativeTests: XCTestCase {
         }
 
         try openHistory()
-        try waitForRows("7 of 12 rows")
-        shot("1-open-7-rows")
+        try waitForRows("6 of 8 rows")
+        shot("1-open-6-rows")
         let initialOrigin = pill.frame.origin
 
         // Gestures stay on the Finder-anchored path: a user drags the handle with another app frontmost, and an
@@ -98,20 +98,20 @@ final class U4NotchHistoryNativeTests: XCTestCase {
             try XCTUnwrap(uie2eForegroundPoint(element, via: finder), "Finder anchor")
         }
         let centre = try anchored(handle)
-        centre.press(forDuration: 0.15, thenDragTo: centre.withOffset(CGVector(dx: 0, dy: 7 * 46)))
-        try waitForRows("12 of 12 rows")
-        shot("2-pulled-12-rows")
+        centre.press(forDuration: 0.15, thenDragTo: centre.withOffset(CGVector(dx: 0, dy: 3 * 46)))
+        try waitForRows("8 of 8 rows")
+        shot("2-pulled-8-rows")
 
         let extended = try anchored(handle)
-        extended.press(forDuration: 0.15, thenDragTo: extended.withOffset(CGVector(dx: 0, dy: -2.4 * 46)))
-        try waitForRows("10 of 12 rows")
-        shot("3-released-between-rows-snaps-10")
+        extended.press(forDuration: 0.15, thenDragTo: extended.withOffset(CGVector(dx: 0, dy: -0.6 * 46)))
+        try waitForRows("8 of 8 rows")
+        shot("3-released-short-of-the-midpoint-stays-8")
         try require(abs(pill.frame.minX - initialOrigin.x) < 2 && abs(pill.frame.minY - initialOrigin.y) < 2,
                     "extending History never drags the pill window")
 
         try anchored(handle).click()
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        try require(rows() == "10 of 12 rows", "a click on the handle never moves it")
+        try require(rows() == "8 of 8 rows", "a click on the handle never moves it")
 
         let escapeStart = ProcessInfo.processInfo.systemUptime
         finder.typeKey(.escape, modifierFlags: [])
@@ -131,7 +131,7 @@ final class U4NotchHistoryNativeTests: XCTestCase {
         shot("4-closed")
 
         try openHistory()
-        try waitForRows("10 of 12 rows")
-        shot("5-reopened-keeps-10-rows")
+        try waitForRows("8 of 8 rows")
+        shot("5-reopened-keeps-8-rows")
     }
 }

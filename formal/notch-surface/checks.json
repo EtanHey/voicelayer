@@ -1,0 +1,54 @@
+{
+  "module": "NotchSurface",
+  "sourceBaseline": "849483ae6f04f0edc8310fcab1793c6e7614c0d0",
+  "sources": [
+    "flow-bar/Sources/VoiceBarUI/NotchSurface.swift",
+    "flow-bar/Sources/VoiceBarUI/NotchDrawerDismissal.swift",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "MutantNoExclusive": {
+      "role": "mutant",
+      "target": "AtMostOneDrawer",
+      "kind": "invariant"
+    },
+    "MutantHistoryOnlyDismiss": {
+      "role": "mutant",
+      "target": "DismissalReachable",
+      "kind": "invariant"
+    },
+    "MutantHistoryOnlyDismissStuck": {
+      "role": "mutant",
+      "target": "DrawerAlwaysClosable",
+      "kind": "temporal"
+    },
+    "MutantRecordingKeepsDrawer": {
+      "role": "mutant",
+      "target": "WingsNeverHidden",
+      "kind": "invariant"
+    },
+    "MutantNoModalGuard": {
+      "role": "mutant",
+      "target": "NoDrawerOverModal",
+      "kind": "invariant"
+    },
+    "MutantTeleprompterKeepsDrawer": {
+      "role": "mutant",
+      "target": "NoDrawerOverTeleprompter",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "AtMostOneDrawer",
+    "DismissalReachable",
+    "WingsNeverHidden",
+    "NoDrawerOverModal",
+    "NoDrawerOverTeleprompter",
+    "DrawerAlwaysClosable"
+  ]
+}

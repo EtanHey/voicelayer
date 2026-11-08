@@ -177,7 +177,8 @@ public actor VoiceBarVersionCheck {
     }
 
     /// The cask's version, or nil when offline, timed out, or unparseable.
-    public func latestVersion() async -> String? {
+    public func latestVersion(force: Bool = false) async -> String? {
+        if force, inFlight == nil { cached = nil }
         // A negative age means the wall clock went backwards (manual change, NTP step); the entry's age is
         // unknown, so it is stale rather than fresh for up to six more hours.
         if let cached {
@@ -197,8 +198,8 @@ public actor VoiceBarVersionCheck {
         return version
     }
 
-    public func status(installed: String?) async -> VoiceBarVersionStatus {
-        VoiceBarVersionStatus.resolve(installed: installed, latest: await latestVersion())
+    public func status(installed: String?, force: Bool = false) async -> VoiceBarVersionStatus {
+        VoiceBarVersionStatus.resolve(installed: installed, latest: await latestVersion(force: force))
     }
 
     @Sendable

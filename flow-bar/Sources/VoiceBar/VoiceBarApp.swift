@@ -268,6 +268,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 2.3 U2: History and the microphone list never show together (lane U1 adds the notch menu). The QA host
     /// drives the same handoff.
     private let notchHistoryBridge = VoiceBarNotchHistoryBridge()
+    /// 2.4 Lane A: the ONE notch surface (History and the Settings drawer); formal/notch-surface.
+    private let notchSurface = NotchSurfaceModel()
+    /// 2.4 Lane A: the Settings drawer's build line and Check for updates. Never updates while anything is live.
+    private lazy var notchUpdates: NotchUpdateController = MainActor.assumeIsolated {
+        let controller = NotchUpdateController(isDictating: { [weak self] in
+            guard let self else { return true }
+            return voiceState.mode != .idle || gestureStateMachine.state != .idle
+        })
+        controller.onStatus = { [weak self] in self?.menuUpdateStatus = $0 }
+        return controller
+    }
     private lazy var notchSurfaceHandoff: VoiceBarNotchSurfaceHandoff = {
         let handoff = VoiceBarNotchSurfaceHandoff(bridge: notchHistoryBridge, presentationModel: notchPresentationModel) { [weak self] kind in
             self?.presentNotchMenu(kind)
@@ -818,7 +829,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onOpenSetupSettings: { [weak self] in self?.openSetupAttentionSettings() },
             historyBridge: notchHistoryBridge,
             onOpenNotchMenu: { [weak self] in self?.notchSurfaceHandoff.requestMenu(.notch) },
-            onCancelNotchMenu: { [weak self] in self?.notchSurfaceHandoff.cancelQueuedMenu() }
+            onCancelNotchMenu: { [weak self] in self?.notchSurfaceHandoff.cancelQueuedMenu() },
+            surface: notchSurface,
+            settingsDrawer: makeNotchSettingsDrawerContext()
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
@@ -996,7 +1009,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configurePillContextMenu() {
-        pillContextMenuController.updateStatusProvider = { [weak self] in self?.menuUpdateStatus.menuMessage }
+        // 2.4 Lane A: the full build line ("abc1234 · ahead of release by 14 commits"), never "ahead of release" alone.
+        pillContextMenuController.updateStatusProvider = { [weak self] in
+            guard let self else { return nil }
+            let installed = VoiceBarInstalledVersion.current()
+            let status = VoiceBarBuildLine.status(menuUpdateStatus, describe: .current()) ?? menuUpdateStatus.menuMessage
+            return [installed.shortCommit, status].compactMap { $0 }.joined(separator: " · ")
+        }
         pillContextMenuController.transcriptProvider = { [weak self] in
             self?.voiceState.latestReusableTranscript ?? ""
         }
@@ -3241,6 +3260,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// The name every read-only microphone row shows: what the priority list resolves to, the same as Settings'
     /// "Next dictation". Side-effect free (it never observes devices or triggers an apply).
+    /// 2.4 Lane A: what the notch Settings drawer reads and opens.
+    private func makeNotchSettingsDrawerContext() -> NotchSettingsDrawerContext {
+        NotchSettingsDrawerContext(
+            shortcutHint: { [weak self] in
+                guard let self else { return "" }
+                return hotkeyEnabled ? "Hold F5 to dictate" : VoiceBarPresentation.hotkeyPermissionHint(
+                    hotkeyEnabled: hotkeyEnabled, missingPermissions: missingHotkeyPermissions
+                )
+            },
+            defaultMicrophoneName: { [weak self] in self?.defaultMicrophoneName() },
+            updates: notchUpdates,
+            openSettingsWindow: { [weak self] tab, focus in self?.openSettingsWindow(tab: tab, focus: focus) }
+        )
+    }
+
     func defaultMicrophoneName() -> String? {
         microphonePrioritySnapshot(devices: MicrophoneDeviceManager.availableInputDevices()).nextVisibleDeviceName
     }

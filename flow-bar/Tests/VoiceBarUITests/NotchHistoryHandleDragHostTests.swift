@@ -47,7 +47,7 @@ final class NotchHistoryHandleDragHostTests: XCTestCase {
             + view.subviews.flatMap { adapters(in: $0) }
     }
 
-    func testDraggingTheExtendHandleDownSevenRowsCommitsTwelveRows() throws {
+    func testDraggingTheExtendHandleDownSettlesOnTheExpandedDetent() throws {
         let state = VoiceState()
         state.isConnected = true
         state.isCollapsed = false
@@ -102,7 +102,7 @@ final class NotchHistoryHandleDragHostTests: XCTestCase {
         drain(1.2) // the open spring settles; the handle takes presses only above 98 % progress
         host.layoutSubtreeIfNeeded()
         let handle = try XCTUnwrap(adapters(in: host).first, "the open panel mounts its extend handle")
-        XCTAssertEqual(handle.accessibilityValue() as? String, "7 of 12 rows")
+        XCTAssertEqual(handle.accessibilityValue() as? String, "6 of 8 rows")
         let frame = handle.convert(handle.bounds, to: nil)
         let start = NSPoint(x: frame.midX, y: frame.midY)
 
@@ -119,7 +119,23 @@ final class NotchHistoryHandleDragHostTests: XCTestCase {
         try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 322), to: panel)
         drain(1)
 
-        XCTAssertEqual(model.historyRows, 12, "pulling the handle 7 rows down commits 12 rows (hit view: \(hitName))")
-        XCTAssertEqual(handle.accessibilityValue() as? String, "12 of 12 rows")
+        XCTAssertEqual(model.historyRows, 8, "pulling the handle 7 rows down settles on the expanded 8 (hit view: \(hitName))")
+        XCTAssertEqual(handle.accessibilityValue() as? String, "8 of 8 rows")
+
+        // 2.4 #813: pushing the bottom edge up past the collapsed rows closes History (mirror of pulling it down).
+        host.layoutSubtreeIfNeeded()
+        let settled = try XCTUnwrap(adapters(in: host).first, "the handle at 8 rows")
+        let edge = settled.convert(settled.bounds, to: nil)
+        let from = NSPoint(x: edge.midX, y: edge.midY)
+        try send(.leftMouseDown, at: from, to: panel)
+        drain()
+        for step in 1 ... 10 {
+            try send(.leftMouseDragged, at: NSPoint(x: from.x, y: from.y + CGFloat(step) * 18.4), to: panel)
+            drain(0.02)
+        }
+        try send(.leftMouseUp, at: NSPoint(x: from.x, y: from.y + 184), to: panel)
+        deadline = Date().addingTimeInterval(3)
+        while model.isHistoryPanelOpen, Date() < deadline { drain() }
+        XCTAssertFalse(model.isHistoryPanelOpen, "4 rows up from 8 (past the collapsed 6) closes History")
     }
 }
