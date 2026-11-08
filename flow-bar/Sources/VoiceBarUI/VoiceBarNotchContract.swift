@@ -162,7 +162,7 @@ public struct VoiceBarNotchMaterialContract: Equatable {
     public func wingContentLayout(
         for side: VoiceBarNotchSide,
         state: VoiceBarNotchVisualState,
-        visibleCoreOcclusionInset _: CGFloat = 0
+        visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchWingContentLayout {
         // P16: every leading wing, the teleprompter's pause/play included, uses the idle-hover mic's lane
         // (Etan: "centered like the idle hover state has the microphone").
@@ -174,10 +174,13 @@ public struct VoiceBarNotchMaterialContract: Equatable {
             .compactStatus,
             .teleprompter,
         ].contains(state)
+        // 2.3 N1 (Etan, real M4): the recording time starts 8 pt past the PHYSICAL notch, which hides the wing's first
+        // `visibleCoreOcclusionInset` points on a hardware notch (0 on a flat display).
+        let hiddenByGlass = side == .trailing && state == .recording ? max(0, visibleCoreOcclusionInset) : 0
         return VoiceBarNotchWingContentLayout(
             side: side,
             coreInset: isFixedTrailing
-                ? VoiceBarNotchContract.fixedWingContentInset
+                ? hiddenByGlass + VoiceBarNotchContract.fixedWingContentInset
                 : VoiceBarNotchContract.compactCoreContentInset,
             outerInset: isFixedTrailing ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
             alignment: .center
@@ -519,6 +522,21 @@ public enum VoiceBarNotchContract {
         material.compactControlSize
 
     public static let recordingLeadingWingWidth = fixedWingWidth
+
+    /// 2.3 N1 (Etan, QA round 1, S2-F3; real M4, 2026-11-08): while recording, the right wing holds the time and
+    /// the level meter, with an equal empty region on the outer side so the meter is centred in the wing's VISIBLE
+    /// part (review D3). On a hardware notch the camera glass hides the wing's first `visibleCoreOcclusionInset`
+    /// points (the drawn core is AppKit's auxiliary gap pulled in by the calibration), so the visible wing starts
+    /// there and the time keeps 8 pt clear of the real notch edge: occlusion + 8 + 26 + 4 + 46 + 4 + 24 + 8, which
+    /// is 120 pt on a flat display and 128.5 pt on the M4, inside the 130 pt morph canvas and the 132 pt bound.
+    /// The left wing keeps its controls at the fixed width.
+    public static func recordingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
+        max(0, visibleCoreOcclusionInset) + 2 * fixedWingContentInset + VoiceBarRecordingWingLabel.width +
+            2 * VoiceBarRecordingWingLabel.meterGap + WaveformLayout.viewportWidth + VoiceBarRecordingWingLabel.outerRegionWidth
+    }
+
+    /// The flat-display (no hidden notch) recording right wing.
+    public static var recordingTrailingWingWidth: CGFloat { recordingTrailingWingWidth(visibleCoreOcclusionInset: 0) }
 
     public static let recordingLeadingWingWidthWithHoldControl: CGFloat =
         recordingLeadingWingWidth + material.compactControlSpacing + material.compactControlSize

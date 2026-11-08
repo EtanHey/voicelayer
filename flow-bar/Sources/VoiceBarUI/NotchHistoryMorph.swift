@@ -30,14 +30,18 @@ public enum NotchHistoryMorph {
     /// The rows stay invisible for the first 30 % of the morph, then fade in over the rest.
     public static let rowsFadeStart: CGFloat = 0.3
 
-    // MARK: Panel (Etan, 2026-11-03: "2 lines, 7 visible")
+    // MARK: Panel (Etan, 2026-11-08, superseding 11-03's "2 lines, 7 visible": collapsed 6 rows, expanded 8,
+    // up to 20 loaded and scrollable inside the panel; one pull goes 6 → 8 because "it only adds one more row")
 
     public static let bodyWidth: CGFloat = 420
     public static let rowHeight: CGFloat = 46
-    public static let visibleRows = 7
-    /// V6 (Etan: "draggable to extend, downward-only is fine"): the handle adds whole rows up to 12 (the mock's
-    /// `dims('history')`: 40 + rows × 46 + 18).
-    public static let maximumRows = 12
+    /// The collapsed panel: two-line rows, six visible.
+    public static let visibleRows = 6
+    /// The expanded panel (the handle's other detent): eight rows. V6 (Etan: "draggable to extend, downward-only
+    /// is fine"); the mock's `dims('history')`: 40 + rows × 46 + 18.
+    public static let maximumRows = 8
+    /// The rows History keeps and lists; past the visible rows they scroll inside the panel.
+    public static let loadedRows = 20
     /// The list starts 8 pt under the 32 pt band (40 pt from the top of the screen); under it an 18 pt band holds
     /// the extend handle. The list is 404 pt wide in the 420 pt panel.
     public static let listTopInset: CGFloat = 8
@@ -64,15 +68,15 @@ public enum NotchHistoryMorph {
     public static let pullResponse: Double = 0.38
     public static let pullDampingFraction: Double = 0.86
 
-    /// History's window below the 32 pt band: seven rows plus the transient-note reserve, or the 12-row panel,
-    /// whichever is taller (578 pt; the window stays 610 pt, inside the 640 pt narrow-display guard). An extended
-    /// panel and a note share this space; the shell never draws past it.
+    /// History's window below the 32 pt band: the collapsed rows plus the transient-note reserve, or the expanded
+    /// panel, whichever is taller (inside the 640 pt narrow-display guard). An extended panel and a note share this
+    /// space; the shell never draws past it.
     public static var historyCanvasLowerSurfaceHeight: CGFloat {
         max(lowerSurfaceHeight(rows: CGFloat(visibleRows)) + VoiceBarNotchContract.transientNoteCanvasReserve,
             lowerSurfaceHeight(rows: CGFloat(maximumRows)))
     }
 
-    /// How far the handle may extend: never past the rows there are to show (no empty rows), never past 12.
+    /// The expanded detent: eight rows, never past the rows there are to show (no empty rows).
     public static func maximumRows(entryCount: Int) -> Int {
         max(visibleRows, min(maximumRows, entryCount))
     }
@@ -86,9 +90,11 @@ public enum NotchHistoryMorph {
         return rows
     }
 
-    /// Where a released handle settles: the nearest whole row inside 7…maximum. Never between rows.
+    /// Where a released handle settles: the nearer detent, collapsed (6) or expanded (`maximum`), so one pull goes
+    /// all the way (formal/history-pull `NoStrandedRows`). Halfway and past it expands. Never a row in between.
     public static func snappedRows(_ rows: CGFloat, maximum: Int) -> Int {
-        min(max(visibleRows, Int(rows.rounded())), max(visibleRows, maximum))
+        let expanded = max(visibleRows, maximum)
+        return rows * 2 >= CGFloat(visibleRows + expanded) ? expanded : visibleRows
     }
 
     public static func rowsAnimation(from rows: CGFloat, to target: Int, velocity: Double) -> Animation {
