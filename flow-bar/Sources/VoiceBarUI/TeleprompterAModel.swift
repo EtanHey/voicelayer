@@ -49,6 +49,11 @@ public enum TeleprompterA {
         return max(0, focusLine - (visibleLines - 1) / 2)
     }
 
+    /// Whether `line` is inside the visible band once `scrolledLines` have gone above it.
+    public static func isVisible(line: Int, scrolledLines: Int, visibleLines: Int) -> Bool {
+        line >= scrolledLines && line < scrolledLines + visibleLines
+    }
+
     /// The fade only exists once a line has gone under it.
     public static func showsTopFade(scrolledLines: Int) -> Bool { scrolledLines > 0 }
 
