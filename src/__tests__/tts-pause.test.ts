@@ -552,7 +552,9 @@ describe("R2-01 F5 capture ownership", () => {
 
 it("R2-01 N6 all takes and actual paste delivery settle before exactly one resume", async () => {
   await startTenSecondRead();
-  at(4300);
+  // Lane B: the player clock agrees with the 2.5 s client clock sent below (a client far behind
+  // the player no longer rewinds the read; playback-engine.test.ts proves that).
+  at(2600);
   const a = deferred<void>(), b = deferred<void>(), bMic = deferred<void>();
   let captures = 0;
   const wait = spyOn(input, "waitForInput").mockImplementation(() => {
@@ -606,7 +608,9 @@ it("R2-01 N6 all takes and actual paste delivery settle before exactly one resum
 
 it("R2-01 N6 actual early B failure keeps the read parked for processing A", async () => {
   await startTenSecondRead();
-  at(4300);
+  // Lane B: the player clock agrees with the 2.5 s client clock sent below (a client far behind
+  // the player no longer rewinds the read; playback-engine.test.ts proves that).
+  at(2600);
   const finishA = deferred<void>(), processingA = deferred<void>();
   const first = runBarCaptureWithPausedRead("early-failure-A", async (opened) => {
     opened();

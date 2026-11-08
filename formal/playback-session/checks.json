@@ -1,0 +1,69 @@
+{
+  "module": "PlaybackSession",
+  "sourceBaseline": "849483ae",
+  "sources": [
+    "src/playback/session.ts",
+    "src/__tests__/playback-session.test.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "JumpBackMutant": {
+      "role": "mutant",
+      "target": "ResumeExact",
+      "kind": "invariant"
+    },
+    "SecondAskMutant": {
+      "role": "mutant",
+      "target": "ResumeExact",
+      "kind": "invariant"
+    },
+    "OverlapMutant": {
+      "role": "mutant",
+      "target": "OneAudible",
+      "kind": "invariant"
+    },
+    "StrandMutant": {
+      "role": "mutant",
+      "target": "AskParksOne",
+      "kind": "invariant"
+    },
+    "EarlyMicMutant": {
+      "role": "mutant",
+      "target": "MicExclusive",
+      "kind": "invariant"
+    },
+    "RecorderWaitMutant": {
+      "role": "mutant",
+      "target": "MicExclusive",
+      "kind": "invariant"
+    },
+    "ClockResetMutant": {
+      "role": "mutant",
+      "target": "TeleTracksAudio",
+      "kind": "invariant"
+    },
+    "PrevOverlapMutant": {
+      "role": "mutant",
+      "target": "OneLiveSession",
+      "kind": "invariant"
+    },
+    "ZombieMutant": {
+      "role": "mutant",
+      "target": "NoZombie",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "ResumeExact",
+    "OneAudible",
+    "AskParksOne",
+    "MicExclusive",
+    "TeleTracksAudio",
+    "OneLiveSession",
+    "NoZombie"
+  ]
+}

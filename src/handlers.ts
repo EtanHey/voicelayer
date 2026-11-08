@@ -31,7 +31,8 @@ import {
   playAudioNonBlocking,
   awaitCurrentPlayback,
   getPlaybackQueueDepth,
-  preemptLongRead,
+  holdReadForAsk,
+  type AskReadHoldHandle,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
   cancelPlayback,
@@ -39,6 +40,7 @@ import {
   type QueuedPlaybackHandle,
 } from "./tts";
 import { waitForPlayerExit } from "./tts/playback-exit";
+import { ledgerCaptureEnd, ledgerMicOpen } from "./playback/ledger";
 import {
   waitForInput,
   type WaitForInputOptions,
@@ -855,6 +857,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       );
     }, timeoutMs);
   };
+  /** Lane B: the read this ask parked; restored on every ask end. */
+  let readHold: AskReadHoldHandle | undefined;
   let promptBudgetRemaining = voiceAskPromptTimeoutMs(validated.message);
   let promptBudgetStartedAt = 0;
   const onPromptParkedChange = (parked: boolean): void => {
@@ -876,8 +880,9 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // leak audio if the recording state changes while the caller waits.
     assertSpeakerClear();
 
-    // Wait for all queued playback to finish (P0-2: awaits full queue)
-    preemptLongRead();
+    // Lane B: park the read on screen at its exact word (never cancel it), then wait for every
+    // other queued player (P0-2: awaits full queue). The ask's end restores the read.
+    readHold ??= holdReadForAsk();
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
@@ -964,6 +969,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         archiveSource: "voice_ask",
         voiceAskArtifacts,
         onCaptureStart: () => {
+          ledgerMicOpen();
           captureActive = true;
           armTimeout(outerTimeoutMs, "capture");
         },
@@ -991,6 +997,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
           captureArchivePath = archivePath;
         },
         onCaptureEnd: (transcribedDurationMs) => {
+          ledgerCaptureEnd("answer");
           captureActive = false;
           captureHeld = false;
           armTimeout(voiceAskReturnTimeoutMs(transcribedDurationMs), "return");
@@ -1042,7 +1049,13 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         }
       }
     }
-  }).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
+  }).finally(async () => {
+    await (promptTimeoutCleanup ?? captureAdmission?.release());
+    // Lane B: the capture is over and its admission released: restore the parked read (answer, failure,
+    // cancel or timeout alike). A Stop during the ask restores it paused.
+    try { readHold?.restore(); }
+    catch (error) { console.error(`[voicelayer] Parked read restore failed: ${error instanceof Error ? error.message : String(error)}`); }
+  });
   const confirmedTeardown = async () => {
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
     await settleSpeechArchivesForUpdate(archiveContext);

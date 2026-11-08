@@ -83,6 +83,8 @@ describe("cancelled read settling and bounded playback wait", () => {
     const speak = spyOn(tts, "speak").mockResolvedValue({}); spies.push(speak);
     const capture = spyOn(input, "waitForInput").mockResolvedValue("unexpected capture"); spies.push(capture);
     startHeldRead();
+    // Lane B: an ask parks a live read; the bound applies to a stopped read whose teardown never settles.
+    tts.stopPlayback();
     const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
     await fixtureCheckpoint(); jest.advanceTimersByTime(35000); await fixtureCheckpoint();
     let result: any; answer.then((value) => { result = value; }); await fixtureCheckpoint();

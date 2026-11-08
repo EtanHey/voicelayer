@@ -312,13 +312,30 @@ export interface PlaybackStateEvent {
   /** Global utterance position (chunk start + chunk-local offset). */
   offset_ms: number;
   chunk_offset_ms: number;
-  pause_owner?: "user" | "f5";
+  pause_owner?: "user" | "f5" | "ask";
   duration_ms?: number;
   /** This player's whole audio, from long_read.chunk_start_ms (0 without one). */
   chunk_duration_ms?: number;
   word_index?: number;
   word_count?: number;
   long_read?: StateEvent["long_read"];
+}
+
+/** Lane B (2.4): the one PlaybackSession on screen, from the daemon's engine (formal/playback-session).
+ * Additive: an older VoiceBar ignores it. Positions are read-global word indices. */
+export interface PlaybackSessionEvent {
+  type: "playback_session";
+  session_id: string | null;
+  /** Named `phase`, not `state`: existing listeners treat any `state` field as the pill state. */
+  phase: "idle" | "queued" | "preparing" | "playing" | "paused" | "seeking" | "parked" | "ended";
+  word_index: number;
+  word_count: number;
+  pause_owner?: "user" | "f5" | "ask";
+  ask: "none" | "waiting" | "prompt" | "capturewait" | "capture" | "closing";
+  /** The read a voice_ask parked; it is restored to this word when the ask ends. */
+  parked_by_ask: string | null;
+  previous_available: boolean;
+  speed: number;
 }
 
 export type CommandModePhase =
@@ -461,6 +478,7 @@ export type SocketEvent = RecordingJobIdentity & (
   | QueueEvent
   | PlaybackOutcomeEvent
   | PlaybackStateEvent
+  | PlaybackSessionEvent
   | PlaybackDurationEvent
   | CommandModeEvent
   | ClipMarkerEvent

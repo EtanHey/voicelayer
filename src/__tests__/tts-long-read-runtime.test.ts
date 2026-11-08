@@ -34,6 +34,7 @@ import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers"
 import { planProsody } from "../tts/prosody";
 import { projectSpeakableText } from "../speakable-text";
 import { PreparedReadStart } from "../tts/selection-read-preparation";
+import { playbackSessionViolations } from "../playback/ledger";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
@@ -1065,6 +1066,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     holdSynth = true; holdHistory = true;
     const old = start(); await playerBarrier.at(0); await synthBarrier.at(1);
     clockMs += 250;
+    // Lane B: an ask parks a live read instead of cancelling it, so the cancelled generation here is a
+    // read the user stopped just before asking; its history teardown still gates the prompt.
+    stopPlayback(250);
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
     const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
@@ -1386,16 +1390,24 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     stopPlayback(100); await h.done;
   });
 
-  it("voice_ask preempts synthesis before waiting on its prompt and recording", async () => {
+  it("Lane B: voice_ask parks a playing read at its word and restores it from that word after the answer", async () => {
     holdSynth = true; const old = start(); await synthBarrier.at(1); await playerBarrier.at(0);
+    // 50 ms into chunk 0: the fixture's words start every 12 ms, so the audio is on word 4 (48 ms).
+    clockMs += 50;
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
     const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
     const answer = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
-    await old.done;
     expect(answer.isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
-    expect(synths[1].killed).toBe(true); expect(players[0].killed).toBe(true);
-    expect(players).toHaveLength(2);
+    // The read was parked, not cancelled: its synthesis kept going and its player was only quiesced.
+    expect(synths[1].killed).toBe(false); expect(players[0].killed).toBe(true);
+    // Chunk 1 was synthesizing (held by the fixture) when the ask came; it finishes now and the read plays on.
+    synths[1].exit.resolve(0);
+    await old.done;
+    const resumed = events.filter(e => e.type === "playback_state" && e.state === "resumed");
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]).toMatchObject({ word_index: 4, chunk_offset_ms: 48 });
+    expect(playbackSessionViolations()).toEqual([]);
   });
 
   it("records long-read first audio at player spawn once, including held preparation", async () => {
