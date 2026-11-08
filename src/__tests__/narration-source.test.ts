@@ -118,6 +118,25 @@ describe("bounded utterances with pauses (voice_ask narration)", () => {
     expect(planUtterances("Question?")).toEqual([{ text: "Question?", pauseAfterMs: 0 }]);
     const run = Array.from({ length: 31 }, (_, i) => `w${i}`).join(" ");
     expect(planUtterances(run).map(u => u.text.split(" ").length)).toEqual([14, 14, 3]);
+    // A cap split without punctuation is synthesis-only: no silence (#818 P1).
+    expect(planUtterances(run).map(u => u.pauseAfterMs)).toEqual([0, 0, 0]);
+  });
+
+  it("#818 P1 / k06-23: a split at the 14-word cap with no punctuation adds NO silence; pauses fall on punctuation", () => {
+    // The reviewer's input: the cap lands between "really" and "fast".
+    const plan = planUtterances("one two three four five six seven eight nine ten eleven twelve thirteen really fast");
+    expect(plan.map(u => u.text).join(" ")).toBe("one two three four five six seven eight nine ten eleven twelve thirteen really fast");
+    expect(plan.length).toBe(2);
+    expect(plan[0].pauseAfterMs).toBe(0);
+    // Etan's "fast -- really fast": the pause lands on the dash, never inside "really fast".
+    const dash = planUtterances("we measured it and it was fast -- really fast and then it stopped completely right there");
+    const before = dash.findIndex(u => u.text.endsWith("--"));
+    expect(before).toBeGreaterThanOrEqual(0);
+    expect(dash[before].pauseAfterMs).toBe(250);
+    for (const [i, u] of dash.entries()) {
+      if (u.pauseAfterMs > 0 && i < dash.length - 1) expect(/[.!?…,;:—–]$|--$/.test(u.text)).toBe(true);
+    }
+    expect(dash.map(u => u.text).join(" ")).toBe("we measured it and it was fast -- really fast and then it stopped completely right there");
   });
 
   it("synthesizes each utterance through the source and offsets word timings by audio plus pauses", async () => {

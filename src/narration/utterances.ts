@@ -27,7 +27,8 @@ export interface PlannedUtterance {
 }
 
 const SENTENCE_END = /[.!?…]["'”’)\]]*$/;
-const CLAUSE_END = /[,;:—–]["'”’)\]]*$|\s[-–—]$/;
+// A clause break is punctuation: a word ending in , ; : or a dash, or a standalone dash token ("fast -- really").
+const CLAUSE_END = /[,;:—–]["'”’)\]]*$|^(?:-{1,2}|[–—])$|[^-]--$/;
 
 export function planUtterances(text: string, policy: UtterancePolicy = ASK_UTTERANCE_POLICY): PlannedUtterance[] {
   const words = text.split(/\s+/).filter(Boolean);
@@ -50,8 +51,12 @@ export function planUtterances(text: string, policy: UtterancePolicy = ASK_UTTER
         current = current.slice(0, lastClause);
         flush(policy.clausePauseMs);
         current = rest;
-      } else {
+      } else if (lastClause === current.length) {
         flush(policy.clausePauseMs);
+      } else {
+        // No punctuation inside the cap: split for synthesis only, with NO added silence. A pause always falls on
+        // punctuation, never mid-phrase (#818 review P1: "really" ... "fast").
+        flush(0);
       }
       lastClause = -1;
     }
