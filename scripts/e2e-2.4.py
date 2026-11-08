@@ -66,7 +66,7 @@ def main():
         remaining = 900 - (time.monotonic() - start)
         try:
             result = subprocess.run(['swift', 'test', '--package-path', 'flow-bar',
-                '--scratch-path', '.build.noindex/swift', '--filter', '|'.join(classes)],
+                '--scratch-path=.build.noindex/swift', '--filter', '|'.join(classes)],
                 cwd=ROOT, timeout=max(0.01, remaining), capture_output=True, text=True)
             output = (result.stdout or '') + (result.stderr or '')
             print(output, end='')
