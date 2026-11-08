@@ -659,6 +659,16 @@ public final class VoiceState {
     private var pendingPlaybackPauseIDs: Set<String> = []
     /// T1 (S2-F9): Pause/Resume clicks already re-sent once with the daemon's current player identity.
     private var resyncedPlaybackControlIDs: Set<String> = []
+    /// T1 review (#809 P1): the logical read a Pause/Resume click was made for. A stale reject may be retried only
+    /// for that same read, still on screen; a reject that arrives after the read ended or was replaced is dropped.
+    private struct PlaybackControlIntent {
+        let readEpoch: Int
+        let utteranceID: String?
+    }
+    private var pendingPlaybackIntents: [String: PlaybackControlIntent] = [:]
+    /// Advances whenever a different logical read takes the screen (a new read after idle, or another utterance).
+    private var logicalReadEpoch = 0
+    private var currentUtteranceID: String?
 
     public var isPlaybackPaused: Bool {
         mode == .speaking && parkedRead != nil
@@ -2482,6 +2492,13 @@ public final class VoiceState {
     /// Playback controls are scoped to the player on screen and use its teleprompter clock.
     @discardableResult
     public func togglePlaybackPause() -> String? {
+        togglePlaybackPause(sendsElapsed: true)
+    }
+
+    /// `sendsElapsed: false` lets the daemon pause at its own cursor: a recovery retry's clock belongs to the
+    /// player it lost track of (#809 P1: 9 s sent after an unseen seek to 1 s skipped the audio between).
+    @discardableResult
+    private func togglePlaybackPause(sendsElapsed: Bool) -> String? {
         guard mode == .speaking, let sendCommand else { return nil }
         let id = UUID().uuidString
         var command: [String: Any] = ["id": id]
@@ -2492,10 +2509,11 @@ public final class VoiceState {
             command["cmd"] = "resume"
         } else {
             command["cmd"] = "pause"
-            command["playback_elapsed_ms"] = playbackElapsedMilliseconds()
+            if sendsElapsed { command["playback_elapsed_ms"] = playbackElapsedMilliseconds() }
             pendingPauseEpoch = playbackEpoch
         }
         pendingPlaybackPauseIDs.insert(id)
+        pendingPlaybackIntents[id] = PlaybackControlIntent(readEpoch: logicalReadEpoch, utteranceID: currentUtteranceID)
         sendCommand(command)
         return id
     }
@@ -2641,6 +2659,10 @@ public final class VoiceState {
             let offset = (event["offset_ms"] as? NSNumber)?.doubleValue
             let offsetMs = offset.flatMap { $0.isFinite && $0 >= 0 ? Int($0.rounded()) : nil }
                 ?? parkedRead?.offsetMs ?? (mode == .speaking ? playbackElapsedMilliseconds() : 0)
+            if mode == .speaking {
+                rehydratePlayerGeometry(event, chunkStart: ((event["long_read"] as? [String: Any])?["chunk_start_ms"] as? NSNumber)?.intValue
+                    ?? (event["long_read"] == nil ? 0 : nil))
+            }
             parkedRead = ParkedRead(owner: PlaybackPauseOwner(rawValue: event["pause_owner"] as? String ?? "user") ?? .user, playbackID: playbackID, generation: generation, offsetMs: offsetMs, read: read)
             if let playbackID, let generation { currentPlayback = (playbackID, generation) }
             pendingPauseEpoch = nil
@@ -2664,6 +2686,7 @@ public final class VoiceState {
             "outcome": ClickTelemetry.outcome(event["outcome"]), "reason": ClickTelemetry.reason(event["reason"]),
         ])
         let retried = id.map { resyncedPlaybackControlIDs.remove($0) != nil } ?? false
+        let intent = id.flatMap { pendingPlaybackIntents.removeValue(forKey: $0) }
         guard owned else { return }
         // T1 (S2-F9): no player exists right now (a scrub's slice or the next chunk is still being made). That is
         // not the end of the read, so never settle it here; but a click must never look dead.
@@ -2675,15 +2698,23 @@ public final class VoiceState {
         guard event["outcome"] as? String == "reject" else { return }
         switch event["reason"] as? String {
         case "stale":
-            // T1 (S2-F9): the player on screen was replaced without this app adopting its identity (a scrub's new
-            // player). The reject names the current player: adopt it and send the same click once more.
-            if !retried, mode == .speaking, (command == "pause") == !isPlaybackPaused,
+            // The click's read ended or another read replaced it: the screen already shows the real state, and the
+            // click must never land on the replacement (#809 P1).
+            guard let intent, intent.readEpoch == logicalReadEpoch, mode == .speaking else {
+                logClick("playback_control_resync", ["command": command, "reason": "replaced", "outcome": "reject"])
+                return
+            }
+            // T1 (S2-F9): this read's player was replaced without this app adopting its identity (a scrub's new
+            // player). The reject names the current (playback_id, generation) and its logical read; only for the
+            // same read, adopt it with its chunk geometry and send the click once more at the daemon's own cursor.
+            if !retried, (command == "pause") == !isPlaybackPaused, let readID = intent.utteranceID,
+               event["utterance_id"] as? String == readID,
                let playbackID = event["playback_id"] as? String, let generation = (event["generation"] as? NSNumber)?.intValue {
-                adoptPlaybackIdentity(playbackID, generation: generation)
+                adoptPlaybackIdentity(playbackID, generation: generation, geometry: event)
                 logClick("playback_control_resync", ["command": command, "reason": "stale", "outcome": "reject",
                                                      "playback_id": ClickTelemetry.identifier(playbackID) ?? "null",
                                                      "generation": String(generation)])
-                if let retry = togglePlaybackPause() { resyncedPlaybackControlIDs.insert(retry) }
+                if let retry = togglePlaybackPause(sendsElapsed: false) { resyncedPlaybackControlIDs.insert(retry) }
                 return
             }
             if mode == .speaking {
@@ -2698,12 +2729,30 @@ public final class VoiceState {
         }
     }
 
-    private func adoptPlaybackIdentity(_ playbackID: String, generation: Int) {
+    private func adoptPlaybackIdentity(_ playbackID: String, generation: Int, geometry: [String: Any]) {
         if let parked = parkedRead {
             parkedRead = ParkedRead(owner: parked.owner, playbackID: playbackID, generation: generation,
                                     offsetMs: parked.offsetMs, read: parked.read)
         }
         currentPlayback = (playbackID, generation)
+        rehydratePlayerGeometry(geometry, chunkStart: (geometry["chunk_start_ms"] as? NSNumber)?.intValue)
+    }
+
+    /// #809 P2: the clock's bounds belong to the player that holds the audio. When a reject or a paused/resumed
+    /// event names a player this app never saw start, take its chunk start, chunk length and total from that
+    /// event, so the old chunk's end cannot clamp the new position (a pause at 4.5 s showed 3.0 s).
+    private func rehydratePlayerGeometry(_ event: [String: Any], chunkStart: Int?) {
+        if let chunkStart, chunkStart != playbackChunkStartMilliseconds {
+            playbackChunkStartMilliseconds = chunkStart
+            playbackChunkEndMilliseconds = nil
+            playbackClockFloorMilliseconds = 0
+        }
+        if let chunkDuration = (event["chunk_duration_ms"] as? NSNumber)?.intValue, chunkDuration > 0 {
+            playbackChunkEndMilliseconds = playbackChunkStartMilliseconds + chunkDuration
+        }
+        if let duration = (event["duration_ms"] as? NSNumber)?.intValue, duration > 0 {
+            playbackDurationMilliseconds = duration
+        }
     }
 
     public func reportWordTimingUnavailable() {
@@ -3281,6 +3330,13 @@ public final class VoiceState {
                     (id: $0, duration: playbackDurationMilliseconds, growing: isPlaybackDurationGrowing)
                 } : nil
                 let shownPosition = mode == .speaking && !isPlaybackPaused ? playbackElapsedMilliseconds() : 0
+                // #809 P1: a new logical read (after idle, or another utterance) retires every pending click's read.
+                let edgeUtteranceID = event["utteranceId"] as? String
+                if mode != .speaking || edgeUtteranceID != currentUtteranceID ||
+                    (edgeUtteranceID == nil && (event["playback_id"] as? String) != currentPlayback?.id) {
+                    logicalReadEpoch += 1
+                }
+                currentUtteranceID = edgeUtteranceID
                 resetAudioLevels()
                 let playbackStart = playbackAmplitudeClock()
                 let offset = (event["playback_offset_ms"] as? NSNumber)?.doubleValue

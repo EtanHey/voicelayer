@@ -120,12 +120,13 @@ final class TeleprompterClockIntegrityTests: XCTestCase {
 
         // A scrub replaced the player; the app never saw the new player's speaking edge.
         state.handleEvent(["type": "ack", "command": "pause", "id": first?["id"] as Any, "outcome": "reject",
-                           "reason": "stale", "playback_id": "p-21", "generation": 1])
+                           "reason": "stale", "playback_id": "p-21", "generation": 1, "utterance_id": "read-1"])
         let retry = sent().last
         XCTAssertEqual(sent().count, 2, "the click is sent once more, scoped to the player that is current")
         XCTAssertEqual(retry?["cmd"] as? String, "pause")
         XCTAssertEqual(retry?["playback_id"] as? String, "p-21")
         XCTAssertEqual(retry?["generation"] as? Int, 1)
+        XCTAssertNil(retry?["playback_elapsed_ms"], "the daemon pauses the new player at its own cursor")
 
         state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-21", "generation": 2,
                            "offset_ms": 1500, "chunk_offset_ms": 1500])
@@ -139,9 +140,9 @@ final class TeleprompterClockIntegrityTests: XCTestCase {
         state.handleEvent(chunk(0, start: 0, playbackID: "p-20", generation: 3))
         state.togglePlaybackPause()
         state.handleEvent(["type": "ack", "command": "pause", "id": sent().last?["id"] as Any, "outcome": "reject",
-                           "reason": "stale", "playback_id": "p-21", "generation": 1])
+                           "reason": "stale", "playback_id": "p-21", "generation": 1, "utterance_id": "read-1"])
         state.handleEvent(["type": "ack", "command": "pause", "id": sent().last?["id"] as Any, "outcome": "reject",
-                           "reason": "stale", "playback_id": "p-22", "generation": 1])
+                           "reason": "stale", "playback_id": "p-22", "generation": 1, "utterance_id": "read-1"])
         XCTAssertEqual(sent().count, 2, "one retry, never a loop")
         XCTAssertEqual(state.confirmationText, "Pause unavailable")
     }
@@ -154,6 +155,100 @@ final class TeleprompterClockIntegrityTests: XCTestCase {
                            "reason": "stale"])
         XCTAssertEqual(sent().count, 1)
         XCTAssertEqual(state.confirmationText, "Pause unavailable")
+    }
+
+    // MARK: - #809 review round 2 (Codex probes, review-809-evidence/Review809AdversarialTests.swift)
+
+    /// P1, verbatim probe: A's late stale reject must never pause B. A ended, B replaced it, and the reject names B.
+    func testLateStaleAckMustNotPauseReplacementRead() {
+        let state = VoiceState()
+        state.isConnected = true
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Read A", "playback_id": "A", "generation": 1])
+        state.togglePlaybackPause()
+        let first = sent.last!["id"]!
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Read B", "playback_id": "B", "generation": 1])
+        state.handleEvent(["type": "ack", "command": "pause", "id": first, "outcome": "reject", "reason": "stale",
+                           "playback_id": "B", "generation": 1])
+        XCTAssertEqual(sent.count, 1, "A's pending click must not be retried against B; actual last scope: \(sent.last!)")
+        XCTAssertNil(state.confirmationText, "the screen already shows B; nothing to explain")
+    }
+
+    /// P1, the same with logical read ids: B's reject names B's read, not A's, so A's click is dropped.
+    func testAStaleRejectNamingAnotherLogicalReadIsNeverRetried() {
+        let (state, sent) = makeState()
+        state.handleEvent(chunk(0, start: 0, playbackID: "p-1", generation: 3))
+        state.togglePlaybackPause()
+        state.handleEvent(["type": "ack", "command": "pause", "id": sent().last?["id"] as Any, "outcome": "reject",
+                           "reason": "stale", "playback_id": "p-9", "generation": 1, "utterance_id": "another-read"])
+        XCTAssertEqual(sent().count, 1)
+    }
+
+    /// P1: a Resume intent is bound to its read the same way.
+    func testAStaleResumeForAReplacedReadIsDropped() {
+        let (state, sent) = makeState()
+        state.handleEvent(chunk(0, start: 0, playbackID: "p-1", generation: 1))
+        state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-1", "generation": 2,
+                           "offset_ms": 900, "chunk_offset_ms": 900])
+        state.togglePlaybackPause()
+        XCTAssertEqual(sent().last?["cmd"] as? String, "resume")
+        var other = chunk(0, start: 0, playbackID: "q-1", generation: 1)
+        other["utteranceId"] = "read-2"
+        state.handleEvent(other)
+        state.handleEvent(["type": "ack", "command": "resume", "id": sent()[sent().count - 1]["id"] as Any,
+                           "outcome": "reject", "reason": "stale", "playback_id": "q-1", "generation": 1,
+                           "utterance_id": "read-1"])
+        XCTAssertEqual(sent().count, 1, "read-1 is no longer on screen: its Resume is never retried")
+    }
+
+    /// P1 (stale cursor), probe with the read's id: 9 s belongs to the old player; an unseen seek moved it to 1 s.
+    func testResyncMustNotReuseClockFromBeforeUnseenSeek() {
+        let (state, sent) = makeState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Read A", "playback_id": "A", "generation": 3,
+                           "duration_ms": 10000, "utteranceId": "R"])
+        now += 9
+        state.togglePlaybackPause()
+        XCTAssertEqual(sent().last?["playback_elapsed_ms"] as? Int, 9000)
+        state.handleEvent(["type": "ack", "command": "pause", "id": sent().last!["id"]!, "outcome": "reject",
+                           "reason": "stale", "playback_id": "A2", "generation": 1, "utterance_id": "R",
+                           "chunk_start_ms": 0, "chunk_duration_ms": 10000, "duration_ms": 10000])
+        XCTAssertEqual(sent().count, 2)
+        XCTAssertNil(sent().last?["playback_elapsed_ms"],
+                     "9 s belongs to the old player; the retry must let the daemon use its actual 1 s cursor")
+    }
+
+    /// P1 (stale bounds), probe with the read's id: the paused player is in chunk 1, so chunk 0's end cannot clamp it.
+    func testCrossChunkRecoveryMustUseTheNewChunksClockBounds() {
+        let (state, sent) = makeState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Chunk zero", "playback_id": "A", "generation": 3,
+                           "duration_ms": 6000, "chunk_duration_ms": 3000, "playback_offset_ms": 0, "utteranceId": "R",
+                           "long_read": ["id": "R", "chunk_index": 0, "chunk_count": 2, "chunk_start_ms": 0]])
+        state.togglePlaybackPause()
+        state.handleEvent(["type": "ack", "command": "pause", "id": sent().last!["id"]!, "outcome": "reject",
+                           "reason": "stale", "playback_id": "B", "generation": 1, "utterance_id": "R"])
+        XCTAssertEqual(sent().last?["playback_id"] as? String, "B")
+        state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "B", "generation": 2,
+                           "offset_ms": 4500, "chunk_offset_ms": 1500, "duration_ms": 6000,
+                           "long_read": ["id": "R", "chunk_index": 1, "chunk_count": 2, "chunk_start_ms": 3000]])
+        XCTAssertTrue(state.isPlaybackPaused)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 4500, "the paused player is in chunk 1; chunk 0's 3000 ms bound is stale")
+    }
+
+    /// P2 via the reject itself: its chunk geometry replaces the old player's before any clamp.
+    func testTheRejectsChunkGeometryReplacesTheOldPlayersBounds() {
+        let (state, sent) = makeState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Chunk zero", "playback_id": "A", "generation": 3,
+                           "duration_ms": 6000, "chunk_duration_ms": 3000, "utteranceId": "R",
+                           "long_read": ["id": "R", "chunk_index": 0, "chunk_count": 2, "chunk_start_ms": 0]])
+        now += 5
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 3000)
+        state.togglePlaybackPause()
+        state.handleEvent(["type": "ack", "command": "pause", "id": sent().last!["id"]!, "outcome": "reject",
+                           "reason": "stale", "playback_id": "B", "generation": 1, "utterance_id": "R",
+                           "chunk_start_ms": 3000, "chunk_duration_ms": 3000, "duration_ms": 6000])
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 5000, "bounded by chunk 1 (3–6 s), not chunk 0")
     }
 
     func testPauseWhileNoPlayerExistsSaysSoAndKeepsTheRead() {
