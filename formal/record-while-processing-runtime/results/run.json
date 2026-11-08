@@ -4,7 +4,8 @@
   "hashes": {
     "formal/record-while-processing-runtime/RuntimeOwnership.tla": "6c44c026082aa76adec1a083404af78bd83a96ca8e2e0f75409b7b354281a442",
     "formal/record-while-processing-runtime/checks.json": "5c3104a871099586b9a8fae8b0f6ea94c05e79126f1a8d627931869883c8d5de",
-    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/record-while-processing-runtime/StaleGuardMutant.cfg": "83cb5ecb92084d6c675e3a6a53647422420e949aa14f65d409250ded8544868a",
     "formal/record-while-processing-runtime/FailedMicMutant.cfg": "071be25abf6e031596d8ad10798a35116d026827d5c2f9c283efe7a41bb026a1",
     "formal/record-while-processing-runtime/StallMutant.cfg": "7569660d9a9006269fb24a86da17c8e213f9c5f314512950dd83bad8bfa663fe",
@@ -24,9 +25,9 @@
     "formal/record-while-processing-runtime/Fixed.cfg": "100335967423506e9e265e1629777937f1770e14f25c8ebc84f389baa37de3c1",
     "src/recording-jobs.ts": "9bdba55a4c85b5d4435ef1fc3d7f6258b9ad22172f537972d98e99551d3041aa",
     "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
-    "src/socket-handlers.ts": "b82c1c831dd4986adff5685c3a0df318c585e848ec92980116a50f3c9f15a5a1",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "ef26abf5d4d86c0273146d020eb727ce196f0091ada032019c56c8706cafa862",
-    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "0ea3a5a5bcb09110d7b9dd28310431e0146698e71db1a102ff51c708072b0b61",
+    "src/socket-handlers.ts": "0d3735b7a2d7f1bd4f3c18df0ded933a60aa0e77e3399dcf13a62ed53f67ab05",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "8cb870d5be48ebcd2e13fece4186b50ed83d1a4493675e5e7db15dfcb1ad0aba",
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368"
   },
   "mutants": {
@@ -114,8 +115,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 174493,
-      "distinct": 58509
+      "generated": 175521,
+      "distinct": 58826
     },
     "RetargetMutant": {
       "role": "mutant",
@@ -154,7 +155,7 @@
       "kind": "temporal",
       "target": "DeliveryAckBound",
       "status": "EXPECTED_FAIL",
-      "generated": 105630,
+      "generated": 105635,
       "distinct": 38108
     },
     "StallMutant": {
@@ -162,8 +163,8 @@
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 104889,
-      "distinct": 31942
+      "generated": 102822,
+      "distinct": 31546
     },
     "FailedMicMutant": {
       "role": "mutant",
@@ -210,8 +211,8 @@
       "kind": "temporal",
       "target": "QueuedCaptureStarts",
       "status": "EXPECTED_FAIL",
-      "generated": 115674,
-      "distinct": 40395
+      "generated": 107220,
+      "distinct": 38087
     }
   }
 }

@@ -1,4 +1,4 @@
-UNION: 64/64 mutants killed; all ownership/readability/retention properties retained. D3 retires only CapAlwaysFires, CaptureWithinCap and CapStops; renewable 10-minute silence replaces capped recording.
+UNION: 71/71 mutants killed; all ownership/readability/retention properties retained. D3 retires only CapAlwaysFires, CaptureWithinCap and CapStops; renewable 10-minute silence replaces capped recording.
 
 | Model | Property | Mutant | Result |
 | --- | --- | --- | --- |
@@ -66,3 +66,10 @@ UNION: 64/64 mutants killed; all ownership/readability/retention properties reta
 | ptt-silence-timeout | SpeechRenewsDeadline | NoRenewalMutant | exact-property FAIL |
 | ptt-silence-timeout | RecurringSpeechNeverTimesOut | ReintroducedCapMutant | exact-property FAIL |
 | ptt-silence-timeout | SilenceTimesOut | NoTimeoutMutant | exact-property FAIL |
+| ptt-silence-timeout | NoPausedAudio | AppendWhilePausedMutant | exact-property FAIL |
+| ptt-silence-timeout | UnpausedRetained | ClipAtPauseMutant | exact-property FAIL |
+| ptt-silence-timeout | UnpausedRetained | NewTakeOnResumeMutant | exact-property FAIL |
+| ptt-silence-timeout | NoTimeoutDuringPause | PauseCountsTowardTimeoutMutant | exact-property FAIL |
+| ptt-silence-timeout | NoTimeoutDuringPause | TimeoutWhilePausedMutant | exact-property FAIL |
+| ptt-silence-timeout | StopCancelFromPaused | NoStopWhilePausedMutant | exact-property FAIL |
+| ptt-silence-timeout | PausedSpansClosed | OpenSpanMutant | exact-property FAIL |

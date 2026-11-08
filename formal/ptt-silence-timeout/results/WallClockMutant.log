@@ -3,12 +3,12 @@
   "kind": "invariant",
   "target": "NoTimeoutDuringSpeech",
   "status": "EXPECTED_FAIL",
-  "generated": 41,
-  "distinct": 37,
+  "generated": 122,
+  "distinct": 91,
   "trace": [
-    "s = [ wall |-> 0,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "s = [ wall |-> 1,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "s = [ wall |-> 2,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  event |-> \"tick\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "s = [ wall |-> 2,\n  phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 2,\n  event |-> \"end\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
+    "s = [ wall |-> 0,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  event |-> \"init\",\n  endedBy |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ wall |-> 1,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  quiet |-> 1,\n  event |-> \"tick\",\n  endedBy |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ wall |-> 2,\n  phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 2,\n  quiet |-> 2,\n  event |-> \"tick\",\n  endedBy |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ wall |-> 2,\n  phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 2,\n  quiet |-> 2,\n  event |-> \"end\",\n  endedBy |-> \"timeout\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
   ]
 }

@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "UnpausedRetained",
+  "status": "EXPECTED_FAIL",
+  "generated": 34,
+  "distinct": 26,
+  "trace": [
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  endedBy |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"pause\",\n  endedBy |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 0,\n  owed |-> 1,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"gated\",\n  endedBy |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<>>,\n  said |-> <<\"quiet\">>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
+  ]
+}
