@@ -76,6 +76,12 @@ public enum TeleprompterA {
 
     public static func clamp(_ lines: Int) -> Int { min(lineRange.upperBound, max(lineRange.lowerBound, lines)) }
 
+    /// Lane B (Etan, 2026-11-08 "less empty space"): the rows a read needs. The handle's choice (3–8) is an upper
+    /// bound; a read that wraps to fewer lines needs only those (at least one). The shell sizes from this.
+    public static func fittedLines(preferred: Int, textLines: Int) -> Int {
+        max(1, min(clamp(preferred), textLines))
+    }
+
     /// Lane B: the speed is its own control now (the footer chip), so the state reads "Reading" alone.
     public static func footerState(isPaused: Bool, isPausedForDictation: Bool) -> String {
         isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : "Reading"

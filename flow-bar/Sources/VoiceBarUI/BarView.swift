@@ -1206,7 +1206,8 @@ public struct BarView: View {
                     speed: state.playbackSpeed,
                     onCycleSpeed: { state.cyclePlaybackSpeed() },
                     previousAvailable: state.previousReadAvailable,
-                    onPrevious: { state.playPreviousRead() }
+                    onPrevious: { state.playPreviousRead() },
+                    onTextLinesChange: { state.reportTeleprompterTextLines($0) }
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {

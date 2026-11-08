@@ -26,6 +26,8 @@ public struct TeleprompterAView: View {
     /// Lane B: "previous read" (nil hides the button; disabled while no previous narration exists).
     public var previousAvailable = false
     public var onPrevious: (() -> Void)?
+    /// Lane B: told how many lines the text wraps to at this column (for the shell's fitted height).
+    public var onTextLinesChange: ((Int) -> Void)?
 
     public init(text: String, wordBoundaries: [TeleprompterBoundary] = [], displayBlocks: [TeleprompterDisplayBlock] = [],
                 hasCompleteDisplay: Bool = false, speechWords: SpeechWordTable? = nil, isPaused: Bool = false,
@@ -34,7 +36,8 @@ public struct TeleprompterAView: View {
                 playbackElapsedMilliseconds: @escaping () -> Int,
                 onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil,
                 speed: Double = 1, onCycleSpeed: (() -> Void)? = nil,
-                previousAvailable: Bool = false, onPrevious: (() -> Void)? = nil) {
+                previousAvailable: Bool = false, onPrevious: (() -> Void)? = nil,
+                onTextLinesChange: ((Int) -> Void)? = nil) {
         self.text = text
         self.wordBoundaries = wordBoundaries
         self.displayBlocks = displayBlocks
@@ -54,6 +57,7 @@ public struct TeleprompterAView: View {
         self.onCycleSpeed = onCycleSpeed
         self.previousAvailable = previousAvailable
         self.onPrevious = onPrevious
+        self.onTextLinesChange = onTextLinesChange
     }
 
     @State private var cache = TeleprompterAModelCache()
@@ -80,6 +84,8 @@ public struct TeleprompterAView: View {
             footer.frame(width: columnWidth, height: TeleprompterA.footerHeight)
             if onVisibleLinesChange != nil { handle }
         }
+        .onAppear { onTextLinesChange?(model.lines.count) }
+        .onChange(of: model.lines.count) { _, count in onTextLinesChange?(count) }
     }
 
     private func column(_ model: TeleprompterAModel, focus: Int?) -> some View {

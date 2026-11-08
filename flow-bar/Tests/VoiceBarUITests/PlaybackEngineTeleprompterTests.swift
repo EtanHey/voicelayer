@@ -214,6 +214,25 @@ final class PlaybackEngineTeleprompterTests: XCTestCase {
         XCTAssertFalse(state.previousReadAvailable)
     }
 
+    // MARK: - Fitted lines ("less empty space")
+
+    func testFittedLinesNeverExceedWhatTheReadUses() {
+        XCTAssertEqual(TeleprompterA.fittedLines(preferred: 3, textLines: 1), 1)
+        XCTAssertEqual(TeleprompterA.fittedLines(preferred: 3, textLines: 2), 2)
+        XCTAssertEqual(TeleprompterA.fittedLines(preferred: 3, textLines: 40), 3)
+        XCTAssertEqual(TeleprompterA.fittedLines(preferred: 8, textLines: 5), 5)
+        XCTAssertEqual(TeleprompterA.fittedLines(preferred: 8, textLines: 0), 1, "never a zero-line box")
+        let (state, _) = makeState()
+        XCTAssertEqual(state.teleprompterFittedLines, 3, "unmeasured: the handle's choice")
+        state.reportTeleprompterTextLines(1)
+        XCTAssertEqual(state.teleprompterFittedLines, 1)
+        state.teleprompterVisibleLines = 6
+        state.reportTeleprompterTextLines(4)
+        XCTAssertEqual(state.teleprompterFittedLines, 4)
+        let short = Self.model("Codex is done.", column: 429)
+        XCTAssertEqual(short.lines.count, 1, "a one-line read measures one line at the real column")
+    }
+
     // MARK: - Frames at the real column (opt-in)
 
     func testWriteRealGeometryFramesWhenRequested() throws {

@@ -2454,6 +2454,24 @@ public final class VoiceState {
     /// U5: the daemon's word table for the utterance on screen (nil from a daemon without word timing).
     public private(set) var speechWords: SpeechWordTable?
     /// U5: Teleprompter A lines (3–8) from its handle; app session only (SPEC open question 4).
+    /// Lane B: the lines the read on screen wraps to at the current column (nil until the teleprompter measured it).
+    public private(set) var teleprompterTextLineCount: Int?
+
+    public func reportTeleprompterTextLines(_ count: Int) {
+        let count = max(0, count)
+        guard teleprompterTextLineCount != count else { return }
+        let before = teleprompterFittedLines
+        teleprompterTextLineCount = count
+        notifyPanelLayoutChangedIfNeeded(before != teleprompterFittedLines)
+    }
+
+    /// Lane B (Etan "less empty space"): the rows the shell needs: the handle's choice, but never more than the read
+    /// uses (a one-line read is a one-line box). The shell (Lane A) sizes the drawer from this.
+    public var teleprompterFittedLines: Int {
+        teleprompterTextLineCount.map { TeleprompterA.fittedLines(preferred: teleprompterVisibleLines, textLines: $0) }
+            ?? teleprompterVisibleLines
+    }
+
     public var teleprompterVisibleLines = TeleprompterA.lineRange.lowerBound {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != teleprompterVisibleLines) }
     }
