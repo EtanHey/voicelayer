@@ -70,7 +70,10 @@ describe("recording job runtime (isolated fake recorder, never real mic)", () =>
             return spawn([process.execPath, "-e", "await Bun.sleep(600); process.stdout.write(new Uint8Array(32000)); await Bun.sleep(60000)"],
               { stdout: "pipe", stderr: "pipe", env: process.env });
           }
-          return spawn(...args);
+          if (Array.isArray(command)) {
+            return spawn(command, { ...args[1], env: { ...process.env, ...args[1]?.env } });
+          }
+          return spawn({ ...command, env: { ...process.env, ...command.env } });
         }));
       }
       const root = getRecordingsArchiveRoot();
