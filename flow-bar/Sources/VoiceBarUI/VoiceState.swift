@@ -2317,6 +2317,7 @@ public final class VoiceState {
     public func snooze(until: Date? = nil) {
         isHidden = true
         hiddenUntil = until
+        if deferredBarRecording != nil { cancel() }
         // QUEUE1b (lead ruling): Hide ends the user read chain on both sides; nothing resumes later.
         let hasWaitingReads = readQueueCurrentRequestID != nil
         switch mode {
@@ -2917,7 +2918,7 @@ public final class VoiceState {
     }
 
     private func startQueuedRecordingIfCaptureReleased() {
-        guard isConnected, !isRecordingDrainPending, microphoneTakeID == nil,
+        guard !isHidden, isConnected, !isRecordingDrainPending, microphoneTakeID == nil,
               case let .queued(request) = deferredBarRecording else { return }
         deferredBarRecording = .opening(request)
         activeBarTakeID = request.takeID
