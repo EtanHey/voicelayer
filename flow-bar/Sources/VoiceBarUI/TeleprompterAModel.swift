@@ -9,10 +9,23 @@ public enum TeleprompterA {
     public static let columnWidth: CGFloat = 404
     public static let lineRange = 3 ... 8
     public static let topFadeHeight: CGFloat = 16
-    public static let footerHeight: CGFloat = 20
-    public static let handleSize = CGSize(width: 34, height: 4)
-    /// The handle's hit band under the footer.
+    /// T3 (Etan, QA 2026-11-08 8:41–8:58: "the dragging thing could probably just go underneath the scrubbing… just
+    /// like iPhone has at the line at the bottom"): a long, thin home-bar line under the scrubber.
+    public static let handleSize = CGSize(width: 112, height: 5)
+    /// The handle's hit band under the scrubber.
     public static let handleBandHeight: CGFloat = 14
+    /// T3: the scrubber row (track, clock labels and its one-line timing notice) between the text and the handle.
+    public static let scrubberGap: CGFloat = 7
+    public static let scrubberRowHeight: CGFloat = 40
+    public static let handleGap: CGFloat = 4
+    /// A stopped read's scrubber has no timing notice and no handle under it; its text takes the rest of the stack.
+    public static let stoppedScrubberRowHeight: CGFloat = 20
+
+    /// The stopped read's text area: the whole stack above its scrubber, so no blank band sits under the scrubber
+    /// (QA 2026-11-08 S4-F3: "Why is there so much space here?").
+    public static func stoppedBodyHeight(lines: Int) -> CGFloat {
+        panelStackHeight(lines: lines) - scrubberGap - stoppedScrubberRowHeight
+    }
 
     public enum Tier: Equatable {
         case spoken, read, unread
@@ -52,7 +65,14 @@ public enum TeleprompterA {
 
     public static let pull = Animation.spring(response: 0.38, dampingFraction: 0.86)
 
-    public static func bodyHeight(lines: Int) -> CGFloat { CGFloat(lines) * lineHeight + footerHeight }
+    /// The text column alone.
+    public static func bodyHeight(lines: Int) -> CGFloat { CGFloat(lines) * lineHeight }
+
+    /// T3: everything the panel stacks under its top inset: text, scrubber row, handle band. The stopped read keeps
+    /// the same stack (its handle band stays empty), so Stop never resizes the panel (T2, S4-F2/F3).
+    public static func panelStackHeight(lines: Int) -> CGFloat {
+        bodyHeight(lines: lines) + scrubberGap + scrubberRowHeight + handleGap + handleBandHeight
+    }
 
     /// Handle drag: follows the pointer inside 3–8 lines and rubber-bands past either end (at most one line).
     public static func draggedHeight(startLines: Int, translation: CGFloat) -> CGFloat {
@@ -76,11 +96,6 @@ public enum TeleprompterA {
     }
 
     public static func clamp(_ lines: Int) -> Int { min(lineRange.upperBound, max(lineRange.lowerBound, lines)) }
-
-    public static func footerState(isPaused: Bool, isPausedForDictation: Bool, rate: String = "1×") -> String {
-        // T2 (QA 2026-11-08, Etan: "Reading is kind of redundant there"): plain reading shows only its rate.
-        isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : rate
-    }
 
     public static func queuedChip(_ count: Int) -> String? { count > 0 ? "+\(count) queued" : nil }
 

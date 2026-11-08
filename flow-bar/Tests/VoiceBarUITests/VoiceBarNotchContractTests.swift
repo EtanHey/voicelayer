@@ -46,10 +46,12 @@ final class VoiceBarNotchContractTests: XCTestCase {
                 coreWidth: 185,
                 topHeight: 32,
                 leadingWingWidth: 0,
-                trailingWingWidth: 73.5,
+                // T3: time, Show/Hide teleprompter and 1× (Etan: "both wings slightly wider"); the panel hugs
+                // text + scrubber + handle.
+                trailingWingWidth: 109.5,
                 bodyLeadingExtent: 140,
                 bodyTrailingExtent: 140,
-                lowerSurfaceHeight: 196
+                lowerSurfaceHeight: 163
             )
         )
     }
@@ -68,10 +70,10 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(hover.totalWidth, 332)
         XCTAssertEqual(recording.topWidth, 332)
         XCTAssertEqual(recording.totalWidth, 332)
-        XCTAssertEqual(teleprompter.topWidth, 258.5)
+        XCTAssertEqual(teleprompter.topWidth, 294.5)
         XCTAssertEqual(teleprompter.bodyWidth, 465)
         XCTAssertEqual(teleprompter.totalWidth, 465)
-        XCTAssertEqual(teleprompter.totalHeight, 228)
+        XCTAssertEqual(teleprompter.totalHeight, 195)
     }
 
     func testCompactStatesKeepOneGlassShapeWhileRecordingFitsEachWing() {
@@ -118,9 +120,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(teleprompter.leadingWingWidth, 0)
         XCTAssertEqual(
             teleprompter.trailingWingWidth,
-            VoiceBarNotchContract.teleprompterWaveformWingWidth(
-                visibleCoreOcclusionInset: 0
-            )
+            VoiceBarNotchContract.readingTrailingWingWidth
         )
         XCTAssertGreaterThan(teleprompter.trailingWingWidth, teleprompter.leadingWingWidth)
 

@@ -146,9 +146,9 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(pausedEvent())
         let paused = presentation(for: state)
         XCTAssertEqual(paused.visualState, .compactStatus)
-        // Paused shows the time + Stop (2.3 U2: in the fixed 73.5 pt wing); the eye belongs to a hidden-but-playing
-        // read and takes the time's place, so the wing never widens for it.
-        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        // T3: paused keeps the reading wings (left Replay/Stop/Play, right time/eye/1×), so pausing never reflows them.
+        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarNotchContract.readingTrailingWingWidth)
+        XCTAssertEqual(paused.geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: 3))
 
         resume(state, offset: 2500)
         XCTAssertFalse(state.isPlaybackPaused)
@@ -435,21 +435,19 @@ final class PlaybackPauseTests: XCTestCase {
         let teleprompter = presentation(for: state)
         state.dismissTeleprompter()
         let compact = presentation(for: state)
+        // T3 (Etan, QA 2026-11-08 7:52): Replay, Stop, Pause in the left wing. Pause keeps the core-side slot in the
+        // mic lane's insets, so it stays the same distance from the notch; the wing fits its three slots exactly.
         for speaking in [teleprompter, compact] {
-            XCTAssertEqual(speaking.geometry.leadingWingWidth, mic.geometry.leadingWingWidth, "\(speaking.visualState)")
+            XCTAssertEqual(speaking.geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: 3),
+                           "\(speaking.visualState)")
             XCTAssertEqual(material.wingContentLayout(for: .leading, state: speaking.visualState), micSlot)
-            let micLayout = VoiceBarNotchShapeLayout(geometry: mic.geometry)
-            let layout = VoiceBarNotchShapeLayout(geometry: speaking.geometry)
-            XCTAssertEqual(
-                layout.coreRect.minX - layout.leadingWingRect.minX,
-                micLayout.coreRect.minX - micLayout.leadingWingRect.minX
-            )
         }
         state.showTeleprompter()
 
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         XCTAssertTrue(state.isTeleprompterReadback)
-        XCTAssertEqual(presentation(for: state).geometry.leadingWingWidth, 0, "a readback has nothing to pause")
+        XCTAssertEqual(presentation(for: state).geometry.leadingWingWidth,
+                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 1), "a stopped read keeps Replay, no Pause")
     }
 
     func testManualSpeechPauseDuringCaptureUsesScopedExistingPauseCommand() {

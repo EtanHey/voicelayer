@@ -267,24 +267,26 @@ final class AppLifecycleTests: XCTestCase {
         state.canReplay = true
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
-            // 2.3 U5: Stop lives in the right wing; the lower row keeps Replay and Hide.
+            // T3: Replay, Pause and Stop in the left wing; 1× and the eye on the right; no lower control row.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 1,
+                leadingControlCount: 3,
+                trailingControlCountFromOuter: 2,
                 trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
-                lowerControlCount: 2,
-                lowerSurfaceIsInteractive: true
+                lowerSurfaceIsInteractive: true,
+                controlSpacing: VoiceBarNotchContract.readingControlSpacing
             )
         )
 
-        // P16: the pause control sits left of the core while speaking; the hidden read's eye joins Stop.
+        // T3: a hidden-but-playing read keeps the same wings, collapsed.
         state.dismissTeleprompter()
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: 3,
                 trailingControlCountFromOuter: 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                lowerSurfaceIsInteractive: false,
+                controlSpacing: VoiceBarNotchContract.readingControlSpacing
             )
         )
     }
@@ -294,18 +296,19 @@ final class AppLifecycleTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "speaking", "text": "Queued read", "request_id": "r-A"])
         state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 3)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 4,
+            "T3: Replay, Next (with its badge), Pause, Stop")
         // PILL1: the last item has nothing waiting, so Next and its slot go.
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 1)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 3)
         state.dismissTeleprompter()
         state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 3)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 4)
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": NSNull()])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 1)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 3)
     }
 
     func testPausedSpeechKeepsPlayAndStopReachable() {
@@ -318,10 +321,13 @@ final class AppLifecycleTests: XCTestCase {
         ])
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
+            // T3: paused keeps Replay, Play and Stop on the left; the eye's slot stays in the region but is hidden.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 1,
-                trailingOuterInset: WaveformLayout.outerInset
+                leadingControlCount: 3,
+                trailingControlCountFromOuter: 2,
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                lowerSurfaceIsInteractive: false,
+                controlSpacing: VoiceBarNotchContract.readingControlSpacing
             )
         )
     }

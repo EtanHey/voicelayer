@@ -166,7 +166,7 @@ final class BarViewClickabilityTests: XCTestCase {
         ])
         XCTAssertEqual(
             makeHost(state: teleprompter, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 465, height: 228)
+            NSSize(width: 465, height: 195)
         )
     }
 
@@ -261,7 +261,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let host = makeHost(state: state, router: router)
 
         XCTAssertGreaterThan(host.bounds.width, Theme.pillSpeakingQueueWidth)
-        click(host, at: readbackReplayButtonCenter(in: host))
+        click(host, at: readbackReplayButtonCenter(in: host, state: state))
 
         XCTAssertEqual(router.replayCount, 1)
         XCTAssertEqual(router.primaryTapCount, 0)
@@ -284,13 +284,13 @@ final class BarViewClickabilityTests: XCTestCase {
 
         let host = makeHost(state: state, router: SpyCommandRouter())
 
-        click(host, at: readbackVisibilityButtonCenter(in: host))
+        click(host, at: readbackVisibilityButtonCenter(in: host, state: state))
         XCTAssertTrue(state.isTeleprompterDismissed)
 
-        click(host, at: readbackVisibilityButtonCenter(in: host))
+        click(host, at: readbackVisibilityButtonCenter(in: host, state: state))
         XCTAssertFalse(state.isTeleprompterDismissed)
 
-        click(host, at: readbackDismissButtonCenter(in: host))
+        click(host, at: readbackDismissButtonCenter(in: host, state: state))
         XCTAssertFalse(state.isTeleprompterReadback)
         XCTAssertNil(state.teleprompterText)
     }
@@ -328,34 +328,23 @@ final class BarViewClickabilityTests: XCTestCase {
         let teleprompter = makeInteractivePanelHost(
             state: state,
             router: router,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                lowerControlCount: 2,
-                lowerSurfaceIsInteractive: true
-            )
+            configuration: readingConfiguration(state, lowerSurfaceIsInteractive: true)
         )
         let leadingWing = teleprompter.layout.presentation.geometry.leadingWingWidth
-        XCTAssertEqual(leadingWing, VoiceBarNotchContract.fixedWingWidth)
-        let pauseRect = teleprompter.controlRects[0]
+        // T3: Replay, Stop and Pause; Pause keeps the core-side slot.
+        XCTAssertEqual(leadingWing, VoiceBarNotchContract.readingLeadingWingWidth(slots: 3))
+        let pauseRect = teleprompter.controlRects[1]
         let pausePoint = NSPoint(x: pauseRect.midX, y: pauseRect.midY)
         XCTAssertLessThan(pauseRect.maxX, teleprompter.layout.visibleContentRect.minX
             + teleprompter.layout.presentation.geometry.coreOriginX)
         XCTAssertTrue(teleprompter.layout.containsInteractiveContent(pausePoint))
         XCTAssertNotNil(teleprompter.host.hitTest(pausePoint))
 
-        // A hidden-but-playing read: pause on the left, the eye and Stop on the right.
+        // A hidden-but-playing read: Replay, Stop and Pause on the left; the time, the eye and 1× on the right.
         state.dismissTeleprompter()
-        let speaking = makeInteractivePanelHost(
-            state: state,
-            router: router,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-            )
-        )
+        let speaking = makeInteractivePanelHost(state: state, router: router, configuration: readingConfiguration(state))
         XCTAssertEqual(speaking.layout.presentation.visualState, .compactStatus)
-        let compactPause = speaking.controlRects[0]
+        let compactPause = speaking.controlRects[1]
         click(speaking.host, at: NSPoint(x: compactPause.midX, y: compactPause.midY))
         XCTAssertEqual(sent.last?["cmd"] as? String, "pause")
         XCTAssertNotNil(sent.last?["playback_elapsed_ms"] as? Int)
@@ -365,17 +354,9 @@ final class BarViewClickabilityTests: XCTestCase {
             "type": "playback_state", "state": "paused", "playback_id": "p-1", "generation": 2,
             "offset_ms": 900, "chunk_offset_ms": 900,
         ])
-        let paused = makeInteractivePanelHost(
-            state: state,
-            router: router,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 1,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-            )
-        )
+        let paused = makeInteractivePanelHost(state: state, router: router, configuration: readingConfiguration(state))
         XCTAssertEqual(paused.layout.presentation.visualState, .compactStatus)
-        let playRect = paused.controlRects[0]
+        let playRect = paused.controlRects[1]
         click(paused.host, at: NSPoint(x: playRect.midX, y: playRect.midY))
         XCTAssertEqual(sent.last?["cmd"] as? String, "resume")
         XCTAssertEqual(sent.last?["playback_id"] as? String, "p-1")
@@ -393,19 +374,11 @@ final class BarViewClickabilityTests: XCTestCase {
         var sent: [[String: Any]] = []
         state.sendCommand = { sent.append($0) }
         let router = SpyCommandRouter()
-        let speaking = makeInteractivePanelHost(
-            state: state,
-            router: router,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 3,
-                trailingControlCountFromOuter: 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-            )
-        )
+        let speaking = makeInteractivePanelHost(state: state, router: router, configuration: readingConfiguration(state))
         XCTAssertEqual(speaking.layout.presentation.visualState, .compactStatus)
         XCTAssertEqual(speaking.layout.presentation.geometry.leadingWingWidth,
-                       VoiceBarPresentation.playbackLeadingWingWidth(slotCount: 3))
-        // From the core outward: the "+2" count, Next, then pause.
+                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 4))
+        // T3, from the core outward: Replay, Next (carrying its "+2" badge), Pause, Stop.
         let next = speaking.controlRects[1]
         click(speaking.host, at: NSPoint(x: next.midX, y: next.midY))
         XCTAssertEqual(sent.last?["cmd"] as? String, "read_next")
@@ -423,36 +396,40 @@ final class BarViewClickabilityTests: XCTestCase {
     /// its command exactly once, leaves the panel non-key and keeps the frontmost app; the readback row (Replay,
     /// Hide) proves hit acceptance on the panel and its one dispatch on a plain non-key window (see below).
     func testEveryPillControlAcceptsTheFirstClickWhileThePanelIsNotKey() {
-        // Pause on the left and Stop (outermost) on the right of a hidden-but-playing read.
+        // T3: Replay (core-side), Pause and Stop in the left wing of a hidden-but-playing read.
         var speaking = makeSpeakingPanel(count: 0)
-        firstClick(speaking.panel, control: 0)
-        XCTAssertEqual(speaking.sent.cmds, ["pause"])
         firstClick(speaking.panel, control: 1)
+        XCTAssertEqual(speaking.sent.cmds, ["pause"])
+        firstClick(speaking.panel, control: 2)
         XCTAssertEqual(speaking.router.stopCount, 1)
+        firstClick(speaking.panel, control: 0)
+        XCTAssertEqual(speaking.router.replayCount, 1)
 
         // Play on a paused read.
         speaking = makeSpeakingPanel(count: 0, paused: true)
-        firstClick(speaking.panel, control: 0)
+        firstClick(speaking.panel, control: 1)
         XCTAssertEqual(speaking.sent.cmds, ["resume"])
         XCTAssertEqual(speaking.router.stopCount, 0)
 
-        // Next, from the core outward after the "+1" count.
+        // Next, beside Replay, carrying its "+1" badge.
         speaking = makeSpeakingPanel(count: 1)
         firstClick(speaking.panel, control: 1)
         XCTAssertEqual(speaking.sent.cmds, ["read_next"])
         XCTAssertEqual(speaking.sent.commands.last?["request_id"] as? String, "r-A")
         XCTAssertEqual(speaking.router.stopCount, 0)
 
-        // Replay and Hide in a retained readback's teleprompter row. A click there makes the production panel key
-        // (becomesKeyOnlyIfNeeded, unchanged here), which HYG2's offscreen isolation forbids in tests, so the real
-        // panel proves their hit targets accept the first mouse-down and a non-key window proves one dispatch each.
+        // T3: a retained readback's Replay (left wing) and X and Hide (right wing). A click into the mounted
+        // teleprompter's panel makes the production panel key (becomesKeyOnlyIfNeeded, unchanged here), which HYG2's
+        // offscreen isolation forbids in tests, so the real panel proves their hit targets accept the first
+        // mouse-down and a non-key window proves one dispatch each.
         let readback = makeReadbackPanel()
         XCTAssertNotNil(acceptedFirstMousePoint(readback.panel, control: 0))
         XCTAssertNotNil(acceptedFirstMousePoint(readback.panel, control: 1))
+        XCTAssertNotNil(acceptedFirstMousePoint(readback.panel, control: 2))
         let host = makeHost(state: readback.state, router: readback.router)
-        click(host, at: readbackReplayButtonCenter(in: host))
+        click(host, at: readbackReplayButtonCenter(in: host, state: readback.state))
         XCTAssertEqual(readback.router.replayCount, 1)
-        click(host, at: readbackVisibilityButtonCenter(in: host))
+        click(host, at: readbackVisibilityButtonCenter(in: host, state: readback.state))
         XCTAssertTrue(readback.state.isTeleprompterDismissed)
         XCTAssertEqual(readback.router.replayCount, 1)
         XCTAssertEqual(readback.router.stopCount, 0)
@@ -498,11 +475,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let panel = makeInteractivePanelHost(
             state: state,
             router: router,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
-                trailingControlCountFromOuter: paused ? 1 : 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-            )
+            configuration: readingConfiguration(state)
         )
         XCTAssertEqual(panel.layout.presentation.visualState, .compactStatus)
         return (panel, sent, router)
@@ -516,12 +489,9 @@ final class BarViewClickabilityTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         XCTAssertTrue(state.canReplay)
         let router = SpyCommandRouter()
-        // Replay, Hide and Dismiss: the configuration VoiceBarApp builds for a retained readback.
-        let panel = makeInteractivePanelHost(
-            state: state,
-            router: router,
-            configuration: VoiceBarNotchInteractionConfiguration(lowerControlCount: 3)
-        )
+        // T3: Replay on the left; X and Hide on the right: the configuration VoiceBarApp builds for a readback.
+        let panel = makeInteractivePanelHost(state: state, router: router,
+                                             configuration: readingConfiguration(state, lowerSurfaceIsInteractive: true))
         XCTAssertEqual(panel.layout.presentation.visualState, .teleprompter)
         return (panel, state, router)
     }
@@ -593,13 +563,19 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "bolt.horizontal.circle.fill").pointSize, 10)
 
         let source = try barViewSource()
-        let speakingStart = try XCTUnwrap(source.range(of: "private var notchSpeakingTrailingContent"))
-        let waveformStart = try XCTUnwrap(source.range(of: "private var notchWaveform"))
-        let speaking = String(source[speakingStart.lowerBound..<waveformStart.lowerBound])
-        XCTAssertFalse(speaking.contains("notchButton("))
-        XCTAssertEqual(speaking.components(separatedBy: "notchTeleprompterButton(").count - 1, 2)
-        XCTAssertTrue(speaking.contains("icon: \"eye\""))
-        XCTAssertTrue(speaking.contains("icon: \"stop.fill\""))
+        // T3: the reading right wing (time, eye, 1× or X) and left wing (Replay, Stop, Pause) keep the compact optics.
+        let trailingStart = try XCTUnwrap(source.range(of: "private var notchReadingTrailingContent"))
+        let waveformStart = try XCTUnwrap(source.range(of: "private func notchWaveform"))
+        let trailing = String(source[trailingStart.lowerBound..<waveformStart.lowerBound])
+        XCTAssertFalse(trailing.contains("notchButton("))
+        XCTAssertEqual(trailing.components(separatedBy: "notchTeleprompterButton(").count - 1, 1)
+        XCTAssertTrue(trailing.contains("\"eye\" : \"eye.slash\""))
+        XCTAssertTrue(trailing.contains("notchTeleprompterDismissButton"))
+        let leadingStart = try XCTUnwrap(source.range(of: "private func readingLeadingControls"))
+        let pauseStart = try XCTUnwrap(source.range(of: "private func playbackPauseButton"))
+        let leading = String(source[leadingStart.lowerBound..<pauseStart.lowerBound])
+        XCTAssertTrue(leading.contains("notchTeleprompterButton(icon: \"arrow.counterclockwise\""))
+        XCTAssertTrue(leading.contains("notchTeleprompterButton(icon: \"stop.fill\""))
 
         let teleprompterStart = try XCTUnwrap(source.range(of: "private func notchTeleprompterButton"))
         XCTAssertTrue(source[teleprompterStart.lowerBound...]
@@ -758,8 +734,8 @@ final class BarViewClickabilityTests: XCTestCase {
     func testQueuedSpeechUsesOnlyASmallBadgeBesideTeleprompterControls() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("if state.queuedSpeakCount > 0"))
-        XCTAssertTrue(source.contains("Text(\"+\\(state.queuedSpeakCount) queued\")"))
+        // T3: the stopped panel's "+N queued" chip (TeleprompterA.queuedChip) sits at the text's bottom-trailing edge.
+        XCTAssertTrue(source.contains("let chip = TeleprompterA.queuedChip(state.queuedSpeakCount)"))
         XCTAssertFalse(source.contains("private var queueVisualization"))
     }
 
@@ -1164,16 +1140,50 @@ final class BarViewClickabilityTests: XCTestCase {
         NSPoint(x: host.bounds.minX + 24, y: host.bounds.midY)
     }
 
-    private func readbackReplayButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.midX - 28, y: 23)
+    /// T3: a wing control's centre in a plain (outset-free) BarView host: `leading` counts from the core outward,
+    /// `trailingFromOuter` from the right wing's outer edge inward (reading spacing).
+    private func wingSlotCenter(in host: NSView, state: VoiceState, leading: Int? = nil,
+                                trailingFromOuter: Int? = nil) -> NSPoint {
+        let geometry = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
+            mode: state.mode, hasTeleprompterText: state.teleprompterText != nil,
+            isTeleprompterDismissed: state.isTeleprompterDismissed, isTeleprompterReadback: state.isTeleprompterReadback,
+            isPlaybackPaused: state.isPlaybackPaused,
+            readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+            isCollapsed: state.isCollapsed)).geometry
+        let size = VoiceBarNotchContract.material.compactControlSize
+        let pitch = size + VoiceBarNotchContract.readingControlSpacing
+        let originX = (host.bounds.width - geometry.totalWidth) / 2
+        let y = host.bounds.maxY - geometry.topHeight / 2
+        if let leading {
+            return NSPoint(x: originX + geometry.coreOriginX - VoiceBarNotchContract.compactCoreContentInset
+                - size / 2 - CGFloat(leading) * pitch, y: y)
+        }
+        let outer = originX + geometry.topOriginX + geometry.topWidth - VoiceBarNotchContract.fixedWingContentInset
+        return NSPoint(x: outer - size / 2 - CGFloat(trailingFromOuter ?? 0) * pitch, y: y)
     }
 
-    private func readbackVisibilityButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.midX, y: 23)
+    private func readbackReplayButtonCenter(in host: NSView, state: VoiceState) -> NSPoint {
+        wingSlotCenter(in: host, state: state, leading: 0)
     }
 
-    private func readbackDismissButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.midX + 28, y: 23)
+    private func readbackVisibilityButtonCenter(in host: NSView, state: VoiceState) -> NSPoint {
+        wingSlotCenter(in: host, state: state, trailingFromOuter: 1)
+    }
+
+    private func readbackDismissButtonCenter(in host: NSView, state: VoiceState) -> NSPoint {
+        wingSlotCenter(in: host, state: state, trailingFromOuter: 0)
+    }
+
+    /// T3: the configuration VoiceBarApp builds for reading (see `readingInteractionConfiguration`).
+    private func readingConfiguration(_ state: VoiceState, lowerSurfaceIsInteractive: Bool = false)
+        -> VoiceBarNotchInteractionConfiguration {
+        let queued = (VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1) > 1 ? 1 : 0
+        return VoiceBarNotchInteractionConfiguration(
+            leadingControlCount: (state.mode == .speaking ? 3 : 1) + queued,
+            trailingControlCountFromOuter: 2,
+            trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+            lowerSurfaceIsInteractive: lowerSurfaceIsInteractive,
+            controlSpacing: VoiceBarNotchContract.readingControlSpacing)
     }
 
     private func statusIconCenter(in host: NSView) -> NSPoint {

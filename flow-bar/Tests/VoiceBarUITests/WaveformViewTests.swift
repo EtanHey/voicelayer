@@ -60,8 +60,8 @@ final class WaveformViewTests: XCTestCase {
         )
         XCTAssertEqual(speakingSlot.coreInset, VoiceBarNotchContract.fixedWingContentInset)
         XCTAssertEqual(speakingSlot.outerInset, VoiceBarNotchContract.fixedWingContentInset)
-        XCTAssertEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth,
-                       "the reading wing keeps the fixed width when calibration changes")
+        XCTAssertEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.readingTrailingWingWidth,
+                       "the reading wing keeps its width when calibration changes")
         XCTAssertLessThanOrEqual(
             WaveformBarStyle.wingLevels.viewportWidth,
             VoiceBarNotchContract.fixedWingWidth - 2 * VoiceBarNotchContract.fixedWingContentInset,
@@ -81,10 +81,10 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertFalse(barSource.contains("Color.clear\n                    .frame"))
         XCTAssertFalse(barSource.contains("horizontalPadding:"))
         let compact = try XCTUnwrap(barSource.components(separatedBy: "private var notchCompactStatusContent").dropFirst().first)
-            .components(separatedBy: "private var notchSpeakingTrailingContent")[0]
-        let speaking = try XCTUnwrap(barSource.components(separatedBy: "private var notchSpeakingTrailingContent").dropFirst().first)
-            .components(separatedBy: "private var notchWaveform")[0]
-        XCTAssertTrue(compact.contains("case .speaking:\n            notchSpeakingTrailingContent"))
+            .components(separatedBy: "private var notchReadingTrailingContent")[0]
+        let speaking = try XCTUnwrap(barSource.components(separatedBy: "private var notchReadingTrailingContent").dropFirst().first)
+            .components(separatedBy: "private func notchWaveform")[0]
+        XCTAssertTrue(compact.contains("case .speaking:\n            notchReadingTrailingContent"))
         XCTAssertTrue(speaking.contains("return HStack("))
         // 2.3 U2: the reading wing shows the time, not a waveform.
         XCTAssertEqual(speaking.components(separatedBy: "notchWaveform").count - 1, 0)
@@ -402,7 +402,7 @@ final class WaveformViewTests: XCTestCase {
         let trailingBranch = try XCTUnwrap(source.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchCompactStatusContent")[0]
         let compact = try XCTUnwrap(source.components(separatedBy: "private var notchCompactStatusContent").dropFirst().first)
-            .components(separatedBy: "private var notchSpeakingTrailingContent")[0]
+            .components(separatedBy: "private var notchReadingTrailingContent")[0]
 
         XCTAssertTrue(leadingCompactStatusBranch.contains("if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {"))
         XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner()"))
@@ -414,7 +414,7 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertTrue(trailingBranch.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent"))
         XCTAssertTrue(compact.contains("historyButton\n                settingsButton"))
         XCTAssertFalse(compact.contains("notchWaveform"))
-        XCTAssertTrue(source.contains("private var notchWaveform"))
+        XCTAssertTrue(source.contains("private func notchWaveform"))
         XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))
     }
 

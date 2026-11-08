@@ -65,11 +65,8 @@ struct VoiceBarSetupAttentionDot: View {
 /// 2.3 U2: the reading-aloud time in the right wing (`.time` in the mocks: 12 pt tabular digits, the secondary
 /// ink). Its width fills the fixed wing's content lane beside Stop exactly, so Stop's hit rect is fixed.
 public struct VoiceBarReadingTimeLabel: View {
-    /// 57.5 pt lane − 6 pt spacing − 20 pt Stop.
-    public static let width: CGFloat = VoiceBarNotchContract.fixedWingWidth
-        - 2 * VoiceBarNotchContract.fixedWingContentInset
-        - VoiceBarNotchContract.material.compactControlSpacing
-        - VoiceBarNotchContract.material.compactControlSize
+    /// The 31.5 pt lane the fixed wing left beside Stop; T3 keeps it beside Show teleprompter and 1×.
+    public static let width: CGFloat = VoiceBarNotchContract.readingTimeLaneWidth
 
     let elapsedMilliseconds: () -> Int
     let color: Color

@@ -88,7 +88,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
     /// Read routing from the real renderer, rather than reproducing a mode allowlist in the test.
     private func wingModes() throws -> Set<String> {
         let text = try source("flow-bar/Sources/VoiceBarUI/BarView.swift")
-        let body = try between(text, "private var notchCompactStatusContent:", "private var notchSpeakingTrailingContent:")
+        let body = try between(text, "private var notchCompactStatusContent:", "private var notchReadingTrailingContent:")
         let regex = try NSRegularExpression(pattern: "(?s)case\\s+([^:]+):(.+?)(?=\\n\\s*case|\\z)")
         var result = Set<String>()
         for match in regex.matches(in: body, range: NSRange(body.startIndex..., in: body)) {

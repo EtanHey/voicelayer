@@ -16,18 +16,19 @@ final class TeleprompterAHandleTests: XCTestCase {
         XCTAssertGreaterThan(before, -TeleprompterA.lineHeight)
     }
 
+    /// T3: the panel hugs text + scrubber + handle (163 pt for three lines, was 196 with the footer and control row).
     func testSurfaceHeightFollowsTheSettledLines() {
-        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 3), 196)
-        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 8), 316)
-        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 12), 316)
-        XCTAssertEqual(VoiceBarNotchContract.geometry(for: .teleprompter).lowerSurfaceHeight, 196)
+        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 3), 163)
+        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 8), 283)
+        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 12), 283)
+        XCTAssertEqual(VoiceBarNotchContract.geometry(for: .teleprompter).lowerSurfaceHeight, 163)
         let resolve = { (lines: Int) in
             VoiceBarNotchPresentation.resolve(hasTeleprompter: true, isRecording: false, hasCompactStatus: false,
                                               teleprompterLines: lines, isHovered: false, isKeyboardFocused: false)
         }
-        XCTAssertEqual(resolve(3).geometry.lowerSurfaceHeight, 196)
-        XCTAssertEqual(resolve(5).geometry.lowerSurfaceHeight, 244)
-        XCTAssertEqual(resolve(8).geometry.lowerSurfaceHeight, 316)
+        XCTAssertEqual(resolve(3).geometry.lowerSurfaceHeight, 163)
+        XCTAssertEqual(resolve(5).geometry.lowerSurfaceHeight, 211)
+        XCTAssertEqual(resolve(8).geometry.lowerSurfaceHeight, 283)
         // Lines never leak into another surface.
         let history = VoiceBarNotchPresentation.resolve(hasTeleprompter: false, isRecording: false, hasCompactStatus: false,
                                                         hasHistoryPanel: true, teleprompterLines: 8,
@@ -54,7 +55,7 @@ final class TeleprompterAHandleTests: XCTestCase {
         model.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false)
         model.setTeleprompterLines(6)
         XCTAssertEqual(model.teleprompterLines, 6)
-        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, 268, "the hit region takes the lines synchronously")
+        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, 235, "the hit region takes the lines synchronously")
         model.setTeleprompterLines(40)
         XCTAssertEqual(model.teleprompterLines, 8)
     }
@@ -66,16 +67,18 @@ final class TeleprompterAHandleTests: XCTestCase {
         state.teleprompterVisibleLines = 7
         var input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true, readQueueLeadingSlotCount: 1)
         input.teleprompterLines = state.teleprompterVisibleLines
-        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.lowerSurfaceHeight, 292)
+        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.lowerSurfaceHeight, 259)
     }
 
-    func testLowerRowHasNoStopAndTheHandleIsKeyboardOnlyFocusable() throws {
+    /// T3 (Etan, QA 2026-11-08 7:52): every teleprompter control is in a wing; the panel is text, scrubber, handle.
+    func testThePanelCarriesNoControlsAndTheHandleIsKeyboardOnlyFocusable() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"), encoding: .utf8)
-        let lower = try XCTUnwrap(bar.components(separatedBy: "private var notchTeleprompterControls").dropFirst().first)
-            .components(separatedBy: "// MARK: - Error state")[0]
-        XCTAssertFalse(lower.contains("stop.fill"), "the teleprompter's lower row carries no Stop")
+        let lower = try XCTUnwrap(bar.components(separatedBy: "private var notchLowerPanelContent").dropFirst().first)
+            .components(separatedBy: "private func queuedChip")[0]
+        XCTAssertFalse(lower.contains("notchTeleprompterButton"), "the teleprompter panel carries no control row")
+        XCTAssertFalse(lower.contains("stop.fill"), "Stop is in the left wing")
         let view = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterAView.swift"),
                               encoding: .utf8)
         XCTAssertTrue(view.contains(".focusable(interactions: .activate)"))

@@ -60,7 +60,16 @@ final class TeleprompterControlGeometryTests: XCTestCase {
             state.handleEvent(speaking)
             let router = Router()
             let presentation = VoiceBarNotchPresentationModel()
-            presentation.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false)
+            // As VoiceBarApp does: the envelope takes the resolved reading wing widths for the state on screen.
+            func syncEnvelope() {
+                let resolved = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
+                    mode: state.mode, hasTeleprompterText: state.teleprompterText != nil,
+                    isTeleprompterReadback: state.isTeleprompterReadback, readQueueLeadingSlotCount: 1,
+                    isCollapsed: state.isCollapsed))
+                presentation.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false,
+                                                       teleprompterLeadingWingWidth: resolved.geometry.leadingWingWidth)
+            }
+            syncEnvelope()
             let host = NSHostingView(rootView:
                 BarView(state: state, commandRouter: router, onOpenSettings: {}, onOpenHistory: {},
                         presentationModel: presentation, includesPanelOutsets: true)
@@ -81,13 +90,16 @@ final class TeleprompterControlGeometryTests: XCTestCase {
             settle(host)
             XCTAssertEqual(presentation.isReducedMotionEnabled, reduceMotion)
 
+            // T3: Replay is the left wing's core-side slot; the eye and the terminal slot (1× while reading, X once
+            // stopped) are the right wing's two outer slots.
             let replay = try frame("Replay", in: host)
             let eye = try frame("Hide teleprompter", in: host)
-            let terminal = eye.offsetBy(dx: eye.width + 10, dy: 0)
+            let terminal = eye.offsetBy(dx: eye.width + VoiceBarNotchContract.readingControlSpacing, dy: 0)
             let accessibility = elements(host)
             XCTAssertFalse(accessibility.contains { $0.label == "Dismiss teleprompter" })
-            XCTAssertFalse(accessibility.contains { $0.children.isEmpty && localFrame($0, in: host).intersects(terminal) },
-                           "The reserved terminal slot must expose no AX element")
+            XCTAssertFalse(accessibility.contains {
+                $0.role == NSAccessibility.Role.button.rawValue && localFrame($0, in: host).intersects(terminal)
+            }, "While reading, the terminal slot holds the 1× label, not a control")
             XCTAssertNotNil(try button("Stop speaking", in: host), "Stop stays in the wing")
             try image(host, name: "speaking", reduceMotion: reduceMotion)
 
@@ -106,6 +118,7 @@ final class TeleprompterControlGeometryTests: XCTestCase {
             XCTAssertTrue(state.isTeleprompterDismissed, "The local hit probe must reach real controls")
             state.showTeleprompter()
             state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            syncEnvelope()
             settle(host)
             XCTAssertTrue(state.isTeleprompterReadback)
             let readbackReplay = try frame("Replay", in: host)
@@ -115,6 +128,7 @@ final class TeleprompterControlGeometryTests: XCTestCase {
             XCTAssertEqual(eye.minX, readbackEye.minX, accuracy: 0.5, "Eye, Reduce Motion=\(reduceMotion)")
             XCTAssertEqual(terminal.width, dismiss.width, accuracy: 0.5)
             XCTAssertEqual(terminal.height, dismiss.height, accuracy: 0.5)
+            XCTAssertEqual(terminal.minX, dismiss.minX, accuracy: 0.5, "X takes the 1× slot")
             try image(host, name: "readback", reduceMotion: reduceMotion)
             print("GEO0 reduceMotion=\(reduceMotion) Replay.x=\(replay.minX)->\(readbackReplay.minX) "
                   + "Eye.x=\(eye.minX)->\(readbackEye.minX) terminal=\(dismiss.size)")
@@ -125,6 +139,7 @@ final class TeleprompterControlGeometryTests: XCTestCase {
             replaying["playback_id"] = "geo0-replayed-player"
             replaying["generation"] = 2
             state.handleEvent(replaying)
+            syncEnvelope()
             settle(host)
             XCTAssertEqual(state.mode, .speaking)
             XCTAssertFalse(state.isTeleprompterReadback)

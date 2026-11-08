@@ -46,7 +46,6 @@ final class WingsU2Tests: XCTestCase {
             ("history", resolve(.idle, hovered: true, historyOpen: true), .history),
             ("recording (F5)", resolve(.recording), .recording),
             ("transcribing", resolve(.transcribing), .compactStatus),
-            ("reading aloud, collapsed", resolve(.speaking, isTeleprompterDismissed: true), .compactStatus),
         ]
         for (name, presentation, visualState) in states {
             XCTAssertEqual(presentation.visualState, visualState, name)
@@ -57,11 +56,19 @@ final class WingsU2Tests: XCTestCase {
         }
     }
 
-    func testReadingAloudWithTheTeleprompterKeepsTheFixedWings() {
-        let presentation = resolve(.speaking, hasTeleprompterText: true)
-        XCTAssertEqual(presentation.visualState, .teleprompter)
-        XCTAssertEqual(presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
-        XCTAssertEqual(presentation.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
+    /// T3 (Etan, QA 2026-11-08 7:52–8:21: replay/stop/pause on the left; timer, eye and 1× on the right; "both wings
+    /// slightly wider"): reading aloud, open or collapsed, has its own wider wings instead of the fixed 73.5 pt pair.
+    func testReadingAloudHasTheWiderReadingWingsOpenOrCollapsed() {
+        for presentation in [resolve(.speaking, hasTeleprompterText: true),
+                             resolve(.speaking, isTeleprompterDismissed: true)] {
+            XCTAssertEqual(presentation.geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: 3),
+                           accuracy: 0.001)
+            XCTAssertEqual(presentation.geometry.trailingWingWidth, VoiceBarNotchContract.readingTrailingWingWidth,
+                           accuracy: 0.001)
+            XCTAssertGreaterThan(presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+            XCTAssertGreaterThan(presentation.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+            XCTAssertLessThanOrEqual(presentation.geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
+        }
     }
 
     /// Deviation (mock silent): an Ask recording's lock is a third control, and a queued read's Next + "+N" are
