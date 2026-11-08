@@ -16,6 +16,10 @@ const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const originalGate = process.env.VOICELAYER_UPDATE_GATE_PATH;
 const spies: Array<{ mockRestore(): void }> = [];
 const drain = () => expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+const prepare = () => {
+  drain(); const ack = { lease, activeOperations: 0, openArchives: 0 };
+  expect(updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, proof).kind).toBe("APPLIED");
+};
 
 describe("picker mutation participates in update drain", () => {
   beforeEach(() => {
@@ -35,7 +39,7 @@ describe("picker mutation participates in update drain", () => {
     const select = spyOn(controller, "selectRecognizer").mockImplementation(async () => {
       throw Error("selection must not reach the controller");
     }); spies.push(select);
-    drain();
+    prepare();
     expect(await handleSocketCommand({ cmd: "set_recognizer", recognizer: "parakeet", id: "blocked-picker" }))
       .toMatchObject({ type: "ack", command: "set_recognizer", id: "blocked-picker", outcome: "reject",
         reason: expect.stringContaining("UPDATE_BUSY"), recognizer_status: readRecognizerStatus() });
@@ -80,7 +84,7 @@ describe("picker mutation participates in update drain", () => {
   });
   test("closed gate refuses delete before touching model files", async () => {
     const remove = spyOn(management, "deleteRecognizer").mockImplementation(() => { throw Error("must not delete"); }); spies.push(remove);
-    drain();
+    prepare();
     expect(await handleSocketCommand({ cmd: "delete_recognizer", engine: "parakeet", id: "delete-drain" }))
       .toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY"), recognizer_status: readRecognizerStatus() });
     expect(remove).not.toHaveBeenCalled();
@@ -89,7 +93,7 @@ describe("picker mutation participates in update drain", () => {
   test("closed gate refuses download and residency before provider work", async () => {
     const transfer = spyOn(downloads, "downloadRecognizer").mockImplementation(async () => { throw Error("must not download"); }); spies.push(transfer);
     const residency = spyOn(controller, "setRecognizerResidency").mockImplementation(async () => { throw Error("must not load"); }); spies.push(residency);
-    drain();
+    prepare();
     for (const command of [{ cmd: "download_recognizer", engine: "parakeet" }, { cmd: "set_recognizer_residency", engine: "whisper", action: "load" }] as const)
       expect(await handleSocketCommand(command)).toMatchObject({ outcome: "reject", reason: expect.stringContaining("UPDATE_BUSY"), recognizer_status: readRecognizerStatus() });
     expect(transfer).not.toHaveBeenCalled(); expect(residency).not.toHaveBeenCalled();

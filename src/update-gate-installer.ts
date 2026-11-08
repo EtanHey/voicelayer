@@ -1,5 +1,6 @@
+import { drainLedgerStatus, formatDrainStatus, type PendingParticipant } from "./update-gate-drain-status";
 import { randomUUID } from "node:crypto";
-import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, UnsafeSuccessorError, type InstallerParticipant } from "./update-gate-installer-participant";
+import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, UnsafeSuccessorError, type InstallerParticipant, type InstallerEvidence } from "./update-gate-installer-participant";
 import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -258,6 +259,24 @@ export type BootstrapInstall = {
   onRequested(lease: UpdateGateLease): void;
   onCommitted(): void;
 };
+export const DEFAULT_DRAIN_TIMEOUT_MS = 120_000;
+const PREPARED_RECHECK_TIMEOUT_MS = 2000;
+function drainTimeoutMs(): number {
+  const value = process.env.VOICELAYER_UPDATE_DRAIN_TIMEOUT_MS;
+  if (value === undefined) return DEFAULT_DRAIN_TIMEOUT_MS;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > DEFAULT_DRAIN_TIMEOUT_MS)
+    throw Error("invalid VOICELAYER_UPDATE_DRAIN_TIMEOUT_MS (1..120000)");
+  return parsed;
+}
+function writeDrainReceipt(lease: UpdateGateLease, reason: string, status: string): void {
+  const path = `${updateGateFilePath()}.drain-${lease.operationId}.json`;
+  const fd = openSync(path, "wx", 0o600);
+  try { writeFileSync(fd, JSON.stringify({ lease, reason, status, at: new Date().toISOString() }) + "\n"); fsyncSync(fd); }
+  finally { closeSync(fd); }
+  const directory = openSync(dirname(path), "r");
+  try { fsyncSync(directory); } finally { closeSync(directory); }
+}
 export async function runGatedInstall(command: string[], harnessParticipant?: InstallerParticipant, bootstrap?: BootstrapInstall): Promise<number> {
   assertGatePath();
   if (!command.length) throw Error("UNKNOWN: missing installer command");
@@ -286,6 +305,8 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
     ownerId: randomUUID(), targetSha: process.env.VOICELAYER_UPDATE_TARGET_SHA ?? "" };
   if (!updateGateLeaseSchema.safeParse(lease).success) throw Error("UNKNOWN: verified target SHA required");
+  const drainBudget = drainTimeoutMs();
+  let drainDeadline = Infinity, preparedDeadline = Infinity, timedOut = false, timeoutReason = "", lastStatus = "", lastProof: InstallerEvidence | undefined;
   let requested = false, committed = false, commitAttempted = false, commitUncertain = false, completed = false, cancelled = false, displayedPhase = "";
   const pastCommit = () => committed || commitUncertain;
   const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const;
@@ -297,12 +318,48 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     process.on(name, handler);
     return [name, handler] as const;
   });
+  const pending = (): PendingParticipant[] => lastProof?.pending ?? (lastProof?.ready ? [] :
+    (["native", "daemon"] as const).map(participant => ({ participant, reply: lastProof?.phase ?? "no reply" })));
+  const status = () => formatDrainStatus(pending(), drainLedgerStatus());
+  const checkPrecommit = () => {
+    if (cancelled || bootstrap?.cancelled()) { cancelled = true; throw Error("UPDATE_CANCELLED"); }
+    if (performance.now() >= Math.min(drainDeadline, preparedDeadline)) {
+      timedOut = true; lastStatus = status();
+      timeoutReason = preparedDeadline < drainDeadline ? `prepared recheck timed out after ${PREPARED_RECHECK_TIMEOUT_MS} ms`
+        : `drain timed out after ${drainBudget} ms`;
+      throw Error(`${timeoutReason}: ${lastStatus}`);
+    }
+  };
+  // Bound even a participant that never settles. A late read-only refresh cannot
+  // authorize a transition: every locked mutation checks the deadline again.
+  const waitPrecommit = <T>(work: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+    const timer = setInterval(() => { try { checkPrecommit(); } catch (error) { clearInterval(timer); reject(error); } }, 10);
+    work.then(value => { clearInterval(timer); try { checkPrecommit(); resolve(value); } catch (error) { reject(error); } },
+      error => { clearInterval(timer); reject(error); });
+  });
+  const refreshPrecommit = async () => {
+    checkPrecommit();
+    const observed = lastProof?.participants ?? lastProof?.pending;
+    lastProof = { ready: false, phase: "no reply", pending: observed?.map(p => ({ ...p, reply: "no reply" })) };
+    try { lastProof = await waitPrecommit(participant.refresh(lease)); }
+    catch (error) {
+      if (!(error && typeof error === "object" && "replyLost" in error && error.replyLost === true)) throw error;
+      lastProof = { ready: false, phase: "no reply" };
+    }
+    checkPrecommit();
+    lastStatus = status();
+    if (displayedPhase !== lastStatus) {
+      console.error(`[update-gate] Update when idle: ${lastStatus}; Cancel: Ctrl-C (before commit)`);
+      displayedPhase = lastStatus;
+    }
+    return lastProof;
+  };
   const verify: ParticipantProof = state => safeParticipantProof(() => ({ ready: participant.verify(state) }));
   const acquire = <T>(read: () => T): Promise<T> => participant.withAcquisitionProof
     ? participant.withAcquisitionProof(read) : retryInstallerAcquisition(read);
   const transition = async (command: UpdateGateCommand) => {
     const apply = () => {
-      if (cancelled || bootstrap?.cancelled()) { cancelled = true; throw Error("UPDATE_CANCELLED"); }
+      checkPrecommit();
       const confirm: ParticipantProof = state => {
         if (!verify(state)) return false;
         if (command.kind === "COMMIT") return persistInstallerController(updateGateFilePath(), {
@@ -335,15 +392,12 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     const request = await transition({ kind: "REQUEST", lease });
     if (request.kind !== "APPLIED") throw Error("UNKNOWN: drain request refused");
     requested = true;
+    drainDeadline = performance.now() + drainBudget;
     bootstrap?.onRequested(lease);
     while (!cancelled && !bootstrap?.cancelled()) {
-      const proof = await participant.refresh(lease);
-      if (displayedPhase !== proof.phase) {
-        console.error(`[update-gate] Update when idle: ${proof.phase}; Cancel: Ctrl-C (before commit)`);
-        displayedPhase = proof.phase;
-      }
+      const proof = await refreshPrecommit();
       const ack = await acquire(() => {
-        if (cancelled || bootstrap?.cancelled()) { cancelled = true; throw Error("UPDATE_CANCELLED"); }
+        checkPrecommit();
         return acknowledgeVoiceDrain(lease, verify, { throwOnContention: true });
       });
       if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; }
@@ -353,10 +407,21 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
       }
       if (ack && proof.ready && proof.native && proof.daemon) {
         const prepared = await transition({ kind: "PREPARE", lease, native: proof.native, daemon: proof.daemon });
-        if (prepared.kind !== "APPLIED") throw Error("UNKNOWN: preparation refused");
+        if (prepared.kind !== "APPLIED") {
+          // A registration can land after the ACK and before PREPARE's lock.
+          // Preserve the in-lock refusal and retry the entire proof round.
+          const state = await retryContention(() => readInstallerGateState(), () => false);
+          if (state.kind !== "DRAINING" || !sameLease(state.lease, lease)) throw Error("UNKNOWN: preparation refused");
+          await waitPrecommit(Bun.sleep(20)); continue;
+        }
+        preparedDeadline = performance.now() + PREPARED_RECHECK_TIMEOUT_MS;
         if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; } // PREPARE retries await backoff, allowing Cancel to arrive.
         // PREPARED bytes alone cannot authorize COMMIT; obtain another live round trip.
-        await participant.refresh(lease);
+        const refreshed = await refreshPrecommit();
+        if (!refreshed.ready || !refreshed.native || !refreshed.daemon) {
+          // PREPARED no longer admits voice; do not park a failed recheck here.
+          throw Error(`UNKNOWN: prepared participant recheck refused: ${lastStatus}`);
+        }
         if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; }
         const commit = await transition({ kind: "COMMIT", lease });
         if (commit.kind !== "APPLIED") throw Error("UNKNOWN: commit refused; mutation not authorized");
@@ -378,7 +443,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
         completed = await completeGatedInstall(lease, result, controllerIdentity, undefined, participant, child.pid);
         return completed ? 0 : result || 1;
       }
-      await Bun.sleep(200);
+      await waitPrecommit(Bun.sleep(Math.min(200, drainDeadline - performance.now())));
     }
     return 130;
   } catch (error) {
@@ -395,7 +460,15 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     throw error;
   } finally {
     if (pastCommit() && !completed) console.error("[update-gate] COMMITTED or uncertain: admission retained closed pending verified completion/recovery");
-    try { if (requested && !pastCommit()) await cancelLease(lease); }
+    try {
+      if (requested && !pastCommit()) {
+        await cancelLease(lease);
+        if (timedOut) {
+          console.error(`[update-gate] ${timeoutReason}; CANCEL restored OPEN: ${lastStatus}`);
+          writeDrainReceipt(lease, timeoutReason, lastStatus);
+        }
+      }
+    }
     finally { for (const [name, handler] of handlers) process.off(name, handler); }
   }
 }
