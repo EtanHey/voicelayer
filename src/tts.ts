@@ -1200,9 +1200,12 @@ class PlaybackQueueManager {
         if (this.captureAdmission === owned) this.captureAdmission = undefined;
         const scope = this.captureParkedScope;
         const read = this.captureParkedRead;
+        if (read && !read.job.completed) {
+          if (!this.parked) this.parked = read;
+          else this.cancel({ id: read.job.id }, undefined, "replaced");
+        }
         this.captureParkedRead = undefined;
         this.captureParkedScope = undefined;
-        if (read && !read.job.completed) this.parked = read;
         const pending = preparationParkedRead()?.pendingChunk;
         if (scope && ((read && this.parked === read) ||
             (pending?.identity.id === scope.id && pending?.identity.generation === scope.generation))) {

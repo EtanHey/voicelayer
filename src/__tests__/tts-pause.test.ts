@@ -83,6 +83,21 @@ async function pauseAt4200() {
   return { ...started, paused, trim };
 }
 
+it("W1 release keeps a newer prompt park and settles the borrowed read", async () => {
+  const { handle } = await pauseAt4200();
+  await tts.awaitCurrentPlayback({ forCaptureAdmission: true });
+  const admission = tts.reserveCaptureAdmission()!;
+  const prompt = tts.playAudioNonBlocking(`${TEST_TMP}/prompt.mp3`, { text: "Question?", durationMs: 1000,
+    onQueued: job => { admission.admit(job, () => {}); } });
+  try {
+    await players.at(1);
+    expect(tts.pausePlayback({ id: prompt.id }, 0).outcome).toBe("accept");
+    admission.release();
+    expect(events.find(e => e.type === "playback_outcome" && e.playback_id === handle.id)).toMatchObject({ reason: "replaced" });
+    expect(tts.resumePlayback({ id: prompt.id }).outcome).toBe("accept");
+  } finally { admission.release(); tts.cancelPlayback({ id: prompt.id }); }
+});
+
 describe("playback transition journal", () => {
   it.each(["user", "f5", "f5-to-user"] as const)("records every owned %s pause/resume without text", async (variant) => {
     const lines: string[] = [];
