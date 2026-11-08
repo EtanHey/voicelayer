@@ -21,8 +21,8 @@
     "formal/ptt-silence-timeout/NoRenewalMutant.cfg": "8086bcbf5f618d61bab9ba9946a7009d172548f64f5d7deff4a5b8b8846c05fd",
     "formal/ptt-silence-timeout/AppendWhilePausedMutant.cfg": "703863d43d6decfc4cedd9455c98c8593c749b9bc32f70193913edbc9a2893c2",
     "formal/ptt-silence-timeout/Fixed.cfg": "0471d70635258942bdbc8b1fd58390f8718add14a41ff3a3f94ba27d35a5a874",
-    "src/input.ts": "98713c0fed12b12de8e98a522c8e4b78faa360c013afcef2b1dfbe72172d4a8a",
-    "src/__tests__/input-durability.test.ts": "3ff3cedc6faeb5c9fcafb260aa6f2adf254b9912876276752fafc34efd3e2abd",
+    "src/input.ts": "7d664485da9ffc59803bd07df4289f93f6892b01914a258ae148a603f285d188",
+    "src/__tests__/input-durability.test.ts": "906cb6a7d4bf7c88a9846ad266e907ef7707d19211d4f17b501f1dbcb967d156",
     "src/recording-pause.ts": "210914f612dcf9363f33a6175809ef2563118cd89efdb1490b653225ad2251be"
   },
   "mutants": {
@@ -106,8 +106,8 @@
       "kind": "temporal",
       "target": "SettlesAfterSilence",
       "status": "EXPECTED_FAIL",
-      "generated": 435118,
-      "distinct": 97721
+      "generated": 453556,
+      "distinct": 101522
     },
     "NoRenewalMutant": {
       "role": "mutant",
@@ -130,8 +130,8 @@
       "kind": "temporal",
       "target": "SilenceTimesOut",
       "status": "EXPECTED_FAIL",
-      "generated": 431284,
-      "distinct": 106243
+      "generated": 443517,
+      "distinct": 109027
     },
     "AppendWhilePausedMutant": {
       "role": "mutant",

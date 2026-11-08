@@ -3,8 +3,8 @@
   "kind": "temporal",
   "target": "SettlesAfterSilence",
   "status": "EXPECTED_FAIL",
-  "generated": 435118,
-  "distinct": 97721,
+  "generated": 453556,
+  "distinct": 101522,
   "trace": [
     "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  endedBy |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
     "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  quiet |-> 1,\n  wall |-> 1,\n  event |-> \"tick\",\n  endedBy |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
@@ -13,6 +13,6 @@
     "s = [ phase |-> \"recording\",\n  speech |-> TRUE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 2,\n  event |-> \"speech\",\n  endedBy |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<\"word\", \"word\">>,\n  said |-> <<\"word\", \"word\">>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
     "s = [ phase |-> \"recording\",\n  speech |-> TRUE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 2,\n  event |-> \"pause\",\n  endedBy |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 1,\n  owed |-> 1,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<\"word\", \"word\">>,\n  said |-> <<\"word\", \"word\">>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
     "s = [ phase |-> \"ended\",\n  speech |-> TRUE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 2,\n  event |-> \"end\",\n  endedBy |-> \"stop\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 1,\n  pcm |-> <<\"word\", \"word\">>,\n  said |-> <<\"word\", \"word\">>,\n  saved |-> <<\"word\", \"word\">>,\n  text |-> <<>> ]",
-    "Finished checking temporal properties in 00s at 2026-11-08 15:50:08"
+    "Finished checking temporal properties in 00s at 2026-11-08 17:22:03"
   ]
 }
