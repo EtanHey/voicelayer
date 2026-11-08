@@ -224,10 +224,10 @@ public struct DictationFocusedTargetEligibility {
     }
 
     /// Terminal surfaces need identity/security evidence, but often expose AXGroup.
-    public func typingHostRejectionReason(into pid: pid_t, allowsNonTextRole: Bool = false) -> String? {
+    public func typingHostRejectionReason(into pid: pid_t, allowsTerminalGroup: Bool = false) -> String? {
         guard processIdentifier == pid else { return "focused_pid_mismatch" }
         guard !isSecure else { return "secure_target" }
-        guard allowsNonTextRole || ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "") else { return "non_text_role" }
+        guard (allowsTerminalGroup && role == "AXGroup") || ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "") else { return "non_text_role" }
         guard diagnosticDetails["enabledAttribute"] != "false" else { return "not_enabled" }
         guard diagnosticDetails["enabledAttribute"] != "error" else { return "enabled_read_failed" }
         guard matchesCurrentFocus() else { return "focus_revalidation_failed" }
@@ -4672,7 +4672,7 @@ public final class VoiceState {
             || chromiumFamilyAppDetector($0) } ?? false
         let permitsTypingHost = usesTyping && eligibility.map {
             $0.typingHostRejectionReason(into: app?.processIdentifier ?? -1,
-                allowsNonTextRole: TerminalPasteTargets.isTerminal(app?.bundleIdentifier)) == nil
+                allowsTerminalGroup: TerminalPasteTargets.isTerminal(app?.bundleIdentifier)) == nil
         } == true
         guard let app, let eligibility,
               permitsTypingHost || eligibility.permitsTyping(into: app.processIdentifier) else {
@@ -4853,7 +4853,7 @@ public final class VoiceState {
                         ])
                     }
                     let deliveredText = isTerminalTarget
-                        ? TerminalPasteTargets.strippingSingleTrailingNewline(text)
+                        ? TerminalPasteTargets.typingText(text, bundleIdentifier: pasteTargetBundleID)
                         : text
 
                     let freshInsertionHandler =
@@ -4974,22 +4974,24 @@ public final class VoiceState {
                     // negotiable: Shift+F5 pastes the last transcript; Cmd+V is his clipboard
                     // and only his clipboard; dictation never writes the pasteboard.
                     //
-                    // So the transcript is TYPED as printable text only, each line break sent
-                    // as Shift+Return (SynthesizedTyping): no control character ever rides in
+                    // So the transcript is TYPED as printable text only. TerminalPasteTargets
+                    // folds line breaks outside cmux; retained breaks use Shift+Return
+                    // (SynthesizedTyping). No control character ever rides in
                     // a key event. This route serves terminals, known rich-host automatic
                     // delivery, explicit re-paste and verified editable native targets.
                     // There is no clipboard fallback anywhere, by design: a failed
                     // paste is recoverable with Shift+F5, a paste over his clipboard is not.
                     //
-                    // Known limit: Shift+Return is a new line only to an app that tells it
-                    // apart from Return — Claude Code and Codex in cmux do. A bare shell
-                    // prompt does not, so a multi-line dictation there submits at each break.
+                    // cmux retains its shipped Shift+Return behavior for kitty-protocol
+                    // composers. Other terminals fold newlines to spaces so a bare shell
+                    // never receives a Return or Shift+Return from a dictated line break.
                     logDiagnostic("paste_path", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
                         "path": "typing",
                         "terminalTarget": boolString(isTerminalTarget),
-                        "trailingNewlineStripped": boolString(deliveredText != text),
+                        "trailingNewlineStripped": boolString(isTerminalTarget && TerminalPasteTargets.strippingSingleTrailingNewline(text) != text),
+                        "terminalNewlinesFolded": boolString(isTerminalTarget && deliveredText != TerminalPasteTargets.strippingSingleTrailingNewline(text)),
                     ])
                     let typed: Bool
                     if let ownedTarget, let ownedTextTypingHandler {

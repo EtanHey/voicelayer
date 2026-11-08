@@ -4,7 +4,7 @@ import XCTest
 
 final class VoiceStatePasteTests: XCTestCase {
     private static let guardedTerminals: Set<String> = [
-        "com.cmuxterm.app", "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
+        "com.cmuxterm.app", "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "dev.warp.Warp-Preview", "dev.warp.WarpOss",
         "com.mitchellh.ghostty", "net.kovidgoyal.kitty", "com.github.wez.wezterm", "org.alacritty",
     ]
 
@@ -15,7 +15,7 @@ final class VoiceStatePasteTests: XCTestCase {
                     let harness = TerminalDelayHarness(bundle: bundle)
                     var receivedPIDs: [pid_t] = []
                     harness.state.guardedTextTypingHandler = { text, pid in
-                        XCTAssertEqual(text, TerminalDelayHarness.delivered)
+                        XCTAssertEqual(text, harness.expectedTyped)
                         receivedPIDs.append(pid)
                         return result
                     }
@@ -93,7 +93,7 @@ final class VoiceStatePasteTests: XCTestCase {
         }
     }
 
-    func testAllTerminalsKeepFocusedAutomaticAndHistoryDeliveryUnchanged() {
+    func testAllTerminalsDeliverFocusedAutomaticAndHistoryWithTypingPolicy() {
         for bundle in Self.guardedTerminals.sorted() {
             for source in ["auto", "settings_history"] {
                 let harness = TerminalDelayHarness(bundle: bundle)
@@ -127,6 +127,7 @@ final class VoiceStatePasteTests: XCTestCase {
         enum Focus: CaseIterable { case unchanged, sameBundleNewPID, otherApp, unavailable }
         static let raw = "ADD שלום 👩‍💻\nsecond line\n"
         static let delivered = "ADD שלום 👩‍💻\nsecond line"
+        var expectedTyped: String { target.bundleIdentifier == "com.cmuxterm.app" ? Self.delivered : "ADD שלום 👩‍💻 second line" }
         let state = VoiceState(
             recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
@@ -217,10 +218,12 @@ final class VoiceStatePasteTests: XCTestCase {
 
         func assertOneTypedDelivery(_ context: String) {
             XCTAssertEqual(guardedPIDs, ["auto", "settings_history"].contains(source) ? [51515] : [], context)
-            XCTAssertEqual(typed, [Self.delivered], context)
-            XCTAssertEqual(keystrokes, [[.text("ADD שלום 👩‍💻"), .newline, .text("second line")]], context)
+            XCTAssertEqual(typed, [expectedTyped], context)
+            if target.bundleIdentifier == "com.cmuxterm.app" {
+                XCTAssertEqual(keystrokes, [[.text("ADD שלום 👩‍💻"), .newline, .text("second line")]], context)
+            } else { XCTAssertFalse(keystrokes.flatMap { $0 }.contains(.newline), context) }
             XCTAssertEqual(outcomes, ["typed"], context)
-            XCTAssertEqual(state.confirmationText, Self.delivered, context)
+            XCTAssertEqual(state.confirmationText, expectedTyped, context)
             assertRetainedWithoutSideEffects(context)
         }
     }
@@ -317,6 +320,7 @@ final class VoiceStatePasteTests: XCTestCase {
     func testKnownRichHostsAndEveryTerminalBypassNewEligibilityForAllDeliveryPlans() {
         let text = "ADD שלום 👩‍💻\nsecond line"
         for bundle in TerminalPasteTargets.bundleIdentifiers.union(["com.t3tools.t3code", "net.imput.helium"]) {
+            let delivered = TerminalPasteTargets.isTerminal(bundle) && bundle != "com.cmuxterm.app" ? "ADD שלום 👩‍💻 second line" : text
             let state = deliveryState(bundleIdentifier: bundle)
             var typed: [String] = []
             state.focusedTargetEligibilityProvider = { XCTFail("Preserve known host: \(bundle)"); return nil }
@@ -327,9 +331,9 @@ final class VoiceStatePasteTests: XCTestCase {
             state.repasteTranscript(text, source: "settings_history")
             state.repasteLastTranscript(source: "shift_f5")
             state.repasteTranscript(text, source: "context_menu_history")
-            XCTAssertEqual(typed, [text, text, text, text], bundle)
+            XCTAssertEqual(typed, [delivered, delivered, delivered, delivered], bundle)
             XCTAssertEqual(state.latestReusableTranscript, text, bundle)
-            if TerminalPasteTargets.isTerminal(bundle) { XCTAssertEqual(state.confirmationText, text, bundle) }
+            if TerminalPasteTargets.isTerminal(bundle) { XCTAssertEqual(state.confirmationText, delivered, bundle) }
         }
     }
 
@@ -2429,7 +2433,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": Self.multiLineSpecimen + "\n",
         ])
 
-        XCTAssertEqual(typedTexts, [Self.multiLineSpecimen])
+        XCTAssertEqual(typedTexts, [Self.multiLineSpecimen.replacingOccurrences(of: "\n", with: " ")])
         XCTAssertEqual(clipboardWrites, [], "the pasteboard is never written")
     }
 

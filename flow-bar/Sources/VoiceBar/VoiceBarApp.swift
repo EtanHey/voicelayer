@@ -1479,7 +1479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     || ["com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS"].contains(bundle)
                     || app.map { ChromiumFamilyApps.contains(bundleURL: $0.bundleURL) } == true
                 return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost,
-                    allowsNonTextRole: TerminalPasteTargets.isTerminal(bundle))
+                    allowsTerminalGroup: TerminalPasteTargets.isTerminal(bundle))
             }
         }
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
