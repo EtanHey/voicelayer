@@ -21,13 +21,31 @@ final class RecordingDetailsProjectionTests: XCTestCase {
     }
     func testUnknownBuildAndAskRowLabelsUseOnlyStoredFacts() throws {
         let unknown = try JSONDecoder().decode(RecordingAppBuild.self, from: Data(#"{"version":null,"git_commit":null,"build_time_utc":null,"source":null}"#.utf8))
-        XCTAssertEqual(unknown.label, "Unknown build")
+        XCTAssertNil(unknown.label)
         let build = try JSONDecoder().decode(RecordingAppBuild.self, from: Data(#"{"version":"2.3.0","git_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#.utf8))
         let entry = SettingsAskHistoryEntry(id: "fixture", dayKey: "2026-11-08", askID: "fixture", createdAt: Date(),
             questionText: "", questionAudioPath: nil, responseTranscript: "", responseAudioPath: nil,
             appBuild: build, retranscribedBy: unknown)
         let row = SettingsHistoryRowModel.ask(entry)
-        XCTAssertEqual(row.buildLabel, "2.3.0 · aaaaaaaa"); XCTAssertEqual(row.retranscribedByLabel, "Unknown build")
+        XCTAssertEqual(row.buildLabel, "2.3.0 · aaaaaaaa")
+        let unknownEntry = SettingsAskHistoryEntry(id: "unknown", dayKey: "2026-11-08", askID: "unknown", createdAt: Date(),
+            questionText: "", questionAudioPath: nil, responseTranscript: "", responseAudioPath: nil, appBuild: unknown)
+        XCTAssertNil(SettingsHistoryRowModel.ask(unknownEntry).buildLabel)
+        let unknownRecording = SettingsHistoryEntry(id: "unknown", dayKey: "2026-11-08", recordingID: "unknown", createdAt: Date(),
+            transcript: "", audioPath: URL(fileURLWithPath: "/synthetic/audio.wav"), appBuild: unknown)
+        XCTAssertFalse(SettingsHistoryDiagnosticsCopy.facts(snapshot: nil, entry: unknownRecording, attemptHistory: nil, selectedAttemptID: nil)
+            .contains { $0.title == "Built from" })
+    }
+    func testDirtyCheckoutAndFirstTranscriberAppearOnlyInDetails() throws {
+        let build = try JSONDecoder().decode(RecordingAppBuild.self, from: Data(#"{"version":"2.3.0","git_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","git_describe":"v2.3.0-dirty","daemon_source":"checkout"}"#.utf8))
+        XCTAssertEqual(build.label, "2.3.0 · aaaaaaaa (dirty, checkout)")
+        let entry = SettingsHistoryEntry(id: "fixture", dayKey: "2026-11-08", recordingID: "fixture", createdAt: Date(),
+            transcript: "", audioPath: URL(fileURLWithPath: "/synthetic/audio.wav"), appBuild: build, transcribedBy: build)
+        let facts = SettingsHistoryDiagnosticsCopy.facts(snapshot: nil, entry: entry, attemptHistory: nil, selectedAttemptID: nil)
+        XCTAssertTrue(facts.contains { $0.title == "Transcribed by" }); XCTAssertFalse(facts.contains { $0.title == "Re-transcribed by" })
+        XCTAssertTrue(facts.contains { $0.title == "Build daemon source" && $0.value == "checkout" })
+        XCTAssertTrue(facts.contains { $0.title == "Build description" && $0.value == "v2.3.0-dirty" })
+        XCTAssertTrue(facts.contains { $0.title == "Build commit" && $0.value == String(repeating: "a", count: 40) })
     }
     func testOptionalExecutionFactsStayAttemptLocalAndBounded() {
         let absent = SettingsHistoryAttemptRecord(id: "legacy", status: .completed)

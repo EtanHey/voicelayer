@@ -248,7 +248,6 @@ struct SettingsHistoryRowModel: Equatable {
     let timestamp: String
     let parts: [SettingsHistoryMediaPart]
     var buildLabel: String? = nil
-    var retranscribedByLabel: String? = nil
 
     static func recording(_ entry: SettingsHistoryEntry) -> SettingsHistoryRowModel {
         // F1: spoken length (≤ the trimmed length) replaces the trimmed one; entries archived before it was
@@ -309,7 +308,7 @@ struct SettingsHistoryRowModel: Equatable {
                     durationLabel: durationLabels.audio,
                     transcribedDurationLabel: durationLabels.transcribed
                 ),
-            ], buildLabel: entry.appBuild?.label, retranscribedByLabel: entry.retranscribedBy?.label
+            ], buildLabel: entry.appBuild?.label
         )
     }
 
@@ -2056,8 +2055,7 @@ public struct SettingsView: View {
                     }
                     historyMediaPartRow(part)
                 }
-                if let build = row.buildLabel { Text("Built from \(build)").font(.caption).foregroundStyle(.secondary) }
-                if let build = row.retranscribedByLabel { Text("Re-transcribed by \(build)").font(.caption).foregroundStyle(.secondary) }
+                if let build = row.buildLabel { Text("Built from \(build)").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

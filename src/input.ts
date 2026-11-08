@@ -1,4 +1,4 @@
-import { recordingAppBuild, tagRetranscription, type RecordingAppBuild } from "./recording-build";
+import { recordingAppBuild, tagTranscription, type RecordingAppBuild } from "./recording-build";
 import { TakeStageTimings, withTakeStageTimings, measureTakeStage, measureTakeStageAsync } from "./take-stage-timings";
 import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
@@ -909,6 +909,7 @@ interface VoiceBarRecordingMetadata {
   audio_sha256: string;
   app_version: string | null;
   app_build: RecordingAppBuild;
+  transcribed_by?: RecordingAppBuild;
   provenance: RecordingProvenance;
   schema_version: number;
 }
@@ -949,6 +950,7 @@ interface VoiceAskRecordingMetadata {
   prompt_delivery?: "text-only";
   app_version: string | null;
   app_build: RecordingAppBuild;
+  transcribed_by?: RecordingAppBuild;
   provenance: RecordingProvenance;
   schema_version: 4 | 5;
 }
@@ -1219,6 +1221,7 @@ function writeVoiceBarRecordingArchive(
     audio_sha256: createHash("sha256").update(input.audioBytes).digest("hex"),
     app_version: provenance.app_version,
     app_build: recordingAppBuild(),
+    ...(input.transcript ? { transcribed_by: recordingAppBuild() } : {}),
     provenance,
     schema_version: 2,
   };
@@ -1429,6 +1432,7 @@ export function finalizeVoiceAskArchive(
   const metadata: VoiceAskRecordingMetadata = {
     ...archive.metadata,
     app_build: archive.metadata.app_build ?? recordingAppBuild({}),
+    transcribed_by: recordingAppBuild(),
     ...(input.transcribedDurationMs === undefined
       ? {}
       : { transcribed_duration_ms: input.transcribedDurationMs }),
@@ -3682,7 +3686,6 @@ export async function waitForInput(
             processingDurationMs: dictationReceipt?.processing_duration_ms,
             polishStatus: finalized.polishStatus,
             requireMetadataUpdate: true,
-            initialTranscription: true,
           });
           archivedRecordingPath = voiceBarArchivePath;
         } else {
@@ -3901,14 +3904,13 @@ export function updateArchivedTranscript(
     polishStatus?: STTPolishStatus | null;
     provenanceProbe?: RecordingProvenanceProbe;
     requireMetadataUpdate?: boolean;
-    initialTranscription?: boolean;
   },
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
   atomicWriteFile(transcriptPath, text);
 
   updateArchivedRecordingMetadata(audioPath, (metadata) => {
-    if (!transcription.initialTranscription) tagRetranscription(metadata);
+    tagTranscription(metadata);
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
@@ -4516,7 +4518,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
         },
       );
     }
-    tagRetranscription(metadata);
+    tagTranscription(metadata, snapshot.metadata);
     delete metadata.last_stt_gate_removal;
     delete metadata.not_transcribed_reason;
     delete metadata.not_transcribed_detail;

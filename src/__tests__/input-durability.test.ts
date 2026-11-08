@@ -2614,7 +2614,8 @@ describe("input recording durability", () => {
     expect(await (surface === "archive" ? retranscribeRecordingCapture(archive) : retranscribeLastCapture())).toBe(backendText);
     const metadata = voiceBarArchiveMetadata(archive);
     expect(metadata.app_build).toEqual(recordingAppBuild());
-    expect(metadata.retranscribed_by).toEqual(recordingAppBuild());
+    expect(metadata.transcribed_by).toEqual(recordingAppBuild());
+    expect(metadata.retranscribed_by).toBeUndefined();
     expect(metadata.transcription_status).toBe("transcribed");
     expect(metadata).not.toHaveProperty("last_stt_gate_removal");
     expect(metadata).not.toHaveProperty("not_transcribed_detail");

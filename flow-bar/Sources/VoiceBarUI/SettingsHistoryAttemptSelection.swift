@@ -77,6 +77,6 @@ struct SettingsHistoryAttemptSelection: Equatable {
             processingDurationMs: entry.processingDurationMs, micDisconnectedAtMs: entry.micDisconnectedAtMs,
             micDisconnectNote: entry.micDisconnectNote, deliveryNote: entry.deliveryNote, modelLabel: entry.modelLabel,
             performanceEffort: entry.performanceEffort, inputDeviceLabel: entry.inputDeviceLabel,
-            appBuild: entry.appBuild, retranscribedBy: entry.retranscribedBy, missingTranscript: nil)
+            appBuild: entry.appBuild, retranscribedBy: entry.retranscribedBy, transcribedBy: entry.transcribedBy, missingTranscript: nil)
     }
 }

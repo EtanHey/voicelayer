@@ -342,8 +342,10 @@ struct SettingsHistoryDiagnosticsCopy {
         if let created = snapshot?.capturedAt ?? entry?.createdAt {
             facts.append(.init(title: "Created", value: dateTime(created, locale: locale, timeZone: timeZone)))
         }
-        if let build = snapshot?.appBuild ?? entry?.appBuild { facts.append(.init(title: "Built from", value: build.label)) }
-        if let build = snapshot?.retranscribedBy ?? entry?.retranscribedBy { facts.append(.init(title: "Re-transcribed by", value: build.label)) }
+        facts += buildFacts(snapshot?.appBuild ?? entry?.appBuild, title: "Built from", prefix: "Build")
+        let retry = snapshot?.retranscribedBy ?? entry?.retranscribedBy
+        facts += buildFacts(retry ?? snapshot?.transcribedBy ?? entry?.transcribedBy,
+            title: retry == nil ? "Transcribed by" : "Re-transcribed by", prefix: "Transcription")
         // Stored input_device_name values, never the currently selected microphone.
         if let mic = snapshot?.inputDeviceName ?? entry?.inputDeviceLabel { facts.append(.init(title: "Microphone", value: mic)) }
         if let language = snapshot?.languageSetting { facts.append(.init(title: "Language setting", value: language)) }
@@ -375,6 +377,15 @@ struct SettingsHistoryDiagnosticsCopy {
             }
         }
         return facts
+    }
+
+    private static func buildFacts(_ build: RecordingAppBuild?, title: String, prefix: String) -> [SettingsHistoryFact] {
+        guard let build, let label = build.label else { return [] }
+        let fields = [("commit", build.gitCommit), ("description", build.gitDescribe), ("time (UTC)", build.buildTimeUTC),
+                      ("source", build.source), ("daemon source", build.daemonSource)]
+        return [SettingsHistoryFact(title: title, value: label)] + fields.compactMap { key, value in
+            value.map { SettingsHistoryFact(title: "\(prefix) \(key)", value: SettingsHistoryDiagnosticPrivacy.text(String($0.prefix(160)))) }
+        }
     }
 
     /// Display name for the engine that WROTE the text of a recorded backend chain (`parakeet-resident`,
