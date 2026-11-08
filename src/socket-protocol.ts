@@ -182,8 +182,8 @@ export interface AudioLevelEvent {
 
 export interface ErrorEvent {
   type: "error";
-  /** A failed seek preserves ongoing playback and its client clock. */
-  source?: "seek";
+  /** Playback failures remain actionable while a returned read shares the UI with Ask processing. */
+  source?: "seek" | "playback";
   message: string;
   /** true = transient error (will recover), false = needs user action. */
   recoverable: boolean;
@@ -450,6 +450,7 @@ export type SocketEvent = RecordingJobIdentity & (
   | UpdateGateDrainEvent
   | HistoryPlaybackGateEvent
   | ReadQueueEvent
+  | { type: "read_processing"; utterance_id: string; active: boolean }
   | StateEvent
   | SpeechEvent
   | SpeechWordsEvent

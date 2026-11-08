@@ -134,6 +134,36 @@ final class PlaybackPauseTests: XCTestCase {
         }
     }
 
+    func testCaptureEndKeepsReadingThroughProcessingAndItsFailure() {
+        let (state, _) = speakingState()
+        state.handleEvent(pausedEvent())
+        var prompt = speakingEvent(text: "Question?", playbackID: "ask-1", generation: 1)
+        prompt["preserves_paused_read"] = true
+        state.handleEvent(prompt)
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": true])
+        var resumed = speakingEvent(generation: 4, offset: 2500)
+        resumed["utteranceId"] = "read-1"
+        state.handleEvent(resumed)
+        let position = state.playbackElapsedMilliseconds()
+        XCTAssertTrue(state.showsReadingProcessingSpinner)
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 2)
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        XCTAssertEqual(state.mode, .speaking)
+        state.handleEvent(["type": "transcription", "text": ""])
+        state.handleEvent(["type": "error", "message": "Transcription failed", "recoverable": true])
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), position)
+        state.handleEvent(["type": "error", "source": "playback", "message": "Read failed", "recoverable": true])
+        XCTAssertEqual(state.mode, .error)
+        state.handleEvent(resumed)
+        state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": false])
+        XCTAssertFalse(state.showsReadingProcessingSpinner)
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 1)
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
     func testW1StoppedBorrowedReadCannotBeRestored() {
         let (state, _) = speakingState()
         state.handleEvent(pausedEvent())

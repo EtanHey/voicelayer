@@ -2018,6 +2018,51 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(texts).not.toContain("Charlie");
     });
 
+    it.each(["answer", "failure", "cancel", "finished", "pause-during-processing", "stop-during-processing", "user-paused", "stopped"])("CAPTURE-END read playback survives processing (%s)", async outcome => {
+      select("A", "Alpha interrupted selection."); await playerBarrier.at(0);
+      clockMs += 500;
+      const original = events.filter(e => e.state === "speaking").at(-1);
+      if (outcome === "user-paused") tts.pausePlayback();
+      if (outcome === "finished") select("B", "Bravo queued selection.");
+      const processing = deferred<void>(), result = deferred<string>();
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }),
+        spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => finishSyntheticCapture(async () => {
+          autoPlay = false;
+          if (outcome === "stopped") stopPlayback();
+          options?.onCaptureEnd?.(1000); effectiveStateSpy.mockReturnValue("transcribing");
+          options?.onPhaseChange?.("transcribing"); processing.resolve();
+          try { return await result.promise; } finally { effectiveStateSpy.mockReturnValue("idle"); }
+        })));
+      autoPlay = true;
+      const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      try {
+        await processing.promise; await settle();
+        const returns = () => events.filter(e => e.state === "speaking" && e.playback_id === original.playback_id).slice(1);
+        expect(returns()).toHaveLength(["user-paused", "stopped"].includes(outcome) ? 0 : 1);
+        if (returns().length) {
+          const park = events.find(e => e.type === "playback_state" && e.playback_id === original.playback_id && e.state === "paused");
+          expect(returns()[0]).toMatchObject({ utteranceId: original.utteranceId, playback_offset_ms: park.offset_ms });
+        }
+        if (outcome === "pause-during-processing") expect(tts.pausePlayback().outcome).toBe("accept");
+        if (outcome === "stop-during-processing") stopPlayback();
+        expect(() => playAudioNonBlocking("foreign.mp3", { text: "Foreign" })).toThrow();
+        if (outcome === "finished") {
+          players.at(-1)!.exit.resolve(0); await settle();
+          expect(events.some(e => e.state === "speaking" && e.request_id === "B")).toBe(false);
+        }
+        if (outcome === "cancel") expect(await handleSocketCommand({ cmd: "cancel" })).toMatchObject({ outcome: "accept" });
+        if (outcome === "failure" || outcome === "cancel") result.reject(Error("synthetic transcription failure"));
+        else result.resolve("an answer");
+        await answer; await settle();
+        expect(returns()).toHaveLength(["user-paused", "stopped"].includes(outcome) ? 0 : 1);
+        if (!["user-paused", "stopped", "pause-during-processing", "stop-during-processing"].includes(outcome)) expect(players.at(-1)!.killed).toBe(false);
+        expect(tts.isPlaybackPaused()).toBe(["user-paused", "pause-during-processing"].includes(outcome));
+        if (outcome === "finished") {
+          expect(events.some(e => e.state === "speaking" && e.request_id === "B")).toBe(true);
+        }
+      } finally { result.resolve("cleanup"); await answer; }
+    });
+
     it.each(["playing", "user-paused", "stopped"])("W1 Ask returns the interrupted read according to its prior state (%s)", async prior => {
       select("A", "Alpha interrupted selection."); await playerBarrier.at(0);
       clockMs += 500;
