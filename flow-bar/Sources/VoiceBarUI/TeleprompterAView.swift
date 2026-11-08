@@ -20,13 +20,21 @@ public struct TeleprompterAView: View {
     public let playbackElapsedMilliseconds: () -> Int
     public var onSpeechSeek: ((String, Int) -> Void)?
     public var onSeek: ((Int) -> Void)?
+    /// Lane B: the listening speed; the footer chip cycles it (nil hides the chip).
+    public var speed: Double = 1
+    public var onCycleSpeed: (() -> Void)?
+    /// Lane B: "previous read" (nil hides the button; disabled while no previous narration exists).
+    public var previousAvailable = false
+    public var onPrevious: (() -> Void)?
 
     public init(text: String, wordBoundaries: [TeleprompterBoundary] = [], displayBlocks: [TeleprompterDisplayBlock] = [],
                 hasCompleteDisplay: Bool = false, speechWords: SpeechWordTable? = nil, isPaused: Bool = false,
                 footerState: String? = nil, queuedCount: Int = 0, visibleLines: Int = 3,
                 onVisibleLinesChange: ((Int) -> Void)? = nil, onHandleDrag: ((Bool) -> Void)? = nil, columnWidth: CGFloat = TeleprompterA.columnWidth,
                 playbackElapsedMilliseconds: @escaping () -> Int,
-                onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil) {
+                onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil,
+                speed: Double = 1, onCycleSpeed: (() -> Void)? = nil,
+                previousAvailable: Bool = false, onPrevious: (() -> Void)? = nil) {
         self.text = text
         self.wordBoundaries = wordBoundaries
         self.displayBlocks = displayBlocks
@@ -42,6 +50,10 @@ public struct TeleprompterAView: View {
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.onSpeechSeek = onSpeechSeek
         self.onSeek = onSeek
+        self.speed = speed
+        self.onCycleSpeed = onCycleSpeed
+        self.previousAvailable = previousAvailable
+        self.onPrevious = onPrevious
     }
 
     @State private var cache = TeleprompterAModelCache()
@@ -105,7 +117,16 @@ public struct TeleprompterAView: View {
                 HStack(spacing: 0) {
                     if let decoration = layout.decoration { Text(decoration + " ").accessibilityHidden(true) }
                     if let separator = layout.separator { Text(separator).accessibilityHidden(true) }
-                    Button { seek(target) } label: { Text(layout.displayText) }
+                    // Lane B: a word is drawn whole. Fixed size means SwiftUI can never compress it to "Cod…"; a word
+                    // wider than the column alone scales down on its own line instead of being cut.
+                    Button { seek(target) } label: {
+                        if model.shrinks[word] {
+                            Text(layout.displayText).lineLimit(1).minimumScaleFactor(0.4)
+                                .frame(maxWidth: model.column - TeleprompterA.wrapSlack, alignment: .leading)
+                        } else {
+                            Text(layout.displayText).fixedSize()
+                        }
+                    }
                         .buttonStyle(.plain)
                         // Not `.disabled`: that would re-tint the tiers. No target = no hit and no seek.
                         .allowsHitTesting(target != nil)
@@ -114,7 +135,7 @@ public struct TeleprompterAView: View {
                 }
                 .foregroundStyle(ink)
                 .font(.system(size: TeleprompterA.fontSize, weight: layout.isHeading ? .semibold : .medium))
-                .padding(.leading, word == model.lines[line].lowerBound || layout.gluesToPrevious ? 0 : model.spacing)
+                .padding(.leading, word == model.lines[line].lowerBound || model.glued[word] ? 0 : model.spacing)
             }
         }
         .lineLimit(1)
@@ -131,10 +152,39 @@ public struct TeleprompterAView: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
+            if let onPrevious {
+                // Lane B: replay the previous narration; the read on screen waits, paused at its word.
+                Button(action: onPrevious) {
+                    Image(systemName: "backward.end.fill").font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                // Dimmed, never dead: with nothing to go back to the click says so (VoiceState.playPreviousRead).
+                .foregroundStyle(palette.secondary.color.opacity(previousAvailable ? 1 : 0.4))
+                .background(PillControlTooltip(text: "Previous read"))
+                .accessibilityLabel("Previous read")
+            }
+            if let onCycleSpeed {
+                // Lane B: 1× is a real control. Each click steps 0.75× · 1× · 1.25× · 1.5× · 2×. Leading side, so the
+                // trailing quarter stays the scrub labels' (TeleprompterScrubLiveCaseTests).
+                Button(action: onCycleSpeed) {
+                    Text(VoiceState.speedLabel(speed))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(palette.subtleTrack.color))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(palette.secondary.color)
+                .background(PillControlTooltip(text: "Playback speed"))
+                .accessibilityLabel("Playback speed")
+                .accessibilityValue(VoiceState.speedLabel(speed))
+            }
             Text(footerState)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(palette.secondary.color)
             Spacer(minLength: 0)
+
             if let chip = TeleprompterA.queuedChip(queuedCount) {
                 Text(chip)
                     .font(.system(size: 11, weight: .medium, design: .rounded))

@@ -555,6 +555,12 @@ public final class VoiceState {
     public private(set) var isPlaybackDurationGrowing = false
     public private(set) var playbackDurationMilliseconds: Int?
     private var playbackStartedAt: TimeInterval?
+    /// Lane B: audio ms per wall ms for the player on screen (its speaking edge's `playback_rate`; 1 = 1×).
+    public private(set) var playbackRate: Double = 1
+    /// Lane B: the listening speed the daemon applies to every player (`playback_session.speed`).
+    public private(set) var playbackSpeed: Double = 1
+    /// Lane B: a previous narration exists for "previous read" (`playback_session.previous_available`).
+    public private(set) var previousReadAvailable = false
     /// T1 (QA 2026-11-08 S1-F6r): no player exists while a read prepares, so there is no clock to run.
     public private(set) var isPlaybackPreparing = false
     /// T1: the player on screen ends here (global ms). Its position cannot pass the end of the audio it holds,
@@ -632,7 +638,8 @@ public final class VoiceState {
         var document: LongReadDocumentSnapshot
     }
 
-    private enum PlaybackPauseOwner: String { case user, f5 }
+    /// Lane B: `ask` is a read an Ask parked; the daemon restores it when the Ask ends.
+    private enum PlaybackPauseOwner: String { case user, f5, ask }
 
     private struct ParkedRead {
         let owner: PlaybackPauseOwner
@@ -2520,7 +2527,10 @@ public final class VoiceState {
             command["cmd"] = "resume"
         } else {
             command["cmd"] = "pause"
-            if sendsElapsed { command["playback_elapsed_ms"] = playbackElapsedMilliseconds() }
+            // Lane B (Etan, QA 2026-11-08 "pause jumps back to 0:00"): the clock reads 0 while a read prepares
+            // (between chunks, right after a resume). Only a live clock is sent; otherwise the daemon pauses at its
+            // own player position.
+            if sendsElapsed, sendsLivePlaybackClock { command["playback_elapsed_ms"] = playbackElapsedMilliseconds() }
             pendingPauseEpoch = playbackEpoch
         }
         pendingPlaybackPauseIDs.insert(id)
@@ -2591,7 +2601,7 @@ public final class VoiceState {
         playbackLongReadID = read.longReadID
         playbackReadbackID = read.readbackID
         playbackReadbackDurationMilliseconds = read.readbackDurationMs
-        playbackStartedAt = playbackAmplitudeClock() - Double(parked.offsetMs) / 1000
+        playbackStartedAt = playbackAmplitudeClock() - Double(parked.offsetMs) / 1000 / playbackRate
         if let playbackID = parked.playbackID, let generation = parked.generation {
             currentPlayback = (playbackID, generation)
         }
@@ -2775,12 +2785,57 @@ public final class VoiceState {
     public func playbackElapsedMilliseconds() -> Int {
         guard mode == .speaking, let playbackStartedAt, !isPlaybackPreparing else { return 0 }
         if isPlaybackPaused, let parkedRead { return clampedPlaybackPosition(parkedRead.offsetMs) }
-        let running = Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000).rounded())
+        let running = Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000 * playbackRate).rounded())
         return clampedPlaybackPosition(max(running, playbackClockFloorMilliseconds))
     }
 
     /// Whether the reading time is a live player position (not preparing, not ended).
     public var showsPlaybackClock: Bool { mode == .speaking && !isPlaybackPreparing }
+
+    /// Lane B: the clock is a real player position worth sending with a Pause (never the 0 of "no player").
+    var sendsLivePlaybackClock: Bool { showsPlaybackClock && playbackStartedAt != nil && !isPlaybackPaused }
+
+    static func playbackRate(_ value: Any?) -> Double {
+        guard let rate = (value as? NSNumber)?.doubleValue, rate.isFinite, rate > 0, rate <= 4 else { return 1 }
+        return rate
+    }
+
+    /// Lane B: the speed steps the teleprompter's speed chip cycles through. 1× is a real step.
+    public static let playbackSpeeds: [Double] = [0.75, 1, 1.25, 1.5, 2]
+
+    public static func nextPlaybackSpeed(after speed: Double) -> Double {
+        let index = playbackSpeeds.firstIndex(of: speed) ?? playbackSpeeds.firstIndex(of: 1)!
+        return playbackSpeeds[(index + 1) % playbackSpeeds.count]
+    }
+
+    public static func speedLabel(_ speed: Double) -> String {
+        let text = speed == speed.rounded() ? String(Int(speed)) : String(format: "%g", speed)
+        return "\(text)×"
+    }
+
+    /// Lane B: cycle the listening speed. A playing read continues from its word at the new speed.
+    @discardableResult
+    public func cyclePlaybackSpeed() -> String? {
+        guard let sendCommand else { return nil }
+        let id = UUID().uuidString
+        let next = Self.nextPlaybackSpeed(after: playbackSpeed)
+        playbackSpeed = next
+        sendCommand(["cmd": "set_playback_speed", "speed": next, "id": id])
+        return id
+    }
+
+    /// Lane B: replay the previous narration from its first word; the read on screen waits, paused at its word.
+    @discardableResult
+    public func playPreviousRead() -> String? {
+        guard let sendCommand else { return nil }
+        guard previousReadAvailable else {
+            showConfirmation("No previous read")
+            return nil
+        }
+        let id = UUID().uuidString
+        sendCommand(["cmd": "previous_read", "id": id])
+        return id
+    }
 
     private func clampedPlaybackPosition(_ milliseconds: Int) -> Int {
         let ends = [playbackChunkEndMilliseconds, playbackDurationMilliseconds].compactMap { $0 }.filter { $0 > 0 }
@@ -2791,7 +2846,7 @@ public final class VoiceState {
         guard !isPlaybackPaused, let envelope = playbackAmplitudeEnvelope,
               let startedAt = playbackAmplitudeStartedAt
         else { return 0 }
-        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000).rounded())
+        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000 * playbackRate).rounded())
         return envelope.level(elapsedMilliseconds: elapsedMilliseconds)
     }
 
@@ -2803,7 +2858,7 @@ public final class VoiceState {
         guard let envelope = playbackAmplitudeEnvelope,
               let startedAt = playbackAmplitudeStartedAt
         else { return nil }
-        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000).rounded())
+        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000 * playbackRate).rounded())
         return envelope.levels(elapsedMilliseconds: elapsedMilliseconds, barCount: 7)
     }
 
@@ -3352,7 +3407,8 @@ public final class VoiceState {
                 let playbackStart = playbackAmplitudeClock()
                 let offset = (event["playback_offset_ms"] as? NSNumber)?.doubleValue
                 let validOffset = offset.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
-                playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000
+                playbackRate = Self.playbackRate(event["playback_rate"])
+                playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000 / playbackRate
                 isPlaybackPreparing = isPreparing
                 playbackReadbackID = event["readback_id"] as? String
                 playbackReadbackDurationMilliseconds = (event["readback_duration_ms"] as? NSNumber)?.intValue
@@ -3649,6 +3705,11 @@ public final class VoiceState {
                 )
             }
 
+        case "playback_session":
+            // Lane B: the daemon's one PlaybackSession (formal/playback-session). Additive; the speaking and
+            // playback_state edges stay authoritative for what is on screen.
+            if let speed = (event["speed"] as? NSNumber)?.doubleValue, Self.playbackSpeeds.contains(speed) { playbackSpeed = speed }
+            previousReadAvailable = event["previous_available"] as? Bool ?? false
         case "playback_duration":
             // SCRUB1: a long read's total grows as chunks synthesize; `final` drops "so far".
             // Preparation has no duration yet; the first speaking edge carries its own.
@@ -4255,6 +4316,7 @@ public final class VoiceState {
         playbackAmplitudeEnvelope = nil
         playbackAmplitudeStartedAt = nil
         playbackStartedAt = nil
+        playbackRate = 1
         playbackDurationMilliseconds = nil
         playbackLongReadID = nil
         playbackReadbackDurationMilliseconds = nil

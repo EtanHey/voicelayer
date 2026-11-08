@@ -35,7 +35,8 @@ final class TeleprompterAModelTests: XCTestCase {
     func testMetricsMatchTheSpec() {
         XCTAssertEqual(TeleprompterA.lineHeight, 24)
         XCTAssertEqual(TeleprompterA.fontSize, 17)
-        XCTAssertEqual(TeleprompterA.columnWidth, 404)
+        // Lane B: the column follows the teleprompter body's whole text width (was a 404 pt cap).
+        XCTAssertEqual(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth)
         XCTAssertEqual(TeleprompterA.topFadeHeight, 16)
         XCTAssertEqual(TeleprompterA.footerHeight, 20)
         XCTAssertEqual(TeleprompterA.handleSize, CGSize(width: 34, height: 4))
@@ -59,7 +60,8 @@ final class TeleprompterAModelTests: XCTestCase {
     }
 
     func testFooterStateAndQueuedChip() {
-        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "Reading · 1×")
+        // Lane B: the speed is the footer's own chip now.
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "Reading")
         XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: false), "Paused")
         XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: true),
                        "Paused for your dictation · resumes after paste")

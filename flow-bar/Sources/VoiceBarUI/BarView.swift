@@ -1197,11 +1197,16 @@ public struct BarView: View {
                         presentationModel?.setTeleprompterLines(lines)
                     },
                     onHandleDrag: { presentationModel?.setTeleprompterHandlePullActive($0) },
-                    columnWidth: min(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth(
-                        coreWidth: notchPresentation.geometry.coreWidth)),
+                    // Lane B: the column is the body's whole text width (no 404 pt cap).
+                    columnWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
+                        coreWidth: notchPresentation.geometry.coreWidth),
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
                     onSpeechSeek: { state.seekSpeechWord(utteranceID: $0, wordIndex: $1) },
-                    onSeek: state.seek
+                    onSeek: state.seek,
+                    speed: state.playbackSpeed,
+                    onCycleSpeed: { state.cyclePlaybackSpeed() },
+                    previousAvailable: state.previousReadAvailable,
+                    onPrevious: { state.playPreviousRead() }
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {
