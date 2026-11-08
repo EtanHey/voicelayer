@@ -205,7 +205,8 @@ enum VoiceBarDaemonEnvironment {
 
     static func sanitizedDaemonEnvironment(
         from inherited: [String: String] = ProcessInfo.processInfo.environment,
-        path: String
+        path: String,
+        bundleInfo: [String: Any] = Bundle.main.infoDictionary ?? [:]
     ) -> [String: String] {
         var env = inherited
         let preservesQAOverrides = shouldPreserveQAOverrides(inherited)
@@ -217,6 +218,12 @@ enum VoiceBarDaemonEnvironment {
         }
         env.removeValue(forKey: preserveQAOverridesEnvironmentVariable)
         env.removeValue(forKey: legacyPreserveQAOverridesEnvironmentVariable)
+        // Overwrite inherited identities: only this running bundle can name its build.
+        for (key, plistKey) in [("VOICEBAR_VERSION", "CFBundleShortVersionString"),
+                                ("VOICEBAR_GIT_COMMIT", "GitCommit"), ("VOICEBAR_BUILD_TIME_UTC", "BuildTimeUTC")] {
+            env[key] = bundleInfo[plistKey] as? String
+        }
+        env["VOICEBAR_BUILD_SOURCE"] = bundleInfo.isEmpty ? nil : "VoiceBar.Info.plist"
         env["PATH"] = path
         env.removeValue(forKey: "VOICELAYER_ALLOW_SOCKET_RECLAIM")
         env.removeValue(forKey: "QA_VOICE_ALLOW_SOCKET_RECLAIM")
@@ -542,7 +549,6 @@ final class VoiceBarDaemonController {
         // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
         var daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
         daemonEnvironment["VOICEBAR_UPDATE_SECRET"] = NativeDrainParticipant.secret
-        daemonEnvironment["VOICEBAR_GIT_COMMIT"] = Bundle.main.object(forInfoDictionaryKey: "GitCommit") as? String
         daemonEnvironment["VOICEBAR_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         guard socketBindingAllowed(daemonEnvironment) else {
             NSLog("[VoiceBar] SOCKET_ISOLATION_REFUSED: refusing MCP child with resident socket paths")

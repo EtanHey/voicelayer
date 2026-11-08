@@ -66,6 +66,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     public let modelLabel: String?
     public let performanceEffort: VoiceBarPerformanceEffort?
     public let inputDeviceLabel: String?
+    public let appBuild: RecordingAppBuild?
+    public let retranscribedBy: RecordingAppBuild?
     public let missingTranscript: SettingsHistoryMissingTranscript?
 
     public init(
@@ -85,6 +87,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         modelLabel: String? = nil,
         performanceEffort: VoiceBarPerformanceEffort? = nil,
         inputDeviceLabel: String? = nil,
+        appBuild: RecordingAppBuild? = nil, retranscribedBy: RecordingAppBuild? = nil,
         missingTranscript: SettingsHistoryMissingTranscript? = nil
     ) {
         self.id = id
@@ -103,6 +106,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.modelLabel = modelLabel
         self.performanceEffort = performanceEffort
         self.inputDeviceLabel = inputDeviceLabel
+        self.appBuild = appBuild; self.retranscribedBy = retranscribedBy
         self.missingTranscript = missingTranscript
     }
 
@@ -282,6 +286,7 @@ public enum SettingsHistoryArchive {
             performanceEffort: metadata?.provenance?.performanceEffort.flatMap(VoiceBarPerformanceEffort.init),
             inputDeviceLabel: metadata?.inputDeviceName?
                 .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty,
+            appBuild: metadata?.appBuild, retranscribedBy: metadata?.retranscribedBy,
             missingTranscript: metadata?.notTranscribedReason.map {
                 SettingsHistoryMissingTranscript(
                     reason: $0,

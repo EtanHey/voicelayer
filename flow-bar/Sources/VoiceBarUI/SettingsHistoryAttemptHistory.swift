@@ -342,6 +342,8 @@ struct SettingsHistoryDiagnosticsCopy {
         if let created = snapshot?.capturedAt ?? entry?.createdAt {
             facts.append(.init(title: "Created", value: dateTime(created, locale: locale, timeZone: timeZone)))
         }
+        if let build = snapshot?.appBuild ?? entry?.appBuild { facts.append(.init(title: "Built from", value: build.label)) }
+        if let build = snapshot?.retranscribedBy ?? entry?.retranscribedBy { facts.append(.init(title: "Re-transcribed by", value: build.label)) }
         // Stored input_device_name values, never the currently selected microphone.
         if let mic = snapshot?.inputDeviceName ?? entry?.inputDeviceLabel { facts.append(.init(title: "Microphone", value: mic)) }
         if let language = snapshot?.languageSetting { facts.append(.init(title: "Language setting", value: language)) }

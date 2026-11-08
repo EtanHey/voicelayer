@@ -12,6 +12,22 @@ private let launcherTestBundledDaemonPath = "/Applications/VoiceBar.app/Contents
 private let launcherTestInstalledInfoPlistPath = "/Applications/VoiceBar.app/Contents/Info.plist"
 
 final class VoiceBarDaemonLauncherTests: XCTestCase {
+    func testUnbundledDaemonCannotInheritAnotherBuildTag() {
+        let inherited = ["VOICEBAR_VERSION": "stale", "VOICEBAR_GIT_COMMIT": "stale",
+            "VOICEBAR_BUILD_TIME_UTC": "stale", "VOICEBAR_BUILD_SOURCE": "stale"]
+        let env = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(from: inherited, path: "/fixture")
+        for key in inherited.keys { XCTAssertNotEqual(env[key], "stale", key) }
+    }
+    func testBundleFactsReplaceInheritedBuildIdentity() {
+        let expected = ["VOICEBAR_VERSION": "2.3.0", "VOICEBAR_GIT_COMMIT": String(repeating: "a", count: 40),
+            "VOICEBAR_BUILD_TIME_UTC": "2026-11-08T00:00:00Z", "VOICEBAR_BUILD_SOURCE": "VoiceBar.Info.plist"]
+        let info = ["CFBundleShortVersionString": expected["VOICEBAR_VERSION"]!, "GitCommit": expected["VOICEBAR_GIT_COMMIT"]!,
+            "BuildTimeUTC": expected["VOICEBAR_BUILD_TIME_UTC"]!]
+        for bundleInfo in [info, [:]] {
+            let env = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(from: expected, path: "/fixture", bundleInfo: bundleInfo)
+            for key in expected.keys { XCTAssertEqual(env[key], bundleInfo.isEmpty ? nil : expected[key], key) }
+        }
+    }
     func testDefaultSocketsAreRefusedBeforeSpawningFromNonResidentBundle() {
         let keys = ["VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "QA_VOICE_SOCKET_PATH",
                     "QA_VOICE_MCP_SOCKET_PATH", "DISABLE_VOICELAYER", "QA_VOICE_DISABLE_FLAG_PATH"]

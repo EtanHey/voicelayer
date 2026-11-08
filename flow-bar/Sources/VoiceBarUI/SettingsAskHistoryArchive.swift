@@ -17,6 +17,8 @@ public struct SettingsAskHistoryEntry: Identifiable, Equatable, Sendable {
     public let responseAudioPath: URL?
     /// Mic-on time for the response recording.
     public let responseDurationMs: Int?
+    public let appBuild: RecordingAppBuild?
+    public let retranscribedBy: RecordingAppBuild?
     /// The response slice handed to speech-to-text.
     public let responseTranscribedDurationMs: Int?
 
@@ -30,7 +32,8 @@ public struct SettingsAskHistoryEntry: Identifiable, Equatable, Sendable {
         responseTranscript: String,
         responseAudioPath: URL?,
         responseDurationMs: Int? = nil,
-        responseTranscribedDurationMs: Int? = nil
+        responseTranscribedDurationMs: Int? = nil,
+        appBuild: RecordingAppBuild? = nil, retranscribedBy: RecordingAppBuild? = nil
     ) {
         self.id = id
         self.dayKey = dayKey
@@ -42,6 +45,7 @@ public struct SettingsAskHistoryEntry: Identifiable, Equatable, Sendable {
         self.responseAudioPath = responseAudioPath
         self.responseDurationMs = responseDurationMs
         self.responseTranscribedDurationMs = responseTranscribedDurationMs
+        self.appBuild = appBuild; self.retranscribedBy = retranscribedBy
     }
 
     public var hasQuestionText: Bool {
@@ -175,7 +179,8 @@ public enum SettingsAskHistoryArchive {
                 askURL.appendingPathComponent("audio.wav")
             ),
             responseDurationMs: metadata.durationMs,
-            responseTranscribedDurationMs: metadata.transcribedDurationMs
+            responseTranscribedDurationMs: metadata.transcribedDurationMs,
+            appBuild: metadata.appBuild, retranscribedBy: metadata.retranscribedBy
         )
     }
 

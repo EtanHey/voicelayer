@@ -1,6 +1,34 @@
 import XCTest
 @testable import VoiceBarUI
 final class RecordingDetailsProjectionTests: XCTestCase {
+    func testBuildTagSurvivesHistoryReloadAndRetry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("2026-11-08/recording")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let build: [String: Any] = ["version": "2.3.0", "git_commit": String(repeating: "a", count: 40),
+            "build_time_utc": "2026-11-08T00:00:00Z", "source": "VoiceBar.Info.plist"]
+        try JSONSerialization.data(withJSONObject: ["id": "recording", "source": "voicebar", "app_build": build,
+            "retranscribed_by": ["version": "2.3.1", "git_commit": String(repeating: "b", count: 40)]]).write(to: directory.appendingPathComponent("metadata.json"))
+        try Data().write(to: directory.appendingPathComponent("audio.wav"))
+        let entry = try XCTUnwrap(SettingsHistoryArchive.load(from: root).first?.entries.first)
+        let snapshot = SettingsHistoryDiagnostics.load(audioPath: entry.audioPath, root: root)
+        for state in [snapshot, nil] {
+            let facts = SettingsHistoryDiagnosticsCopy.facts(snapshot: state, entry: entry, attemptHistory: nil, selectedAttemptID: nil)
+            XCTAssertTrue(facts.contains { $0.title == "Built from" && $0.value == "2.3.0 · aaaaaaaa" })
+            XCTAssertTrue(facts.contains { $0.title == "Re-transcribed by" && $0.value == "2.3.1 · bbbbbbbb" })
+        }
+    }
+    func testUnknownBuildAndAskRowLabelsUseOnlyStoredFacts() throws {
+        let unknown = try JSONDecoder().decode(RecordingAppBuild.self, from: Data(#"{"version":null,"git_commit":null,"build_time_utc":null,"source":null}"#.utf8))
+        XCTAssertEqual(unknown.label, "Unknown build")
+        let build = try JSONDecoder().decode(RecordingAppBuild.self, from: Data(#"{"version":"2.3.0","git_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#.utf8))
+        let entry = SettingsAskHistoryEntry(id: "fixture", dayKey: "2026-11-08", askID: "fixture", createdAt: Date(),
+            questionText: "", questionAudioPath: nil, responseTranscript: "", responseAudioPath: nil,
+            appBuild: build, retranscribedBy: unknown)
+        let row = SettingsHistoryRowModel.ask(entry)
+        XCTAssertEqual(row.buildLabel, "2.3.0 · aaaaaaaa"); XCTAssertEqual(row.retranscribedByLabel, "Unknown build")
+    }
     func testOptionalExecutionFactsStayAttemptLocalAndBounded() {
         let absent = SettingsHistoryAttemptRecord(id: "legacy", status: .completed)
         XCTAssertNil(absent.executionLabel); XCTAssertNil(absent.processingLabel)
