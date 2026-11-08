@@ -295,9 +295,13 @@ export function buildPlaybackArgv(
   isResidentStack: boolean = isDefaultVoiceBarSocketPath(),
   rate = 1,
 ): string[] {
-  // Lane B: 1× is a real speed step. afplay scales the rate with its high-quality time-pitch (-q 1).
-  const speed = player === "afplay" && rate !== 1 && Number.isFinite(rate) && rate > 0 ? ["-r", String(rate), "-q", "1"] : [];
-  if (isResidentStack || player !== "afplay") return player === "afplay" ? [player, ...speed, audioFile] : [player, audioFile];
+  // Lane B: 1× is a real speed step. afplay scales the rate with its high-quality time-pitch (-q 1);
+  // the Linux players get their own pitch-preserving tempo so the scaled player clock matches the audio.
+  const scaled = rate !== 1 && Number.isFinite(rate) && rate > 0;
+  const speed = !scaled ? [] : player === "afplay" ? ["-r", String(rate), "-q", "1"]
+    : player === "mpv" ? [`--speed=${rate}`] : player === "ffplay" ? ["-af", `atempo=${rate}`] : [];
+  if (player !== "afplay") return [player, ...speed, audioFile];
+  if (isResidentStack) return [player, ...speed, audioFile];
   return [player, "-v", "0", ...speed, audioFile];
 }
 

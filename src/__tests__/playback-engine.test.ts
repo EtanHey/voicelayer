@@ -199,8 +199,11 @@ describe("socket E2E: the playback engine through real commands (VoiceBar's wire
     expect(await handleSocketCommand({ cmd: "set_playback_speed", speed: 1.5 })).toMatchObject({ outcome: "accept" });
     (await trims.at(0)).exit.resolve(0);
     const fast = await players.at(1); await fixtureCheckpoint();
-    expect(fast.argv).toContain("-r");
-    expect(fast.argv[fast.argv.indexOf("-r") + 1]).toBe("1.5");
+    // macOS uses afplay -r; the Linux CI runner plays through ffplay (or mpv) with a pitch-preserving tempo.
+    if (fast.argv[0] === "afplay") expect(fast.argv[fast.argv.indexOf("-r") + 1]).toBe("1.5");
+    else if (fast.argv[0] === "ffplay") expect(fast.argv[fast.argv.indexOf("-af") + 1]).toBe("atempo=1.5");
+    else if (fast.argv[0] === "mpv") expect(fast.argv).toContain("--speed=1.5");
+    else throw new Error(`unexpected player ${fast.argv[0]}`);
     expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 3000, playback_rate: 1.5 });
     // 2 s of wall time at 1.5× is 3 s of audio: 3000 + 3000 = word 6.
     at(5400);
