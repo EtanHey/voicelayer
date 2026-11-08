@@ -115,9 +115,11 @@ public struct TeleprompterAView: View {
                 .foregroundStyle(ink)
                 .font(.system(size: TeleprompterA.fontSize, weight: layout.isHeading ? .semibold : .medium))
                 // QA 2026-11-08 ("Codex" showed as "cod…"): the model already wrapped whole words to the column, so a
-                // word never gives up width. Left flexible, the line's HStack tail-truncated a last word that fit
-                // (154 pt measured in a 160 pt column, "Codex." drawn 46.5 of its 55 pt).
-                .fixedSize()
+                // word that fits never gives up width. Left flexible, the line's HStack tail-truncated a last word that
+                // fit (154 pt measured in a 160 pt column, "Codex." drawn 46.5 of its 55 pt). A piece wider than the
+                // column (24 family emoji are 552 pt) stays compressible on its own line, so nothing ever draws past
+                // the column's clip.
+                .fixedSize(horizontal: model.fitsColumn[word], vertical: false)
                 .padding(.leading, word == model.lines[line].lowerBound || layout.gluesToPrevious ? 0 : model.spacing)
             }
         }

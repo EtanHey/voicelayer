@@ -43,7 +43,7 @@ final class TeleprompterAWholeWordsTests: XCTestCase {
         }
     }
 
-    func testEveryWordRendersWholeWhenItEndsALine() throws {
+    private func withAccessibility(_ body: () throws -> Void) throws {
         XCTAssertTrue(VLOffscreenPolicyInstalled())
         let app = NSApplication.shared
         let setter = NSSelectorFromString("setAccessibilityEnhancedUserInterface:")
@@ -55,22 +55,57 @@ final class TeleprompterAWholeWordsTests: XCTestCase {
         let setEnhanced = unsafeBitCast(app.method(for: setter), to: Setter.self)
         setEnhanced(app, setter, true)
         defer { setEnhanced(app, setter, wasEnhanced) }
+        try body()
+    }
 
-        let text = "I asked Codex to review it, then Claude Code and Codex again. Did codex agree with Codex? Ask Codex."
-        // 160 pt puts "Codex." at the end of a line that fits (the QA shape); the others are the widths where base
-        // truncated a line-ending word, plus the live column.
-        for column: CGFloat in [150, 152, 160, 172, 404] {
+    /// Every piece that fits the column is drawn whole, and no piece is drawn past the column, where it would clip.
+    private func assertWholeWordsWithinTheColumn(_ text: String, columns: [CGFloat], expectedWords: Int? = nil,
+                                                 file: StaticString = #filePath, line: UInt = #line) throws {
+        for column in columns {
             let words = renderedWords(text, column: column)
-            XCTAssertEqual(words.count, 19, "column \(column): every word is drawn")
-            for (word, frame) in words {
-                XCTAssertGreaterThanOrEqual(frame.width + 0.5, TeleprompterAModel.width(word, heading: false),
-                                            "column \(column): \"\(word)\" is truncated (\(frame.width) pt drawn)")
+            if let expectedWords {
+                XCTAssertEqual(words.count, expectedWords, "column \(column): every word is drawn", file: file, line: line)
             }
-            // Whole words never push a line past the column: the wrap still decides where lines break.
-            let left = try XCTUnwrap(words.map(\.frame.minX).min())
+            XCTAssertFalse(words.isEmpty, file: file, line: line)
+            let left = try XCTUnwrap(words.map(\.frame.minX).min(), file: file, line: line)
             for (word, frame) in words {
-                XCTAssertLessThanOrEqual(frame.maxX - left, column + 0.5, "column \(column): \"\(word)\" overflows")
+                let measured = TeleprompterAModel.width(word, heading: false)
+                if measured <= column {
+                    XCTAssertGreaterThanOrEqual(frame.width + 0.5, measured,
+                                                "column \(column): \"\(word)\" fits but is truncated (\(frame.width) pt drawn)",
+                                                file: file, line: line)
+                }
+                XCTAssertLessThanOrEqual(frame.maxX - left, column + 0.5,
+                                         "column \(column): \"\(word)\" (\(measured) pt) is drawn past the column",
+                                         file: file, line: line)
             }
+        }
+    }
+
+    func testEveryWordRendersWholeWhenItEndsALine() throws {
+        try withAccessibility {
+            // 160 pt puts "Codex." at the end of a line that fits (the QA shape); the others are the widths where base
+            // truncated a line-ending word, plus the live column.
+            try assertWholeWordsWithinTheColumn(
+                "I asked Codex to review it, then Claude Code and Codex again. Did codex agree with Codex? Ask Codex.",
+                columns: [150, 152, 160, 172, 404], expectedWords: 19)
+        }
+    }
+
+    /// Review round 2 (Codex, P2): a piece wider than the column (the splitter caps pieces at 24 characters, not at a
+    /// width) must never be pinned past the column's clip. 24 family emoji are one 552 pt piece; long URLs and paths
+    /// split into pieces wider than a narrow column. Each stays inside the column, and every piece that fits is whole.
+    func testAPieceWiderThanTheColumnStaysInsideItAndFittingPiecesStayWhole() throws {
+        try withAccessibility {
+            let family = String(repeating: "👨‍👩‍👧‍👦", count: 24)
+            XCTAssertGreaterThan(TeleprompterAModel.width(family, heading: false), 404)
+            try assertWholeWordsWithinTheColumn("Ask \(family) Codex.", columns: [150, 160, 404], expectedWords: 3)
+            try assertWholeWordsWithinTheColumn(
+                "See https://github.com/EtanHey/voicelayer/blob/main/flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift for Codex.",
+                columns: [150, 160, 404])
+            try assertWholeWordsWithinTheColumn(
+                "Open /Users/happycampr/.t3/worktrees/voicelayer/flow-bar/Sources/VoiceBarUI/BarView.swift with Codex.",
+                columns: [150, 160, 404])
         }
     }
 
