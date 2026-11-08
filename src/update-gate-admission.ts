@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { updateGateFilePath } from "./paths";
 import { readUpdateGate, transitionUpdateGate, type UpdateGateLease, type UpdateGateState, type UpdateGateTransition } from "./update-gate";
 import { withUpdateGateLock, persistUpdateGateState, resolveUpdateGatePath } from "./update-gate-storage";
+import { admissionOwnerProbe, reconcileDeadAdmissions } from "./update-gate-owner";
+const ownerStartTime = admissionOwnerProbe.startTime(process.pid);
 export class UpdateBusyError extends Error {
   constructor() { super("UPDATE_BUSY: update gate closed; retry when the update finishes"); }
 }
@@ -40,7 +42,7 @@ function snapshot(path: string) {
   try {
     const state = diskState(path);
     if (state.kind === "UNKNOWN" || degraded.has(path) || hasDiagnostic(path)) return null;
-    return { state, active: readLedger(path) };
+    return { state, active: reconcileDeadAdmissions(path, readLedger(path)) };
   } catch { return null; }
 }
 const degraded = new Set<string>();
@@ -160,7 +162,7 @@ function acquire(retryContention = false): Admission {
     if (state.kind === "UNKNOWN") return unregistered();
     if (state.kind !== "OPEN") return null;
     const token = randomUUID(), file = join(path + ".admissions", token);
-    const owner = { token, pid: process.pid, incarnation, generation: state.generation };
+    const owner = { token, pid: process.pid, incarnation, generation: state.generation, ...(ownerStartTime ? { startTime: ownerStartTime } : {}) };
     persistVisible(path, file, owner);
     return { refs: 0, release: () => releaseWhenUnlocked(() => withUpdateGateLock(() => {
       // An anomalous owner is a recoverable registration, never an orphaned host lock.

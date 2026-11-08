@@ -13,7 +13,9 @@
     "src/update-gate.ts",
     "src/update-gate-installer.ts",
     "src/mcp-server-daemon.ts",
-    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift"
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift",
+    "src/update-gate-owner.ts",
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift"
   ],
   "checks": {
     "Fixed": {
@@ -135,6 +137,21 @@
       "role": "mutant",
       "target": "RecoveryOnlyVerified",
       "kind": "invariant"
+    },
+    "ReapFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "ReapMutantAge": {
+      "role": "mutant",
+      "target": "NeverReapLiveOwner",
+      "kind": "invariant"
+    },
+    "ReapOld": {
+      "role": "mutant",
+      "target": "DeadRegistrationsCanPrepare",
+      "kind": "temporal"
     }
   },
   "acceptance": [
@@ -152,6 +169,8 @@
     "LeasedUpdateReopensAdmission",
     "EventuallyOpenAfterAbandonedLease",
     "NeverRecoverLiveController",
-    "RecoveryOnlyVerified"
+    "RecoveryOnlyVerified",
+    "NeverReapLiveOwner",
+    "DeadRegistrationsCanPrepare"
   ]
 }

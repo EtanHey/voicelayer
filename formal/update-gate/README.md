@@ -144,3 +144,13 @@ deadline. The model abstracts fresh round trips and the empty ledger as predicat
 and G1 publication as atomic. It does not prove partial-write recovery, detached
 installer quiescence, actual launch latency, IPC availability or installed macOS
 behavior. R5 half-state repair and rollback to a different build remain deferred.
+
+## Dead admission owners
+
+ReapFixed checks NeverReapLiveOwner and DeadRegistrationsCanPrepare. Owner death
+is irreversible for the recorded incarnation; PID reuse proves that incarnation
+dead. Unknown/live owners remain. Reap and PREPARE share G1; weak fairness lets
+a drain containing only dead registrations reach PREPARED. ReapOld reproduces
+the stuck ledger; ReapMutantAge violates safety by retiring a live old owner.
+OS identity correctness, crash durability of reason files and native execution
+are outside the model. No age-based lease, lock or registration expiry is modeled.
