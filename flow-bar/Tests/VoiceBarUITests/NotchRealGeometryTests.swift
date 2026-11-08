@@ -63,16 +63,17 @@ final class NotchRealGeometryTests: XCTestCase {
 
     enum Surface: String, CaseIterable {
         case hoverLauncher, recording, compactStatus, teleprompter, historyCollapsed, historyExpanded, settings
+        case settingsTranscription
     }
 
     static func presentation(_ surface: Surface, screen: VoiceBarNotchScreenGeometry) -> VoiceBarNotchPresentation {
         let rows: Int = switch surface {
         case .historyCollapsed: NotchHistoryMorph.visibleRows
         case .historyExpanded: NotchHistoryMorph.maximumRows
-        case .settings: NotchSettingsDrawerPresentation.rows
+        case .settings, .settingsTranscription: NotchSettingsDrawerPresentation.rows
         default: NotchHistoryMorph.visibleRows
         }
-        let isDrawer = [.historyCollapsed, .historyExpanded, .settings].contains(surface)
+        let isDrawer = [.historyCollapsed, .historyExpanded, .settings, .settingsTranscription].contains(surface)
         return VoiceBarNotchPresentation.resolve(
             hasTeleprompter: surface == .teleprompter,
             isRecording: surface == .recording,
@@ -253,6 +254,7 @@ final class NotchRealGeometryTests: XCTestCase {
             case .historyCollapsed: .history(.collapsed)
             case .historyExpanded: .history(.expanded)
             case .settings: .settings(.general)
+            case .settingsTranscription: .settings(.transcription)
             default: nil
             }
             if drawer != nil { model.setHistoryPanelOpen(true) }

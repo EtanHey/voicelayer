@@ -1249,6 +1249,13 @@ public struct BarView: View {
         if notchPresentation.visualState == .history, case let .settings(tab) = surface.drawer, let settingsDrawer {
             NotchSettingsDrawer(
                 selectedTab: tab, palette: notchPalette, missingPermissions: state.setupMissingPermissions,
+                facts: { tab in
+                    NotchSettingsDrawerPresentation.facts(
+                        for: tab, recognizer: state.recognizerPickerState,
+                        dictionaryTerms: state.transcriptionVocabularyTerms.count,
+                        recentDictations: state.recentTranscriptionEntries.count
+                    )
+                },
                 context: settingsDrawer,
                 onSelectTab: { surface.send(.selectSettingsTab($0)) },
                 onOpenWindow: { tab, focus in

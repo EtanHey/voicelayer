@@ -72,4 +72,27 @@ final class NotchSettingsDrawerTests: XCTestCase {
         }
         XCTAssertEqual(controller.makeRecentTranscriptsSubmenu().items.count, 8)
     }
+
+    func testEachTabStatesWhatItHoldsWithoutLoadingAnything() {
+        let unknown = RecognizerPickerState.unavailable
+        XCTAssertEqual(NotchSettingsDrawerPresentation.facts(for: .transcription, recognizer: unknown,
+                                                             dictionaryTerms: 0, recentDictations: 0).first?.detail,
+                       "Not reported yet")
+        let dictionary = NotchSettingsDrawerPresentation.facts(for: .dictionary, recognizer: unknown,
+                                                               dictionaryTerms: 12, recentDictations: 0)
+        XCTAssertEqual(dictionary.first?.detail, "12 terms")
+        XCTAssertEqual(NotchSettingsDrawerPresentation.facts(for: .dictionary, recognizer: unknown,
+                                                             dictionaryTerms: 1, recentDictations: 0).first?.detail, "1 term")
+        XCTAssertEqual(NotchSettingsDrawerPresentation.facts(for: .history, recognizer: unknown,
+                                                             dictionaryTerms: 0, recentDictations: 20).first?.detail,
+                       "20 in the notch, every recording in History")
+        XCTAssertTrue(NotchSettingsDrawerPresentation.facts(for: .speech, recognizer: unknown,
+                                                            dictionaryTerms: 0, recentDictations: 0).isEmpty)
+        for tab in SettingsTab.allCases {
+            for fact in NotchSettingsDrawerPresentation.facts(for: tab, recognizer: unknown, dictionaryTerms: 3,
+                                                              recentDictations: 4) {
+                XCTAssertFalse(fact.detail.contains("—") || fact.detail.contains("--"), fact.detail)
+            }
+        }
+    }
 }

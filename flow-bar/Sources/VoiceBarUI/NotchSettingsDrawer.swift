@@ -114,6 +114,37 @@ public enum NotchSettingsDrawerPresentation {
 
     public static func openTabTitle(_ tab: SettingsTab) -> String { "Open \(tab.title) settings" }
 
+    /// A read-only fact a tab shows above its hand-off button.
+    public struct Fact: Equatable {
+        public let symbol: String
+        public let title: String
+        public let detail: String
+    }
+
+    /// What each non-General tab can say without loading anything: the recognizer VoiceBar will use and whether
+    /// it is loaded, how many dictionary terms there are, how many dictations the notch holds.
+    public static func facts(
+        for tab: SettingsTab, recognizer: RecognizerPickerState, dictionaryTerms: Int, recentDictations: Int
+    ) -> [Fact] {
+        switch tab {
+        case .general, .speech:
+            return []
+        case .transcription:
+            guard let engine = recognizer.effective ?? recognizer.selected else {
+                return [Fact(symbol: "waveform", title: "Recognizer", detail: "Not reported yet")]
+            }
+            let residency = engine == .parakeet ? recognizer.parakeet : recognizer.whisper
+            return [Fact(symbol: "waveform", title: engine.title, detail: residency.title)]
+        case .dictionary:
+            return [Fact(symbol: "text.book.closed", title: "Your dictionary",
+                         detail: dictionaryTerms == 1 ? "1 term" : "\(dictionaryTerms) terms")]
+        case .history:
+            return [Fact(symbol: "clock.arrow.circlepath", title: "Recent dictations",
+                         detail: recentDictations == 0 ? "None yet"
+                             : "\(recentDictations) in the notch, every recording in History")]
+        }
+    }
+
     /// The mic name on ONE line within `budget`: whole when it fits, else cut at a word or character with "…".
     public static func microphoneLine(_ name: String?, budget: CGFloat = microphoneNameWidthBudget,
                                       measure: (String) -> CGFloat = NotchSettingsDrawerPresentation.measure) -> String {
@@ -141,6 +172,8 @@ struct NotchSettingsDrawer: View {
     let selectedTab: SettingsTab
     let palette: VoiceBarNotchContrastPalette
     let missingPermissions: [HotkeyPermission]
+    /// Read-only facts per tab (`NotchSettingsDrawerPresentation.facts`).
+    var facts: (SettingsTab) -> [NotchSettingsDrawerPresentation.Fact] = { _ in [] }
     let context: NotchSettingsDrawerContext
     let onSelectTab: (SettingsTab) -> Void
     /// Opens the Settings window (the drawer closes first; that is the row's job done).
@@ -236,28 +269,37 @@ struct NotchSettingsDrawer: View {
 
     // MARK: Other tabs
 
+    /// The other tabs, in General's row style: what the tab holds (read-only facts), one line on what else is
+    /// there, and the hand-off to the Settings window at that tab.
     private func tabEntry(_ tab: SettingsTab) -> some View {
-        VStack(spacing: 10) {
-            Spacer(minLength: 0)
-            Image(systemName: tab.systemImage)
-                .font(.system(size: 26, weight: .regular))
-                .foregroundStyle(palette.secondary.color)
-            Text(tab.title)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(palette.primary.color)
-            Text(NotchSettingsDrawerPresentation.tabDescription(tab))
-                .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
-                .foregroundStyle(palette.secondary.color)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 300)
-            actionButton(NotchSettingsDrawerPresentation.openTabTitle(tab), prominent: true) {
-                onOpenWindow(tab, nil)
+        VStack(alignment: .leading, spacing: NotchSettingsDrawerPresentation.rowSpacing) {
+            ForEach(facts(tab), id: \.title) { fact in
+                row(id: "fact-\(fact.title)", symbol: fact.symbol, title: fact.title, detail: fact.detail)
             }
-            .padding(.top, 4)
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(palette.secondary.color)
+                    .frame(width: 20)
+                Text(NotchSettingsDrawerPresentation.tabDescription(tab))
+                    .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
+                    .foregroundStyle(palette.secondary.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.leading, NotchSettingsDrawerPresentation.rowLeadingPadding)
+            .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
+            .frame(minHeight: NotchSettingsDrawerPresentation.rowHeight)
             Spacer(minLength: 0)
+            HStack {
+                Spacer()
+                actionButton(NotchSettingsDrawerPresentation.openTabTitle(tab), prominent: true) {
+                    onOpenWindow(tab, nil)
+                }
+            }
+            .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: Pieces
