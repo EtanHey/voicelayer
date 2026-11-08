@@ -33,8 +33,11 @@ import {
   getPlaybackQueueDepth,
   holdReadForAsk,
   type AskReadHoldHandle,
+  preemptLongRead,
+  releaseAskReadSuccessor,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
+  isPlaybackPaused,
   cancelPlayback,
   type CaptureAdmission,
   type QueuedPlaybackHandle,
@@ -527,8 +530,8 @@ async function executeAdmittedNormalAsk({ ingress, context }: {
     deferReleaseUntil: (settlement) => {
       releaseDeferred = true;
       void settlement.then(
-        () => reservation.release(),
-        () => reservation.release(),
+        () => { reservation.release(); releaseAskReadSuccessor(); },
+        () => { reservation.release(); releaseAskReadSuccessor(); },
       );
     },
   };
@@ -880,15 +883,23 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // leak audio if the recording state changes while the caller waits.
     assertSpeakerClear();
 
-    // Lane B: park the read on screen at its exact word (never cancel it), then wait for every
-    // other queued player (P0-2: awaits full queue). The ask's end restores the read.
+    // Lane B: park the read on screen at its exact word (never cancel it); only a read that cannot be parked is
+    // preempted. Then wait for physical playback exit (P0-2: awaits full queue) before Ask borrows the speaker.
+    // The ask's recorder exit (or its end) restores the read.
     readHold ??= holdReadForAsk();
+    preemptLongRead("ask");
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
     }
 
     captureAdmission = reserveCaptureAdmission();
+    if (!captureAdmission && readHold?.held && isPlaybackPaused()) {
+      // A seek's runner can materialize its parked job/slice after the old player exit.
+      await awaitCurrentPlayback({ forCaptureAdmission: true });
+      if (timeoutSettled || inputAbortController.signal.aborted) return { kind: "ended-before-capture" };
+      captureAdmission = reserveCaptureAdmission();
+    }
     if (!captureAdmission) throw new Error("Playback changed before Ask could reserve capture admission; try again");
 
     // Speak the question aloud — BLOCKING for converse
@@ -933,7 +944,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     const promptStopped = speech.playbackOutcome?.reason === "stopped";
     if (speech.playbackOutcome && speech.playbackOutcome.status !== "completed" && !promptStopped) {
       captureAdmission.release();
-      if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && getEffectiveRecordingState() === "idle") {
+      if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() && getEffectiveRecordingState() === "idle") {
         broadcast({ type: "state", state: "idle", source: "playback" });
       }
       return { kind: "prompt-incomplete", status: speech.playbackOutcome.status };
@@ -955,7 +966,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
 
     // Record mic audio, then transcribe with selected STT backend
     assertSpeakerClear();
-    if (promptPlayers.length) broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording" });
+    if (promptPlayers.length || isPlaybackPaused()) broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording",
+      ...(isPlaybackPaused() ? { preserves_paused_read: true } : {}) });
     const pushToEnd = resolvePushToEnd(validated.push_to_end ?? false, {
       caller: "mcp.voice_ask",
     });
@@ -1004,6 +1016,12 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         },
         onPhaseChange: (phase) => {
           progressHeartbeat?.setStage(phase);
+          // Capture-end r2: the input phase follows bounded recorder-exit settlement. Once its transcribing state is
+          // published, the read this ask parked takes the speaker back (idempotent; the ask's end is the fallback).
+          queueMicrotask(() => {
+            try { readHold?.restore({ recorderExited: true }); }
+            catch (error) { console.error(`[voicelayer] Parked read restore failed: ${error instanceof Error ? error.message : String(error)}`); }
+          });
         },
         onNoAnswer: (unclassified) => { noAnswer = !unclassified; unclassifiedAnswer = unclassified; },
         onNoSpeech: () => {
@@ -1043,18 +1061,20 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         await promptReaped;
         await promptTimeoutCleanup;
         // A late old exit must not mark a newer playback/capture owner idle.
-        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() &&
+        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() &&
             getEffectiveRecordingState() === "idle") {
           broadcast({ type: "state", state: "idle", source: "playback" });
         }
       }
     }
   }).finally(async () => {
-    await (promptTimeoutCleanup ?? captureAdmission?.release());
-    // Lane B: the capture is over and its admission released: restore the parked read (answer, failure,
-    // cancel or timeout alike). A Stop during the ask restores it paused.
+    await promptTimeoutCleanup;
+    captureAdmission?.release();
+    // Lane B: the capture is over and its admission released: restore the parked read if its recorder exit did
+    // not (failure, cancel, timeout, or a read the user had paused). A Stop during the ask ended it already.
     try { readHold?.restore(); }
     catch (error) { console.error(`[voicelayer] Parked read restore failed: ${error instanceof Error ? error.message : String(error)}`); }
+    if (!operationLifecycle) releaseAskReadSuccessor();
   });
   const confirmedTeardown = async () => {
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
@@ -1076,7 +1096,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     ) {
       // Errors can return before owned teardown; never idle a foreign/newer owner.
       void Promise.all(promptPlayers.map(handle => handle.playerExited)).then(() => {
-        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() &&
+        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() &&
             getEffectiveRecordingState() === "idle") {
           broadcast({ type: "state", state: "idle" });
         }

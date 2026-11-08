@@ -115,7 +115,7 @@ describe("AskParksOne: voice_ask over a read", () => {
     healthy(engine);
   });
 
-  it("Stop during the ask ends the ask, never the parked read: it comes back paused", () => {
+  it("Stop during the ask ends the ask and the read it parked (Stop means stop; paused-ask W1 \"stopped\")", () => {
     const engine = new PlaybackSessionEngine();
     playing(engine, "r1");
     engine.askBegin(4);
@@ -123,8 +123,11 @@ describe("AskParksOne: voice_ask over a read", () => {
     engine.askPromptStart();
     engine.stopAll();
     expect(engine.ask).toBe("closing");
+    expect(engine.get("r1")!.state).toBe("ended");
     engine.playerExited(ASK_PROMPT_ID);
-    expect(engine.askRestore()).toMatchObject({ restored: { id: "r1", state: "paused", word: 4 } });
+    const restore = engine.askRestore();
+    expect(restore).toMatchObject({ ok: true });
+    expect("restored" in restore && restore.restored).toBeFalsy();
     healthy(engine);
   });
 

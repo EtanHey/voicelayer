@@ -54,6 +54,7 @@ import {
   resumePlayback,
   isPlaybackPaused,
   isCaptureAdmissionReserved,
+  isAskReadProcessing,
   isSpeakerOutputRefusedError,
   SpeechPreparationStoppedError,
   setLongReadSettledListener,
@@ -420,7 +421,7 @@ function handleSocketCommandAdmitted(
       // P16: a stop/cancel aimed at an active capture (F5 release over a paused read) ends only the
       // capture; the parked read stays parked for Play, and the ack never waits on it (P16b, TLA+
       // CaptureCmdAckWithoutAwait): a parked long read cannot finish, so awaiting it false-rejected at 35 s.
-      if (recordingState !== "idle" && isPlaybackPaused()) return buildAck(command, "accept");
+      if (recordingState !== "idle" && (isPlaybackPaused() || isAskReadProcessing())) return buildAck(command, "accept");
       stopAll(command.playback_elapsed_ms, stopQueuePolicy(recordingState, false), true);
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),

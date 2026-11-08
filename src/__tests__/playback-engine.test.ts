@@ -278,6 +278,8 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
   it("Row 1: a read on its second chunk comes back at 0:40 (never a chunk-local 0:10) after ask 1 and ask 2, attached each time", async () => {
     const handle = tts.playAudioNonBlocking(`${TEST_TMP}/row1.mp3`, { text, voice: "test", durationMs: 20_000, utteranceDurationMs: 50_000,
       wordBoundaries: words.map(word => ({ ...word, offset_ms: word.offset_ms * 2 })),
+      // As the long-read runner sends it: a chunk's first edge carries its read-global start.
+      playbackOffsetMs: 30_000,
       longRead: { id: "row1-read", chunk_index: 1, chunk_count: 2, chunk_start_ms: 30_000 } });
     await players.at(0);
     at(11_200);

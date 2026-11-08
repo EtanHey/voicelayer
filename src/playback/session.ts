@@ -418,13 +418,15 @@ export class PlaybackSessionEngine {
     return { ok: true, restored: { id: session.id, state: "preparing", word } };
   }
 
-  /** Stop: every positioned session ends and an ask in flight closes. A read the ask parked is never
-   * lost: it survives and comes back PAUSED at its word when the ask ends. */
+  /** Stop: every positioned session ends and an ask in flight closes, together with the read it parked: Stop
+   * means stop (the paused-ask stack's W1 "stopped" contract; its daemon tests pin it). */
   stopAll(): void {
     for (const session of this.sessions.values()) if (POSITIONED.has(session.state)) this.move(session, "ended", "stop");
     for (const id of this.players) this.exiting.add(id);
     this.players.clear();
-    if (this.parked) this.parked = { ...this.parked, from: "paused" };
+    const parked = this.parked && this.sessions.get(this.parked.id);
+    if (parked?.state === "parked") this.move(parked, "ended", "stop");
+    this.parked = undefined;
     this.mic = false;
     if (this.ask !== "none" && this.ask !== "closing") this.ask = "closing";
     this.record("stop");

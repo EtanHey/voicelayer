@@ -318,7 +318,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
             isPlaybackPaused: state.isPlaybackPaused,
-            readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+            readQueueLeadingSlotCount: VoiceBarPresentation.playbackLeadingSlotCount(for: state),
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker,

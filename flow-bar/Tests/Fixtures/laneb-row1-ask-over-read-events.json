@@ -20,7 +20,7 @@
    "utteranceId": "playback-1",
    "text": "One two three four five six seven eight nine ten",
    "voice": "test",
-   "readback_id": "b7feea22-4a6a-4146-9600-0a6869b53c17",
+   "readback_id": "3153712d-8eb5-4c23-9381-0456b47938bf",
    "readback_duration_ms": 0,
    "playback_id": "playback-1",
    "generation": 1,
@@ -30,6 +30,7 @@
     "chunk_count": 2,
     "chunk_start_ms": 30000
    },
+   "playback_offset_ms": 30000,
    "duration_ms": 50000,
    "chunk_duration_ms": 20000,
    "narration_source": "voicelayer-engines",
@@ -211,6 +212,26 @@
    "__t": 0
   },
   {
+   "type": "playback_state",
+   "state": "paused",
+   "playback_id": "playback-1",
+   "generation": 2,
+   "offset_ms": 40000,
+   "chunk_offset_ms": 10000,
+   "pause_owner": "user",
+   "duration_ms": 50000,
+   "chunk_duration_ms": 20000,
+   "word_index": 5,
+   "word_count": 10,
+   "long_read": {
+    "id": "row1-read",
+    "chunk_index": 1,
+    "chunk_count": 2,
+    "chunk_start_ms": 30000
+   },
+   "__t": 11200
+  },
+  {
    "type": "playback_session",
    "session_id": "row1-read",
    "phase": "parked",
@@ -237,10 +258,11 @@
   {
    "type": "state",
    "state": "speaking",
+   "preserves_paused_read": true,
    "utteranceId": "playback-2",
    "text": "Quick check for your recording?",
    "voice": "test",
-   "readback_id": "9d9f5a55-db7a-45f5-b915-c6123bba7a9b",
+   "readback_id": "aee96fb1-6854-4987-973e-b4ab79187075",
    "readback_duration_ms": 0,
    "playback_id": "playback-2",
    "generation": 1,
@@ -326,6 +348,7 @@
    "state": "idle",
    "source": "playback",
    "next_state": "recording",
+   "preserves_paused_read": true,
    "__t": 11200
   },
   {
@@ -382,7 +405,7 @@
    "utteranceId": "playback-1",
    "text": "One two three four five six seven eight nine ten",
    "voice": "test",
-   "readback_id": "0ac22820-206a-4e29-9029-9325b69a1e11",
+   "readback_id": "3ea73579-e865-4a50-8d89-468d67578bb8",
    "readback_duration_ms": 0,
    "playback_id": "playback-1",
    "generation": 3,
@@ -594,6 +617,26 @@
    "__t": 11200
   },
   {
+   "type": "playback_state",
+   "state": "paused",
+   "playback_id": "playback-1",
+   "generation": 4,
+   "offset_ms": 42000,
+   "chunk_offset_ms": 12000,
+   "pause_owner": "user",
+   "duration_ms": 50000,
+   "chunk_duration_ms": 20000,
+   "word_index": 6,
+   "word_count": 10,
+   "long_read": {
+    "id": "row1-read",
+    "chunk_index": 1,
+    "chunk_count": 2,
+    "chunk_start_ms": 30000
+   },
+   "__t": 14300
+  },
+  {
    "type": "playback_session",
    "session_id": "row1-read",
    "phase": "parked",
@@ -620,10 +663,11 @@
   {
    "type": "state",
    "state": "speaking",
+   "preserves_paused_read": true,
    "utteranceId": "playback-3",
    "text": "Second check: did the read pause?",
    "voice": "test",
-   "readback_id": "44ced164-9941-42a7-a839-1718d0e603b0",
+   "readback_id": "5b30c787-7247-4573-a17d-d09353cc2bc7",
    "readback_duration_ms": 0,
    "playback_id": "playback-3",
    "generation": 1,
@@ -714,6 +758,7 @@
    "state": "idle",
    "source": "playback",
    "next_state": "recording",
+   "preserves_paused_read": true,
    "__t": 14300
   },
   {
@@ -770,7 +815,7 @@
    "utteranceId": "playback-1",
    "text": "One two three four five six seven eight nine ten",
    "voice": "test",
-   "readback_id": "fc4b59e3-18d2-48a9-a878-e16ab693109f",
+   "readback_id": "eac2cfe8-aa8f-4d7f-9906-9b763232137a",
    "readback_duration_ms": 0,
    "playback_id": "playback-1",
    "generation": 5,
