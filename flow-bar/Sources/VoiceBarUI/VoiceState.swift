@@ -612,6 +612,10 @@ public final class VoiceState {
     /// text, timings and timeline at the moment it went quiet.
     private struct ReadSnapshot {
         var text: String
+        var epoch: Int
+        var speechWords: SpeechWordTable?
+        var selection: (id: String?, requestID: String?, text: String?, hash: String?, preparing: Bool)
+        var timelineChunks: [Int: (text: String, words: [TeleprompterBoundary])]
         var words: [TeleprompterBoundary]
         var durationMs: Int?
         var isDurationGrowing: Bool
@@ -638,6 +642,8 @@ public final class VoiceState {
     private var parkedRead: ParkedRead? {
         didSet { notifyPanelLayoutChangedIfNeeded((oldValue == nil) != (parkedRead == nil)) }
     }
+    /// Ask has its own presentation/player; this snapshot stays silent until admission is released.
+    private var askParkedRead: ParkedRead?
     /// The player the latest speaking frame named. Pause/Resume are scoped to it and its events must match it.
     private var currentPlayback: (id: String, generation: Int)?
     /// The read on screen when a capture took over, for a `paused` confirmation that lands mid-capture.
@@ -2491,6 +2497,10 @@ public final class VoiceState {
     private func currentReadSnapshot() -> ReadSnapshot {
         ReadSnapshot(
             text: statusText,
+            epoch: playbackEpoch,
+            speechWords: speechWords,
+            selection: (selectionReadID, selectionReadRequestID, selectionReadText, selectionReadHash, selectionReadIsPreparing),
+            timelineChunks: playbackTimelineChunks,
             words: wordBoundaries,
             durationMs: playbackDurationMilliseconds,
             isDurationGrowing: isPlaybackDurationGrowing,
@@ -2513,6 +2523,7 @@ public final class VoiceState {
     /// the paused read comes back. Never resumes audio by itself.
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
+        if mode == .disconnected { askParkedRead = nil }
         if mode == .disconnected || (oldValue == .speaking && mode == .idle) {
             clearCurrentSelectionReadIdentity(advanceEpoch: false)
             retireParkedRead()
@@ -2538,6 +2549,11 @@ public final class VoiceState {
         let read = parked.read
         clearRetainedTeleprompter()
         statusText = read.text
+        playbackEpoch = read.epoch
+        speechWords = read.speechWords
+        (selectionReadID, selectionReadRequestID, selectionReadText, selectionReadHash, selectionReadIsPreparing) = read.selection
+        playbackTimelineReadID = read.longReadID
+        playbackTimelineChunks = read.timelineChunks
         restoreLongReadDocument(read.document)
         wordBoundaries = read.words
         playbackDurationMilliseconds = read.durationMs
@@ -3113,8 +3129,20 @@ public final class VoiceState {
 
         case "state":
             guard let stateStr = event["state"] as? String else { return }
+            if event["preserves_paused_read"] as? Bool == true, askParkedRead == nil { askParkedRead = parkedRead }
             switch stateStr {
             case "idle":
+                if event["restores_paused_read"] as? Bool == true {
+                    guard let parked = askParkedRead,
+                          event["playback_id"] as? String == parked.playbackID,
+                          (event["generation"] as? NSNumber)?.intValue == parked.generation else { return }
+                    askParkedRead = nil
+                    enterIdleState(clearQueue: false)
+                    parkedRead = parked
+                    isCaptureSettlementPending = false
+                    restoreParkedReadIfSettled()
+                    return
+                }
                 if !supportsRecordingJobs, queuedRecordingTakeID != nil,
                    event["source"] as? String == "recording" {
                     microphoneTakeID = nil
@@ -3173,6 +3201,7 @@ public final class VoiceState {
                 // submissions. Only an acknowledged newer own request establishes their order.
                 // Receipts may arrive out of order; never roll a newer read back to an older one.
                 if let submission, submission.order < selectionReceiptOrder { return }
+                if event["preserves_paused_read"] as? Bool != true { askParkedRead = nil }
                 if let submission {
                     selectionQueueSnapshotIsEmpty = false
                     selectionReceiptOrder = submission.order
@@ -3400,6 +3429,8 @@ public final class VoiceState {
             handlePlaybackStateEvent(event)
 
         case "playback_outcome":
+            if let id = event["playback_id"] as? String, let parked = askParkedRead,
+               id == parked.playbackID || id == parked.read.longReadID { askParkedRead = nil }
             // Stop or replacement settled the parked job: there is nothing left to resume.
             if let id = event["playback_id"] as? String, let parked = parkedRead,
                id == parked.playbackID || id == parked.read.longReadID {
@@ -3415,6 +3446,9 @@ public final class VoiceState {
                     if mode == .speaking { enterIdleState(clearQueue: false) }
                     showSelectionBusyNote(message: "Speech stopped")
                 }
+                // A terminal paused player cannot become a running highlight clock while its
+                // replacement is still synthesizing. Freeze its readback before removing the park.
+                if mode == .speaking { enterIdleState(clearQueue: true) }
                 clearCurrentSelectionReadIdentity()
                 retireParkedRead()
             }
