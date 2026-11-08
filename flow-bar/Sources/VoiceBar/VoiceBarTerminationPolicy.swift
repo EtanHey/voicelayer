@@ -34,9 +34,10 @@ struct VoiceBarTerminationPolicy {
 
 /// A bounded save window, independent of update-controller liveness or playback.
 @MainActor enum VoiceBarQuitDeferral {
+    nonisolated static let maximumWait: TimeInterval = 6
     static func waitWhileSaving(_ saving: () -> Bool,
                                 sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }) async {
-        for _ in 0..<60 {
+        for _ in 0..<Int(maximumWait * 10) {
             guard saving() else { return }
             await sleep(.milliseconds(100))
         }

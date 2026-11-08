@@ -137,6 +137,23 @@ import VoiceBarUI
         XCTAssertEqual(policy.reply(enforcesSingleton: true, voiceBusy: true, gatePermitsQuit: false), .terminateNow)
     }
 
+    func testReplacementSurvivesIncumbentsFullSaveWindowAndCleanup() async {
+        var incumbent = VoiceBarTerminationPolicy()
+        XCTAssertEqual(incumbent.reply(enforcesSingleton: true, voiceBusy: true), .terminateLater)
+        var saveTicks = 0
+        await VoiceBarQuitDeferral.waitWhileSaving({ true }, sleep: { _ in saveTicks += 1 })
+        let incumbentExit = Double(saveTicks) / 10 + VoiceBarDaemonController.acceptedQuitWait - 0.1
+        var time: TimeInterval = 0
+        let newcomerContinues = AppDelegate.waitForIncumbents([123], isAlive: { _ in time < incumbentExit },
+            now: { time }, wait: { time += $0 })
+        XCTAssertTrue(newcomerContinues, "the newcomer must outlive the incumbent's deferred quit")
+        time = max(time, incumbentExit)
+        let runningCopies = (time < incumbentExit ? 1 : 0) + (newcomerContinues ? 1 : 0)
+        XCTAssertEqual(runningCopies, 1, "the incumbent's later exit must not leave zero copies")
+        incumbent.authorize(.internalFailure)
+        XCTAssertEqual(incumbent.reply(enforcesSingleton: true, voiceBusy: true), .terminateCancel)
+    }
+
     func testSlowAcceptingIncumbentLeavesReplacementRunning() {
         var time: TimeInterval = 0
         let acceptedQuitCleanup: TimeInterval = 2.1
