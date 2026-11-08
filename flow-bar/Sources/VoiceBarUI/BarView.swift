@@ -470,7 +470,7 @@ public struct BarView: View {
         if let forcedHistoryRows { return forcedHistoryRows }
         let entries = state.recentTranscriptionEntries.count
         switch surface.drawer {
-        case .settings: return NotchHistoryMorph.maximumRows
+        case .settings: return NotchSettingsDrawerPresentation.rows
         case let .history(detent): return detent.rows(entryCount: entries)
         case nil: return surface.historyDetent.rows(entryCount: entries)
         }
@@ -487,7 +487,9 @@ public struct BarView: View {
     private func toggleHistoryDrawer() {
         if surface.drawer?.isHistory == true {
             surface.send(.dismiss(.toggle))
-        } else if canPullHistory || isSettingsDrawerOpen {
+        } else {
+            // The button works wherever it shows (the launcher, a transcribing take); the machine still refuses
+            // while recording, reading aloud or under a modal sheet.
             surface.send(.openHistory)
         }
     }
@@ -1717,7 +1719,7 @@ public struct BarView: View {
 
     static func rows(for drawer: NotchDrawer, entries: Int) -> Int {
         switch drawer {
-        case .settings: NotchHistoryMorph.maximumRows
+        case .settings: NotchSettingsDrawerPresentation.rows
         case let .history(detent): detent.rows(entryCount: entries)
         }
     }

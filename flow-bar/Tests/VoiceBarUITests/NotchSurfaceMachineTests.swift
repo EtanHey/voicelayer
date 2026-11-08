@@ -136,6 +136,16 @@ final class NotchSurfaceMachineTests: XCTestCase {
         // Per remembered detent (2): with every activity flag clear, no drawer, History at that detent, or one of
         // the 5 Settings tabs; under each of the 7 other flag combinations, no drawer at all.
         XCTAssertEqual(seen.count, 2 * (1 + 1 + 5 + 7))
+
+        // Refinement: projected onto the TLA+ variables (detent and tab abstracted), the Swift machine reaches
+        // exactly the 10 distinct states TLC reports for formal/notch-surface Fixed.cfg.
+        struct Projected: Hashable { let history, settings, recording, teleprompter, modal: Bool }
+        let projected = Set(seen.map {
+            Projected(history: $0.drawer?.isHistory == true, settings: $0.drawer?.isSettings == true,
+                      recording: $0.isRecording, teleprompter: $0.isTeleprompterShown, modal: $0.isModal)
+        })
+        XCTAssertEqual(projected.count, 10)
+        XCTAssertTrue(projected.allSatisfy { !($0.history && $0.settings) })
     }
 }
 

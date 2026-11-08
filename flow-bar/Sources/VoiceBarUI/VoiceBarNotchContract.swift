@@ -487,6 +487,11 @@ public enum VoiceBarNotchContract {
     /// both software seams inward to meet the physical housing.
     public static let hardwareHorizontalCalibrationInset: CGFloat = 8.5
     public static let compactCoreContentInset: CGFloat = 13.5
+    /// 2.4 Lane A (Etan: "keep ≥ 8 pt of padding to the physical notch"): the least distance wing content may have
+    /// from the physical camera housing. The calibrated core edge IS the housing edge (#359, operator and phone
+    /// verified: AppKit's auxiliary gap includes a clear shoulder, which `hardwareHorizontalCalibrationInset` removes),
+    /// so every core-side inset is measured from it and must be at least this. NotchRealGeometryTests checks it.
+    public static let physicalNotchClearance: CGFloat = 8
     public static let compactStatusTrailingSafetyInset: CGFloat = 8
     public static let compactIndicatorLaneWidth = compactContentFitWingWidth(
         contentWidth: material.compactControlSize

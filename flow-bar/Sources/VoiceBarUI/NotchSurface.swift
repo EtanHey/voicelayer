@@ -200,8 +200,8 @@ public struct NotchSurfaceMachine: Equatable, Hashable, Sendable {
     public var dismissalReachable: Bool { drawer == nil || canDismiss }
 }
 
-/// The observable owner the views and monitors share. Main thread only, like the presentation model.
-@MainActor
+/// The observable owner the views and monitors share. Main thread only, like `VoiceBarNotchPresentationModel`
+/// (not actor-annotated, so the AppKit delegate can own it).
 @Observable
 public final class NotchSurfaceModel {
     public private(set) var machine = NotchSurfaceMachine()

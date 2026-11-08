@@ -57,10 +57,12 @@ final class NotchSettingsDrawerTests: XCTestCase {
         XCTAssertEqual(many.detail, "Microphone, Accessibility, Input Monitoring")
     }
 
-    func testTheDrawerIsExactlyTheExpandedHistoryHeight() {
-        XCTAssertEqual(NotchSettingsDrawerPresentation.lowerSurfaceHeight,
-                       NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(NotchHistoryMorph.maximumRows)))
-        XCTAssertEqual(NotchSettingsDrawerPresentation.lowerSurfaceHeight, 8 + 8 * 46 + 18)
+    func testTheDrawerSitsBetweenCollapsedAndExpandedHistory() {
+        XCTAssertEqual(NotchSettingsDrawerPresentation.lowerSurfaceHeight, 8 + 7 * 46 + 18)
+        XCTAssertGreaterThan(NotchSettingsDrawerPresentation.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight)
+        XCTAssertLessThan(NotchSettingsDrawerPresentation.lowerSurfaceHeight,
+                          NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(NotchHistoryMorph.maximumRows)),
+                          "inside the window History already sizes, so the swap never resizes it")
     }
 
     func testTheRightClickRecentsStayAtEightWhileHistoryHoldsTwenty() {

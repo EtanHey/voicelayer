@@ -37,10 +37,13 @@ public enum NotchSettingsDrawerPresentation {
     /// The widest the microphone name may draw before it ends in "…" (one line, never wrapped).
     public static let microphoneNameWidthBudget: CGFloat = 210
 
-    /// The drawer's height below the 32 pt band: exactly the expanded History panel's, so pulling from History
-    /// into Settings never resizes the window under the spring.
+    /// The drawer's height in History row units: between collapsed (6) and expanded (8) History, so the swap
+    /// between them is a short spring on the same shell and the window (sized for 8) never resizes.
+    public static let rows = 7
+
+    /// The drawer's height below the 32 pt band (fits the General tab with no dead space).
     public static var lowerSurfaceHeight: CGFloat {
-        NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(NotchHistoryMorph.maximumRows))
+        NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(rows))
     }
 
     public static func permissionTitle(_ permission: HotkeyPermission) -> String {
@@ -90,8 +93,8 @@ public enum NotchSettingsDrawerPresentation {
         switch phase {
         case .idle: nil
         case .checking: "Checking for updates…"
-        case .upToDate: "You are on the latest version."
-        case let .ahead(latest): "This build is newer than the latest release (\(latest))."
+        case .upToDate: "No newer release is available."
+        case let .ahead(latest): "No newer release. This build is past \(latest)."
         case let .available(version): "VoiceBar \(version) is available."
         case .couldNotCheck: "Could not check for updates. Try again in a moment."
         case .updating: "Updating. VoiceBar restarts when it is done."
@@ -227,6 +230,7 @@ struct NotchSettingsDrawer: View {
                 Spacer()
                 actionButton(NotchSettingsDrawerPresentation.allSettings) { onOpenWindow(.general, nil) }
             }
+            .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
         }
     }
 

@@ -195,7 +195,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         try drag(from: notchPoint(harness, fromTop: 120), dy: -140, in: harness.panel)
         wait { harness.surface.drawer == .settings(.general) }
         XCTAssertEqual(harness.surface.drawer, .settings(.general))
-        XCTAssertEqual(harness.model.historyRows, NotchHistoryMorph.maximumRows, "Settings sits at the expanded height")
+        XCTAssertEqual(harness.model.historyRows, NotchSettingsDrawerPresentation.rows, "Settings has its own height")
     }
 
     func testTheGearOpensSettingsInTheNotchAndClosesItAgain() throws {

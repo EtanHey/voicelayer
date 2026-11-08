@@ -30,7 +30,7 @@ final class SettingsVersionFooterTests: XCTestCase {
         XCTAssertTrue(shell.contains("SettingsVersionFooter(installed: installedVersion, status: versionStatus)"))
         XCTAssertFalse(shell.contains("VoiceBarStatusFooter(presentation:"))
         XCTAssertFalse(shell.contains("footer.privacy"))
-        XCTAssertTrue(shell.contains(".lineLimit(1)"))
+        XCTAssertFalse(shell.contains(".truncationMode(.tail)"), "2.4: the build line wraps, it never ends in …")
         XCTAssertTrue(shell.contains(".accessibilityValue(status?.message ?? \"\")"))
     }
 
@@ -41,6 +41,18 @@ final class SettingsVersionFooterTests: XCTestCase {
         XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .available("2.2.62")),
                        "VoiceBar 2.3.0 · Update available")
         XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: nil), "VoiceBar 2.3.0")
+    }
+
+    /// 2.4 Lane A: "ahead of release" says by how much, and is never cut to "Ahead of rel…".
+    func testAheadOfReleaseSaysByHowMuch() {
+        let installed = VoiceBarInstalledVersion(version: "2.4.0", commit: "abcdef0123")
+        let describe = VoiceBarGitDescribe(releaseVersion: "2.3.0", commitsAhead: 14)
+        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .ahead(latest: "2.3.0"), describe: describe),
+                       "VoiceBar 2.4.0 · Ahead of release by 14 commits")
+        XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .available("2.4.1"), describe: describe),
+                       "VoiceBar 2.4.0 · Update available")
+        XCTAssertEqual(SettingsVersionFooter.statusText(.latest, describe: .init(releaseVersion: "2.4.0", commitsAhead: 0)),
+                       "Up to date")
     }
 
     func testVersionAppearsOnceAcrossSettings() throws {

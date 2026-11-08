@@ -57,6 +57,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var contextMenuTracking = false
     /// 2.3 U2: the same History bridge + surface handoff the app uses (U2 review R1: no separate QA menu path).
     let historyBridge = VoiceBarNotchHistoryBridge()
+    /// 2.4 Lane A: the same ONE notch surface the app uses; every transition is a receipt (`notch-surface …`), so the
+    /// M1 XCUI cases can prove an Esc, an outside click or a drag-up closed the drawer.
+    let notchSurface = NotchSurfaceModel()
     lazy var surfaceHandoff: VoiceBarNotchSurfaceHandoff = makeSurfaceHandoff()
     /// QA-only: hold scheduled menu presentations so a test can open History in the gap (wings-u2 queued-cancel).
     var holdsMenuQueue = false
@@ -144,7 +147,19 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             onOpenSetupSettings: { [weak self] in self?.openSetupSettings() },
             historyBridge: historyBridge,
             onOpenNotchMenu: { [weak self] in self?.surfaceHandoff.requestMenu(.notch) },
-            onCancelNotchMenu: { [weak self] in self?.surfaceHandoff.cancelQueuedMenu() }))
+            onCancelNotchMenu: { [weak self] in self?.surfaceHandoff.cancelQueuedMenu() },
+            surface: notchSurface,
+            settingsDrawer: NotchSettingsDrawerContext(
+                shortcutHint: { "QA · hotkeys disabled" }, defaultMicrophoneName: { "QA microphone A" },
+                updates: nil,
+                openSettingsWindow: { [weak self] tab, _ in
+                    self?.model.tab = tab; self?.model.requestID += 1; self?.settings.makeKeyAndOrderFront(nil)
+                    self?.model.receipt("notch-settings-window-\(tab.title.lowercased())")
+                }
+            )))
+        notchSurface.log = { [weak self] line in
+            self?.model.receipt(line.replacingOccurrences(of: "[VoiceBar] ", with: ""))
+        }
         bar.activeHitTestProvider = { [weak self] point in
             guard let self else { return false }
             return self.panelLayout().containsInteractiveContent(point)
