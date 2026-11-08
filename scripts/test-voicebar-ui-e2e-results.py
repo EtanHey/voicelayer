@@ -19,6 +19,40 @@ QA_SOURCE = dict(kind='application', bundle='com.voicelayer.voicebar.uie2e', exe
 
 
 class ReportTests(unittest.TestCase):
+    def timing_manifest(self, entries):
+        attachments = []
+        for index, (name, data) in enumerate(entries):
+            filename = f'timing-{index}.json'
+            (self.root / filename).write_text(json.dumps(data))
+            attachments.append(dict(suggestedHumanReadableName='UIE2E-E2E24-TIMING-' + name + '_0_UUID.json',
+                exportedFileName=filename, isAssociatedWithFailure=False))
+        return [dict(attachments=attachments)]
+
+    def test_timing_export_preserves_each_case_and_total(self):
+        manifest = self.timing_manifest([('dictionary', dict(case='dictionary',seconds=1.25)),
+                                         ('recognizer', dict(case='recognizer',seconds=2))])
+        data = results.timing_receipts(self.root, manifest, {'e2e24:dictionary','e2e24:recognizer'})
+        self.assertEqual(data['totalSeconds'],3.25)
+        self.assertEqual([row['case'] for row in data['cases']],['dictionary','recognizer'])
+
+    def test_timing_missing_duplicate_invalid_and_mismatched_cases_fail(self):
+        for entries in [[], [('dictionary',dict(case='dictionary',seconds=-1))],
+            [('dictionary',dict(case='dictionary',seconds=True))],
+            [('dictionary',dict(case='dictionary',seconds=float('nan')))],
+            [('dictionary',dict(case='recognizer',seconds=1))],
+            [('dictionary',dict(case='dictionary',seconds=1))]*2]:
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                results.timing_receipts(self.root,self.timing_manifest(entries),{'e2e24:dictionary'})
+
+    def test_timing_cannot_escape_export_or_use_failed_attachment(self):
+        manifest = self.timing_manifest([('dictionary',dict(case='dictionary',seconds=1))])
+        attachment = manifest[0]['attachments'][0]
+        attachment['isAssociatedWithFailure'] = True
+        with self.assertRaises(ValueError): results.timing_receipts(self.root,manifest,{'e2e24:dictionary'})
+        attachment['isAssociatedWithFailure'] = False
+        attachment['exportedFileName'] = '../outside.json'
+        with self.assertRaises(ValueError): results.timing_receipts(self.root,manifest,{'e2e24:dictionary'})
+
     def test_seek2_can_no_longer_be_waived_as_an_expected_failure(self):
         step = dict(passed=True, expectedFailure=dict(packet='SEEK2', surface='notch:seek-idle',
                     descriptions=['[SEEK2] readback must seek']))
@@ -627,6 +661,23 @@ class ReportTests(unittest.TestCase):
         # The signed test runner cannot write here. Only exported XCTest attachments exist.
         with patch.object(results.subprocess, 'run'):
             return results.export(self.root, self.root / 'no-sandbox-ledger')
+
+    def test_e2e24_export_writes_timings_and_missing_attachment_fails(self):
+        directory, ledger, manifest = self.attachment_run()
+        ledger.update(scenario='e2e24', scope='e2e24')
+        ledger['coverage'].update(scenario='e2e24', verifiedSurfaces=['e2e24:dictionary'], missingSurfaces=[])
+        (directory/'ledger.json').write_text(json.dumps(ledger))
+        (self.root/'scenario.json').write_text(json.dumps(dict(scenario='e2e24')))
+        with patch.object(results.subprocess,'run'):
+            self.assertFalse(results.export(self.root,self.root/'sandbox'))
+        self.assertIn('timing', (directory/'index.html').read_text())
+        (directory/'timing.json').write_text(json.dumps(dict(case='dictionary',seconds=1.25)))
+        manifest.append(dict(suggestedHumanReadableName='UIE2E-E2E24-TIMING-dictionary_0_UUID.json',
+                             exportedFileName='timing.json',isAssociatedWithFailure=False))
+        (directory/'manifest.json').write_text(json.dumps([dict(attachments=manifest)]))
+        with patch.object(results.subprocess,'run'):
+            self.assertTrue(results.export(self.root,self.root/'sandbox'))
+        self.assertEqual(json.loads((self.root/'timings.json').read_text())['totalSeconds'],1.25)
 
     def test_export_reads_attached_receipts_without_any_scratch_ledger(self):
         self.attachment_run()

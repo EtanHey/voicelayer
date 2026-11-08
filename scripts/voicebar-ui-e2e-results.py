@@ -3,6 +3,7 @@
 import argparse
 import html
 import json
+import math
 import pathlib
 import plistlib
 import re
@@ -186,6 +187,31 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
         '<style>body{font:16px system-ui;background:#16181d;color:#eee}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}figure{margin:0}img{width:100%}figcaption{padding:8px}</style>'
         '<h1>VoiceBar UI E2E — ' + scenario + ' — synthetic UI fixtures, no audio</h1>' + scope + warnings + notes + video + '<main>' + ''.join(figures) + '</main>')
     return all_passed
+
+
+def timing_receipts(directory, manifest, required):
+    cases = {}
+    for test in manifest:
+        for attachment in test['attachments']:
+            match = re.match(r'^UIE2E-E2E24-TIMING-([a-z0-9-]+)(?=[_.]|$)', attachment['suggestedHumanReadableName'])
+            if not match:
+                continue
+            path = (directory / attachment['exportedFileName']).resolve()
+            if (not path.is_relative_to(directory.resolve()) or not path.is_file()
+                    or attachment['isAssociatedWithFailure']):
+                raise ValueError('Missing/unsafe/failed timing attachment')
+            data = json.loads(path.read_text())
+            name = match[1]
+            seconds = data.get('seconds')
+            if (data.get('case') != name or name in cases or type(seconds) not in (int, float)
+                    or not math.isfinite(seconds) or seconds < 0):
+                raise ValueError('Invalid/duplicate timing case')
+            cases[name] = dict(case=name, seconds=seconds, attachment=attachment['exportedFileName'])
+    if {'e2e24:' + name for name in cases} != set(required):
+        raise ValueError('Timing attachments differ from required native cases')
+    return dict(schema='voicelayer.e2e24-timings.v1', scenario='e2e24',
+                cases=[cases[name] for name in sorted(cases)],
+                totalSeconds=sum(row['seconds'] for row in cases.values()))
 
 
 def receipts(directory, manifest):
@@ -379,6 +405,16 @@ def export(output, sandbox, scenario=None):
                     '--output-path', str(directory), '--filter', 'UIE2E-*'], check=True)
     manifest = json.loads((directory / 'manifest.json').read_text())
     steps, ledger, issues = receipts(directory, manifest)
+    if scenario == 'e2e24':
+        coverage = ledger['coverage'] if ledger is not None else {}
+        required = set(coverage.get('verifiedSurfaces', [])) | set(coverage.get('missingSurfaces', [])) | set(coverage.get('expectedSurfaces', {}))
+        try:
+            if not required:
+                raise ValueError('Missing native case inventory for timings')
+            timings = timing_receipts(directory, manifest, required)
+            (output / 'timings.json').write_text(json.dumps(timings, indent=2) + '\n')
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            issues.append('FAIL per-case timing export: ' + str(error))
     if ledger is not None:
         labels = [ledger.get('scenario'), ledger.get('scope'), ledger['coverage'].get('scenario')]
         if ((scenario in {'e2e24', 'focused-338', 'hide1', 'gate2246', 'wings-u2'} and labels != [scenario] * 3)
