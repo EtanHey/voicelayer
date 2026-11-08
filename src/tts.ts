@@ -1417,13 +1417,13 @@ class PlaybackQueueManager {
       return { outcome: "accept", reason: "manual pause", offset_ms: globalOffset(this.parked.job) };
     }
     if (this.parked) {
-      return this.isStale(this.parked.job, scope) ? { outcome: "reject", reason: "stale" }
+      return this.isStale(this.parked.job, scope) ? staleControl(this.parked.job.id, this.parked.job.lifecycle.generation)
         : { outcome: "noop", reason: "already paused", offset_ms: globalOffset(this.parked.job) };
     }
     const active = this.current;
     const job = active?.job ?? this.restartAfterTermination ?? this.preparing?.job;
     if (!job || job.completed) return { outcome: "noop", reason: "nothing playing" };
-    if (this.isStale(job, scope)) return { outcome: "reject", reason: "stale" };
+    if (this.isStale(job, scope)) return staleControl(job.id, job.lifecycle.generation);
     if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
     if (!job.metadata || ((job.priority === "critical" || this.captureAdmission) && !this.ownsPausablePrompt(job))) return { outcome: "reject", reason: "unsupported" };
     const chunkStart = job.metadata.longRead?.chunk_start_ms ?? 0;
@@ -1497,7 +1497,7 @@ class PlaybackQueueManager {
   resume(scope: ControlScope): SeekResult {
     const parked = this.parked;
     if (!parked) return { outcome: "noop", reason: "not paused" };
-    if (this.isStale(parked.job, scope)) return { outcome: "reject", reason: "stale" };
+    if (this.isStale(parked.job, scope)) return staleControl(parked.job.id, parked.job.lifecycle.generation);
     if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) return { outcome: "reject", reason: "busy" };
     const offset_ms = (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
     if (parked.resumeRequested) return { outcome: "noop", reason: "resuming", offset_ms };
@@ -1868,6 +1868,8 @@ class PlaybackQueueManager {
         ...(next.metadata.longRead ? { long_read: next.metadata.longRead } : {}),
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
         ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),
+        // T1: where this player's audio ends, from chunk_start_ms; the client clock never runs past it.
+        ...(durationMs && durationMs > 0 ? { chunk_duration_ms: durationMs } : {}),
         playback_amplitude: next.playbackAmplitude,
         initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),
       });
@@ -2285,6 +2287,12 @@ export function playbackTelemetrySnapshot(): CommandTelemetrySnapshot {
 }
 setCommandTelemetrySnapshot(playbackTelemetrySnapshot);
 
+/** T1 (QA 2026-11-08 S2-F9): a stale Pause/Resume names the player that IS current, so a client whose
+ * identity fell behind can adopt it and retry once instead of failing silently. */
+function staleControl(id: string, generation: number): SeekResult {
+  return { outcome: "reject", reason: "stale", playback_id: id, generation };
+}
+
 /** Idempotent; the scope, when given, must name the current item. `elapsedMs` is the global client clock. */
 export function pausePlayback(scope: { id?: string; generation?: number } = {}, playbackElapsedMs?: number, owner: PlaybackPauseOwner = "user"): SeekResult {
   const result = playbackQueueManager.pause(scope, playbackElapsedMs, owner);
@@ -2293,7 +2301,7 @@ export function pausePlayback(scope: { id?: string; generation?: number } = {}, 
   if (result.outcome !== "noop" || result.reason !== "nothing playing" || !read || !admission ||
       read.controller.signal.aborted) return result;
   if ((scope.id !== undefined && scope.id !== admission.identity.id) ||
-      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return { outcome: "reject", reason: "stale" };
+      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return staleControl(admission.identity.id, admission.identity.generation);
   const publish = (parked: PendingReadChunk & { phase: "paused" }) => publishPlaybackState({ type: "playback_state", state: "paused",
     playback_id: parked.identity.id, generation: parked.identity.generation, pause_owner: parked.owner,
     offset_ms: parked.info.chunk_start_ms, chunk_offset_ms: 0, word_index: 0,
@@ -2343,7 +2351,7 @@ export function resumePlayback(scope: { id?: string; generation?: number } = {})
   const admission = read.pendingChunk;
   if (!admission || admission.phase !== "paused") return { outcome: "noop", reason: "not paused" };
   if ((scope.id !== undefined && scope.id !== admission.identity.id) ||
-      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return { outcome: "reject", reason: "stale" };
+      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return staleControl(admission.identity.id, admission.identity.generation);
   read.pendingChunk = { ...admission, phase: "resuming",
     identity: { id: admission.info.chunk_index === 0 ? nextPlaybackId() : admission.identity.id,
       generation: admission.identity.generation + 1 } };

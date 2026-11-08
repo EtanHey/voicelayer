@@ -409,10 +409,15 @@ describe("P10 socket pause/resume", () => {
     expect(resumedEvent).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4000, word_index: 4 });
     // The resumed frame and its event agree on the new generation; the pre-pause scope is now stale.
     expect(speaking).toMatchObject({ playback_id: handle.id, generation: resumedEvent.generation });
+    // T1 (S2-F9): a stale scope learns the player that IS current, so the client can adopt it and retry once.
     expect(handleSocketCommand(parseCommand(JSON.stringify({ cmd: "pause", playback_id: handle.id,
-      generation: firstSpeaking.generation })) as any)).toMatchObject({ outcome: "reject", reason: "stale" });
+      generation: firstSpeaking.generation })) as any)).toMatchObject({ outcome: "reject", reason: "stale",
+      playback_id: handle.id, generation: resumedEvent.generation });
     expect(handleSocketCommand(parseCommand(JSON.stringify({ cmd: "pause", playback_id: "playback-retired" })) as any))
-      .toMatchObject({ outcome: "reject", reason: "stale" });
+      .toMatchObject({ outcome: "reject", reason: "stale", playback_id: handle.id, generation: resumedEvent.generation });
+    // T1: the speaking edge says where this player's audio ends, so the client clock cannot run past it.
+    expect(speaking.chunk_duration_ms).toBe(firstSpeaking.chunk_duration_ms);
+    expect(firstSpeaking.chunk_duration_ms).toBeGreaterThan(0);
     expect(tts.isPlaybackPaused()).toBe(false);
     expect(events.filter(e => e.type === "playback_outcome")).toEqual([]);
     resumedPlayer.exit.resolve(0);

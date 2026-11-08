@@ -18,6 +18,9 @@ export interface SeekResult {
   reason?: string;
   offset_ms?: number;
   clamped?: boolean;
+  /** A stale Pause/Resume: the player that is actually current. */
+  playback_id?: string;
+  generation?: number;
 }
 export interface LongReadSeek { seek(offsetMs: number): SeekResult; restart(): SeekResult }
 
