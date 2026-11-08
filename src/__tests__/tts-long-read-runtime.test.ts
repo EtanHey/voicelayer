@@ -1980,6 +1980,58 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(texts).not.toContain("Charlie");
     });
 
+    it.each(["playing", "preparing", "capture-error", "prompt-pause", "prompt-preparation"])("W1 Ask borrows playback without replacing the paused selection or its queue (%s)", async phase => {
+      holdFirstSynth = holdSynth = phase === "preparing";
+      select("A", "Alpha paused selection.");
+      if (phase === "preparing") await synthBarrier.at(0);
+      else await playerBarrier.at(0);
+      expect(handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 500 } as any)).toMatchObject({ outcome: "accept" });
+      select("B", "Bravo waiting selection.");
+      await settle();
+      const paused = events.filter(e => e.type === "playback_state" && e.state === "paused").at(-1);
+      const beforeAsk = events.length;
+      autoPlay = phase !== "prompt-pause";
+      holdSynth = false;
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => {
+        if (phase === "preparing") { synths[0].exit.resolve(0); await settle(); }
+        if (phase === "capture-error") throw Error("synthetic capture failure");
+        return "an answer";
+      })));
+      holdSynth = phase === "prompt-preparation";
+      const promptSynthIndex = synths.length;
+      const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      if (phase === "prompt-preparation") {
+        const synthesis = await synthBarrier.at(promptSynthIndex);
+        await settle();
+        expect(events.slice(beforeAsk).filter(e => e.state === "speaking")).toEqual([]);
+        expect(players).toHaveLength(1);
+        synthesis.exit.resolve(0);
+      }
+      if (phase === "prompt-pause") {
+        await playerBarrier.at(1);
+        const prompt = events.filter(e => e.state === "speaking").at(-1);
+        expect(tts.pausePlayback({ id: prompt.playback_id, generation: prompt.generation }, 0).outcome).toBe("accept");
+        const parkedPrompt = events.filter(e => e.type === "playback_state" && e.state === "paused").at(-1);
+        expect(tts.resumePlayback({ id: parkedPrompt.playback_id, generation: parkedPrompt.generation }).outcome).toBe("accept");
+        (await playerBarrier.at(2)).exit.resolve(0);
+      }
+      await answer;
+      await settle();
+      expect(tts.isPlaybackPaused()).toBe(true);
+      expect(events.filter(e => e.type === "read_queue").at(-1)).toMatchObject({ count: 1, current_request_id: "A" });
+      expect(events.filter(e => e.restores_paused_read).at(-1)).toMatchObject({ playback_id: paused.playback_id, generation: paused.generation });
+      const prompt = events.slice(beforeAsk).filter(e => e.state === "speaking");
+      expect(prompt).toHaveLength(phase === "prompt-pause" ? 2 : 1);
+      expect(prompt[0]).toMatchObject({ text: "Question?", preserves_paused_read: true });
+      expect(prompt[0].playback_id).not.toBe(paused.playback_id);
+      expect(events.slice(beforeAsk).some(e => e.type === "playback_outcome" && e.playback_id === paused.playback_id)).toBe(false);
+      autoPlay = false;
+      expect(tts.resumePlayback({ id: paused.playback_id, generation: paused.generation })).toMatchObject({ outcome: "accept", offset_ms: paused.offset_ms });
+      await playerBarrier.at(phase === "preparing" ? 1 : phase === "prompt-pause" ? 3 : 2);
+      expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ request_id: "A", playback_id: paused.playback_id, playback_offset_ms: paused.offset_ms });
+    });
+
     it("a paused read stays paused when a new selection queues; Next replaces the park with the queued read", async () => {
       select("A", "Alpha paused selection.");
       await playerBarrier.at(0);

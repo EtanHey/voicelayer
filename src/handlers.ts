@@ -34,6 +34,7 @@ import {
   preemptLongRead,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
+  isPlaybackPaused,
   cancelPlayback,
   type CaptureAdmission,
   type QueuedPlaybackHandle,
@@ -877,7 +878,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     assertSpeakerClear();
 
     // Wait for all queued playback to finish (P0-2: awaits full queue)
-    preemptLongRead();
+    preemptLongRead("ask");
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
@@ -928,7 +929,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     const promptStopped = speech.playbackOutcome?.reason === "stopped";
     if (speech.playbackOutcome && speech.playbackOutcome.status !== "completed" && !promptStopped) {
       captureAdmission.release();
-      if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && getEffectiveRecordingState() === "idle") {
+      if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() && getEffectiveRecordingState() === "idle") {
         broadcast({ type: "state", state: "idle", source: "playback" });
       }
       return { kind: "prompt-incomplete", status: speech.playbackOutcome.status };
@@ -950,7 +951,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
 
     // Record mic audio, then transcribe with selected STT backend
     assertSpeakerClear();
-    if (promptPlayers.length) broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording" });
+    if (promptPlayers.length || isPlaybackPaused()) broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording",
+      ...(isPlaybackPaused() ? { preserves_paused_read: true } : {}) });
     const pushToEnd = resolvePushToEnd(validated.push_to_end ?? false, {
       caller: "mcp.voice_ask",
     });
@@ -1036,7 +1038,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         await promptReaped;
         await promptTimeoutCleanup;
         // A late old exit must not mark a newer playback/capture owner idle.
-        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() &&
+        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() &&
             getEffectiveRecordingState() === "idle") {
           broadcast({ type: "state", state: "idle", source: "playback" });
         }
@@ -1063,7 +1065,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     ) {
       // Errors can return before owned teardown; never idle a foreign/newer owner.
       void Promise.all(promptPlayers.map(handle => handle.playerExited)).then(() => {
-        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() &&
+        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() &&
             getEffectiveRecordingState() === "idle") {
           broadcast({ type: "state", state: "idle" });
         }
