@@ -731,7 +731,14 @@ export function consumeCancelSignalForRecording(): boolean {
   return true;
 }
 
-export interface VoiceBarRecordingArchiveInput {
+type TailArchiveInput = {
+  tailAppends?: NonNullable<TranscriptionResult["tailAppend"]>[];
+  tailRecoveryReasons?: NonNullable<TranscriptionResult["tailRecoveryReason"]>[];
+};
+function tailArchiveMetadata(input: TailArchiveInput) {
+  return { tail_appends: input.tailAppends ?? [], tail_recovery_reasons: input.tailRecoveryReasons ?? [] };
+}
+export interface VoiceBarRecordingArchiveInput extends TailArchiveInput {
   inputDevice?: RecordingInputDevice | null;
   audioBytes: Uint8Array;
   transcript: string | null;
@@ -856,7 +863,7 @@ class RecordingFailureWithCapturedPcm extends Error {
 
 type STTFinalizeEnv = STTCorrectorEnv & STTPolishEnv;
 
-interface WaitForInputArchiveInput {
+interface WaitForInputArchiveInput extends TailArchiveInput {
   inputDevice?: RecordingInputDevice | null;
   options: WaitForInputOptions;
   audioBytes: Uint8Array;
@@ -880,7 +887,7 @@ export interface VoiceAskCaptureArchiveInput {
   provenanceProbe?: RecordingProvenanceProbe;
 }
 
-export interface VoiceAskArchiveFinalizationInput {
+export interface VoiceAskArchiveFinalizationInput extends TailArchiveInput {
   transcript: string;
   backend: string;
   transcribedDurationMs?: number;
@@ -888,7 +895,7 @@ export interface VoiceAskArchiveFinalizationInput {
   provenanceProbe?: RecordingProvenanceProbe;
 }
 
-interface VoiceBarRecordingMetadata {
+interface VoiceBarRecordingMetadata extends Partial<ReturnType<typeof tailArchiveMetadata>> {
   input_device_name?: string;
   input_device_uid?: string | null;
   id: string;
@@ -918,7 +925,7 @@ const VOICE_ASK_ARTIFACT_NAMES = {
   user_transcript: "voicelayer-transcript.txt",
 } as const;
 
-interface VoiceAskRecordingMetadata {
+interface VoiceAskRecordingMetadata extends Partial<ReturnType<typeof tailArchiveMetadata>> {
   input_device_name?: string;
   input_device_uid?: string | null;
   id: string;
@@ -1198,6 +1205,7 @@ function writeVoiceBarRecordingArchive(
     probe: input.provenanceProbe,
   });
   const metadata: VoiceBarRecordingMetadata = {
+    ...tailArchiveMetadata(input),
     ...(input.inputDevice ? { input_device_name: input.inputDevice.name, input_device_uid: input.inputDevice.uid } : {}),
     id,
     created_at: createdAtIso,
@@ -1423,6 +1431,7 @@ export function finalizeVoiceAskArchive(
   );
   const metadata: VoiceAskRecordingMetadata = {
     ...archive.metadata,
+    ...tailArchiveMetadata(input),
     ...(input.transcribedDurationMs === undefined
       ? {}
       : { transcribed_duration_ms: input.transcribedDurationMs }),
@@ -1462,6 +1471,7 @@ export function archiveWaitForInputRecording(
       pushToEnd: input.pushToEnd,
       durationMs: input.durationMs,
       transcribedDurationMs: input.transcribedDurationMs,
+      tailAppends: input.tailAppends, tailRecoveryReasons: input.tailRecoveryReasons,
       backend: input.backend,
       polishStatus: input.polishStatus,
     });
@@ -1480,6 +1490,7 @@ export function archiveWaitForInputRecording(
   });
   return finalizeVoiceAskArchive(archivePath, {
     transcript: input.transcript,
+    tailAppends: input.tailAppends, tailRecoveryReasons: input.tailRecoveryReasons,
     backend: input.backend,
     transcribedDurationMs: input.transcribedDurationMs,
     polishStatus: input.polishStatus,
@@ -1855,7 +1866,8 @@ export class ChunkedRecordingSession {
   private readonly silenceMode: SilenceMode;
   private activeChunks: Uint8Array[] = [];
   private activeBytes = 0;
-  private completedSegments: Uint8Array[] = [];
+  private completedSegments: { pcm: Uint8Array; offsetS: number }[] = [];
+  private activeOffsetBytes = 0;
   private overlapBuffer = new Uint8Array(0);
   private hasSpeech = false;
   private silenceChunks = 0;
@@ -1887,10 +1899,11 @@ export class ChunkedRecordingSession {
 
     if (decision.shouldCloseChunk && this.activeBytes > 0) {
       const flat = flattenChunks(this.activeChunks);
-      this.completedSegments.push(flat);
+      this.completedSegments.push({ pcm: flat, offsetS: this.activeOffsetBytes / (this.sampleRate * BYTES_PER_SAMPLE) });
       this.overlapBuffer = flat.slice(
         -Math.min(decision.overlapBytes, flat.byteLength),
       );
+      this.activeOffsetBytes += flat.byteLength - this.overlapBuffer.byteLength;
       this.activeChunks =
         this.overlapBuffer.byteLength > 0 ? [this.overlapBuffer] : [];
       this.activeBytes = this.overlapBuffer.byteLength;
@@ -1903,6 +1916,7 @@ export class ChunkedRecordingSession {
     this.activeChunks = [];
     this.activeBytes = 0;
     this.completedSegments = [];
+    this.activeOffsetBytes = 0;
     this.overlapBuffer = new Uint8Array(0);
     this.hasSpeech = false;
     this.silenceChunks = 0;
@@ -1923,7 +1937,7 @@ export class ChunkedRecordingSession {
     if (this.activeBytes === 0) return;
     const flat = flattenChunks(this.activeChunks);
     const lastCompleted =
-      this.completedSegments[this.completedSegments.length - 1];
+      this.completedSegments[this.completedSegments.length - 1]?.pcm;
     if (
       lastCompleted &&
       lastCompleted.byteLength >= flat.byteLength &&
@@ -1935,10 +1949,12 @@ export class ChunkedRecordingSession {
     ) {
       return;
     }
-    this.completedSegments.push(flat);
+    this.completedSegments.push({ pcm: flat, offsetS: this.activeOffsetBytes / (this.sampleRate * BYTES_PER_SAMPLE) });
   }
 
-  consumeSegments(): Uint8Array[] {
+  consumeSegments(): Uint8Array[] { return this.consumeTimedSegments().map(s => s.pcm); }
+
+  consumeTimedSegments(): { pcm: Uint8Array; offsetS: number }[] {
     const segments = this.completedSegments;
     this.completedSegments = [];
     return segments;
@@ -1959,16 +1975,16 @@ export async function transcribeChunkSequence(
 
 async function transcribeChunkSequenceRaw(
   chunks: Uint8Array[],
-  transcribeChunk: (chunk: Uint8Array, prompt: string) => Promise<string>,
+  transcribeChunk: (chunk: Uint8Array, prompt: string, index: number) => Promise<string>,
 ): Promise<string> {
   const transcripts: string[] = [];
 
-  for (const chunk of chunks) {
+  for (const [index, chunk] of chunks.entries()) {
     const prompt =
       transcripts.length === 0
         ? ""
         : buildChunkPrompt(mergeChunkTranscripts(transcripts), 24);
-    const text = (await transcribeChunk(chunk, prompt)).trim();
+    const text = (await transcribeChunk(chunk, prompt, index)).trim();
     if (text) {
       transcripts.push(text);
     }
@@ -3547,8 +3563,8 @@ export async function waitForInput(
     let finalized: FinalizedTranscriptionResult;
     let sttBackendLabel = backend.name;
     const chunkBackendLabels = new Set<string>();
-    const tailAppends: (NonNullable<TranscriptionResult["tailAppend"]> & { chunkIndex?: number })[] = [];
-    let chunkIndex = 0;
+    const tailAppends: NonNullable<TranscriptionResult["tailAppend"]>[] = [];
+    const tailRecoveryReasons: NonNullable<TranscriptionResult["tailRecoveryReason"]>[] = [];
     let gateRemoval: STTAttemptEvidence["gateRemoval"];
     const noteGateRemoval = (evidence: STTAttemptEvidence | undefined) => {
       if (evidence?.gateRemoval) gateRemoval = { gate: evidence.gateRemoval.gate,
@@ -3558,10 +3574,11 @@ export async function waitForInput(
 
     if (useChunkedTranscription) {
       chunkedSession.finalize();
-      const segments = chunkedSession.consumeSegments();
+      const timedSegments = chunkedSession.consumeTimedSegments();
+      const segments = timedSegments.map(s => s.pcm);
       const rawText = await transcribeChunkSequenceRaw(
         segments,
-        async (chunk, prompt) => {
+        async (chunk, prompt, index) => {
           const chunkPath = recordingFilePath(
             process.pid,
             Date.now() + Math.random(),
@@ -3570,10 +3587,11 @@ export async function waitForInput(
             throwIfWaitForInputAborted(options.signal);
             writeFileSync(chunkPath, createWavBuffer(chunk));
             const result = await measureTakeStageAsync("decode", () => backend.transcribe(chunkPath, {
-              promptOverride: prompt,
+              promptOverride: prompt, signal: options.signal,
             }));
-            if (result.tailAppend) tailAppends.push({ ...result.tailAppend, chunkIndex });
-            chunkIndex++;
+            if (result.tailAppend) tailAppends.push({ ...result.tailAppend,
+              startS: result.tailAppend.startS + timedSegments[index].offsetS, endS: result.tailAppend.endS + timedSegments[index].offsetS });
+            if (result.tailRecoveryReason) tailRecoveryReasons.push(result.tailRecoveryReason);
             chunkBackendLabels.add(result.backend);
             noteGateRemoval(result.attemptEvidence);
             throwIfWaitForInputAborted(options.signal);
@@ -3596,9 +3614,10 @@ export async function waitForInput(
         sttBackendLabel = `mixed(${[...chunkBackendLabels].join("|")})`;
       }
     } else {
-      const result = await measureTakeStageAsync("decode", () => backend.transcribe(wavPath));
+      const result = await measureTakeStageAsync("decode", () => backend.transcribe(wavPath, { signal: options.signal }));
       sttBackendLabel = result.backend;
       if (result.tailAppend) tailAppends.push(result.tailAppend);
+      if (result.tailRecoveryReason) tailRecoveryReasons.push(result.tailRecoveryReason);
       noteGateRemoval(result.attemptEvidence);
       throwIfWaitForInputAborted(options.signal);
       // Built BEFORE the finalize call, and abortable: the pause map is a
@@ -3675,6 +3694,7 @@ export async function waitForInput(
       try {
         if (voiceBarArchivePath) {
           updateArchivedTranscript(join(voiceBarArchivePath, "audio.wav"), text, {
+            tailAppends, tailRecoveryReasons,
             backend: sttBackendLabel,
             languageMode: getLanguageModeFromEnv(),
             transcribedDurationMs: sttTrim.transcribedDurationMs,
@@ -3686,13 +3706,14 @@ export async function waitForInput(
         } else {
           archivedRecordingPath = voiceAskArchivePath
             ? finalizeVoiceAskArchive(voiceAskArchivePath, {
+                tailAppends, tailRecoveryReasons,
                 transcript: text,
                 backend: sttBackendLabel,
                 transcribedDurationMs: sttTrim.transcribedDurationMs,
                 polishStatus: finalized.polishStatus,
               })
             : archiveWaitForInputRecording({
-                options,
+                options, tailAppends, tailRecoveryReasons,
                 audioBytes: retainedWavData,
                 transcript: text,
                 silenceMode,
@@ -3718,7 +3739,6 @@ export async function waitForInput(
         }
       }
       if (archivedRecordingPath) {
-        updateArchivedRecordingMetadata(join(archivedRecordingPath, "audio.wav"), metadata => { metadata.tail_appends = tailAppends; });
         linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
         recordArchivedGateRemoval(join(archivedRecordingPath, "audio.wav"), gateRemoval);
       }
@@ -3900,14 +3920,13 @@ export function updateArchivedTranscript(
     polishStatus?: STTPolishStatus | null;
     provenanceProbe?: RecordingProvenanceProbe;
     requireMetadataUpdate?: boolean;
-    tailAppends?: NonNullable<TranscriptionResult["tailAppend"]>[];
-  },
+  } & TailArchiveInput,
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
   atomicWriteFile(transcriptPath, text);
 
   updateArchivedRecordingMetadata(audioPath, (metadata) => {
-    metadata.tail_appends = transcription.tailAppends ?? [];
+    Object.assign(metadata, tailArchiveMetadata(transcription));
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
@@ -4496,7 +4515,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
     const languageMode = getLanguageModeFromEnv();
     const metadata: Record<string, unknown> = {
       ...snapshot.metadata,
-      tail_appends: result.tailAppend ? [result.tailAppend] : [],
+      ...tailArchiveMetadata({ tailAppends: result.tailAppend ? [result.tailAppend] : [], tailRecoveryReasons: result.tailRecoveryReason ? [result.tailRecoveryReason] : [] }),
       backend: result.backend,
       language_mode: languageMode,
       transcription_status: "transcribed",
@@ -4688,6 +4707,7 @@ async function retranscribeRecordingCaptureAdmitted(
       if (text) {
         updateArchivedTranscript(wavPath, text, {
           tailAppends: result.tailAppend ? [result.tailAppend] : [],
+          tailRecoveryReasons: result.tailRecoveryReason ? [result.tailRecoveryReason] : [],
           backend: result.backend,
           processingDurationMs: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
           languageMode: getLanguageModeFromEnv(),
@@ -4812,6 +4832,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
         if (archivedAudioPath) {
           updateArchivedTranscript(archivedAudioPath, text, {
             tailAppends: result.tailAppend ? [result.tailAppend] : [],
+            tailRecoveryReasons: result.tailRecoveryReason ? [result.tailRecoveryReason] : [],
             backend: result.backend,
             processingDurationMs: Math.round(Math.max(0, performance.now() - processingStartedAtMs)),
             languageMode: getLanguageModeFromEnv(),

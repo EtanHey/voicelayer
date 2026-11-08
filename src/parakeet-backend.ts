@@ -1,5 +1,5 @@
 import type { STTBackend, STTResult, STTTranscribeOptions } from "./stt";
-import { parakeetServer, ParakeetServiceError, type ParakeetResponse } from "./parakeet-server";
+import { parakeetServer, parakeetOwnerShutdownSignal, ParakeetServiceError, type ParakeetResponse } from "./parakeet-server";
 import type { STTOutcome } from "./soundlayer/contracts";
 import { requestedLanguageCode } from "./language-config";
 import { retainParakeetFallback, type ParakeetFallbackAttempt } from "./parakeet-attempts";
@@ -62,7 +62,7 @@ export function parakeetWavInfo(bytes: Uint8Array): WavInfo {
   return { frames: dataBytes / 2, sampleRate, lastActiveSeconds: last, allZero, dataOffset };
 }
 
-export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, lastSpeechSeconds?: number): string | null {
+export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, speechProbabilities?: number[]): string | null {
   if (!result || typeof result.text !== "string") return "invalid-response";
   const evidence = result.attemptEvidence;
   if (evidence?.status && !["RETURNED", "EMPTY_RESPONSE"].includes(evidence.status)) return "provider-" + evidence.status.toLowerCase();
@@ -78,7 +78,9 @@ export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, last
   // full input. Never trim native words or guess a transcript seam.
   if (duration >= 8 && result.text.trim().split(/\s+/u).length < Math.max(2, duration / 10)) return "sparse-response";
   if (result.last_token_end_s !== null && (result.last_token_end_s < 0 || result.last_token_end_s > duration)) return "invalid-timing";
-  if (duration >= 2 && result.last_token_end_s !== null && lastSpeechSeconds !== undefined && lastSpeechSeconds - result.last_token_end_s > 0.8) return "uncovered-tail";
+  if (duration >= 2 && result.last_token_end_s !== null && speechProbabilities && hasUncoveredInternalSpeech([{
+    start: (Math.floor((result.last_token_end_s + 0.8) * info.sampleRate / VAD_CHUNK_SAMPLES) + 1) * VAD_CHUNK_SAMPLES / info.sampleRate, end: duration,
+  }], speechProbabilities, info)) return "uncovered-tail";
   return null;
 }
 
@@ -90,13 +92,6 @@ function sileroProbabilities(evidence: ParakeetSpeechEvidence, info: WavInfo, sh
       !probabilities || probabilities.length !== Math.ceil(info.frames / VAD_CHUNK_SAMPLES) ||
       probabilities.some(p => !Number.isFinite(p) || p < 0 || p > 1)) return undefined;
   return probabilities;
-}
-
-function lastSileroSpeech(evidence: ParakeetSpeechEvidence, info: WavInfo, sha256: string | null): number | undefined {
-  const probabilities = sileroProbabilities(evidence, info, sha256);
-  if (!probabilities) return undefined;
-  const last = probabilities.findLastIndex(p => p >= PARAKEET_EMPTY_SPEECH_THRESHOLD);
-  return last < 0 ? 0 : Math.min((last + 1) * VAD_CHUNK_SAMPLES, info.frames) / info.sampleRate;
 }
 
 // Decoder token times are external data, not proof that every input frame was
@@ -286,10 +281,9 @@ export class ParakeetBackend implements STTBackend {
           duration - result.last_token_end_s >= 1))) {
         try { speechEvidence = await (this.deps.speechProbe ?? probeParakeetSpeech)(inputPath); }
         catch (error) { speechEvidence = { status: "UNKNOWN", threshold: PARAKEET_EMPTY_SPEECH_THRESHOLD, errorType: error instanceof Error ? error.name : "unknown" }; }
-        const lastSpeechSeconds = lastSileroSpeech(speechEvidence, info, inputSha256);
-        if (lastSpeechSeconds === undefined) console.error("[voicelayer] Parakeet speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
-        reason = parakeetOutputRisk(result, info, lastSpeechSeconds);
         const probabilities = sileroProbabilities(speechEvidence, info, inputSha256);
+        if (!probabilities) console.error("[voicelayer] Parakeet speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
+        reason = parakeetOutputRisk(result, info, probabilities);
         if (!reason && probabilities && hasUncoveredInternalSpeech(gaps, probabilities, info)) reason = "uncovered-internal";
       }
       if (reason === "empty-response") {
@@ -309,8 +303,9 @@ export class ParakeetBackend implements STTBackend {
           speechEvidence, errorType: null, previousAttemptPath: nativeBoundaryPath, stage: "vad-boundary" }) ?? nativeBoundaryPath;
       }
       if (reason === "uncovered-tail" && result.last_token_end_s !== null) {
+        const lastTokenEndS = result.last_token_end_s;
         const tailPath = inputPath + ".tail.wav";
-        const startFrame = Math.ceil(result.last_token_end_s * info.sampleRate);
+        const startFrame = Math.ceil(lastTokenEndS * info.sampleRate);
         const pcm = inputBytes.subarray(info.dataOffset + startFrame * 2, info.dataOffset + info.frames * 2);
         // A new canonical header retains exactly the uncovered PCM, with no
         // backward overlap. Never edit/dedupe the native text, including fu….
@@ -321,30 +316,54 @@ export class ParakeetBackend implements STTBackend {
         tail.writeUInt16LE(2, 32); tail.writeUInt16LE(16, 34); tail.write("data", 36);
         tail.writeUInt32LE(pcm.length, 40); tail.set(pcm, 44);
         let ownedTail = false;
+        let recovered: STTResult | null = null;
+        let tailReason: NonNullable<STTResult["tailRecoveryReason"]> = "tail-empty";
+        const deadline = new AbortController();
+        const signal = AbortSignal.any([deadline.signal, parakeetOwnerShutdownSignal, ...(options?.signal ? [options.signal] : [])]);
+        const timer = setTimeout(() => deadline.abort(), Math.min(15000, Math.max(5000, 3000 * (duration - startFrame / info.sampleRate))));
+        let abortTail: (() => void) | undefined;
+        const aborted = new Promise<never>((_, reject) => {
+          abortTail = () => reject(new Error(deadline.signal.aborted ? "tail-timeout" : "tail-cancelled"));
+          signal.addEventListener("abort", abortTail, { once: true });
+        });
         try {
           const fd = openSync(tailPath, "wx", 0o400); ownedTail = true;
           try { writeFileSync(fd, tail); } finally { closeSync(fd); }
-          await (this.deps.unload ?? (() => parakeetServer.unload()))();
-          noteRecognizerEngine("whisper", { phase: "loading", error: null });
-          const recovered = await this.deps.fallbackBackend.transcribe(tailPath, options);
+          signal.throwIfAborted();
+          // Tail retries keep the resident Parakeet model; the deadline kills only our Whisper child.
+          recovered = await Promise.race([this.deps.fallbackBackend.transcribe(tailPath, { ...options, signal, wordTimestamps: true }), aborted]);
           const e = recovered.attemptEvidence;
           if ((e?.inputPath && e.inputPath !== tailPath) || (e?.inputSha256 && e.inputSha256 !== createHash("sha256").update(tail).digest("hex")) ||
               (e?.status && !["RETURNED", "EMPTY_RESPONSE"].includes(e.status)) ||
               (e?.processExitCode != null && e.processExitCode !== 0) || e?.decodeCoverage === "PARTIAL" || e?.tail === "KNOWN_MISSING") throw new Error("Invalid tail decode");
-          const added = recovered.text.trim();
-          noteRecognizerEngine("whisper", { phase: recovered.backend.startsWith("whisper-server") ? "ready" : "sleeping", available: true, error: null });
+          let added = recovered.text.trim();
+          const first = /^([^\p{L}\p{N}]*)([\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*)(?:[^\p{L}\p{N}]*)/u.exec(added);
+          const last = result.text.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)?.at(-1);
+          if (first && last && recovered.firstWordStartS !== undefined && recovered.firstWordStartS >= 0 && recovered.firstWordStartS <= 0.3 &&
+              first[2].toLowerCase() === last.toLowerCase()) added = added.slice(first[0].length).trimStart();
+          tailReason = added ? "tail-appended" : "tail-empty";
           if (added) return { text: result.text + (/\s$/u.test(result.text) ? "" : " ") + added,
             backend: this.name + "+tail-whisper", durationMs: Date.now() - started,
-            outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", attemptEvidence: result.attemptEvidence,
+            outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", attemptEvidence: { ...result.attemptEvidence, ...(e?.gateRemoval ? { gateRemoval: e.gateRemoval } : {}) },
+            tailRecoveryReason: tailReason,
             tailAppend: { startS: startFrame / info.sampleRate, endS: duration, chars: added.length }, languageWarning, languageEvidence };
           console.error("[voicelayer] Parakeet tail Whisper empty; keeping all native text");
         } catch (error) {
-          noteRecognizerEngine("whisper", { phase: "error", error: "tail-decode-failed" });
-          console.error(`[voicelayer] Parakeet tail Whisper failed (${error instanceof Error ? error.name : "unknown"}); keeping all native text`);
+          tailReason = deadline.signal.aborted ? "tail-timeout" : signal.aborted ? "tail-cancelled" : "tail-failed";
+          console.error(`[voicelayer] Parakeet ${tailReason}; keeping all native text`);
         } finally {
+          clearTimeout(timer); if (abortTail) signal.removeEventListener("abort", abortTail);
+          retain({ audioPath, submittedPath: tailPath, inputSha256: createHash("sha256").update(tail).digest("hex"), sourceInputSha256: inputSha256, reason: tailReason, parakeet: result,
+            whisper: recovered, speechEvidence, errorType: tailReason === "tail-failed" ? "TailDecodeError" : null,
+            stage: "tail-append", tailSpan: { startS: startFrame / info.sampleRate, endS: duration },
+            speechWindowSummary: { threshold: PARAKEET_EMPTY_SPEECH_THRESHOLD, continuousMinS: INTERNAL_SPEECH_MIN_S,
+              speechWindows: speechEvidence?.probabilities?.filter((p, i) => i * VAD_CHUNK_SAMPLES / info.sampleRate > lastTokenEndS + 0.8 && p >= PARAKEET_EMPTY_SPEECH_THRESHOLD).length ?? 0 } });
           if (ownedTail) { try { unlinkSync(tailPath); } catch { console.error("[voicelayer] Could not remove private tail snapshot"); } }
         }
-        reason = null; // A tail failure must never fall through to full replacement.
+        return { text: result.text, backend: this.name, durationMs: Date.now() - started,
+          outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", attemptEvidence: { ...result.attemptEvidence,
+            ...(tailReason === "tail-empty" && recovered?.attemptEvidence?.gateRemoval ? { gateRemoval: recovered.attemptEvidence.gateRemoval } : {}) },
+          tailRecoveryReason: tailReason, languageWarning, languageEvidence };
       }
       if (reason) return fallback(reason, result);
       return { text: result.text, backend: this.name, durationMs: Date.now() - started, outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", languageWarning, languageEvidence, attemptEvidence: result.attemptEvidence };

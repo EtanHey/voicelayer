@@ -402,9 +402,11 @@ describe("older schema recordings stay loadable", () => {
       languageMode: "hebrew",
       provenanceProbe: CLI_PROBE,
       tailAppends: [{ startS: 0.5, endS: 0.7, chars: 6 }],
+      tailRecoveryReasons: ["tail-timeout"],
     });
 
     const metadataPath = join(archivedPath!, "metadata.json");
+    expect(JSON.parse(readFileSync(metadataPath, "utf8")).tail_recovery_reasons).toEqual(["tail-timeout"]);
     expect(JSON.parse(readFileSync(metadataPath, "utf8")).tail_appends).toEqual([{ startS: 0.5, endS: 0.7, chars: 6 }]);
 
     const provenance = (

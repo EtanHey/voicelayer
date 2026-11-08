@@ -15,6 +15,7 @@ export interface TranscriptionResult {
   attemptEvidence?: STTAttemptEvidence;
   outcome?: STTOutcome;
   /** Appended decode span on this input's timeline; no transcript content. */
+  tailRecoveryReason?: "tail-appended" | "tail-empty" | "tail-timeout" | "tail-cancelled" | "tail-failed";
   tailAppend?: { startS: number; endS: number; chars: number };
 }
 

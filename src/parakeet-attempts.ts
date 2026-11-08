@@ -8,6 +8,7 @@ import type { STTOutcome } from "./soundlayer/contracts";
 export interface ParakeetFallbackAttempt {
   audioPath: string;
   inputSha256?: string | null;
+  sourceInputSha256?: string | null;
   reason: string;
   parakeet: unknown;
   whisper: { text: string; backend: string; durationMs: number } | null;
@@ -20,7 +21,9 @@ export interface ParakeetFallbackAttempt {
   languageEvidence?: import("./parakeet-lid").ParakeetLanguageEvidence;
   whisperStatus?: "NOT_RUN";
   whisperErrorAttempt?: unknown;
-  stage?: "native-or-input-boundary" | "fallback-terminal" | "native-terminal" | "vad-boundary";
+  stage?: "native-or-input-boundary" | "fallback-terminal" | "native-terminal" | "vad-boundary" | "tail-append";
+  tailSpan?: { startS: number; endS: number };
+  speechWindowSummary?: { threshold: number; continuousMinS: number; speechWindows: number };
   previousAttemptPath?: string;
   submittedPath?: string;
 }

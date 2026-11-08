@@ -69,6 +69,8 @@ export interface STTResult extends TranscriptionResult {
   languageEvidence?: import("./parakeet-lid").ParakeetLanguageEvidence;
   /** Private alternate-attempt diagnostic when Parakeet retries via Whisper. */
   fallbackEvidencePath?: string;
+  rawText?: string;
+  firstWordStartS?: number;
   /**
    * Whisper segment timestamps on the source recording's absolute timeline.
    * Present when the outro gate requests verbose responses. On the chunked path, overlap words keep the earlier chunk's
@@ -111,7 +113,8 @@ function residentBackendWithFallbackReason(
 }
 
 export interface STTTranscribeOptions extends TranscribeAudioOptions {
-  /** Cancel admission while an already admitted capture awaits maintenance. */
+  wordTimestamps?: boolean;
+  /** Cancel admission or an active provider request. */
   signal?: AbortSignal;
   promptOverride?: string;
 }
@@ -2207,6 +2210,7 @@ const ownedFallbackExits = new Set<Promise<number>>();
 
 const whisperCliJson = z.object({ transcription: z.array(z.object({
   text: z.string(),
+  tokens: z.array(z.object({ text: z.string(), offsets: z.object({ from: z.number().finite(), to: z.number().finite() }) })).optional(),
   offsets: z.object({ from: z.number().finite().nonnegative(), to: z.number().finite().nonnegative() })
     .refine(offsets => offsets.to >= offsets.from),
 })) });
@@ -2234,7 +2238,8 @@ export class WhisperCppBackend implements STTBackend {
     audioPath: string,
     options?: STTTranscribeOptions,
   ): Promise<STTResult> {
-    if (this.lifecycle.signal?.aborted) throw new Error("STT owner is shut down");
+    const signal = AbortSignal.any([...(this.lifecycle.signal ? [this.lifecycle.signal] : []), ...(options?.signal ? [options.signal] : [])]);
+    signal.throwIfAborted();
     if (!this.binaryPath) this.binaryPath = findWhisperBinary();
     if (!this.modelPath) this.modelPath = findModel();
 
@@ -2295,7 +2300,7 @@ export class WhisperCppBackend implements STTBackend {
     // A private, unique output prefix prevents concurrent/stale JSON from
     // supplying another decode's timing. Never write beside archived audio.
     mkdirSync(getStateDir(), { recursive: true, mode: 0o700 });
-    const outputDir = gateEnabled ? mkdtempSync(join(getStateDir(), "whisper-cli-")) : null;
+    const outputDir = gateEnabled || options?.wordTimestamps ? mkdtempSync(join(getStateDir(), "whisper-cli-")) : null;
     const outputPrefix = outputDir ? join(outputDir, "decode") : null;
     const args = [
       this.binaryPath,
@@ -2303,20 +2308,21 @@ export class WhisperCppBackend implements STTBackend {
       this.modelPath,
       "-f",
       audioPath,
-      ...(!gateEnabled ? ["--no-timestamps"] : []),
+      ...(!gateEnabled && !options?.wordTimestamps ? ["--no-timestamps"] : []),
       ...whisperArgs,
       "--no-prints", // suppress progress output
-      ...(outputPrefix ? ["-oj", "-of", outputPrefix] : []),
+      ...(outputPrefix ? [options?.wordTimestamps ? "-ojf" : "-oj", "-of", outputPrefix] : []),
     ];
 
     try {
+      signal.throwIfAborted();
       const proc = Bun.spawn(args, {
         stdout: "pipe",
         stderr: "pipe",
         env,
-        ...(this.lifecycle.signal ? { signal: this.lifecycle.signal, killSignal: "SIGKILL" } : {}),
+        signal, killSignal: "SIGKILL",
       });
-      if (this.lifecycle.signal) {
+      if (this.lifecycle.signal || options?.signal) {
         const exited = proc.exited;
         ownedFallbackExits.add(exited);
         void exited.then(() => ownedFallbackExits.delete(exited), () => ownedFallbackExits.delete(exited));
@@ -2340,11 +2346,14 @@ export class WhisperCppBackend implements STTBackend {
         .join(" ")
         .trim();
 
+      let firstWordStartS: number | undefined;
       let segments: TranscriptSegment[] | undefined;
       if (outputPrefix) {
         // Missing/malformed JSON refuses delivery rather than silently disabling
-        // the gates. CLI offsets are integer milliseconds, not word timestamps.
+        // the gates. Segment offsets and optional full-JSON token offsets are milliseconds.
         const payload = whisperCliJson.parse(await Bun.file(outputPrefix + ".json").json());
+        const token = payload.transcription.flatMap(s => s.tokens ?? []).find(t => /[\p{L}\p{N}]/u.test(t.text) && !/^\s*\[.*\]\s*$/u.test(t.text));
+        if (token && token.offsets.from >= 0) firstWordStartS = token.offsets.from / 1000;
         segments = payload.transcription.map(({ text, offsets }) => ({ text, startS: offsets.from / 1000, endS: offsets.to / 1000 }));
         if (segments.some((segment, index, all) => index > 0 && segment.startS < all[index - 1]!.endS)) {
           throw new Error("whisper-cli segment evidence overlaps or is out of order");
@@ -2392,8 +2401,11 @@ export class WhisperCppBackend implements STTBackend {
         : { text: gated.text, removed: null };
       if (caption.removed) console.error(`[voicelayer] CLI caption gate: dropped class ${caption.removed.class} at ${caption.removed.startS.toFixed(2)}-${caption.removed.endS.toFixed(2)}s`);
 
+      const firstStart = firstWordStartS;
+      if (firstStart !== undefined && [...gated.removed, ...(caption.removed ? [caption.removed] : [])]
+        .some(r => firstStart >= r.startS && firstStart <= r.endS)) firstWordStartS = undefined;
       return {
-        text: caption.text,
+        text: caption.text, rawText: text, firstWordStartS,
         backend: this.name + (gated.removed.length ? "+outro" : "") + (caption.removed ? "+caption" : ""),
         durationMs: Date.now() - start,
         attemptEvidence: { status: caption.text.trim() ? "RETURNED" : "EMPTY_RESPONSE", processExitCode: exitCode, inputPath: audioPath, decodeCoverage: "UNKNOWN", tail: "UNKNOWN",

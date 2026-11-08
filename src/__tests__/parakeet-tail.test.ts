@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { createHash } from "crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, watch } from "fs";
+import { createHash, randomUUID } from "crypto";
 import { join } from "path";
 import { testTmp } from "./setup/test-tmp";
-import { ParakeetBackend, parakeetWavInfo } from "../parakeet-backend";
+import { ParakeetBackend, parakeetWavInfo, type ParakeetBackendDeps } from "../parakeet-backend";
 import type { ParakeetResponse } from "../parakeet-server";
 import type { ParakeetSpeechEvidence } from "../parakeet-vad";
 import { VAD_CHUNK_SAMPLES } from "../vad-constants";
 import { WhisperCppBackend, type STTBackend } from "../stt";
+import { ChunkedRecordingSession } from "../input";
 import { stripHallucinatedCaption } from "../stt-caption-gate";
 
 // File-only synthetic PCM. Tones represent acoustic energy; VAD outputs below
@@ -62,7 +63,7 @@ function fakeCli(tail = "Thank you.", freshSpeech = false, outroSpeech: boolean 
   writeFileSync(binary, `#!${process.execPath}\nimport { readFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2); writeFileSync(process.env.LANE_K_ARGS, JSON.stringify(args));
 const prefix = args[args.indexOf("-of") + 1];
-if (args.includes("-oj")) writeFileSync(prefix + ".json", readFileSync(process.env.LANE_K_JSON));
+if (args.includes("-oj") || args.includes("-ojf")) writeFileSync(prefix + ".json", readFileSync(process.env.LANE_K_JSON));
 console.log("[00:00:00.000 --> 00:00:26.000] stdout is not the JSON text");\n`);
   chmodSync(binary, 0o700);
   let captionCalls = 0;
@@ -98,8 +99,8 @@ describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
 
   test.each([
     { duration: 79, gap: 3.8, speechAfterToken: 3, probe: true, retry: true },
-    { duration: 79, gap: 1, speechAfterToken: 0.9, probe: true, retry: true },
-    { duration: 2, gap: 1, speechAfterToken: 0.9, probe: true, retry: true },
+    { duration: 79, gap: 1, speechAfterToken: 0.9, probe: true, retry: false },
+    { duration: 2, gap: 1.6, speechAfterToken: 1.5, probe: true, retry: true },
     { duration: 1.9, gap: 1, speechAfterToken: 0.9, probe: false, retry: false },
     { duration: 79, gap: 0.9, speechAfterToken: 0.85, probe: false, retry: false },
     { duration: 79, gap: 3.8, speechAfterToken: 0.7, probe: true, retry: false },
@@ -130,7 +131,7 @@ describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
     expect(probes).toBe(Number(probe)); expect(retries).toBe(Number(retry));
     expect(result.backend.includes("+tail-whisper")).toBe(retry);
     expect(result.text).toBe(retry ? response.text + " " + recovered : response.text);
-    expect(result.tailAppend).toEqual(retry ? { startS: lastToken, endS: duration, chars: recovered.length } : undefined);
+    expect(result.tailAppend).toEqual(retry ? { startS: Math.ceil(lastToken * 16000) / 16000, endS: duration, chars: recovered.length } : undefined);
   });
 
   test("50 seconds of above-512 non-speech noise keeps Parakeet, ZERO Whisper calls", async () => {
@@ -209,4 +210,89 @@ describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
     expect(result.text).toBe(""); expect(result.outcome).toBe("ACOUSTIC_GATE_EMPTY");
     expect(result.attemptEvidence?.gateRemoval?.gate).toBe("closing-caption");
   });
+});
+
+function tailRouter(fallbackBackend: STTBackend, deps: Partial<ParakeetBackendDeps> = {}) {
+  return new ParakeetBackend({ fallbackBackend, transcribe: async () => ({ ...native, last_token_end_s: 77.4, raw_token_times: [] }),
+    speechProbe: async p => { const e = evidence(p, false); e.probabilities!.fill(.9); return e; },
+    retainFallback: () => "fixture-tail-receipt", env: () => ({ QA_VOICE_WHISPER_LANG: "en" }), ...deps });
+}
+
+test.each([1, 9, 10, 16])("tail requires continuous speech, not %i windows of spike/breath", async windows => {
+  let calls = 0;
+  const r = await tailRouter({ name: "fake", isAvailable: async () => true, transcribe: async () => {
+    calls++; return { text: "Thank you.", backend: "fake", durationMs: 0 };
+  } }, { speechProbe: async p => {
+    const e = evidence(p, false); e.probabilities!.fill(.01);
+    const start = Math.floor((77.4 + .8) / .032) + 1;
+    e.probabilities!.fill(.31, start, start + windows); return e;
+  } }).transcribe(path);
+  expect(calls).toBe(windows === 16 ? 1 : 0);
+  expect(r.text).toBe(nativeText + (windows === 16 ? " Thank you." : ""));
+});
+
+test.each([
+  { tail: "SOL, much, much more.", time: .3, added: "much, much more." },
+  { tail: "Sol Sol much, much more.", time: .1, added: "Sol much, much more." },
+  { tail: "Sol much, much more.", time: .301, added: "Sol much, much more." },
+  { tail: "much, much more.", time: .1, added: "much, much more." },
+  { tail: "Sol.", time: .1, added: "" },
+])("only one timestamp-qualified residual word may be removed: %j", async ({ tail, time, added }) => {
+  const attempts: Parameters<NonNullable<ParakeetBackendDeps["retainFallback"]>>[0][] = [];
+  let unloads = 0;
+  const r = await tailRouter({ name: "fake", isAvailable: async () => true, transcribe: async () => ({
+    text: tail, rawText: tail + " Thank you.", firstWordStartS: time, backend: "fake", durationMs: 0,
+    attemptEvidence: { gateRemoval: { gate: "closing-caption", removedSpans: 1, rawCharacters: 40 } },
+  }) }, { unload: async () => { unloads++; throw new Error("failed unload must be irrelevant to a tail"); },
+    retainFallback: a => { attempts.push(a); return "fixture-tail-receipt"; } }).transcribe(path);
+  expect(unloads).toBe(0); expect(r.text).toBe(nativeText + (added ? " " + added : ""));
+  expect(r.attemptEvidence?.gateRemoval?.removedSpans).toBe(1);
+  expect(attempts[0]).toMatchObject({ stage: "tail-append", whisper: { rawText: tail + " Thank you." },
+    speechWindowSummary: { threshold: .3, continuousMinS: .5 } });
+});
+
+test.each([false, true])("stuck CLI is killed, native text kept, queue released; cancel=%s", async cancel => {
+  const pidPath = join(root, randomUUID() + ".pid"), binary = join(root, "stuck-whisper-cli");
+  writeFileSync(binary, `#!${process.execPath}\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nwriteFileSync(${JSON.stringify(pidPath + ".ready")}, "ready");\nsetTimeout(() => process.exit(42), 6500);\n`);
+  chmodSync(binary, 0o700);
+  const cli = new WhisperCppBackend({ noVocabularyPrompt: true });
+  Object.defineProperty(cli, "binaryPath", { value: binary }); Object.defineProperty(cli, "modelPath", { value: join(root, "fake.bin") });
+  const controller = new AbortController();
+  const watcher = cancel ? watch(root, (_, name) => { if (name === pidPath.split("/").at(-1) + ".ready") controller.abort(); }) : null;
+  let stopped: Promise<unknown> = Promise.resolve(), decodes = 0;
+  const backend = tailRouter({ name: "fake", isAvailable: async () => true, transcribe: (p, o) => {
+    const task = cli.transcribe(p, o); stopped = task.catch(() => {}); return task;
+  } }, { transcribe: async () => ({ ...native, last_token_end_s: decodes++ === 0 ? 77.4 : 79, raw_token_times: [] }) });
+  try {
+    const first = backend.transcribe(path, { signal: controller.signal }), next = backend.transcribe(path);
+    const r = await first; expect(r.text).toBe(nativeText);
+    expect(r.tailRecoveryReason).toBe(cancel ? "tail-cancelled" : "tail-timeout");
+    expect((await next).text).toBe(nativeText); await stopped;
+    const pid = Number(readFileSync(pidPath, "utf8")); expect(pid).toBeGreaterThan(0);
+    expect(() => process.kill(pid, 0)).toThrow();
+  } finally { watcher?.close(); }
+}, 14000);
+
+test("real CLI outro gate on a tail clip keeps native words and retains raw tail evidence", async () => {
+  const cli = fakeCli();
+  writeFileSync(cli.json, JSON.stringify({ transcription: [{ text: "Thank you.", offsets: { from: 100, to: 300 } }] }));
+  const r = await tailRouter(cli.backend).transcribe(path);
+  expect(r.text).toBe(nativeText); expect(r.tailRecoveryReason).toBe("tail-empty");
+  const args: string[] = JSON.parse(readFileSync(cli.argsPath, "utf8")); expect(args).toContain("-ojf");
+});
+
+test("live chunk provenance carries absolute offsets through overlap", () => {
+  const session = new ChunkedRecordingSession();
+  session.pushChunk(Buffer.alloc(30 * 32000), true); session.pushChunk(Buffer.alloc(27 * 32000), true); session.finalize();
+  expect(session.consumeTimedSegments().map(s => s.offsetS)).toEqual([0, 27]);
+});
+
+
+test.each([100, 400])("CLI token time, not segment start, bounds seam removal: %i ms", async from => {
+  const cli = fakeCli();
+  writeFileSync(cli.json, JSON.stringify({ transcription: [{ text: "SOL much, much more.", offsets: { from: 0, to: 1200 }, tokens: [
+    { text: "[_SOT_]", offsets: { from: 0, to: 0 } }, { text: " SOL", offsets: { from, to: from + 80 } },
+  ] }] }));
+  const r = await tailRouter(cli.backend).transcribe(path);
+  expect(r.text).toBe(nativeText + (from === 100 ? " much, much more." : " SOL much, much more."));
 });
