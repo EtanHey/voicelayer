@@ -130,6 +130,11 @@
       "role": "mutant",
       "target": "NoteNeverStuck",
       "kind": "temporal"
+    },
+    "MutTypedTab": {
+      "role": "mutant",
+      "target": "N6ConfirmationInWing",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -138,6 +143,7 @@
     "N3GrowsDown",
     "N4NoSubstitute",
     "N5InlineHistory",
+    "N6ConfirmationInWing",
     "NoteHasCause",
     "NoteNeverStuck",
     "TypeOK",

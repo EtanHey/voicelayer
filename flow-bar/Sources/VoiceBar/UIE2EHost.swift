@@ -57,6 +57,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var contextMenuTracking = false
     /// 2.3 U2: the same History bridge + surface handoff the app uses (U2 review R1: no separate QA menu path).
     let historyBridge = VoiceBarNotchHistoryBridge()
+    /// 2.4 Lane A: the same ONE notch surface the app uses; every transition is a receipt (`notch-surface …`), so the
+    /// M1 XCUI cases can prove an Esc, an outside click or a drag-up closed the drawer.
+    let notchSurface = NotchSurfaceModel()
     lazy var surfaceHandoff: VoiceBarNotchSurfaceHandoff = makeSurfaceHandoff()
     /// QA-only: hold scheduled menu presentations so a test can open History in the gap (wings-u2 queued-cancel).
     var holdsMenuQueue = false
@@ -137,14 +140,29 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         bindNotchModel(VoiceBarNotchPresentationModel(onLayoutInvalidated: { [weak self] in self?.updatePillLayout() }))
         let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
-            onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 },
+            onOpenHistory: { self.model.tab = .history; self.model.requestID += 1; self.model.receipt("history-open") },
             presentationModel: notchModel,
             includesPanelOutsets: true,
             onOpenMicrophonePicker: { [weak self] in self?.surfaceHandoff.requestMenu(.microphone) },
             onOpenSetupSettings: { [weak self] in self?.openSetupSettings() },
             historyBridge: historyBridge,
             onOpenNotchMenu: { [weak self] in self?.surfaceHandoff.requestMenu(.notch) },
-            onCancelNotchMenu: { [weak self] in self?.surfaceHandoff.cancelQueuedMenu() }))
+            onCancelNotchMenu: { [weak self] in self?.surfaceHandoff.cancelQueuedMenu() },
+            surface: notchSurface,
+            settingsDrawer: NotchSettingsDrawerContext(
+                shortcutHint: { "QA · hotkeys disabled" }, defaultMicrophoneName: { "QA microphone A" },
+                updates: nil,
+                openSettingsWindow: { [weak self] tab, focus in
+                    // The drawer's Fix… is the badged gear's old destination: the same setup spot and receipt.
+                    if focus == .permissions { self?.openSetupSettings(); return }
+                    self?.model.tab = tab; self?.model.focus = focus; self?.model.requestID += 1
+                    self?.settings.makeKeyAndOrderFront(nil)
+                    self?.model.receipt("notch-settings-window-\(tab.title.lowercased())")
+                }
+            )))
+        notchSurface.log = { [weak self] line in
+            self?.model.receipt(line.replacingOccurrences(of: "[VoiceBar] ", with: ""))
+        }
         bar.activeHitTestProvider = { [weak self] point in
             guard let self else { return false }
             return self.panelLayout().containsInteractiveContent(point)
@@ -179,6 +197,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onVisibilityChange = { [weak self] hidden in
             if hidden { self?.pill?.orderOut(nil) } else { self?.pill?.orderFront(nil) }
         }
+        // 2.4 Lane A fixture providers (#813): they drive the same notch surface and Settings window the app does.
+        model.onNotchSurface = { [weak self] event in self?.notchSurface.send(event) }
+        model.onShowSettings = { [weak self] in self?.settings.makeKeyAndOrderFront(nil) }
+        installTakeIdentity(on: bar)
         configureMenu()
         // wings-u2 first-click check: the pill must never become key from a click while another app is active.
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: pill, queue: .main) {
@@ -289,6 +311,14 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Button("Release menu queue") { self.releaseMenuQueue() }
                     .accessibilityIdentifier("qa-fixture-release-menu-queue")
             }.controlSize(.small).padding(2).fixtureFrame("wings")
+            // 2.4 #813 (Lane A): one provider per E2E flow, `qa-fixture-2.4-<name>`, each ending in the receipt
+            // `fixture:2.4-<name>`. Synthetic only: no device, no audio, nothing outside the sandbox.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8), spacing: 2) {
+                ForEach(UIE2EModel.laneAFixtures24, id: \.self) { name in
+                    Button(name) { self.model.fixture("2.4-" + name) }
+                        .accessibilityIdentifier("qa-fixture-2.4-\(name)")
+                }
+            }.controlSize(.mini).padding(2).fixtureFrame("e2e24-lane-a")
             // Preserve Settings' real minimum viewport for its inner scrollers;
             // only the small overflow below the fixture rows scrolls here.
             ScrollView(.vertical) {
@@ -355,8 +385,29 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// (`AppDelegate.refreshNotchPresentationModel`), on every fixture and every layout change.
     func bindNotchModel(_ notchModel: VoiceBarNotchPresentationModel) {
         self.notchModel = notchModel
-        model.onFixtureApplied = { [weak self] in self?.refreshNotchModel() }
+        model.onFixtureApplied = { [weak self] in self?.refreshNotchModel(); self?.publishTakeIdentity() }
         refreshNotchModel()
+    }
+
+    /// 2.4 #813: the recording take's identity, readable natively as the pill's AX value and as static text
+    /// `recording-take-id` (a window's own AXValue is often nil). QA host only; the product shows no take id.
+    private var takeIdentityLabel: NSTextField?
+
+    private func installTakeIdentity(on host: NSView) {
+        let label = UIE2ETakeIdentityLabel(labelWithString: "")
+        label.setAccessibilityIdentifier("recording-take-id")
+        label.alphaValue = 0.02
+        label.frame = NSRect(x: 0, y: 0, width: 2, height: 2)
+        host.addSubview(label)
+        takeIdentityLabel = label
+        publishTakeIdentity()
+    }
+
+    func publishTakeIdentity() {
+        let take = model.recordingTakeID ?? ""
+        takeIdentityLabel?.stringValue = take
+        takeIdentityLabel?.setAccessibilityLabel(take.isEmpty ? "no take" : take)
+        pill?.setAccessibilityValue(model.recordingTakeID)
     }
 
     func refreshNotchModel() {
@@ -567,6 +618,12 @@ final class UIE2EModel {
     var processing: [String: Any] = [:]
     var speech: [String: Any] = [:]
     var microphoneOrder = ["a", "b"]
+    /// 2.4 #813: the permissions Settings reports broken (the QA baseline keeps the two it always showed).
+    var missingPermissions: [HotkeyPermission] = [.accessibility, .inputMonitoring]
+    /// 2.4 #813: the synthetic recording take, exposed natively by the host (`recording-take-id`).
+    var recordingTakeID: String?
+    var onNotchSurface: (NotchSurfaceEvent) -> Void = { _ in }
+    var onShowSettings: () -> Void = {}
     var recent: RecentTranscriptionEntry { .init(text: Self.transcript, createdAt: Date(timeIntervalSince1970: 1_790_000_000)) }
 
     /// 2.3 U4 native test only (`VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS=N`): N synthetic dictations in the notch History
@@ -712,6 +769,86 @@ final class UIE2EModel {
         sandbox.writeObject(processing, file: "processing.json")
         refresh()
     }
+    /// 2.4 #813: Lane A's 22 providers (REVIEW-813 contract table, rows 1, 2, 5 to 24).
+    static let laneAFixtures24 = [
+        "settings", "history", "recording", "paste-failed", "queued", "typed-feedback", "microphone-priority",
+        "permission-revoked", "history-expanded", "history-20", "recording-long-microphone-name",
+        "record-after-record", "history-dictation", "history-ask", "history-speak",
+        "tooltips-launcher", "tooltips-recording", "tooltips-transcribing", "tooltips-speaking", "tooltips-readback",
+        "tooltips-history", "tooltips-settings",
+    ]
+
+    /// Puts the QA app into the real product state each 2.4 flow starts from. Every state below is one the
+    /// production code reaches; nothing is drawn only for the test except the take identity the host exposes.
+    private func apply24(_ name: String) {
+        recordingTakeID = nil
+        onNotchSurface(.dismiss(.action))
+        let baseline = {
+            self.missingPermissions = [.accessibility, .inputMonitoring]
+            self.voice.setSetupMissingPermissions([])
+            self.refresh()
+            self.voice.handleEvent(["type": "state", "state": "idle"])
+            self.voice.dismissRetainedTeleprompter()
+        }
+        func showSettings(_ tab: SettingsTab, focus: SettingsFocus? = nil) {
+            self.tab = tab; self.focus = focus; requestID += 1; onShowSettings()
+        }
+        func seedHistory(_ count: Int) {
+            voice.recentTranscriptionEntries = (0 ..< count).map { index in
+                RecentTranscriptionEntry(text: "QA notch row \(index + 1)", recordingPath: sandbox.root
+                    .appendingPathComponent("notch-\(index).wav").path, createdAt: Date().addingTimeInterval(Double(-60 * index)))
+            }
+        }
+        func hoverHeld() {
+            voice.isHovering = true
+            voice.beginModalInteraction(); holdsFixturePresentation = true
+        }
+        func recording(queueDepth: Int = 0) {
+            voice.setSetupMissingPermissions([])
+            voice.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
+            if queueDepth > 0 { voice.handleEvent(["type": "queue", "depth": queueDepth]) }
+            recordingTakeID = "qa-take-\(queueDepth + 1)"
+        }
+        switch name {
+        case "settings": baseline(); showSettings(.general)
+        case "history": baseline(); showSettings(.history)
+        case "recording", "recording-long-microphone-name", "tooltips-recording":
+            baseline(); recording()
+        case "queued", "record-after-record":
+            // Take 1 still processing behind take 2's live recording (the daemon's queue depth).
+            baseline(); recording(queueDepth: 1)
+        case "paste-failed":
+            baseline(); voice.mode = .idle
+            voice.confirmationText = "Paste failed. Click the text field and press Shift+F5."
+            hoverHeld()
+        case "typed-feedback":
+            // The product's typed feedback is the one-line "Typed" confirmation; there is no typed-feedback field.
+            baseline(); voice.mode = .idle; voice.confirmationText = "Typed"; hoverHeld()
+        case "microphone-priority":
+            baseline(); microphoneOrder = ["a", "b", "c"]; showSettings(.general, focus: .microphonePriority)
+        case "permission-revoked":
+            baseline(); missingPermissions = [.accessibility]; voice.setSetupMissingPermissions([.accessibility])
+            showSettings(.general, focus: .permissions)
+        case "history-expanded", "history-20", "tooltips-history":
+            baseline(); seedHistory(20); hoverHeld()
+            onNotchSurface(.openHistory)
+            onNotchSurface(.setHistoryDetent(name == "history-expanded" ? .expanded : .collapsed))
+        case "history-dictation", "history-ask", "history-speak":
+            baseline(); showSettings(.history)
+        case "tooltips-launcher": baseline(); seedHistory(3); hoverHeld()
+        case "tooltips-transcribing": baseline(); voice.handleEvent(["type": "state", "state": "transcribing"])
+        case "tooltips-speaking", "tooltips-readback":
+            baseline(); voice.isHovering = true
+            voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
+                "text": "First QA item\nSecond QA item", "readback_id": "qa-readback"])
+            if name == "tooltips-readback" { voice.handleEvent(["type": "state", "state": "idle", "source": "playback"]) }
+        case "tooltips-settings":
+            // Settings in the notch: its tabs and buttons are pill controls now.
+            baseline(); hoverHeld(); onNotchSurface(.openSettings(.general))
+        default: baseline()
+        }
+    }
+
     func fixture(_ name: String) {
         if holdsFixturePresentation { voice.endModalInteraction(); holdsFixturePresentation = false }
         voice.confirmationText = nil
@@ -787,6 +924,7 @@ final class UIE2EModel {
                 "text": "First QA item\nSecond QA item", "readback_id": "qa-readback"])
             voice.dismissTeleprompter()
         case "disconnected": voice.setConnectionStatus(false)
+        case let lane where lane.hasPrefix("2.4-"): apply24(String(lane.dropFirst(4)))
         default: refresh(); voice.mode = .idle
         }
         if ["launcher", "setup-error", "recording", "transcribing", "speaking-collapsed"].contains(name) {
@@ -822,9 +960,12 @@ private struct UIE2ESettings: View {
     let model: UIE2EModel
     var body: some View {
         let history = model.history, asks = model.askHistory
-        SettingsView(hotkeyEnabled: false, missingPermissions: [.accessibility, .inputMonitoring],
+        SettingsView(hotkeyEnabled: false, missingPermissions: model.missingPermissions,
             availableDevices: { [] }, selectedDeviceID: { nil }, prioritySnapshot: { model.microphone },
-            onReorderPriority: { model.microphoneOrder = $0; model.receipt("microphone-order") },
+            onReorderPriority: {
+                model.microphoneOrder = $0; model.receipt("microphone-order")
+                model.receipt("microphone-priority:" + $0.joined(separator: ","))
+            },
             modelsStatus: { model.voice.modelsSettingsState }, onRefreshModelsStatus: { model.refresh() },
             residencyNotice: { "QA recognizer failure\nSecond line" }, onSelectResidency: { model.voice.setWhisperResidency($0) },
             speechControls: { model.voice.speechControls }, speechConnected: { model.voice.isConnected },
@@ -857,4 +998,9 @@ private struct UIE2ESettings: View {
             historyPlayback: .init(start: { _ in fatalError("UIE2E forbids playback") }, stop: {}))
     }
 }
+/// The host's take identity: readable by XCUI, never hit-tested, never seen.
+private final class UIE2ETakeIdentityLabel: NSTextField {
+    override func hitTest(_: NSPoint) -> NSView? { nil }
+}
 #endif
+

@@ -25,7 +25,7 @@ import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleReplay, handleVoiceAsk } from "../handlers";
 import { pausePlayback, isPlaybackPaused } from "../tts";
-import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, pausePlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
 import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
@@ -1415,6 +1415,43 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     stopPlayback(1200); await h.done;
   });
 
+  it.each(["plain", "structured"])("D1 narration telemetry uses the actual long clone fallback rate for %s", async kind => {
+    const previous = process.env.QA_VOICE_TTS_RATE;
+    process.env.QA_VOICE_TTS_RATE = "+7%";
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(null));
+    autoPlay = true;
+    try {
+      const h = speakLongRead(kind === "plain" ? "A plain fallback sentence." : "**Heading**\n\nA plain fallback sentence.", {kind: "long", engine: "clone", voice: "fixture", rate: "-10%"});
+      handles.push(h); await h.done;
+      expect(synths[0].argv).toContain("--rate=+7%");
+      const line = logs.mock.calls.map(([line]) => String(line)).find(line => line.startsWith('{"event":"narration_generated"'));
+      expect(JSON.parse(line!)).toMatchObject({engine_chosen: "edge-tts", configured_rate: "+7%", engine_tried: ["qwen3-tts", "edge-tts"], fallback_reason: "clone_synthesis_failed"});
+    } finally { if (previous === undefined) delete process.env.QA_VOICE_TTS_RATE; else process.env.QA_VOICE_TTS_RATE = previous; }
+  });
+
+  it("D5 narration telemetry uses the actual short clone fallback Edge rate", async () => {
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    spies.push(spyOn(qwen, "hasClonedProfile").mockReturnValue(true));
+    spies.push(spyOn(qwen, "loadProfile").mockReturnValue({name: "fixture", engine: "qwen3-tts", reference_clips: [], reference_clip: "", fallback: "jenny", created: "", model_path: "fixture"}));
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(null));
+    autoPlay = true;
+    await speak("A simple fallback sentence.", {voice: "fixture", rate: "+12%", waitForPlayback: true});
+    const actual = synths[0].argv.find(arg => arg.startsWith("--rate="))!.slice(7);
+    const line = logs.mock.calls.map(([line]) => String(line)).find(line => line.startsWith('{"event":"narration_generated"'));
+    expect(JSON.parse(line!)).toMatchObject({engine_chosen: "edge-tts", configured_rate: actual, engine_tried: ["qwen3-tts", "edge-tts"], engine_unavailable: ["xtts-v2", "f5-tts-mlx"], fallback_reason: "clone_synthesis_failed"});
+  });
+
+  it("D3 narration telemetry identifies a missing clone profile fallback", async () => {
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({kind: "short", engine: "clone", voice: "missing-fixture", rate: "-10%", rateSource: "settings", engineSource: "settings"}));
+    spies.push(spyOn(qwen, "loadProfile").mockReturnValue(null));
+    autoPlay = true;
+    await speak("A missing profile sentence.", {waitForPlayback: true});
+    const line = logs.mock.calls.map(([line]) => String(line)).find(line => line.startsWith('{"event":"narration_generated"'));
+    expect(JSON.parse(line!)).toMatchObject({engine_chosen: "edge-tts", engine_tried: ["edge-tts"], engine_unavailable: ["clone-profile"], fallback_reason: "clone_profile_missing"});
+  });
+
   it("records the actual edge engine when a long-read clone falls back", async () => {
     spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(null));
     autoPlay = true; await start("clone", "A sentence.").done;
@@ -1466,6 +1503,43 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     stopPlayback(1250); await h.done;
     expect(events.filter(e => e.type === "playback_outcome").at(-1).stopped_at_ms).toBe(250);
     expect(seekPlayback(0).outcome).toBe("noop"); expect(players).toHaveLength(4);
+  });
+
+  it("T1 S2-F9: a cross-chunk seek's new player announces its identity, so Pause scoped to it is accepted", async () => {
+    const h = start(); await playerBarrier.at(0);
+    players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);
+    const before = events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1);
+    expect(seekPlayback(250)).toMatchObject({ outcome: "accept" });
+    await playerBarrier.at(2);
+    const after = events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1);
+    expect(after).toMatchObject({ playback_offset_ms: 250, long_read: { chunk_index: 0, chunk_start_ms: 0 } });
+    expect(after.chunk_duration_ms).toBeGreaterThan(250);
+    expect(after.playback_id).not.toBe(before.playback_id);
+    // The scope the client held before the seek is stale and is told who is current instead of failing silently.
+    expect(pausePlayback({ id: before.playback_id, generation: before.generation }, 300))
+      .toMatchObject({ outcome: "reject", reason: "stale", playback_id: after.playback_id, generation: after.generation });
+    expect(pausePlayback({ id: after.playback_id, generation: after.generation }, 300)).toMatchObject({ outcome: "accept" });
+    stopPlayback(); await h.done;
+  });
+
+  // #809 review round 2 (Codex probe): the logged M4 path, resume at generation 3 then speech_seek to a new player at
+  // generation 1. The replacement announces its identity; the stale reject names it with the same logical read.
+  it("Review809 logged resume gen3 then speech_seek new gen1 broadcasts the identity and names the same read", async () => {
+    const h = start(); await playerBarrier.at(0);
+    expect(pausePlayback({}, 0).outcome).toBe("accept");
+    await fixtureCheckpoint(); expect(tts.resumePlayback().outcome).toBe("accept");
+    await playerBarrier.at(1);
+    const before = events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1);
+    expect(before.generation).toBe(3);
+    expect(tts.seekSpeechWord(h.id, 0, "review-seek").outcome).toBe("accept");
+    await playerBarrier.at(2);
+    const after = events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1);
+    expect(after.generation).toBe(1); expect(after.playback_id).not.toBe(before.playback_id);
+    expect(after.utteranceId).toBe(before.utteranceId);
+    expect(pausePlayback({ id: before.playback_id, generation: before.generation })).toMatchObject({
+      outcome: "reject", reason: "stale", playback_id: after.playback_id, generation: 1, utterance_id: before.utteranceId });
+    expect(pausePlayback({ id: after.playback_id, generation: after.generation })).toMatchObject({ outcome: "accept" });
+    stopPlayback(); await h.done;
   });
 
   it("streams edge chunks with local subtitles, global metadata, no lost text, and one history entry", async () => {

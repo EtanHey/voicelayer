@@ -173,7 +173,7 @@ test("R3 async timeout admits unregistered without reaping or retrying voice wor
 });
 test("N1 async retry observes closure before running any voice work", async () => {
   fixture(); fs.mkdirSync(path + ".lock"); let calls = 0;
-  const close = setTimeout(() => { fs.writeFileSync(path, JSON.stringify({ version: 1, kind: "DRAINING", lease })); fs.rmdirSync(path + ".lock"); }, 10);
+  const close = setTimeout(() => { fs.writeFileSync(path, JSON.stringify({ version: 1, kind: "PREPARED", lease, native: { lease, activeOperations: 0, openArchives: 0 }, daemon: { lease, activeOperations: 0, openArchives: 0 } })); fs.rmdirSync(path + ".lock"); }, 10);
   try {
     await expect(gate.withAsyncVoiceAdmission(() => { calls++; })).rejects.toThrow("UPDATE_BUSY");
     expect(calls).toBe(0); expect(fs.existsSync(path + ".voice-diag.json")).toBe(false);

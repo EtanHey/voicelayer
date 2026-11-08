@@ -6,10 +6,10 @@
   "generated": 31,
   "distinct": 31,
   "trace": [
-    "/\\ result = \"none\"\n/\\ attempts = 0\n/\\ held = TRUE\n/\\ phase = \"attempt\"\n/\\ gate = \"DRAINING\"\n/\\ schedule = \"between\"",
-    "/\\ result = \"locked\"\n/\\ attempts = 1\n/\\ held = TRUE\n/\\ phase = \"decide\"\n/\\ gate = \"DRAINING\"\n/\\ schedule = \"between\"",
-    "/\\ result = \"locked\"\n/\\ attempts = 1\n/\\ held = FALSE\n/\\ phase = \"decide\"\n/\\ gate = \"DRAINING\"\n/\\ schedule = \"between\"",
-    "/\\ result = \"locked\"\n/\\ attempts = 1\n/\\ held = FALSE\n/\\ phase = \"recovery\"\n/\\ gate = \"DRAINING\"\n/\\ schedule = \"between\"",
-    "Finished checking temporal properties in 00s at 2026-11-05 11:46:50"
+    "/\\ result = \"none\"\n/\\ userGate = \"OPEN\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 0\n/\\ held = TRUE\n/\\ outcome = \"waiting\"\n/\\ phase = \"attempt\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"between\"",
+    "/\\ result = \"locked\"\n/\\ userGate = \"OPEN\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 1\n/\\ held = TRUE\n/\\ outcome = \"waiting\"\n/\\ phase = \"decide\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"between\"",
+    "/\\ result = \"locked\"\n/\\ userGate = \"OPEN\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 1\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"decide\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"between\"",
+    "/\\ result = \"locked\"\n/\\ userGate = \"OPEN\"\n/\\ earlyRefusal = FALSE\n/\\ age = 0\n/\\ attempts = 1\n/\\ held = FALSE\n/\\ outcome = \"waiting\"\n/\\ phase = \"recovery\"\n/\\ ack = FALSE\n/\\ gate = \"DRAINING\"\n/\\ ledger = 0\n/\\ schedule = \"between\"",
+    "Finished checking temporal properties in 00s at 2026-11-08 01:37:38"
   ]
 }

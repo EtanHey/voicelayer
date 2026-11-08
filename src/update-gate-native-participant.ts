@@ -1,3 +1,5 @@
+import { PACKAGE_VERSION } from "./version";
+import type { PendingParticipant } from "./update-gate-drain-status";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { acknowledgeVoiceDrain } from "./update-gate-admission";
@@ -16,9 +18,11 @@ export function createNativeDrainParticipant(options: {
   secret?: string; nativePid?: number; send: (request: Envelope & { type: "update_gate_drain"; mac: string }) => void;
 }) {
   const incarnation = randomUUID();
+  let nativeIdentity: { pid: number; incarnation: string } | undefined;
   const pending = new Map<string, { lease: UpdateGateLease; action: "drain" | "quit"; finish: (value: Envelope | null) => void }>();
   const sign = (kind: string, value: Envelope) => createHmac("sha256", options.secret!).update(drainMessage(kind, value)).digest("hex");
   return {
+    identity: () => nativeIdentity ?? { pid: options.nativePid },
     request(lease: UpdateGateLease, action: "drain" | "quit" = "drain"): Promise<Envelope | null> {
       if (!options.secret || !options.nativePid || !updateGateLeaseSchema.safeParse(lease).success) return Promise.resolve(null);
       const value = { action, id: randomUUID(), pid: process.pid, incarnation, lease };
@@ -38,14 +42,16 @@ export function createNativeDrainParticipant(options: {
       if (!waiter || v.action !== waiter.action || v.pid !== options.nativePid ||
         drainMessage("lease", { ...v, id: "", pid: 0, incarnation: "" }) !==
         drainMessage("lease", { ...v, id: "", pid: 0, incarnation: "", lease: waiter.lease })) return;
-      if (timingSafeEqual(Buffer.from(v.mac, "hex"), Buffer.from(sign("ack-" + v.action, v), "hex"))) waiter.finish(v);
+      if (timingSafeEqual(Buffer.from(v.mac, "hex"), Buffer.from(sign("ack-" + v.action, v), "hex"))) {
+        nativeIdentity = { pid: v.pid, incarnation: v.incarnation }; waiter.finish(v);
+      }
     },
     disconnect(): void { for (const waiter of [...pending.values()]) waiter.finish(null); },
   };
 }
 
 /** Live round trip bracketed by G2's exact in-lock snapshot; no saved ACK cache. */
-export function createVoiceDrainControl(participant: Pick<ReturnType<typeof createNativeDrainParticipant>, "request">,
+export function createVoiceDrainControl(participant: Pick<ReturnType<typeof createNativeDrainParticipant>, "request"> & Partial<Pick<ReturnType<typeof createNativeDrainParticipant>, "identity">>,
   ready: () => boolean) {
   const incarnation = randomUUID();
   return async (input: unknown, action: "drain" | "quit"): Promise<Record<string, unknown>> => {
@@ -56,11 +62,20 @@ export function createVoiceDrainControl(participant: Pick<ReturnType<typeof crea
       try { return ready() === true && (action !== "quit" || state.kind === "COMMITTED"); }
       catch { return false; } // Expected participant-evidence faults never become storage faults.
     };
-    if (!acknowledgeVoiceDrain(lease, proof)) return { kind: "UNKNOWN" };
+    const unknown = (nativeMissing: boolean, daemonMissing: boolean, requested: boolean) => {
+      if (action === "quit") return { kind: "UNKNOWN" }; // Quit's exit-proof contract is unchanged.
+      const pending: PendingParticipant[] = [];
+      if (nativeMissing) pending.push({ participant: "native", ...participant.identity?.(),
+        reply: requested ? "no reply: native did not acknowledge drain" : "no reply: native not requested until daemon drain proof" });
+      if (daemonMissing) pending.push({ participant: "daemon", pid: process.pid, incarnation, version: PACKAGE_VERSION,
+        reply: "UNKNOWN: daemon not idle, ledger nonempty, or gate evidence unavailable" });
+      return { kind: "UNKNOWN", pending };
+    };
+    if (!acknowledgeVoiceDrain(lease, proof)) return unknown(true, true, false);
     const native = await participant.request(lease, action);
-    const daemon = native && acknowledgeVoiceDrain(lease, proof);
+    const daemon = acknowledgeVoiceDrain(lease, proof);
     return native && daemon ? { kind: "ACKNOWLEDGED", native: { lease, activeOperations: 0, openArchives: 0 },
       daemon, identities: { native: { pid: native.pid, incarnation: native.incarnation },
-        daemon: { pid: process.pid, incarnation } } } : { kind: "UNKNOWN" };
+        daemon: { pid: process.pid, incarnation } } } : unknown(!native, !daemon, true);
   };
 }

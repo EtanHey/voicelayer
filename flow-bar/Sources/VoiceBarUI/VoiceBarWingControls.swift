@@ -73,6 +73,9 @@ public struct VoiceBarReadingTimeLabel: View {
 
     let elapsedMilliseconds: () -> Int
     let color: Color
+    /// T1 (QA 2026-11-08 S1-F6r): "Preparing speech…" has no player, so it shows no counter. The lane keeps its
+    /// width so Stop never moves.
+    var showsClock: () -> Bool = { true }
 
     /// "m:ss" up to 9:59. Two-digit minutes with seconds ("10:00", 33.8 pt) overflow the fixed 31.5 pt lane, so a
     /// longer read shows whole minutes ("10m" to "99m"), then whole hours ("1h" to "99h"); all fit the lane.
@@ -90,7 +93,8 @@ public struct VoiceBarReadingTimeLabel: View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
             // U2 review R1 (A2): the accessibility value is computed with the visible text on every tick, so
             // VoiceOver never reads a stale time.
-            let time = Self.text(elapsedMilliseconds: elapsedMilliseconds())
+            let shows = showsClock()
+            let time = shows ? Self.text(elapsedMilliseconds: elapsedMilliseconds()) : ""
             Text(time)
                 .font(.system(size: 12))
                 .monospacedDigit()
@@ -99,7 +103,7 @@ public struct VoiceBarReadingTimeLabel: View {
                 .frame(width: Self.width)
                 .accessibilityElement()
                 .accessibilityLabel("Reading time")
-                .accessibilityValue(time)
+                .accessibilityValue(shows ? time : "Preparing")
         }
     }
 }

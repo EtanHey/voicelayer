@@ -9,7 +9,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             (.hoverLauncher, CGSize(width: 332, height: 32)),
             (.recording, CGSize(width: 332, height: 32)),
             (.compactStatus, CGSize(width: 336.5, height: 32)),
-            (.teleprompter, CGSize(width: 465, height: 228)),
+            (.teleprompter, CGSize(width: 545, height: 228)),
         ]
 
         for (state, expectedVisibleSize) in cases {
@@ -31,8 +31,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(layout.containsInteractiveContent(CGPoint(x: 12 + 202.5, y: 17 + 24)))
-        XCTAssertTrue(layout.containsInteractiveContent(CGPoint(x: 12 + 262.5, y: 17 + 24)))
+        XCTAssertTrue(layout.containsInteractiveContent(CGPoint(x: 12 + 242.5, y: 17 + 24)))
+        XCTAssertTrue(layout.containsInteractiveContent(CGPoint(x: 12 + 302.5, y: 17 + 24)))
         XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 12 + 232.5, y: 17 + 120)))
         XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 12 + 108, y: 17 + 212)))
         XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 2, y: 2)))
@@ -65,8 +65,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             height: layout.visibleContentRect.height
         )
 
-        XCTAssertEqual(windowFrame, CGRect(x: 627.5, y: 872, width: 472, height: 245))
-        XCTAssertEqual(visibleFrame, CGRect(x: 639.5, y: 889, width: 448, height: 228))
+        XCTAssertEqual(windowFrame, CGRect(x: 587.5, y: 872, width: 552, height: 245))
+        XCTAssertEqual(visibleFrame, CGRect(x: 599.5, y: 889, width: 528, height: 228))
         XCTAssertEqual(visibleFrame.midX, screen.housingFrame.midX)
         XCTAssertEqual(visibleFrame.maxY, screen.screenFrame.maxY)
     }
