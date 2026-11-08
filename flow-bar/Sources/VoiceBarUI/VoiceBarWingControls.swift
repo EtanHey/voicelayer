@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 2.3 U2 (3-wings mock): a setup problem (a missing permission, so the F5 listener cannot start) badges the gear
@@ -104,44 +105,72 @@ public struct VoiceBarReadingTimeLabel: View {
     }
 }
 
-/// 2.3 N1 (Etan, QA round 1, S2-F3): the recording wing's live time over the capturing microphone's name, on the
-/// notch side of the level meter. A long name truncates at the tail (Etan: long mic-name truncation is fine).
-public struct VoiceBarRecordingWingLabel: View {
-    /// Fits "9:59" at 12 pt and about a dozen 9 pt characters of the name.
-    public static let width: CGFloat = 56
+/// 2.3 N1 (Etan, QA round 1, S2-F3): the recording wing's live time and the capturing microphone's name, in two
+/// equal regions either side of the level meter so the meter stays centred in its wing (N1 review D3): the time on
+/// the notch side, the name on the outer side. Both appear only once capture has opened (N1 review D1); before that
+/// the regions stay empty and the wing keeps its width, so the outline never jumps. A long name wraps to two lines
+/// and then truncates at the tail (Etan: long mic-name truncation is fine); VoiceOver reads it in full.
+public enum VoiceBarRecordingWingLabel {
+    /// Each side region: "9:59" at 12 pt fits; the meter's 46 pt plus two of these fill the wing to the canvas cap.
+    public static let width: CGFloat = 28
+    public static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+    public static let nameFontSize: CGFloat = 8.5
+}
 
+public struct VoiceBarRecordingTimeRegion: View {
     let elapsedMilliseconds: () -> Int
-    let microphoneName: String?
+    let isCaptureOpen: Bool
     let color: Color
-    let secondaryColor: Color
 
-    public init(elapsedMilliseconds: @escaping () -> Int, microphoneName: String?, color: Color, secondaryColor: Color) {
+    public init(elapsedMilliseconds: @escaping () -> Int, isCaptureOpen: Bool, color: Color) {
         self.elapsedMilliseconds = elapsedMilliseconds
-        self.microphoneName = microphoneName
+        self.isCaptureOpen = isCaptureOpen
         self.color = color
-        self.secondaryColor = secondaryColor
     }
 
     public var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
-            VStack(alignment: .leading, spacing: 0) {
-                Text(time)
-                    .font(.system(size: 12, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(color)
-                if let microphoneName {
-                    Text(microphoneName)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(secondaryColor)
-                        .truncationMode(.tail)
+        Group {
+            if isCaptureOpen {
+                TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                    let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+                    Text(time)
+                        .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .accessibilityElement()
+                        .accessibilityLabel("Recording time")
+                        .accessibilityValue(time)
                 }
             }
-            .lineLimit(1)
-            .frame(width: Self.width, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Recording time")
-            .accessibilityValue(microphoneName.map { "\(time), \($0)" } ?? time)
         }
+        .frame(width: VoiceBarRecordingWingLabel.width, alignment: .trailing)
+    }
+}
+
+public struct VoiceBarRecordingMicrophoneRegion: View {
+    let microphoneName: String?
+    let color: Color
+
+    public init(microphoneName: String?, color: Color) {
+        self.microphoneName = microphoneName
+        self.color = color
+    }
+
+    public var body: some View {
+        Group {
+            if let microphoneName {
+                Text(microphoneName)
+                    .font(.system(size: VoiceBarRecordingWingLabel.nameFontSize, weight: .medium))
+                    .foregroundStyle(color)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(.leading)
+                    .accessibilityLabel("Microphone")
+                    .accessibilityValue(microphoneName)
+            }
+        }
+        .frame(width: VoiceBarRecordingWingLabel.width, alignment: .leading)
     }
 }

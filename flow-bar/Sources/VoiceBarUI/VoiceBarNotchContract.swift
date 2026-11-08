@@ -520,11 +520,12 @@ public enum VoiceBarNotchContract {
 
     public static let recordingLeadingWingWidth = fixedWingWidth
 
-    /// 2.3 N1 (Etan, QA round 1, S2-F3): while recording, the right wing hugs the time-over-microphone column and
-    /// the level meter between the fixed wing's equal insets (124 pt). The left wing keeps its controls at the
-    /// fixed width; the right wing stays inside the 132 pt bound and the morph canvas.
-    public static let recordingTrailingWingWidth = 2 * fixedWingContentInset + VoiceBarRecordingWingLabel.width +
-        material.compactControlSpacing + WaveformLayout.viewportWidth
+    /// 2.3 N1 (Etan, QA round 1, S2-F3): while recording, the right wing holds the time, the level meter and the
+    /// microphone name in symmetric regions between the fixed wing's equal insets, so the meter stays centred
+    /// (N1 review D3): 8 + 28 + 6 + 46 + 6 + 28 + 8 = 130 pt, exactly the morph canvas and inside the 132 pt bound.
+    /// The left wing keeps its controls at the fixed width.
+    public static let recordingTrailingWingWidth = 2 * fixedWingContentInset +
+        2 * (VoiceBarRecordingWingLabel.width + material.compactControlSpacing) + WaveformLayout.viewportWidth
 
     public static let recordingLeadingWingWidthWithHoldControl: CGFloat =
         recordingLeadingWingWidth + material.compactControlSpacing + material.compactControlSize

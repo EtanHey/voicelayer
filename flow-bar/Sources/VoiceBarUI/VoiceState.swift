@@ -429,28 +429,34 @@ public final class VoiceState {
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
-                stampRecordingWing(isRecording: mode == .recording)
+                // N1 review D1: leaving (or optimistically entering) recording clears the wing's time and microphone;
+                // only the capture-open edge (`captureLive`) stamps them.
+                stampRecordingWing(isCaptureOpen: false)
             }
             notifyPanelLayoutChangedIfNeeded(oldValue != mode)
         }
     }
 
     /// 2.3 N1 (Etan, QA round 1, S2-F3): the recording wings name the microphone and show a live time.
-    /// Presentation only: the app wires this to the CoreAudio default input's name, the device sox opens; it is
-    /// read once as a recording starts. Never opens, selects or routes a device.
+    /// Presentation only: the app wires this to the CoreAudio default input's name, the device sox opens. It is read
+    /// once, when capture actually opens (N1 review D1: `captureLive`, the daemon's first audio frame), never at the
+    /// optimistic press. Never opens, selects or routes a device.
     @ObservationIgnored public var recordingMicrophoneNameProvider: () -> String? = { nil }
     public private(set) var recordingMicrophoneName: String?
-    @ObservationIgnored private var recordingStartedAt: TimeInterval?
+    private var recordingStartedAt: TimeInterval?
+    /// True from this take's capture-open edge until it leaves recording: the wing's clock runs only then.
+    public var isRecordingCaptureOpen: Bool { recordingStartedAt != nil }
 
-    /// Milliseconds since this recording started on the panel's uptime clock; 0 when not recording.
+    /// Milliseconds since this take's capture opened, on the panel's uptime clock; 0 before it opens and after.
     public func recordingElapsedMilliseconds() -> Int {
         guard let recordingStartedAt else { return 0 }
         return max(0, Int(((playbackAmplitudeClock() - recordingStartedAt) * 1000).rounded()))
     }
 
-    private func stampRecordingWing(isRecording: Bool) {
-        recordingStartedAt = isRecording ? playbackAmplitudeClock() : nil
-        let name = isRecording ? recordingMicrophoneNameProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+    /// The capture-open edge stamps the clock and reads the microphone once; anything else clears both.
+    private func stampRecordingWing(isCaptureOpen: Bool) {
+        recordingStartedAt = isCaptureOpen ? playbackAmplitudeClock() : nil
+        let name = isCaptureOpen ? recordingMicrophoneNameProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
         recordingMicrophoneName = name?.isEmpty == false ? name : nil
     }
 
@@ -597,7 +603,12 @@ public final class VoiceState {
     // starts hearing the room at that same instant, so neither is evidence the
     // capture path is live. Only the daemon's first `audio_level` frame is.
     // `.recording` + false = booting; `.recording` + true = live.
-    public private(set) var captureLive = false
+    public private(set) var captureLive = false {
+        didSet {
+            guard captureLive != oldValue else { return }
+            stampRecordingWing(isCaptureOpen: captureLive && mode == .recording)
+        }
+    }
     /// Presentation-only guard for the brief idle frame before playback hands off to capture.
     public private(set) var isRecordingHandoffPending = false
     public var recordingTimingClock: () -> TimeInterval = {
