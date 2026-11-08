@@ -320,6 +320,45 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     void handle.exited;
   });
 
+  /** Lane B night item 2 (Etan: "resume the read when the voice_ask answer capture ENDS"): the read comes back at
+   * the recorder's exit, from its word, while the answer is still transcribing; never only after the whole ask. */
+  it("capture-end r2: the read resumes from its word at recorder exit, before the answer finishes transcribing", async () => {
+    const recordingState = asks[3] as ReturnType<typeof spyOn>;
+    let finishTranscription!: (answer: string) => void;
+    (asks[5] as ReturnType<typeof spyOn>).mockImplementation((async (_ms: number, _mode: unknown, _push: unknown, options: any) => {
+      captures++;
+      options?.onCaptureStart?.();
+      options?.onCaptureEnd?.(1000);
+      // The recorder has exited; the answer transcribes now.
+      recordingState.mockReturnValue("transcribing");
+      options?.onPhaseChange?.("transcribing");
+      try { return await new Promise<string>(resolve => { finishTranscription = resolve; }); }
+      finally { recordingState.mockReturnValue("idle"); }
+    }) as any);
+    const handle = read();
+    await players.at(0);
+    at(3200);
+    let settled = false;
+    const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 }).finally(() => { settled = true; });
+    await fixtureCheckpoint();
+    (await trims.at(0)).exit.resolve(0);
+    await fixtureCheckpoint();
+    (await players.at(1)).exit.resolve(0);
+    for (let i = 0; i < 20; i++) await fixtureCheckpoint();
+    expect(settled).toBe(false);
+    expect(players.values.length, "the read's player starts while the answer transcribes").toBe(3);
+    expect(states("resumed").at(-1)).toMatchObject({ word_index: 3, offset_ms: 3000 });
+    expect(events.filter(e => e.type === "read_processing").map(e => e.active)).toEqual([true]);
+    finishTranscription("answer 1");
+    expect((await answer).content[0].text).toContain("answer 1");
+    expect(events.filter(e => e.type === "read_processing").map(e => e.active)).toEqual([true, false]);
+    // The read kept playing through the ask's end: no second resume, no pause.
+    expect(states("resumed")).toHaveLength(1);
+    expect(playbackSessionViolations()).toEqual([]);
+    players.values[2].exit.resolve(0);
+    expect((await handle.exited).status).toBe("completed");
+  });
+
   it("a user-paused read stays paused across the ask and keeps its word", async () => {
     read();
     await players.at(0);
