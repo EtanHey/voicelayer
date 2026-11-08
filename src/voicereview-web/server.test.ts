@@ -162,6 +162,7 @@ describe("VoiceReview web server helpers", () => {
     });
     expect(calls).toHaveLength(1);
     expect(calls[0].args).toContain("--category=diagnosis-flag");
+    expect(calls[0].env.PYTHONDONTWRITEBYTECODE).toBe("1");
     expect(calls[0].env.PYTHONPATH).toBe("/tmp/voice-review-wt/src");
     expect(calls[0].cwd).toBe("/tmp/voice-review-wt");
   });
@@ -603,6 +604,7 @@ describe("VoiceReview web server helpers", () => {
       "bun run finish-session",
     ]);
     expect(calls[0].cwd).toBe("/tmp/brainlayer-prod");
+    expect(calls[0].env.PYTHONDONTWRITEBYTECODE).toBe("1");
     expect(calls[0].env.PYTHONPATH).toBe("/tmp/brainlayer-prod/src");
     expect(body).toEqual({
       ok: true,

@@ -5,7 +5,7 @@ if [[ $# -ne 1 || ! -d "$1/Contents" ]]; then
   echo "usage: $0 <built app bundle>" >&2
   exit 2
 fi
-artifacts=$(find "$1" \( -name __pycache__ -o -name '*.pyc' \) -print)
+artifacts=$(find -H "$1" \( -name __pycache__ -o -name '*.pyc' \) -print)
 if [[ -n "$artifacts" ]]; then
   printf 'error: Python cache artifacts in bundle:\n%s\n' "$artifacts" >&2
   exit 1

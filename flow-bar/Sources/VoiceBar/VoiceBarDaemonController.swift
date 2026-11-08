@@ -217,6 +217,7 @@ enum VoiceBarDaemonEnvironment {
         }
         env.removeValue(forKey: preserveQAOverridesEnvironmentVariable)
         env.removeValue(forKey: legacyPreserveQAOverridesEnvironmentVariable)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PATH"] = path
         env.removeValue(forKey: "VOICELAYER_ALLOW_SOCKET_RECLAIM")
         env.removeValue(forKey: "QA_VOICE_ALLOW_SOCKET_RECLAIM")
