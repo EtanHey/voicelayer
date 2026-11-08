@@ -2209,6 +2209,10 @@ public final class VoiceState {
     }
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
+        if mode == .speaking, showsReadingProcessingSpinner {
+            sendCommand?(["cmd": "stop", "id": UUID().uuidString])
+            return
+        }
         if case let .queued(request) = deferredBarRecording {
             deferredBarRecording = nil
             locallyStartedDictationTakes.remove(request.takeID)
@@ -3283,7 +3287,12 @@ public final class VoiceState {
                 // never ends a paused read: that is playback's Stop, outcome or replacement, not capture's idle.
                 if idleSource == "recording" {
                     isCaptureSettlementPending = false
-                    if mode == .speaking { return }
+                    if mode == .speaking {
+                        modelsRecordingBusy = false
+                        modelsRecordingReason = nil
+                        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
+                        return
+                    }
                     if parkedRead != nil { scheduleParkedReadRestore() }
                 }
                 if barInitiatedRecording, mode == .transcribing {
@@ -3638,7 +3647,19 @@ public final class VoiceState {
 
         case "transcription":
             // The remote Ask owns this result; the returned read keeps its clock and presentation.
-            if showsReadingProcessingSpinner { return }
+            if showsReadingProcessingSpinner {
+                if event["partial"] as? Bool != true {
+                    let text = (event["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let path = event["recording_path"] as? String
+                    if !text.isEmpty {
+                        rememberRecentTranscription(text, recordingPath: path)
+                        refreshTranscriptionVocabulary()
+                    }
+                    if let path, !path.isEmpty { onHistoryArchiveChange?(path) }
+                    releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
+                }
+                return
+            }
             if let text = event["text"] as? String {
                 let isPartial = (event["partial"] as? Bool) == true
                 let recordingPath = (event["recording_path"] as? String)?

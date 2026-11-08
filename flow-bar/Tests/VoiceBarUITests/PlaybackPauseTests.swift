@@ -141,6 +141,9 @@ final class PlaybackPauseTests: XCTestCase {
         prompt["preserves_paused_read"] = true
         state.handleEvent(prompt)
         state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        // The daemon emits transcribing before read_processing; this briefly enters transcribing.
+        XCTAssertEqual(state.mode, .transcribing)
         state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": true])
         var resumed = speakingEvent(generation: 4, offset: 2500)
         resumed["utteranceId"] = "read-1"
@@ -148,7 +151,6 @@ final class PlaybackPauseTests: XCTestCase {
         let position = state.playbackElapsedMilliseconds()
         XCTAssertTrue(state.showsReadingProcessingSpinner)
         XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 2)
-        state.handleEvent(["type": "state", "state": "transcribing"])
         XCTAssertEqual(state.mode, .speaking)
         state.handleEvent(["type": "transcription", "text": ""])
         state.handleEvent(["type": "error", "message": "Transcription failed", "recoverable": true])
@@ -161,6 +163,42 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": false])
         XCTAssertFalse(state.showsReadingProcessingSpinner)
         XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 1)
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
+    func testR2AnswerBookkeeping() {
+        let (state, _) = speakingState()
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": true])
+        var resumed = speakingEvent()
+        resumed["utteranceId"] = "read-1"
+        state.handleEvent(resumed)
+        var refreshed = false
+        state.onHistoryArchiveChange = { _ in refreshed = true }
+        state.handleEvent(["type": "transcription", "text": "Synthetic answer", "recording_path": "/synthetic/answer"])
+        XCTAssertEqual(state.recentTranscriptions.first, "Synthetic answer")
+        XCTAssertTrue(refreshed)
+        XCTAssertFalse(state.remoteOwnedRecordingForTesting)
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
+    func testR2IdleBookkeeping() {
+        let (state, _) = speakingState()
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(speakingEvent())
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        XCTAssertFalse(state.remoteOwnedRecordingForTesting)
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
+    func testR2EscapeStopsRead() {
+        let (state, sent) = speakingState()
+        state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": true])
+        var resumed = speakingEvent()
+        resumed["utteranceId"] = "read-1"
+        state.handleEvent(resumed)
+        state.cancel()
+        XCTAssertEqual(sent().last?["cmd"] as? String, "stop")
         XCTAssertEqual(state.mode, .speaking)
     }
 

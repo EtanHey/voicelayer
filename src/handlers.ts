@@ -1009,7 +1009,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         },
         onPhaseChange: (phase) => {
           progressHeartbeat?.setStage(phase);
-          // The input phase follows recorder reap; run after its transcribing state is published.
+          // The input phase follows bounded recorder-exit settlement; run after its transcribing state is published.
           queueMicrotask(() => { if (returnInterruptedRead?.(true)) returnInterruptedRead = undefined; });
         },
         onNoAnswer: (unclassified) => { noAnswer = !unclassified; unclassifiedAnswer = unclassified; },
