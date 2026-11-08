@@ -60,6 +60,7 @@ import {
 import type { PreparedReadStart } from "./tts/selection-read-preparation";
 import {
   waitForInput,
+  micAllowed,
   hasRetainedRecording,
   retranscribeLastCapture,
   retranscribeRecordingCapture,
@@ -491,7 +492,7 @@ function handleSocketCommandAdmitted(
       if (!canStartBarCapture()) {
         return buildAck(command, "reject", recordingJobsSnapshot().capture_error ?? "busy");
       }
-      if (existsSync(VOICE_DISABLED_FILE) || existsSync(MIC_DISABLED_FILE)) {
+      if (!micAllowed()) {
         broadcast({
           type: "error",
           message: "Mic is disabled",
@@ -564,6 +565,9 @@ function handleSocketCommandAdmitted(
         try {
           unlinkSync(flagFile);
         } catch {}
+        if (scope === "mic") {
+          try { unlinkSync(VOICE_DISABLED_FILE); } catch {}
+        }
         if (scope === "all") {
           try {
             unlinkSync(TTS_DISABLED_FILE);

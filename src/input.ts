@@ -68,6 +68,7 @@ import {
   retainedRecordingFilePath,
   retainedRecordingMetadataFilePath,
   MIC_DISABLED_FILE,
+  VOICE_DISABLED_FILE,
   STOP_FILE,
 } from "./paths";
 import {
@@ -2020,9 +2021,9 @@ function writeString(view: DataView, offset: number, str: string): void {
   }
 }
 
-/** Check if mic recording is disabled via flag file. */
-function isMicDisabled(): boolean {
-  return existsSync(MIC_DISABLED_FILE);
+/** Shared microphone admission policy for direct capture and socket commands. */
+export function micAllowed(): boolean {
+  return !existsSync(MIC_DISABLED_FILE) && !existsSync(VOICE_DISABLED_FILE);
 }
 
 type RecorderKillSignal = Parameters<ReturnType<typeof Bun.spawn>["kill"]>[0];
@@ -2323,7 +2324,7 @@ export async function recordToBuffer(
   return withCaptureVoiceAdmission(async () => {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
-  if (isMicDisabled()) {
+  if (!micAllowed()) {
     console.error(
       "[voicelayer] Mic disabled via flag file — skipping recording",
     );
