@@ -37,7 +37,7 @@ final class WaveformViewTests: XCTestCase {
 
     /// 2.3 U2 (3-wings mock): the transcribing and reading-aloud right wings are the fixed 73.5 pt wing and hold
     /// History + Settings or the time + Stop, not a waveform; their content sits between equal 8 pt insets whatever
-    /// the hardware calibration. Only recording draws level bars (six, in the same fixed wing).
+    /// the hardware calibration. Only recording draws level bars (2.2.61's 46 pt meter, in the same fixed wing).
     func testTranscribingAndReadingRightWingsAreTheFixedWingAtEveryCalibration() {
         let processing = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .transcribing, statusText: "Transcribing")
@@ -63,10 +63,37 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth,
                        "the reading wing keeps the fixed width when calibration changes")
         XCTAssertLessThanOrEqual(
-            WaveformBarStyle.wingLevels.viewportWidth,
+            WaveformLayout.viewportWidth,
             VoiceBarNotchContract.fixedWingWidth - 2 * VoiceBarNotchContract.fixedWingContentInset,
-            "the recording level bars fit the fixed wing's content lane"
+            "the recording level meter fits the fixed wing's content lane"
         )
+    }
+
+    /// 2.3 N1 (Etan, QA round 1, WAVE-F1: the recording waveform is "thin, much shorter than before"): the
+    /// recording wing draws 2.2.61's meter again (`git show 1dc0c174`: seven 4 pt bars, 3 pt gaps, 46 × 24 pt,
+    /// 3 pt floor), not U2's six 3 pt bars at 33 × 16 pt. It still fits the fixed wing's 57.5 pt content lane,
+    /// centred between its equal 8 pt insets, and the wing's height.
+    func testTheRecordingWingDrawsThe2261LevelMeter() throws {
+        let source = try barViewSource()
+        let trailing = try XCTUnwrap(source.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
+            .components(separatedBy: "private var notchCompactStatusContent")[0]
+        let recording = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
+            .components(separatedBy: "case .compactStatus")[0]
+        XCTAssertTrue(recording.contains("notchWaveform"), "the recording wing draws the shared notch meter")
+        XCTAssertFalse(recording.contains("style:"), "no thinner recording-only bar style")
+        XCTAssertEqual(WaveformLayout.barCount, 7)
+        XCTAssertEqual(WaveformLayout.barWidth, 4)
+        XCTAssertEqual(WaveformLayout.barSpacing, 3)
+        XCTAssertEqual(WaveformLayout.viewportWidth, 7 * 4 + 6 * 3)
+        XCTAssertEqual(WaveformLayout.viewportHeight, 24)
+        let recordingWing = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .recording, statusText: "Recording")
+        ).geometry
+        let slot = VoiceBarNotchContract.material.wingContentLayout(for: .trailing, state: .recording)
+        XCTAssertEqual(slot.coreInset, slot.outerInset, "the meter stays centred in the wing")
+        XCTAssertLessThanOrEqual(WaveformLayout.viewportWidth,
+                                 recordingWing.trailingWingWidth - slot.coreInset - slot.outerInset)
+        XCTAssertLessThanOrEqual(WaveformLayout.viewportHeight, recordingWing.topHeight)
     }
 
     func testOneStateDrivenNotchWaveformFeedsTheSharedRenderer() throws {
@@ -409,8 +436,8 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))
         XCTAssertTrue(trailingBranch.contains("notchWaveform"))
-        // 2.3 U2: the recording wing's six level bars; transcribing keeps History + Settings, no waveform.
-        XCTAssertTrue(trailingBranch.contains("notchWaveform(style: .wingLevels)"))
+        // 2.3 N1: the recording wing's 2.2.61 level meter; transcribing keeps History + Settings, no waveform.
+        XCTAssertFalse(trailingBranch.contains("notchWaveform(style:"))
         XCTAssertTrue(trailingBranch.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent"))
         XCTAssertTrue(compact.contains("historyButton\n                settingsButton"))
         XCTAssertFalse(compact.contains("notchWaveform"))
@@ -421,11 +448,9 @@ final class WaveformViewTests: XCTestCase {
     func testEveryWaveformModeUsesTheSharedFixedViewport() throws {
         let source = try waveformViewSource()
 
-        // 2.3 U2: the viewport comes from the bar style (`.standard` is the 46 × 24 pt meter, `.wingLevels` the
-        // recording wing's six bars), still one fixed frame per style.
-        XCTAssertTrue(source.contains(".frame(width: style.viewportWidth, height: maxHeight)"))
-        XCTAssertTrue(source.contains("case .standard: WaveformLayout.viewportWidth"))
-        XCTAssertTrue(source.contains("case .standard: WaveformLayout.viewportHeight"))
+        // 2.3 N1: one 46 × 24 pt meter again, recording wing included.
+        XCTAssertTrue(source.contains(".frame(width: WaveformLayout.viewportWidth"))
+        XCTAssertTrue(source.contains("height: WaveformLayout.viewportHeight"))
         XCTAssertTrue(source.contains(".fixedSize(horizontal: true, vertical: true)"))
         XCTAssertFalse(
             source

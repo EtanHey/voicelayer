@@ -5,6 +5,7 @@ import Foundation
 public enum ClickTelemetry {
     public static let events: Set<String> = [
         "command_dispatch", "playback_state_apply", "playback_state_drop", "playback_control_ack", "teleprompter_hide",
+        "playback_control_resync", "speaking_drop",
     ]
     /// Commands a pill or teleprompter click sends; health polls and settings writes are not click telemetry.
     public static let dispatchedCommands: Set<String> = ["pause", "resume", "replay", "stop", "cancel", "read_next", "seek"]

@@ -62,8 +62,14 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   /** The playing job and its control generation, so pause/resume and their events bind to this exact player (P16). */
   playback_id?: string;
   generation?: number;
+  /** Ask's real player temporarily owns the surface; the paused read stays parked. */
+  preserves_paused_read?: boolean;
+  /** Capture admission released: restore only the named paused presentation, without audio. */
+  restores_paused_read?: boolean;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
+  /** This player's whole audio (chunk or utterance), measured from long_read.chunk_start_ms (0 without one). */
+  chunk_duration_ms?: number;
   /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
   stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
@@ -176,8 +182,8 @@ export interface AudioLevelEvent {
 
 export interface ErrorEvent {
   type: "error";
-  /** A failed seek preserves ongoing playback and its client clock. */
-  source?: "seek";
+  /** Playback failures remain actionable while a returned read shares the UI with Ask processing. */
+  source?: "seek" | "playback";
   message: string;
   /** true = transient error (will recover), false = needs user action. */
   recoverable: boolean;
@@ -312,6 +318,8 @@ export interface PlaybackStateEvent {
   chunk_offset_ms: number;
   pause_owner?: "user" | "f5";
   duration_ms?: number;
+  /** This player's whole audio, from long_read.chunk_start_ms (0 without one). */
+  chunk_duration_ms?: number;
   word_index?: number;
   word_count?: number;
   long_read?: StateEvent["long_read"];
@@ -386,6 +394,14 @@ export interface AckEvent {
   reason?: string;
   offset_ms?: number;
   clamped?: boolean;
+  /** A stale Pause/Resume reject: the player that is actually current (T1, S2-F9) — identity is the
+   * (playback_id, generation) pair — its logical read (utterance_id) and where its audio sits in that read. */
+  playback_id?: string;
+  generation?: number;
+  utterance_id?: string;
+  chunk_start_ms?: number;
+  chunk_duration_ms?: number;
+  duration_ms?: number;
   model_status?: WhisperModelStatus;
   residency?: WhisperModelResidency;
   tts_controls?: import("./tts-controls-status").TTSControlsStatus;
@@ -434,6 +450,7 @@ export type SocketEvent = RecordingJobIdentity & (
   | UpdateGateDrainEvent
   | HistoryPlaybackGateEvent
   | ReadQueueEvent
+  | { type: "read_processing"; utterance_id: string; active: boolean }
   | StateEvent
   | SpeechEvent
   | SpeechWordsEvent

@@ -141,6 +141,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var visibleCoreOcclusionInset: CGFloat
     /// NOTCH1: a transient note shown inside the notch, in a band under the top row.
     public var transientNote: String?
+    /// 2.3 N1: an earlier take is still transcribing while this one records (the spinner beside Stop).
+    public var showsEarlierTakeProcessing: Bool
 
     public init(
         mode: VoiceMode,
@@ -163,8 +165,10 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
         visibleCoreOcclusionInset: CGFloat = 0,
         transientNote: String? = nil,
-        transientNoteOffersHistory: Bool? = nil
+        transientNoteOffersHistory: Bool? = nil,
+        showsEarlierTakeProcessing: Bool = false
     ) {
+        self.showsEarlierTakeProcessing = showsEarlierTakeProcessing
         self.mode = mode
         self.showsRecordingHold = showsRecordingHold
         self.hasTeleprompterText = hasTeleprompterText
@@ -267,10 +271,12 @@ public enum VoiceBarPresentation {
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
             recordingLeadingWingWidth: recordingLeadingWingWidth(
                 mode: input.mode,
-                showsRecordingHold: input.showsRecordingHold
+                showsRecordingHold: input.showsRecordingHold,
+                showsEarlierTakeProcessing: input.showsEarlierTakeProcessing
             ),
             recordingTrailingWingWidth: input.mode == .recording
-                ? VoiceBarNotchContract.fixedWingWidth
+                ? VoiceBarNotchContract.recordingTrailingWingWidth(
+                    visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
                 : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
                 ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
@@ -341,6 +347,10 @@ public enum VoiceBarPresentation {
         )
     }
 
+    public static func playbackLeadingSlotCount(for state: VoiceState) -> Int {
+        (readQueueControl(for: state)?.leadingSlotCount ?? 1) + (state.showsReadingProcessingSpinner ? 1 : 0)
+    }
+
     public static func readQueueControl(for state: VoiceState) -> VoiceBarReadQueueControl? {
         readQueueControl(
             mode: state.mode,
@@ -379,12 +389,22 @@ public enum VoiceBarPresentation {
 
     private static func recordingLeadingWingWidth(
         mode: VoiceMode,
-        showsRecordingHold: Bool
+        showsRecordingHold: Bool,
+        showsEarlierTakeProcessing: Bool
     ) -> CGFloat? {
         guard mode == .recording else { return nil }
-        return showsRecordingHold
+        let material = VoiceBarNotchContract.material
+        // 2.3 N1: the earlier take's spinner is one more slot at the wing's outer edge.
+        return (showsRecordingHold
             ? VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl
-            : VoiceBarNotchContract.recordingLeadingWingWidth
+            : VoiceBarNotchContract.recordingLeadingWingWidth) +
+            (showsEarlierTakeProcessing ? material.compactControlSpacing + material.compactControlSize : 0)
+    }
+
+    /// 2.3 N1 (Etan, queued-recording clip F1): while this take records, an earlier take is still queued,
+    /// transcribing or delivering, per the daemon's job snapshot. The live take itself is never counted.
+    public static func showsEarlierTakeProcessing(for state: VoiceState) -> Bool {
+        state.mode == .recording && state.processingTakeCount > 0
     }
 
     public static func hotkeyPermissionHint(

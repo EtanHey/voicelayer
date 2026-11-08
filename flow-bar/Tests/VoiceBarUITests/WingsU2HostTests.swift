@@ -116,7 +116,8 @@ final class WingsU2HostTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .recording)
-        assertFixedWings(host, leading: 2, trailing: 0)
+        // 2.3 N1: the right wing hugs the time, the microphone and the level meter; it holds no control.
+        assertFixedWings(host, leading: 2, trailing: 0, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth)
         // From the core outward: Cancel, then Stop.
         firstClick(host, control: 0)
         XCTAssertEqual(host.router.calls, ["cancel"])
@@ -340,16 +341,17 @@ final class WingsU2HostTests: XCTestCase {
         _ host: Host,
         leading: Int,
         trailing: Int,
+        trailingWidth: CGFloat = VoiceBarNotchContract.fixedWingWidth,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let geometry = host.layout.presentation.geometry
         let fixed = VoiceBarNotchContract.fixedWingWidth
         XCTAssertEqual(geometry.leadingWingWidth, fixed, accuracy: 0.001, "left wing", file: file, line: line)
-        XCTAssertEqual(geometry.trailingWingWidth, fixed, accuracy: 0.001, "right wing", file: file, line: line)
+        XCTAssertEqual(geometry.trailingWingWidth, trailingWidth, accuracy: 0.001, "right wing", file: file, line: line)
         let origin = host.layout.visibleContentRect.origin
         let left = CGRect(x: origin.x + geometry.coreOriginX - fixed, y: -1_000, width: fixed, height: 2_000)
-        let right = CGRect(x: origin.x + geometry.coreOriginX + geometry.coreWidth, y: -1_000, width: fixed,
+        let right = CGRect(x: origin.x + geometry.coreOriginX + geometry.coreWidth, y: -1_000, width: trailingWidth,
                            height: 2_000)
         let inLeft = host.controlRects.filter { left.contains($0) }.count
         let inRight = host.controlRects.filter { right.contains($0) }.count

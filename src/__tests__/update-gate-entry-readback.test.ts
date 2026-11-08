@@ -174,7 +174,7 @@ test("entry refuses an actual closed gate before installing or writing a control
   const bytes = readFileSync(f.gate, "utf8"), install = await controlledInstaller(f);
   await expect(install(installCommand(f))).rejects.toThrow("UNKNOWN: gate unavailable or another update owns it");
   assertRefused(f); expect(readFileSync(f.gate, "utf8")).toBe(bytes);
-  expect(() => withVoiceAdmission(() => {})).toThrow("UPDATE_BUSY");
+  expect(withVoiceAdmission(() => "DRAINING still admits")).toBe("DRAINING still admits");
 });
 
 test("entry exhausts the unchanged contention bound without reaping a real holder", async () => {

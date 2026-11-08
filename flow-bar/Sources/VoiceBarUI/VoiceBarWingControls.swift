@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 2.3 U2 (3-wings mock): a setup problem (a missing permission, so the F5 listener cannot start) badges the gear
@@ -73,6 +74,9 @@ public struct VoiceBarReadingTimeLabel: View {
 
     let elapsedMilliseconds: () -> Int
     let color: Color
+    /// T1 (QA 2026-11-08 S1-F6r): "Preparing speech…" has no player, so it shows no counter. The lane keeps its
+    /// width so Stop never moves.
+    var showsClock: () -> Bool = { true }
 
     /// "m:ss" up to 9:59. Two-digit minutes with seconds ("10:00", 33.8 pt) overflow the fixed 31.5 pt lane, so a
     /// longer read shows whole minutes ("10m" to "99m"), then whole hours ("1h" to "99h"); all fit the lane.
@@ -90,7 +94,8 @@ public struct VoiceBarReadingTimeLabel: View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
             // U2 review R1 (A2): the accessibility value is computed with the visible text on every tick, so
             // VoiceOver never reads a stale time.
-            let time = Self.text(elapsedMilliseconds: elapsedMilliseconds())
+            let shows = showsClock()
+            let time = shows ? Self.text(elapsedMilliseconds: elapsedMilliseconds()) : ""
             Text(time)
                 .font(.system(size: 12))
                 .monospacedDigit()
@@ -99,7 +104,60 @@ public struct VoiceBarReadingTimeLabel: View {
                 .frame(width: Self.width)
                 .accessibilityElement()
                 .accessibilityLabel("Reading time")
-                .accessibilityValue(time)
+                .accessibilityValue(shows ? time : "Preparing")
         }
+    }
+}
+
+/// 2.3 N1 (Etan, QA round 1, S2-F3): the recording wing's live time, on the notch side of the level meter, with an
+/// equal empty region on the outer side so the meter stays centred in the wing's VISIBLE part (review D3). The time
+/// shows only once capture has opened (review D1). Etan, real M4 (2026-11-08): the timer must clear the physical
+/// notch by at least 8 pt, and a two-line mic name ("MacB / ook…") is never acceptable. A readable single line does
+/// not fit beside the 46 pt meter inside the morph canvas, so the capturing microphone is the time's tooltip and
+/// VoiceOver value instead of wing text.
+public enum VoiceBarRecordingWingLabel {
+    /// The time's region: "9:59" / "0:54" at 11 pt is 25.0 pt (26 rounded up to whole points).
+    public static let width: CGFloat = 26
+    /// The empty region outside the meter: 2 pt narrower than the time's, which keeps the meter within 1 pt of the
+    /// visible wing's centre (review D3 allows 2) and the M4 wing inside the 130 pt morph canvas.
+    public static let outerRegionWidth: CGFloat = 24
+    /// Between each region and the meter.
+    public static let meterGap: CGFloat = 4
+    public static let timeFontSize: CGFloat = 11
+    public static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: timeFontSize, weight: .medium)
+}
+
+public struct VoiceBarRecordingTimeRegion: View {
+    let elapsedMilliseconds: () -> Int
+    let isCaptureOpen: Bool
+    let microphoneName: String?
+    let color: Color
+
+    public init(elapsedMilliseconds: @escaping () -> Int, isCaptureOpen: Bool, microphoneName: String?, color: Color) {
+        self.elapsedMilliseconds = elapsedMilliseconds
+        self.isCaptureOpen = isCaptureOpen
+        self.microphoneName = microphoneName
+        self.color = color
+    }
+
+    public var body: some View {
+        Group {
+            if isCaptureOpen {
+                TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                    let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+                    Text(time)
+                        .font(.system(size: VoiceBarRecordingWingLabel.timeFontSize, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .accessibilityElement()
+                        .accessibilityLabel("Recording time")
+                        .accessibilityValue(microphoneName.map { "\(time), \($0)" } ?? time)
+                }
+            }
+        }
+        .frame(width: VoiceBarRecordingWingLabel.width, alignment: .trailing)
+        .background(PillControlTooltip(text: microphoneName))
     }
 }

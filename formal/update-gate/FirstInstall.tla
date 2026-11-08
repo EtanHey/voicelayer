@@ -261,4 +261,41 @@ EventuallyOpenAfterAbandonedLease ==
   (scenario \in {"dead", "crash"}) ~> (gate = "OPEN" /\ available)
 NeverRecoverLiveController == creation.recovered => ~creation.live
 RecoveryOnlyVerified == creation.recovered => creation.verified
+
+(* Admission participants are process incarnations, not bare PIDs. Reused means the
+   recorded incarnation is gone even though that PID has a new owner. Unknown
+   cannot justify retirement. Reap/Prepare abstract the same held G1 mutex. *)
+reapVars == vars
+OwnerIds == {"a", "b"}
+DeadOwnerEvidence == {"dead", "reused", "reusedOtherUid", "reusedLegacy", "zombie"}
+ReapInit ==
+  /\ participants \in [OwnerIds -> {"live", "dead", "reused", "unknown", "reusedOtherUid", "reusedLegacy", "zombie", "legacyUnverifiable"}]
+  /\ evidence = OwnerIds /\ creation = {} /\ scenario \in SUBSET OwnerIds
+  /\ phase = "OPEN" /\ created = FALSE
+  /\ gate = "OPEN" /\ mutex = FALSE /\ available = FALSE
+OwnerDeath(i) ==
+  /\ participants[i] = "live" /\ participants' = [participants EXCEPT ![i] = "dead"]
+  /\ UNCHANGED <<evidence, creation, scenario, phase, created, gate, mutex, available>>
+OwnerReap(i, ageMutant, disabled) ==
+  /\ ~disabled /\ i \in evidence
+  /\ (participants[i] \in DeadOwnerEvidence \/ (IgnoreEvidence /\ participants[i] \in {"unknown", "legacyUnverifiable"}) \/ (ageMutant /\ i \in scenario))
+  /\ evidence' = evidence \ {i} /\ creation' = creation \cup {i}
+  /\ created' = (created \/ participants[i] \notin DeadOwnerEvidence)
+  /\ UNCHANGED <<participants, scenario, phase, gate, mutex, available>>
+ReapRequest == /\ phase = "OPEN" /\ phase' = "DRAINING"
+               /\ UNCHANGED <<participants, evidence, creation, scenario, created, gate, mutex, available>>
+ReapPrepare == /\ phase = "DRAINING" /\ evidence = {} /\ phase' = "PREPARED"
+               /\ UNCHANGED <<participants, evidence, creation, scenario, created, gate, mutex, available>>
+ReapNext(ageMutant, disabled) == ReapRequest \/ ReapPrepare \/
+  (\E i \in OwnerIds: OwnerDeath(i) \/ OwnerReap(i, ageMutant, disabled))
+ReapSpec(ageMutant, disabled) == ReapInit /\ [][ReapNext(ageMutant, disabled)]_reapVars
+  /\ WF_reapVars(ReapRequest) /\ WF_reapVars(ReapPrepare)
+  /\ (\A i \in OwnerIds: WF_reapVars(OwnerReap(i, ageMutant, disabled)))
+ReapFixedSpec == ReapSpec(FALSE, FALSE)
+ReapAgeMutantSpec == ReapSpec(TRUE, FALSE)
+ReapOldSpec == ReapSpec(FALSE, TRUE)
+NeverReapLiveOwner == ~created
+DeadRegistrationsCanPrepare ==
+  (\A i \in evidence: participants[i] \in DeadOwnerEvidence) ~> (phase = "PREPARED")
+
 =============================================================================

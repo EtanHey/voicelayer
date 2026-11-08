@@ -3,7 +3,7 @@
 // Uses a consuming event tap so plain F5 does not leak to the focused app
 // and trigger macOS keyboard-focus traversal.
 //
-// Gesture state machine: F5 keyDown shows an immediate preview; holding past
+// Gesture state machine: F5 keyDown enters pressing; holding past
 // the threshold starts push-to-talk, and double-tap locks recording on.
 //
 // AIDEV-NOTE: Cmd+F5 arrives as F5 keyDown/keyUp events with the Command flag
@@ -53,7 +53,7 @@ private func describeFlags(_ flags: CGEventFlags) -> String {
 // MARK: - Gesture State Machine
 
 /// Maps raw key events to push-to-talk and double-tap lock.
-/// - F5 down: shows a pressing preview immediately
+/// - F5 down: enters pressing immediately; hints have a separate presentation grace
 /// - F5 held past threshold: starts push-to-talk recording
 /// - F5 double-tap: starts a locked recording
 final class GestureStateMachine {
@@ -81,6 +81,8 @@ final class GestureStateMachine {
     private var doubleTapTimerGeneration = 0
     private var doubleTapDeadline: TimeInterval?
     private var doubleTapExpiryBehavior: DoubleTapExpiryBehavior?
+    private var previewTimer: DispatchWorkItem?
+    private var previewTimerGeneration = 0
 
     // Only a release that STOPPED capture arms this guard; ordinary double-taps are unchanged.
     // 150 ms covers relay bounce while staying below the 160 ms deliberate hold threshold.
@@ -95,6 +97,23 @@ final class GestureStateMachine {
 
     static let doubleTapWindowMs: Int = 400
     static let holdThresholdMs: Int = 160
+    static let pressingPreviewDelayMs = 120
+    static let awaitingSecondTapPreviewDelayMs = 350
+    static let minimumPreviewVisibleMs = 150
+    private let doubleTapWindow: Int
+    private let holdThreshold: Int
+
+    init(doubleTapWindowMs: Int = GestureStateMachine.doubleTapWindowMs,
+         holdThresholdMs: Int = GestureStateMachine.holdThresholdMs) {
+        doubleTapWindow = doubleTapWindowMs
+        holdThreshold = holdThresholdMs
+    }
+
+    /// Strictly after the grace, with enough time left to avoid a late hint flash.
+    static func previewDelayMs(graceMs: Int, windowMs: Int) -> Int? {
+        let delay = graceMs + 1
+        return delay + minimumPreviewVisibleMs <= windowMs ? delay : nil
+    }
 
     // Callbacks — set by the owner (AppDelegate)
     var onHoldStart: () -> Void = {}
@@ -102,6 +121,7 @@ final class GestureStateMachine {
     var onSingleTap: () -> Void = {}
     var onDoubleTap: () -> Void = {}
     var onCancel: () -> Void = {}
+    var onLogicalPhaseChange: (HotkeyPhase) -> Void = { _ in }
     var onPreviewPhaseChange: (HotkeyPhase) -> Void = { _ in }
 
     func handleKeyDown() {
@@ -128,12 +148,12 @@ final class GestureStateMachine {
             doubleTapExpiryBehavior = nil
             keyDownTime = nil
             state = .locked
-            onPreviewPhaseChange(.holding)
+            publishPhase(.holding)
             onHoldStart()
             onDoubleTap()
         case .locked:
             state = .idle
-            onPreviewPhaseChange(.idle)
+            publishPhase(.idle)
             onHoldEnd()
             // The production stop callback resets this model. Arm only after it returns.
             stoppedOnKeyDown = true
@@ -161,7 +181,7 @@ final class GestureStateMachine {
             let releasedAt = clock()
             keyDownTime = nil
             state = .idle
-            onPreviewPhaseChange(.idle)
+            publishPhase(.idle)
             onHoldEnd()
             lastStopRelease = releasedAt
         case .locked:
@@ -178,7 +198,7 @@ final class GestureStateMachine {
             startPressing(now: now)
         case .locked:
             state = .idle
-            onPreviewPhaseChange(.idle)
+            publishPhase(.idle)
             onHoldEnd()
         default:
             break
@@ -191,12 +211,12 @@ final class GestureStateMachine {
             clearHoldTimer()
             keyDownTime = nil
             state = .locked
-            onPreviewPhaseChange(.holding)
+            publishPhase(.holding)
             onHoldStart()
         case .holding:
             keyDownTime = nil
             state = .idle
-            onPreviewPhaseChange(.idle)
+            publishPhase(.idle)
             onHoldEnd()
         default:
             break
@@ -226,7 +246,7 @@ final class GestureStateMachine {
         doubleTapExpiryBehavior = nil
         keyDownTime = nil
         state = .idle
-        onPreviewPhaseChange(.idle)
+        publishPhase(.idle)
     }
 
     private func startPressing(now: TimeInterval) {
@@ -235,16 +255,16 @@ final class GestureStateMachine {
         let generation = holdTimerGeneration
         keyDownTime = now
         state = .pressing
-        onPreviewPhaseChange(.pressing)
+        publishPhase(.pressing, graceMs: Self.pressingPreviewDelayMs, windowMs: holdThreshold)
         let timer = DispatchWorkItem { [weak self] in
             guard let self, state == .pressing, holdTimerGeneration == generation else { return }
             holdTimer = nil
             state = .holding
-            onPreviewPhaseChange(.holding)
+            publishPhase(.holding)
             onHoldStart()
         }
         holdTimer = timer
-        schedule(Self.holdThresholdMs, timer)
+        schedule(holdThreshold, timer)
     }
 
     private func startDoubleTapWindow(expiryBehavior: DoubleTapExpiryBehavior) {
@@ -252,15 +272,15 @@ final class GestureStateMachine {
         doubleTapTimerGeneration += 1
         let generation = doubleTapTimerGeneration
         state = .waitingForDoubleTap
-        doubleTapDeadline = clock() + Double(Self.doubleTapWindowMs) / 1000
+        doubleTapDeadline = clock() + Double(doubleTapWindow) / 1000
         doubleTapExpiryBehavior = expiryBehavior
-        onPreviewPhaseChange(.awaitingSecondTap)
+        publishPhase(.awaitingSecondTap, graceMs: Self.awaitingSecondTapPreviewDelayMs, windowMs: doubleTapWindow)
         let timer = DispatchWorkItem { [weak self] in
             guard let self, state == .waitingForDoubleTap, doubleTapTimerGeneration == generation else { return }
             expireDoubleTapWindow()
         }
         doubleTapTimer = timer
-        schedule(Self.doubleTapWindowMs, timer)
+        schedule(doubleTapWindow, timer)
     }
 
     private func isDoubleTapWindowExpired(now: TimeInterval) -> Bool {
@@ -281,7 +301,7 @@ final class GestureStateMachine {
         doubleTapExpiryBehavior = nil
         keyDownTime = nil
         state = .idle
-        onPreviewPhaseChange(.idle)
+        publishPhase(.idle)
         switch expiryBehavior {
         case .singleTap:
             onSingleTap()
@@ -293,15 +313,45 @@ final class GestureStateMachine {
     }
 
     private func clearDoubleTapTimer() {
+        clearPreviewTimer()
         doubleTapTimer?.cancel()
         doubleTapTimer = nil
         doubleTapTimerGeneration += 1
     }
 
     private func clearHoldTimer() {
+        clearPreviewTimer()
         holdTimer?.cancel()
         holdTimer = nil
         holdTimerGeneration += 1
+    }
+
+    private func clearPreviewTimer() {
+        previewTimer?.cancel()
+        previewTimer = nil
+        previewTimerGeneration += 1
+    }
+
+    private func publishPhase(_ phase: HotkeyPhase, graceMs: Int? = nil, windowMs: Int = 0) {
+        clearPreviewTimer()
+        onLogicalPhaseChange(phase)
+        guard let graceMs else {
+            onPreviewPhaseChange(phase)
+            return
+        }
+        onPreviewPhaseChange(.idle)
+        guard let delay = Self.previewDelayMs(graceMs: graceMs, windowMs: windowMs) else { return }
+        let generation = previewTimerGeneration
+        let expectedState = state
+        let deadline = clock() + Double(windowMs) / 1000
+        let timer = DispatchWorkItem { [weak self] in
+            guard let self, previewTimerGeneration == generation, state == expectedState,
+                  clock() + Double(Self.minimumPreviewVisibleMs) / 1000 <= deadline else { return }
+            previewTimer = nil
+            onPreviewPhaseChange(phase)
+        }
+        previewTimer = timer
+        schedule(delay, timer)
     }
 }
 

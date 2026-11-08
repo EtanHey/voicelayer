@@ -754,6 +754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         configurePillContextMenu()
+        configureRecordingWing()
 
         server.onUpdateGateDrain = { [weak self] request in
             guard let self else { return nil }
@@ -993,6 +994,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         workspaceNotificationObservers.removeAll()
         terminationSignalSource?.cancel()
         terminationSignalSource = nil
+    }
+
+    /// 2.3 N1: the recording wing names the default input, the device sox opens (a property read only).
+    private func configureRecordingWing() {
+        voiceState.recordingMicrophoneNameProvider = { MicrophoneDeviceManager.selectedInputDeviceName() }
     }
 
     private func configurePillContextMenu() {
@@ -1753,11 +1759,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         gestureStateMachine.activity.setCancellationActive(commandRouter.shouldHandleEscape)
         // Hold start → push-to-talk recording
-        gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
+        gestureStateMachine.onLogicalPhaseChange = { [weak self] phase in
             if phase == .pressing {
                 self?.logHotkeyTimingDiagnostic("hotkey_key_down")
             }
             self?.voiceState.setHotkeyPhase(phase)
+        }
+        gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
+            self?.voiceState.setHotkeyPreviewPhase(phase)
         }
 
         gestureStateMachine.onHoldStart = { [weak self] in
@@ -2281,13 +2290,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
                 isPlaybackPaused: state?.isPlaybackPaused ?? false,
-                readQueueLeadingSlotCount: state.flatMap { VoiceBarPresentation.readQueueControl(for: $0)?.leadingSlotCount } ?? 1,
+                readQueueLeadingSlotCount: state.map { VoiceBarPresentation.playbackLeadingSlotCount(for: $0) } ?? 1,
                 confirmationText: state?.confirmationText,
                 commandModeState: state?.commandModeState,
                 activeClipMarker: state?.activeClipMarker,
                 queueDepth: state?.queueDepth ?? 0,
                 keepsPasteFlowEnvelope: state?.keepsPasteFlowEnvelope ?? false,
-                hotkeyPhase: state?.hotkeyPhase ?? .idle,
+                hotkeyPhase: state?.presentedHotkeyPhase ?? .idle,
                 statusText: notchStatusText(for: state),
                 isHovered: state?.isHovering ?? false,
                 isKeyboardFocused: false,
@@ -2295,7 +2304,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 coreWidth: coreWidth,
                 visibleCoreOcclusionInset: visibleCoreOcclusionInset,
                 transientNote: state?.selectionFeedbackNote,
-                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory
+                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory,
+                showsEarlierTakeProcessing: state.map(VoiceBarPresentation.showsEarlierTakeProcessing(for:)) ?? false
             )
         )
     }
@@ -2306,7 +2316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             mode: state.mode,
             transcript: state.transcript,
             confirmationText: state.confirmationText,
-            hotkeyPhase: state.hotkeyPhase,
+            hotkeyPhase: state.presentedHotkeyPhase,
             hotkeyEnabled: state.hotkeyEnabled,
             errorMessage: state.errorMessage,
             transcribingStatusText: state.transcribingStatusText,

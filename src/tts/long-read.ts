@@ -18,8 +18,19 @@ export interface SeekResult {
   reason?: string;
   offset_ms?: number;
   clamped?: boolean;
+  /** A stale Pause/Resume: the player that is actually current, its logical read and where its audio sits. */
+  playback_id?: string;
+  generation?: number;
+  utterance_id?: string;
+  chunk_start_ms?: number;
+  chunk_duration_ms?: number;
+  duration_ms?: number;
 }
-export interface LongReadSeek { seek(offsetMs: number): SeekResult; restart(): SeekResult }
+export interface LongReadSeek {
+  seek(offsetMs: number): SeekResult; restart(): SeekResult;
+  cancelPendingSeek?(): void;
+  pendingPosition?(): { info: NonNullable<StateEvent["long_read"]>; offsetMs: number } | undefined;
+}
 
 export interface LongReadDependencies {
   /** Private ingress identity; generation/artifact persistence is a later unit. */
@@ -133,7 +144,10 @@ export async function runLongRead(
     }
     return { outcome: "accept", offset_ms: offset, clamped: offsetMs > total };
   };
-  deps.registerSeek?.({ seek, restart: () => seek(0, true) });
+  deps.registerSeek?.({ seek, restart: () => seek(0, true),
+    cancelPendingSeek: () => { seeking?.abort(); seeking = undefined; },
+    pendingPosition: () => target ? { offsetMs: target.local, info: { id, chunk_index: target.index,
+      chunk_count: texts.length, chunk_start_ms: chunkStart(target.index) } } : undefined });
 
   const pump = () => {
     if (closing || signal.aborted || synthesisFailed || inFlight ||

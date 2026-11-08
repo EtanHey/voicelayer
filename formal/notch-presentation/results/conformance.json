@@ -10,7 +10,7 @@
   "remoteCI": "NOT_RUN",
   "installedOrLiveAcceptance": "NOT_RUN",
   "sourceSHA256": {
-    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "2c090c01488677a0a87a95e912a1dc0471c6e64dc50edef39ebb82c508d10220",
+    "flow-bar/Tests/VoiceBarTests/LaneGFormalConformanceTests.swift": "f8c430777438c32b56f7ef14f313767028a08e35b63dca8559a8adb59871236c",
     "formal/runtime-contract.json": "d5fde60fe38663b6b603b9c34ff3735112d33232966d48e5e79c568a05b48821"
   },
   "tests": 3,
@@ -54,6 +54,10 @@
     "FixedProjection": {
       "count": 0,
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "N6": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   },
   "driftProbe": {
@@ -78,7 +82,7 @@
   "productionSource": "f98243d2b2141ff0f0d16c3f145cb76cfcd0ebae",
   "fixedNotchExpectedFailures": 0,
   "historicalCurrentExpectedMismatchGroups": {
-    "Current projection": 2436,
+    "Current projection": 2412,
     "Current NoteHasCause": 1
   },
   "pinnedNativePipelineBaseline": {

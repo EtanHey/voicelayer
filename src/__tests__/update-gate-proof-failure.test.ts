@@ -24,7 +24,9 @@ function cancellable(gate: string) {
 test("R1 native readiness exception returns UNKNOWN without stranding drain", async () => {
   const gate = await fixture();
   const control = createVoiceDrainControl({ async request() { throw Error("must not send"); } }, () => { throw Error("expected evidence unavailable"); });
-  expect(await control(lease, "drain")).toEqual({ kind: "UNKNOWN" });
+  expect(await control(lease, "drain")).toMatchObject({ kind: "UNKNOWN", pending: [
+    { participant: "native", reply: "no reply: native not requested until daemon drain proof" },
+    { participant: "daemon", pid: process.pid, reply: expect.stringContaining("UNKNOWN") }] });
   cancellable(gate);
 });
 test("R1 compatibility proof exception refuses PREPARE without stranding drain", async () => {
