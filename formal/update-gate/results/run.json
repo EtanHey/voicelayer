@@ -2,8 +2,8 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/update-gate/FirstInstall.tla": "8d7e670832b87d999422e39149559be8cf3d05838bc8b9495cb2b1e71fd49c4b",
-    "formal/update-gate/checks.json": "ba2977db9d0b9d9121172afab5ff0e5dde9d14026e07670219f25ea98cf06f37",
+    "formal/update-gate/FirstInstall.tla": "bdaf715b331c70ddc17ab1bf5f29a55996da2b1625eb03266c3f23756b7324f2",
+    "formal/update-gate/checks.json": "30ef634c3418cd2684c68297a66e1e340155161453a9662d1dacaf33d51484f2",
     "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/update-gate/QuitMutantReuse.cfg": "c588f7108cc70e0fc570aa6f3aab8fb19f20102851e578f30d5af0eeae34d4e1",
@@ -15,6 +15,7 @@
     "formal/update-gate/QuitOld.cfg": "678f0103c569654842568c0b64d6513bc8d76d13607f423110d0d3d6f0501e76",
     "formal/update-gate/RecoveryOld.cfg": "0b21fa13c4565a61c2a128e7e9ebe5d29f768e7d8034e9fa821af9555a687a4c",
     "formal/update-gate/QuitFixed.cfg": "337fb47483788cfe44e144fd2754449e60e3850457758e5aaf6806b26b37c888",
+    "formal/update-gate/ReapMutantUnknown.cfg": "e6fa3bcf8cd0b4b64e6fde73a92a25a6c57f692ef9f649665c4b0b6b8bf6daf3",
     "formal/update-gate/CompleteMutantOwner.cfg": "02698124abe7a06134a05f97a4a771a604ac0a6f4fb7511bca12568b57afa918",
     "formal/update-gate/CompleteMutantSha.cfg": "7c5f1c775261ff4f9f286d4c08401ee5180cdfa9608477a5646e66c4675d2d47",
     "formal/update-gate/CompleteFixed.cfg": "8797f42e341d0d257f95b8081f685a7af89f2e2c2d68d738851e15423d219b33",
@@ -34,19 +35,19 @@
     "formal/update-gate/Fixed.cfg": "fa31127d1d9fd50b63cdb75a8a56ad38e0160082856aedff1df2f1e2f50d0704",
     "formal/update-gate/RecoveryMutantLive.cfg": "aae8a1603365d43f954e3fb326fad28f3f67ceb67a61dffdd8bd513a120c664a",
     "src/cli/setup.ts": "f45eee3baf6989070638cfd0bc22dbeb6a73cbbcdaef5aab0902bb0abbacbce9",
-    "src/update-gate-admission.ts": "c2e4a60c599b3544ca0ebcc896fef5e19b8e26a98e3d3a20df434b970e2f3b79",
+    "src/update-gate-admission.ts": "54ef26d430c9e02178111faab2c6cf18675827a0a72f6cdddd26f2030cce1fb4",
     "src/update-gate-storage.ts": "c33977d31799636a3a9292f4977827c52b6ab784f249512437f67b2553210476",
     "scripts/lib/update-gate.sh": "e30af5fdebc72200d55630795d8be1e2cc51a3c6848d8c1985f60fdd3334805d",
     "scripts/voicelayer-dedupe-voicebar.sh": "51b515b9d92107f11f8e06d5f08edfa33fbdc5354987b12b1bd0574bfede50f0",
     "scripts/install-voicebar-autostart.sh": "58a4649aa3707a6382e521c626e7c58a480f64113ef4bdd2a3e084c61be62e7c",
     "scripts/promote-voicebar-release.sh": "0bbf4a2c3c357a6c743386422c02e968e3bed4d4331204cfeec1408c6836cd61",
-    "src/update-gate-installer-participant.ts": "a354401ee67aa478e0f03c90a1ab53126d012fa180284e6c8e6eae74cd6085f0",
+    "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
-    "src/update-gate-installer.ts": "b711bddd0f7edf7a26bf4f68f122c3e4c5ffe67e0fa62793629e15f4cfc9736f",
+    "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
     "src/mcp-server-daemon.ts": "a920961a9913ed8febcce8e83e4873676108142ea571f89a224eaa793eb8fdf8",
-    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "09462a3194b32f06ef801fa6e58c6fb28927c8d0536d3f5131887a07cb3b1add",
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "2d9120f7a6343711697307d304c7b9db22f4e8303aedb0809ce3d3c77114972b",
     "src/update-gate-owner.ts": "94a6efef3240dc751a8600e15630127fcbd67009cca314ca65eb8d60f29ee8ea",
-    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "016564be7bd76aa73d3d8ab781a4304fe5a428e6f6c337b0369cde88052c97f1"
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "467763de15b00bc45940b695ad792914fdcc7e42dd414e6831e3b9604a47f11f"
   },
   "mutants": {
     "BootstrapOnlyQuiescent": [
@@ -98,7 +99,8 @@
       "RecoveryMutantTarget"
     ],
     "NeverReapLiveOwner": [
-      "ReapMutantAge"
+      "ReapMutantAge",
+      "ReapMutantUnknown"
     ],
     "DeadRegistrationsCanPrepare": [
       "ReapOld"
@@ -323,6 +325,14 @@
       "status": "EXPECTED_FAIL",
       "generated": 640,
       "distinct": 512
+    },
+    "ReapMutantUnknown": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverReapLiveOwner",
+      "status": "EXPECTED_FAIL",
+      "generated": 283,
+      "distinct": 270
     }
   }
 }

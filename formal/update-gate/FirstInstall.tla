@@ -278,7 +278,7 @@ OwnerDeath(i) ==
   /\ UNCHANGED <<evidence, creation, scenario, phase, created, gate, mutex, available>>
 OwnerReap(i, ageMutant, disabled) ==
   /\ ~disabled /\ i \in evidence
-  /\ (participants[i] \in DeadOwnerEvidence \/ (ageMutant /\ i \in scenario))
+  /\ (participants[i] \in DeadOwnerEvidence \/ (IgnoreEvidence /\ participants[i] \in {"unknown", "legacyUnverifiable"}) \/ (ageMutant /\ i \in scenario))
   /\ evidence' = evidence \ {i} /\ creation' = creation \cup {i}
   /\ created' = (created \/ participants[i] \notin DeadOwnerEvidence)
   /\ UNCHANGED <<participants, scenario, phase, gate, mutex, available>>

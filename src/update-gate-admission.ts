@@ -160,9 +160,9 @@ function acquire(retryContention = false): Admission {
   const body = (path: string): Admission | null => {
     const state = initializeUnderLock(path);
     if (state.kind === "UNKNOWN") return unregistered();
-    if (state.kind !== "OPEN") return null;
+    if (state.kind !== "OPEN" && state.kind !== "DRAINING") return null;
     const token = randomUUID(), file = join(path + ".admissions", token);
-    const owner = { token, pid: process.pid, incarnation, generation: state.generation, ...(ownerStartTime ? { startTime: ownerStartTime } : {}) };
+    const owner = { token, pid: process.pid, incarnation, generation: state.kind === "OPEN" ? state.generation : state.lease.generation, ...(ownerStartTime ? { startTime: ownerStartTime } : {}) };
     persistVisible(path, file, owner);
     return { refs: 0, release: () => releaseWhenUnlocked(() => withUpdateGateLock(() => {
       // An anomalous owner is a recoverable registration, never an orphaned host lock.

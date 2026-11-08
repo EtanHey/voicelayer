@@ -152,6 +152,8 @@ is irreversible for the recorded incarnation; PID reuse proves that incarnation
 dead. Unknown/live owners remain. Reap and PREPARE share G1; weak fairness lets
 a drain containing only dead registrations reach PREPARED. ReapOld reproduces
 the stuck ledger; ReapMutantAge violates safety by retiring a live old owner.
+ReapMutantUnknown violates the same safety property by treating unknown or
+legacy-unverifiable evidence as death.
 OS identity correctness, crash durability of reason files and native execution
 are outside the model. No age-based lease, lock or registration expiry is modeled.
 
@@ -161,3 +163,11 @@ dead; unverifiable legacy evidence still blocks. No new property is claimed.
 The sysctl layout and the strict birth-after-mtime comparison are checked in source
 tests, not derived from TLC. Retention affects retired proof artifacts only and
 does not change admission state.
+
+## Precommit user-block correction
+
+The admission/deadline extension is checked alongside CANCEL retry in
+[`../update-gate-cancel/`](../update-gate-cancel/README.md): `UserBlockFixed`,
+`OldAdmission`, `UnboundedDrain`, and `NoLedger`. These prove separate availability,
+locked-ledger and bounded-resolution properties; installed acceptance remains a
+separate gate. The bootstrap/completion models here keep their existing scope.

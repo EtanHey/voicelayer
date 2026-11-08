@@ -11,7 +11,7 @@
 | LeasedUpdateReopensAdmission | CompleteOld, CompleteSlowOneShot |
 | NeverProceedOnReusedOrCompetitor | QuitMutantReuse |
 | NeverProceedWithoutHeldLease | QuitMutantHeld |
-| NeverReapLiveOwner | ReapMutantAge |
+| NeverReapLiveOwner | ReapMutantAge, ReapMutantUnknown |
 | NeverRecoverLiveController | RecoveryMutantLive |
 | NeverReopenUnverified | CompleteMutantSha, CompleteMutantOwner |
 | RecoveryOnlyVerified | RecoveryMutantTarget |

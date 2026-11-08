@@ -165,6 +165,9 @@ struct SettingsArchiveMetadata: Decodable {
     let notTranscribedReason: String?
     let notTranscribedDetail: String?
     let inputDbfs: Double?
+    let appBuild: RecordingAppBuild?
+    let transcribedBy: RecordingAppBuild?
+    let retranscribedBy: RecordingAppBuild?
     let provenance: RecordingModelProvenance?
 
     struct RecordingModelProvenance: Decodable {
@@ -192,6 +195,7 @@ struct SettingsArchiveMetadata: Decodable {
         case notTranscribedReason = "not_transcribed_reason"
         case notTranscribedDetail = "not_transcribed_detail"
         case inputDbfs = "input_dbfs"
+        case appBuild = "app_build", retranscribedBy = "retranscribed_by", transcribedBy = "transcribed_by"
         case provenance
     }
 

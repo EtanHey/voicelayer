@@ -152,6 +152,11 @@
       "role": "mutant",
       "target": "DeadRegistrationsCanPrepare",
       "kind": "temporal"
+    },
+    "ReapMutantUnknown": {
+      "role": "mutant",
+      "target": "NeverReapLiveOwner",
+      "kind": "invariant"
     }
   },
   "acceptance": [

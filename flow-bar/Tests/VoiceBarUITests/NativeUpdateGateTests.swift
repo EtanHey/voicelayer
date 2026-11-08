@@ -3,6 +3,16 @@ import XCTest
 @testable import VoiceBarUI
 
 @MainActor final class NativeUpdateGateTests: XCTestCase {
+    func testUpdateBusyAckShowsExistingNoticeBand() {
+        let state = VoiceState()
+        let id = UUID().uuidString
+        state.pendingIntent = PendingIntent(id: id, command: .record)
+        state.handleEvent(["type": "ack", "id": id, "command": "record", "outcome": "reject",
+                           "reason": "UPDATE_BUSY: update gate closed; retry when the update finishes"])
+        XCTAssertNil(state.pendingIntent)
+        XCTAssertEqual(state.confirmationText, "Updating VoiceBar…")
+    }
+
     func testPendingDaemonIntentsAndHistoryOwnersAreNotIdle() {
         let state = VoiceState()
         state.mode = .idle
@@ -37,7 +47,14 @@ import XCTest
         release()
         XCTAssertTrue(gate.permitsTermination())
         try write(["version": 1, "kind": "DRAINING", "lease": lease])
-        XCTAssertThrowsError(try gate.acquire())
+        let drainingRelease = try gate.acquire()
+        let drainingFiles = try FileManager.default.contentsOfDirectory(atPath: path + ".admissions")
+        XCTAssertEqual(drainingFiles.count, 1)
+        let drainingRecord = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath:
+            path + ".admissions/" + XCTUnwrap(drainingFiles.first)))) as? [String: Any]
+        XCTAssertEqual(drainingRecord?["generation"] as? Int, 1)
+        XCTAssertNil(gate.acknowledge(lease: lease, idle: true))
+        drainingRelease()
         XCTAssertNil(gate.acknowledge(lease: lease, idle: false))
         XCTAssertNotNil(gate.acknowledge(lease: lease, idle: true))
         XCTAssertFalse(gate.permitsTermination())
@@ -67,6 +84,27 @@ import XCTest
         }
     }
 
+    func testDrainingUnreadableOrUnwritableLedgerAdmitsVoiceWithFaultEvidence() throws {
+        try XCTSkipIf(getuid() == 0, "Root bypasses the permission fixtures")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for mode in [0o700, 0o300, 0o400, 0o000] {
+            let path = root.appendingPathComponent(String(mode)).path
+            let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
+                "ownerId": UUID().uuidString, "targetSha": String(repeating: "a", count: 40)]
+            try JSONSerialization.data(withJSONObject: ["version": 1, "kind": "DRAINING", "lease": lease])
+                .write(to: URL(fileURLWithPath: path))
+            try FileManager.default.createDirectory(atPath: path + ".admissions", withIntermediateDirectories: false)
+            try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: path + ".admissions")
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path + ".admissions") }
+            let gate = NativeUpdateGate(path: path)
+            XCTAssertNoThrow(try gate.acquire()())
+            XCTAssertEqual(FileManager.default.fileExists(atPath: path + ".voice-diag.json"), mode != 0o700)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".lock"))
+        }
+    }
+
     func testClosedGateRequiresReadableLedgerBeforeRefusingVoice() throws {
         try XCTSkipIf(getuid() == 0, "Root bypasses the permission fixtures")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -80,7 +118,7 @@ import XCTest
             ("missing", 0o700, false), ("non-directory", 0o700, false),
             ("symlink-at-path", 0o700, false),
         ]
-        for kind in ["DRAINING", "PREPARED", "COMMITTED"] {
+        for kind in ["PREPARED", "COMMITTED"] {
             for fixture in fixtures {
                 let label = "\(kind)/\(fixture.name)"
                 let path = root.appendingPathComponent("\(kind)-\(fixture.name)").path
