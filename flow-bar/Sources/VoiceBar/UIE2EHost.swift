@@ -152,8 +152,11 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settingsDrawer: NotchSettingsDrawerContext(
                 shortcutHint: { "QA · hotkeys disabled" }, defaultMicrophoneName: { "QA microphone A" },
                 updates: nil,
-                openSettingsWindow: { [weak self] tab, _ in
-                    self?.model.tab = tab; self?.model.requestID += 1; self?.settings.makeKeyAndOrderFront(nil)
+                openSettingsWindow: { [weak self] tab, focus in
+                    // The drawer's Fix… is the badged gear's old destination: the same setup spot and receipt.
+                    if focus == .permissions { self?.openSetupSettings(); return }
+                    self?.model.tab = tab; self?.model.focus = focus; self?.model.requestID += 1
+                    self?.settings.makeKeyAndOrderFront(nil)
                     self?.model.receipt("notch-settings-window-\(tab.title.lowercased())")
                 }
             )))
