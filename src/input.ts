@@ -1,3 +1,4 @@
+import { recordingAppBuild, tagTranscription, type RecordingAppBuild } from "./recording-build";
 import { TakeStageTimings, withTakeStageTimings, measureTakeStage, measureTakeStageAsync } from "./take-stage-timings";
 import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
@@ -907,6 +908,8 @@ interface VoiceBarRecordingMetadata {
   transcription_status: "transcribed" | "cancelled" | "captured" | "recording-failed";
   audio_sha256: string;
   app_version: string | null;
+  app_build: RecordingAppBuild;
+  transcribed_by?: RecordingAppBuild;
   provenance: RecordingProvenance;
   schema_version: number;
 }
@@ -946,6 +949,8 @@ interface VoiceAskRecordingMetadata {
   artifacts: Omit<typeof VOICE_ASK_ARTIFACT_NAMES, "agent_audio"> & { agent_audio: "agent-audio.mp3" | null };
   prompt_delivery?: "text-only";
   app_version: string | null;
+  app_build: RecordingAppBuild;
+  transcribed_by?: RecordingAppBuild;
   provenance: RecordingProvenance;
   schema_version: 4 | 5;
 }
@@ -1215,6 +1220,8 @@ function writeVoiceBarRecordingArchive(
     transcription_status: input.transcriptionStatus,
     audio_sha256: createHash("sha256").update(input.audioBytes).digest("hex"),
     app_version: provenance.app_version,
+    app_build: recordingAppBuild(),
+    ...(input.transcript ? { transcribed_by: recordingAppBuild() } : {}),
     provenance,
     schema_version: 2,
   };
@@ -1318,6 +1325,7 @@ export function archiveVoiceAskCapture(
     artifacts: { ...VOICE_ASK_ARTIFACT_NAMES, agent_audio: agentAudioBytes ? VOICE_ASK_ARTIFACT_NAMES.agent_audio : null },
     ...(agentAudioBytes ? {} : { prompt_delivery: "text-only" as const }),
     app_version: provenance.app_version,
+    app_build: recordingAppBuild(),
     provenance,
     schema_version: artifacts.promptDelivery === "text-only" ? 5 : 4,
   };
@@ -1423,6 +1431,8 @@ export function finalizeVoiceAskArchive(
   );
   const metadata: VoiceAskRecordingMetadata = {
     ...archive.metadata,
+    app_build: archive.metadata.app_build ?? recordingAppBuild({}),
+    transcribed_by: recordingAppBuild(),
     ...(input.transcribedDurationMs === undefined
       ? {}
       : { transcribed_duration_ms: input.transcribedDurationMs }),
@@ -3900,6 +3910,7 @@ export function updateArchivedTranscript(
   atomicWriteFile(transcriptPath, text);
 
   updateArchivedRecordingMetadata(audioPath, (metadata) => {
+    tagTranscription(metadata);
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
@@ -4507,6 +4518,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
         },
       );
     }
+    tagTranscription(metadata, snapshot.metadata);
     delete metadata.last_stt_gate_removal;
     delete metadata.not_transcribed_reason;
     delete metadata.not_transcribed_detail;

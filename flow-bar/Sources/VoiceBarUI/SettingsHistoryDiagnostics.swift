@@ -19,17 +19,21 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
 
     /// Retained archive language mode; never a current preference or detected-language substitution.
     public let languageSetting: String?
+    public let appBuild: RecordingAppBuild?
+    public let transcribedBy: RecordingAppBuild?
+    public let retranscribedBy: RecordingAppBuild?
     public let inputDeviceName: String?
     public init(archiveState: ArchiveState, savedTextState: SavedTextState, selection: String,
                 summary: String, savedResult: String, capturedAt: Date?, backend: String?, model: String?,
                 detail: String?, warnings: [String], languageSetting: String? = nil, inputDeviceName: String? = nil,
-                transcriptWrittenAt: Date? = nil) {
+                transcriptWrittenAt: Date? = nil, appBuild: RecordingAppBuild? = nil, retranscribedBy: RecordingAppBuild? = nil, transcribedBy: RecordingAppBuild? = nil) {
         self.archiveState = archiveState; self.savedTextState = savedTextState; self.selection = selection
         self.summary = summary; self.savedResult = savedResult; self.capturedAt = capturedAt
         self.backend = backend; self.model = model; self.detail = detail; self.warnings = warnings
         self.languageSetting = Self.retainedLabel(languageSetting)
         self.inputDeviceName = Self.retainedLabel(inputDeviceName)
         self.transcriptWrittenAt = transcriptWrittenAt
+        self.appBuild = appBuild; self.retranscribedBy = retranscribedBy; self.transcribedBy = transcribedBy
     }
     private static func retainedLabel(_ value: String?) -> String? {
         guard let value else { return nil }
@@ -106,7 +110,8 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
             model: (provenance?["whisper_model_path"] as? String).map { SettingsHistoryDiagnosticPrivacy.text(URL(fileURLWithPath: $0).lastPathComponent) },
             detail: (metadata["not_transcribed_detail"] as? String).map(SettingsHistoryDiagnosticPrivacy.text), warnings: warnings,
             languageSetting: (provenance?["language_mode"] as? String) ?? (metadata["language_mode"] as? String),
-            inputDeviceName: metadata["input_device_name"] as? String, transcriptWrittenAt: transcript?.writtenAt)
+            inputDeviceName: metadata["input_device_name"] as? String, transcriptWrittenAt: transcript?.writtenAt,
+            appBuild: RecordingAppBuild.parse(metadata["app_build"]), retranscribedBy: RecordingAppBuild.parse(metadata["retranscribed_by"]), transcribedBy: RecordingAppBuild.parse(metadata["transcribed_by"]))
     }
 
     private static func parseDate(_ value: String) -> Date? {
