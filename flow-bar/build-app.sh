@@ -526,7 +526,12 @@ wait_for_exactly_one_voicebar_instance() {
 
 relaunch_voicebar_app() {
     echo "[build-app] Relaunching $APP_DIR..."
-    open "$APP_DIR"
+    if is_resident_app_dir; then
+        source "$REPO_ROOT/scripts/lib/voicebar-launchagent.sh"
+        voicebar_start_launchd "$APP_DIR" || return 1
+    else
+        open "$APP_DIR" # Isolated QA bundles have their own identity and paths.
+    fi
     wait_for_exactly_one_voicebar_instance
 }
 

@@ -214,14 +214,15 @@ describe("auto-f5-verify.sh pure helpers", () => {
     }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("failed branch cycles restore main build and kickstart VoiceBar services", async () => {
+  test("failed branch cycles restore main build through shared VoiceBar starter", async () => {
     const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
     try {
       const binDir = join(workDir, "bin");
       const mainRoot = join(workDir, "main");
       const buildLog = join(workDir, "build.log");
       const launchctlLog = join(workDir, "launchctl.log");
-      await Bun.$`mkdir -p ${binDir} ${mainRoot}/flow-bar`.env(process.env);
+      await Bun.$`mkdir -p ${binDir} ${mainRoot}/flow-bar ${mainRoot}/scripts`.env(process.env);
+      writeFileSync(join(mainRoot, "scripts/start-voicebar.sh"), '#!/bin/bash\nprintf "shared-voicebar-start\\n" >> "$LAUNCHCTL_LOG"\n', { mode: 0o755 });
       writeFileSync(
         join(mainRoot, "flow-bar", "build-app.sh"),
         [
@@ -269,7 +270,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
       const launchctlOutput = await Bun.file(launchctlLog).text();
       const launchdDomain = `gui/${process.getuid?.() ?? 501}`;
       expect(launchctlOutput).toContain(
-        `kickstart -k ${launchdDomain}/com.voicelayer.voicebar`,
+        "shared-voicebar-start",
       );
       expect(launchctlOutput).toContain(
         `kickstart -k ${launchdDomain}/com.voicelayer.mcp-daemon`,

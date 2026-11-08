@@ -108,7 +108,8 @@ case "${1:-}" in
             exit 1
         fi
         echo "[voicelayer] Launching /Applications/VoiceBar.app..."
-        exec open "/Applications/VoiceBar.app" --args "$@"
+        [[ "$#" -eq 0 ]] || { echo "VoiceBar launches through launchd; bar takes no arguments" >&2; exit 2; }
+        exec bash "$PACKAGE_ROOT/scripts/start-voicebar.sh"
         ;;
     hotkey)
         shift

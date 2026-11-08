@@ -643,6 +643,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         terminationSignalSource.resume()
         self.terminationSignalSource = terminationSignalSource
 
+        let launchdLabel = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"]
+        if getppid() != 1 || launchdLabel != "com.voicelayer.voicebar" {
+            NSLog("[VoiceBar] WARNING: VoiceBar isn't running under launchd — restart it with voicelayer bar")
+        }
+
         // Register Apple Event handler for voicebar:// URL scheme.
         // Defer registration until the next run loop iteration after launch setup.
         DispatchQueue.main.async { [weak self] in

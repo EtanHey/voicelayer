@@ -32,9 +32,9 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
   copyFileSync("launchd/com.voicelayer.voicebar.plist", join(root, "launchd/com.voicelayer.voicebar.plist"));
   writeFileSync(join(root, "running"), "101\n");
   writeFileSync(join(root, "calls"), "");
-  stub("pgrep", '[[ -s "$TEST_ROOT/running" ]] || exit 1; if [[ "$1" == -x ]]; then cat "$TEST_ROOT/running"; elif [[ "$1" == -afl ]]; then printf "101 %s/Contents/MacOS/VoiceBar\\n" "$TEST_ORIGINAL_APP"; else exit 1; fi');
-  stub("ps", '[[ -s "$TEST_ROOT/running" ]] || exit 0; if [[ "$1" == -p ]]; then printf "%s/Contents/MacOS/VoiceBar\\n" "$TEST_ORIGINAL_APP"; else printf "101 1 %s/Contents/MacOS/VoiceBar\\n" "$TEST_ORIGINAL_APP"; fi');
-  stub("launchctl", 'echo "launchctl $*" >> "$TEST_ROOT/calls"; case "$1" in list|print) [[ "$TEST_MANAGED" == 1 && ! -f "$TEST_ROOT/unloaded" ]];; bootout) : > "$TEST_ROOT/unloaded";; bootstrap) /bin/rm -f "$TEST_ROOT/unloaded";; kickstart) [[ "$TEST_FAULT" != kickstart ]] || exit 45; echo 202 > "$TEST_ROOT/running";; *) exit 0;; esac');
+  stub("pgrep", '[[ -s "$TEST_ROOT/running" ]] || exit 1; if [[ "$1" == -x || "$1" == -U ]]; then cat "$TEST_ROOT/running"; elif [[ "$1" == -afl ]]; then printf "101 %s/Contents/MacOS/VoiceBar\\n" "$TEST_ORIGINAL_APP"; else exit 1; fi');
+  stub("ps", '[[ -s "$TEST_ROOT/running" ]] || exit 0; if [[ "$1" == -p ]]; then app="$TEST_ORIGINAL_APP"; [[ ! -f "$TEST_ROOT/started-app" ]] || app="$(cat "$TEST_ROOT/started-app")"; printf "%s/Contents/MacOS/VoiceBar\\n" "$app"; else printf "101 1 %s/Contents/MacOS/VoiceBar\\n" "$TEST_ORIGINAL_APP"; fi');
+  stub("launchctl", 'echo "launchctl $*" >> "$TEST_ROOT/calls"; case "$1" in list|print) [[ ( "$TEST_MANAGED" == 1 || -f "$TEST_ROOT/bootstrapped" ) && ! -f "$TEST_ROOT/unloaded" ]] || exit 113; if [[ -s "$TEST_ROOT/running" ]]; then echo "state = running"; echo "pid = $(cat "$TEST_ROOT/running")"; fi;; bootout) : > "$TEST_ROOT/unloaded";; bootstrap) /bin/rm -f "$TEST_ROOT/unloaded"; : > "$TEST_ROOT/bootstrapped"; if [[ "$TEST_FAULT" != kickstart ]]; then echo 202 > "$TEST_ROOT/running"; echo "$TEST_APP" > "$TEST_ROOT/started-app"; fi;; kickstart) [[ "$TEST_FAULT" != kickstart ]] || exit 45; echo 202 > "$TEST_ROOT/running"; echo "$TEST_APP" > "$TEST_ROOT/started-app";; *) exit 0;; esac');
   stub("open", 'echo "open $*" >> "$TEST_ROOT/calls"; app="$1"; [[ "$app" != -a ]] || app="$TEST_APP"; [[ -d "$app" ]] || exit 1; echo 202 > "$TEST_ROOT/running"');
   stub("bun", `if [[ "$1" == */src/update-gate-installer.ts ]]; then
     if [[ "$2" == --validate ]]; then echo validate >> "$TEST_ROOT/calls"; [[ "$TEST_FAULT" != validate ]]; exit; fi
@@ -82,10 +82,10 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
   if (script !== "flow-bar/build-app.sh") writeFileSync(join(root, "flow-bar/build-app.sh"), `#!/bin/bash
     echo build >> "$TEST_ROOT/calls"
     case "$TEST_FAULT" in build) exit 42;; signal) /bin/kill -TERM "$PPID"; exit 42;; signal-self) echo "signal-verify $TEST_GATE_CHILD_PID" >> "$TEST_ROOT/calls"; /bin/kill -TERM "$TEST_GATE_CHILD_PID"; exit 0;; esac
-    if [[ "$TEST_FAULT" != kickstart && "\${TEST_UPDATE:-0}" != 1 ]]; then echo 202 > "$TEST_ROOT/running"; fi
+    if [[ "\${TEST_UPDATE:-0}" != 1 ]]; then source "$TEST_ROOT/scripts/lib/voicebar-launchagent.sh"; voicebar_start_launchd "$TEST_APP"; fi
   `, { mode: 0o755 });
   const env = { ...process.env, HOME: join(root, "home"), PATH: bin, TEST_ROOT: root, TEST_APP: app,
-    TEST_ORIGINAL_APP: original, TEST_MANAGED: managed ? "1" : "0", TEST_FAULT: fault,
+    VOICEBAR_LAUNCH_WAIT_ATTEMPTS: "2", TEST_ORIGINAL_APP: original, TEST_MANAGED: managed ? "1" : "0", TEST_FAULT: fault,
     VOICELAYER_INSTALL_OPERATION: "", VOICEBAR_CODESIGN_IDENTITY: "Developer ID Application: Fixture (PPN23G925Y)", VOICELAYER_TEST_BUN_CANDIDATES: join(bin, "bun"),
     VOICELAYER_VERIFY_CHANGED_FILES_FILE: join(root, "changed"), VOICEBAR_LEGACY_LOG_DIR: join(root, "legacy"),
     PLIST_BUDDY: join(bin, "PlistBuddy"), VOICEBAR_PLIST_BUDDY: join(bin, "PlistBuddy"), VOICELAYER_VERIFY_SKIP_BUILD: fault === "skip-build" ? "1" : "0", VOICELAYER_VERIFY_REPO_ROOT: "", VOICEBAR_TEST_BREW_CASK_REGISTERED: "0" };
@@ -114,13 +114,13 @@ for (const managed of [false, true]) for (const fault of ["", "build", "validate
     const result = fixture("scripts/voicelayer-verify.sh", fault, managed).run();
     expect(result.calls).toContain("gate-quit");
 
-    expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ running: "202" });
+    expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ running: fault === "kickstart" ? "" : "202" });
     if (fault === "build" || fault === "signal") expect(result.calls).toContain("build");
     if (["build", "validate", "signal"].includes(fault)) expect(result.exit).not.toBe(0);
-    else expect(result.exit).toBe(0);
+    else if (fault !== "kickstart") expect(result.exit).toBe(0);
     if (fault === "skip-build") expect(result.calls).not.toContain("build\n");
-    if (!fault) expect(result.calls).not.toContain("launchctl kickstart");
-    if (fault === "kickstart" && managed) expect(result.calls).toContain("open ");
+    if (!fault) expect(result.calls).not.toContain("launchctl kickstart -k");
+    if (fault === "kickstart") { expect(result.exit).not.toBe(0); expect(result.calls).not.toContain("open "); }
   }, 20000);
 
 for (const managed of [false, true]) for (const fault of ["build", "validate", "signal-self"])
@@ -134,7 +134,8 @@ for (const managed of [false, true]) for (const fault of ["build", "validate", "
       expect(result.calls).toContain(`signal-verify ${childPid}\n`);
     }
     expect({ running: result.running, err: result.err }).toMatchObject({ running: "202" });
-    expect(result.calls).toContain(managed ? "launchctl kickstart" : "open ");
+    expect(result.calls).toMatch(/launchctl (kickstart|bootstrap) /);
+    expect(result.calls).not.toContain("launchctl kickstart -k");
   }, 20000);
 
 for (const [script, args] of [
@@ -190,7 +191,8 @@ for (const fault of ["", "validate"]) scriptTest(`real retired-agent cleanup res
 scriptTest("dedupe restores the verified canonical bundle when the original QA bundle moves to backup", () => {
   const f = fixture("scripts/voicelayer-dedupe-voicebar.sh", "", false, true), result = f.run(["--apply", "--no-stop"]);
   expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ exit: 0, running: "202" });
-  expect(result.calls).toContain(`open ${f.app}`);
+  expect(result.calls).toMatch(/launchctl (kickstart|bootstrap) /);
+    expect(result.calls).not.toContain("launchctl kickstart -k");
   expect(result.calls).not.toContain(`open ${f.original}`);
 }, 20000);
 
@@ -206,7 +208,8 @@ scriptTest("recovery does not start a VoiceBar that was dormant before preserve-
 scriptTest("update --no-stop restores the verified canonical bundle after nested dedupe moves the original QA bundle", () => {
   const f = fixture("scripts/voicelayer-update.sh", "", false, true), result = f.run(["--no-stop"]);
   expect({ exit: result.exit, err: result.err, running: result.running }).toMatchObject({ exit: 0, running: "202" });
-  expect(result.calls).toContain(`open ${f.app}`);
+  expect(result.calls).toMatch(/launchctl (kickstart|bootstrap) /);
+    expect(result.calls).not.toContain("launchctl kickstart -k");
   expect(result.calls).not.toContain(`open ${f.original}`);
 });
 
