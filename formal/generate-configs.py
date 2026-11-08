@@ -39,7 +39,7 @@ def generate(name, module, base, current, invariants, temporal, historical, muta
     old.update(module=module, checks=checks, acceptance=sorted(acceptance))
     (directory / "checks.json").write_text(json.dumps(old, indent=2) + "\n")
 
-ni = ["TypeOK", "VisibleHasShell", "N1CompactNote", "N2NoProcessingBand", "N3GrowsDown", "N4NoSubstitute", "N5InlineHistory", "NoteHasCause"]
+ni = ["TypeOK", "VisibleHasShell", "N1CompactNote", "N2NoProcessingBand", "N3GrowsDown", "N4NoSubstitute", "N5InlineHistory", "NoteHasCause", "N6ConfirmationInWing"]
 generate("notch-presentation", "NotchPresentation", dict(Variant="fixed", Fault="none"), dict(Variant="current"),
          dict(current=["TypeOK", "VisibleHasShell"], fixed=ni), dict(current=["NoteNeverStuck"], fixed=["NoteNeverStuck"]),
          [("OldWing","N1CompactNote",{}),("OldProcessingNote","N2NoProcessingBand",{}),
@@ -52,7 +52,8 @@ generate("notch-presentation", "NotchPresentation", dict(Variant="fixed", Fault=
           ("MutStaleNote","NoteHasCause","stale-note",{}),("MutNeverExpire","NoteNeverStuck","never-expire",{}),
           ("MutantNoShell","VisibleHasShell","no-collapsed-shell",{}),
           ("MutantType","TypeOK","timer-range",{}),
-          ("MutantStuck","NoteNeverStuck","timer-reset",{})])
+          ("MutantStuck","NoteNeverStuck","timer-reset",{}),
+          ("MutTypedTab","N6ConfirmationInWing","confirmation-tab",{})])
 
 ri = ["TypeOK","OneMic","OneDecoder","NoDuplicatePaste","NoCancelledPaste","N7CooldownRing","D3EveryTakeKept",
       "N6Admissible","N6StartsB","N6PreservesA","N7ScopedCancel","N7GuardedClick","N7Identity","N8ImmediatePaste","N8FinalNotSuperseded","NoTimeoutWhileTalking","N8DecodeAdmissible","SpeechRenewsDeadline","NoEarlySilenceTimeout","RecurringSpeechNeverTimesOut","EscapeTargetsNewest"]
