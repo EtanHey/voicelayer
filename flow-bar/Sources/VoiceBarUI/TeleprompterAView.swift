@@ -46,6 +46,8 @@ public struct TeleprompterAView: View {
 
     @State private var cache = TeleprompterAModelCache()
     @State private var dragStartLines: Int?
+    /// The scroll position the last slide settled on, so a seek's multi-line jump is told from a reading step.
+    @State private var settledScrolledLines = 0
     @State private var handleOvershoot: CGFloat = 0
     /// True only between this handle's own `onHandleDrag(true)` and its one matching `false`.
     @State private var ownsPointer = false
@@ -81,7 +83,9 @@ public struct TeleprompterAView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .animation(TeleprompterA.slide(reduceMotion: reduceMotion), value: scrolled)
+        .animation(TeleprompterA.slide(reduceMotion: reduceMotion, fromLine: settledScrolledLines, toLine: scrolled),
+                   value: scrolled)
+        .onChange(of: scrolled, initial: true) { _, line in settledScrolledLines = line }
         .mask {
             VStack(spacing: 0) {
                 LinearGradient(colors: [.black.opacity(TeleprompterA.showsTopFade(scrolledLines: scrolled) ? 0 : 1), .black],

@@ -58,8 +58,19 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual([0, 3, 5, 8, 12].map(TeleprompterA.clamp), [3, 3, 5, 8, 8])
     }
 
+    /// T2 (QA 2026-11-08 S3-F1): clicking earlier text drew the old and new lines on top of each other while the
+    /// mounted lines slid across the whole jump. A reading step still slides; a seek's jump lands.
+    func testOnlyAOneLineReadingStepSlides() {
+        XCTAssertNotNil(TeleprompterA.slide(reduceMotion: false, fromLine: 4, toLine: 5))
+        XCTAssertNotNil(TeleprompterA.slide(reduceMotion: false, fromLine: 5, toLine: 4))
+        XCTAssertNil(TeleprompterA.slide(reduceMotion: false, fromLine: 6, toLine: 0), "a backward seek lands")
+        XCTAssertNil(TeleprompterA.slide(reduceMotion: false, fromLine: 0, toLine: 4), "a forward seek lands")
+        XCTAssertNil(TeleprompterA.slide(reduceMotion: true, fromLine: 4, toLine: 5))
+    }
+
     func testFooterStateAndQueuedChip() {
-        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "Reading · 1×")
+        // T2 (QA 2026-11-08, Etan: "Reading is kind of redundant there"): only the rate is left.
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "1×")
         XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: false), "Paused")
         XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: true),
                        "Paused for your dictation · resumes after paste")

@@ -1121,9 +1121,9 @@ public struct BarView: View {
             VStack(spacing: 7) {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
-                    .frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA
-                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines) + TeleprompterA.handleBandHeight
-                        : Theme.teleprompterViewportHeight : nil)
+                    // T2 (QA 2026-11-08 S4-F2/F3): the stopped read keeps the reading body's height. A 78 pt
+                    // viewport inside the same tall panel cut its text and left a blank band above Replay/X.
+                    .frame(height: state.showsTeleprompterScrubber ? teleprompterBodyHeight : nil)
                 if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
                 }
@@ -1219,6 +1219,7 @@ public struct BarView: View {
                     wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth
                     ),
+                    viewportHeight: teleprompterBodyHeight,
                     contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
@@ -1230,6 +1231,11 @@ public struct BarView: View {
         .onChange(of: state.isPreparingSpeech, initial: true) { old, isPreparing in
             preparingHandoff.preparingChanged(to: isPreparing, initial: old == isPreparing)
         }
+    }
+
+    /// The panel's text area, live or stopped: the lines the handle settled on, plus the handle band.
+    private var teleprompterBodyHeight: CGFloat {
+        TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines) + TeleprompterA.handleBandHeight
     }
 
     /// U5: live reading uses Teleprompter A; an idle-retained readback keeps its scrolling view.

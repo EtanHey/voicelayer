@@ -400,10 +400,10 @@ final class TeleprompterScrubTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
-        // Readback keeps its 78 pt viewport; U5's live Teleprompter A sizes to its lines plus the handle band.
-        XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA\n" +
-            "                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines) + TeleprompterA.handleBandHeight\n" +
-            "                        : Theme.teleprompterViewportHeight : nil)"))
+        // T2 (QA 2026-11-08 S4-F2/F3): readback keeps the live body's height (lines plus the handle band); its old
+        // 78 pt viewport clipped the stopped text above a blank band. Measured in TeleprompterStoppedPanelTests.
+        XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? teleprompterBodyHeight : nil)"))
+        XCTAssertTrue(bar.contains("viewportHeight: teleprompterBodyHeight,"))
         XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber { Spacer(minLength: 0) }"))
         let trailing = try XCTUnwrap(bar.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchCompactStatusContent")[0]
