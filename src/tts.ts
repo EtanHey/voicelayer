@@ -32,6 +32,7 @@ import {
   readFileSync,
   writeFileSync,
   copyFileSync,
+  statSync,
   unlinkSync,
 } from "fs";
 import { resolveBinary } from "./resolve-binary";
@@ -88,6 +89,8 @@ import { SpeechWordTimeline } from "./tts/speech-words";
 import { isPlaybackSpeed, resolvePauseCursorMs } from "./playback/session";
 import { narrationSource, setNarrationSource } from "./narration/source";
 import { createNarrationSource } from "./narration/adapter";
+import { planUtterances, synthesizeBounded, type AssembleNarration } from "./narration/utterances";
+import type { NarrationAudio } from "./narration/source";
 import { ledgerAskBegin, ledgerAskRestore, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
   ledgerPreviousHold, ledgerPreviousReturn, ledgerResumed, ledgerStopAll, ledgerStopped, currentPlaybackSpeed,
   setLedgerPlaybackSpeed, setPreviousReadProbe } from "./playback/ledger";
@@ -590,6 +593,42 @@ async function narrateEdge(text: string, voice: string, rate: string, outFile: s
   const audio = await narrationSource().synthesize({ text, engine: "edge", voice, rate, outFile, signal, retries, prosody });
   if (!audio) throw new EdgeSynthesisUnavailableError("the narration source has no edge voice");
   return { audioFile: audio.audioFile, wordBoundaries: audio.wordBoundaries, durationMs: audio.durationMs };
+}
+
+/** Utterance audio and silences joined in order, resampled to one 24 kHz mono stream. */
+const assembleNarration: AssembleNarration = async (parts, outFile, signal) => {
+  const argv = ["ffmpeg", "-nostdin", "-y"];
+  const chains: string[] = [];
+  parts.forEach((part, index) => {
+    if ("file" in part) argv.push("-i", part.file);
+    else argv.push("-f", "lavfi", "-t", (part.silenceMs / 1000).toFixed(3), "-i", "anullsrc=r=24000:cl=mono");
+    chains.push(`[${index}:a]aresample=24000,aformat=sample_fmts=fltp:channel_layouts=mono[a${index}]`);
+  });
+  const inputs = parts.map((_, index) => `[a${index}]`).join("");
+  argv.push("-filter_complex", `${chains.join(";")};${inputs}concat=n=${parts.length}:v=0:a=1[out]`,
+    "-map", "[out]", "-ac", "1", "-ar", "24000", "-b:a", "48k", outFile);
+  await runAudioCommand(argv, signal);
+  if (!existsSync(outFile) || statSync(outFile).size === 0) throw new Error("assembled narration is empty");
+};
+
+/**
+ * Lane B: voice_ask narration as bounded utterances with pauses, through the one NarrationSource (lead,
+ * 2026-11-08, from w4's renders: the calmer arm every time). If assembly fails the ask is spoken as one
+ * whole request: the prompt is never lost to a pause policy.
+ */
+async function narrateBounded(engine: "edge" | "clone", text: string, voice: string, rate: string, outFile: string,
+  signal?: AbortSignal): Promise<NarrationAudio | null> {
+  try {
+    return await synthesizeBounded({ text, engine, voice, rate, outFile, signal }, {
+      source: narrationSource(), assemble: assembleNarration,
+      probeMs: file => probeAudioDurationMs(file) ?? 0,
+      dispose: file => { try { unlinkSync(file); } catch {} try { unlinkSync(file.replace(".mp3", ".meta.ndjson")); } catch {} },
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    console.error(`[voicelayer] Bounded ask narration failed (${error instanceof Error ? error.message : String(error)}); speaking it as one request`);
+    return narrationSource().synthesize({ text, engine, voice, rate, outFile, signal });
+  }
 }
 
 /** A cloned voice through the narration source; null when the clone is unavailable (callers fall back). */
@@ -3680,7 +3719,9 @@ async function prepareSpeech(
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
     const ttsFile = ttsFilePath(process.pid, ttsCounter++);
     // A cloned voice keeps its own pace today; the profile rate is passed for the source to own later.
-    const cloned = await narrateClone(spokenText, resolved.voice, options?.rate ?? "+0%", ttsFile, signal);
+    const cloned = options?.mode === "converse"
+      ? (await narrateBounded("clone", spokenText, resolved.voice, options?.rate ?? "+0%", ttsFile, signal)) !== null
+      : await narrateClone(spokenText, resolved.voice, options?.rate ?? "+0%", ttsFile, signal);
     throwIfAbortedSafe(signal);
     if (cloned) {
       audioEngine = "qwen3-tts";
@@ -3770,10 +3811,16 @@ async function speakWithEdgeTTS(
   const tempChunkFiles: string[] = [];
   let wordBoundaries: WordBoundary[] = [];
 
-  const textChunks = chunkTextForTTS(spokenText);
+  // Lane B: an Ask prompt is planned as bounded utterances with pauses (one assembled file).
+  const bounded = options?.mode === "converse" && planUtterances(spokenText).length > 1;
+  const textChunks = bounded ? [spokenText] : chunkTextForTTS(spokenText);
   try {
     if (textChunks.length === 1) {
-      const synthesized = await narrateEdge(textChunks[0], voice, rate, ttsFile, signal);
+      const synthesized = bounded ? await (async () => {
+        const audio = await narrateBounded("edge", spokenText, voice, rate, ttsFile, signal);
+        if (!audio) throw new EdgeSynthesisUnavailableError("the narration source has no edge voice");
+        return audio;
+      })() : await narrateEdge(textChunks[0], voice, rate, ttsFile, signal);
       throwIfAbortedSafe(signal);
       wordBoundaries = synthesized.wordBoundaries;
     } else {

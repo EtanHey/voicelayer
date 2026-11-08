@@ -45,14 +45,15 @@ final class PlaybackEngineTeleprompterTests: XCTestCase {
         let geometry = VoiceBarNotchScreenGeometry.resolve(metrics: screen.metrics)
         XCTAssertEqual(geometry.kind, .hardwareNotch)
         let column = VoiceBarNotchContract.material.teleprompterTextWidth(coreWidth: core)
-        // Wider than the old 404 pt cap: the column follows the body (465 pt at this core).
-        XCTAssertEqual(column, 429)
-        XCTAssertGreaterThan(column, 404)
-        XCTAssertEqual(TeleprompterA.columnWidth, column)
         // ≥ 8 pt from every edge: the body's text inset, and the text starts below the physical notch band.
         let inset = VoiceBarNotchContract.material.teleprompterBodyHorizontalInset + VoiceBarNotchContract.material.teleprompterTextInnerInset
         XCTAssertGreaterThanOrEqual(inset, 8)
         let body = VoiceBarNotchContract.geometry(for: .teleprompter, coreWidth: core)
+        // The column is the body's whole text width, so a wider drawer (Lane A) widens it with no change here.
+        // Wider than the old 404 pt cap (429 pt at a 465 pt body; 509 pt at Lane A's 545 pt body).
+        XCTAssertEqual(column, body.bodyWidth - 2 * inset)
+        XCTAssertGreaterThan(column, 404)
+        XCTAssertEqual(TeleprompterA.columnWidth, column)
         XCTAssertGreaterThanOrEqual(body.topHeight, screen.safeAreaTop, "the reading lines sit under the notch band")
         XCTAssertGreaterThanOrEqual(body.bodyWidth - column, 2 * 8)
     }
