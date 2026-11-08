@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { DISABLE_POLL_INTERVAL_MS } from "./daemon-disable-poll";
 import { recoverAbandonedUpdate } from "./update-gate-installer";
 import { initializeVoiceGate, withFreshAsyncVoiceAdmission } from "./update-gate-admission";
 import { createNativeDrainParticipant, createVoiceDrainControl } from "./update-gate-native-participant";
@@ -85,7 +86,6 @@ import {
 } from "./daemon-heartbeat";
 
 // --- Tool dispatch table ---
-const DISABLE_POLL_INTERVAL_MS = 5000;
 
 const toolDispatch: Record<
   string,
