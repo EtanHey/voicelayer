@@ -44,7 +44,7 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
     }
 
     /// A read several lines in, so the reader has scrolled and its line above the visible text is mounted (y < 0).
-    private func scrolledRead(clockSeconds: TimeInterval) -> (VoiceState, () -> [[String: Any]]) {
+    private func scrolledRead(clockSeconds: TimeInterval, queued: Int = 0) -> (VoiceState, () -> [[String: Any]]) {
         var now = 100.0
         let state = VoiceState(playbackAmplitudeClock: { now })
         state.isConnected = true
@@ -58,9 +58,118 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
         state.handleEvent(["type": "subtitle", "words": words.enumerated().map { index, text in
             ["offset_ms": index * 300, "duration_ms": 280, "text": text] as [String: Any]
         }])
+        if queued > 0 { state.handleEvent(["type": "read_queue", "count": queued, "current_request_id": "r-1"]) }
         now += clockSeconds // the reader has read this far and scrolled
         XCTAssertEqual(state.playbackElapsedMilliseconds(), Int(clockSeconds * 1000))
         return (state, { sent })
+    }
+
+    private func mount(_ state: VoiceState, router: Spy) -> (NSWindow, NSView) {
+        let bar = NSHostingView(rootView: BarView(state: state, commandRouter: router, onOpenSettings: {}, onOpenHistory: {}))
+        bar.frame = NSRect(origin: .zero, size: bar.fittingSize)
+        let window = NSWindow(contentRect: bar.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = bar
+        window.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+        window.orderBack(nil)
+        windows.append(window)
+        settle(bar)
+        return (window, bar)
+    }
+
+    private func settle(_ view: NSView, seconds: TimeInterval = 0.6) {
+        view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        view.layoutSubtreeIfNeeded()
+    }
+
+    /// A control's hit area: Pause and Next are pill buttons with a 26 pt hit circle; Replay, Stop and the eye are
+    /// teleprompter buttons whose 20 pt square frame takes the click.
+    private enum HitShape {
+        case pillCircle, square
+        var reach: CGFloat {
+            switch self {
+            case .pillCircle: VoiceBarPillControlButton.hitDiameter / 2 - 0.5
+            case .square: VoiceBarNotchContract.material.compactControlSize / 2 - 0.5
+            }
+        }
+        func contains(_ dx: CGFloat, _ dy: CGFloat) -> Bool {
+            self == .square || dx * dx + dy * dy <= reach * reach
+        }
+    }
+
+    /// Clicks every `step` pt across a control's hit area, centred at `center`, and hands back what each click did.
+    private func sweep(_ center: NSPoint, _ shape: HitShape, in window: NSWindow, step: CGFloat = 2,
+                       _ check: (_ dx: CGFloat, _ dy: CGFloat) throws -> Void,
+                       click: (NSPoint) -> Void) rethrows {
+        let reach = shape.reach
+        for dx in stride(from: -reach, through: reach, by: step) {
+            for dy in stride(from: -reach, through: reach, by: step) where shape.contains(dx, dy) {
+                click(NSPoint(x: center.x + dx, y: center.y + dy))
+                try check(dx, dy)
+            }
+        }
+    }
+
+    private func click(_ point: NSPoint, in window: NSWindow) {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            if let event = event(type, at: point, in: window) { window.sendEvent(event) }
+        }
+    }
+
+    /// Review P2 (T2+T3): the reader's hidden lines sat under every wing control's lower edge, not only Pause. Each of
+    /// Replay, Next (with reads queued), Stop and Show/Hide teleprompter does exactly its own thing and never seeks.
+    func testEveryReadingWingControlDoesOnlyItsOwnThingAndNeverSeeks() throws {
+        for queued in [0, 2] {
+            let (state, sent) = scrolledRead(clockSeconds: 12, queued: queued)
+            let router = Spy()
+            let (window, bar) = mount(state, router: router)
+            let geometry = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
+                mode: .speaking, hasTeleprompterText: true, readQueueLeadingSlotCount: queued > 0 ? 3 : 1)).geometry
+            XCTAssertEqual(geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: queued > 0 ? 4 : 3))
+            let size = VoiceBarNotchContract.material.compactControlSize
+            let pitch = size + VoiceBarNotchContract.readingControlSpacing
+            let originX = (bar.bounds.width - geometry.totalWidth) / 2
+            let y = bar.bounds.maxY - geometry.topHeight / 2
+            func leading(_ slot: Int) -> NSPoint {
+                NSPoint(x: originX + geometry.coreOriginX - VoiceBarNotchContract.compactCoreContentInset - size / 2
+                    - CGFloat(slot) * pitch, y: y)
+            }
+            let eye = NSPoint(x: originX + geometry.topOriginX + geometry.topWidth - VoiceBarNotchContract.fixedWingContentInset
+                - size / 2 - pitch, y: y)
+            // T3's left wing from the core outward: Replay, (Next,) Pause, Stop.
+            let stopSlot = queued > 0 ? 3 : 2
+            for (name, center, expected) in [("Replay", leading(0), "replay"), ("Stop", leading(stopSlot), "stop")] {
+                try sweep(center, .square, in: window, { dx, dy in
+                    let calls = router.calls
+                    router.calls.removeAll()
+                    let commands = sent().compactMap { $0["cmd"] as? String }
+                    XCTAssertFalse(commands.contains("seek") || commands.contains("speech_seek"),
+                                   "queued \(queued): \(name) at (\(dx), \(dy)) sent \(commands)")
+                    XCTAssertEqual(calls, [expected], "queued \(queued): \(name) at (\(dx), \(dy)) did \(calls)")
+                }, click: { click($0, in: window) })
+            }
+            XCTAssertTrue(sent().isEmpty, "Replay and Stop route through the router, never a socket command: \(sent())")
+            if queued > 0 {
+                var seen = 0
+                try sweep(leading(1), .pillCircle, in: window, { dx, dy in
+                    let commands = sent()[seen...].compactMap { $0["cmd"] as? String }
+                    seen = sent().count
+                    XCTAssertEqual(commands, ["read_next"], "Next at (\(dx), \(dy)) sent \(commands)")
+                }, click: { click($0, in: window) })
+                XCTAssertTrue(router.calls.isEmpty, "\(router.calls)")
+            }
+            // The eye hides the panel; show it again after each click so every click starts from the open reader.
+            var seen = sent().count
+            try sweep(eye, .square, in: window, step: 6, { dx, dy in
+                let commands = sent()[seen...].compactMap { $0["cmd"] as? String }
+                XCTAssertTrue(commands.isEmpty, "the eye at (\(dx), \(dy)) sent \(commands)")
+                XCTAssertTrue(state.isTeleprompterDismissed, "the eye at (\(dx), \(dy)) hid the teleprompter")
+                state.showTeleprompter()
+                settle(bar, seconds: 0.3)
+                seen = sent().count
+            }, click: { click($0, in: window) })
+            XCTAssertTrue(router.calls.isEmpty, "\(router.calls)")
+        }
     }
 
     func testEveryClickOnTheReadingPauseControlPausesAndNeverSeeks() throws {
