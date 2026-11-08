@@ -2627,7 +2627,9 @@ export function setExternalSpeechPreemptionListener(listener: typeof externalSpe
 /** Any live read lends Ask an automatic return; a user's existing pause never does. */
 export function parkReadForAsk(): ((processing?: boolean) => boolean) | undefined {
   const read = activeLongRead;
-  if (!read || read.controller.signal.aborted || isPlaybackPaused()) return;
+  // Parking requires a runner that can retain and resume its position.
+  // Otherwise cancel it and let the bounded teardown wait retain ownership.
+  if (!read || !read.seek || read.controller.signal.aborted || isPlaybackPaused()) return;
   read.seek?.cancelPendingSeek?.();
   const pending = read.seek?.pendingPosition?.();
   if (pending && !read.pendingChunk) read.pendingChunk = { ...pending, phase: "preparing",
