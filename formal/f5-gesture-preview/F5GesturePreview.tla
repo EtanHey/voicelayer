@@ -1,6 +1,6 @@
 ------------------------ MODULE F5GesturePreview ------------------------
 EXTENDS Integers
-CONSTANTS Window, AwaitGrace, PressGrace, MinimumVisible, Immediate, EnforceMinimum
+CONSTANTS Window, AwaitGrace, PressGrace, MinimumVisible, Immediate, EnforceMinimum, GuardPreview
 VARIABLES now, phase, preview, releasedAt, awaitSeen, pressSeen, quickLock,
           shortRelease, briefHint
 vars == <<now, phase, preview, releasedAt, awaitSeen, pressSeen, quickLock,
@@ -58,7 +58,7 @@ ShowPress == /\ phase = "pressing" /\ preview = "idle"
              /\ briefHint' = (briefHint \/ now + MinimumVisible > Hold)
              /\ UNCHANGED <<now, phase, releasedAt, awaitSeen, quickLock, shortRelease>>
 
-ShowAwait == /\ phase = "waiting" /\ preview = "idle"
+ShowAwait == /\ (GuardPreview => phase = "waiting") /\ releasedAt >= 0 /\ preview = "idle"
              /\ Eligible(AwaitGrace, Window) /\ now > releasedAt + AwaitGrace
              /\ ~EnforceMinimum \/ now + MinimumVisible <= releasedAt + Window
              /\ preview' = "awaitingSecondTap" /\ awaitSeen' = TRUE
@@ -70,6 +70,10 @@ Spec == Init /\ [][Next]_vars
 NoQuickDoubleTapHint == quickLock => ~awaitSeen
 NoShortTapHoldHint == shortRelease => ~pressSeen
 NoBriefHint == ~briefHint
+Display(p) == CASE p = "waiting" -> "awaitingSecondTap"
+               [] p \in {"holding", "locked"} -> "holding"
+               [] OTHER -> p
+PreviewMatchesPhase == preview \in {"idle", Display(phase)}
 \* Negative assertion: its violation witnesses non-vacuous future hint display.
 FutureHintUnreachable == ~awaitSeen
 =============================================================================

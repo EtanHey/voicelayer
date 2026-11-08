@@ -3,3 +3,4 @@
 | NoBriefHint | BriefHintMutant |
 | NoQuickDoubleTapHint | ImmediateAwaitMutant |
 | NoShortTapHoldHint | ImmediatePressMutant |
+| PreviewMatchesPhase | StaleShowMutant |

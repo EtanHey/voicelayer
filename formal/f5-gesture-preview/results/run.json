@@ -2,18 +2,19 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/f5-gesture-preview/F5GesturePreview.tla": "a4f30aede552ef0f19d9a72ea7b361e9a5a2dccae0639a970c821e21600bf2b2",
-    "formal/f5-gesture-preview/checks.json": "03ba1550d335da6996942c183e6bcce8974e7122b7a032b532d68ada43e848fe",
+    "formal/f5-gesture-preview/F5GesturePreview.tla": "0cb096b7364913ffb4cb0592006b5d1bd44bc80e588ea827081ca79664ec764f",
+    "formal/f5-gesture-preview/checks.json": "6cc7fd15c7482628a7ec763c5f84a139edfbcf35d15dbe54b0d9631e250a4179",
     "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
-    "formal/f5-gesture-preview/ImmediateAwaitMutant.cfg": "3400c6fff4298f673b5de37d9f2f3442fbb9ae6db5ac90cf32b3686c6bd293ae",
-    "formal/f5-gesture-preview/FutureHintWitness.cfg": "a7567ea86517c211c2e8cba4a93cae3ff1783fbf301bd639cae343f44345a877",
-    "formal/f5-gesture-preview/FutureLongWindow.cfg": "d1eac8d0ce8c4e2badeb91dd45203d2d21e651d68906c74324ae789b6d76d323",
-    "formal/f5-gesture-preview/ImmediatePressMutant.cfg": "541a0f85c1421e9a3e9c1b8be3f2896af39aea53dde502f86da9686568fa28e2",
-    "formal/f5-gesture-preview/BriefHintMutant.cfg": "7cd9f8ca04d16ed6b2b3aa117b420a2227334c27d61ea147fade4fe32c38fc5f",
-    "formal/f5-gesture-preview/Fixed.cfg": "15e3a39707ddf0f6e101b74e12d129f1896691b92c4fd859adfb2d5ae10e9d49",
-    "flow-bar/Sources/VoiceBar/HotkeyManager.swift": "a598f46ea9bde4565cfda473260fdc114510cc7e9a9edcbf6245dfa41b31e5c1",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e836d91a7f10d27ecf7e53f1df986f3382584748ea7bf23b92359b2c87557fe8",
+    "formal/f5-gesture-preview/ImmediateAwaitMutant.cfg": "23b72adc737f0ff116ec3c0ceaceda303a3be2f4bd6fd516c13cf22aafe4d0b6",
+    "formal/f5-gesture-preview/FutureHintWitness.cfg": "cc720d2e1643f82bc0a258fd05637287966de4017f6f9917e8dd5d96f80944fa",
+    "formal/f5-gesture-preview/FutureLongWindow.cfg": "6a30053711a058852f425134c8cc9183765f20ebd77f27d64c74ae7720f10bf8",
+    "formal/f5-gesture-preview/ImmediatePressMutant.cfg": "bd55b3b40b9ee52050e1ae1dbbce18f6816a3d7d2d9bef951554fcfa29e6487c",
+    "formal/f5-gesture-preview/BriefHintMutant.cfg": "f7bb89b2f2c51a5b4affa775d6a5efb48c9be0d95ccd6082d5e068560da7b622",
+    "formal/f5-gesture-preview/Fixed.cfg": "6c013dde2567e6138e2355049f1d98466bf47bfabfee6217cb129f39c2f2f74c",
+    "formal/f5-gesture-preview/StaleShowMutant.cfg": "b87699b9abeb202829948576a8af5064b7e6917b871656638d458dba3b1c4e3e",
+    "flow-bar/Sources/VoiceBar/HotkeyManager.swift": "aae1623f2d79a60b052a96698cc2cd51a05d81e1c3b743317709c8273e01524f",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "45df4b21857310e0f23195ae2cd6c5cb3a9485d67cd56fadb88ce50e688b9c08",
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "3c7e2cfedde3d5cf6fd19d0b37c8450f275ddb86b7c301280dc069d01214a713",
     "flow-bar/Sources/VoiceBarUI/BarView.swift": "7a076d828909aa8f92e65602edadcb6fb5ce98744b548232e557ef2828274ea5"
   },
@@ -26,6 +27,9 @@
     ],
     "NoBriefHint": [
       "BriefHintMutant"
+    ],
+    "PreviewMatchesPhase": [
+      "StaleShowMutant"
     ]
   },
   "graphHashes": {
@@ -79,6 +83,14 @@
       "status": "EXPECTED_FAIL",
       "generated": 3475,
       "distinct": 3475
+    },
+    "StaleShowMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PreviewMatchesPhase",
+      "status": "EXPECTED_FAIL",
+      "generated": 3489,
+      "distinct": 3489
     }
   }
 }

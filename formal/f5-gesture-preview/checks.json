@@ -36,11 +36,17 @@
       "role": "witness",
       "target": "FutureHintUnreachable",
       "kind": "invariant"
+    },
+    "StaleShowMutant": {
+      "role": "mutant",
+      "target": "PreviewMatchesPhase",
+      "kind": "invariant"
     }
   },
   "acceptance": [
     "NoQuickDoubleTapHint",
     "NoShortTapHoldHint",
-    "NoBriefHint"
+    "NoBriefHint",
+    "PreviewMatchesPhase"
   ]
 }

@@ -952,7 +952,7 @@ public final class VoiceState {
     public var presentedHotkeyPhase: HotkeyPhase { hotkeyPreviewPhase ?? hotkeyPhase }
 
     public func setHotkeyPreviewPhase(_ phase: HotkeyPhase) {
-        hotkeyPreviewPhase = hotkeyEnabled ? phase : .idle
+        hotkeyPreviewPhase = hotkeyEnabled && (phase == .idle || phase == hotkeyPhase) ? phase : .idle
     }
 
     /// Whether the pill is collapsed (idle for too long).

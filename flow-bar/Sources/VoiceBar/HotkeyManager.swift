@@ -100,6 +100,14 @@ final class GestureStateMachine {
     static let pressingPreviewDelayMs = 120
     static let awaitingSecondTapPreviewDelayMs = 350
     static let minimumPreviewVisibleMs = 150
+    private let doubleTapWindow: Int
+    private let holdThreshold: Int
+
+    init(doubleTapWindowMs: Int = GestureStateMachine.doubleTapWindowMs,
+         holdThresholdMs: Int = GestureStateMachine.holdThresholdMs) {
+        doubleTapWindow = doubleTapWindowMs
+        holdThreshold = holdThresholdMs
+    }
 
     /// Strictly after the grace, with enough time left to avoid a late hint flash.
     static func previewDelayMs(graceMs: Int, windowMs: Int) -> Int? {
@@ -247,7 +255,7 @@ final class GestureStateMachine {
         let generation = holdTimerGeneration
         keyDownTime = now
         state = .pressing
-        publishPhase(.pressing, graceMs: Self.pressingPreviewDelayMs, windowMs: Self.holdThresholdMs)
+        publishPhase(.pressing, graceMs: Self.pressingPreviewDelayMs, windowMs: holdThreshold)
         let timer = DispatchWorkItem { [weak self] in
             guard let self, state == .pressing, holdTimerGeneration == generation else { return }
             holdTimer = nil
@@ -256,7 +264,7 @@ final class GestureStateMachine {
             onHoldStart()
         }
         holdTimer = timer
-        schedule(Self.holdThresholdMs, timer)
+        schedule(holdThreshold, timer)
     }
 
     private func startDoubleTapWindow(expiryBehavior: DoubleTapExpiryBehavior) {
@@ -264,15 +272,15 @@ final class GestureStateMachine {
         doubleTapTimerGeneration += 1
         let generation = doubleTapTimerGeneration
         state = .waitingForDoubleTap
-        doubleTapDeadline = clock() + Double(Self.doubleTapWindowMs) / 1000
+        doubleTapDeadline = clock() + Double(doubleTapWindow) / 1000
         doubleTapExpiryBehavior = expiryBehavior
-        publishPhase(.awaitingSecondTap, graceMs: Self.awaitingSecondTapPreviewDelayMs, windowMs: Self.doubleTapWindowMs)
+        publishPhase(.awaitingSecondTap, graceMs: Self.awaitingSecondTapPreviewDelayMs, windowMs: doubleTapWindow)
         let timer = DispatchWorkItem { [weak self] in
             guard let self, state == .waitingForDoubleTap, doubleTapTimerGeneration == generation else { return }
             expireDoubleTapWindow()
         }
         doubleTapTimer = timer
-        schedule(Self.doubleTapWindowMs, timer)
+        schedule(doubleTapWindow, timer)
     }
 
     private func isDoubleTapWindowExpired(now: TimeInterval) -> Bool {

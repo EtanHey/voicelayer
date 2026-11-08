@@ -32,11 +32,13 @@ This uses the existing pinned TLC runner, one worker and nice 19. checks.json
 registers every config and exact expected counterexample. The model uses 1 ms
 ticks, four representative first-release times, all second-press ticks, hold
 and expiry timers, and cancellation. It explores input/preview order at equal
-timestamps. Current constants and a future 800 ms window pass; the old immediate
+timestamps. It is bounded to one episode (no A-B-A re-press). Current constants and a future 800 ms window pass; the old immediate
 awaiting preview and pressing preview violate their exact invariants. Removing
 the minimum-visible rule reproduces the late hint flash. FutureHintWitness is
 a deliberately false assertion whose counterexample proves that the longer
-window actually permits a hint.
+window actually permits a hint. PreviewMatchesPhase ties every displayed hint
+to the current logical phase. StaleShowMutant drops the phase guard and violates
+that invariant when a queued awaiting hint arrives after cancellation.
 
 The model abstracts cancelled jobs as inert and does not prove Swift source
 refinement or macOS rendering. Swift's injected clock/scheduler tests exercise
