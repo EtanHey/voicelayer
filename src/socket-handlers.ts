@@ -82,7 +82,7 @@ import type {
 } from "./socket-protocol";
 import { buildHealthResponse } from "./daemon-health";
 import { getPlaybackQueueDepth } from "./tts";
-import { getRecordingState, reportInputDeviceLost } from "./input";
+import { getRecordingState, reportInputDeviceLost, setRecordingPaused } from "./input";
 import {
   addAlias,
   addPromptTerm,
@@ -793,6 +793,11 @@ function handleSocketCommandAdmitted(
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
+    case "set_recording_pause": {
+      if (recordingState !== "recording") return buildAck(command, "noop", "not recording");
+      const result = setRecordingPaused(command.paused, command.capture_id);
+      return buildAck(command, result.outcome, result.reason);
+    }
     case "input_device_lost":
       // MICDROP3: evidence from VoiceBar's CoreAudio listener; it never ends the capture, it only
       // labels it when the audio after it is flat. A report for another or a finished capture is

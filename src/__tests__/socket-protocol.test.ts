@@ -499,6 +499,17 @@ describe("socket-protocol", () => {
       ).toBeNull();
     });
 
+    it("parses recording pause commands with a strict Boolean and an optional capture id", () => {
+      expect(parseCommand('{"cmd":"set_recording_pause","paused":true,"capture_id":3,"id":"p-1"}'))
+        .toEqual({ cmd: "set_recording_pause", paused: true, capture_id: 3, id: "p-1" });
+      expect(parseCommand('{"cmd":"set_recording_pause","paused":false}'))
+        .toEqual({ cmd: "set_recording_pause", paused: false });
+      expect(parseCommand('{"cmd":"set_recording_pause"}')).toBeNull();
+      expect(parseCommand('{"cmd":"set_recording_pause","paused":"yes"}')).toBeNull();
+      expect(parseCommand('{"cmd":"set_recording_pause","paused":true,"capture_id":0}')).toBeNull();
+      expect(parseCommand('{"cmd":"set_recording_pause","paused":true,"capture_id":1.5}')).toBeNull();
+    });
+
     it("allows long VoiceBar recording timeouts", () => {
       const result = parseCommand('{"cmd":"record","timeout_seconds":3600}');
       expect(result).toEqual({ cmd: "record", timeout_seconds: 3600 });

@@ -3,7 +3,8 @@
   "sourceBaseline": "01ca5dec",
   "sources": [
     "src/input.ts",
-    "src/__tests__/input-durability.test.ts"
+    "src/__tests__/input-durability.test.ts",
+    "src/recording-pause.ts"
   ],
   "checks": {
     "Fixed": {
@@ -45,6 +46,41 @@
       "role": "mutant",
       "target": "SilenceTimesOut",
       "kind": "temporal"
+    },
+    "AppendWhilePausedMutant": {
+      "role": "mutant",
+      "target": "NoPausedAudio",
+      "kind": "invariant"
+    },
+    "ClipAtPauseMutant": {
+      "role": "mutant",
+      "target": "UnpausedRetained",
+      "kind": "invariant"
+    },
+    "NewTakeOnResumeMutant": {
+      "role": "mutant",
+      "target": "UnpausedRetained",
+      "kind": "invariant"
+    },
+    "PauseCountsTowardTimeoutMutant": {
+      "role": "mutant",
+      "target": "NoTimeoutDuringPause",
+      "kind": "invariant"
+    },
+    "TimeoutWhilePausedMutant": {
+      "role": "mutant",
+      "target": "NoTimeoutDuringPause",
+      "kind": "invariant"
+    },
+    "NoStopWhilePausedMutant": {
+      "role": "mutant",
+      "target": "StopCancelFromPaused",
+      "kind": "invariant"
+    },
+    "OpenSpanMutant": {
+      "role": "mutant",
+      "target": "PausedSpansClosed",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -54,6 +90,11 @@
     "SettlesAfterSilence",
     "SpeechRenewsDeadline",
     "RecurringSpeechNeverTimesOut",
-    "SilenceTimesOut"
+    "SilenceTimesOut",
+    "NoPausedAudio",
+    "UnpausedRetained",
+    "NoTimeoutDuringPause",
+    "StopCancelFromPaused",
+    "PausedSpansClosed"
   ]
 }

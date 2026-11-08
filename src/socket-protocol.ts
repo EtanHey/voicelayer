@@ -369,6 +369,7 @@ export type AckCommand =
   | "vocab_add_term"
   | "vocab_remove_term"
   | "set_recording_hold"
+  | "set_recording_pause"
   | "set_whisper_effort"
   | "set_whisper_residency"
   | "set_processing_setting"
@@ -641,6 +642,13 @@ export interface SetRecordingHoldCommand extends SocketCommandBase {
   engaged: boolean;
 }
 
+/** Pause/resume the live push-to-talk take; `capture_id` (from the `recording` state event) guards a stale click. */
+export interface SetRecordingPauseCommand extends SocketCommandBase {
+  cmd: "set_recording_pause";
+  paused: boolean;
+  capture_id?: number;
+}
+
 export interface SeekCommand extends SocketCommandBase {
   cmd: "seek";
   offset_ms: number;
@@ -688,6 +696,7 @@ export type SocketCommand =
   | VocabAddTermCommand
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
+  | SetRecordingPauseCommand
   | InputDeviceLostCommand
   | SetWhisperEffortCommand
   | PreviewTTSProfileCommand
@@ -1186,6 +1195,11 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
       }
+      case "set_recording_pause":
+        if (typeof parsed.paused !== "boolean" ||
+            (parsed.capture_id !== undefined && (!Number.isSafeInteger(parsed.capture_id) || parsed.capture_id < 1))) return null;
+        return withCommandId<SetRecordingPauseCommand>({ cmd: "set_recording_pause", paused: parsed.paused,
+          ...(parsed.capture_id !== undefined ? { capture_id: parsed.capture_id } : {}) }, id);
       case "input_device_lost":
         if (!(DEVICE_LOSS_REASONS as readonly unknown[]).includes(parsed.reason) ||
             !Number.isSafeInteger(parsed.capture_id) || parsed.capture_id < 1 ||
