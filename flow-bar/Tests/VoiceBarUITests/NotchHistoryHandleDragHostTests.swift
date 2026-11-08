@@ -47,7 +47,7 @@ final class NotchHistoryHandleDragHostTests: XCTestCase {
             + view.subviews.flatMap { adapters(in: $0) }
     }
 
-    func testDraggingTheExtendHandleDownSevenRowsCommitsTwelveRows() throws {
+    func testDraggingTheExtendHandleDownSettlesOnTheExpandedDetent() throws {
         let state = VoiceState()
         state.isConnected = true
         state.isCollapsed = false
@@ -102,7 +102,7 @@ final class NotchHistoryHandleDragHostTests: XCTestCase {
         drain(1.2) // the open spring settles; the handle takes presses only above 98 % progress
         host.layoutSubtreeIfNeeded()
         let handle = try XCTUnwrap(adapters(in: host).first, "the open panel mounts its extend handle")
-        XCTAssertEqual(handle.accessibilityValue() as? String, "7 of 12 rows")
+        XCTAssertEqual(handle.accessibilityValue() as? String, "6 of 8 rows")
         let frame = handle.convert(handle.bounds, to: nil)
         let start = NSPoint(x: frame.midX, y: frame.midY)
 
@@ -119,7 +119,7 @@ final class NotchHistoryHandleDragHostTests: XCTestCase {
         try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 322), to: panel)
         drain(1)
 
-        XCTAssertEqual(model.historyRows, 12, "pulling the handle 7 rows down commits 12 rows (hit view: \(hitName))")
-        XCTAssertEqual(handle.accessibilityValue() as? String, "12 of 12 rows")
+        XCTAssertEqual(model.historyRows, 8, "pulling the handle 7 rows down settles on the expanded 8 (hit view: \(hitName))")
+        XCTAssertEqual(handle.accessibilityValue() as? String, "8 of 8 rows")
     }
 }

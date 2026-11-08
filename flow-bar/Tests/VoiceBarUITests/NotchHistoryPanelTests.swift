@@ -81,9 +81,9 @@ final class NotchHistoryPanelTests: XCTestCase {
         ).flushTop
         XCTAssertEqual(drawn.topWidth, 420, "the morph draws the top row as wide as the panel")
         XCTAssertEqual(layout.bodyRect.midX, layout.coreRect.midX, "centred on the housing")
-        XCTAssertEqual(history.lowerSurfaceHeight, 348)
-        XCTAssertEqual(history.totalHeight, 380)
-        XCTAssertEqual(NotchHistoryMorph.listHeight, 322)
+        XCTAssertEqual(history.lowerSurfaceHeight, 302, "2.4: six rows collapsed")
+        XCTAssertEqual(history.totalHeight, 334)
+        XCTAssertEqual(NotchHistoryMorph.listHeight, 276)
         XCTAssertEqual(NotchHistoryMorph.bodyWidth - 2 * NotchHistoryMorph.listHorizontalInset, 404)
     }
 
@@ -95,64 +95,30 @@ final class NotchHistoryPanelTests: XCTestCase {
         ))
     }
 
-    /// #166 review MUST-FIX 2: the popover closed on any outside click; the panel must too, and on Esc.
+    /// #166 review MUST-FIX 2, superseded by 2.4 Lane A (NotchDrawerDismissalTests): outside clicks, including
+    /// VoiceBar's own windows, and Esc whichever window is key, close the drawer.
     @MainActor
-    func testTheOpenPanelClosesOnAnOutsideClickAndOnEscapeAimedAtIt() throws {
-        var closes = 0
-        let dismissal = NotchHistoryDismissal { closes += 1 }
-        let panel = NSPanel(contentRect: NSRect(x: -20000, y: -20000, width: 10, height: 10),
-                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        VLOrderTestWindow(panel)
-        defer { panel.orderOut(nil) }
-        dismissal.panelWindow = panel
-
-        dismissal.handleOutsideMouseDown()
-        XCTAssertEqual(closes, 1, "a click in another app closes it")
-
-        try dismissal.handleGlobalKeyDown(key(53, "\u{1B}", in: nil))
-        XCTAssertEqual(closes, 2, "Esc going to another app closes it")
-
-        XCTAssertTrue(try dismissal.handleLocalKeyDown(key(53, "\u{1B}", in: panel)), "Esc in the panel is consumed")
-        XCTAssertEqual(closes, 3)
-
-        XCTAssertFalse(try dismissal.handleLocalKeyDown(key(0, "a", in: panel)), "other keys pass through")
-        try dismissal.handleGlobalKeyDown(key(0, "a", in: nil))
-        XCTAssertEqual(closes, 3)
+    func testTheOpenPanelClosesOnAnOutsideClickAndOnEscape() {
+        var reasons: [NotchDismissReason] = []
+        let dismissal = NotchDrawerDismissal { reasons.append($0) }
+        dismissal.escapeIsOwnedElsewhere = { false }
+        dismissal.handleGlobalMouseDown()
+        dismissal.handleGlobalKeyDown(keyCode: 53)
+        XCTAssertTrue(dismissal.handleLocalKeyDown(keyCode: 53))
+        XCTAssertFalse(dismissal.handleLocalKeyDown(keyCode: 0), "other keys pass through")
+        dismissal.handleGlobalKeyDown(keyCode: 0)
+        XCTAssertEqual(reasons, [.outsideClick, .escape, .escape])
     }
 
-    /// CodeRabbit (#166, 4100680970): the local monitor swallowed Esc in EVERY VoiceBar window while the panel
-    /// was open, so Esc could not close a Settings sheet. Only Esc aimed at the panel is the panel's.
+    /// CodeRabbit (#166, 4100680970): Esc must still reach a Settings sheet. A sheet (or IME composition) owns Esc,
+    /// so the drawer leaves it alone.
     @MainActor
-    func testEscapeInAnotherVoiceBarWindowIsNotConsumed() throws {
+    func testEscapeOwnedByASettingsSheetIsNotConsumed() {
         var closes = 0
-        let dismissal = NotchHistoryDismissal { closes += 1 }
-        let panel = NSPanel(contentRect: NSRect(x: -20000, y: -20000, width: 10, height: 10),
-                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        let settings = NSWindow(contentRect: NSRect(x: -20000, y: -19000, width: 10, height: 10),
-                                styleMask: [.titled], backing: .buffered, defer: false)
-        VLOrderTestWindow(panel)
-        VLOrderTestWindow(settings)
-        defer {
-            panel.orderOut(nil)
-            settings.orderOut(nil)
-        }
-        dismissal.panelWindow = panel
-
-        XCTAssertFalse(try dismissal.handleLocalKeyDown(key(53, "\u{1B}", in: settings)),
-                       "Esc belongs to the Settings window")
+        let dismissal = NotchDrawerDismissal { _ in closes += 1 }
+        dismissal.escapeIsOwnedElsewhere = { true }
+        XCTAssertFalse(dismissal.handleLocalKeyDown(keyCode: 53), "Esc belongs to the sheet")
         XCTAssertEqual(closes, 0)
-    }
-
-    @MainActor
-    func testDismissalMonitorsAreInstalledOnlyWhileOpen() {
-        let dismissal = NotchHistoryDismissal {}
-        XCTAssertFalse(dismissal.isMonitoring)
-        dismissal.start()
-        XCTAssertTrue(dismissal.isMonitoring)
-        dismissal.start()
-        XCTAssertTrue(dismissal.isMonitoring, "starting twice keeps one set of monitors")
-        dismissal.stop()
-        XCTAssertFalse(dismissal.isMonitoring)
     }
 
     /// Macroscope (#166): "Copied ✓" was keyed by row offset, so an entry inserted at 0 moved it.

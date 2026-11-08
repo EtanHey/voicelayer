@@ -219,9 +219,12 @@ public final class PillContextMenuController: NSObject {
         return menu
     }
 
+    /// The notch History list holds 20 (2.4 Lane A); the right-click submenu stays the eight it always showed.
+    public static let recentTranscriptsMenuLimit = 8
+
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
-        let entries = recentTranscriptionEntriesProvider()
+        let entries = Array(recentTranscriptionEntriesProvider().prefix(Self.recentTranscriptsMenuLimit))
 
         guard !entries.isEmpty else {
             let empty = NSMenuItem(title: "No recent transcripts", action: nil, keyEquivalent: "")
