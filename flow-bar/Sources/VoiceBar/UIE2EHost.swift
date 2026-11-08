@@ -313,6 +313,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var input = VoiceBarNotchOperationalInput(
             mode: state.mode,
             showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
+            showsRecordingPause: state.mode == .recording && state.recordingMode == "ptt",
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,

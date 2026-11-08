@@ -135,6 +135,26 @@ final class NotchIconButtonTooltipTests: XCTestCase {
                                      expecting: ["Stop recording", "Cancel recording"])
     }
 
+    /// Recording pause: a PTT take gets Pause beside Stop, with its own hit area clear of Stop and ✕.
+    func testPTTRecordingPauseButtonHasItsOwnHitArea() throws {
+        let s = state { $0.handleEvent(["type": "state", "state": "recording", "mode": "ptt", "capture_id": 4]) }
+        let mounted = try mount(bar(s))
+        assertEveryControlHasATooltip("recording ptt", mounted,
+                                     expecting: ["Stop recording", "Pause recording", "Cancel recording"])
+        func frame(_ text: String) throws -> CGRect {
+            let tip = try XCTUnwrap(mounted.tooltips.first { $0.text == text }, text)
+            return try XCTUnwrap(mounted.controls.first { $0.insetBy(dx: -1, dy: -1).contains(CGPoint(x: tip.frame.midX, y: tip.frame.midY)) }, text)
+        }
+        let stop = try frame("Stop recording"), pause = try frame("Pause recording"), cancel = try frame("Cancel recording")
+        XCTAssertFalse(pause.intersects(stop), "Pause \(pause) overlaps Stop \(stop)")
+        XCTAssertFalse(pause.intersects(cancel), "Pause \(pause) overlaps Cancel \(cancel)")
+        XCTAssertEqual(abs(pause.midX - stop.midX) < abs(cancel.midX - stop.midX), true, "Pause sits next to Stop")
+
+        s.setRecordingPaused(true)
+        assertEveryControlHasATooltip("recording ptt paused", try mount(bar(s)),
+                                     expecting: ["Stop recording", "Resume recording", "Cancel recording"])
+    }
+
     func testTranscribingAndErrorButtons() throws {
         let transcribing = state { $0.handleEvent(["type": "state", "state": "transcribing"]) }
         assertEveryControlHasATooltip("transcribing", try mount(bar(transcribing)),

@@ -2280,6 +2280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             from: VoiceBarNotchOperationalInput(
                 mode: mode,
                 showsRecordingHold: mode == .recording && state?.recordingMode == "vad",
+                showsRecordingPause: mode == .recording && state?.recordingMode == "ptt",
                 hasTeleprompterText: state?.teleprompterText != nil,
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,

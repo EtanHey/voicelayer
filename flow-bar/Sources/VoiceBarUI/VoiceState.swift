@@ -429,6 +429,7 @@ public final class VoiceState {
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
+                resetRecordingPause()
             }
             notifyPanelLayoutChangedIfNeeded(oldValue != mode)
         }
@@ -527,6 +528,14 @@ public final class VoiceState {
     public var silenceMode: String? // "quick" | "standard" | "thoughtful"
     public private(set) var isRecordingHoldEngaged = false
     private var pendingRecordingHold: (id: String, previous: Bool)?
+    /// Recording pause (Etan, 2026-11-08): the daemon stops adding audio to the PTT take until Resume. This mirrors
+    /// that optimistically, like Lock; the daemon owns the audio gate and its silence deadline.
+    public private(set) var isRecordingPaused = false
+    private var pendingRecordingPause: (id: String, previous: Bool)?
+    /// The daemon's `capture_id` for the live take, so a late Pause cannot reach the next take.
+    private var recordingCaptureID: Int?
+    private var recordingPausedAtUptimeMs: Int?
+    private var recordingPausedTotalMs = 0
 
     /// Brief confirmation text shown after paste (e.g., "Pasted!").
     public var confirmationText: String? {
@@ -2306,6 +2315,45 @@ public final class VoiceState {
         ])
     }
 
+    /// Pause or resume the live PTT take. One request is in flight at a time; a refused one rolls back.
+    public func setRecordingPaused(_ paused: Bool) {
+        guard mode == .recording, recordingMode == "ptt" else { return }
+        guard pendingRecordingPause == nil else { return }
+        guard paused != isRecordingPaused else { return }
+
+        let id = UUID().uuidString
+        pendingRecordingPause = (id: id, previous: isRecordingPaused)
+        applyRecordingPause(paused)
+        var command: [String: Any] = ["cmd": IntentCommand.setRecordingPause.rawValue, "paused": paused, "id": id]
+        if let recordingCaptureID { command["capture_id"] = recordingCaptureID }
+        sendCommand?(command)
+    }
+
+    /// Recording time with paused time left out; it stands still while the take is paused.
+    public func recordingActiveElapsedMilliseconds() -> Int {
+        guard mode == .recording, let startedAt = recordingStateUptimeMs else { return 0 }
+        let now = recordingPausedAtUptimeMs ?? currentRecordingUptimeMs()
+        return max(0, now - startedAt - recordingPausedTotalMs)
+    }
+
+    private func applyRecordingPause(_ paused: Bool) {
+        let now = currentRecordingUptimeMs()
+        if paused {
+            recordingPausedAtUptimeMs = recordingPausedAtUptimeMs ?? now
+        } else if let pausedAt = recordingPausedAtUptimeMs {
+            recordingPausedTotalMs += max(0, now - pausedAt)
+            recordingPausedAtUptimeMs = nil
+        }
+        isRecordingPaused = paused
+    }
+
+    private func resetRecordingPause() {
+        pendingRecordingPause = nil
+        isRecordingPaused = false
+        recordingPausedAtUptimeMs = nil
+        recordingPausedTotalMs = 0
+    }
+
     public func replay() {
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
@@ -2808,12 +2856,12 @@ public final class VoiceState {
     }
 
     public var recordingWaveformLevel: Double {
-        guard mode == .recording else { return 0 }
+        guard mode == .recording, !isRecordingPaused else { return 0 }
         return WaveformMetrics.recordingLevel(from: localRecordingLevel ?? socketAudioLevel)
     }
 
     public var recordingWaveformLevels: [Double] {
-        guard mode == .recording else { return Array(repeating: 0, count: 7) }
+        guard mode == .recording, !isRecordingPaused else { return Array(repeating: 0, count: 7) }
         return recordingWaveformHistory.liveWindow(barCount: 7)
     }
 
@@ -3429,6 +3477,7 @@ public final class VoiceState {
             case "recording":
                 if let captureID = (event["capture_id"] as? NSNumber)?.intValue {
                     inputDeviceLossMonitor?.beginCapture(captureID: captureID)
+                    recordingCaptureID = captureID
                 }
                 isRecordingHandoffPending = false
                 pendingMicDisconnectNotice = nil
@@ -5713,6 +5762,18 @@ public final class VoiceState {
                 refreshModelsBusy()
             } else {
                 refreshModelsSettingsStatus()
+            }
+            return
+        }
+
+        if ack.command == .setRecordingPause,
+           let pendingRecordingPause,
+           pendingRecordingPause.id == ack.id {
+            // A noop that says the daemon is already where we asked to be keeps the optimistic state.
+            let alreadyThere = ack.outcome == .noop && (ack.reason == "already paused" || ack.reason == "not paused")
+            self.pendingRecordingPause = nil
+            if ack.outcome != .accept, !alreadyThere, mode == .recording {
+                applyRecordingPause(pendingRecordingPause.previous)
             }
             return
         }
