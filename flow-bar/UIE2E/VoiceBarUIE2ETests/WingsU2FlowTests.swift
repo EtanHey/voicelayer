@@ -109,8 +109,11 @@ extension VoiceBarFlowTests {
             assertWing("setup-error", left: ["Start voice recording", "Choose microphone"], right: ["History", gear.label])
         }
         let beforeSetup = fixtureEvents().count
+        // 2.4 Lane A: the badged gear opens Settings in the notch, whose General leads with the broken step; its
+        // Fix… opens the Settings window at the setup spot, as the gear itself did in 2.3.
         click(qaPill.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Settings. ")).firstMatch,
-              "badged gear opens the setup spot")
+              "badged gear opens the Settings drawer")
+        click(qaPill.buttons["Fix…"], "the drawer's Fix… opens the setup spot")
         step("assert Settings › General at Permissions") {
             waitUntil { self.fixtureEvents().dropFirst(beforeSetup).contains("setup-settings") }
             // General's permission rows sit under "Finish setup" while one is broken (SettingsGeneralSetup.header);
@@ -215,9 +218,13 @@ extension VoiceBarFlowTests {
             waitUntil { self.fixtureEvents().dropFirst(beforeQueue).contains("microphone-list-cancelled") }
             XCTAssertFalse(fixtureEvents().dropFirst(beforeQueue).contains("microphone-list-open"), "nothing showed")
             XCTAssertFalse(app.menuItems["Microphone priority…"].exists, "no list over History")
-            XCTAssertTrue(qaPill.buttons["Close history"].exists, "History stayed open")
+            // 2.4 Lane A (Etan: History closes on ANY click outside it, VoiceBar's own windows included): the
+            // release click on the QA window closes History too. It was open when the held block ran, which is
+            // what cancelled the list above; the surface receipt names the cause.
+            XCTAssertTrue(fixtureEvents().dropFirst(beforeQueue).contains { $0.contains("(dismiss outsideClick)") },
+                          "the fixture click closed History by the outside-click rule")
         }
-        click(qaPill.buttons["Close history"], "close History")
+        if qaPill.buttons["Close history"].exists { click(qaPill.buttons["Close history"], "close History") }
         click(app.buttons["qa-fixture-idle"])
         if gate2245Enabled {
             step("GATE2245 no device-start or process tripwire invoked") { XCTAssertTrue(guardReceiptIsClean(guardLaunches)) }

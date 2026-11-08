@@ -10,11 +10,14 @@ import XCTest
 final class NotchHistoryMorphTests: XCTestCase {
     // MARK: Morph B values
 
+    /// 2.4 Lane A (Etan: "one spring, no multi-stage"): open, close and the handle share one critically damped spring.
     func testTheSpringsAndRadiiAreMorphBs() {
-        XCTAssertEqual(NotchHistoryMorph.openResponse, 0.42)
-        XCTAssertEqual(NotchHistoryMorph.openDampingFraction, 0.8)
-        XCTAssertEqual(NotchHistoryMorph.closeResponse, 0.45)
+        XCTAssertEqual(NotchHistoryMorph.openResponse, 0.4)
+        XCTAssertEqual(NotchHistoryMorph.openDampingFraction, 1.0)
+        XCTAssertEqual(NotchHistoryMorph.closeResponse, 0.4)
         XCTAssertEqual(NotchHistoryMorph.closeDampingFraction, 1.0)
+        XCTAssertEqual(NotchHistoryMorph.pullResponse, 0.4)
+        XCTAssertEqual(NotchHistoryMorph.pullDampingFraction, 1.0)
         XCTAssertEqual(NotchHistoryMorph.openTopRadius, 19)
         XCTAssertEqual(NotchHistoryMorph.openBottomRadius, 24)
         XCTAssertEqual(VoiceBarNotchContract.material.compactOuterCornerRadius(for: .history), 24)
@@ -29,16 +32,14 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertEqual(close.damping, 2 * sqrt(close.stiffness), accuracy: 1e-9, "close is critically damped")
     }
 
+    /// 2.4 Lane A: one stage. No scale, no blur pass, no delayed fade: the rows' opacity is the progress.
     func testRowsGrowOutOfTheNotch() {
-        XCTAssertEqual(NotchHistoryMorph.rowsScale(progress: 0), 0.8)
-        XCTAssertEqual(NotchHistoryMorph.rowsScale(progress: 1), 1)
-        XCTAssertEqual(NotchHistoryMorph.rowsScale(progress: 1.06), 1, "scale is clamped through the overshoot")
-        XCTAssertEqual(NotchHistoryMorph.rowsBlur(progress: 0), 20)
-        XCTAssertEqual(NotchHistoryMorph.rowsBlur(progress: 0.5), 10, accuracy: 1e-9)
-        XCTAssertEqual(NotchHistoryMorph.rowsBlur(progress: 1), 0, "no blur pass at all once open")
-        XCTAssertEqual(NotchHistoryMorph.rowsOpacity(progress: 0.3), 0, "invisible for the first 30 %")
-        XCTAssertEqual(NotchHistoryMorph.rowsOpacity(progress: 0.65), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(NotchHistoryMorph.rowsScale(progress: 0), 1)
+        XCTAssertEqual(NotchHistoryMorph.rowsBlur(progress: 0), 0)
+        XCTAssertEqual(NotchHistoryMorph.rowsBlur(progress: 0.5), 0)
+        XCTAssertEqual(NotchHistoryMorph.rowsOpacity(progress: 0.3), 0.3, accuracy: 1e-9)
         XCTAssertEqual(NotchHistoryMorph.rowsOpacity(progress: 1), 1)
+        XCTAssertEqual(NotchHistoryMorph.rowsOpacity(progress: 1.06), 1, "clamped")
     }
 
     func testRadiiFollowProgressClamped() {
@@ -64,8 +65,8 @@ final class NotchHistoryMorphTests: XCTestCase {
             NotchHistoryMorph.animation(opening: true, from: 0.5, velocity: 2),
             .interpolatingSpring(
                 mass: 1,
-                stiffness: pow(2 * .pi / 0.42, 2),
-                damping: 4 * .pi * 0.8 / 0.42,
+                stiffness: pow(2 * .pi / 0.4, 2),
+                damping: 4 * .pi * 1.0 / 0.4,
                 initialVelocity: 4
             )
         )
@@ -89,7 +90,7 @@ final class NotchHistoryMorphTests: XCTestCase {
         let (bounds, geometry) = shapeBounds(progress: 1)
         XCTAssertEqual(bounds.minX, geometry.topOriginX - 19, accuracy: 0.01)
         XCTAssertEqual(bounds.maxX, geometry.topOriginX + geometry.topWidth + 19, accuracy: 0.01)
-        XCTAssertEqual(bounds.height, 334, accuracy: 0.01, "32 + 8 + 6 × 46 + 18: collapsed six rows (Etan, 2026-11-08)")
+        XCTAssertEqual(bounds.height, 32 + 8 + 6 * 46 + 18, accuracy: 0.01)
     }
 
     func testAtZeroTheMorphIsExactlyTheLauncher() {
@@ -135,12 +136,9 @@ final class NotchHistoryMorphTests: XCTestCase {
 
     // MARK: Rows, scroll indicator, hover
 
-    /// Etan, 2026-11-08 (supersedes 11-03 "7 visible"): collapsed 6 rows, expanded 8, up to 20 loaded and scrollable.
-    func testSixCollapsedEightExpandedTwentyLoadedAndTheMocksInsets() {
+    func testSixTwoLineRowsAndTheMocksInsets() {
         XCTAssertEqual(NotchHistoryMorph.rowHeight, 46)
-        XCTAssertEqual(NotchHistoryMorph.visibleRows, 6)
-        XCTAssertEqual(NotchHistoryMorph.maximumRows, 8)
-        XCTAssertEqual(NotchHistoryMorph.loadedRows, 20)
+        XCTAssertEqual(NotchHistoryMorph.visibleRows, 6, "2.4: collapsed 6")
         XCTAssertEqual(NotchHistoryMorph.listTopInset, 8)
         XCTAssertEqual(NotchHistoryMorph.handleBandHeight, 18, "the mock: 40 + rows × 46 + 18")
         XCTAssertEqual(NotchHistoryMorph.lowerSurfaceHeight, 8 + 6 * 46 + 18)
@@ -271,8 +269,7 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertGreaterThan(mid, 0.05)
         XCTAssertLessThan(mid, 0.95, "mid-flight is neither end: grabbing here must not jump to 1")
         let peak = stride(from: 10.0, through: 11.5, by: 0.005).map { open.value(at: $0) }.max() ?? 0
-        XCTAssertGreaterThan(peak, 1, "the 0.8-damped open spring overshoots a little, as SwiftUI's does")
-        XCTAssertLessThan(peak, 1.05)
+        XCTAssertLessThanOrEqual(peak, 1 + 1e-9, "2.4: the one spring is critically damped, so opening never overshoots")
         XCTAssertEqual(open.value(at: 14), 1, accuracy: 1e-4, "settles")
         // Velocity is the derivative of the value.
         let t = 10.07, h = 1e-5
@@ -349,9 +346,8 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertFalse(accepts(300, height - 9, progress: 0.6), "never while the panel is still opening")
     }
 
-    /// Etan, 2026-11-08 ("it only adds one more row"): the handle has two detents, collapsed 6 and expanded 8. A
-    /// released handle settles on the nearer one, so one pull goes 6 → 8 and one push 8 → 6; never a row between.
-    func testRowsFollowTheHandleStretchPastBothEndsAndSnapToTheTwoDetents() {
+    /// 2.4: the handle still follows the pointer row by row, but settles only on the two detents, 6 and 8.
+    func testRowsFollowTheHandleStretchPastBothEndsAndSnapToADetent() {
         XCTAssertEqual(NotchHistoryMorph.rowsRubberBand(7.4, maximum: 8), 7.4)
         let past = NotchHistoryMorph.rowsRubberBand(10, maximum: 8)
         XCTAssertGreaterThan(past, 8)
@@ -360,19 +356,16 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertLessThan(below, 6)
         XCTAssertGreaterThan(below, 5.4)
         XCTAssertEqual(NotchHistoryMorph.snappedRows(6.9, maximum: 8), 6)
-        XCTAssertEqual(NotchHistoryMorph.snappedRows(7.1, maximum: 8), 8, "past halfway: the whole extension")
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(7.1, maximum: 8), 8)
         XCTAssertEqual(NotchHistoryMorph.snappedRows(8.5, maximum: 8), 8)
         XCTAssertEqual(NotchHistoryMorph.snappedRows(5.6, maximum: 8), 6)
-        for rows in stride(from: CGFloat(5), through: 9, by: 0.25) {
-            XCTAssertTrue([6, 8].contains(NotchHistoryMorph.snappedRows(rows, maximum: 8)), "\(rows): only the detents")
-        }
-        XCTAssertEqual(NotchHistoryMorph.snappedRows(7.6, maximum: 7), 7, "never past the rows there are")
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(9, maximum: 7), 7, "never past the rows there are")
     }
 
     func testTheHandleNeverExtendsIntoEmptyRows() {
         XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 3), 6)
         XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 7), 7)
-        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 20), 8)
+        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 40), 8)
     }
 
     func testAHandleDragFollowsThePointerOneRowPer46Points() throws {
@@ -380,12 +373,11 @@ final class NotchHistoryMorphTests: XCTestCase {
         pull.press(y: 380, progress: 6, time: 0)
         let band = { NotchHistoryMorph.rowsRubberBand($0, maximum: 8) }
         XCTAssertNil(pull.move(y: 382, time: 0.01, range: 46, band: band), "inside the slop: a click")
-        let rows = try XCTUnwrap(pull.move(y: 380 + 69, time: 0.2, range: 46, band: band))
-        XCTAssertEqual(rows, 7.5, accuracy: 0.001)
+        let rows = try XCTUnwrap(pull.move(y: 380 + 92, time: 0.2, range: 46, band: band))
+        XCTAssertEqual(rows, 8, accuracy: 0.001)
         guard case .settle = pull.release(progress: rows) else { return XCTFail("a drag settles") }
-        XCTAssertEqual(NotchHistoryMorph.snappedRows(rows, maximum: 8), 8, "one pull: 6 → 8")
-        pull.press(y: 380, progress: 8, time: 1)
-        XCTAssertEqual(pull.release(progress: 8), .click, "a press that never moved changes nothing")
+        pull.press(y: 380, progress: 9, time: 1)
+        XCTAssertEqual(pull.release(progress: 9), .click, "a press that never moved changes nothing")
     }
 
     func testTheSettledRowsAreTheHitRegionAndOutliveAClose() {
@@ -408,7 +400,7 @@ final class NotchHistoryMorphTests: XCTestCase {
         model.setHistoryPanelOpen(true)
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation).canvasGeometry
         XCTAssertGreaterThanOrEqual(
-            canvas.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 8),
+            canvas.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(NotchHistoryMorph.maximumRows)),
             "dragging the handle never resizes the window under the pointer"
         )
         XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 6),

@@ -85,7 +85,8 @@ final class VoiceBarAppPresenceTests: XCTestCase {
         app.configurePillContextMenuForTesting()
         let settings = try XCTUnwrap(window.contentViewController as? NSHostingController<SettingsView>)
         settings.rootView.onVersionStatusChange(.available("2.3.1"))
-        XCTAssertEqual(app.pillContextMenuControllerForTesting.updateStatusProvider(), "update to 2.3.1")
+        // 2.4 Lane A: the menu carries the same build-line status as the notch Settings drawer.
+        XCTAssertEqual(app.pillContextMenuControllerForTesting.updateStatusProvider(), "update available: 2.3.1")
     }
 
     func testDockMenuExistsOnlyWithADockIcon() {

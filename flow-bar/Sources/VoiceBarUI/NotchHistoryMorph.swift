@@ -5,17 +5,21 @@ import SwiftUI
 /// VoiceBar 2.3 lane U4: History morph B, exactly as Etan chose it in the approved mock (2-morph.html,
 /// 5-history.html; "the best we've ever done", 2026-11-03). One progress value `p` drives everything:
 /// p = 0 is the closed launcher, p = 1 the open panel. The shell's size follows `p` unclamped (the open
-/// spring overshoots a little), the radii follow it clamped, and the rows grow out of the notch: they scale
-/// up from 0.8 at the top edge, sharpen from a 20 pt blur, and fade in once the shape is 30 % open.
+/// spring may overshoot a hair), the radii follow it clamped, and the rows come out of the notch with it.
+/// 2.4 Lane A made the motion one stage: one spring, the rows' opacity following `p`.
 /// Every morph is a spring on `p`, so a new target retargets from the current position and velocity and
 /// the morph reverses from wherever it is.
 public enum NotchHistoryMorph {
-    // MARK: Springs (BoringNotch's, as the mock states)
+    // MARK: Spring (2.4 Lane A, Etan: "simplify the History pull animation: one spring, no multi-stage")
 
-    public static let openResponse: Double = 0.42
-    public static let openDampingFraction: Double = 0.8
-    public static let closeResponse: Double = 0.45
-    public static let closeDampingFraction: Double = 1.0
+    /// THE spring: opening, closing, a released pull, the extend handle settling and the History/Settings drawer
+    /// swap all ride it. Critically damped: it lands without a bounce and reverses cleanly from wherever it is.
+    public static let springResponse: Double = 0.4
+    public static let springDampingFraction: Double = 1.0
+    public static let openResponse: Double = springResponse
+    public static let openDampingFraction: Double = springDampingFraction
+    public static let closeResponse: Double = springResponse
+    public static let closeDampingFraction: Double = springDampingFraction
 
     // MARK: Radii
 
@@ -25,23 +29,21 @@ public enum NotchHistoryMorph {
 
     // MARK: Rows
 
-    public static let rowsStartScale: CGFloat = 0.8
-    public static let rowsStartBlur: CGFloat = 20
-    /// The rows stay invisible for the first 30 % of the morph, then fade in over the rest.
-    public static let rowsFadeStart: CGFloat = 0.3
+    /// One stage: the rows' opacity follows the shell's progress, with no scale, no blur pass and no delayed fade.
+    public static let rowsStartScale: CGFloat = 1
+    public static let rowsStartBlur: CGFloat = 0
+    public static let rowsFadeStart: CGFloat = 0
 
-    // MARK: Panel (Etan, 2026-11-08, superseding 11-03's "2 lines, 7 visible": collapsed 6 rows, expanded 8,
-    // up to 20 loaded and scrollable inside the panel; one pull goes 6 → 8 because "it only adds one more row")
+    // MARK: Panel (2.4 Lane A, Etan: "collapsed 6, expanded 8, scrolls to 20")
 
     public static let bodyWidth: CGFloat = 420
     public static let rowHeight: CGFloat = 46
-    /// The collapsed panel: two-line rows, six visible.
+    /// The collapsed detent.
     public static let visibleRows = 6
-    /// The expanded panel (the handle's other detent): eight rows. V6 (Etan: "draggable to extend, downward-only
-    /// is fine"); the mock's `dims('history')`: 40 + rows × 46 + 18.
+    /// The expanded detent: the extend handle settles on 6 or 8, never between.
     public static let maximumRows = 8
-    /// The rows History keeps and lists; past the visible rows they scroll inside the panel.
-    public static let loadedRows = 20
+    /// How many dictations the list holds; past the visible rows it scrolls.
+    public static let maximumEntries = 20
     /// The list starts 8 pt under the 32 pt band (40 pt from the top of the screen); under it an 18 pt band holds
     /// the extend handle. The list is 404 pt wide in the 420 pt panel.
     public static let listTopInset: CGFloat = 8
@@ -65,18 +67,18 @@ public enum NotchHistoryMorph {
     /// The handle takes presses across a wider strip than it draws (Fitts): 88 pt × the band, plus 4 pt below.
     public static let handleHitWidth: CGFloat = 88
     /// The `pull` motion token: a released handle settles on the nearest whole row.
-    public static let pullResponse: Double = 0.38
-    public static let pullDampingFraction: Double = 0.86
+    public static let pullResponse: Double = springResponse
+    public static let pullDampingFraction: Double = springDampingFraction
 
-    /// History's window below the 32 pt band: the collapsed rows plus the transient-note reserve, or the expanded
-    /// panel, whichever is taller (inside the 640 pt narrow-display guard). An extended panel and a note share this
-    /// space; the shell never draws past it.
+    /// History's window below the 32 pt band: seven rows plus the transient-note reserve, or the 12-row panel,
+    /// whichever is taller (578 pt; the window stays 610 pt, inside the 640 pt narrow-display guard). An extended
+    /// panel and a note share this space; the shell never draws past it.
     public static var historyCanvasLowerSurfaceHeight: CGFloat {
         max(lowerSurfaceHeight(rows: CGFloat(visibleRows)) + VoiceBarNotchContract.transientNoteCanvasReserve,
             lowerSurfaceHeight(rows: CGFloat(maximumRows)))
     }
 
-    /// The expanded detent: eight rows, never past the rows there are to show (no empty rows).
+    /// How far the handle may extend: never past the rows there are to show (no empty rows), never past 8.
     public static func maximumRows(entryCount: Int) -> Int {
         max(visibleRows, min(maximumRows, entryCount))
     }
@@ -90,11 +92,17 @@ public enum NotchHistoryMorph {
         return rows
     }
 
-    /// Where a released handle settles: the nearer detent, collapsed (6) or expanded (`maximum`), so one pull goes
-    /// all the way (formal/history-pull `NoStrandedRows`). Halfway and past it expands. Never a row in between.
+    /// 2.4 Lane A: a handle released this far above the collapsed rows (1.25 rows, about 58 pt) closes History.
+    public static let handleCloseRows: CGFloat = CGFloat(visibleRows) - 1.25
+
+    public static func handleClosesHistory(rawRows: CGFloat) -> Bool {
+        rawRows > 0 && rawRows <= handleCloseRows
+    }
+
+    /// Where a released handle settles: the nearer detent (6 collapsed, or the expanded rows), never between.
     public static func snappedRows(_ rows: CGFloat, maximum: Int) -> Int {
-        let expanded = max(visibleRows, maximum)
-        return rows * 2 >= CGFloat(visibleRows + expanded) ? expanded : visibleRows
+        let expanded = max(visibleRows, min(maximumRows, maximum))
+        return NotchHistoryDetent.nearest(rows: rows) == .expanded ? expanded : visibleRows
     }
 
     public static func rowsAnimation(from rows: CGFloat, to target: Int, velocity: Double) -> Animation {
@@ -110,6 +118,9 @@ public enum NotchHistoryMorph {
 
     /// A press that moves less than this is a click, never a drag.
     public static let dragSlop: CGFloat = 3
+    /// 2.4 Lane A: a pull that goes this far past open (in progress units, before the rubber band; about 90 pt on
+    /// the collapsed panel) arms Settings, and releasing it there opens the Settings drawer.
+    public static let settingsPullThreshold: CGFloat = 1.3
     /// The band a pull starts in, measured from the top of the screen.
     public static let pullBandHeight: CGFloat = 34
     /// A release faster than this (in progress per second) decides the target by its direction alone.
@@ -127,17 +138,16 @@ public enum NotchHistoryMorph {
     }
 
     public static func rowsOpacity(progress p: CGFloat) -> CGFloat {
-        clamp((p - rowsFadeStart) / (1 - rowsFadeStart))
+        clamp(p)
     }
 
-    public static func rowsScale(progress p: CGFloat) -> CGFloat {
-        lerp(rowsStartScale, 1, clamp(p))
+    public static func rowsScale(progress _: CGFloat) -> CGFloat {
+        1
     }
 
-    /// No blur at all once open: a zero-radius blur still costs a render pass.
-    public static func rowsBlur(progress p: CGFloat) -> CGFloat {
-        let pc = clamp(p)
-        return pc > 0.999 ? 0 : lerp(rowsStartBlur, 0, pc)
+    /// No blur, ever: one stage, and no render pass for it.
+    public static func rowsBlur(progress _: CGFloat) -> CGFloat {
+        0
     }
 
     public static func topRadius(progress p: CGFloat, closed: CGFloat) -> CGFloat {
@@ -298,6 +308,9 @@ public struct NotchHistoryPull: Equatable {
 
     public private(set) var phase: Phase = .idle
     public private(set) var velocity: Double = 0
+    /// Where the pointer has the value, before the rubber band: past 1 it measures how far the pull went beyond
+    /// open (2.4: far enough arms Settings). 0 while not dragging.
+    public private(set) var rawProgress: CGFloat = 0
     private var lastY: CGFloat = 0
     private var lastTime: TimeInterval = 0
     /// A seed the band can't express (a spring overshooting past 1 or under 0) is carried as an offset on every
@@ -354,6 +367,7 @@ public struct NotchHistoryPull: Equatable {
                 lastY = y
                 lastTime = time
                 seedOffset = seed - band(seed)
+                rawProgress = seed
                 return seed
             }
             phase = .dragging(startY: startY, startProgress: startProgress)
@@ -372,13 +386,15 @@ public struct NotchHistoryPull: Equatable {
         velocity = 0.7 * Double((y - lastY) / span) / dt + 0.3 * velocity
         lastY = y
         lastTime = time
-        return startProgress + (y - startY) / span
+        rawProgress = startProgress + (y - startY) / span
+        return rawProgress
     }
 
     /// The press ended (or was cancelled: then a drag still settles, at the nearer end).
     public mutating func release(progress: CGFloat, cancelled: Bool = false) -> Release {
         defer {
             phase = .idle
+            rawProgress = 0
         }
         switch phase {
         case .idle:
@@ -405,10 +421,7 @@ struct NotchHistoryRowsMorph: ViewModifier, Animatable {
     }
 
     func body(content: Content) -> some View {
-        let blur = NotchHistoryMorph.rowsBlur(progress: progress)
         content
-            .scaleEffect(NotchHistoryMorph.rowsScale(progress: progress), anchor: .top)
-            .blur(radius: blur, opaque: false)
             .opacity(NotchHistoryMorph.rowsOpacity(progress: progress))
             .allowsHitTesting(progress > 0.98)
     }

@@ -147,29 +147,40 @@ public enum SettingsDictionarySource: Hashable, Sendable {
     }
 }
 
-/// S1 (Etan, 2026-11-02): one quiet line, "VoiceBar 2.2.61 · Up to date". The only place the version appears;
-/// full release provenance and update copy stay available on hover.
+/// S1 (Etan, 2026-11-02): one quiet place for the version, "VoiceBar 2.2.61 · Up to date". 2.4 Lane A: the full
+/// build line, never truncated: the version and short SHA on the first line, the status ("Ahead of release by 14
+/// commits") on its own line, wrapping rather than ending in "…" in the narrow sidebar.
 struct SettingsVersionFooter: View {
     let installed: VoiceBarInstalledVersion
     let status: VoiceBarVersionStatus?
+    var describe: VoiceBarGitDescribe? = .current()
 
-    static func line(installed: VoiceBarInstalledVersion, status: VoiceBarVersionStatus?) -> String {
+    static func line(installed: VoiceBarInstalledVersion, status: VoiceBarVersionStatus?,
+                     describe: VoiceBarGitDescribe? = nil) -> String {
         let version = "VoiceBar \(installed.version ?? "Unknown")"
-        guard let status else { return version }
-        return "\(version) · \(status.sidebarMessage)"
+        guard let text = statusText(status, describe: describe) else { return version }
+        return "\(version) · \(text)"
+    }
+
+    /// Sentence case for the sidebar: "Up to date", "Ahead of release by 14 commits", "Update available".
+    static func statusText(_ status: VoiceBarVersionStatus?, describe: VoiceBarGitDescribe?) -> String? {
+        if let ahead = describe?.commitsAhead, ahead > 0, let status, !status.isUpdateAvailable,
+           let text = VoiceBarBuildLine.status(status, describe: describe) {
+            return text.prefix(1).uppercased() + text.dropFirst()
+        }
+        return status?.sidebarMessage
     }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Text("VoiceBar \(installed.version ?? "Unknown")")
+        VStack(alignment: .leading, spacing: 1) {
+            Text(["VoiceBar \(installed.version ?? "Unknown")", installed.shortCommit].compactMap { $0 }
+                .joined(separator: " · "))
                 .monospacedDigit()
-                .fixedSize()
-            if let status {
-                Text("·")
-                Text(status.sidebarMessage)
+                .fixedSize(horizontal: false, vertical: true)
+            if let status, let text = Self.statusText(status, describe: describe) {
+                Text(text)
                     .foregroundStyle(tint(status))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .font(.system(size: 10))
@@ -190,6 +201,11 @@ struct SettingsVersionFooter: View {
 }
 
 extension VoiceBarVersionStatus {
+    var isUpdateAvailable: Bool {
+        if case .available = self { return true }
+        return false
+    }
+
     var sidebarMessage: String {
         switch self {
         case .checking: "Checking…"

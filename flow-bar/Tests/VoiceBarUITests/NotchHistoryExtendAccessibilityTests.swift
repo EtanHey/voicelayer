@@ -26,7 +26,7 @@ final class NotchHistoryExtendAccessibilityTests: XCTestCase {
         defer { window.contentView = nil; window.close() }
         VLOrderTestWindow(window)
 
-        for rows in [6, 8] {
+        for rows in [6, 8, 7] {
             host.rootView = handle(rows: rows)
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))

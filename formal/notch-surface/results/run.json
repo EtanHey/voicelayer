@@ -1,0 +1,101 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/notch-surface/NotchSurface.tla": "db3d3804e80b7b3f506509badaad45db322e61833278c8ffc1a54c9fb5c32fb8",
+    "formal/notch-surface/checks.json": "4969a21188134f0a8373e11d625db9c8c9aff969db66fe1b9edf9741a7cc8344",
+    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/notch-surface/MutantRecordingKeepsDrawer.cfg": "5e5e51e28bc220754bb084daf1736eb26abcf877c5838ebe01d90d7c6693017b",
+    "formal/notch-surface/MutantHistoryOnlyDismissStuck.cfg": "1085feb86beaa8dabe13f80d4e2eeea77f9880db28add4e5af898713ea9d7ac0",
+    "formal/notch-surface/MutantNoModalGuard.cfg": "79175dec2fb757e3e413ba373dd4e82849bf746ec1aec26b0f3b733639514678",
+    "formal/notch-surface/MutantNoExclusive.cfg": "3304e68c7d549438551e9f3cb616d2e436a577526c715ec30e9295ea23d7c0a1",
+    "formal/notch-surface/MutantTeleprompterKeepsDrawer.cfg": "de7be2671043def9d1d6d9382422fda8a51bb96fd88ed4457e19af8cd0645df1",
+    "formal/notch-surface/MutantHistoryOnlyDismiss.cfg": "ca9c87e7de7de588b8551441926ee05f944c2d5027bc4730703a5ca3109c3e7f",
+    "formal/notch-surface/Fixed.cfg": "4ca07f42eb50a1fb8f65db4d9f42f5856b13c5713db1a872d4a0084455112039",
+    "flow-bar/Sources/VoiceBarUI/NotchSurface.swift": "58d42d97b4024e1e85701a13489febcb710528b06aef73ecb4b54cb62778f78d",
+    "flow-bar/Sources/VoiceBarUI/NotchDrawerDismissal.swift": "67e7b6505a6b57106b4e34f723c4194f44734590bc10bd5e6239dcc9f1d4d44c",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "e2b38e24be21910e9f00b6498e18195e6d4abb82556b5c8f72f055e615ddda36"
+  },
+  "mutants": {
+    "AtMostOneDrawer": [
+      "MutantNoExclusive"
+    ],
+    "DismissalReachable": [
+      "MutantHistoryOnlyDismiss"
+    ],
+    "WingsNeverHidden": [
+      "MutantRecordingKeepsDrawer"
+    ],
+    "NoDrawerOverModal": [
+      "MutantNoModalGuard"
+    ],
+    "NoDrawerOverTeleprompter": [
+      "MutantTeleprompterKeepsDrawer"
+    ],
+    "DrawerAlwaysClosable": [
+      "MutantHistoryOnlyDismissStuck"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "673caa27b4083355b88f6b1789212d1cb2e0b5327f094b83359c12539a476248"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 69,
+      "distinct": 10
+    },
+    "MutantNoExclusive": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "AtMostOneDrawer",
+      "status": "EXPECTED_FAIL",
+      "generated": 11,
+      "distinct": 7
+    },
+    "MutantHistoryOnlyDismiss": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DismissalReachable",
+      "status": "EXPECTED_FAIL",
+      "generated": 3,
+      "distinct": 3
+    },
+    "MutantHistoryOnlyDismissStuck": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "DrawerAlwaysClosable",
+      "status": "EXPECTED_FAIL",
+      "generated": 68,
+      "distinct": 10
+    },
+    "MutantRecordingKeepsDrawer": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "WingsNeverHidden",
+      "status": "EXPECTED_FAIL",
+      "generated": 13,
+      "distinct": 7
+    },
+    "MutantNoModalGuard": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDrawerOverModal",
+      "status": "EXPECTED_FAIL",
+      "generated": 21,
+      "distinct": 7
+    },
+    "MutantTeleprompterKeepsDrawer": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDrawerOverTeleprompter",
+      "status": "EXPECTED_FAIL",
+      "generated": 15,
+      "distinct": 7
+    }
+  }
+}

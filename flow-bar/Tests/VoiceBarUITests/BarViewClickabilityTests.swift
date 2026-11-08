@@ -167,7 +167,7 @@ final class BarViewClickabilityTests: XCTestCase {
         ])
         XCTAssertEqual(
             makeHost(state: teleprompter, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 465, height: 228)
+            NSSize(width: 545, height: 228)
         )
     }
 

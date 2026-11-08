@@ -349,7 +349,8 @@ public enum VoiceBarPresentation {
 
     public static func readQueueControl(for state: VoiceState) -> VoiceBarReadQueueControl? {
         readQueueControl(
-            mode: state.mode,
+            // 2.4 Lane A: a paused read waiting out "Typed" keeps the paused layout (Play, Next, +N).
+            mode: state.isParkedReadAwaitingFeedback ? .speaking : state.mode,
             isReadback: state.isTeleprompterReadback,
             currentRequestID: state.readQueueCurrentRequestID,
             count: state.readQueueCount
@@ -461,6 +462,14 @@ public enum VoiceBarPresentation {
 
     /// P16 (Etan, 2026-10-18): pause/play sits on the pill's left while VoiceBar speaks, never while
     /// recording, transcribing or idle (an ended readback has nothing playing).
+    /// The wing's pause/play for `state`, including a paused read that is waiting out a dictation's feedback.
+    public static func playbackPauseControl(for state: VoiceState) -> VoiceBarPlaybackPauseControl? {
+        if state.isParkedReadAwaitingFeedback {
+            return playbackPauseControl(mode: .speaking, isPaused: true, isReadback: false)
+        }
+        return playbackPauseControl(mode: state.mode, isPaused: state.isPlaybackPaused, isReadback: state.isTeleprompterReadback)
+    }
+
     public static func playbackPauseControl(
         mode: VoiceMode,
         isPaused: Bool,

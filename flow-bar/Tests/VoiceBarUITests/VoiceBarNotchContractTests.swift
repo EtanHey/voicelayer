@@ -47,8 +47,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
                 topHeight: 32,
                 leadingWingWidth: 0,
                 trailingWingWidth: 73.5,
-                bodyLeadingExtent: 140,
-                bodyTrailingExtent: 140,
+                bodyLeadingExtent: 180,
+                bodyTrailingExtent: 180,
                 lowerSurfaceHeight: 196
             )
         )
@@ -69,8 +69,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(recording.topWidth, 332)
         XCTAssertEqual(recording.totalWidth, 332)
         XCTAssertEqual(teleprompter.topWidth, 258.5)
-        XCTAssertEqual(teleprompter.bodyWidth, 465)
-        XCTAssertEqual(teleprompter.totalWidth, 465)
+        XCTAssertEqual(teleprompter.bodyWidth, 545, "2.4: the widened teleprompter")
+        XCTAssertEqual(teleprompter.totalWidth, 545)
         XCTAssertEqual(teleprompter.totalHeight, 228)
     }
 

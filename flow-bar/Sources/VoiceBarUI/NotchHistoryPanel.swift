@@ -164,6 +164,10 @@ struct NotchHistoryPanel: View {
         .contentShape(Rectangle())
         .opacity(isRetranscribing ? 0.62 : 1)
         .accessibilityElement(children: .contain)
+        // 2.4 Lane A: a stable identifier per position (the E2E suite counts the hittable rows: 6, then 8) and the
+        // button role the row's open action already has.
+        .accessibilityIdentifier(NotchHistoryPresentation.rowAccessibilityIdentifier(index: index))
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(
             [NotchHistoryPresentation.firstWords(entry.text), NotchHistoryPresentation.rowHeader(for: entry)]
                 .compactMap { $0 }

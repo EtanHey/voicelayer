@@ -1,0 +1,42 @@
+{
+  "hardwareModel" : "Mac16,5",
+  "hostName" : "MacBook Pro",
+  "recordedAt" : "2026-11-08T11:16:15Z",
+  "screens" : [
+    {
+      "auxiliaryTopLeftArea" : {
+        "height" : 32,
+        "width" : 771.5,
+        "x" : 0,
+        "y" : 1085
+      },
+      "auxiliaryTopRightArea" : {
+        "height" : 32,
+        "width" : 771.5,
+        "x" : 956.5,
+        "y" : 1085
+      },
+      "backingScaleFactor" : 2,
+      "builtIn" : true,
+      "frame" : {
+        "height" : 1117,
+        "width" : 1728,
+        "x" : 0,
+        "y" : 0
+      },
+      "name" : "Built-in Retina Display",
+      "safeAreaInsets" : {
+        "bottom" : 0,
+        "left" : 0,
+        "right" : 0,
+        "top" : 32
+      },
+      "visibleFrame" : {
+        "height" : 1084,
+        "width" : 1728,
+        "x" : 0,
+        "y" : 0
+      }
+    }
+  ]
+}
