@@ -1,0 +1,12 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoShortTapHoldHint",
+  "status": "EXPECTED_FAIL",
+  "generated": 3,
+  "distinct": 3,
+  "trace": [
+    "/\\ quickLock = FALSE\n/\\ pressSeen = TRUE\n/\\ shortRelease = FALSE\n/\\ now = 0\n/\\ releasedAt = -1\n/\\ preview = \"pressing\"\n/\\ phase = \"pressing\"\n/\\ awaitSeen = FALSE\n/\\ briefHint = FALSE",
+    "/\\ quickLock = FALSE\n/\\ pressSeen = TRUE\n/\\ shortRelease = TRUE\n/\\ now = 0\n/\\ releasedAt = 0\n/\\ preview = \"awaitingSecondTap\"\n/\\ phase = \"waiting\"\n/\\ awaitSeen = TRUE\n/\\ briefHint = FALSE"
+  ]
+}

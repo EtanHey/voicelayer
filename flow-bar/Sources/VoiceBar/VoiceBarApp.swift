@@ -1753,11 +1753,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         gestureStateMachine.activity.setCancellationActive(commandRouter.shouldHandleEscape)
         // Hold start → push-to-talk recording
-        gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
+        gestureStateMachine.onLogicalPhaseChange = { [weak self] phase in
             if phase == .pressing {
                 self?.logHotkeyTimingDiagnostic("hotkey_key_down")
             }
             self?.voiceState.setHotkeyPhase(phase)
+        }
+        gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
+            self?.voiceState.setHotkeyPreviewPhase(phase)
         }
 
         gestureStateMachine.onHoldStart = { [weak self] in
@@ -2287,7 +2290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 activeClipMarker: state?.activeClipMarker,
                 queueDepth: state?.queueDepth ?? 0,
                 keepsPasteFlowEnvelope: state?.keepsPasteFlowEnvelope ?? false,
-                hotkeyPhase: state?.hotkeyPhase ?? .idle,
+                hotkeyPhase: state?.presentedHotkeyPhase ?? .idle,
                 statusText: notchStatusText(for: state),
                 isHovered: state?.isHovering ?? false,
                 isKeyboardFocused: false,
@@ -2306,7 +2309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             mode: state.mode,
             transcript: state.transcript,
             confirmationText: state.confirmationText,
-            hotkeyPhase: state.hotkeyPhase,
+            hotkeyPhase: state.presentedHotkeyPhase,
             hotkeyEnabled: state.hotkeyEnabled,
             errorMessage: state.errorMessage,
             transcribingStatusText: state.transcribingStatusText,
