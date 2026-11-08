@@ -89,7 +89,7 @@ final class NotchHistoryMorphTests: XCTestCase {
         let (bounds, geometry) = shapeBounds(progress: 1)
         XCTAssertEqual(bounds.minX, geometry.topOriginX - 19, accuracy: 0.01)
         XCTAssertEqual(bounds.maxX, geometry.topOriginX + geometry.topWidth + 19, accuracy: 0.01)
-        XCTAssertEqual(bounds.height, 380, accuracy: 0.01)
+        XCTAssertEqual(bounds.height, 334, accuracy: 0.01, "32 + 8 + 6 × 46 + 18: collapsed six rows (Etan, 2026-11-08)")
     }
 
     func testAtZeroTheMorphIsExactlyTheLauncher() {
@@ -135,12 +135,15 @@ final class NotchHistoryMorphTests: XCTestCase {
 
     // MARK: Rows, scroll indicator, hover
 
-    func testSevenTwoLineRowsAndTheMocksInsets() {
+    /// Etan, 2026-11-08 (supersedes 11-03 "7 visible"): collapsed 6 rows, expanded 8, up to 20 loaded and scrollable.
+    func testSixCollapsedEightExpandedTwentyLoadedAndTheMocksInsets() {
         XCTAssertEqual(NotchHistoryMorph.rowHeight, 46)
-        XCTAssertEqual(NotchHistoryMorph.visibleRows, 7)
+        XCTAssertEqual(NotchHistoryMorph.visibleRows, 6)
+        XCTAssertEqual(NotchHistoryMorph.maximumRows, 8)
+        XCTAssertEqual(NotchHistoryMorph.loadedRows, 20)
         XCTAssertEqual(NotchHistoryMorph.listTopInset, 8)
         XCTAssertEqual(NotchHistoryMorph.handleBandHeight, 18, "the mock: 40 + rows × 46 + 18")
-        XCTAssertEqual(NotchHistoryMorph.lowerSurfaceHeight, 8 + 7 * 46 + 18)
+        XCTAssertEqual(NotchHistoryMorph.lowerSurfaceHeight, 8 + 6 * 46 + 18)
         XCTAssertEqual(NotchHistoryPresentation.rowLeadingPadding, 10)
         XCTAssertEqual(NotchHistoryPresentation.rowTrailingPadding, 6)
         XCTAssertEqual(NotchHistoryPresentation.rowCornerRadius, 8)
@@ -346,52 +349,58 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertFalse(accepts(300, height - 9, progress: 0.6), "never while the panel is still opening")
     }
 
-    func testRowsFollowTheHandleStretchPastBothEndsAndSnapToWholeRows() {
-        XCTAssertEqual(NotchHistoryMorph.rowsRubberBand(9.4, maximum: 12), 9.4)
-        let past = NotchHistoryMorph.rowsRubberBand(14, maximum: 12)
-        XCTAssertGreaterThan(past, 12)
-        XCTAssertLessThan(past, 12.6, "at most 0.6 of a row past the end")
-        let below = NotchHistoryMorph.rowsRubberBand(5, maximum: 12)
-        XCTAssertLessThan(below, 7)
-        XCTAssertGreaterThan(below, 6.4)
-        XCTAssertEqual(NotchHistoryMorph.snappedRows(9.4, maximum: 12), 9)
-        XCTAssertEqual(NotchHistoryMorph.snappedRows(9.6, maximum: 12), 10)
-        XCTAssertEqual(NotchHistoryMorph.snappedRows(12.5, maximum: 12), 12)
-        XCTAssertEqual(NotchHistoryMorph.snappedRows(6.6, maximum: 12), 7)
-        XCTAssertEqual(NotchHistoryMorph.snappedRows(11, maximum: 9), 9, "never past the rows there are")
+    /// Etan, 2026-11-08 ("it only adds one more row"): the handle has two detents, collapsed 6 and expanded 8. A
+    /// released handle settles on the nearer one, so one pull goes 6 → 8 and one push 8 → 6; never a row between.
+    func testRowsFollowTheHandleStretchPastBothEndsAndSnapToTheTwoDetents() {
+        XCTAssertEqual(NotchHistoryMorph.rowsRubberBand(7.4, maximum: 8), 7.4)
+        let past = NotchHistoryMorph.rowsRubberBand(10, maximum: 8)
+        XCTAssertGreaterThan(past, 8)
+        XCTAssertLessThan(past, 8.6, "at most 0.6 of a row past the end")
+        let below = NotchHistoryMorph.rowsRubberBand(4, maximum: 8)
+        XCTAssertLessThan(below, 6)
+        XCTAssertGreaterThan(below, 5.4)
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(6.9, maximum: 8), 6)
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(7.1, maximum: 8), 8, "past halfway: the whole extension")
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(8.5, maximum: 8), 8)
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(5.6, maximum: 8), 6)
+        for rows in stride(from: CGFloat(5), through: 9, by: 0.25) {
+            XCTAssertTrue([6, 8].contains(NotchHistoryMorph.snappedRows(rows, maximum: 8)), "\(rows): only the detents")
+        }
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(7.6, maximum: 7), 7, "never past the rows there are")
     }
 
     func testTheHandleNeverExtendsIntoEmptyRows() {
-        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 3), 7)
-        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 9), 9)
-        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 40), 12)
+        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 3), 6)
+        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 7), 7)
+        XCTAssertEqual(NotchHistoryMorph.maximumRows(entryCount: 20), 8)
     }
 
     func testAHandleDragFollowsThePointerOneRowPer46Points() throws {
         var pull = NotchHistoryPull()
-        pull.press(y: 380, progress: 7, time: 0)
-        let band = { NotchHistoryMorph.rowsRubberBand($0, maximum: 12) }
+        pull.press(y: 380, progress: 6, time: 0)
+        let band = { NotchHistoryMorph.rowsRubberBand($0, maximum: 8) }
         XCTAssertNil(pull.move(y: 382, time: 0.01, range: 46, band: band), "inside the slop: a click")
-        let rows = try XCTUnwrap(pull.move(y: 380 + 92, time: 0.2, range: 46, band: band))
-        XCTAssertEqual(rows, 9, accuracy: 0.001)
+        let rows = try XCTUnwrap(pull.move(y: 380 + 69, time: 0.2, range: 46, band: band))
+        XCTAssertEqual(rows, 7.5, accuracy: 0.001)
         guard case .settle = pull.release(progress: rows) else { return XCTFail("a drag settles") }
-        pull.press(y: 380, progress: 9, time: 1)
-        XCTAssertEqual(pull.release(progress: 9), .click, "a press that never moved changes nothing")
+        XCTAssertEqual(NotchHistoryMorph.snappedRows(rows, maximum: 8), 8, "one pull: 6 → 8")
+        pull.press(y: 380, progress: 8, time: 1)
+        XCTAssertEqual(pull.release(progress: 8), .click, "a press that never moved changes nothing")
     }
 
     func testTheSettledRowsAreTheHitRegionAndOutliveAClose() {
         let model = VoiceBarNotchPresentationModel()
         model.setHistoryPanelOpen(true)
         XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight)
-        model.setHistoryRows(10)
+        model.setHistoryRows(8)
         XCTAssertEqual(
-            model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 10),
+            model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 8),
             "the hit region grows with the settled rows"
         )
         model.setHistoryPanelOpen(false)
         model.setHistoryPanelOpen(true)
-        XCTAssertEqual(model.historyRows, 10, "a reopened panel keeps its height for the session")
-        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 10))
+        XCTAssertEqual(model.historyRows, 8, "a reopened panel keeps its height for the session")
+        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 8))
     }
 
     func testTheWindowHoldsTheTallestPanelWhileHistoryIsUp() {
@@ -399,11 +408,11 @@ final class NotchHistoryMorphTests: XCTestCase {
         model.setHistoryPanelOpen(true)
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation).canvasGeometry
         XCTAssertGreaterThanOrEqual(
-            canvas.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 12),
+            canvas.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 8),
             "dragging the handle never resizes the window under the pointer"
         )
-        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 7),
-                       "but clicks below the seven rows still reach the app underneath")
+        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 6),
+                       "but clicks below the six rows still reach the app underneath")
     }
 
     func testTheExtendedShellFollowsTheLiveHeight() {

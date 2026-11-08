@@ -334,7 +334,8 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isCollapsed: state.isCollapsed,
             visibleCoreOcclusionInset: 0,
             transientNote: state.selectionFeedbackNote,
-            transientNoteOffersHistory: state.selectionFeedbackNoteOffersHistory)
+            transientNoteOffersHistory: state.selectionFeedbackNoteOffersHistory,
+            showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state))
         input.isHistoryPanelOpen = historyOpen
         input.historyRows = historyRows
         let presentation = VoiceBarPresentation.notchPresentation(from: input)

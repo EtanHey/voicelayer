@@ -577,7 +577,8 @@ public struct BarView: View {
             isKeyboardFocused: keepsLauncherMounted,
             isCollapsed: state.isCollapsed,
             visibleCoreOcclusionInset: 0,
-            transientNote: state.selectionFeedbackNote
+            transientNote: state.selectionFeedbackNote,
+            showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
         )
         input.isHistoryPanelOpen = isHistoryMounted
         input.historyRows = historyRows
@@ -713,7 +714,7 @@ public struct BarView: View {
         dragHistoryRows(to: y, time: time)
     }
 
-    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past 7 and the last row.
+    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past either detent.
     private func dragHistoryRows(to y: CGFloat, time: TimeInterval) {
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
         guard let rows = historyRowsPull.move(
@@ -728,7 +729,7 @@ public struct BarView: View {
         withTransaction(follow) { historyRowsExtent = rows }
     }
 
-    /// A released (or cancelled) handle settles on the nearest whole row with the `pull` spring; the hit region and
+    /// A released (or cancelled) handle settles on the nearer detent with the `pull` spring; the hit region and
     /// the session's remembered height take the settled rows at once. A press that never moved changes nothing.
     private func endHistoryRowsPull(cancelled: Bool) {
         presentationModel?.setHistoryPullActive(false)
@@ -854,6 +855,20 @@ public struct BarView: View {
             }
         case .recording:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                if VoiceBarPresentation.showsEarlierTakeProcessing(for: state) {
+                    // 2.3 N1 (Etan, queued-recording clip F1): an earlier take is still transcribing. Its spinner
+                    // sits left of Stop, beside the recording controls and never instead of them. It is not a
+                    // control, so it registers no tooltip; VoiceOver reads it.
+                    ProcessingSpinner()
+                        .frame(
+                            width: VoiceBarNotchContract.material.compactControlSize,
+                            height: VoiceBarNotchContract.material.compactControlSize
+                        )
+                        .accessibilityElement()
+                        .accessibilityLabel("Earlier recording still transcribing")
+                        .accessibilityAddTraits(.updatesFrequently)
+                        .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
+                }
                 notchButton(
                     icon: "stop.fill",
                     isDestructive: true,
@@ -959,8 +974,20 @@ public struct BarView: View {
                 settingsButton
             }
         case .recording:
-            // 2.3 U2: six level bars in the fixed right wing.
-            notchWaveform(style: .wingLevels)
+            // 2.3 N1 (Etan, QA round 1; real M4): the live time 8 pt clear of the physical notch, then 2.2.61's
+            // 46 × 24 pt level meter, centred in the visible wing by an equal empty region outside it (review D3). The
+            // time shows only once capture has opened (review D1); the capturing microphone is its tooltip and VoiceOver
+            // value, never wing text.
+            HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
+                VoiceBarRecordingTimeRegion(
+                    elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
+                    isCaptureOpen: state.isRecordingCaptureOpen,
+                    microphoneName: state.recordingMicrophoneName,
+                    color: notchPrimaryLabelColor
+                )
+                notchWaveform
+                Color.clear.frame(width: VoiceBarRecordingWingLabel.outerRegionWidth, height: 1)
+            }
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
                 notchSpeakingTrailingContent
@@ -1044,18 +1071,13 @@ public struct BarView: View {
     }
 
     private var notchWaveform: some View {
-        notchWaveform(style: .standard)
-    }
-
-    private func notchWaveform(style: WaveformBarStyle) -> some View {
         VoiceBarNotchWaveform(
             mode: state.mode,
             isListening: !state.speechDetected,
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() },
-            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused,
-            style: style
+            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused
         )
         .help("Input level")
         .accessibilityLabel("Input level")
@@ -1523,7 +1545,8 @@ public struct BarView: View {
     /// VoiceOver's adjust on the extend handle: one row at a time, instantly.
     private func adjustHistoryRows(by delta: Int) {
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
-        let rows = NotchHistoryMorph.snappedRows(CGFloat(historyRows + delta), maximum: maximum)
+        // An assistive step moves between the two detents, like a pull.
+        let rows = delta > 0 ? max(NotchHistoryMorph.visibleRows, maximum) : NotchHistoryMorph.visibleRows
         guard rows != historyRows else { return }
         historyRows = rows
         presentationModel?.setHistoryRows(rows)
