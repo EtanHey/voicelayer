@@ -71,6 +71,69 @@ final class RecordingPauseTests: XCTestCase {
         XCTAssertFalse(state.isRecordingPaused)
     }
 
+    /// Round 2 (Codex P2): the daemon never paused, so a refused Pause must leave its round-trip in the clock.
+    func testRejectedPauseKeepsTheRoundTripInTheClock() throws {
+        let (state, commands, advance) = recordingState()
+        advance(10)
+        state.setRecordingPaused(true)
+        advance(3)
+        XCTAssertEqual(state.recordingActiveElapsedMilliseconds(), 10_000, "optimistically frozen")
+        state.handleEvent(["type": "ack", "command": "set_recording_pause", "outcome": "reject",
+                           "id": try XCTUnwrap(commands().last?["id"] as? String), "reason": "pause needs push-to-talk"])
+        XCTAssertFalse(state.isRecordingPaused)
+        XCTAssertEqual(state.recordingActiveElapsedMilliseconds(), 13_000)
+        advance(2)
+        XCTAssertEqual(state.recordingActiveElapsedMilliseconds(), 15_000)
+    }
+
+    /// A refused Resume leaves the take paused exactly where it froze.
+    func testRejectedResumeRefreezesAtTheOriginalPause() throws {
+        let (state, commands, advance) = recordingState()
+        advance(10)
+        state.setRecordingPaused(true)
+        state.handleEvent(["type": "ack", "command": "set_recording_pause", "outcome": "accept",
+                           "id": try XCTUnwrap(commands().last?["id"] as? String)])
+        advance(5)
+        state.setRecordingPaused(false)
+        advance(2)
+        state.handleEvent(["type": "ack", "command": "set_recording_pause", "outcome": "noop",
+                           "id": try XCTUnwrap(commands().last?["id"] as? String), "reason": "stale capture"])
+        XCTAssertTrue(state.isRecordingPaused)
+        XCTAssertEqual(state.recordingActiveElapsedMilliseconds(), 10_000)
+        advance(4)
+        XCTAssertEqual(state.recordingActiveElapsedMilliseconds(), 10_000)
+        // The daemon is still paused, so a later Resume is accepted and counts only time after it.
+        state.setRecordingPaused(false)
+        state.handleEvent(["type": "ack", "command": "set_recording_pause", "outcome": "accept",
+                           "id": try XCTUnwrap(commands().last?["id"] as? String)])
+        advance(1)
+        XCTAssertEqual(state.recordingActiveElapsedMilliseconds(), 11_000)
+    }
+
+    /// #808 reads this clock on every tick; a sampled sequence is monotonic, frozen while paused, and resets per take.
+    func testElapsedClockIsTheSingleTickSource() throws {
+        let (state, commands, advance) = recordingState()
+        let tick: () -> Int = state.recordingActiveElapsedMilliseconds
+        var samples: [Int] = []
+        for _ in 0 ..< 4 { advance(0.25); samples.append(tick()) }
+        state.setRecordingPaused(true)
+        state.handleEvent(["type": "ack", "command": "set_recording_pause", "outcome": "accept",
+                           "id": try XCTUnwrap(commands().last?["id"] as? String)])
+        for _ in 0 ..< 4 { advance(0.25); samples.append(tick()) }
+        state.setRecordingPaused(false)
+        for _ in 0 ..< 2 { advance(0.25); samples.append(tick()) }
+        XCTAssertEqual(samples, [250, 500, 750, 1_000, 1_000, 1_000, 1_000, 1_000, 1_250, 1_500])
+    }
+
+    /// A take whose `recording` event carries no capture id never sends the previous take's id.
+    func testNextTakeDoesNotInheritTheCaptureID() throws {
+        let (state, commands, _) = recordingState(captureID: 7)
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
+        state.setRecordingPaused(true)
+        XCTAssertNil(try XCTUnwrap(commands().last)["capture_id"])
+    }
+
     func testVADRecordingCannotPause() {
         let (state, commands, _) = recordingState(mode: "vad")
         state.setRecordingPaused(true)

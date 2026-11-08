@@ -703,6 +703,11 @@ export interface RecordingCaptureState {
   /** Recording pause: the take's paused spans, written to the archive as `paused_spans`. */
   pausedSpans?: RecordingPauseSpan[];
   /**
+   * The take ended while paused. Its end is the Pause click, not the user's own end of speech, so STT, the
+   * archive and recovery all keep the complete gated PCM: no trailing-silence trim and no physical-stop cut.
+   */
+  endedWhilePaused?: true;
+  /**
    * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
    * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
    * F5 press, so its late-record-start recovery claims the ask and auto-pastes the answer into
@@ -2558,6 +2563,7 @@ export async function recordToBuffer(
       let finishError = error;
       const capturedChunks = [...pcmChunks, ...drainPendingCapturedPcm()];
       if (captureState && pauseGate) {
+        if (pauseGate.isPaused()) captureState.endedWhilePaused = true;
         // A take that ends while paused closes its open span here.
         const spans = pauseGate.spans(Date.now());
         if (spans.length > 0) captureState.pausedSpans = spans;
@@ -3313,7 +3319,9 @@ export async function waitForInput(
     pcmData: pttDecodePcm, trimmed: pttDecodePcm.byteLength < pcmData.byteLength,
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pttDecodePcm),
-  } : hasMicLossEvidence ? {
+  } : hasMicLossEvidence || captureState.endedWhilePaused ? {
+    // Recording pause: a take stopped while paused ends at the click, so a quiet tail before it may be
+    // quiet speech; STT gets every gated byte, exactly as archived (Etan's law: never trim his words).
     pcmData, trimmed: false,
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pcmData),

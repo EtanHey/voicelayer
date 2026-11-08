@@ -431,6 +431,8 @@ public final class VoiceState {
                 resetRecordingHold()
                 resetRecordingPause()
             }
+            // A finished take's capture id must never ride on the next take's Pause.
+            if oldValue == .recording, mode != .recording { recordingCaptureID = nil }
             notifyPanelLayoutChangedIfNeeded(oldValue != mode)
         }
     }
@@ -531,7 +533,14 @@ public final class VoiceState {
     /// Recording pause (Etan, 2026-11-08): the daemon stops adding audio to the PTT take until Resume. This mirrors
     /// that optimistically, like Lock; the daemon owns the audio gate and its silence deadline.
     public private(set) var isRecordingPaused = false
-    private var pendingRecordingPause: (id: String, previous: Bool)?
+    /// The optimistic intent in flight, with the clock bookkeeping from before it, so a refused intent restores
+    /// the clock exactly: the daemon never paused (or never resumed), so no time may be added or lost.
+    private var pendingRecordingPause: (id: String, previous: RecordingPauseClock)?
+    private struct RecordingPauseClock {
+        var isPaused: Bool
+        var pausedAtUptimeMs: Int?
+        var pausedTotalMs: Int
+    }
     /// The daemon's `capture_id` for the live take, so a late Pause cannot reach the next take.
     private var recordingCaptureID: Int?
     private var recordingPausedAtUptimeMs: Int?
@@ -2322,14 +2331,21 @@ public final class VoiceState {
         guard paused != isRecordingPaused else { return }
 
         let id = UUID().uuidString
-        pendingRecordingPause = (id: id, previous: isRecordingPaused)
+        pendingRecordingPause = (id: id, previous: RecordingPauseClock(
+            isPaused: isRecordingPaused,
+            pausedAtUptimeMs: recordingPausedAtUptimeMs,
+            pausedTotalMs: recordingPausedTotalMs
+        ))
         applyRecordingPause(paused)
         var command: [String: Any] = ["cmd": IntentCommand.setRecordingPause.rawValue, "paused": paused, "id": id]
         if let recordingCaptureID { command["capture_id"] = recordingCaptureID }
         sendCommand?(command)
     }
 
-    /// Recording time with paused time left out; it stands still while the take is paused.
+    /// The single elapsed source for the recording clock: time since the take's `recording` event with paused
+    /// time left out. It stands still while paused, so a visible clock (#808) reads it on every tick. It follows
+    /// the optimistic Pause/Resume state and excludes the daemon's 200 ms click tail, so it is the time the user
+    /// spent unpaused, not the archived audio duration.
     public func recordingActiveElapsedMilliseconds() -> Int {
         guard mode == .recording, let startedAt = recordingStateUptimeMs else { return 0 }
         let now = recordingPausedAtUptimeMs ?? currentRecordingUptimeMs()
@@ -5773,7 +5789,10 @@ public final class VoiceState {
             let alreadyThere = ack.outcome == .noop && (ack.reason == "already paused" || ack.reason == "not paused")
             self.pendingRecordingPause = nil
             if ack.outcome != .accept, !alreadyThere, mode == .recording {
-                applyRecordingPause(pendingRecordingPause.previous)
+                let previous = pendingRecordingPause.previous
+                isRecordingPaused = previous.isPaused
+                recordingPausedAtUptimeMs = previous.pausedAtUptimeMs
+                recordingPausedTotalMs = previous.pausedTotalMs
             }
             return
         }
