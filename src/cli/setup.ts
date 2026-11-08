@@ -435,17 +435,13 @@ async function restoreSetupAvailability(packageRoot: string): Promise<void> {
   if (failures.length) failures.push(...await writeSetupAgents(packageRoot, false));
   for (let n = 0; n < 50 && !canonicalVoiceBarRunning(); n++) await Bun.sleep(100);
   if (!canonicalVoiceBarRunning()) {
-    const job = Bun.spawnSync(["launchctl", "print", `gui/${process.getuid!()}/com.voicelayer.voicebar`], { env: process.env, stdout: "pipe", stderr: "pipe" });
-    // A loaded job that is starting/running owns the launch. Only a job which
-    // never started (or is absent) permits the LaunchServices fallback.
-    if (job.exitCode !== 0 || /state = (not running|exited)/.test(job.stdout.toString())) {
-      if (hasLiveInstallerController()) throw Error("live controller owns restoration");
-      try { await runCommand(["open", VOICEBAR_APP_PATH]); } catch (error) { failures.push(error); }
-      for (let n = 0; n < 50 && !canonicalVoiceBarRunning(); n++) await Bun.sleep(100);
-    }
+    if (hasLiveInstallerController()) throw Error("live controller owns restoration");
+    try { await runCommand(["bash", join(packageRoot, "scripts/start-voicebar.sh")]); }
+    catch (error) { failures.push(error); }
   }
   for (const error of failures) recoveryRequired(error);
   if (!canonicalVoiceBarRunning()) throw Error("VoiceBar could not be made to run from the final canonical bundle; plists retained");
+  await runCommand(["bash", join(packageRoot, "scripts/start-voicebar.sh"), "--verify-only"]);
 }
 
 async function runCaskPostflight(packageRoot: string): Promise<"controller" | "restored"> {

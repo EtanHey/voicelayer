@@ -27,7 +27,7 @@ function fixture(fault = "", formula = false) {
     symlinkSync(Bun.which(tool)!, join(bin, tool));
   for (const file of ["src/update-gate-installer.ts", "src/update-gate-admission.ts", "src/update-gate-storage.ts", "src/paths.ts"])
     symlinkSync(join(process.cwd(), file), join(root, file));
-  for (const file of ["src/cli/voicelayer.sh", "src/cli/setup.ts", "scripts/lib/update-gate.sh",
+  for (const file of ["src/cli/voicelayer.sh", "src/cli/setup.ts", "scripts/start-voicebar.sh", "scripts/lib/update-gate.sh",
     "scripts/voicelayer-dedupe-voicebar.sh", "scripts/lib/voicebar-launchagent.sh", "scripts/lib/voicebar-bundle-identity.sh",
     "scripts/install-voicebar-autostart.sh", "scripts/install-voicebar-f5-hidutil.sh", "scripts/apply-voicebar-f5-hidutil.sh",
     "launchd/com.voicelayer.voicebar.plist", "launchd/com.voicelayer.f5-to-f18-hidutil.plist"])
@@ -38,9 +38,9 @@ function fixture(fault = "", formula = false) {
       .replaceAll("^/(opt/homebrew|usr/local)/Cellar/", `^${fixtureRoot}/(opt/homebrew|usr/local)/Cellar/`), { mode: 0o755 });
   const proof = join(root, "proof"); writeFileSync(proof, JSON.stringify({ phase: "idle", ready: true }));
   process.env.VOICELAYER_UPDATE_GATE_PATH = gate; process.env.VOICELAYER_TEST_INSTALL_PROOF = proof;
-  const simulation = { ROOT: root, APP: app, FAULT: fault, VOICEBAR_LEGACY_LOG_DIR: join(root, "legacy"),
+  const simulation = { ROOT: root, APP: app, FAULT: fault, VOICEBAR_LAUNCH_WAIT_ATTEMPTS: "2", VOICEBAR_LEGACY_LOG_DIR: join(root, "legacy"),
     VOICELAYER_TEST_BUN_CANDIDATES: join(bin, "bun"), ...Object.fromEntries(Object.entries(process.env)
-      .filter(([key]) => (key.startsWith("VOICELAYER_") && !["VOICELAYER_INSTALL_OPERATION", "VOICELAYER_SUPERVISED_BOOTSTRAP", "VOICELAYER_UPDATE_TARGET_SHA"].includes(key)) || key.startsWith("QA_VOICE_"))) };
+      .filter(([key, value]) => typeof value === "string" && ((key.startsWith("VOICELAYER_") && !["VOICELAYER_INSTALL_OPERATION", "VOICELAYER_SUPERVISED_BOOTSTRAP", "VOICELAYER_UPDATE_TARGET_SHA"].includes(key)) || key.startsWith("QA_VOICE_")))) };
   const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
   const preamble = Object.entries(simulation).map(([k, v]) => `export ${k}=${quote(v!)}`).join("\n");
   const stub = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/bash\n${preamble}\n${body}\n`, { mode: 0o755 });
@@ -55,7 +55,7 @@ function fixture(fault = "", formula = false) {
 if [[ -f "$ROOT/lease-active" && "$1" != remove && "$1" != print && "$1" != list ]]; then echo EARLY_START >&2; exit 98; fi
 case "$1" in
   remove|bootout) rm -f "$ROOT/loaded-\${2##*/}";;
-  print|list) [[ -f "$ROOT/loaded-\${2##*/}" ]] || exit 1; [[ ! -f "$ROOT/started" ]] || echo 'state = running';;
+  print|list) [[ -f "$ROOT/loaded-\${2##*/}" ]] || exit 1; [[ ! -f "$ROOT/started" ]] || { echo 'state = running'; echo 'pid = 101'; };;
   bootstrap) label="\${3##*/}"; label="\${label%.plist}"; : > "$ROOT/loaded-$label"
     if [[ "$label" == com.voicelayer.voicebar && "$FAULT" != waiting && "$FAULT" != nostart && "$FAULT" != loaded-stopped ]]; then
       echo "$APP/Contents/MacOS/VoiceBar" > "$ROOT/running"; cp "$APP/version" "$ROOT/running-version"; : > "$ROOT/started"; fi;;
@@ -272,7 +272,13 @@ for (const participant of ["VoiceBar", "bun src/mcp-server-daemon.ts", "bun src/
     writeFileSync(join(f.root, "participant"), `101 ${participant}\n`);
     if (participant !== "VoiceBar") writeFileSync(join(f.root, "running"), "");
     const r = f.setup({}, "--cask-postflight");
-    expect(r.exitCode).toBe(0); // G4d keeps the canonical bundle, but never initializes UNKNOWN.
+    // An existing unowned VoiceBar stays alive, but cannot report launchd success.
+    expect(r.exitCode).toBe(participant === "VoiceBar" ? 1 : 0);
+    if (participant === "VoiceBar") {
+      expect(r.stderr.toString()).toContain("launchd");
+      expect(readFileSync(join(f.root, "running"), "utf8")).toContain("VoiceBar");
+      expect(readFileSync(join(f.root, "calls"), "utf8")).not.toContain("kickstart");
+    }
     expect(r.stderr.toString()).toContain("RECOVERY_REQUIRED");
     expect(r.stderr.toString()).toContain("no live voice participants");
     expect(existsSync(f.gate)).toBe(false);

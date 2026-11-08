@@ -24,6 +24,7 @@ if [[ "${VOICELAYER_TEST_ISOLATED:-}" == 1 ]]; then
   [[ "$isolated_tool_dir" == "$isolated_root/"* ]] || exit 1
 fi
 source "$ROOT_DIR/scripts/lib/update-gate.sh"
+source "$ROOT_DIR/scripts/lib/voicebar-launchagent.sh"
 UPDATE_GATE_ARGS=("$@")
 LABEL="com.voicelayer.voicebar"
 PLIST_SRC="$ROOT_DIR/launchd/$LABEL.plist"
@@ -190,7 +191,7 @@ release_quarantine() {
 reload_launch_agent() {
   unload_launch_agent
   launchctl bootstrap "$DOMAIN" "$PLIST_DST"
-  launchctl kickstart "$DOMAIN/$LABEL"
+  voicebar_start_launchd "$VOICEBAR_APP"
 }
 
 while [[ "$#" -gt 0 ]]; do
@@ -258,7 +259,10 @@ if [[ "$RESTORE_AVAILABILITY" -eq 1 ]]; then
   "$runtime" "$ROOT_DIR/src/update-gate-installer.ts" --setup-availability || exit 1
   mkdir -p "$HOME/Library/LaunchAgents"
   write_plist
-  if pgrep -x VoiceBar >/dev/null 2>&1; then exit 0; else status=$?; fi
+  if pgrep -x VoiceBar >/dev/null 2>&1; then
+    voicebar_verify_launchd "$VOICEBAR_APP" || { echo 'ERROR: resident VoiceBar is not owned by launchd' >&2; exit 1; }
+    exit 0
+  else status=$?; fi
   [[ "$status" -eq 1 ]] || exit 1
   release_quarantine
   prepare_log_dir
@@ -267,10 +271,7 @@ if [[ "$RESTORE_AVAILABILITY" -eq 1 ]]; then
   if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     launchctl bootstrap "$DOMAIN" "$PLIST_DST"
   fi
-  # bootstrap may have RunAtLoad-started it already. Never kick a running bar.
-  if pgrep -x VoiceBar >/dev/null 2>&1; then exit 0; else status=$?; fi
-  [[ "$status" -eq 1 ]] || exit 1
-  launchctl kickstart "$DOMAIN/$LABEL"
+  voicebar_start_launchd "$VOICEBAR_APP"
   exit 0
 fi
 if [[ "$RELOAD" -eq 1 ]]; then
@@ -322,6 +323,6 @@ if [[ "$NO_START" -eq 1 || "$PRESERVE_LOAD_STATE" -eq 1 ]]; then
 fi
 
 launchctl bootstrap "$DOMAIN" "$PLIST_DST"
-launchctl kickstart "$DOMAIN/$LABEL"
+voicebar_start_launchd "$VOICEBAR_APP"
 
 echo "Installed $LABEL"

@@ -13,7 +13,15 @@
     "src/update-gate.ts",
     "src/update-gate-installer.ts",
     "src/mcp-server-daemon.ts",
-    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift"
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift",
+    "scripts/lib/voicebar-launchagent.sh",
+    "scripts/start-voicebar.sh",
+    "src/update-gate-bootstrap.ts",
+    "src/voice-bar-launcher.ts",
+    "src/cli/voicelayer.sh",
+    "flow-bar/build-app.sh",
+    "scripts/lib/qa-candidate-lifecycle.py",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift"
   ],
   "checks": {
     "Fixed": {

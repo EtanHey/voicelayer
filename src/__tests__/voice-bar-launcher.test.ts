@@ -1,56 +1,27 @@
-import { describe, it, expect, beforeEach } from "bun:test";
-
-/**
- * Tests for Voice Bar status checker (post-architecture-inversion).
- *
- * VoiceBar is now a persistent server. MCP doesn't auto-launch it.
- * ensureVoiceBarRunning() only checks + warns.
- */
-
-import {
-  ensureVoiceBarRunning,
-  resetLaunchState,
-  isVoiceBarRunning,
-} from "../voice-bar-launcher";
-
-// Real subprocesses: standalone p95 <= 36 ms; 4x rounded up, with a 5 s scheduling floor.
-const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
-
-describe("voice-bar-launcher", () => {
-  beforeEach(() => {
+import { afterEach, expect, spyOn, test } from "bun:test";
+import { ensureVoiceBarRunning, resetLaunchState, isVoiceBarRunning } from "../voice-bar-launcher";
+afterEach(resetLaunchState);
+for (const state of ["running", "absent", "failed"] as const) {
+  test(`MCP startup uses the shared launchd starter: ${state}`, () => {
     resetLaunchState();
+    const commands: string[][] = [];
+    const spawn = spyOn(Bun, "spawnSync").mockImplementation((command, options) => {
+      const args = command as string[]; commands.push(args);
+      if (args[0] !== "pgrep") expect(options?.env).toBe(process.env);
+      return { exitCode: args[0] === "pgrep" ? state === "running" ? 0 : 1 : state === "failed" ? 1 : 0 } as ReturnType<typeof Bun.spawnSync>;
+    });
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(isVoiceBarRunning()).toBe(state === "running");
+      ensureVoiceBarRunning(); ensureVoiceBarRunning();
+      const starts = commands.filter(args => args[0] !== "pgrep");
+      expect(starts).toHaveLength(state === "running" ? 0 : 1);
+      if (starts.length) {
+        expect(starts[0]![0]).toBe("/bin/bash");
+        expect(starts[0]![1]).toEndWith("/scripts/start-voicebar.sh");
+      }
+      expect(commands.flat()).not.toContain("open");
+      if (state === "failed") expect(log.mock.calls.flat().join(" ")).toContain("launchd startup/ownership verification failed");
+    } finally { spawn.mockRestore(); log.mockRestore(); }
   });
-
-  describe("ensureVoiceBarRunning", () => {
-    it("returns without error (check-only, no launch)", () => {
-      expect(() => ensureVoiceBarRunning()).not.toThrow();
-    }, SUBPROCESS_TEST_TIMEOUT_MS);
-
-    it("only checks once per session (idempotent)", () => {
-      ensureVoiceBarRunning();
-      ensureVoiceBarRunning();
-      // No crash = pass
-    }, SUBPROCESS_TEST_TIMEOUT_MS);
-
-    it("sets check-attempted flag after first call", () => {
-      ensureVoiceBarRunning();
-      const start = performance.now();
-      ensureVoiceBarRunning();
-      const elapsed = performance.now() - start;
-      expect(elapsed).toBeLessThan(5);
-    }, SUBPROCESS_TEST_TIMEOUT_MS);
-
-    it("resets properly with resetLaunchState", () => {
-      ensureVoiceBarRunning();
-      resetLaunchState();
-      expect(() => ensureVoiceBarRunning()).not.toThrow();
-    }, SUBPROCESS_TEST_TIMEOUT_MS);
-  });
-
-  describe("isVoiceBarRunning", () => {
-    it("returns a boolean", () => {
-      const result = isVoiceBarRunning();
-      expect(typeof result).toBe("boolean");
-    }, SUBPROCESS_TEST_TIMEOUT_MS);
-  });
-});
+}
