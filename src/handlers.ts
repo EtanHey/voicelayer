@@ -33,7 +33,6 @@ import {
   getPlaybackQueueDepth,
   holdReadForAsk,
   type AskReadHoldHandle,
-  preemptLongRead,
   releaseAskReadSuccessor,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
@@ -883,11 +882,12 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // leak audio if the recording state changes while the caller waits.
     assertSpeakerClear();
 
-    // Lane B: park the read on screen at its exact word (never cancel it); only a read that cannot be parked is
-    // preempted. Then wait for physical playback exit (P0-2: awaits full queue) before Ask borrows the speaker.
-    // The ask's recorder exit (or its end) restores the read.
+    // Lane B: park the read on screen at its exact word; an ask never cancels a read nor empties the narration queue
+    // (statechart gaps 1 and 2). Another ask still owning capture refuses this one before the read is touched. Then
+    // wait for physical playback exit (P0-2: awaits full queue) before Ask borrows the speaker. The ask's recorder
+    // exit (or its end) restores the read.
     readHold ??= holdReadForAsk();
-    preemptLongRead("ask");
+    if (readHold.refused) return { kind: "capture-owned" };
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };

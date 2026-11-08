@@ -31,6 +31,7 @@ import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
+import { TEST_TMP } from "./setup/test-tmp";
 import { planProsody } from "../tts/prosody";
 import { projectSpeakableText } from "../speakable-text";
 import { PreparedReadStart } from "../tts/selection-read-preparation";
@@ -1439,6 +1440,53 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(playbackSessionViolations()).toEqual([]);
   });
 
+  // Statechart gap 1: a read still synthesizing its first chunk behind short agent speech. The old hold paused its
+  // admission through pausePlayback, which the agent's playing job refused as stale; preemptLongRead("ask") then
+  // cancelled the read. The admission is parked directly now and the read plays once the ask is over.
+  it("statechart gap 1: voice_ask over a read preparing behind agent speech parks it (never cancels it)", async () => {
+    holdSynth = true; holdFirstSynth = true;
+    const agentWords = [{ text: "Agent", offset_ms: 0, duration_ms: 400 }, { text: "speech.", offset_ms: 400, duration_ms: 400 }];
+    const agentFile = join(mkdtempSync(join(TEST_TMP, "gap1-")), "agent.mp3");
+    writeFileSync(agentFile, "fake audio");
+    const agent = playAudioNonBlocking(agentFile, { text: "Agent speech.", voice: "fixture", durationMs: 800, wordBoundaries: agentWords });
+    const agentPlayer = await playerBarrier.at(0);
+    const read = start("edge", "Charlie reads behind the agent.");
+    await synthBarrier.at(0);
+    // Only the read's first chunk stays synthesizing; the ask's own prompt synthesizes normally.
+    holdSynth = false;
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    expect(synths[0].killed, "the read's synthesis keeps going").toBe(false);
+    expect(events.some(e => e.type === "playback_outcome" && /Charlie/.test(e.text ?? ""))).toBe(false);
+    // The ask waits for the agent's short speech (FX-2), then asks; the read waits parked.
+    autoPlay = true; agentPlayer.exit.resolve(0); await agent.exited;
+    expect((await answer).isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
+    synths[0].exit.resolve(0);
+    for (let i = 0; i < 20; i++) await fixtureCheckpoint();
+    await read.done;
+    expect(events.filter(e => e.type === "state" && e.state === "speaking" && /Charlie/.test(e.text ?? "")).length).toBeGreaterThan(0);
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  // Statechart gap 3: the runner's seek (a word click across chunks) reaches the engine as Seek / SeekDone.
+  it("statechart gap 3: a cross-chunk word seek drives the engine through seeking at its word", async () => {
+    const { playbackSessionEngine } = await import("../playback/ledger");
+    const h = start();
+    await playerBarrier.at(0);
+    let wait = 0;
+    while (!events.some(e => e.type === "speech_words" && e.wordOffset > 0) && wait++ < 50) await fixtureCheckpoint();
+    const next = events.find(e => e.type === "speech_words" && e.wordOffset > 0);
+    expect(tts.seekSpeechWord(h.id, next.wordOffset, "gap3")).toMatchObject({ outcome: "accept" });
+    await playerBarrier.at(1); await fixtureCheckpoint();
+    const log = playbackSessionEngine().log.filter(entry => entry.id === h.id);
+    expect(log.find(entry => entry.event === "seek")).toMatchObject({ from: "playing", to: "seeking" });
+    expect(log.map(entry => entry.event).slice(-3)).toEqual(["seek", "seek-done", "ready"]);
+    expect(playbackSessionEngine().get(h.id)).toMatchObject({ state: "playing", cursor: next.wordOffset });
+    stopPlayback(); await h.done;
+  });
+
   it("records long-read first audio at player spawn once, including held preparation", async () => {
     recordFirstAudio("long", 9999); recordFirstAudio("short", 1234);
     const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
@@ -2457,17 +2505,24 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(receipts("B")).toEqual([]);
     });
 
-    it("QUEUE1b SOL-R2-2: Ask after teardown ends the retained queue; a fresh D never runs into B", async () => {
+    // Statechart gap 2 (Lane B, supersedes QUEUE1b SOL-R2-2's Ask row): an ask never touches the narration queue. An
+    // ask that parks nothing (no read on screen) used to empty the reads F5 retained; they now survive it, exactly as
+    // they survive the capture, and a fresh D plays with them still queued behind it. Agent speech still ends them.
+    it("statechart gap 2: an Ask that parks nothing keeps the retained queue; a fresh D plays with B and C behind it", async () => {
       await suspendedBehindA();
       autoPlay = true;
       spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
       spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "an answer")));
       await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
       await settle();
-      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+      // D plays now (its player held open); the retained B and C wait behind it, as after a capture.
+      autoPlay = false;
       select("D", "Delta fresh selection.");
       await settle(); await settle();
+      expect(receipts("D").length).toBeGreaterThan(0);
       expect(receipts("B")).toEqual([]);
+      expect(lastQueue()).toMatchObject({ count: 2, current_request_id: "D" });
     });
 
     it("an agent voice_speak keeps its priority: it preempts the user's read as before and ends the user queue", async () => {

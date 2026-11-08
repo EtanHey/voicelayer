@@ -13,7 +13,7 @@ import * as booking from "../session-booking";
 import { handleVoiceAsk } from "../handlers";
 import { handleSocketCommand } from "../socket-handlers";
 import { addToHistory } from "../tts";
-import { playbackSessionViolations, resetPlaybackSessionLedger } from "../playback/ledger";
+import { ledgerSnapshot, playbackSessionEngine, playbackSessionViolations, resetPlaybackSessionLedger } from "../playback/ledger";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { TTS_HISTORY_FILE } from "../paths";
 import { dirname, join } from "path";
@@ -210,6 +210,49 @@ describe("socket E2E: the playback engine through real commands (VoiceBar's wire
   });
 });
 
+/** BRIEF-B-MODEL-GAPS (statechart "Where code and model disagree"), fail-first per item. */
+describe("statechart gap 3: a live seek or speed change drives the engine's Seek / SeekDone", () => {
+  const transitions = (id = "read-1") => playbackSessionEngine().log.filter(entry => entry.id === id).map(entry => entry.event);
+
+  it("a socket seek goes playing -> seeking -> preparing -> playing at its word, with the invariants checked", async () => {
+    read();
+    await players.at(0);
+    at(1500);
+    expect(await handleSocketCommand({ cmd: "seek", offset_ms: 6000 })).toMatchObject({ outcome: "accept", offset_ms: 6000 });
+    (await trims.at(0)).exit.resolve(0);
+    await players.at(1); await fixtureCheckpoint();
+    expect(transitions()).toEqual(["start", "ready", "seek", "seek-done", "ready"]);
+    expect(playbackSessionEngine().log.find(entry => entry.event === "seek")).toMatchObject({ from: "playing", to: "seeking" });
+    expect(ledgerSnapshot()).toMatchObject({ phase: "playing", session_id: "read-1", word_index: 6 });
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  it("set_playback_speed restarts the player through the same Seek / SeekDone at the word it is on", async () => {
+    read();
+    await players.at(0);
+    at(3400);
+    expect(await handleSocketCommand({ cmd: "set_playback_speed", speed: 1.5 })).toMatchObject({ outcome: "accept" });
+    (await trims.at(0)).exit.resolve(0);
+    await players.at(1); await fixtureCheckpoint();
+    expect(transitions()).toEqual(["start", "ready", "seek", "seek-done", "ready"]);
+    expect(ledgerSnapshot()).toMatchObject({ phase: "playing", word_index: 3, speed: 1.5 });
+    expect(playbackSessionViolations()).toEqual([]);
+    await handleSocketCommand({ cmd: "set_playback_speed", speed: 1 });
+  });
+
+  it("a pause between the seek's commit and its new player lands on the seek's word (SeekDone, then Pause)", async () => {
+    read();
+    await players.at(0);
+    at(1500);
+    await handleSocketCommand({ cmd: "seek", offset_ms: 6000 });
+    (await trims.at(0)).exit.resolve(0);
+    await fixtureCheckpoint();
+    expect(await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 0 })).toMatchObject({ outcome: "accept", offset_ms: 6000 });
+    expect(ledgerSnapshot()).toMatchObject({ phase: "paused", word_index: 6 });
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+});
+
 describe("socket E2E: voice_ask over a read (parks and restores, twice back to back)", () => {
   let asks: ReturnType<typeof spyOn>[] = [];
   let captures = 0;
@@ -371,6 +414,145 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     expect(states("paused").at(-1)).toMatchObject({ word_index: 6, offset_ms: 6000, pause_owner: "user" });
     expect(await handleSocketCommand({ cmd: "resume" })).toMatchObject({ outcome: "accept", offset_ms: 6000 });
     await players.at(2);
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  /** Statechart gap 1: the queue refused to park in these cases and preemptLongRead("ask") cancelled the read (or the
+   * engine recorded a park the player never made). An ask never cancels a read: each case parks it. */
+  it("gap 1: a read queued behind short agent speech is parked where it waits, and plays from its word after the ask", async () => {
+    const agent = tts.playAudioNonBlocking(`${TEST_TMP}/agent.mp3`, { text: "Agent note.", voice: "test", durationMs: 1000,
+      wordBoundaries: [{ text: "Agent", offset_ms: 0, duration_ms: 500 }, { text: "note.", offset_ms: 500, duration_ms: 500 }] });
+    const queued = read();
+    const short = await players.at(0);
+    const answer = handleVoiceAsk({ message: "Question behind agent speech?", timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    // Parked by the ask while it still waited behind the agent's speech: never cancelled.
+    expect(states("paused").at(-1)).toMatchObject({ word_index: 0, long_read: { id: "read-1" } });
+    expect(playbackSessionEngine().ask).toBe("waiting");
+    expect(events.some(e => e.type === "playback_outcome" && e.long_read?.id === "read-1")).toBe(false);
+    // Short agent speech keeps the wait contract: the ask's prompt follows it.
+    short.exit.resolve(0); expect((await agent.exited).status).toBe("completed");
+    const prompt = await players.at(1); await fixtureCheckpoint();
+    prompt.exit.resolve(0);
+    expect((await answer).content[0].text).toContain("answer 1");
+    const resumed = await players.at(2); await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text, playback_offset_ms: 0 });
+    expect(playbackSessionViolations()).toEqual([]);
+    resumed.exit.resolve(0);
+    expect((await queued.exited).status).toBe("completed");
+  });
+
+  it("gap 1: a critical-priority read is parked at its word and restored from it (the critical guard refused it)", async () => {
+    const handle = tts.playAudioNonBlocking(`${TEST_TMP}/critical.mp3`, { text, voice: "test", durationMs: 10_000, wordBoundaries: words,
+      priority: "critical", longRead: { id: "read-critical", chunk_index: 0, chunk_count: 1, chunk_start_ms: 0 } });
+    await players.at(0);
+    at(3200);
+    const answer = handleVoiceAsk({ message: "Critical question?", timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    expect(states("paused").at(-1)).toMatchObject({ word_index: 3, long_read: { id: "read-critical" } });
+    expect(ledgerSnapshot()).toMatchObject({ parked_by_ask: "read-critical" });
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    (await players.at(1)).exit.resolve(0);
+    expect((await answer).isError).not.toBe(true);
+    await players.at(2); await fixtureCheckpoint();
+    expect(states("resumed").at(-1)).toMatchObject({ word_index: 3, offset_ms: 3000 });
+    expect(playbackSessionViolations()).toEqual([]);
+    void handle.exited;
+  });
+
+  it("gap 1: another ask still owning capture refuses this ask before the read is touched", async () => {
+    const admission = tts.reserveCaptureAdmission()!;
+    expect(admission).toBeDefined();
+    const queued = read();
+    const hold = tts.holdReadForAsk();
+    expect(hold).toMatchObject({ held: false, refused: "capture-owned" });
+    // Neither the player nor the engine moved: no park, no ask, no cancel.
+    expect(ledgerSnapshot()).toMatchObject({ ask: "none", parked_by_ask: null });
+    expect(states("paused")).toHaveLength(0);
+    hold.restore();
+    admission.release();
+    await players.at(0); await fixtureCheckpoint();
+    expect(ledgerSnapshot()).toMatchObject({ phase: "playing", session_id: "read-1" });
+    players.values[0].exit.resolve(0);
+    expect((await queued.exited).status).toBe("completed");
+  });
+
+  it("gap 1: a read the driver still cannot park is ended in the engine too, with the violation kept (never a silent park)", async () => {
+    const handle = read();
+    await players.at(0);
+    at(2200);
+    // The pause refuses while a capture is recording (voice_ask itself checks this first, synchronously).
+    (asks[3] as ReturnType<typeof spyOn>).mockReturnValue("recording");
+    const hold = tts.holdReadForAsk();
+    (asks[3] as ReturnType<typeof spyOn>).mockReturnValue("idle");
+    expect(hold.held).toBe(false);
+    expect((await handle.exited).status).toBe("interrupted");
+    expect(playbackSessionEngine().get("read-1")?.state).toBe("ended");
+    expect(ledgerSnapshot()).toMatchObject({ parked_by_ask: null });
+    expect(playbackSessionViolations()).toEqual(["AskKeepsRead(driver): read-1 could not be parked and was ended"]);
+    hold.restore();
+  });
+
+  it("gap 4: Stop during an ask over a replay ends the ask and the replay; the held read still returns paused at its word", async () => {
+    const earlier = `${TEST_TMP}/earlier-stop.mp3`;
+    writeFileSync(earlier, "fake audio");
+    addToHistory("An earlier read about stopping", earlier, "test", [], { wordBoundaries: "An earlier read about stopping".split(" ")
+      .map((word, i) => ({ text: word, offset_ms: i * 1000, duration_ms: 800 })) });
+    read();
+    await players.at(0);
+    at(5300);
+    await handleSocketCommand({ cmd: "previous_read" });
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    await players.at(1); await fixtureCheckpoint();
+    const answer = handleVoiceAsk({ message: "Question then Stop?", timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    expect(playbackSessionEngine().previousHeld).toBe("read-1");
+    expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+    for (const player of players.values) player.exit.resolve(143);
+    await answer;
+    for (let i = 0; i < 10; i++) await fixtureCheckpoint();
+    // Stop means stop for the ask and the replay it parked; the read held aside was never on screen, so it returns.
+    expect(states("paused").at(-1)).toMatchObject({ word_index: 5, offset_ms: 5000, pause_owner: "user" });
+    expect(ledgerSnapshot()).toMatchObject({ phase: "paused", session_id: "read-1", word_index: 5, ask: "none" });
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  /** Statechart gap 4 (recommended reading): an ask during a previous_read replay parks the REPLAY (the read on screen,
+   * at its word) and keeps the read held aside held; after the ask the replay plays on, then the held read returns. */
+  it("gap 4: an ask during previous_read parks the replay; the held read stays held and returns paused after it", async () => {
+    const earlier = `${TEST_TMP}/earlier-ask.mp3`;
+    writeFileSync(earlier, "fake audio");
+    const replayWords = "An earlier read about Codex and Claude together".split(" ")
+      .map((word, i) => ({ text: word, offset_ms: i * 1000, duration_ms: 800 }));
+    addToHistory("An earlier read about Codex and Claude together", earlier, "test", [], { wordBoundaries: replayWords });
+    read();
+    await players.at(0);
+    at(5300);
+    expect(await handleSocketCommand({ cmd: "previous_read" })).toMatchObject({ outcome: "accept" });
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    const replay = await players.at(1); await fixtureCheckpoint();
+    const replayId = events.filter(e => e.state === "speaking").at(-1).playback_id;
+    const answer = handleVoiceAsk({ message: "Question over the replay?", timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    // The replay was parked by the ask, not cancelled; the read held aside is still held (engine prevHeld).
+    expect(events.some(e => e.type === "playback_outcome" && e.playback_id === replayId)).toBe(false);
+    expect(states("paused").at(-1)).toMatchObject({ playback_id: replayId });
+    expect(playbackSessionEngine().previousHeld).toBe("read-1");
+    expect(playbackSessionEngine().get("read-1")?.state).toBe("queued");
+    expect(ledgerSnapshot()).toMatchObject({ parked_by_ask: playbackSessionEngine().parked?.id });
+    expect(playbackSessionEngine().parked?.id).not.toBe("read-1");
+    void replay;
+    for (const trim of trims.values.slice(1)) trim.exit.resolve(0);
+    await fixtureCheckpoint();
+    (await players.at(2)).exit.resolve(0);
+    expect((await answer).isError).not.toBe(true);
+    // After the ask the replay plays on from its word; the held read waits for it.
+    const replayed = await players.at(3); await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text: "An earlier read about Codex and Claude together" });
+    expect(playbackSessionEngine().previousHeld).toBe("read-1");
+    replayed.exit.resolve(0); await fixtureCheckpoint(); await fixtureCheckpoint();
+    expect(states("paused").at(-1)).toMatchObject({ word_index: 5, offset_ms: 5000, pause_owner: "user" });
+    expect(ledgerSnapshot()).toMatchObject({ phase: "paused", session_id: "read-1", word_index: 5 });
     expect(playbackSessionViolations()).toEqual([]);
   });
 });

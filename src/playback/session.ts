@@ -87,6 +87,11 @@ export class PlaybackSessionEngine {
     return undefined;
   }
 
+  /** Sessions on screen (positioned), for the driver's conformance checks. */
+  positionedSessions(): Readonly<PlaybackSession>[] {
+    return [...this.sessions.values()].filter(session => POSITIONED.has(session.state));
+  }
+
   private positioned(): PlaybackSession | undefined {
     for (const session of this.sessions.values()) if (POSITIONED.has(session.state)) return session;
     return undefined;
@@ -223,6 +228,17 @@ export class PlaybackSessionEngine {
     return ok({ word: to, state: "preparing" });
   }
 
+  /** A chunk boundary inside one read: the next chunk's player continues the same session (logged, generation bumped). */
+  nextChunk(id: string): EngineResult {
+    const session = this.sessions.get(id);
+    if (!session || session.state !== "playing") return no(session ? `session is ${session.state}` : "unknown session");
+    this.move(session, "preparing", "next-chunk");
+    // The previous chunk's player has exited (the driver spawns only then): nothing is left exiting.
+    this.exiting.delete(id);
+    this.preparing.add(id);
+    return ok({ word: session.cursor });
+  }
+
   /** Seek to a word from a playing read. */
   seek(id: string, to: number): EngineResult {
     const session = this.sessions.get(id);
@@ -309,12 +325,17 @@ export class PlaybackSessionEngine {
     return ok({ id, word: session.cursor, state: "paused" });
   }
 
-  /** voice_ask preempts: the positioned read is parked at its exact word, keeping whether it was paused. */
-  askBegin(driverWord?: number): EngineResult {
+  /**
+   * voice_ask preempts: the positioned read is parked at its exact word, keeping whether it was paused.
+   * `only` names the session the driver actually parked (null: it parked nothing), so the engine never records a park
+   * the player does not honour (statechart gap 1). Omitted, the engine parks whatever is positioned (the model's rule).
+   */
+  askBegin(driverWord?: number, only?: string | null): EngineResult {
     if (this.ask !== "none") return no("ask in progress");
     this.ask = "waiting";
     this.record("ask-begin");
-    const session = this.positioned();
+    const named = only === undefined ? this.positioned() : only === null ? undefined : this.sessions.get(only);
+    const session = named && POSITIONED.has(named.state) ? named : undefined;
     if (!session) return ok();
     const from = session.state === "paused" ? "paused" : "playing";
     // A user pause keeps its stored word. Otherwise the driver names the word the audio is on.
