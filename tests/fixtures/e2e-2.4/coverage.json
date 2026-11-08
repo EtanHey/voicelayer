@@ -12,8 +12,8 @@
       "GesturePreviewTimingTests/testLogicalPhasesAndHoldThresholdStayImmediate",
       "GesturePreviewTimingTests/testLogicalPressStillCancelsSelectionCaptureBeforeAnyHint"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "F5 tap, hold, double tap lock, tap again lock, hint timing",
@@ -95,21 +95,22 @@
       "HotkeyManagerTests/testGestureCancelStopsLockedRecordingWithoutTranscribing",
       "HotkeyManagerTests/testHotkeyPermissionStatusRequiresBothListenEventAndAccessibility"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Option F5 read, pause, resume",
     "source": "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift",
     "cases": [
       "F5PauseConformanceTests/testN6TakeSetKeepsF5ReadParkedUntilEveryTakeSettles",
-      "F5PauseConformanceTests/testTLCF5CaptureProjectionDrivesRealRouterAndState",
-      "F5PauseConformanceTests/testNextChunkPauseAdoptionRequiresCurrentReadAndLocalIntent",
-      "F5PauseConformanceTests/testRealDaemonSettlementFramesProjectResumedReadToSpeaking",
-      "F5PauseConformanceTests/testCloneShortChunkedDaemonFramesResumeAtPausedWord"
+      "F5PauseConformanceTests/testNextChunkPauseAdoptionRequiresCurrentReadAndLocalIntent"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {
+      "F5PauseConformanceTests/testTLCF5CaptureProjectionDrivesRealRouterAndState": "formal/speech-queue/check.sh; VOICELAYER_F5_CASES and VOICELAYER_F5_WIRE",
+      "F5PauseConformanceTests/testRealDaemonSettlementFramesProjectResumedReadToSpeaking": "formal/speech-queue/check.sh; VOICELAYER_F5_DAEMON_WIRE",
+      "F5PauseConformanceTests/testCloneShortChunkedDaemonFramesResumeAtPausedWord": "F-resume-clone runtime; VOICELAYER_F5_CLONE_WIRE"
+    },
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Option F5 read, pause, resume",
@@ -122,8 +123,8 @@
       "F5ResumeIdentityTests/testStoppedRefusedAndEmptyQueueSelectionsNeverResurrect",
       "F5ResumeIdentityTests/testSpeakingToIdleWithF5ParkDoesNotSwallowSameTextRead"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Option F5 read, pause, resume",
@@ -158,8 +159,8 @@
       "PlaybackPauseTests/testF5SettlementOnlyDaemonResumesAndLateIdleIsNoop",
       "PlaybackPauseTests/testPreparingPauseOwnerIsControllableBeforeAFirstChunkExists"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Paste target and History fallback",
@@ -190,8 +191,8 @@
       "ReadyTimePasteTests/testShiftF5WithoutOwnFocusedInputDoesNotUsePreviousApp",
       "ReadyTimePasteTests/testOwnProcessWithoutEditorRefusesWithoutQueryingExternalAX"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "iTerm2, Warp, Terminal, cmux, Ghostty whole take typing",
@@ -225,8 +226,8 @@
       "RecordingJobOwnershipTests/testXUsesNewestTakeGuardAndCannotBorrowAnotherTakeGuard",
       "RecordingJobOwnershipTests/testFreshInstanceKeepsRecoveredFinalWithoutRiskingDuplicateInsertion"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Queued recordings spinner and record after record",
@@ -260,8 +261,8 @@
       "RecordingJobOwnershipTests/testXUsesNewestTakeGuardAndCannotBorrowAnotherTakeGuard",
       "RecordingJobOwnershipTests/testFreshInstanceKeepsRecoveredFinalWithoutRiskingDuplicateInsertion"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Queued recordings spinner and record after record",
@@ -342,8 +343,8 @@
       "VoiceStateTests/testRecordingHoldSerializesToggleRequestsUntilAck",
       "VoiceStateTests/testRecordingExitClearsHoldState"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Cancel and hide",
@@ -360,8 +361,8 @@
       "HiddenVoiceBarTests/testF5DictatesAgainOnceShown",
       "HiddenVoiceBarTests/testHideForOneHourHandsItsEndTimeToVoiceState"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Cancel and hide",
@@ -371,8 +372,8 @@
       "PhysicalPressStopTests/testNativeMouseFiveLockedStopCarriesPhysicalPressFlag",
       "PhysicalPressStopTests/testOrdinaryStopRemoteAskAndVADNeverSendPhysicalPressFlag"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "History play, copy, paste, retranscribe, details",
@@ -387,8 +388,8 @@
       "SettingsHistoryArchiveTests/testCancelledBackgroundScanDoesNotMaterializeStaleEntries",
       "SettingsHistoryArchiveTests/testAnUntranscribedRecordingShowsTheStoredReason"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "History play, copy, paste, retranscribe, details",
@@ -410,12 +411,13 @@
       "SettingsSpeechHistoryTests/testNotificationBurstProducesOneLoad",
       "SettingsSpeechHistoryTests/testSeekingToChunkEndContinuesRetainedQueue",
       "SettingsSpeechHistoryTests/testSkippingPastChunkEndContinuesRetainedQueue",
-      "SettingsSpeechHistoryTests/testRetainedChunksPlayInOrderAndStopClearsQueue",
-      "SettingsSpeechHistoryTests/testSpeechHistoryLoadingPresentation",
-      "SettingsSpeechHistoryTests/testSpeechHistoryPresentationInLightAndDark"
+      "SettingsSpeechHistoryTests/testRetainedChunksPlayInOrderAndStopClearsQueue"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {
+      "SettingsSpeechHistoryTests/testSpeechHistoryLoadingPresentation": "opt-in screenshot regeneration",
+      "SettingsSpeechHistoryTests/testSpeechHistoryPresentationInLightAndDark": "opt-in screenshot regeneration"
+    },
+    "kind": "unit/offscreen"
   },
   {
     "flow": "History play, copy, paste, retranscribe, details",
@@ -427,32 +429,8 @@
       "HistoryRetranscribeStateTests/testStartingAReTranscriptionDoesNotMoveTheActions",
       "HistoryRetranscribeStateTests/testAnEntryAlreadyReTranscribingSpinsFromItsFirstFrame"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
-  },
-  {
-    "flow": "History timestamp and day header",
-    "source": "flow-bar/Tests/VoiceBarUITests/SettingsHistoryTimingTests.swift",
-    "cases": [
-      "SettingsHistoryTimingTests/testArchiveMetadataCarriesSpokenAndProcessingTimes",
-      "SettingsHistoryTimingTests/testMicDisconnectNoteLoadsFromMetadataAndShowsOnTheRow",
-      "SettingsHistoryTimingTests/testNoSignalNoteShowsWithoutAClock",
-      "SettingsHistoryTimingTests/testSpokenLengthReplacesTheTrimmedLengthAndProcessingSitsBesideThem",
-      "SettingsHistoryTimingTests/testOldEntriesKeepTheTrimmedLengthAndShowNoProcessing",
-      "SettingsHistoryTimingTests/testSpokenLengthWithinASecondOfTheRecordingIsNotRepeated",
-      "SettingsHistoryTimingTests/testRowStatsNameTheEstimateAndEveryTimeForVoiceOver"
-    ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
-  },
-  {
-    "flow": "History timestamp and day header",
-    "source": "flow-bar/Tests/VoiceBarUITests/HistoryDayBoundaryClipTests.swift",
-    "cases": [
-      "HistoryDayBoundaryClipTests/testTheLastRowOfADayIsNotCoveredByTheNextDaysHeader"
-    ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "History outside close and drag close",
@@ -474,8 +452,8 @@
       "NotchHistoryPanelTests/testRowsShowFirstWordsOnOneFlattenedLine",
       "NotchHistoryPanelTests/testRowActionsAreLabelledIconButtons"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "History outside close and drag close",
@@ -483,8 +461,8 @@
     "cases": [
       "NotchHistoryHandleDragHostTests/testDraggingTheExtendHandleDownSevenRowsCommitsTwelveRows"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Teleprompter and typed feedback",
@@ -502,8 +480,8 @@
       "TeleprompterFormattingTests/testAQuotedSentenceEndCountsAndGlueNeverSplits",
       "TeleprompterFormattingTests/testAHugeTokenOrPunctuationChainIsBoundedAndKeepsItsGroup"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Teleprompter and typed feedback",
@@ -515,8 +493,8 @@
       "VoiceStateCommandModeTests/testCommandModeEventRequestsPanelLayoutRefresh",
       "VoiceStateCommandModeTests/testClipMarkerEventRequestsPanelLayoutRefresh"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Recording wings mic name and time",
@@ -531,8 +509,8 @@
       "WingsU2HostTests/testReadingAloudWithTheTeleprompterShowsTheTimeAndALiveWingStop",
       "WingsU2HostTests/testTheWingStopStopsTheReadWhileTheTeleprompterIsOpen"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Tooltip on every control",
@@ -544,8 +522,8 @@
       "NotchIconButtonTooltipTests/testTranscribingAndErrorButtons",
       "NotchIconButtonTooltipTests/testSpeakingButtons"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Mic priority reorder",
@@ -561,8 +539,8 @@
       "MicrophoneDevicePriorityTests/testExplicitEmptyReplacementClearsSeededStableOrder",
       "MicrophoneDevicePriorityTests/testResolutionReturnsPreferredConnectedDeviceID"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Mic priority reorder",
@@ -574,8 +552,8 @@
       "MicrophonePrioritySettingsTests/testEveryGestureWritesThroughTheSnapshotOrdering",
       "MicrophonePrioritySettingsTests/testTheAppSuppliesTheMousePressTimeForDragSessions"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Dictionary add edit delete",
@@ -595,11 +573,12 @@
       "DictionaryAddExistingTermTests/testSavingTheOpenedTermAddsOnlyTheVariant",
       "DictionaryAddExistingTermTests/testPressingAddOnAnExistingTermOpensItAndTheNextPressSavesAnEditOfIt",
       "DictionaryAddExistingTermTests/testPressingAddOnANewTermStillSavesAtOnce",
-      "DictionaryAddExistingTermTests/testSettingsHandsTheSheetYourTerms",
-      "DictionaryAddExistingTermTests/testWritesTheAddAndOpenedSheetsInLightAndDark"
+      "DictionaryAddExistingTermTests/testSettingsHandsTheSheetYourTerms"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {
+      "DictionaryAddExistingTermTests/testWritesTheAddAndOpenedSheetsInLightAndDark": "opt-in screenshot regeneration"
+    },
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Dictionary add edit delete",
@@ -610,8 +589,8 @@
       "DictionaryRenameSameTermTests/testASpacingOnlyEditOfTheSameTermIsNotARename",
       "DictionaryRenameSameTermTests/testARealRenameStillRenames"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Dictionary add edit delete",
@@ -625,8 +604,8 @@
       "DictionaryDeletionTests/testSelectionAfterDeleteMovesToTheNextRowThenThePrevious",
       "DictionaryDeletionTests/testArrowKeysMoveTheSelectionWithinTheVisibleRows"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Recognizer load unload",
@@ -652,8 +631,8 @@
       "ModelsSettingsStateTests/testEffortNoteNamesTheRunningEffortWhenItDiffersFromTheSetting",
       "ModelsSettingsStateTests/testEffortFactsRemainAvailableForDiagnosticsWithoutAPicker"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Permission fake revocation",
@@ -661,8 +640,8 @@
     "cases": [
       "PermissionHealthAppPropagationTests/testRevokeAndRegrantReachSettingsTheNotchDotAndThePopoverWithoutRelaunch"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
   },
   {
     "flow": "Permission fake revocation",
@@ -676,7 +655,38 @@
       "PermissionHealthTests/testASuccessfulRestartLeavesNoSetupSectionOnceHealthy",
       "PermissionHealthTests/testRenderedGeneralShowsNoSetupRightAfterASuccessfulRestart"
     ],
-    "kind": "unit or offscreen host",
-    "status": "needs scoped run"
+    "deferred": {},
+    "kind": "unit/offscreen"
+  },
+  {
+    "flow": "History timestamp and day header",
+    "source": "flow-bar/Tests/VoiceBarUITests/RecentTranscriptionTimeTests.swift",
+    "cases": [
+      "RecentTranscriptionTimeTests/testRelativeTimesPerRow",
+      "RecentTranscriptionTimeTests/testEntriesSavedBeforeTimesStillLoad",
+      "RecentTranscriptionTimeTests/testANewDictationIsStampedAndARetranscriptionKeepsTheOriginalTime",
+      "RecentTranscriptionTimeTests/testHistoryDayHeaderUsesPinnedLocaleAndZone",
+      "RecentTranscriptionTimeTests/testHistoryClockFormatUsesPinnedLocaleAndZone"
+    ],
+    "deferred": {},
+    "kind": "unit/offscreen"
+  },
+  {
+    "flow": "Measured physical notch control clearance and offscreen renders",
+    "source": "flow-bar/Tests/VoiceBarUITests/E2E24MeasuredGeometryTests.swift",
+    "cases": [
+      "E2E24MeasuredGeometryTests/testMeasuredDisplaysKeepControlsOutsidePhysicalNotchAndRender"
+    ],
+    "deferred": {},
+    "kind": "unit/offscreen"
+  },
+  {
+    "flow": "QA pause resume and word seek outcomes",
+    "source": "flow-bar/Tests/VoiceBarTests/UIE2EPlaybackFixtureTests.swift",
+    "cases": [
+      "UIE2EPlaybackFixtureTests/testPauseResumeAndWordSeekChangeRealVoiceState"
+    ],
+    "deferred": {},
+    "kind": "unit/offscreen"
   }
 ]

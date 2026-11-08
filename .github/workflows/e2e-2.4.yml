@@ -1,20 +1,25 @@
 name: 2.4 isolated E2E
 on:
+  push:
+    branches: [main, integration/2.4]
   pull_request:
-    branches: [integration/2.4]
+    branches: [main, integration/2.4]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   isolated:
-    runs-on: macos-14
-    timeout-minutes: 17
+    runs-on: macos-26
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+      - name: Compile native XCUI cases without launching
+        run: xcodebuild build-for-testing -project flow-bar/UIE2E/VoiceBarUIE2E.xcodeproj -scheme VoiceBarUIE2E -destination "platform=macOS" -derivedDataPath "$PWD/.build.noindex/e2e24-xcui"
       - run: bun install --frozen-lockfile
+      - run: python3 scripts/generate-e2e-2.4-coverage.py --check
       - run: python3 scripts/test-e2e-2.4.py
       - run: bun test tests/e2e-2.4-geometry.test.ts
       - run: bash scripts/e2e-2.4.sh --report .build.noindex/e2e-2.4/report.json

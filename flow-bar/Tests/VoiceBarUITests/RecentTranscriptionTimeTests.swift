@@ -73,3 +73,16 @@ final class RecentTranscriptionTimeTests: XCTestCase {
         XCTAssertEqual(saved.first { $0.recordingPath == "/tmp/r/audio.wav" }?.createdAt, original)
     }
 }
+
+extension RecentTranscriptionTimeTests {
+    func testHistoryDayHeaderUsesPinnedLocaleAndZone() {
+        let date = Date(timeIntervalSince1970: 0)
+        XCTAssertEqual(SettingsHistoryDayGroup(dayKey: "1970-01-01", date: date, entries: []).dayTitle(
+            locale: Locale(identifier: "en_US_POSIX"), timeZone: TimeZone(secondsFromGMT: 0)!), "Jan 1, 1970")
+    }
+    func testHistoryClockFormatUsesPinnedLocaleAndZone() {
+        let date = Date(timeIntervalSince1970: 13 * 3600 + 5 * 60)
+        XCTAssertEqual(SettingsArchiveScanner.shortTimestamp(for: date,
+            locale: Locale(identifier: "en_GB"), timeZone: TimeZone(secondsFromGMT: 0)!), "13:05")
+    }
+}

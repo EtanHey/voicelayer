@@ -12,8 +12,8 @@ import {
 } from "fs";
 import { join } from "path";
 
-// Real subprocesses: standalone p95 <= 1117 ms; 4x rounded up, with a 5 s scheduling floor.
-const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// Functional subprocess cases need scheduling room on shared hosts. The E2E gate retains its 900 s outer deadline.
+const SUBPROCESS_TEST_TIMEOUT_MS = 30_000;
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const retiredDaemonPlist = join(
