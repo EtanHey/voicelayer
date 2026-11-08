@@ -3,8 +3,8 @@
   "kind": "invariant",
   "target": "NeverReapLiveOwner",
   "status": "EXPECTED_FAIL",
-  "generated": 70,
-  "distinct": 67,
+  "generated": 262,
+  "distinct": 259,
   "trace": [
     "/\\ phase = \"OPEN\"\n/\\ available = FALSE\n/\\ scenario = {\"a\"}\n/\\ creation = {}\n/\\ gate = \"OPEN\"\n/\\ created = FALSE\n/\\ participants = [a |-> \"live\", b |-> \"live\"]\n/\\ evidence = {\"a\", \"b\"}\n/\\ mutex = FALSE",
     "/\\ phase = \"OPEN\"\n/\\ available = FALSE\n/\\ scenario = {\"a\"}\n/\\ creation = {\"a\"}\n/\\ gate = \"OPEN\"\n/\\ created = TRUE\n/\\ participants = [a |-> \"live\", b |-> \"live\"]\n/\\ evidence = {\"b\"}\n/\\ mutex = FALSE"

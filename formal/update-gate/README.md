@@ -154,3 +154,10 @@ a drain containing only dead registrations reach PREPARED. ReapOld reproduces
 the stuck ledger; ReapMutantAge violates safety by retiring a live old owner.
 OS identity correctness, crash durability of reason files and native execution
 are outside the model. No age-based lease, lock or registration expiry is modeled.
+
+Round 2 expands the same evidence partition with `reusedOtherUid`, `reusedLegacy`,
+`zombie`, and `legacyUnverifiable`. The first three prove the recorded incarnation
+dead; unverifiable legacy evidence still blocks. No new property is claimed.
+The sysctl layout and the strict birth-after-mtime comparison are checked in source
+tests, not derived from TLC. Retention affects retired proof artifacts only and
+does not change admission state.

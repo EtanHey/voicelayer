@@ -2,7 +2,7 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/update-gate/FirstInstall.tla": "12366a28bf0de7ab3620feb7971ac31efacef287cabb6e9011c3d9b23321e259",
+    "formal/update-gate/FirstInstall.tla": "8d7e670832b87d999422e39149559be8cf3d05838bc8b9495cb2b1e71fd49c4b",
     "formal/update-gate/checks.json": "ba2977db9d0b9d9121172afab5ff0e5dde9d14026e07670219f25ea98cf06f37",
     "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
@@ -45,7 +45,7 @@
     "src/update-gate-installer.ts": "b711bddd0f7edf7a26bf4f68f122c3e4c5ffe67e0fa62793629e15f4cfc9736f",
     "src/mcp-server-daemon.ts": "a920961a9913ed8febcce8e83e4873676108142ea571f89a224eaa793eb8fdf8",
     "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "09462a3194b32f06ef801fa6e58c6fb28927c8d0536d3f5131887a07cb3b1add",
-    "src/update-gate-owner.ts": "3bedf7e3bf108a1ca62fe57abf40ff3fd2bd425df7d69fee6e7182ec52009e3e",
+    "src/update-gate-owner.ts": "94a6efef3240dc751a8600e15630127fcbd67009cca314ca65eb8d60f29ee8ea",
     "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "016564be7bd76aa73d3d8ab781a4304fe5a428e6f6c337b0369cde88052c97f1"
   },
   "mutants": {
@@ -305,24 +305,24 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 512,
-      "distinct": 304
+      "generated": 2280,
+      "distinct": 1452
     },
     "ReapMutantAge": {
       "role": "mutant",
       "kind": "invariant",
       "target": "NeverReapLiveOwner",
       "status": "EXPECTED_FAIL",
-      "generated": 70,
-      "distinct": 67
+      "generated": 262,
+      "distinct": 259
     },
     "ReapOld": {
       "role": "mutant",
       "kind": "temporal",
       "target": "DeadRegistrationsCanPrepare",
       "status": "EXPECTED_FAIL",
-      "generated": 192,
-      "distinct": 128
+      "generated": 640,
+      "distinct": 512
     }
   }
 }

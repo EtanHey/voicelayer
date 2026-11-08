@@ -267,8 +267,9 @@ RecoveryOnlyVerified == creation.recovered => creation.verified
    cannot justify retirement. Reap/Prepare abstract the same held G1 mutex. *)
 reapVars == vars
 OwnerIds == {"a", "b"}
+DeadOwnerEvidence == {"dead", "reused", "reusedOtherUid", "reusedLegacy", "zombie"}
 ReapInit ==
-  /\ participants \in [OwnerIds -> {"live", "dead", "reused", "unknown"}]
+  /\ participants \in [OwnerIds -> {"live", "dead", "reused", "unknown", "reusedOtherUid", "reusedLegacy", "zombie", "legacyUnverifiable"}]
   /\ evidence = OwnerIds /\ creation = {} /\ scenario \in SUBSET OwnerIds
   /\ phase = "OPEN" /\ created = FALSE
   /\ gate = "OPEN" /\ mutex = FALSE /\ available = FALSE
@@ -277,9 +278,9 @@ OwnerDeath(i) ==
   /\ UNCHANGED <<evidence, creation, scenario, phase, created, gate, mutex, available>>
 OwnerReap(i, ageMutant, disabled) ==
   /\ ~disabled /\ i \in evidence
-  /\ (participants[i] \in {"dead", "reused"} \/ (ageMutant /\ i \in scenario))
+  /\ (participants[i] \in DeadOwnerEvidence \/ (ageMutant /\ i \in scenario))
   /\ evidence' = evidence \ {i} /\ creation' = creation \cup {i}
-  /\ created' = (created \/ participants[i] \in {"live", "unknown"})
+  /\ created' = (created \/ participants[i] \notin DeadOwnerEvidence)
   /\ UNCHANGED <<participants, scenario, phase, gate, mutex, available>>
 ReapRequest == /\ phase = "OPEN" /\ phase' = "DRAINING"
                /\ UNCHANGED <<participants, evidence, creation, scenario, created, gate, mutex, available>>
@@ -295,6 +296,6 @@ ReapAgeMutantSpec == ReapSpec(TRUE, FALSE)
 ReapOldSpec == ReapSpec(FALSE, TRUE)
 NeverReapLiveOwner == ~created
 DeadRegistrationsCanPrepare ==
-  (\A i \in evidence: participants[i] \in {"dead", "reused"}) ~> (phase = "PREPARED")
+  (\A i \in evidence: participants[i] \in DeadOwnerEvidence) ~> (phase = "PREPARED")
 
 =============================================================================
