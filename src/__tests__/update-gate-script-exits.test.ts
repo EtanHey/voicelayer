@@ -85,7 +85,7 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
     if [[ "\${TEST_UPDATE:-0}" != 1 ]]; then source "$TEST_ROOT/scripts/lib/voicebar-launchagent.sh"; voicebar_start_launchd "$TEST_APP"; fi
   `, { mode: 0o755 });
   const env = { ...process.env, HOME: join(root, "home"), PATH: bin, TEST_ROOT: root, TEST_APP: app,
-    TEST_ORIGINAL_APP: original, TEST_MANAGED: managed ? "1" : "0", TEST_FAULT: fault,
+    VOICEBAR_LAUNCH_WAIT_ATTEMPTS: "2", TEST_ORIGINAL_APP: original, TEST_MANAGED: managed ? "1" : "0", TEST_FAULT: fault,
     VOICELAYER_INSTALL_OPERATION: "", VOICEBAR_CODESIGN_IDENTITY: "Developer ID Application: Fixture (PPN23G925Y)", VOICELAYER_TEST_BUN_CANDIDATES: join(bin, "bun"),
     VOICELAYER_VERIFY_CHANGED_FILES_FILE: join(root, "changed"), VOICEBAR_LEGACY_LOG_DIR: join(root, "legacy"),
     PLIST_BUDDY: join(bin, "PlistBuddy"), VOICEBAR_PLIST_BUDDY: join(bin, "PlistBuddy"), VOICELAYER_VERIFY_SKIP_BUILD: fault === "skip-build" ? "1" : "0", VOICELAYER_VERIFY_REPO_ROOT: "", VOICEBAR_TEST_BREW_CASK_REGISTERED: "0" };

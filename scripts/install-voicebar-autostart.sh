@@ -259,7 +259,7 @@ if [[ "$RESTORE_AVAILABILITY" -eq 1 ]]; then
   "$runtime" "$ROOT_DIR/src/update-gate-installer.ts" --setup-availability || exit 1
   mkdir -p "$HOME/Library/LaunchAgents"
   write_plist
-  if pgrep -x VoiceBar >/dev/null 2>&1; then
+  if pgrep -U "$(id -u)" -x VoiceBar >/dev/null 2>&1; then
     voicebar_verify_launchd "$VOICEBAR_APP" || { echo 'ERROR: resident VoiceBar is not owned by launchd' >&2; exit 1; }
     exit 0
   else status=$?; fi

@@ -48,6 +48,8 @@ vl_gate_wait_voicebar() {
     return 1
 }
 vl_gate_restore_voicebar() {
+    # The TS supervisor owns restoration after commit, including disabled state.
+    [[ "${VOICELAYER_INSTALL_OPERATION:-}" =~ \"source\"[[:space:]]*:[[:space:]]*\"supervised-bootstrap\" ]] && return 0
     local status
     [[ -n "${VOICELAYER_GATE_RESTORE_APP:-}" ]] || return 0
     if pgrep -U "$(id -u)" -x VoiceBar >/dev/null 2>&1; then

@@ -89,3 +89,22 @@ test("R2 launch wait exceeds native accepted quit and auto-f5 restore uses share
   expect(restore).not.toContain('kickstart_launchd_service "$VOICEBAR_LAUNCHD_LABEL"');
   expect(restore).toContain('bash "$main_root/scripts/start-voicebar.sh"');
 });
+
+test("supervised post-commit failure leaves disabled job to TS restore", () => {
+  const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "supervised-"));
+  const log = join(root, "calls");
+  writeFileSync(log, "");
+  for (const name of ["launchctl", "open"]) writeFileSync(join(root, name),
+    '#!/bin/bash\necho "$*" >> "$CALLS"\nexit 1\n', { mode: 0o755 });
+  writeFileSync(join(root, "pgrep"), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+  const result = Bun.spawnSync(["/bin/bash", "-c",
+    'source "$GATE"; trap vl_gate_restore_exit EXIT; exit 7'], {
+    env: { ...process.env, PATH: root + ":/usr/bin:/bin", CALLS: log,
+      GATE: join(process.cwd(), "scripts/lib/update-gate.sh"),
+      VOICELAYER_INSTALL_OPERATION: JSON.stringify({ source: "supervised-bootstrap" }),
+      VOICELAYER_GATE_RESTORE_APP: "/Applications/VoiceBar.app", VOICEBAR_LAUNCH_WAIT_ATTEMPTS: "1" },
+    stdout: "pipe", stderr: "pipe",
+  });
+  expect(result.exitCode).toBe(7);
+  expect(readFileSync(log, "utf8")).toBe("");
+});
