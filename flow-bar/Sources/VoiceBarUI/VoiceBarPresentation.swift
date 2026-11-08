@@ -275,7 +275,8 @@ public enum VoiceBarPresentation {
                 showsEarlierTakeProcessing: input.showsEarlierTakeProcessing
             ),
             recordingTrailingWingWidth: input.mode == .recording
-                ? VoiceBarNotchContract.recordingTrailingWingWidth
+                ? VoiceBarNotchContract.recordingTrailingWingWidth(
+                    visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
                 : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
                 ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)

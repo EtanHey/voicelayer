@@ -102,35 +102,30 @@ final class RecordingWingLabelTests: XCTestCase {
         XCTAssertTrue(state.isRecordingCaptureOpen)
     }
 
-    /// Review D3: the time and the microphone sit in equal regions either side of the meter, so the meter's centre is
-    /// the wing's centre (within 2 pt) whether or not they show; the wing never changes width when they appear.
+    /// Review D3 on a flat display (no glass-hidden inset): the time on the notch side and an empty region outside
+    /// the meter keep the meter's centre within 2 pt of the wing's whether or not the time shows; the wing never
+    /// changes width when it appears. RecordingWingNotchClearanceTests covers the M4's hidden inset.
     func testTheMeterStaysCentredInTheRecordingWingWithAndWithoutTheLabels() {
-        let material = VoiceBarNotchContract.material
         let inset = VoiceBarNotchContract.fixedWingContentInset
-        let region = VoiceBarRecordingWingLabel.width
-        let spacing = material.compactControlSpacing
+        let gap = VoiceBarRecordingWingLabel.meterGap
         for hold in [false, true] {
             let wing = resolve(.recording, hold: hold).geometry.trailingWingWidth
-            XCTAssertEqual(wing, 2 * inset + 2 * (region + spacing) + WaveformLayout.viewportWidth, accuracy: 0.001)
+            XCTAssertEqual(wing, 2 * inset + VoiceBarRecordingWingLabel.width + 2 * gap + WaveformLayout.viewportWidth +
+                           VoiceBarRecordingWingLabel.outerRegionWidth, accuracy: 0.001)
             XCTAssertEqual(wing, VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001)
-            XCTAssertLessThanOrEqual(wing, 132)
+            XCTAssertEqual(wing, 120, accuracy: 0.001)
             XCTAssertLessThanOrEqual(wing, VoiceBarNotchContract.morphCanvasWingCapacity)
-            // The production HStack order: time region, meter, microphone region, from the wing's inner edge.
-            let meterMinX = inset + region + spacing
-            let meterCentre = meterMinX + WaveformLayout.viewportWidth / 2
-            XCTAssertEqual(meterCentre, wing / 2, accuracy: 2, "the meter is centred whatever the regions show")
+            // The production HStack order: time region, meter, empty outer region, from the wing's inner edge.
+            let meterCentre = inset + VoiceBarRecordingWingLabel.width + gap + WaveformLayout.viewportWidth / 2
+            XCTAssertEqual(meterCentre, wing / 2, accuracy: 2, "the meter is centred whatever the time shows")
             XCTAssertEqual(resolve(.recording, hold: hold).geometry.leadingWingWidth, hold
                 ? VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl
                 : VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
         }
-        for time in ["0:00", "9:59", "10m", "99h"] {
-            XCTAssertLessThanOrEqual(ceil((time as NSString).size(withAttributes: [.font: VoiceBarRecordingWingLabel.timeFont]).width),
-                                     region, "\(time) fits its region")
-        }
         XCTAssertEqual(resolve(.transcribing).geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
     }
 
-    func testBarViewLaysTheRegionsOutSymmetricallyAroundTheMeter() throws {
+    func testBarViewLaysTheTimeBeforeTheMeterAndAnEmptyRegionAfterIt() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/BarView.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
@@ -140,9 +135,9 @@ final class RecordingWingLabelTests: XCTestCase {
             .components(separatedBy: "case .compactStatus")[0]
         let time = try XCTUnwrap(recording.range(of: "VoiceBarRecordingTimeRegion(")).lowerBound
         let meter = try XCTUnwrap(recording.range(of: "notchWaveform")).lowerBound
-        let microphone = try XCTUnwrap(recording.range(of: "VoiceBarRecordingMicrophoneRegion(")).lowerBound
+        let outer = try XCTUnwrap(recording.range(of: "VoiceBarRecordingWingLabel.outerRegionWidth")).lowerBound
         XCTAssertLessThan(time, meter)
-        XCTAssertLessThan(meter, microphone)
+        XCTAssertLessThan(meter, outer)
         XCTAssertTrue(recording.contains("isCaptureOpen: state.isRecordingCaptureOpen"))
         XCTAssertTrue(recording.contains("state.recordingMicrophoneName"))
     }
