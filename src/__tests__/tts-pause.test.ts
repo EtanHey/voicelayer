@@ -221,6 +221,26 @@ describe("P10 queue pause/resume", () => {
     expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toEqual([]);
   });
 
+  // #809 review round 2 (Codex probe, review-809-evidence/reviewer-ts-probes.txt), on the agreed contract: the stale
+  // reject names the current player, its logical read and where its audio sits; the recovery retry carries no client
+  // elapsed, so the daemon pauses at its own cursor (1000), never the old player's 9000.
+  it("Review809 retry after an unseen seek pauses at the daemon's own cursor, not the stale client clock", async () => {
+    await startTenSecondRead();
+    const original = events.filter(e => e.state === "speaking").at(-1);
+    expect(tts.seekPlayback(1000).outcome).toBe("accept");
+    (await trims.at(0)).exit.resolve(0); await players.at(1); await fixtureCheckpoint();
+    const replacement = events.filter(e => e.state === "speaking").at(-1);
+    expect(replacement.playback_offset_ms).toBe(1000);
+    expect(tts.pausePlayback({ id: original.playback_id, generation: original.generation }, 9000))
+      .toMatchObject({ outcome: "reject", reason: "stale", playback_id: replacement.playback_id,
+        generation: replacement.generation, utterance_id: replacement.utteranceId, chunk_start_ms: 0,
+        chunk_duration_ms: replacement.chunk_duration_ms, duration_ms: replacement.duration_ms });
+    const retry = tts.pausePlayback({ id: replacement.playback_id, generation: replacement.generation });
+    expect(retry).toMatchObject({ outcome: "accept", offset_ms: 1000 });
+    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({
+      state: "paused", offset_ms: 1000, chunk_duration_ms: replacement.chunk_duration_ms });
+  });
+
   it("scoped controls reject stale identities without touching the paused item", async () => {
     const { handle } = await pauseAt4200();
     expect(tts.resumePlayback({ id: "playback-foreign" })).toMatchObject({ outcome: "reject", reason: "stale" });

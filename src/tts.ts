@@ -1417,13 +1417,13 @@ class PlaybackQueueManager {
       return { outcome: "accept", reason: "manual pause", offset_ms: globalOffset(this.parked.job) };
     }
     if (this.parked) {
-      return this.isStale(this.parked.job, scope) ? staleControl(this.parked.job.id, this.parked.job.lifecycle.generation)
+      return this.isStale(this.parked.job, scope) ? staleControl(staleIdentity(this.parked.job))
         : { outcome: "noop", reason: "already paused", offset_ms: globalOffset(this.parked.job) };
     }
     const active = this.current;
     const job = active?.job ?? this.restartAfterTermination ?? this.preparing?.job;
     if (!job || job.completed) return { outcome: "noop", reason: "nothing playing" };
-    if (this.isStale(job, scope)) return staleControl(job.id, job.lifecycle.generation);
+    if (this.isStale(job, scope)) return staleControl(staleIdentity(job));
     if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
     if (!job.metadata || ((job.priority === "critical" || this.captureAdmission) && !this.ownsPausablePrompt(job))) return { outcome: "reject", reason: "unsupported" };
     const chunkStart = job.metadata.longRead?.chunk_start_ms ?? 0;
@@ -1497,7 +1497,7 @@ class PlaybackQueueManager {
   resume(scope: ControlScope): SeekResult {
     const parked = this.parked;
     if (!parked) return { outcome: "noop", reason: "not paused" };
-    if (this.isStale(parked.job, scope)) return staleControl(parked.job.id, parked.job.lifecycle.generation);
+    if (this.isStale(parked.job, scope)) return staleControl(staleIdentity(parked.job));
     if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) return { outcome: "reject", reason: "busy" };
     const offset_ms = (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
     if (parked.resumeRequested) return { outcome: "noop", reason: "resuming", offset_ms };
@@ -1568,6 +1568,8 @@ class PlaybackQueueManager {
       offset_ms: (job.metadata?.longRead?.chunk_start_ms ?? 0) + local, chunk_offset_ms: local,
       ...(state === "paused" ? { pause_owner: this.parked?.owner ?? "user" } : {}),
       ...(duration !== undefined ? { duration_ms: duration } : {}),
+      // T1: where this player's audio ends, from its long_read.chunk_start_ms (as on its speaking edge).
+      ...(job.metadata?.durationMs && job.metadata.durationMs > 0 ? { chunk_duration_ms: job.metadata.durationMs } : {}),
       ...(word_count !== undefined ? { word_index: job.pausedWordIndex ?? word_index ?? 0, word_count } : {}),
       ...(job.metadata?.longRead ? { long_read: job.metadata.longRead } : {}) },
       state === "paused" ? this.parked?.owner ?? "user" : job.resumeOwner ?? "user");
@@ -2287,10 +2289,21 @@ export function playbackTelemetrySnapshot(): CommandTelemetrySnapshot {
 }
 setCommandTelemetrySnapshot(playbackTelemetrySnapshot);
 
-/** T1 (QA 2026-11-08 S2-F9): a stale Pause/Resume names the player that IS current, so a client whose
- * identity fell behind can adopt it and retry once instead of failing silently. */
-function staleControl(id: string, generation: number): SeekResult {
-  return { outcome: "reject", reason: "stale", playback_id: id, generation };
+/** T1 (QA 2026-11-08 S2-F9): a stale Pause/Resume names the player that IS current (the playback_id +
+ * generation pair; generation restarts at 1 for every new player), the logical read it belongs to (utterance_id,
+ * stable across that read's chunks and seeks), and where that player's audio sits in the read. A client whose
+ * identity fell behind retries only for its own read, and lets the daemon choose the cursor. */
+type StaleIdentity = Pick<SeekResult, "playback_id" | "generation" | "utterance_id" | "chunk_start_ms" | "chunk_duration_ms" | "duration_ms">;
+function staleControl(identity: StaleIdentity): SeekResult {
+  return { outcome: "reject", reason: "stale", ...identity };
+}
+function staleIdentity(job: PlaybackJob): StaleIdentity {
+  const metadata = job.metadata;
+  const duration = metadata?.getUtteranceDurationMs?.() ?? metadata?.utteranceDurationMs ?? metadata?.durationMs;
+  return { playback_id: job.id, generation: job.lifecycle.generation, utterance_id: job.wordTimeline.utteranceId,
+    chunk_start_ms: metadata?.longRead?.chunk_start_ms ?? 0,
+    ...(metadata?.durationMs && metadata.durationMs > 0 ? { chunk_duration_ms: metadata.durationMs } : {}),
+    ...(duration !== undefined ? { duration_ms: duration } : {}) };
 }
 
 /** Idempotent; the scope, when given, must name the current item. `elapsedMs` is the global client clock. */
@@ -2301,7 +2314,8 @@ export function pausePlayback(scope: { id?: string; generation?: number } = {}, 
   if (result.outcome !== "noop" || result.reason !== "nothing playing" || !read || !admission ||
       read.controller.signal.aborted) return result;
   if ((scope.id !== undefined && scope.id !== admission.identity.id) ||
-      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return staleControl(admission.identity.id, admission.identity.generation);
+      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return staleControl({ playback_id: admission.identity.id, generation: admission.identity.generation,
+        utterance_id: read.wordTimeline.utteranceId, chunk_start_ms: admission.info.chunk_start_ms });
   const publish = (parked: PendingReadChunk & { phase: "paused" }) => publishPlaybackState({ type: "playback_state", state: "paused",
     playback_id: parked.identity.id, generation: parked.identity.generation, pause_owner: parked.owner,
     offset_ms: parked.info.chunk_start_ms, chunk_offset_ms: 0, word_index: 0,
@@ -2351,7 +2365,8 @@ export function resumePlayback(scope: { id?: string; generation?: number } = {})
   const admission = read.pendingChunk;
   if (!admission || admission.phase !== "paused") return { outcome: "noop", reason: "not paused" };
   if ((scope.id !== undefined && scope.id !== admission.identity.id) ||
-      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return staleControl(admission.identity.id, admission.identity.generation);
+      (scope.generation !== undefined && scope.generation !== admission.identity.generation)) return staleControl({ playback_id: admission.identity.id, generation: admission.identity.generation,
+        utterance_id: read.wordTimeline.utteranceId, chunk_start_ms: admission.info.chunk_start_ms });
   read.pendingChunk = { ...admission, phase: "resuming",
     identity: { id: admission.info.chunk_index === 0 ? nextPlaybackId() : admission.identity.id,
       generation: admission.identity.generation + 1 } };
