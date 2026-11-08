@@ -14,7 +14,8 @@ import { handleVoiceAsk } from "../handlers";
 import { handleSocketCommand } from "../socket-handlers";
 import { addToHistory } from "../tts";
 import { playbackSessionViolations, resetPlaybackSessionLedger } from "../playback/ledger";
-import { writeFileSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
@@ -44,7 +45,8 @@ beforeEach(() => {
   }) as any);
   const extract = spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockReturnValue(
     { result: Promise.resolve({ source: "unavailable", sample_interval_ms: 50, samples: [] }), cancel: () => {} } as any);
-  const cast = spyOn(socket, "broadcast").mockImplementation((event: any) => { events.push(event); });
+  // Each event carries its virtual time (__t, ms since T0) so a Swift test can replay the stream on the same clock.
+  const cast = spyOn(socket, "broadcast").mockImplementation((event: any) => { events.push({ ...event, __t: Date.now() - T0 }); });
   restore = [() => spawn.mockRestore(), () => extract.mockRestore(), () => cast.mockRestore()];
 });
 
@@ -265,6 +267,46 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     expect(playbackSessionViolations()).toEqual([]);
     last.exit.resolve(0);
     expect((await handle.exited).status).toBe("completed");
+  });
+
+  /** QA 11:47 Row 1: after ask 1 the clock came back at 0:10 (the read paused at 0:41); after ask 2 the read UI
+   * vanished while its audio played. The read here is chunk 2 of 2 (it starts at 0:30), so a chunk-local clock
+   * would show 0:11. The stream is also written for the Swift replay (PlaybackEngineContractReplayTests). */
+  it("Row 1: a read on its second chunk comes back at 0:40 (never a chunk-local 0:10) after ask 1 and ask 2, attached each time", async () => {
+    const handle = tts.playAudioNonBlocking(`${TEST_TMP}/row1.mp3`, { text, voice: "test", durationMs: 20_000, utteranceDurationMs: 50_000,
+      wordBoundaries: words.map(word => ({ ...word, offset_ms: word.offset_ms * 2 })),
+      longRead: { id: "row1-read", chunk_index: 1, chunk_count: 2, chunk_start_ms: 30_000 } });
+    await players.at(0);
+    at(11_200);
+    await askOver(1, "Quick check for your recording?", 0);
+    await players.at(2); await fixtureCheckpoint();
+    const first = events.filter(e => e.state === "speaking" && e.text === text).at(-1);
+    // The restored edge keeps the read's total: a chunk-length duration would clamp the clock (QA: 0:41 came back 0:10).
+    expect(first).toMatchObject({ playback_offset_ms: 40_000, duration_ms: 50_000, chunk_duration_ms: 20_000,
+      long_read: { chunk_start_ms: 30_000 } });
+    expect(states("resumed").at(-1)).toMatchObject({ offset_ms: 40_000, chunk_offset_ms: 10_000, word_index: 5 });
+    // The pill's last word after the restore is the read, never idle.
+    expect(events.filter(e => e.type === "state").at(-1)).toMatchObject({ state: "speaking", text });
+    at(14_300);
+    await askOver(3, "Second check: did the read pause?", 1);
+    await players.at(4); await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking" && e.text === text).at(-1)).toMatchObject({ playback_offset_ms: 42_000 });
+    expect(events.filter(e => e.type === "state").at(-1)).toMatchObject({ state: "speaking", text });
+    expect(playbackSessionViolations()).toEqual([]);
+    // Normalized stream for the Swift contract replay: process-specific ids become stable tokens.
+    const ids = new Map<string, string>();
+    const stable = (value: string) => value.replace(/playback-\d+-\d+-\d+/g, id => {
+      if (!ids.has(id)) ids.set(id, `playback-${ids.size + 1}`);
+      return ids.get(id)!;
+    });
+    const consumed = new Set(["state", "playback_state", "speech_words", "subtitle", "playback_duration", "playback_session", "ack"]);
+    const stream = events.filter(e => consumed.has(e.type)).map(e => JSON.parse(stable(JSON.stringify(e))));
+    const fixture = join(import.meta.dir, "../../flow-bar/Tests/Fixtures/laneb-row1-ask-over-read-events.json");
+    if (process.env.LANEB_RECORD_STREAM === "1") {
+      mkdirSync(dirname(fixture), { recursive: true });
+      writeFileSync(fixture, JSON.stringify({ source: "src/__tests__/playback-engine.test.ts Row 1", text, events: stream }, null, 1) + "\n");
+    }
+    void handle.exited;
   });
 
   it("a user-paused read stays paused across the ask and keeps its word", async () => {

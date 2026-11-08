@@ -1,0 +1,983 @@
+{
+ "source": "src/__tests__/playback-engine.test.ts Row 1",
+ "text": "One two three four five six seven eight nine ten",
+ "events": [
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "playing",
+   "word_index": 0,
+   "word_count": 10,
+   "ask": "none",
+   "parked_by_ask": null,
+   "previous_available": false,
+   "speed": 1,
+   "__t": 0
+  },
+  {
+   "type": "state",
+   "state": "speaking",
+   "utteranceId": "playback-1",
+   "text": "One two three four five six seven eight nine ten",
+   "voice": "test",
+   "readback_id": "ee7d244f-45cc-442b-86d3-9d35793abd44",
+   "readback_duration_ms": 0,
+   "playback_id": "playback-1",
+   "generation": 1,
+   "long_read": {
+    "id": "row1-read",
+    "chunk_index": 1,
+    "chunk_count": 2,
+    "chunk_start_ms": 30000
+   },
+   "duration_ms": 50000,
+   "chunk_duration_ms": 20000,
+   "narration_source": "voicelayer-engines",
+   "playback_amplitude": {
+    "source": "unavailable",
+    "sample_interval_ms": 50,
+    "samples": []
+   },
+   "initial_timing": {
+    "type": "subtitle",
+    "words": [
+     {
+      "offset_ms": 0,
+      "duration_ms": 800,
+      "text": "One"
+     },
+     {
+      "offset_ms": 2000,
+      "duration_ms": 800,
+      "text": "two"
+     },
+     {
+      "offset_ms": 4000,
+      "duration_ms": 800,
+      "text": "three"
+     },
+     {
+      "offset_ms": 6000,
+      "duration_ms": 800,
+      "text": "four"
+     },
+     {
+      "offset_ms": 8000,
+      "duration_ms": 800,
+      "text": "five"
+     },
+     {
+      "offset_ms": 10000,
+      "duration_ms": 800,
+      "text": "six"
+     },
+     {
+      "offset_ms": 12000,
+      "duration_ms": 800,
+      "text": "seven"
+     },
+     {
+      "offset_ms": 14000,
+      "duration_ms": 800,
+      "text": "eight"
+     },
+     {
+      "offset_ms": 16000,
+      "duration_ms": 800,
+      "text": "nine"
+     },
+     {
+      "offset_ms": 18000,
+      "duration_ms": 800,
+      "text": "ten"
+     }
+    ]
+   },
+   "__t": 0
+  },
+  {
+   "type": "speech_words",
+   "utteranceId": "playback-1",
+   "wordOffset": 0,
+   "approximate": false,
+   "words": [
+    {
+     "text": "One",
+     "startMs": 0,
+     "endMs": 800
+    },
+    {
+     "text": "two",
+     "startMs": 2000,
+     "endMs": 2800
+    },
+    {
+     "text": "three",
+     "startMs": 4000,
+     "endMs": 4800
+    },
+    {
+     "text": "four",
+     "startMs": 6000,
+     "endMs": 6800
+    },
+    {
+     "text": "five",
+     "startMs": 8000,
+     "endMs": 8800
+    },
+    {
+     "text": "six",
+     "startMs": 10000,
+     "endMs": 10800
+    },
+    {
+     "text": "seven",
+     "startMs": 12000,
+     "endMs": 12800
+    },
+    {
+     "text": "eight",
+     "startMs": 14000,
+     "endMs": 14800
+    },
+    {
+     "text": "nine",
+     "startMs": 16000,
+     "endMs": 16800
+    },
+    {
+     "text": "ten",
+     "startMs": 18000,
+     "endMs": 18800
+    }
+   ],
+   "__t": 0
+  },
+  {
+   "type": "subtitle",
+   "words": [
+    {
+     "offset_ms": 0,
+     "duration_ms": 800,
+     "text": "One"
+    },
+    {
+     "offset_ms": 2000,
+     "duration_ms": 800,
+     "text": "two"
+    },
+    {
+     "offset_ms": 4000,
+     "duration_ms": 800,
+     "text": "three"
+    },
+    {
+     "offset_ms": 6000,
+     "duration_ms": 800,
+     "text": "four"
+    },
+    {
+     "offset_ms": 8000,
+     "duration_ms": 800,
+     "text": "five"
+    },
+    {
+     "offset_ms": 10000,
+     "duration_ms": 800,
+     "text": "six"
+    },
+    {
+     "offset_ms": 12000,
+     "duration_ms": 800,
+     "text": "seven"
+    },
+    {
+     "offset_ms": 14000,
+     "duration_ms": 800,
+     "text": "eight"
+    },
+    {
+     "offset_ms": 16000,
+     "duration_ms": 800,
+     "text": "nine"
+    },
+    {
+     "offset_ms": 18000,
+     "duration_ms": 800,
+     "text": "ten"
+    }
+   ],
+   "__t": 0
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 5,
+   "word_count": 10,
+   "ask": "waiting",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 11200
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 5,
+   "word_count": 10,
+   "ask": "prompt",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 11200
+  },
+  {
+   "type": "state",
+   "state": "speaking",
+   "utteranceId": "playback-2",
+   "text": "Quick check for your recording?",
+   "voice": "test",
+   "readback_id": "aa7337bb-a428-43d3-b632-a8557804d0d5",
+   "readback_duration_ms": 0,
+   "playback_id": "playback-2",
+   "generation": 1,
+   "duration_ms": 1000,
+   "chunk_duration_ms": 1000,
+   "narration_source": "voicelayer-engines",
+   "playback_amplitude": {
+    "source": "unavailable",
+    "sample_interval_ms": 50,
+    "samples": []
+   },
+   "initial_timing": {
+    "type": "subtitle",
+    "words": [
+     {
+      "text": "Quick check for your recording?",
+      "offset_ms": 0,
+      "duration_ms": 1000
+     }
+    ]
+   },
+   "__t": 11200
+  },
+  {
+   "type": "speech_words",
+   "utteranceId": "playback-2",
+   "wordOffset": 0,
+   "approximate": false,
+   "words": [
+    {
+     "text": "Quick",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "check",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "for",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "your",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "recording?",
+     "startMs": 0,
+     "endMs": 1000
+    }
+   ],
+   "__t": 11200
+  },
+  {
+   "type": "subtitle",
+   "words": [
+    {
+     "text": "Quick check for your recording?",
+     "offset_ms": 0,
+     "duration_ms": 1000
+    }
+   ],
+   "__t": 11200
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 5,
+   "word_count": 10,
+   "ask": "capturewait",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 11200
+  },
+  {
+   "type": "state",
+   "state": "idle",
+   "source": "playback",
+   "next_state": "recording",
+   "__t": 11200
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 5,
+   "word_count": 10,
+   "ask": "capture",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 11200
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 5,
+   "word_count": 10,
+   "ask": "closing",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 11200
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "preparing",
+   "word_index": 5,
+   "word_count": 10,
+   "ask": "none",
+   "parked_by_ask": null,
+   "previous_available": false,
+   "speed": 1,
+   "__t": 11200
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "playing",
+   "word_index": 5,
+   "word_count": 10,
+   "ask": "none",
+   "parked_by_ask": null,
+   "previous_available": false,
+   "speed": 1,
+   "__t": 11200
+  },
+  {
+   "type": "state",
+   "state": "speaking",
+   "utteranceId": "playback-1",
+   "text": "One two three four five six seven eight nine ten",
+   "voice": "test",
+   "readback_id": "8d70f525-3640-4b66-9975-32c6af262441",
+   "readback_duration_ms": 0,
+   "playback_id": "playback-1",
+   "generation": 3,
+   "long_read": {
+    "id": "row1-read",
+    "chunk_index": 1,
+    "chunk_count": 2,
+    "chunk_start_ms": 30000
+   },
+   "playback_offset_ms": 40000,
+   "duration_ms": 50000,
+   "chunk_duration_ms": 20000,
+   "narration_source": "voicelayer-engines",
+   "playback_amplitude": {
+    "source": "unavailable",
+    "sample_interval_ms": 50,
+    "samples": []
+   },
+   "initial_timing": {
+    "type": "subtitle",
+    "words": [
+     {
+      "offset_ms": 0,
+      "duration_ms": 800,
+      "text": "One"
+     },
+     {
+      "offset_ms": 2000,
+      "duration_ms": 800,
+      "text": "two"
+     },
+     {
+      "offset_ms": 4000,
+      "duration_ms": 800,
+      "text": "three"
+     },
+     {
+      "offset_ms": 6000,
+      "duration_ms": 800,
+      "text": "four"
+     },
+     {
+      "offset_ms": 8000,
+      "duration_ms": 800,
+      "text": "five"
+     },
+     {
+      "offset_ms": 10000,
+      "duration_ms": 800,
+      "text": "six"
+     },
+     {
+      "offset_ms": 12000,
+      "duration_ms": 800,
+      "text": "seven"
+     },
+     {
+      "offset_ms": 14000,
+      "duration_ms": 800,
+      "text": "eight"
+     },
+     {
+      "offset_ms": 16000,
+      "duration_ms": 800,
+      "text": "nine"
+     },
+     {
+      "offset_ms": 18000,
+      "duration_ms": 800,
+      "text": "ten"
+     }
+    ]
+   },
+   "__t": 11200
+  },
+  {
+   "type": "speech_words",
+   "utteranceId": "playback-1",
+   "wordOffset": 0,
+   "approximate": false,
+   "words": [
+    {
+     "text": "One",
+     "startMs": 0,
+     "endMs": 800
+    },
+    {
+     "text": "two",
+     "startMs": 2000,
+     "endMs": 2800
+    },
+    {
+     "text": "three",
+     "startMs": 4000,
+     "endMs": 4800
+    },
+    {
+     "text": "four",
+     "startMs": 6000,
+     "endMs": 6800
+    },
+    {
+     "text": "five",
+     "startMs": 8000,
+     "endMs": 8800
+    },
+    {
+     "text": "six",
+     "startMs": 10000,
+     "endMs": 10800
+    },
+    {
+     "text": "seven",
+     "startMs": 12000,
+     "endMs": 12800
+    },
+    {
+     "text": "eight",
+     "startMs": 14000,
+     "endMs": 14800
+    },
+    {
+     "text": "nine",
+     "startMs": 16000,
+     "endMs": 16800
+    },
+    {
+     "text": "ten",
+     "startMs": 18000,
+     "endMs": 18800
+    }
+   ],
+   "__t": 11200
+  },
+  {
+   "type": "subtitle",
+   "words": [
+    {
+     "offset_ms": 0,
+     "duration_ms": 800,
+     "text": "One"
+    },
+    {
+     "offset_ms": 2000,
+     "duration_ms": 800,
+     "text": "two"
+    },
+    {
+     "offset_ms": 4000,
+     "duration_ms": 800,
+     "text": "three"
+    },
+    {
+     "offset_ms": 6000,
+     "duration_ms": 800,
+     "text": "four"
+    },
+    {
+     "offset_ms": 8000,
+     "duration_ms": 800,
+     "text": "five"
+    },
+    {
+     "offset_ms": 10000,
+     "duration_ms": 800,
+     "text": "six"
+    },
+    {
+     "offset_ms": 12000,
+     "duration_ms": 800,
+     "text": "seven"
+    },
+    {
+     "offset_ms": 14000,
+     "duration_ms": 800,
+     "text": "eight"
+    },
+    {
+     "offset_ms": 16000,
+     "duration_ms": 800,
+     "text": "nine"
+    },
+    {
+     "offset_ms": 18000,
+     "duration_ms": 800,
+     "text": "ten"
+    }
+   ],
+   "__t": 11200
+  },
+  {
+   "type": "playback_state",
+   "state": "resumed",
+   "playback_id": "playback-1",
+   "generation": 3,
+   "offset_ms": 40000,
+   "chunk_offset_ms": 10000,
+   "duration_ms": 50000,
+   "chunk_duration_ms": 20000,
+   "word_index": 5,
+   "word_count": 10,
+   "long_read": {
+    "id": "row1-read",
+    "chunk_index": 1,
+    "chunk_count": 2,
+    "chunk_start_ms": 30000
+   },
+   "__t": 11200
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 6,
+   "word_count": 10,
+   "ask": "waiting",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 14300
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 6,
+   "word_count": 10,
+   "ask": "prompt",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 14300
+  },
+  {
+   "type": "state",
+   "state": "speaking",
+   "utteranceId": "playback-3",
+   "text": "Second check: did the read pause?",
+   "voice": "test",
+   "readback_id": "bffa3345-5b88-4bde-921f-c509cdcfde28",
+   "readback_duration_ms": 0,
+   "playback_id": "playback-3",
+   "generation": 1,
+   "duration_ms": 1000,
+   "chunk_duration_ms": 1000,
+   "narration_source": "voicelayer-engines",
+   "playback_amplitude": {
+    "source": "unavailable",
+    "sample_interval_ms": 50,
+    "samples": []
+   },
+   "initial_timing": {
+    "type": "subtitle",
+    "words": [
+     {
+      "text": "Second check: did the read pause?",
+      "offset_ms": 0,
+      "duration_ms": 1000
+     }
+    ]
+   },
+   "__t": 14300
+  },
+  {
+   "type": "speech_words",
+   "utteranceId": "playback-3",
+   "wordOffset": 0,
+   "approximate": false,
+   "words": [
+    {
+     "text": "Second",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "check:",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "did",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "the",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "read",
+     "startMs": 0,
+     "endMs": 1000
+    },
+    {
+     "text": "pause?",
+     "startMs": 0,
+     "endMs": 1000
+    }
+   ],
+   "__t": 14300
+  },
+  {
+   "type": "subtitle",
+   "words": [
+    {
+     "text": "Second check: did the read pause?",
+     "offset_ms": 0,
+     "duration_ms": 1000
+    }
+   ],
+   "__t": 14300
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 6,
+   "word_count": 10,
+   "ask": "capturewait",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 14300
+  },
+  {
+   "type": "state",
+   "state": "idle",
+   "source": "playback",
+   "next_state": "recording",
+   "__t": 14300
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 6,
+   "word_count": 10,
+   "ask": "capture",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 14300
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "parked",
+   "word_index": 6,
+   "word_count": 10,
+   "ask": "closing",
+   "parked_by_ask": "row1-read",
+   "previous_available": false,
+   "speed": 1,
+   "__t": 14300
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "preparing",
+   "word_index": 6,
+   "word_count": 10,
+   "ask": "none",
+   "parked_by_ask": null,
+   "previous_available": false,
+   "speed": 1,
+   "__t": 14300
+  },
+  {
+   "type": "playback_session",
+   "session_id": "row1-read",
+   "phase": "playing",
+   "word_index": 6,
+   "word_count": 10,
+   "ask": "none",
+   "parked_by_ask": null,
+   "previous_available": false,
+   "speed": 1,
+   "__t": 14300
+  },
+  {
+   "type": "state",
+   "state": "speaking",
+   "utteranceId": "playback-1",
+   "text": "One two three four five six seven eight nine ten",
+   "voice": "test",
+   "readback_id": "c1af856f-aba1-4745-af88-85d22b747cbe",
+   "readback_duration_ms": 0,
+   "playback_id": "playback-1",
+   "generation": 5,
+   "long_read": {
+    "id": "row1-read",
+    "chunk_index": 1,
+    "chunk_count": 2,
+    "chunk_start_ms": 30000
+   },
+   "playback_offset_ms": 42000,
+   "duration_ms": 50000,
+   "chunk_duration_ms": 20000,
+   "narration_source": "voicelayer-engines",
+   "playback_amplitude": {
+    "source": "unavailable",
+    "sample_interval_ms": 50,
+    "samples": []
+   },
+   "initial_timing": {
+    "type": "subtitle",
+    "words": [
+     {
+      "offset_ms": 0,
+      "duration_ms": 800,
+      "text": "One"
+     },
+     {
+      "offset_ms": 2000,
+      "duration_ms": 800,
+      "text": "two"
+     },
+     {
+      "offset_ms": 4000,
+      "duration_ms": 800,
+      "text": "three"
+     },
+     {
+      "offset_ms": 6000,
+      "duration_ms": 800,
+      "text": "four"
+     },
+     {
+      "offset_ms": 8000,
+      "duration_ms": 800,
+      "text": "five"
+     },
+     {
+      "offset_ms": 10000,
+      "duration_ms": 800,
+      "text": "six"
+     },
+     {
+      "offset_ms": 12000,
+      "duration_ms": 800,
+      "text": "seven"
+     },
+     {
+      "offset_ms": 14000,
+      "duration_ms": 800,
+      "text": "eight"
+     },
+     {
+      "offset_ms": 16000,
+      "duration_ms": 800,
+      "text": "nine"
+     },
+     {
+      "offset_ms": 18000,
+      "duration_ms": 800,
+      "text": "ten"
+     }
+    ]
+   },
+   "__t": 14300
+  },
+  {
+   "type": "speech_words",
+   "utteranceId": "playback-1",
+   "wordOffset": 0,
+   "approximate": false,
+   "words": [
+    {
+     "text": "One",
+     "startMs": 0,
+     "endMs": 800
+    },
+    {
+     "text": "two",
+     "startMs": 2000,
+     "endMs": 2800
+    },
+    {
+     "text": "three",
+     "startMs": 4000,
+     "endMs": 4800
+    },
+    {
+     "text": "four",
+     "startMs": 6000,
+     "endMs": 6800
+    },
+    {
+     "text": "five",
+     "startMs": 8000,
+     "endMs": 8800
+    },
+    {
+     "text": "six",
+     "startMs": 10000,
+     "endMs": 10800
+    },
+    {
+     "text": "seven",
+     "startMs": 12000,
+     "endMs": 12800
+    },
+    {
+     "text": "eight",
+     "startMs": 14000,
+     "endMs": 14800
+    },
+    {
+     "text": "nine",
+     "startMs": 16000,
+     "endMs": 16800
+    },
+    {
+     "text": "ten",
+     "startMs": 18000,
+     "endMs": 18800
+    }
+   ],
+   "__t": 14300
+  },
+  {
+   "type": "subtitle",
+   "words": [
+    {
+     "offset_ms": 0,
+     "duration_ms": 800,
+     "text": "One"
+    },
+    {
+     "offset_ms": 2000,
+     "duration_ms": 800,
+     "text": "two"
+    },
+    {
+     "offset_ms": 4000,
+     "duration_ms": 800,
+     "text": "three"
+    },
+    {
+     "offset_ms": 6000,
+     "duration_ms": 800,
+     "text": "four"
+    },
+    {
+     "offset_ms": 8000,
+     "duration_ms": 800,
+     "text": "five"
+    },
+    {
+     "offset_ms": 10000,
+     "duration_ms": 800,
+     "text": "six"
+    },
+    {
+     "offset_ms": 12000,
+     "duration_ms": 800,
+     "text": "seven"
+    },
+    {
+     "offset_ms": 14000,
+     "duration_ms": 800,
+     "text": "eight"
+    },
+    {
+     "offset_ms": 16000,
+     "duration_ms": 800,
+     "text": "nine"
+    },
+    {
+     "offset_ms": 18000,
+     "duration_ms": 800,
+     "text": "ten"
+    }
+   ],
+   "__t": 14300
+  },
+  {
+   "type": "playback_state",
+   "state": "resumed",
+   "playback_id": "playback-1",
+   "generation": 5,
+   "offset_ms": 42000,
+   "chunk_offset_ms": 12000,
+   "duration_ms": 50000,
+   "chunk_duration_ms": 20000,
+   "word_index": 6,
+   "word_count": 10,
+   "long_read": {
+    "id": "row1-read",
+    "chunk_index": 1,
+    "chunk_count": 2,
+    "chunk_start_ms": 30000
+   },
+   "__t": 14300
+  }
+ ]
+}
