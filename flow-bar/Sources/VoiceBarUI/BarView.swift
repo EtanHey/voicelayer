@@ -835,19 +835,52 @@ public struct BarView: View {
         dragHistoryRows(to: y, time: time)
     }
 
-    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past 7 and the last row.
+    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past the last row. Pushed above the
+    /// collapsed rows it closes the panel with the pointer instead (0510 N4, `NotchHistoryMorph.handleDrag`).
     private func dragHistoryRows(to y: CGFloat, time: TimeInterval) {
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
-        guard let rows = historyRowsPull.move(
+        guard historyRowsPull.move(
             y: y, time: time, range: NotchHistoryMorph.rowHeight,
             band: { NotchHistoryMorph.rowsRubberBand($0, maximum: maximum) },
             seed: renderedHistoryRows(at: time)
-        ) else { return }
+        ) != nil else { return }
+        let follow = NotchHistoryMorph.handleDrag(
+            rawRows: historyRowsPull.rawProgress, maximum: maximum,
+            openTravel: notchPresentationOpenHistoryHeight - VoiceBarNotchContract.topHeight
+        )
         historyRowsFlight = nil
+        historyFlight = nil
         presentationModel?.setHistoryPullActive(true)
-        var follow = Transaction()
-        follow.disablesAnimations = true
-        withTransaction(follow) { historyRowsExtent = rows }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            historyRowsExtent = follow.rows
+            historyProgress = follow.progress
+        }
+    }
+
+    /// A drag on the open drawer (its body, History's handle or Settings' grip) owns the pointer.
+    private var drawerHoldsPointer: Bool {
+        isDrawerBodyDragActive || historyRowsPull.phase != .idle
+    }
+
+    /// 0510 N4: Settings' grip pushes the drawer closed under the pointer, the same open/close pull as History's
+    /// body: it follows, and a release past halfway (or a flick up) closes it.
+    private func dragDrawerGrip(y: CGFloat, time: TimeInterval) {
+        if !isDrawerBodyDragActive {
+            guard case .idle = historyPull.phase, case .idle = historyRowsPull.phase, isHistoryPresented,
+                  (historyFrozenProgress ?? renderedHistoryProgress(at: time)) > 0.98 else { return }
+            isDrawerBodyDragActive = true
+            historyPull.press(y: y, progress: historyProgress, time: time)
+        }
+        followHistoryPull(y: y, time: time, openHeight: notchPresentationOpenHistoryHeight)
+    }
+
+    private func endDrawerGripDrag(cancelled: Bool) {
+        guard isDrawerBodyDragActive else { return }
+        endHistoryPull(cancelled: cancelled)
+        isDrawerBodyDragActive = false
+        drawerBodyDragEndedAt = NotchHistoryClock.now()
     }
 
     /// A released (or cancelled) handle settles on the nearest whole row with the `pull` spring; the hit region and
@@ -858,12 +891,15 @@ public struct BarView: View {
         guard case let .settle(_, velocity) = historyRowsPull.release(progress: historyRowsExtent, cancelled: cancelled)
         else { return }
         // 2.4 Lane A: pushing the bottom edge up past the collapsed rows closes History (the mirror of pulling it
-        // down); the rows spring back to the detent for the next open.
-        if !cancelled, NotchHistoryMorph.handleClosesHistory(rawRows: rawRows) {
+        // down); the rows spring back to the detent for the next open. A cancelled push settles at the nearer end,
+        // so one that already closed the panel more than halfway closes it.
+        if NotchHistoryMorph.handleClosesHistory(rawRows: rawRows), !cancelled || historyProgress < 0.5 {
             surface.send(.dismiss(.dragUp))
             settleHistoryRowsExtent(to: historyRows, velocity: 0)
             return
         }
+        // A push that closed the panel part-way and was let go short of closing springs it open again.
+        if historyProgress < 1 { animateHistory(toOpen: true) }
         let detent = NotchHistoryDetent.nearest(rows: historyRowsExtent)
         let previous = historyRows
         surface.send(.setHistoryDetent(detent))
@@ -1286,39 +1322,48 @@ public struct BarView: View {
     @ViewBuilder
     private var notchLowerPanelContent: some View {
         if notchPresentation.visualState == .history, case let .settings(tab) = surface.drawer, let settingsDrawer {
-            NotchSettingsDrawer(
-                selectedTab: tab, appearance: notchAppearance, context: settingsDrawer, request: settingsRequest,
-                history: {
-                    AnyView(historyPanelContent(listHeight: NotchSettingsDrawerPresentation.historyListHeight)
-                        .padding(.top, NotchHistoryMorph.listTopInset))
-                },
-                onSelectTab: { surface.send(.selectSettingsTab($0)) }
-            )
+            VStack(spacing: 0) {
+                NotchSettingsDrawer(
+                    selectedTab: tab, appearance: notchAppearance, context: settingsDrawer, request: settingsRequest,
+                    history: {
+                        AnyView(historyPanelContent(listHeight: NotchSettingsDrawerPresentation.historyListHeight)
+                            .padding(.top, NotchHistoryMorph.listTopInset))
+                    },
+                    onSelectTab: { surface.send(.selectSettingsTab($0)) }
+                )
+                .simultaneousGesture(drawerBodyDragGesture)
+                // 0510 N4: the panes scroll inside themselves, so the drawer gets History's grip to push it closed.
+                NotchHistoryExtendHandle(
+                    palette: notchPalette, onDrag: dragDrawerGrip, onDragEnd: endDrawerGripDrag
+                )
+            }
             .frame(maxHeight: .infinity, alignment: .top)
-            .simultaneousGesture(drawerBodyDragGesture)
-            .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress))
+            .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
+                                            keepsPointer: drawerHoldsPointer))
         } else if notchPresentation.visualState == .history {
             VStack(spacing: 0) {
                 historyPanelContent()
                     .padding(.horizontal, NotchHistoryMorph.listHorizontalInset)
                     .padding(.top, NotchHistoryMorph.listTopInset)
                     .simultaneousGesture(drawerBodyDragGesture)
-                    .overlay(alignment: .bottom) {
-                        if isSettingsPullArmed { settingsPullHint }
-                    }
                 NotchHistoryExtendHandle(
                     palette: notchPalette,
-                    rows: historyRows,
-                    maximumRows: NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
-                    onAdjust: adjustHistoryRows,
+                    rows: (historyRows, NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
+                           adjustHistoryRows),
+                    showsGrip: !isSettingsPullArmed,
                     onDrag: dragHistoryHandle,
                     onDragEnd: { cancelled in
                         if historyRowsPull.phase != .idle { endHistoryRowsPull(cancelled: cancelled) }
                     }
                 )
+                // 0510 N6: the hint takes the handle's band (the overpull stretches the shell under it), never a row.
+                .overlay {
+                    if isSettingsPullArmed { settingsPullHint }
+                }
             }
                 .frame(maxHeight: .infinity, alignment: .top)
-                .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress))
+                .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
+                                                keepsPointer: drawerHoldsPointer))
         } else if isMorphTeleprompterContentPresented {
             VStack(spacing: 7) {
                 notchTeleprompterTimeline
@@ -1342,18 +1387,18 @@ public struct BarView: View {
         }
     }
 
-    /// Shown while a pull past open is armed: releasing opens Settings.
+    /// Shown while a pull past open is armed: releasing opens Settings. It fits the handle's 18 pt band (0510 N6).
     private var settingsPullHint: some View {
-        Label("Release for Settings", systemImage: "gearshape")
-            .font(.system(size: 11.5, weight: .medium))
+        Label(NotchHistoryPresentation.settingsPullHint, systemImage: "gearshape")
+            .font(.system(size: 11, weight: .medium))
             .foregroundStyle(notchPalette.primary.color)
             .padding(.horizontal, 10)
-            .frame(height: 24)
+            .frame(height: NotchHistoryPresentation.settingsPullHintHeight)
             .background(Capsule(style: .continuous).fill(notchPalette.primary.color.opacity(0.14)))
-            .padding(.bottom, 6)
             .transition(.opacity)
             .allowsHitTesting(false)
-            .accessibilityHidden(true)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(NotchHistoryPresentation.settingsPullHintIdentifier)
     }
 
     @ViewBuilder

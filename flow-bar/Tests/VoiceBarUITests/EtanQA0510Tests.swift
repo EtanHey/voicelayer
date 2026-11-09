@@ -91,6 +91,53 @@ final class EtanQA0510Tests: XCTestCase {
         }
     }
 
+    /// N5: a quick grab (two samples, 0.01 s) moves the panel exactly as far as a slow drag over the same distance.
+    /// Before, the first sample past the slop re-anchored the drag there, so a flick lost its whole first sample.
+    func testN5QuickGrabTravelsAsFarAsASlowDrag() throws {
+        func drag(samples: [CGFloat], seconds: Double) -> (raw: CGFloat, shown: CGFloat) {
+            var pull = NotchHistoryPull()
+            pull.press(y: 300, progress: 6, time: 0)
+            var shown: CGFloat = 6
+            for (index, y) in samples.enumerated() {
+                shown = pull.move(y: y, time: seconds * Double(index + 1) / Double(samples.count),
+                                  range: NotchHistoryMorph.rowHeight, band: { $0 }, seed: 6) ?? shown
+            }
+            return (pull.rawProgress, shown)
+        }
+        let slow = drag(samples: stride(from: 302, through: 365, by: 3).map { CGFloat($0) }, seconds: 0.3)
+        let quick = drag(samples: [340, 365], seconds: 0.01)
+        XCTAssertEqual(quick.raw, slow.raw, accuracy: NotchHistoryMorph.handoffAllowance / NotchHistoryMorph.rowHeight,
+                       "[N5] a 0.01 s grab travels like a 0.3 s grab")
+        XCTAssertEqual(NotchHistoryDetent.nearest(rows: quick.shown), .expanded, "[N5] the quick grab reaches 8 rows")
+        XCTAssertEqual(NotchHistoryDetent.nearest(rows: slow.shown), .expanded, "fixture: the slow grab reaches 8 rows")
+    }
+
+    /// N4: pushing History's handle above the collapsed rows closes the panel WITH the pointer (it used to rubber-band
+    /// and sit still), one row of travel per row climbed, reaching fully closed at the top.
+    func testN4HandlePushedUpClosesThePanelWithThePointer() {
+        let travel = NotchHistoryMorph.lowerSurfaceHeight(rows: 6)
+        var previous: CGFloat = 1
+        for raw in stride(from: CGFloat(6), through: -1, by: -0.5) {
+            let follow = NotchHistoryMorph.handleDrag(rawRows: raw, maximum: 8, openTravel: travel)
+            XCTAssertEqual(follow.rows, 6, "[N4] the rows stay collapsed while the panel closes")
+            XCTAssertLessThanOrEqual(follow.progress, previous, "[N4] climbing never reopens the panel")
+            previous = follow.progress
+        }
+        let oneRow = NotchHistoryMorph.handleDrag(rawRows: 5, maximum: 8, openTravel: travel).progress
+        XCTAssertEqual((1 - oneRow) * travel, NotchHistoryMorph.rowHeight, accuracy: 0.001, "[N4] it tracks the pointer 1:1")
+        XCTAssertEqual(NotchHistoryMorph.handleDrag(rawRows: -1, maximum: 8, openTravel: travel).progress, 0,
+                       "[N4] at the top of the screen the panel is closed")
+        XCTAssertEqual(NotchHistoryMorph.handleDrag(rawRows: 7.5, maximum: 8, openTravel: travel).progress, 1,
+                       "pulling down still only extends the rows")
+    }
+
+    /// N6: "Release for Settings" fits the handle's band, under the last row, so it can never cover one.
+    func testN6SettingsPullHintFitsTheHandleBand() {
+        XCTAssertLessThanOrEqual(NotchHistoryPresentation.settingsPullHintHeight, NotchHistoryMorph.handleBandHeight,
+                                 "[N6] the hint is no taller than the band it replaces the grip in")
+        XCTAssertEqual(NotchHistoryPresentation.settingsPullHint, "Release for Settings", "[N6] the feature stays")
+    }
+
     func testN7DrawersCanOpenDuringRecording() {
         for event in [NotchSurfaceEvent.openHistory, .openSettings(.general)] {
             var machine = NotchSurfaceMachine()

@@ -37,9 +37,11 @@ public enum NotchSettingsDrawerPresentation {
         NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(rows))
     }
 
-    /// The History tab's list: the drawer below its tab bar and insets.
+    public static let topInset: CGFloat = 6
+
+    /// The History tab's list: the drawer below its tab bar, above the grip's band (BarView adds the grip).
     public static var historyListHeight: CGFloat {
-        lowerSurfaceHeight - 6 - 8 - tabBarHeight - NotchHistoryMorph.listTopInset
+        lowerSurfaceHeight - topInset - tabBarHeight - NotchHistoryMorph.listTopInset - NotchHistoryMorph.handleBandHeight
     }
 
     public static let versionTitle = "VoiceBar"
@@ -113,8 +115,7 @@ struct NotchSettingsDrawer: View {
                 .clipped()
         }
         .padding(.horizontal, NotchSettingsDrawerPresentation.horizontalInset)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.top, NotchSettingsDrawerPresentation.topInset)
     }
 
     @ViewBuilder

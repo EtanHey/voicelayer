@@ -216,12 +216,63 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
 }
 
 extension NotchSurfaceHostedFlowTests {
+    /// The open History panel's extend handle, in window space (its native AX adapter is a real NSView).
+    private func historyHandle(_ harness: Harness) throws -> NSPoint {
+        func find(_ view: NSView) -> NSView? {
+            if view.accessibilityIdentifier() == "notch-history-extend-handle" { return view }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        harness.host.layoutSubtreeIfNeeded()
+        let handle = try XCTUnwrap(find(harness.host), "the open panel mounts its extend handle")
+        let frame = handle.convert(handle.bounds, to: nil)
+        return NSPoint(x: frame.midX, y: frame.midY)
+    }
+
+    /// 0510 N5: a quick grab of the handle (two drag samples) extends History to eight rows, like a slow one.
+    func testN5AQuickHandleGrabExtendsHistoryLikeASlowOne() throws {
+        for steps in [12, 2] {
+            let harness = makeHarness()
+            try openHistory(harness)
+            XCTAssertEqual(harness.surface.drawer, .history(.collapsed))
+            try drag(from: historyHandle(harness), dy: -65, steps: steps, in: harness.panel)
+            wait { harness.surface.drawer == .history(.expanded) }
+            XCTAssertEqual(harness.surface.drawer, .history(.expanded), "[N5] \(steps)-sample grab of the handle")
+            harness.panel.orderOut(nil)
+        }
+    }
+
+    /// 0510 N4: History's handle and Settings' grip, pushed to the top of the screen, close their drawer on release.
+    func testN4PushingEitherDrawerToTheTopClosesItOnRelease() throws {
+        for (settings, steps) in [(false, 12), (false, 3), (true, 12), (true, 3)] {
+            let harness = makeHarness()
+            try openHistory(harness)
+            var grip = try historyHandle(harness)
+            if settings {
+                // The gear swaps History for Settings on the same shell; the grip sits two rows lower.
+                try click(control(3, harness), in: harness.panel)
+                wait { harness.surface.drawer == .settings(.general) }
+                resize(harness)
+                drain(1.0)
+                grip.y -= NotchSettingsDrawerPresentation.lowerSurfaceHeight - NotchHistoryMorph.lowerSurfaceHeight(rows: 6)
+            }
+            let top = notchPoint(harness, fromTop: 1)
+            try drag(from: grip, dy: top.y - grip.y, steps: steps, in: harness.panel)
+            wait { harness.surface.drawer == nil }
+            XCTAssertNil(harness.surface.drawer, "[N4] \(settings ? "Settings" : "History") \(steps)-sample push to the top")
+            XCTAssertEqual(harness.surface.journal.last?.event, .dismiss(.dragUp))
+            harness.panel.orderOut(nil)
+        }
+    }
+}
+
+extension NotchSurfaceHostedFlowTests {
     /// 2.4 #813 (E2E `testE2E24HistoryDragUpCloses`): pushing the bottom edge (the extend handle) up past the
     /// collapsed rows closes History, the mirror of pulling it down.
     func testDraggingTheHandleUpPastCollapsedClosesHistory() throws {
         XCTAssertEqual(NotchHistoryMorph.handleCloseRows, 4.75)
         XCTAssertTrue(NotchHistoryMorph.handleClosesHistory(rawRows: 4.5))
         XCTAssertFalse(NotchHistoryMorph.handleClosesHistory(rawRows: 5.5), "a short push only collapses")
+        XCTAssertTrue(NotchHistoryMorph.handleClosesHistory(rawRows: -0.54), "[N4] pushed to the top of the screen closes")
         XCTAssertEqual(NotchHistoryPresentation.rowAccessibilityIdentifier(index: 0), "history-row-1")
         XCTAssertEqual(NotchHistoryPresentation.rowAccessibilityIdentifier(index: 19), "history-row-20")
     }
