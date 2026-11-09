@@ -1,4 +1,4 @@
-/** Private diagnostic alternatives for a full-audio Whisper retry. */
+/** Private diagnostic alternatives for full-input retries and span repairs. */
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
@@ -20,7 +20,8 @@ export interface ParakeetFallbackAttempt {
   languageEvidence?: import("./parakeet-lid").ParakeetLanguageEvidence;
   whisperStatus?: "NOT_RUN";
   whisperErrorAttempt?: unknown;
-  stage?: "native-or-input-boundary" | "fallback-terminal" | "native-terminal" | "vad-boundary";
+  stage?: "native-or-input-boundary" | "fallback-terminal" | "native-terminal" | "vad-boundary" | "span-repair";
+  repair?: { gap: { start: number; end: number }; clip: { start: number; end: number }; accepted: boolean };
   previousAttemptPath?: string;
   submittedPath?: string;
 }

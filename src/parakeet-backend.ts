@@ -4,7 +4,8 @@ import type { STTOutcome } from "./soundlayer/contracts";
 import { requestedLanguageCode } from "./language-config";
 import { retainParakeetFallback, type ParakeetFallbackAttempt } from "./parakeet-attempts";
 import { mkdirSync, writeFileSync, unlinkSync, openSync, closeSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
+import { fallbackOutputRisk, planSpanRepairs, qualifySpanRepair, spanWav, type SpeechGap } from "./parakeet-span-repair";
 import { createHash, randomUUID } from "crypto";
 import { getStateDir } from "./paths";
 import { noteRecognizerEngine, noteRecognizerEffective } from "./recognizer-state";
@@ -121,8 +122,8 @@ function internalTokenGaps(result: ParakeetResponse, duration: number): { start:
   return gaps;
 }
 
-function hasUncoveredInternalSpeech(gaps: { start: number; end: number }[], probabilities: number[], info: WavInfo): boolean {
-  for (const gap of gaps) {
+function uncoveredInternalSpeech(gaps: SpeechGap[], probabilities: number[], info: WavInfo): SpeechGap[] {
+  return gaps.filter(gap => {
     let speechFrames = 0;
     // Count only complete VAD windows strictly inside the token-free interval.
     for (let i = Math.ceil(gap.start * info.sampleRate / VAD_CHUNK_SAMPLES);
@@ -130,8 +131,8 @@ function hasUncoveredInternalSpeech(gaps: { start: number; end: number }[], prob
       speechFrames = probabilities[i]! >= PARAKEET_EMPTY_SPEECH_THRESHOLD ? speechFrames + VAD_CHUNK_SAMPLES : 0;
       if (speechFrames / info.sampleRate >= INTERNAL_SPEECH_MIN_S) return true;
     }
-  }
-  return false;
+    return false;
+  });
 }
 
 export interface ParakeetBackendDeps {
@@ -209,6 +210,7 @@ export class ParakeetBackend implements STTBackend {
       catch { console.error("[voicelayer] Could not save Parakeet fallback diagnostic"); return undefined; }
     };
     let speechEvidence: ParakeetSpeechEvidence | undefined;
+    let uncoveredSpans: SpeechGap[] = [];
     let nativeBoundaryPath: string | undefined;
     const env = this.deps.env?.() ?? process.env;
     const language = parakeetLanguage(options, env);
@@ -227,7 +229,8 @@ export class ParakeetBackend implements STTBackend {
       }
       console.error(`[voicelayer] Parakeet optional language detection: ${languageEvidence.status}; language=${languageEvidence.status === "COMPLETE" ? languageEvidence.language : "unknown"}; confidence=${languageEvidence.status === "COMPLETE" ? languageEvidence.probability : "unknown"}; warning=${languageWarning ?? "none"}; selected recognizer unchanged`);
     };
-    const fallback = async (reason: string, parakeet: unknown = null, parakeetErrorStatus?: string, parakeetCleanupFailure?: { name: string; message: string }) => {
+    const fallback = async (reason: string, parakeet: unknown = null, parakeetErrorStatus?: string, parakeetCleanupFailure?: { name: string; message: string }): Promise<STTResult> => {
+      console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_fallback", reason, uncovered_spans_s: uncoveredSpans })}`);
       await finishLanguage(); // No fallback model while a language child is still owned.
       // Commit the first raw boundary BEFORE starting W, so interruption during
       // fallback cannot erase the original empty/error/partial P observation.
@@ -239,6 +242,21 @@ export class ParakeetBackend implements STTBackend {
         noteRecognizerEngine("whisper", { phase: "loading", error: null }); noteRecognizerEffective("whisper", reason);
         const result = await this.deps.fallbackBackend.transcribe(inputPath, options);
         noteRecognizerEngine("whisper", { phase: result.backend.startsWith("whisper-server") ? "ready" : "sleeping", available: true, error: null });
+        const probabilities = info && speechEvidence && sileroProbabilities(speechEvidence, info, inputSha256);
+        const speechSeconds = probabilities?.reduce((sum, p, i) => sum + (p >= PARAKEET_EMPTY_SPEECH_THRESHOLD
+          ? Math.min(VAD_CHUNK_SAMPLES, info!.frames - i * VAD_CHUNK_SAMPLES) / info!.sampleRate : 0), 0);
+        const risk = !info?.allZero && typeof result.text === "string" ? fallbackOutputRisk(result.text, speechSeconds) : null;
+        if (risk && (reason === "uncovered-tail" || reason === "sparse-response") && parakeet && typeof parakeet === "object" && "complete" in parakeet && parakeet.complete === true &&
+            "text" in parakeet && typeof parakeet.text === "string" && parakeet.text.trim()) {
+          console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_fallback_rejected", reason: risk,
+            accepted: false, parakeet_chars: parakeet.text.length, whisper_chars: result.text.length })}`);
+          const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet, speechEvidence,
+            whisper: result, errorType: risk, deliveryText: parakeet.text, outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", previousAttemptPath, stage: "fallback-terminal" });
+          noteRecognizerEffective("parakeet", "fallback-rejected");
+          return { text: parakeet.text, backend: `${this.name}+fallback-${reason}->${this.name}+kept-native`, durationMs: Date.now() - started,
+            outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", fallbackEvidencePath, languageWarning, languageEvidence };
+        }
+        if (risk) throw new STTQualificationError("UNRESOLVED_FALLBACK_INCOMPLETE", result);
         const evidence = result.attemptEvidence;
         if ((evidence?.inputSha256 && evidence.inputSha256 !== inputSha256) || (evidence?.inputPath && evidence.inputPath !== inputPath)) throw new STTQualificationError("REFUSED_AUDIO_IDENTITY_MISMATCH", result);
         if (evidence?.status === "ERROR" || evidence?.status === "TIMEOUT" ||
@@ -290,7 +308,10 @@ export class ParakeetBackend implements STTBackend {
         if (lastSpeechSeconds === undefined) console.error("[voicelayer] Parakeet speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
         reason = parakeetOutputRisk(result, info, lastSpeechSeconds);
         const probabilities = sileroProbabilities(speechEvidence, info, inputSha256);
-        if (!reason && probabilities && hasUncoveredInternalSpeech(gaps, probabilities, info)) reason = "uncovered-internal";
+        if (!reason && probabilities) {
+          uncoveredSpans = uncoveredInternalSpeech(gaps, probabilities, info);
+          if (uncoveredSpans.length) reason = "uncovered-internal";
+        }
       }
       if (reason === "empty-response") {
         nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result, whisper: null, errorType: null, stage: "native-or-input-boundary" });
@@ -307,6 +328,58 @@ export class ParakeetBackend implements STTBackend {
         }
         nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result, whisper: null,
           speechEvidence, errorType: null, previousAttemptPath: nativeBoundaryPath, stage: "vad-boundary" }) ?? nativeBoundaryPath;
+      }
+      if (reason === "uncovered-internal") {
+        console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_fallback", reason, uncovered_spans_s: uncoveredSpans })}`);
+        nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result,
+          whisper: null, speechEvidence, errorType: null, stage: "native-or-input-boundary" });
+        const plans = planSpanRepairs(result, uncoveredSpans, duration);
+        let text = result.text, backend = this.name, fallbackEvidencePath = nativeBoundaryPath;
+        if (!plans.length) console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_span_repair", accepted: false,
+          reason: "unaligned-native-tokens", parakeet_chars: result.text.length, whisper_chars: null })}`);
+        // Only our exact idle model is unloaded; unconfirmed cleanup admits no W.
+        try {
+          if (plans.length) await (this.deps.unload ?? (() => parakeetServer.unload()))();
+          for (const plan of plans) {
+            if (options?.signal?.aborted) break;
+            const clipPath = join(dirname(inputPath), `${randomUUID()}.wav`);
+            let whisper: STTResult | null = null, rejection: string | undefined, accepted = false;
+            try {
+              const clip = spanWav(inputBytes, info.dataOffset, plan);
+              writeFileSync(clipPath, clip, { flag: "wx", mode: 0o400 });
+              whisper = await this.deps.fallbackBackend.transcribe(clipPath, options);
+              const evidence = whisper.attemptEvidence;
+              if ((evidence?.inputPath && evidence.inputPath !== clipPath) ||
+                  (evidence?.inputSha256 && evidence.inputSha256 !== createHash("sha256").update(clip).digest("hex")) ||
+                  (evidence?.status && !["RETURNED", "EMPTY_RESPONSE"].includes(evidence.status)) ||
+                  (evidence?.processExitCode != null && evidence.processExitCode !== 0) ||
+                  evidence?.decodeCoverage === "PARTIAL" || evidence?.tail === "KNOWN_MISSING") throw new Error("UnqualifiedSpanResponse");
+              const probabilities = speechEvidence!.probabilities!;
+              let speechSeconds = 0;
+              for (let i = Math.floor(plan.start / .032); i * .032 < plan.end; i++) {
+                if (probabilities[i]! >= PARAKEET_EMPTY_SPEECH_THRESHOLD)
+                  speechSeconds += Math.max(0, Math.min(plan.end, (i + 1) * .032) - Math.max(plan.start, i * .032));
+              }
+              const qualified = qualifySpanRepair(whisper.text, plan, speechSeconds);
+              accepted = qualified.accepted;
+              if (qualified.accepted && qualified.insertion) {
+                text = text.slice(0, plan.offset) + " " + qualified.insertion + text.slice(plan.offset);
+                backend = whisper.backend;
+              } else if (!qualified.accepted) rejection = qualified.reason;
+            } catch (error) { rejection = error instanceof Error ? error.name : "unknown"; }
+            finally { try { unlinkSync(clipPath); } catch {} }
+            console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_span_repair", span_s: plan.gap,
+              clip_s: { start: plan.start, end: plan.end }, accepted, reason: rejection ?? null,
+              parakeet_chars: result.text.length, whisper_chars: whisper?.text.length ?? null, delivered_chars: text.length })}`);
+            fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result,
+              whisper, speechEvidence, errorType: rejection ?? null, deliveryText: text, stage: "span-repair",
+              repair: { gap: plan.gap, clip: { start: plan.start, end: plan.end }, accepted }, previousAttemptPath: fallbackEvidencePath }) ?? fallbackEvidencePath;
+          }
+        } catch (error) { console.error(`[voicelayer] Parakeet span repair unavailable: ${error instanceof Error ? error.name : "unknown"}; keeping native text`); }
+        const repaired = text !== result.text;
+        return { text, backend: `${this.name}+fallback-uncovered-internal->${backend}+${repaired ? "span-repair" : "kept-native"}`,
+          durationMs: Date.now() - started, outcome: repaired ? "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN" : "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN",
+          languageWarning, languageEvidence, fallbackEvidencePath };
       }
       if (reason) return fallback(reason, result);
       return { text: result.text, backend: this.name, durationMs: Date.now() - started, outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", languageWarning, languageEvidence, attemptEvidence: result.attemptEvidence };
