@@ -514,8 +514,8 @@
       "WingsU2HostTests/testTranscribingKeepsHistoryAndSettingsLiveWithoutAThirdControl",
       "WingsU2HostTests/testReadingAloudCollapsedIsPauseLeftShowAndStopRight",
       "WingsU2HostTests/testReadingAloudPausedIsPlayLeftTimeAndStopRight",
-      "WingsU2HostTests/testReadingAloudWithTheTeleprompterShowsTheTimeAndALiveWingStop",
-      "WingsU2HostTests/testTheWingStopStopsTheReadWhileTheTeleprompterIsOpen"
+      "WingsU2HostTests/testReadingAloudWithTheTeleprompterShowsTheTimeAndTheStopInTheEyeRow",
+      "WingsU2HostTests/testTheEyeRowStopStopsTheReadWhileTheTeleprompterIsOpen"
     ],
     "deferred": {},
     "kind": "unit/offscreen"
