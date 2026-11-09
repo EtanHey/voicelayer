@@ -40,6 +40,11 @@ jobs:
           from pathlib import Path
           # Fresh-HOME M4 wall seconds, including each job's explicit replay steps.
           seconds = {
+              # E7 local wall seconds, measured with the Homebrew JDK on 2026-11-08.
+              "clone-engine": 2.27,
+              "speech-word-seek": 1.611,
+              "teleprompter-a-seek": 2.155,
+              "teleprompter-a-handle": 2.048,
               "f5-gesture-preview": 3.9,
               "history-pull": 2.724,
               "history-row-refresh": 0.808,
