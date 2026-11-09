@@ -1107,6 +1107,10 @@ public final class VoiceState {
     /// Live repro 2026-07-26 12:55:30 — a remote caller's answer was pasted into Preview.
     private var remoteOwnedRecording = false
 
+    /// An agent's Ask is capturing (a remote MCP caller owns the recording). Etan, QA 0510 R3: drawers may open
+    /// "as long as there's no teleprompter of speech or asking", so the notch treats this like the teleprompter.
+    public var isAskCapture: Bool { mode == .recording && remoteOwnedRecording }
+
     /// A local record request must clear `remoteOwnedRecording`, but an ambiguous idle from
     /// another client can let that request race an active remote capture's final transcript.
     /// Keep this independent paste block until an authoritative owner/terminal event arrives.

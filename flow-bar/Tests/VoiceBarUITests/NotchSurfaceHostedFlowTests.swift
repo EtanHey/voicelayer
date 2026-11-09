@@ -205,17 +205,110 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         XCTAssertNil(harness.surface.drawer)
     }
 
-    func testRecordingClosesAnOpenDrawerSoTheWingsShow() throws {
+    /// 0510 R3/N8: a capture starting under an open drawer keeps it, and a drawer opens during one.
+    func testRecordingKeepsAnOpenDrawerAndAllowsANewOne() throws {
         let harness = makeHarness()
         try click(center(harness.rects[3]), in: harness.panel)
         wait { harness.surface.drawer != nil }
         harness.surface.send(.recordingChanged(true))
-        XCTAssertNil(harness.surface.drawer)
-        XCTAssertEqual(harness.surface.send(.openHistory), .refused(.recording))
+        XCTAssertEqual(harness.surface.drawer, .settings(.general))
+        XCTAssertEqual(harness.surface.send(.openHistory).isRefusal, false)
+        XCTAssertEqual(harness.surface.drawer, .history(.collapsed))
+    }
+}
+
+private extension NotchSurfaceOutcome {
+    var isRefusal: Bool {
+        if case .refused = self { return true }
+        return false
     }
 }
 
 extension NotchSurfaceHostedFlowTests {
+    /// A pull measured from the top of the screen, the panel resized before every event as the app does (its top
+    /// stays pinned while the drawer grows it), so the pointer stays where the user's would be.
+    private func pull(_ harness: Harness, fromTop start: CGFloat, toTop end: CGFloat, steps: Int = 12) throws {
+        resize(harness)
+        try send(.leftMouseDown, at: notchPoint(harness, fromTop: start), to: harness.panel)
+        drain()
+        for step in 1 ... steps {
+            resize(harness)
+            let top = start + (end - start) * CGFloat(step) / CGFloat(steps)
+            try send(.leftMouseDragged, at: notchPoint(harness, fromTop: top), to: harness.panel)
+            drain(0.02)
+        }
+        resize(harness)
+        try send(.leftMouseUp, at: notchPoint(harness, fromTop: end), to: harness.panel)
+        drain(0.8)
+    }
+
+    enum Activity: String, CaseIterable { case launcher, recording, transcribing, typed }
+
+    /// Puts the notch in `activity` the way the app feeds it (VoiceState plus the presentation model's envelope).
+    private func enter(_ activity: Activity, _ harness: Harness) {
+        let fixed = VoiceBarNotchContract.fixedWingWidth
+        switch activity {
+        case .launcher:
+            return
+        case .recording:
+            harness.state.mode = .recording
+            harness.model.updateOperationalEnvelope(
+                hasTeleprompter: false, isRecording: true, hasCompactStatus: false,
+                recordingLeadingWingWidth: fixed, recordingTrailingWingWidth: VoiceBarNotchContract.recordingTrailingWingWidth)
+        case .transcribing:
+            harness.state.mode = .transcribing
+            harness.model.updateOperationalEnvelope(
+                hasTeleprompter: false, isRecording: false, hasCompactStatus: true,
+                compactStatusLeadingWingWidth: fixed, compactStatusTrailingWingWidth: fixed)
+        case .typed:
+            harness.state.mode = .idle
+            harness.state.confirmationText = "Typed"
+            harness.model.updateOperationalEnvelope(
+                hasTeleprompter: false, isRecording: false, hasCompactStatus: true,
+                compactStatusLeadingWingWidth: fixed, compactStatusTrailingWingWidth: 60)
+        }
+        resize(harness)
+        drain(0.6)
+    }
+
+    /// 0510 N7 (R3): History pulls down from the notch while recording, transcribing and on Typed, not only from
+    /// the launcher; the band keeps the activity's own wings above it.
+    func testN7HistoryPullsDownInEveryNonSpeechState() throws {
+        for activity in Activity.allCases {
+            let harness = makeHarness()
+            enter(activity, harness)
+            try pull(harness, fromTop: 12, toTop: 230)
+            wait { harness.surface.drawer != nil }
+            XCTAssertEqual(harness.surface.drawer?.isHistory, true, "[N7] History pulls down while \(activity)")
+            if activity != .launcher {
+                XCTAssertEqual(harness.model.presentation.visualState, .history, "[N7] the drawer shows (\(activity))")
+                XCTAssertNotEqual(harness.model.presentation.bandState, .hoverLauncher,
+                                  "[N7] the band keeps the \(activity) wings above the drawer")
+            }
+            harness.panel.orderOut(nil)
+        }
+    }
+
+    /// 0510 N9 (R4): the microphone control is in the same core-side slot in every allowed state that has a left
+    /// wing to spare (launcher, transcribing, Typed), and it opens Settings › General at the microphone in the notch.
+    func testN9TheMicrophoneControlOpensTheNotchMicrophoneSettingEverywhere() throws {
+        for activity in [Activity.launcher, .transcribing, .typed] {
+            let harness = makeHarness()
+            enter(activity, harness)
+            XCTAssertEqual(harness.model.presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth,
+                           "[N9] \(activity): the same two-slot left wing")
+            let current = layout(harness.model)
+            let chevron = VoiceBarNotchHitRegion(
+                geometry: current.presentation.geometry,
+                configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+            ).rects[0].offsetBy(dx: current.visibleContentRect.minX, dy: current.visibleContentRect.minY)
+            try click(center(chevron), in: harness.panel)
+            wait { harness.surface.drawer != nil }
+            XCTAssertEqual(harness.surface.drawer, .settings(.general), "[N9] \(activity): the chevron opens General")
+            harness.panel.orderOut(nil)
+        }
+    }
+
     /// The open History panel's extend handle, in window space (its native AX adapter is a real NSView).
     private func historyHandle(_ harness: Harness) throws -> NSPoint {
         func find(_ view: NSView) -> NSView? {

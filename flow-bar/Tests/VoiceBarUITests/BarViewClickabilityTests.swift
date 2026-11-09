@@ -730,7 +730,7 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
 
-        XCTAssertTrue(leading.contains("if notchPresentation.visualState == .compactStatus, state.mode == .transcribing"))
+        XCTAssertTrue(leading.contains("if notchPresentation.bandState == .compactStatus, state.mode == .transcribing"))
         XCTAssertTrue(leading.contains("ProcessingSpinner()"))
         XCTAssertFalse(leading.contains("statusLabel"))
     }

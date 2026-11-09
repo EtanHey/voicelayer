@@ -369,6 +369,7 @@ public struct BarView: View {
     /// The spot the Settings drawer was last opened at (0510 N9: the microphone control opens General at the
     /// microphone priority list). Its id changes per request so the pane scrolls there again.
     @State private var settingsRequest: SettingsTabRequest?
+    @State private var settingsRequestID = 0
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     /// The History panel is on screen (open, opening, closing or being pulled). The window keeps the panel's size
@@ -482,12 +483,13 @@ public struct BarView: View {
         }
     }
 
-    /// What the notch is doing that outranks a drawer, reported to the machine. Recording wings and the
-    /// teleprompter close any drawer and refuse a new one.
+    /// What the notch is doing, reported to the machine. Only agent speech closes a drawer and refuses a new one:
+    /// the teleprompter, or an agent's Ask capturing (0510 R3: "as long as there's no teleprompter of speech or
+    /// asking"). A dictation keeps the drawer under its wings.
     private func synchronizeSurfaceActivity() {
         let visual = notchPresentation.visualState
         surface.send(.recordingChanged(visual == .recording || state.mode == .recording))
-        surface.send(.teleprompterChanged(visual == .teleprompter))
+        surface.send(.teleprompterChanged(visual == .teleprompter || state.isAskCapture))
     }
 
     private func toggleHistoryDrawer() {
@@ -504,6 +506,7 @@ public struct BarView: View {
         if isSettingsDrawerOpen {
             surface.send(.dismiss(.toggle))
         } else {
+            settingsRequest = nil
             surface.send(.openSettings(.general))
         }
     }
@@ -666,6 +669,7 @@ public struct BarView: View {
             showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
         )
         input.isHistoryPanelOpen = isHistoryMounted
+        input.showsIdleMicrophoneControl = VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
         input.historyRows = historyRows
         input.teleprompterLines = state.teleprompterVisibleLines
         input.transientNoteOffersHistory = state.selectionFeedbackNoteOffersHistory
@@ -686,10 +690,14 @@ public struct BarView: View {
         guard presentation.visualState == .history else { return nil }
         return VoiceBarNotchHistoryMorphInput(
             progress: historyFrozenProgress ?? historyProgress,
-            closed: VoiceBarNotchContract.geometry(
-                for: .hoverLauncher,
-                coreWidth: presentation.geometry.coreWidth,
-                visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+            // The band the drawer closes back into: the launcher's, or the activity's own (0510 R3).
+            closed: VoiceBarNotchGeometry(
+                coreWidth: presentation.geometry.coreWidth, topHeight: presentation.geometry.topHeight,
+                leadingWingWidth: presentation.geometry.leadingWingWidth,
+                trailingWingWidth: presentation.geometry.trailingWingWidth,
+                bodyLeadingExtent: presentation.geometry.leadingWingWidth,
+                bodyTrailingExtent: presentation.geometry.trailingWingWidth,
+                lowerSurfaceHeight: 0
             ),
             open: presentation.geometry,
             // The live rows plus any note band, never past History's window.
@@ -989,10 +997,14 @@ public struct BarView: View {
         }
     }
 
-    /// History opens only from the launcher or itself, and never while there's nothing to show.
+    /// History pulls down from the launcher, from itself, and (0510 N7) while recording, transcribing or on a
+    /// compact status such as Typed; never over the teleprompter, during agent speech or an Ask, or with nothing
+    /// to show.
     private var canPullHistory: Bool {
-        let state = notchPresentation.visualState
-        return (state == .hoverLauncher || state == .history) && !self.state.recentTranscriptionEntries.isEmpty
+        let visual = notchPresentation.visualState
+        let speaking = state.mode == .speaking || state.isAskCapture
+        return [.hoverLauncher, .history, .recording, .compactStatus].contains(visual) && !speaking
+            && !state.recentTranscriptionEntries.isEmpty
     }
 
     private var notchPresentationOpenHistoryHeight: CGFloat {
@@ -1035,7 +1047,7 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLeadingContent: some View {
-        switch notchPresentation.visualState {
+        switch notchPresentation.bandState {
         case .idle:
             EmptyView()
         case .hoverLauncher, .history:
@@ -1094,17 +1106,29 @@ public struct BarView: View {
             // R0856-05: the recording controls arrive with a wider wing; they show once its glass covers them.
             .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
         case .compactStatus, .teleprompter:
-            if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {
+            if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {
                 // 2.3 U2: the spinner sits where Stop was, in a control slot so it lines up with it. It is not a
                 // control, so it registers no tooltip (R0856-09: tooltips sit on controls); VoiceOver reads it.
-                transcriptionSpinner
+                // 0510 N9: the microphone control keeps its core-side slot, as on the launcher.
+                HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                    transcriptionSpinner
+                    microphonePickerButton
+                }
             } else if let playbackPauseControl {
                 playbackLeadingControls(playbackPauseControl)
-            } else if notchPresentation.visualState == .compactStatus,
+            } else if notchPresentation.bandState == .compactStatus,
                       state.mode == .idle, VoiceBarPresentation.readQueueControl(for: state) != nil {
                 playbackLeadingControls(nil)
-            } else if notchPresentation.visualState == .compactStatus {
-                statusIcon
+            } else if notchPresentation.bandState == .compactStatus {
+                if VoiceBarPresentation.showsIdleMicrophoneControl(for: state) {
+                    // 0510 N9 (Typed and every other idle notice): the launcher's mic and chevron, unchanged.
+                    HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                        statusIcon
+                        microphonePickerButton
+                    }
+                } else {
+                    statusIcon
+                }
             }
         }
     }
@@ -1165,7 +1189,7 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchTrailingContent: some View {
-        switch notchPresentation.visualState {
+        switch notchPresentation.bandState {
         case .idle:
             EmptyView()
         case .hoverLauncher, .history:
@@ -1191,7 +1215,7 @@ public struct BarView: View {
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
                 notchSpeakingTrailingContent
-            } else if notchPresentation.visualState == .compactStatus {
+            } else if notchPresentation.bandState == .compactStatus {
                 notchCompactStatusContent
             } else if state.isTeleprompterReadback {
                 notchWaveform
@@ -1241,7 +1265,7 @@ public struct BarView: View {
     /// read swaps the time for Show teleprompter, so the wing never carries a third control. 2.3 U5: the wing Stop is
     /// the live one with the teleprompter open too; the teleprompter's lower row no longer has a Stop.
     private var notchSpeakingTrailingContent: some View {
-        let isCompact = notchPresentation.visualState == .compactStatus
+        let isCompact = notchPresentation.bandState == .compactStatus
         return HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
             if isCompact, state.isTeleprompterDismissed, !state.isPlaybackPaused {
                 notchTeleprompterButton(
@@ -1556,8 +1580,8 @@ public struct BarView: View {
 
     private func handleModeChange(_ newMode: VoiceMode) {
         errorDismissTask?.cancel()
-        if newMode != .idle,
-           !(newMode == .transcribing && state.isHistoryRetranscriptionPending) {
+        // 0510 N8: a drawer stays open through recording and transcribing; agent speech takes the notch.
+        if newMode == .speaking {
             surface.send(.dismiss(.voiceActivity))
         }
     }
@@ -1758,14 +1782,29 @@ public struct BarView: View {
         }
     }
 
+    /// 0510 N9 (Etan, R4: the mic control "should take you to the right settings page in the notch app", the same
+    /// every time): wherever it shows, it opens Settings › General at Microphone priority in the notch, and
+    /// closes it again from there. Without a Settings drawer (2.3 hosts) it keeps opening the microphone list.
     private var microphonePickerButton: some View {
         notchButton(
             icon: "chevron.down",
+            isSelected: isMicrophoneSettingsOpen,
             accessibilityLabel: "Choose microphone",
             tooltip: "Choose microphone"
         ) {
-            onOpenMicrophonePicker()
+            guard settingsDrawer != nil else { return onOpenMicrophonePicker() }
+            if isMicrophoneSettingsOpen {
+                surface.send(.dismiss(.toggle))
+            } else {
+                settingsRequestID &+= 1
+                settingsRequest = SettingsTabRequest(tab: .general, focus: .microphonePriority, id: settingsRequestID)
+                surface.send(.openSettings(.general))
+            }
         }
+    }
+
+    private var isMicrophoneSettingsOpen: Bool {
+        surface.drawer == .settings(.general) && settingsRequest?.focus == .microphonePriority
     }
 
     /// Tests only: mount with the notch History panel already open.

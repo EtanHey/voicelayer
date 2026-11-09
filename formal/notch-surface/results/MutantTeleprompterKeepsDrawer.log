@@ -3,11 +3,11 @@
   "kind": "invariant",
   "target": "NoDrawerOverTeleprompter",
   "status": "EXPECTED_FAIL",
-  "generated": 15,
-  "distinct": 7,
+  "generated": 19,
+  "distinct": 8,
   "trace": [
-    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = FALSE\n/\\ teleprompter = FALSE",
-    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = TRUE\n/\\ teleprompter = FALSE",
-    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = TRUE\n/\\ teleprompter = TRUE"
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = FALSE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = TRUE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = TRUE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = TRUE"
   ]
 }

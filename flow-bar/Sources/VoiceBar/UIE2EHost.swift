@@ -365,11 +365,12 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state))
         input.isHistoryPanelOpen = historyOpen
         input.historyRows = historyRows
+        input.showsIdleMicrophoneControl = VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
         let presentation = VoiceBarPresentation.notchPresentation(from: input)
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(presentation: presentation,
             interactionConfiguration: AppDelegate.notchInteractionConfiguration(
-                for: state, visualState: presentation.visualState),
+                for: state, visualState: presentation.visualState, bandState: presentation.bandState),
             canvasGeometry: canvas.canvasGeometry)
     }
 

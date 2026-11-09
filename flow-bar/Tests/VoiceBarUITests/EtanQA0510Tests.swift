@@ -138,14 +138,31 @@ final class EtanQA0510Tests: XCTestCase {
         XCTAssertEqual(NotchHistoryPresentation.settingsPullHint, "Release for Settings", "[N6] the feature stays")
     }
 
+    /// N9: every idle notice (Typed included) keeps the launcher's mic and microphone control; a parked read's
+    /// controls are the only thing that takes that wing.
+    func testN9IdleNoticesKeepTheMicrophoneControl() {
+        let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
+            keepsExpandedInDevState: true, pasteboard: NSPasteboard.withUniqueName())
+        state.mode = .idle
+        state.confirmationText = "Typed"
+        XCTAssertTrue(VoiceBarPresentation.showsIdleMicrophoneControl(for: state), "[N9] Typed shows it")
+        var input = VoiceBarNotchOperationalInput(mode: .idle, confirmationText: "Typed", isHovered: true)
+        input.showsIdleMicrophoneControl = true
+        let typed = VoiceBarPresentation.notchPresentation(from: input)
+        XCTAssertEqual(typed.visualState, .compactStatus)
+        XCTAssertEqual(typed.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth,
+                       "[N9] Typed's left wing holds the mic and its control, like the launcher's")
+        state.mode = .recording
+        XCTAssertFalse(VoiceBarPresentation.showsIdleMicrophoneControl(for: state))
+    }
+
     func testN7DrawersCanOpenDuringRecording() {
         for event in [NotchSurfaceEvent.openHistory, .openSettings(.general)] {
             var machine = NotchSurfaceMachine()
             machine.send(.recordingChanged(true))
-            expected("N7") {
-                machine.send(event)
-                XCTAssertNotNil(machine.drawer, "[N7] recording must permit History and Settings")
-            }
+            machine.send(event)
+            XCTAssertNotNil(machine.drawer, "[N7] recording must permit History and Settings")
         }
     }
 
@@ -156,11 +173,9 @@ final class EtanQA0510Tests: XCTestCase {
             let drawer = machine.drawer
             XCTAssertNotNil(drawer, "fixture: drawer opened before recording")
             machine.send(.recordingChanged(true))
-            expected("N8") {
-                XCTAssertEqual(machine.drawer, drawer, "[N8] keep the drawer while recording")
-                machine.send(.recordingChanged(false))
-                XCTAssertEqual(machine.drawer, drawer, "[N8] retain the drawer after recording ends")
-            }
+            XCTAssertEqual(machine.drawer, drawer, "[N8] keep the drawer while recording")
+            machine.send(.recordingChanged(false))
+            XCTAssertEqual(machine.drawer, drawer, "[N8] retain the drawer after recording ends")
         }
     }
 
@@ -192,10 +207,10 @@ final class EtanQA0510Tests: XCTestCase {
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             XCTAssertEqual(surface.drawer, drawer, "fixture: drawer mounted before mode change")
-            state.mode = .transcribing
-            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-            expected("N8") {
-                XCTAssertEqual(surface.drawer, drawer, "[N8] real BarView dismisses drawer on transcribing mode change")
+            for mode in [VoiceMode.recording, .transcribing, .idle] {
+                state.mode = mode
+                RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+                XCTAssertEqual(surface.drawer, drawer, "[N8] real BarView keeps the drawer through \(mode)")
             }
         }
     }

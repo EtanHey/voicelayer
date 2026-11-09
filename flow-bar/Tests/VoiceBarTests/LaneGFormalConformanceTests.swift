@@ -168,11 +168,16 @@ final class LaneGFormalConformanceTests: XCTestCase {
             let tag = "\(row.policy)/\(String(decoding: try encoder.encode(row.input), as: UTF8.self))"
             resident.setHovered(input.isHovered)
             resident.setHistoryPanelOpen(input.isHistoryPanelOpen)
-            resident.updateOperationalEnvelope(hasTeleprompter: p.visualState == .teleprompter,
-                isRecording: input.mode == .recording, hasCompactStatus: p.visualState == .compactStatus,
-                compactStatusLeadingWingWidth: p.geometry.leadingWingWidth, compactStatusTrailingWingWidth: p.geometry.trailingWingWidth,
-                recordingLeadingWingWidth: p.geometry.leadingWingWidth, recordingTrailingWingWidth: p.geometry.trailingWingWidth,
-                teleprompterLeadingWingWidth: input.mode == .speaking ? p.geometry.leadingWingWidth : nil,
+            // Adaptation point (0510 R3): the app feeds the resident model from the drawer-less resolve
+            // (`AppDelegate.refreshNotchPresentationModel`), so a drawer knows the band it hangs under.
+            var drawerless = input
+            drawerless.isHistoryPanelOpen = false
+            let feed = VoiceBarPresentation.notchPresentation(from: drawerless)
+            resident.updateOperationalEnvelope(hasTeleprompter: feed.visualState == .teleprompter,
+                isRecording: input.mode == .recording, hasCompactStatus: feed.visualState == .compactStatus,
+                compactStatusLeadingWingWidth: feed.geometry.leadingWingWidth, compactStatusTrailingWingWidth: feed.geometry.trailingWingWidth,
+                recordingLeadingWingWidth: feed.geometry.leadingWingWidth, recordingTrailingWingWidth: feed.geometry.trailingWingWidth,
+                teleprompterLeadingWingWidth: input.mode == .speaking ? feed.geometry.leadingWingWidth : nil,
                 keepsIdleExpanded: input.mode == .idle && !input.isCollapsed, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback)
             if resident.presentation != p { errors["Resident"]!.append(tag) }
             if p.geometry.leadingWingWidth > 132 || p.geometry.trailingWingWidth > 132 { errors["WingBounds"]!.append(tag) }

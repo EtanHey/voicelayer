@@ -4,7 +4,9 @@ import Observation
 
 // 2.4 Lane A: ONE notch surface. The notch owns every drawer that hangs from it (History and Settings) and
 // shows the recording wings and the teleprompter. Which drawer is open, and whether one may open at all, is
-// decided here and nowhere else. BarView, the dismissal monitors, the gear, the pull gesture and the app send
+// decided here and nowhere else. Etan, QA 0510 R3: "as long as there's no teleprompter of speech or asking,
+// settings and history should be pulled down", including while recording, transcribing and on Typed: a drawer
+// hangs under the recording wings and stays through the capture; only the teleprompter and a modal sheet close it. BarView, the dismissal monitors, the gear, the pull gesture and the app send
 // events; they never flip a flag of their own. Model: formal/notch-surface/NotchSurface.tla.
 
 /// History's two resting heights (Etan, 2.4: "collapsed 6, expanded 8, scrolls to 20").
@@ -53,8 +55,8 @@ public enum NotchDrawer: Equatable, Hashable, Sendable {
     }
 }
 
-/// What the notch shows, derived from the machine. Recording and the teleprompter outrank a drawer, and the
-/// machine guarantees a drawer is never open under either.
+/// What the notch shows, derived from the machine. The teleprompter outranks a drawer (the machine guarantees no
+/// drawer is open under it); a drawer outranks recording, whose wings stay in the band above it (0510 R3).
 public enum NotchSurfaceState: Equatable, Hashable, Sendable {
     case closed
     case recording
@@ -77,7 +79,7 @@ public enum NotchDismissReason: String, Equatable, Hashable, Sendable, CaseItera
     case toggle
     /// A row action finished the drawer's job (Paste, open the recording, open a Settings window tab).
     case action
-    /// Dictation, Ask or a read-aloud took the notch.
+    /// A read-aloud or an Ask took the notch (its teleprompter). Dictation no longer closes a drawer (0510 R3).
     case voiceActivity
     /// History emptied while it was open.
     case emptied
@@ -98,8 +100,6 @@ public enum NotchSurfaceEvent: Equatable, Hashable, Sendable {
 }
 
 public enum NotchSurfaceRefusal: Equatable, Hashable, Sendable {
-    /// The recording wings own the notch; no drawer may hide them.
-    case recording
     case teleprompter
     /// A modal Settings sheet or alert is up; a drawer would sit over it and take its clicks.
     case modal
@@ -126,18 +126,16 @@ public struct NotchSurfaceMachine: Equatable, Hashable, Sendable {
     public init() {}
 
     public var state: NotchSurfaceState {
-        if isRecording { return .recording }
         if isTeleprompterShown { return .teleprompter }
         switch drawer {
         case let .history(detent): return .history(detent)
         case let .settings(tab): return .settings(tab)
-        case nil: return .closed
+        case nil: return isRecording ? .recording : .closed
         }
     }
 
-    /// Why no drawer may open right now, or nil when one may.
+    /// Why no drawer may open right now, or nil when one may. Recording never refuses one (0510 R3, N7).
     public var openRefusal: NotchSurfaceRefusal? {
-        if isRecording { return .recording }
         if isTeleprompterShown { return .teleprompter }
         if isModal { return .modal }
         return nil
@@ -168,8 +166,8 @@ public struct NotchSurfaceMachine: Equatable, Hashable, Sendable {
             guard canDismiss else { return .refused(.noDrawer) }
             drawer = nil
         case let .recordingChanged(isRecording):
+            // 0510 N8: the drawer stays through the capture and after it.
             self.isRecording = isRecording
-            if isRecording { drawer = nil }
         case let .teleprompterChanged(isShown):
             isTeleprompterShown = isShown
             if isShown { drawer = nil }
@@ -182,13 +180,16 @@ public struct NotchSurfaceMachine: Equatable, Hashable, Sendable {
         return beforeDrawer == drawer ? .unchanged : .changed(from: before, to: after)
     }
 
-    // MARK: Invariants (the same four TLC checks; the exhaustive Swift walk asserts them on every state)
+    // MARK: Invariants (the same checks TLC makes; the exhaustive Swift walk asserts them on every state)
 
     /// AtMostOneDrawer is structural (`drawer` is one optional value); this names it for the walk.
     public var atMostOneDrawer: Bool { true }
 
-    /// WingsNeverHidden: while recording no drawer is open.
-    public var wingsNeverHidden: Bool { !isRecording || drawer == nil }
+    /// DrawerReachableWhileCapturing (0510 N7): recording, with no teleprompter and no modal sheet, both drawers
+    /// may open.
+    public var drawerReachableWhileCapturing: Bool {
+        !isRecording || isTeleprompterShown || isModal || openRefusal == nil
+    }
 
     /// NoDrawerOverModal: while a modal sheet or alert is up no drawer is open.
     public var noDrawerOverModal: Bool { !isModal || drawer == nil }

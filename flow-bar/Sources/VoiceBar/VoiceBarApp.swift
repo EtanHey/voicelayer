@@ -1226,7 +1226,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     geometry: layout.presentation.geometry,
                     configuration: Self.notchInteractionConfiguration(
                         for: voiceState,
-                        visualState: layout.presentation.visualState
+                        visualState: layout.presentation.visualState,
+                        bandState: layout.presentation.bandState
                     )
                 )
                 guard region.rects.indices.contains(expected.rectIndex) else {
@@ -2146,7 +2147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             presentation: presentation,
             interactionConfiguration: Self.notchInteractionConfiguration(
                 for: voiceState,
-                visualState: presentation.visualState
+                visualState: presentation.visualState,
+                bandState: presentation.bandState
             ),
             canvasGeometry: canvas.canvasGeometry
         )
@@ -2158,8 +2160,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     static func notchInteractionConfiguration(
         for state: VoiceState,
-        visualState: VoiceBarNotchVisualState
+        visualState: VoiceBarNotchVisualState,
+        bandState: VoiceBarNotchVisualState? = nil
     ) -> VoiceBarNotchInteractionConfiguration {
+        // 0510 R3: under a drawer the band keeps the activity's own controls; the drawer's body is live too.
+        if visualState == .history, let bandState, bandState != .history, bandState != .hoverLauncher {
+            return notchInteractionConfiguration(for: state, visualState: bandState).withInteractiveLowerSurface
+        }
         switch visualState {
         case .idle:
             return .none
@@ -2176,8 +2183,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .compactStatus:
             switch state.mode {
             case .transcribing:
-                // 2.3 U2: the spinner is not a control; History and Settings stay live on the right.
-                return VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
+                // 2.3 U2: the spinner is not a control; History and Settings stay live on the right. 0510 N9: the
+                // microphone control takes the left wing's core-side slot.
+                return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1, trailingControlCountFromCore: 2)
             case .speaking:
                 // P16: pause/play on the left; QUEUE1: Next and the "+N" count share it.
                 // 2.3 U2: Stop at the right wing's outer edge (its time, or a hidden read's eye, beside it).
@@ -2193,8 +2201,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     trailingOuterInset: WaveformLayout.outerInset
                 )
             case .idle:
-                // D2: Next and "+N" wait in the left wing after F5 interrupted a queued read.
-                return VoiceBarNotchInteractionConfiguration(leadingControlCount: playbackLeadingSlotCount(for: state))
+                // D2: Next and "+N" wait in the left wing after F5 interrupted a queued read. 0510 N9: otherwise the
+                // launcher's mic and its microphone control.
+                return VoiceBarNotchInteractionConfiguration(
+                    leadingControlCount: VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
+                        ? 2 : playbackLeadingSlotCount(for: state)
+                )
             case .disconnected, .recording:
                 return .none
             }
@@ -2301,8 +2313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchPresentation {
         let mode = state?.mode ?? .idle
-        return VoiceBarPresentation.notchPresentation(
-            from: VoiceBarNotchOperationalInput(
+        var input = VoiceBarNotchOperationalInput(
                 mode: mode,
                 showsRecordingHold: mode == .recording && state?.recordingMode == "vad",
                 hasTeleprompterText: state?.teleprompterText != nil,
@@ -2325,8 +2336,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 transientNote: state?.selectionFeedbackNote,
                 transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory,
                 showsEarlierTakeProcessing: state.map(VoiceBarPresentation.showsEarlierTakeProcessing(for:)) ?? false
-            )
         )
+        input.showsIdleMicrophoneControl = state.map(VoiceBarPresentation.showsIdleMicrophoneControl(for:)) ?? false
+        return VoiceBarPresentation.notchPresentation(from: input)
     }
 
     private static func notchStatusText(for state: VoiceState?) -> String {
