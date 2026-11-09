@@ -179,6 +179,9 @@ struct TeleprompterAModel {
     let lines: [Range<Int>]
     let lineOfWord: [Int]
     let spacing: CGFloat
+    /// Whether each display piece, decoration included, fits the column. Only a fitting piece is pinned at its
+    /// natural width; one wider than the column sits alone on its line (the wrap never joins it) and may compress.
+    let fitsColumn: [Bool]
 
     init(document: TeleprompterRenderedDocument, text: String, column: CGFloat) {
         words = document.words
@@ -189,10 +192,13 @@ struct TeleprompterAModel {
         }
         tokenOfWord = pieces.count == words.count ? pieces : nil
         spacing = Self.width(" ", heading: false)
+        // Each piece is its own Text in the view, rounded on its own; measure it the same way, so a decorated or
+        // separated word can never draw wider than the wrap counted.
         let widths = layouts.map { layout in
-            Self.width((layout.decoration.map { $0 + " " } ?? "") + (layout.separator ?? "") + layout.displayText,
-                       heading: layout.isHeading)
+            [layout.decoration.map { $0 + " " }, layout.separator, layout.displayText].compactMap { $0 }
+                .reduce(CGFloat(0)) { $0 + Self.width($1, heading: layout.isHeading) }
         }
+        fitsColumn = widths.map { $0 <= column }
         lines = TeleprompterA.lines(widths: widths, breaks: layouts.map { $0.lineBreak != .none },
                                     glues: layouts.map(\.gluesToPrevious), spacing: spacing, column: column)
         var lineOfWord = Array(repeating: 0, count: words.count)
