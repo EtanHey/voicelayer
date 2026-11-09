@@ -133,7 +133,7 @@ function readOverride(
   fallback: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  assertTestIsolation(env);
+  assertTestIsolation();
   const value = env[name]?.trim();
   return value ? value : fallback;
 }
@@ -143,7 +143,7 @@ function readOverrideAliased(
   fallback: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  assertTestIsolation(env);
+  assertTestIsolation();
   for (const name of names) {
     const value = env[name]?.trim();
     if (value) return value;
@@ -155,7 +155,7 @@ function firstOverrideValue(
   names: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  assertTestIsolation(env);
+  assertTestIsolation();
   for (const name of names) {
     const value = env[name]?.trim();
     if (value) return value;
@@ -194,7 +194,7 @@ function heartbeatPathBesidePid(pidPath: string): string {
 export function mcpHeartbeatFilePath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  assertTestIsolation(env);
+  assertTestIsolation();
   const explicit = env[MCP_HEARTBEAT_OVERRIDE_ENV]?.trim();
   if (explicit) return explicit;
   const pidOverride = env[MCP_PID_OVERRIDE_ENV]?.trim();

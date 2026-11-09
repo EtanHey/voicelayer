@@ -86,14 +86,12 @@ test("required redirects and missing isolated roots reject fallback before user 
     if (JSON.stringify(classifyVocabulary(homeVocabulary)) !== JSON.stringify(['production vocabulary'])) {
       failures.push('HOME fallback negative control');
     }
-    // Losing process isolation during a test must now refuse even empty caller envs.
+    // A plain production-like child may remove isolation, still under synthetic HOME.
     const isolated = process.env.VOICELAYER_TEST_ISOLATED;
     delete process.env.VOICELAYER_TEST_ISOLATED;
     try {
-      for (const fn of [() => p.getTmpRoot({}), () => v.getSTTVocabularyPath({ env: {} })]) {
-        try { fn(); failures.push('missing preload allowed'); }
-        catch (e) { if (!String(e).includes('test requires the isolation preload')) throw e; }
-      }
+      if (p.getTmpRoot({}) !== '/tmp') failures.push('production tmp');
+      if (v.getSTTVocabularyPath({ env: {} }) !== homeVocabulary) failures.push('production vocabulary default');
     } finally {
       process.env.VOICELAYER_TEST_ISOLATED = isolated;
     }

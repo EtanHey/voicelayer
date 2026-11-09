@@ -11,10 +11,10 @@ const pathsModule = join(repo, "src/paths.ts");
 
 test("test resolvers refuse a missing preload even with explicit path overrides", () => {
   for (const isolated of [undefined, "", "0"]) {
-    expect(() => requireIsolatedOverride({
-      NODE_ENV: "test", VOICELAYER_TEST_ISOLATED: isolated,
-      VOICELAYER_TMP_ROOT: "/synthetic-only",
-    }, "VOICELAYER_TMP_ROOT")).toThrow("test requires the isolation preload");
+    withChildFixtureEnv({ VOICELAYER_TEST_ISOLATED: isolated }, () => {
+      expect(() => requireIsolatedOverride({ VOICELAYER_TMP_ROOT: "/synthetic-only" },
+        "VOICELAYER_TMP_ROOT")).toThrow("test requires the isolation preload");
+    });
   }
   expect(() => requireIsolatedOverride({
     NODE_ENV: "test", VOICELAYER_TEST_ISOLATED: "1",
@@ -80,7 +80,6 @@ for (const cwd of ["src/__tests__", "tests", "src/__tests__/setup"]) {
     }));
     try {
       const result = run(["test", fixture]);
-      console.log(`cwd=${cwd}\n${result.stdout}${result.stderr}`);
       expect(result.error).toBeUndefined();
       // A directory without a bunfig must fail closed; configured dirs must load it.
       if (cwd.endsWith("/setup")) {
@@ -99,7 +98,6 @@ for (const cwd of ["src/__tests__", "tests", "src/__tests__/setup"]) {
       // Explicitly bypass local configs: refuse on import, before even mkdirSync.
       rmSync(join(home, "state"), { recursive: true, force: true });
       const refused = run(["test", `--config=${config}`, fixture]);
-      console.log(`no-preload cwd=${cwd}\n${refused.stdout}${refused.stderr}`);
       expect(refused.status).not.toBe(0);
       expect(refused.stderr).toContain("test requires the isolation preload");
       expect(existsSync(join(home, "state"))).toBe(false);
