@@ -33,7 +33,7 @@ for (const f of fixtures.fixtures) test(`SPEED adapter boundary: ${f.id}`, async
   const ledger: ParakeetFallbackAttempt[] = []; let pCalls = 0, wCalls = 0;
   const expectsVad = f.native.status === "EMPTY_RESPONSE";
   const backend = new ParakeetBackend({ env: () => ({ QA_VOICE_WHISPER_LANG: "en" }), unload: async () => {},
-    speechProbe: async () => ({ status: "UNKNOWN", threshold: 0.3, errorType: "FixtureVadUnavailable" }),
+    speechProbe: async () => ({ status: "COMPLETE", threshold: 0.3, inputSha256: hash, frames: 32000, analyzedFrames: 32000, speechFrames: 512, maxProbability: .8 }),
     retainFallback: value => { ledger.push(value); return "synthetic-attempt-" + ledger.length; },
     transcribe: async submitted => {
       pCalls++; expect(readFileSync(submitted)).toEqual(bytes);
@@ -47,7 +47,7 @@ for (const f of fixtures.fixtures) test(`SPEED adapter boundary: ${f.id}`, async
       wCalls++; expect(readFileSync(submitted)).toEqual(bytes);
       // The native/input boundary must already be durable before W starts.
       expect(ledger.map(row => row.stage)).toEqual(expectsVad ? ["native-or-input-boundary", "vad-boundary"] : ["native-or-input-boundary"]);
-      if (expectsVad) expect(ledger[1].speechEvidence).toMatchObject({ status: "UNKNOWN", errorType: "FixtureVadUnavailable" });
+      if (expectsVad) expect(ledger[1].speechEvidence).toMatchObject({ status: "COMPLETE", speechFrames: 512 });
       const w = f.whisper!;
       if (["ERROR", "TIMEOUT"].includes(w.status)) throw new STTQualificationError("UNRESOLVED_FALLBACK_FAILED", w);
       return { text: w.text, backend: "whisper-fixture", durationMs: 1,

@@ -13,7 +13,7 @@ function fixture() {
   bytes.write("RIFF"); bytes.writeUInt32LE(bytes.length - 8, 4); bytes.write("WAVEfmt ", 8);
   bytes.writeUInt32LE(16, 16); bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22);
   bytes.writeUInt32LE(16000, 24); bytes.writeUInt32LE(32000, 28); bytes.writeUInt16LE(2, 32); bytes.writeUInt16LE(16, 34);
-  bytes.write("data", 36); bytes.writeUInt32LE(frames * 2, 40); bytes.writeInt16LE(1, 44);
+  bytes.write("data", 36); bytes.writeUInt32LE(frames * 2, 40); bytes.fill(1, 44);
   const path = testTmp("span-repair.wav"); writeFileSync(path, bytes);
   const groups = [
     { text: "Keep every original word including fu… no start again before this", start: 29 },
@@ -32,7 +32,7 @@ function fixture() {
   return { path, native, speech, tokens };
 }
 
-async function repair(candidate: string, mode: "speech" | "silence" | "untimed" | "error" | "whole" | "multi" | "mismatch" | "cleanup" | "identity" = "speech") {
+async function repair(candidate: string, mode: "speech" | "silence" | "untimed" | "error" | "whole" | "multi" | "mismatch" | "cleanup" | "identity" | "tail" = "speech") {
   const f = fixture(), clips: Buffer[] = [], retained: ParakeetFallbackAttempt[] = [];
   if (mode === "silence") f.speech.probabilities.fill(.01);
   if (mode === "untimed") f.native.raw_token_times = f.tokens.map(({ start, end }) => ({ start, end }));
@@ -40,36 +40,51 @@ async function repair(candidate: string, mode: "speech" | "silence" | "untimed" 
   if (mode === "mismatch") f.native.text += " unmatched";
   if (mode === "whole") f.native.text = "Keep this native thought.";
   if (mode === "identity") f.native.attemptEvidence = { inputPath: "another-recording.wav" };
+  if (mode === "tail") {
+    f.speech.probabilities.fill(.01);
+    f.native = { ...f.native, text: f.tokens.slice(0, -6).map(t => t.text).join("").trim(),
+      raw_token_times: f.tokens.slice(0, -6), last_token_end_s: 115.5 };
+    for (let i = Math.ceil(125 / .032); i * .032 < 127; i++) f.speech.probabilities[i] = .9;
+  }
+  let parakeetCalls = 0, whisperCalls = 0;
   const logs = spyOn(console, "error").mockImplementation(() => {});
   try {
-    const backend = new ParakeetBackend({ transcribe: async () => f.native, speechProbe: async () => f.speech,
+    const backend = new ParakeetBackend({ transcribe: async path => {
+      if (parakeetCalls++ === 0) return f.native;
+      const clip = readFileSync(path); clips.push(clip);
+      if (mode === "error") throw new Error("Parakeet repair failed");
+      const frames = clip.readUInt32LE(40) / 2;
+      return { text: mode === "multi" && clips.length === 1 ? "words survive recovered clause another boundary" : candidate,
+        complete: true, input_frames: frames, covered_frames: frames, sample_rate: 16000,
+        last_token_end_s: frames / 16000, inference_s: 0, language: null };
+    }, speechProbe: async () => f.speech,
       env: () => ({ QA_VOICE_WHISPER_LANG: "en" }), unload: async () => { if (mode === "cleanup") throw new Error("cleanup unconfirmed"); },
       retainFallback: attempt => { retained.push(attempt); return "retained-test-attempt"; },
       fallbackBackend: { name: "fixture-whisper", isAvailable: async () => true, transcribe: async path => {
-        clips.push(readFileSync(path));
-        if (mode === "error") throw new Error("provider failed");
-        return { text: mode === "multi" && clips.length === 1 ? "words survive recovered clause another boundary" : candidate, backend: "fixture-whisper", durationMs: 1 };
+        whisperCalls++; return { text: candidate, backend: "fixture-whisper", durationMs: 1 };
       } },
     });
     const result = await backend.transcribe(f.path);
-    return { ...f, result, clips, retained, logs: logs.mock.calls.map(c => c.join(" ")) };
+    return { ...f, result, clips, retained, parakeetCalls, whisperCalls, logs: logs.mock.calls.map(c => c.join(" ")) };
   } finally { logs.mockRestore(); }
 }
 
-test("a tiny omission in a long take decodes only padded gap and inserts without replacing any native word", async () => {
+test("an uncovered internal span re-decodes only with Parakeet and preserves every native word", async () => {
   const r = await repair("before this recovered clause after this");
   expect(r.clips).toHaveLength(1);
   expect(r.clips[0]!.readUInt32LE(40) / 32000).toBeLessThanOrEqual(5.5);
   expect(r.result.text).toBe(r.native.text.replace("this after", "this recovered clause after"));
-  expect(r.result.backend).toContain("fallback-uncovered-internal");
+  expect(r.parakeetCalls).toBe(2); expect(r.whisperCalls).toBe(0);
+  expect(r.result.backend).toBe("parakeet-resident+uncovered-internal+span-repair");
   expect(r.logs.some(l => l.includes('"reason":"uncovered-internal"') && l.includes('"uncovered_spans_s"'))).toBe(true);
-  expect(r.retained.some(a => a.whisper?.text === "before this recovered clause after this")).toBe(true);
+  expect(r.retained.some(a => a.repairParakeet?.text === "before this recovered clause after this")).toBe(true);
   expect(r.retained.some(a => a.deliveryText === r.result.text)).toBe(true);
 });
 
-test.each(["silence", "untimed", "error", "mismatch", "cleanup"] as const)("%s keeps every native character when repair cannot qualify", async mode => {
+test.each(["silence", "untimed", "error", "mismatch"] as const)("%s keeps every native character when repair cannot qualify", async mode => {
   const r = await repair("must not replace the full take", mode);
   expect(r.result.text).toBe(r.native.text);
+  expect(r.whisperCalls).toBe(0);
   if (mode !== "error") expect(r.clips).toHaveLength(0);
 });
 
@@ -80,21 +95,45 @@ test.each([
 ])("unsafe fallback is retained privately and rejected whole, without trimming native words", async candidate => {
   const r = await repair(candidate);
   expect(r.result.text).toBe(r.native.text);
-  expect(r.retained.some(a => a.whisper?.text === candidate)).toBe(true);
+  expect(r.retained.some(a => a.repairParakeet?.text === candidate)).toBe(true);
   expect(r.logs.some(l => l.includes('"accepted":false'))).toBe(true);
   expect(r.logs.join(" ")).not.toContain(candidate);
 });
 
-test("uncovered-internal survives backend provenance parsing", () => {
+test("legacy Whisper provenance stays readable; Parakeet repairs are not fallback provenance", () => {
   expect(fallbackReasonFromBackend("parakeet-resident+fallback-uncovered-internal->whisper.cpp+span-repair")).toBe("uncovered-internal");
+  expect(fallbackReasonFromBackend("parakeet-resident+uncovered-internal+span-repair")).toBeNull();
+  expect(fallbackReasonFromBackend("parakeet-resident+uncovered-tail+span-repair")).toBeNull();
 });
 
-test("a looping whole-input retry for other risks cannot replace returned native words", async () => {
-  const candidate = "one two three four five six ".repeat(12);
-  const r = await repair(candidate, "whole");
-  expect(r.result.text).toBe(r.native.text);
-  expect(r.retained.some(a => a.whisper?.text === candidate && a.deliveryText === r.native.text)).toBe(true);
-  expect(r.logs.some(l => l.includes("repeated-six-gram"))).toBe(true);
+test("sparse but usable Parakeet output does not admit Whisper", async () => {
+  const r = await repair("must never replace native", "whole");
+  expect(r.result.text).toBe(r.native.text); expect(r.whisperCalls).toBe(0);
+});
+
+test("tail speech is re-decoded with Parakeet using a bounded left anchor", async () => {
+  const r = await repair("another boundary recovered tail", "tail");
+  expect(r.parakeetCalls).toBe(2); expect(r.whisperCalls).toBe(0);
+  expect(r.result.text).toBe(r.native.text + " recovered tail");
+  expect(r.result.backend).toBe("parakeet-resident+uncovered-tail+span-repair");
+});
+
+test("Parakeet span recovery never unloads the resident model", async () => {
+  const r = await repair("before this recovered clause after this", "cleanup");
+  expect(r.result.text).toContain("this recovered clause after"); expect(r.whisperCalls).toBe(0);
+});
+
+test.each([false, true])("Parakeet provider failure admits Whisper, looping=%s", async looping => {
+  const f = fixture(); let whisperCalls = 0;
+  const backend = new ParakeetBackend({ transcribe: async () => { throw new Error("Parakeet crashed"); }, unload: async () => {},
+    retainFallback: () => "private", env: () => ({ QA_VOICE_WHISPER_LANG: "en" }),
+    fallbackBackend: { name: "fixture-whisper", isAvailable: async () => true, transcribe: async () => {
+      whisperCalls++; return { text: looping ? "one two three four five six ".repeat(12) : "Recovered after provider failure.", backend: "fixture-whisper", durationMs: 1 };
+    } },
+  });
+  if (looping) await expect(backend.transcribe(f.path)).rejects.toThrow("UNRESOLVED_FALLBACK_INCOMPLETE");
+  else expect((await backend.transcribe(f.path)).text).toBe("Recovered after provider failure.");
+  expect(whisperCalls).toBe(1);
 });
 
 test("a rejected repair keeps a separate accepted insertion and all native characters", async () => {

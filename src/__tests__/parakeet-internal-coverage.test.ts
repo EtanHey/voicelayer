@@ -33,7 +33,7 @@ test.skipIf(!privatePaths)("V32: legacy untimed tokens retain native text instea
   expect(recovered.toLowerCase().replace(/[^a-z0-9 ]/g, "")).toContain(clause);
   const { result, retries } = await replay(join(root, "internal.wav"), native, speech, recovered);
   expect(retries).toBe(0);
-  expect(result.backend).toContain("fallback-uncovered-internal");
+  expect(result.backend).toContain("uncovered-internal");
   expect(result.text).toBe(native.text);
 });
 

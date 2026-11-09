@@ -21,6 +21,7 @@ export interface ParakeetFallbackAttempt {
   whisperStatus?: "NOT_RUN";
   whisperErrorAttempt?: unknown;
   stage?: "native-or-input-boundary" | "fallback-terminal" | "native-terminal" | "vad-boundary" | "span-repair";
+  repairParakeet?: import("./parakeet-server").ParakeetResponse | null;
   repair?: { gap: { start: number; end: number }; clip: { start: number; end: number }; accepted: boolean };
   previousAttemptPath?: string;
   submittedPath?: string;
