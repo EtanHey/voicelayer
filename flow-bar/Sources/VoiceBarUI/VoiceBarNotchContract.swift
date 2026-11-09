@@ -573,7 +573,7 @@ public enum VoiceBarNotchContract {
         contentWidth: teleprompterLeadingContentWidth
     )
 
-    public static let teleprompterTrailingWingWidth = fixedWingWidth
+    public static let teleprompterTrailingWingWidth = readingTrailingWingWidth
 
     public static let material = VoiceBarNotchMaterialContract(
         blackToGlassFadeWidth: 16,
@@ -615,17 +615,37 @@ public enum VoiceBarNotchContract {
             material.fadeToContentGap + contentWidth + material.outerContentInset
     }
 
-    /// 2.3 U2: the reading-aloud right wing is the fixed wing (time + Stop), like every other state.
-    /// U5: the teleprompter's lower surface for `lines` Teleprompter A lines (196 pt holds three).
+    /// T3 (Etan, QA 2026-11-08 7:52–8:21): the panel holds only the text, the scrubber and the handle; every
+    /// control is in a wing. It hugs that stack: 16 pt above, 10 pt below (153 pt for three lines, was 196).
+    public static let teleprompterTopInset: CGFloat = 16
+    public static let teleprompterBottomInset: CGFloat = 10
     public static func teleprompterLowerSurfaceHeight(lines: Int) -> CGFloat {
-        196 + CGFloat(TeleprompterA.clamp(lines) - TeleprompterA.lineRange.lowerBound) * TeleprompterA.lineHeight
+        teleprompterTopInset + TeleprompterA.panelStackHeight(lines: TeleprompterA.clamp(lines)) + teleprompterBottomInset
     }
 
-    public static func teleprompterWaveformWingWidth(
-        visibleCoreOcclusionInset _: CGFloat
-    ) -> CGFloat {
-        fixedWingWidth
+    /// T3: reading-aloud controls sit a little further apart than the compact default, so a hover plate never
+    /// meets its neighbour (Etan, 9:35: "not enough padding … around this button for the hover state").
+    public static let readingControlSpacing: CGFloat = 7
+
+    /// T3: the left wing while reading: Replay, Stop, Pause (+ Next, carrying its "+N" badge, when reads are
+    /// queued); a stopped read keeps Replay (+ Next). It fits its slots exactly, so no wing has empty space
+    /// (S1-F7: "more space on the left for no reason").
+    public static func readingLeadingWingWidth(slots: Int) -> CGFloat {
+        let count = CGFloat(max(1, slots))
+        return compactContentFitWingWidth(
+            contentWidth: count * material.compactControlSize + (count - 1) * readingControlSpacing)
     }
+
+    /// The reading time's lane: m:ss up to 9:59, then whole minutes or hours (VoiceBarReadingTimeLabel).
+    public static let readingTimeLaneWidth: CGFloat = fixedWingWidth - 2 * fixedWingContentInset
+        - material.compactControlSpacing - material.compactControlSize
+    /// T3 (S1-F7: "not enough padding between the notch itself and the counter"): extra room between the notch
+    /// and the time, on top of the wing's inset.
+    public static let readingTimeCoreGap: CGFloat = 8
+    /// T3: the right wing while reading: time, Show/Hide teleprompter, then 1× (a stopped read: X). Wider than the
+    /// fixed wing, as Etan asked ("both wings slightly wider").
+    public static let readingTrailingWingWidth: CGFloat = 2 * fixedWingContentInset + readingTimeCoreGap +
+        readingTimeLaneWidth + 2 * (readingControlSpacing + material.compactControlSize)
 
     public static func geometry(
         for visualState: VoiceBarNotchVisualState,
@@ -673,7 +693,7 @@ public enum VoiceBarNotchContract {
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
                 leadingWingWidth: 0,
-                trailingWingWidth: fixedWingWidth,
+                trailingWingWidth: readingTrailingWingWidth,
                 bodyLeadingExtent: 140,
                 bodyTrailingExtent: 140,
                 lowerSurfaceHeight: teleprompterLowerSurfaceHeight(lines: TeleprompterA.lineRange.lowerBound)

@@ -9,7 +9,6 @@ public struct TeleprompterAView: View {
     public var hasCompleteDisplay = false
     public var speechWords: SpeechWordTable?
     public var isPaused = false
-    public var footerState = TeleprompterA.footerState(isPaused: false, isPausedForDictation: false)
     public var queuedCount = 0
     public var visibleLines = 3
     /// Nil hides the handle (the shell cannot grow yet).
@@ -20,20 +19,22 @@ public struct TeleprompterAView: View {
     public let playbackElapsedMilliseconds: () -> Int
     public var onSpeechSeek: ((String, Int) -> Void)?
     public var onSeek: ((Int) -> Void)?
+    /// T3: drawn between the text and the handle (the live scrubber), so the handle sits under it.
+    public var accessory: AnyView?
 
     public init(text: String, wordBoundaries: [TeleprompterBoundary] = [], displayBlocks: [TeleprompterDisplayBlock] = [],
                 hasCompleteDisplay: Bool = false, speechWords: SpeechWordTable? = nil, isPaused: Bool = false,
-                footerState: String? = nil, queuedCount: Int = 0, visibleLines: Int = 3,
+                queuedCount: Int = 0, visibleLines: Int = 3,
                 onVisibleLinesChange: ((Int) -> Void)? = nil, onHandleDrag: ((Bool) -> Void)? = nil, columnWidth: CGFloat = TeleprompterA.columnWidth,
                 playbackElapsedMilliseconds: @escaping () -> Int,
-                onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil) {
+                onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil,
+                accessory: AnyView? = nil) {
         self.text = text
         self.wordBoundaries = wordBoundaries
         self.displayBlocks = displayBlocks
         self.hasCompleteDisplay = hasCompleteDisplay
         self.speechWords = speechWords
         self.isPaused = isPaused
-        self.footerState = footerState ?? TeleprompterA.footerState(isPaused: isPaused, isPausedForDictation: false)
         self.queuedCount = queuedCount
         self.visibleLines = TeleprompterA.clamp(visibleLines)
         self.onVisibleLinesChange = onVisibleLinesChange
@@ -42,6 +43,7 @@ public struct TeleprompterAView: View {
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.onSpeechSeek = onSpeechSeek
         self.onSeek = onSeek
+        self.accessory = accessory
     }
 
     @State private var cache = TeleprompterAModelCache()
@@ -67,8 +69,15 @@ public struct TeleprompterAView: View {
             }
             .frame(width: columnWidth, height: CGFloat(visibleLines) * TeleprompterA.lineHeight, alignment: .topLeading)
             .clipped()
-            footer.frame(width: columnWidth, height: TeleprompterA.footerHeight)
-            if onVisibleLinesChange != nil { handle }
+            // T2 (Etan: "Reading is kind of redundant there") and T3: no status line; 1× is in the right wing.
+            if let accessory {
+                accessory
+                    .frame(width: columnWidth, height: TeleprompterA.scrubberRowHeight, alignment: .top)
+                    .padding(.top, TeleprompterA.scrubberGap)
+            }
+            handleRow
+                .frame(width: columnWidth, height: TeleprompterA.handleBandHeight)
+                .padding(.top, TeleprompterA.handleGap)
         }
     }
 
@@ -80,6 +89,10 @@ public struct TeleprompterAView: View {
             ForEach(Array(window), id: \.self) { line in
                 lineView(model, line: line, focusGroup: focusGroup)
                     .offset(y: CGFloat(line - scrolled) * TeleprompterA.lineHeight)
+                    // QA 2026-11-08 c07 X1 (Etan R3: Pause seeked back). Lines mounted outside the visible band (the one
+                    // above, for the slide; those below) are clipped from sight but not from hits, and the line above sat
+                    // under the wing's Pause. Only a line you can see takes a click.
+                    .allowsHitTesting(TeleprompterA.isVisible(line: line, scrolledLines: scrolled, visibleLines: visibleLines))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -139,30 +152,30 @@ public struct TeleprompterAView: View {
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 8) {
-            Text(footerState)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(palette.secondary.color)
-            Spacer(minLength: 0)
+    /// The home-bar handle centred under the scrubber; a queued-speech chip, when there is one, at the trailing edge.
+    private var handleRow: some View {
+        ZStack {
+            if onVisibleLinesChange != nil { handle }
             if let chip = TeleprompterA.queuedChip(queuedCount) {
-                Text(chip)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(palette.secondary.color)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(palette.subtleTrack.color))
-                    .accessibilityLabel("\(queuedCount) queued")
+                HStack {
+                    Spacer(minLength: 0)
+                    Text(chip)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(palette.secondary.color)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(palette.subtleTrack.color))
+                        .accessibilityLabel("\(queuedCount) queued")
+                }
             }
         }
-        .lineLimit(1)
     }
 
     private var handle: some View {
         Capsule()
-            .fill(palette.tertiary.color)
+            .fill(palette.secondary.color)
             .frame(width: TeleprompterA.handleSize.width, height: TeleprompterA.handleSize.height)
-            .frame(width: 64, height: TeleprompterA.handleBandHeight)
+            .frame(width: TeleprompterA.handleSize.width + 32, height: TeleprompterA.handleBandHeight)
             .contentShape(Rectangle())
             // Icon-only control: the notch's native tooltip, like every wing button.
             .background(PillControlTooltip(text: "Drag to show more or fewer lines"))

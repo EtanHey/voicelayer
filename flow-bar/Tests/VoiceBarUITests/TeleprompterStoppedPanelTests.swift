@@ -32,7 +32,8 @@ final class TeleprompterStoppedPanelTests: XCTestCase {
                            "request_id": "t2-read", "playback_id": "t2-player", "generation": 1])
         state.teleprompterVisibleLines = lines
         let presentation = VoiceBarNotchPresentationModel()
-        presentation.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false)
+        presentation.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false,
+                                               teleprompterLeadingWingWidth: VoiceBarNotchContract.readingLeadingWingWidth(slots: 3))
         presentation.setTeleprompterLines(lines)
         let host = NSHostingView(rootView: AnyView(
             BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
@@ -60,9 +61,11 @@ final class TeleprompterStoppedPanelTests: XCTestCase {
 
         let viewport = try XCTUnwrap(scrollViews(in: host).max { $0.frame.height < $1.frame.height },
                                      "the stopped read keeps its scrolling text view")
-        let expected = TeleprompterA.bodyHeight(lines: 8) + TeleprompterA.handleBandHeight
+        // T3: the stopped text takes the whole reading stack above its scrubber.
+        let expected = TeleprompterA.stoppedBodyHeight(lines: 8)
         XCTAssertEqual(viewport.frame.height, expected, accuracy: 0.5,
                        "the stopped text uses the body the reader had, not a 78 pt strip")
+        XCTAssertGreaterThan(expected, 78)
     }
 
     /// T2 (S2-F8): every teleprompter control carries the notch's native tooltip, the scrubber included.

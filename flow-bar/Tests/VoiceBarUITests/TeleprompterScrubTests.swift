@@ -270,8 +270,10 @@ final class TeleprompterScrubTests: XCTestCase {
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
         XCTAssertTrue(view.contains("Button {"))
         XCTAssertTrue(view.contains(".accessibilityHint(\"Seek to this word\")"))
-        XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber {\n                    TeleprompterPlaybackScrubBar(state: state)"),
+        // T3: the live scrubber sits inside Teleprompter A above the handle; an ended readback mounts its own.
+        XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber, !showsTeleprompterA {\n                    TeleprompterPlaybackScrubBar(state: state)"),
                       "SCRUB1: ended readback keeps the scrubber mounted")
+        XCTAssertTrue(bar.contains("accessory: AnyView(TeleprompterPlaybackScrubBar(state: state))"))
         let scrub = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SettingsPlaybackScrubBar.swift"))
         XCTAssertTrue(scrub.contains("if isPlaying {\n                TimelineView"), "idle has no periodic schedule")
         let wrapper = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift"))
@@ -402,13 +404,15 @@ final class TeleprompterScrubTests: XCTestCase {
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
         // T2 (QA 2026-11-08 S4-F2/F3): readback keeps the live body's height (lines plus the handle band); its old
         // 78 pt viewport clipped the stopped text above a blank band. Measured in TeleprompterStoppedPanelTests.
-        XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? teleprompterBodyHeight : nil)"))
+        // T3: and above its scrubber it takes the whole reading stack (no blank band under the scrubber).
+        XCTAssertTrue(bar.contains(": teleprompterBodyHeight : nil)"))
         XCTAssertTrue(bar.contains("viewportHeight: teleprompterBodyHeight,"))
-        XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber { Spacer(minLength: 0) }"))
+        XCTAssertTrue(bar.contains("TeleprompterA.stoppedBodyHeight(lines: state.teleprompterVisibleLines)"))
         let trailing = try XCTUnwrap(bar.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchCompactStatusContent")[0]
         XCTAssertTrue(trailing.contains("case .compactStatus, .teleprompter:"))
-        XCTAssertTrue(trailing.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent\n            } else if state.isTeleprompterReadback {\n                notchWaveform"),
+        // T3: a stopped read's right wing is its time, the eye and X (Etan: "Why is the X down here?").
+        XCTAssertTrue(trailing.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent\n            } else if state.isTeleprompterReadback {\n                notchReadingTrailingContent"),
                       "the reserved trailing wing is never left empty in readback")
         XCTAssertTrue(bar.contains("isPlaybackEnded: state.isTeleprompterReadback"))
         XCTAssertTrue(bar.contains("accessibilityLabel: \"Dismiss teleprompter\""), "readback keeps its dismiss control")

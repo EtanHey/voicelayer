@@ -9,6 +9,8 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public let lowerControlCount: Int
     /// The whole lower surface takes clicks, hover and scroll (the History panel's rows).
     public let lowerSurfaceIsInteractive: Bool
+    /// The gap between wing control slots (T3: the reading wings space theirs a little wider).
+    public let controlSpacing: CGFloat
 
     public init(
         leadingControlCount: Int = 0,
@@ -16,7 +18,8 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         trailingControlCountFromOuter: Int = 0,
         trailingOuterInset: CGFloat = VoiceBarNotchContract.material.compactContentInset,
         lowerControlCount: Int = 0,
-        lowerSurfaceIsInteractive: Bool = false
+        lowerSurfaceIsInteractive: Bool = false,
+        controlSpacing: CGFloat = VoiceBarNotchContract.material.compactControlSpacing
     ) {
         self.leadingControlCount = max(0, leadingControlCount)
         self.trailingControlCountFromCore = max(0, trailingControlCountFromCore)
@@ -24,6 +27,7 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         self.trailingOuterInset = max(0, trailingOuterInset)
         self.lowerControlCount = max(0, lowerControlCount)
         self.lowerSurfaceIsInteractive = lowerSurfaceIsInteractive
+        self.controlSpacing = max(0, controlSpacing)
     }
 
     /// The History panel: the launcher's buttons stay live (History closes it again) and the body is live.
@@ -73,7 +77,7 @@ public struct VoiceBarNotchHitRegion: Equatable {
     ) {
         let material = VoiceBarNotchContract.material
         let size = material.compactControlSize
-        let pitch = size + material.compactControlSpacing
+        let pitch = size + configuration.controlSpacing
         let topY = geometry.lowerSurfaceHeight + ((geometry.topHeight - size) / 2)
         var rects: [CGRect] = []
 
