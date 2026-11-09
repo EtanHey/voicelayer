@@ -14,7 +14,7 @@ capture-end r2 window: the recorder has exited, the answer is transcribing and t
 admission. A read the ask found playing is restored at its word when the window opens (AskRestore) and may play in it;
 a read the user had paused stays parked until the ask releases (AskRelease) and comes back paused. No other read starts
 in the window (the next queued read waits for the release), and a second ask is not enabled (the daemon refuses it as
-capture-owned before touching the read). Pause, resume, seek and Esc work on the restored read in the window.
+capture-owned before touching the read). Pause, resume and Esc work on the restored read in the window. Seek does not: `seekPlayback` and `seekSpeechWord` refuse any non-idle recording state, transcribing included, so the model enables Seek only with no ask.
 
 Positions are word indices held by the session. `mark` is the ground truth (the word heard when
 the read left the speaker); `pausedAt` is what the engine stored; a resume must land on `mark`.
@@ -43,7 +43,7 @@ resumes the read, the same text sets the "Already reading this" notice, differen
 Liveness: `Liveness.cfg` checks ParkedEventuallyReleased under FairSpec, weak fairness on the ask's progress
 steps (prompt start/end, mic open, capture end, recorder exit, reap, restore, release).
 
-`W == 2` keeps Fixed at 888,570 distinct states (`results/Fixed.log`); every mutant still trips. "Previous read" holds the read on screen (prevHeld) and PrevReturn brings it back paused at its word.
+`W == 2` keeps Fixed at 837,722 distinct states (`results/Fixed.log`); every mutant still trips. "Previous read" holds the read on screen (prevHeld) and PrevReturn brings it back paused at its word.
 
 Stop during an ask ends the ask and the read it parked: Stop means stop (the paused-ask stack's W1 "stopped" contract).
 

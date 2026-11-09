@@ -2,7 +2,7 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/playback-session/PlaybackSession.tla": "03f8990ac6f409007fbb0f7b80ead9e788f973c12395cb1582d57a0841b89aec",
+    "formal/playback-session/PlaybackSession.tla": "c5317f3dd930c49968ee1cf16b69e3a6124e2a4d088ae38258877a6526dd1d99",
     "formal/playback-session/checks.json": "657a846565cecae49048ba32b49644b33eb0a5cfeb76b6e00d1341ce924145c1",
     "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
@@ -69,7 +69,7 @@
     ]
   },
   "graphHashes": {
-    "Fixed": "b692e198a98745ab0c1fc91f3ee2d9719d78e5cd5f73a188e4cff1c4d823011b"
+    "Fixed": "c7c53c3829e45d451ba28cb4b1341632ada572ef10e714913efb0bbb4437cdd6"
   },
   "checks": {
     "Fixed": {
@@ -77,8 +77,8 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 3232601,
-      "distinct": 888570
+      "generated": 3008269,
+      "distinct": 837722
     },
     "JumpBackMutant": {
       "role": "mutant",
@@ -93,8 +93,8 @@
       "kind": "invariant",
       "target": "ResumeExact",
       "status": "EXPECTED_FAIL",
-      "generated": 1806,
-      "distinct": 935
+      "generated": 1805,
+      "distinct": 934
     },
     "OverlapMutant": {
       "role": "mutant",
@@ -133,16 +133,16 @@
       "kind": "invariant",
       "target": "MicExclusive",
       "status": "EXPECTED_FAIL",
-      "generated": 14962,
-      "distinct": 6118
+      "generated": 14922,
+      "distinct": 6096
     },
     "ClockResetMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "TeleTracksAudio",
       "status": "EXPECTED_FAIL",
-      "generated": 1267,
-      "distinct": 688
+      "generated": 1266,
+      "distinct": 687
     },
     "PrevOverlapMutant": {
       "role": "mutant",
@@ -173,16 +173,16 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 3232601,
-      "distinct": 888570
+      "generated": 3008269,
+      "distinct": 837722
     },
     "NoRestoreMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 150495,
-      "distinct": 50845
+      "generated": 155407,
+      "distinct": 52448
     },
     "AskCancelsReadMutant": {
       "role": "mutant",

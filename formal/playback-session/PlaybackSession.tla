@@ -63,9 +63,12 @@ Init == /\ st = [r \in Reads |-> "queued"]
         /\ mic = FALSE /\ recorder = FALSE /\ asks = 0 /\ prevHeld = None
         /\ optq = {} /\ notice = FALSE /\ askFound = None /\ restoring = None /\ lost = FALSE
 
-\* Pause, resume, seek and Esc work with no ask, and on the read an ask restored while its answer transcribes
+\* Pause, resume and Esc work with no ask, and on the read an ask restored while its answer transcribes
 \* (the read_processing window; tts.ts isProcessingRead).
 UserControls == ask \in {"none", "transcribing"}
+\* Seek works only with no ask: seekPlayback and seekSpeechWord refuse any non-idle recording state, transcribing
+\* included (tts.ts seekPlayback / seekSpeechWord; no isProcessingRead exception).
+SeekControls == ask = "none"
 
 \* Next queued read: read 2 only after read 1 ended.
 \* The ask's capture admission ("transcribing") still holds the speaker for the read it restored only, so the next
@@ -126,7 +129,7 @@ Resume(r) == /\ st[r] = "paused" /\ UserControls
              /\ UNCHANGED <<pausedAt, mark, seekTo, players, exiting, ask, parked, parkedFrom, mic, recorder, asks>>
 
 \* Seek one word back or forward from a playing read.
-Seek(r) == /\ st[r] = "playing" /\ UserControls
+Seek(r) == /\ st[r] = "playing" /\ SeekControls
            /\ \E to \in {cur[r] - 1, cur[r] + 1} \cap 0 .. (W - 1) :
                 seekTo' = [seekTo EXCEPT ![r] = to]
            /\ st' = [st EXCEPT ![r] = "seeking"] /\ Leave(r)
