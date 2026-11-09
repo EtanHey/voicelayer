@@ -444,7 +444,7 @@ public final class VoiceState {
                 resetRecordingPause()
                 // N1 review D1: leaving (or optimistically entering) recording clears the wing's time and microphone;
                 // only the capture-open edge (`captureLive`) stamps them.
-                stampRecordingWing(isCaptureOpen: false)
+                stampRecordingWing(openedAtUptimeMs: nil)
             }
             // A finished take's capture id must never ride on the next take's Pause.
             if oldValue == .recording, mode != .recording { recordingCaptureID = nil }
@@ -477,14 +477,16 @@ public final class VoiceState {
         return max(0, now - startedAt - closedPausedMs - openPausedMs)
     }
 
-    /// The capture-open edge stamps the clock and reads the microphone once; anything else clears both.
-    private func stampRecordingWing(isCaptureOpen: Bool) {
-        let now = currentRecordingUptimeMs()
-        recordingStartedAtUptimeMs = isCaptureOpen ? now : nil
-        recordingPausedBaselineMs = isCaptureOpen
-            ? recordingPausedTotalMs + (recordingPausedAtUptimeMs.map { max(0, now - $0) } ?? 0)
-            : 0
-        let name = isCaptureOpen ? recordingMicrophoneNameProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+    /// The capture-open edge stamps the clock and reads the microphone once; `nil` clears both. Clearing never
+    /// reads `recordingTimingClock`, and opening reuses the first-audio diagnostic's own reading, so the wing adds
+    /// no read to the record/first-audio latency timeline.
+    private func stampRecordingWing(openedAtUptimeMs: Int?) {
+        recordingStartedAtUptimeMs = openedAtUptimeMs
+        recordingPausedBaselineMs = openedAtUptimeMs.map { now in
+            recordingPausedTotalMs + (recordingPausedAtUptimeMs.map { max(0, now - $0) } ?? 0)
+        } ?? 0
+        let name = openedAtUptimeMs != nil
+            ? recordingMicrophoneNameProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
         recordingMicrophoneName = name?.isEmpty == false ? name : nil
     }
 
@@ -657,7 +659,8 @@ public final class VoiceState {
     public private(set) var captureLive = false {
         didSet {
             guard captureLive != oldValue else { return }
-            stampRecordingWing(isCaptureOpen: captureLive && mode == .recording)
+            // The open edge is stamped where the first frame is timed (`noteFirstRecordingAudioLevelIfNeeded`).
+            if !captureLive { stampRecordingWing(openedAtUptimeMs: nil) }
         }
     }
     /// Presentation-only guard for the brief idle frame before playback hands off to capture.
@@ -5790,6 +5793,7 @@ public final class VoiceState {
         let firstAudioUptimeMs = currentRecordingUptimeMs()
         didLogFirstRecordingAudioLevel = true
         captureLive = true
+        stampRecordingWing(openedAtUptimeMs: firstAudioUptimeMs)
         var details = [
             "firstAudioLevelUptimeMs": String(firstAudioUptimeMs),
             "socketRms": Self.formatAudioLevel(socketRMS),

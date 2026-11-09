@@ -114,8 +114,8 @@
       "kind": "temporal",
       "target": "SettlesAfterSilence",
       "status": "EXPECTED_FAIL",
-      "generated": 444823,
-      "distinct": 83530
+      "generated": 454678,
+      "distinct": 85159
     },
     "NoRenewalMutant": {
       "role": "mutant",
