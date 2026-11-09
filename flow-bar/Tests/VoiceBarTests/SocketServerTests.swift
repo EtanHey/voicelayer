@@ -1622,18 +1622,23 @@ private func clickSpeakingStop(
     in window: NSWindow,
     playbackClient: Int32
 ) throws -> String {
-    var x = host.bounds.maxX - 10
-    // 2.3 U5: Stop is in the right wing (the top row) with the teleprompter open too.
-    let y = host.bounds.height > VoiceBarNotchContract.topHeight
-        ? host.bounds.maxY - VoiceBarNotchContract.topHeight / 2
-        : host.bounds.midY
-    while x >= host.bounds.midX {
-        try click(host, at: NSPoint(x: x, y: y), in: window)
-        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
-        if let line = try readLine(from: playbackClient, timeout: 0.02) {
-            return line
+    // T7 (Etan QA 2026-11-09): with the teleprompter open the red Stop is the eye row's terminal control (20 pt above
+    // the body's bottom); collapsed, it is in the right wing's top row. Sweep both rows, in either orientation.
+    let eyeRow = VoiceBarPresentation.teleprompterLowerControlBottomInset + VoiceBarNotchContract.material.compactControlSize / 2
+    let rows = host.bounds.height > VoiceBarNotchContract.topHeight
+        ? [host.bounds.maxY - VoiceBarNotchContract.topHeight / 2, host.bounds.minY + VoiceBarNotchContract.topHeight / 2,
+           host.bounds.minY + eyeRow, host.bounds.maxY - eyeRow]
+        : [host.bounds.midY]
+    for y in rows {
+        var x = host.bounds.maxX - 10
+        while x >= host.bounds.midX {
+            try click(host, at: NSPoint(x: x, y: y), in: window)
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            if let line = try readLine(from: playbackClient, timeout: 0.02) {
+                return line
+            }
+            x -= 3
         }
-        x -= 3
     }
     throw NSError(domain: "SocketServerTests", code: 3)
 }

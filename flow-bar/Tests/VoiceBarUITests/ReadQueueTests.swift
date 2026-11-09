@@ -419,10 +419,13 @@ final class ReadQueueTests: XCTestCase {
         let slots = VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1
         let input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true,
                                                   readQueueLeadingSlotCount: slots)
-        // 2.3 U2: the reading wing is the fixed 73.5 pt wing; with the queue empty it holds only Pause.
+        // QUEUE1's own Next control goes with the queue; the input built from it alone is the fixed wing.
         XCTAssertEqual(slots, 1, "no empty Next slot remains")
         XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth,
                        VoiceBarNotchContract.fixedWingWidth)
+        // T1 (Etan QA 2026-11-09): the live wing keeps its whole transport; Forward is shown disabled instead.
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), VoiceBarPresentation.readingTransportSlotCount)
+        XCTAssertFalse(VoiceBarPresentation.readingForwardControl(for: state).isEnabled)
         XCTAssertNil(VoiceBarPresentation.readQueueControl(
             mode: .speaking, isReadback: false, currentRequestID: a, count: -1), "negative counts are zero")
 

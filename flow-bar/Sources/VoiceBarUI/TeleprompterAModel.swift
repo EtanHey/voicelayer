@@ -14,10 +14,29 @@ public enum TeleprompterA {
     public static let wrapSlack: CGFloat = 2
     public static let lineRange = 3 ... 8
     public static let topFadeHeight: CGFloat = 16
-    public static let footerHeight: CGFloat = 20
     public static let handleSize = CGSize(width: 34, height: 4)
-    /// The handle's hit band under the footer.
+    /// The handle's hit band under the eye row.
     public static let handleBandHeight: CGFloat = 14
+
+    /// T2/T8 (Etan QA 2026-11-09: "The drag bar ... can go underneath the eye and the replay row. Scrub would have
+    /// less gap"): the lower body, top to bottom, is text, scrubber, eye row, height handle. No footer row; the gaps
+    /// are tight so the text keeps the room.
+    public static let bodyTopInset: CGFloat = 16
+    /// Text to scrubber.
+    public static let scrubberGap: CGFloat = 8
+    /// `SettingsPlaybackScrubBar`'s own frame.
+    public static let scrubberHeight: CGFloat = 24
+    /// Scrubber to the eye row (T8: at most 7 pt).
+    public static let controlsGap: CGFloat = 3
+    public static let controlsHeight: CGFloat = 20
+    /// Eye row to the handle band.
+    public static let handleGap: CGFloat = 2
+    public static let bodyBottomInset: CGFloat = 4
+    /// Everything in the lower body except the text lines.
+    public static let chromeHeight: CGFloat = bodyTopInset + scrubberGap + scrubberHeight + controlsGap + controlsHeight
+        + handleGap + handleBandHeight + bodyBottomInset
+    /// The teleprompter's lower surface for `lines` text lines.
+    public static func lowerSurfaceHeight(lines: Int) -> CGFloat { chromeHeight + CGFloat(clamp(lines)) * lineHeight }
 
     public enum Tier: Equatable {
         case spoken, read, unread
@@ -51,7 +70,8 @@ public enum TeleprompterA {
 
     public static let pull = Animation.spring(response: 0.38, dampingFraction: 0.86)
 
-    public static func bodyHeight(lines: Int) -> CGFloat { CGFloat(lines) * lineHeight + footerHeight }
+    /// The text column's height (T1/T3/T6 removed the footer row under it).
+    public static func bodyHeight(lines: Int) -> CGFloat { CGFloat(lines) * lineHeight }
 
     /// Handle drag: follows the pointer inside 3–8 lines and rubber-bands past either end (at most one line).
     public static func draggedHeight(startLines: Int, translation: CGFloat) -> CGFloat {
@@ -82,12 +102,11 @@ public enum TeleprompterA {
         max(1, min(clamp(preferred), textLines))
     }
 
-    /// Lane B: the speed is its own control now (the footer chip), so the state reads "Reading" alone.
+    /// T3 (Etan QA 2026-11-09: "the reading prose ... can be totally removed"): reading has no status words. A
+    /// pause keeps its words, for VoiceOver only (the teleprompter collapses while paused).
     public static func footerState(isPaused: Bool, isPausedForDictation: Bool) -> String {
-        isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : "Reading"
+        isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : ""
     }
-
-    public static func queuedChip(_ count: Int) -> String? { count > 0 ? "+\(count) queued" : nil }
 
     /// Greedy wrap on measured widths. A forced break starts a line; a glued word never takes a space.
     public static func lines(widths: [CGFloat], breaks: [Bool], glues: [Bool], spacing: CGFloat,

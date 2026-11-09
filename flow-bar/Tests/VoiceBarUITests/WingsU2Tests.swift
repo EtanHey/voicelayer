@@ -45,7 +45,6 @@ final class WingsU2Tests: XCTestCase {
             ("idle launcher", resolve(.idle, hovered: true), .hoverLauncher),
             ("history", resolve(.idle, hovered: true, historyOpen: true), .history),
             ("transcribing", resolve(.transcribing), .compactStatus),
-            ("reading aloud, collapsed", resolve(.speaking, isTeleprompterDismissed: true), .compactStatus),
         ]
         for (name, presentation, visualState) in states {
             XCTAssertEqual(presentation.visualState, visualState, name)
@@ -67,11 +66,21 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 120, accuracy: 0.001)
     }
 
-    func testReadingAloudWithTheTeleprompterKeepsTheFixedWings() {
-        let presentation = resolve(.speaking, hasTeleprompterText: true)
-        XCTAssertEqual(presentation.visualState, .teleprompter)
-        XCTAssertEqual(presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
-        XCTAssertEqual(presentation.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
+    /// T1/T5/T6/T7 (Etan QA 2026-11-09): reading puts speed, Back, Pause and Forward in the left wing, and lays the
+    /// right wing out like recording (time, blue meter, and Stop in its outer region while collapsed). Both stay
+    /// inside the 130 pt morph canvas, open or collapsed, so the outline does not move between them.
+    func testReadingAloudUsesTheTransportWingAndTheRecordingStyleRightWing() {
+        let transport = VoiceBarPresentation.readingTransportSlotCount
+        XCTAssertEqual(VoiceBarPresentation.readingTransportWingWidth, 129.5, accuracy: 0.001,
+                       "13.5 core inset + three 20 pt controls + three 6 pt gaps + 30 pt speed chip + 8 pt outer inset")
+        XCTAssertLessThanOrEqual(VoiceBarPresentation.readingTransportWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
+        for presentation in [resolve(.speaking, hasTeleprompterText: true, readQueueLeadingSlotCount: transport),
+                             resolve(.speaking, isTeleprompterDismissed: true, readQueueLeadingSlotCount: transport)] {
+            XCTAssertEqual(presentation.geometry.leadingWingWidth, VoiceBarPresentation.readingTransportWingWidth,
+                           accuracy: 0.001)
+            XCTAssertEqual(presentation.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth,
+                           accuracy: 0.001)
+        }
     }
 
     /// Deviation (mock silent): an Ask recording's lock is a third control, and a queued read's Next + "+N" are

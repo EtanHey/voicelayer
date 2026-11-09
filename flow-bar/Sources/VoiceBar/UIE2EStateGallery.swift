@@ -226,6 +226,9 @@ final class UIE2EStateGallery {
             compactStatusTrailingWingWidth: base.geometry.trailingWingWidth,
             recordingLeadingWingWidth: base.geometry.leadingWingWidth,
             recordingTrailingWingWidth: base.geometry.trailingWingWidth,
+            // T1/T5/T7: the reading wings (transport left, time + meter right) in the teleprompter state too.
+            teleprompterLeadingWingWidth: base.visualState == .teleprompter ? base.geometry.leadingWingWidth : nil,
+            teleprompterTrailingWingWidth: base.visualState == .teleprompter ? base.geometry.trailingWingWidth : nil,
             keepsIdleExpanded: state.mode == .idle && !state.isCollapsed,
             coreWidth: geometry.housingFrame.width, visibleCoreOcclusionInset: geometry.visibleCoreOcclusionInset,
             virtualNotchIdleCoreHeight: geometry.virtualNotchIdleCoreHeight,

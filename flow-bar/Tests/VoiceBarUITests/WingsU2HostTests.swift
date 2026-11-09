@@ -144,28 +144,26 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertEqual(host.router.calls, [], "the spinner is not a control and nothing cancels the take")
     }
 
+    /// T1/T6: speed, Back, Pause, Forward on the left (Pause is the second from the core). T5/T7: time, meter and
+    /// Stop (in the outer region) on the right; a hidden read's eye sits one pitch inside Stop.
     func testReadingAloudCollapsedIsPauseLeftShowAndStopRight() {
         let state = makeSpeakingState()
         state.dismissTeleprompter()
         var sent: [String] = []
         state.sendCommand = { if let cmd = $0["cmd"] as? String { sent.append(cmd) } }
-        let host = makeHost(
-            state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-            )
-        )
+        let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 2))
         XCTAssertEqual(host.layout.presentation.visualState, .compactStatus)
-        assertFixedWings(host, leading: 1, trailing: 2)
-        firstClick(host, control: 0)
+        assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+                         leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
+        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Pause speech", "Previous read", "Playback speed",
+                                                     "Stop speaking", "Show teleprompter"])
+        firstClick(host, control: BarViewClickabilityTests.pauseIndex)
         XCTAssertEqual(sent, ["pause"])
         // From the outer edge inward: Stop, then Show teleprompter.
-        firstClick(host, control: 1)
+        firstClick(host, control: BarViewClickabilityTests.compactStopIndex)
         XCTAssertEqual(host.router.calls, ["stop"])
         XCTAssertTrue(state.isTeleprompterDismissed)
-        firstClick(host, control: 2)
+        firstClick(host, control: BarViewClickabilityTests.compactStopIndex + 1)
         XCTAssertFalse(state.isTeleprompterDismissed, "the eye shows the teleprompter again")
     }
 
@@ -176,18 +174,14 @@ final class WingsU2HostTests: XCTestCase {
         state.dismissTeleprompter()
         var sent: [String] = []
         state.sendCommand = { if let cmd = $0["cmd"] as? String { sent.append(cmd) } }
-        let host = makeHost(
-            state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 1,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-            )
-        )
-        assertFixedWings(host, leading: 1, trailing: 1)
-        firstClick(host, control: 0)
+        let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 1))
+        assertFixedWings(host, leading: 4, trailing: 1, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+                         leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
+        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Resume speech", "Previous read", "Playback speed",
+                                                     "Stop speaking"])
+        firstClick(host, control: BarViewClickabilityTests.pauseIndex)
         XCTAssertEqual(sent, ["resume"])
-        firstClick(host, control: 1)
+        firstClick(host, control: BarViewClickabilityTests.compactStopIndex)
         XCTAssertEqual(host.router.calls, ["stop"])
     }
 
@@ -195,44 +189,44 @@ final class WingsU2HostTests: XCTestCase {
     /// states); the lower row has no Stop. A click into a mounted teleprompter makes the production panel key
     /// (becomesKeyOnlyIfNeeded, unchanged), which the offscreen isolation forbids, so Pause and Stop prove here that
     /// their hit targets accept the first mouse-down; the dispatch is proved in the plain window below.
-    func testReadingAloudWithTheTeleprompterShowsTheTimeAndALiveWingStop() {
+    /// T5/T7 (Etan QA 2026-11-09, reversing 2.3 U5): with the teleprompter open the right wing is time + meter only,
+    /// as when recording, and the live red Stop is the eye row's terminal control.
+    func testReadingAloudWithTheTeleprompterShowsTheTimeAndTheStopInTheEyeRow() {
         let state = makeSpeakingState()
+        let group = VoiceBarPresentation.teleprompterLowerGroupCount(canReplay: state.canReplay)
         let host = makeHost(
             state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 1,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
-                lowerControlCount: 1,
-                lowerSurfaceIsInteractive: true
-            )
+            configuration: BarViewClickabilityTests.readingConfiguration(lowerGroup: group, lowerSurfaceIsInteractive: true)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .teleprompter)
         let geometry = host.layout.presentation.geometry
-        XCTAssertEqual(geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
-        XCTAssertEqual(geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
-        let pause = host.controlRects[0]
+        XCTAssertEqual(geometry.leadingWingWidth, VoiceBarPresentation.readingTransportWingWidth, accuracy: 0.001)
+        XCTAssertEqual(geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001)
+        let pause = host.controlRects[BarViewClickabilityTests.pauseIndex]
         let point = NSPoint(x: pause.midX, y: pause.midY)
         guard let target = host.host.hitTest(point), let down = event(.leftMouseDown, at: point, in: host.panel) else {
             return XCTFail("No Pause hit target")
         }
         XCTAssertTrue(target.acceptsFirstMouse(for: down))
-        let origin = host.layout.visibleContentRect.origin
-        let stopSlot = NSPoint(
-            x: origin.x + geometry.coreOriginX + geometry.coreWidth + geometry.trailingWingWidth
-                - VoiceBarNotchContract.fixedWingContentInset - VoiceBarNotchContract.material.compactControlSize / 2,
-            y: pause.midY
-        )
-        XCTAssertTrue(host.layout.containsInteractiveContent(stopSlot), "the wing Stop's slot is live")
+        // The rects end with the group, then the terminal slot, then the interactive body.
+        let stopRect = host.controlRects[host.controlRects.count - 2]
+        let stopSlot = NSPoint(x: stopRect.midX, y: stopRect.midY)
+        XCTAssertLessThan(stopSlot.y, pause.minY, "Stop sits below the top row, in the eye row")
+        XCTAssertTrue(host.layout.containsInteractiveContent(stopSlot), "the eye-row Stop's slot is live")
         guard let stopTarget = host.host.hitTest(stopSlot), let stopDown = event(.leftMouseDown, at: stopSlot, in: host.panel)
         else { return XCTFail("No Stop hit target") }
+        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Pause speech", "Previous read", "Playback speed"],
+                                              leading: true)
+        assertDrawnControlsSitOnTheirHitRects(host, ["Hide teleprompter", "Stop speaking"], at: [
+            host.controlRects[host.controlRects.count - 3], stopRect])
         XCTAssertTrue(stopTarget.acceptsFirstMouse(for: stopDown))
     }
 
     /// 2.3 U5 moved the live Stop into the wing (U2's handoff note). Clicked in a plain non-key window, so key-ness
     /// cannot mask the dispatch: the first click on the rendered wing Stop stops the read with the teleprompter open.
     /// (R0856-10's key-focus trap was `.focusable(true)` on the Stop; the wing Stop is not focusable.)
-    func testTheWingStopStopsTheReadWhileTheTeleprompterIsOpen() {
+    /// T7: the first click on the rendered eye-row Stop stops the read with the teleprompter open.
+    func testTheEyeRowStopStopsTheReadWhileTheTeleprompterIsOpen() {
         let state = makeSpeakingState()
         let router = Spy()
         let bar = NSHostingView(rootView: BarView(state: state, commandRouter: router,
@@ -248,19 +242,20 @@ final class WingsU2HostTests: XCTestCase {
             mode: .speaking, hasTeleprompterText: true, readQueueLeadingSlotCount: 1))
         XCTAssertEqual(presentation.visualState, .teleprompter)
         let geometry = presentation.geometry
-        // The hit-region slot the WIP registered: 8 pt inside the right wing's outer edge, in the top row.
+        // The eye row's terminal slot: one pitch right of the centred Replay + eye group, 20 pt above the bottom.
         let originX = (bar.bounds.width - geometry.totalWidth) / 2
-        let stopMidX = originX + geometry.coreOriginX + geometry.coreWidth + geometry.trailingWingWidth
-            - VoiceBarNotchContract.fixedWingContentInset - VoiceBarNotchContract.material.compactControlSize / 2
-        let topRowMidY = bar.bounds.maxY - geometry.topHeight / 2
+        let stopMidX = originX + geometry.totalWidth / 2 + VoiceBarPresentation.teleprompterTerminalOffset(
+            groupControlCount: VoiceBarPresentation.teleprompterLowerGroupCount(canReplay: state.canReplay))
+        let eyeRowMidY = bar.bounds.minY + VoiceBarPresentation.teleprompterLowerControlBottomInset
+            + VoiceBarNotchContract.material.compactControlSize / 2
         for dx in stride(from: CGFloat(-6), through: 6, by: 3) {
-            let point = NSPoint(x: stopMidX + dx, y: topRowMidY)
+            let point = NSPoint(x: stopMidX + dx, y: eyeRowMidY)
             guard let down = event(.leftMouseDown, at: point, in: window),
                   let up = event(.leftMouseUp, at: point, in: window) else { return XCTFail("events") }
             window.sendEvent(down)
             window.sendEvent(up)
         }
-        XCTAssertFalse(router.calls.isEmpty, "the wing Stop dispatches on its first click")
+        XCTAssertFalse(router.calls.isEmpty, "the eye-row Stop dispatches on its first click")
         XCTAssertEqual(Set(router.calls), ["stop"])
     }
 
@@ -295,7 +290,7 @@ final class WingsU2HostTests: XCTestCase {
                 isTeleprompterDismissed: state.isTeleprompterDismissed,
                 isTeleprompterReadback: state.isTeleprompterReadback,
                 isPlaybackPaused: state.isPlaybackPaused,
-                readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+                readQueueLeadingSlotCount: VoiceBarPresentation.playbackLeadingSlotCount(for: state),
                 isHovered: hovered,
                 isCollapsed: state.isCollapsed
             )
@@ -337,16 +332,34 @@ final class WingsU2HostTests: XCTestCase {
     }
 
     /// Both wings are the fixed width, every control sits inside its wing, and the right wing has at most two.
+    /// The drawn control (its native tooltip view) sits exactly on the hit rect the panel registers for it.
+    private func assertDrawnControlsSitOnTheirHitRects(_ host: Host, _ labels: [String], leading: Bool = false,
+                                                       at rects: [CGRect]? = nil,
+                                                       file: StaticString = #filePath, line: UInt = #line) {
+        func all(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(all) }
+        let targets = rects ?? Array(host.controlRects.prefix(labels.count))
+        for (label, rect) in zip(labels, targets) {
+            guard let drawn = all(host.host).first(where: { $0.toolTip == label && !$0.visibleRect.isEmpty }) else {
+                XCTFail("\(label) is not drawn", file: file, line: line); continue
+            }
+            let frame = drawn.convert(drawn.bounds, to: nil)
+            XCTAssertEqual(frame.minX, rect.minX, accuracy: 0.5, "\(label) x", file: file, line: line)
+            XCTAssertEqual(frame.width, rect.width, accuracy: 0.5, "\(label) width", file: file, line: line)
+            XCTAssertEqual(frame.midY, rect.midY, accuracy: 0.5, "\(label) y", file: file, line: line)
+        }
+    }
+
     private func assertFixedWings(
         _ host: Host,
         leading: Int,
         trailing: Int,
         trailingWidth: CGFloat = VoiceBarNotchContract.fixedWingWidth,
+        leadingWidth: CGFloat = VoiceBarNotchContract.fixedWingWidth,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let geometry = host.layout.presentation.geometry
-        let fixed = VoiceBarNotchContract.fixedWingWidth
+        let fixed = leadingWidth
         XCTAssertEqual(geometry.leadingWingWidth, fixed, accuracy: 0.001, "left wing", file: file, line: line)
         XCTAssertEqual(geometry.trailingWingWidth, trailingWidth, accuracy: 0.001, "right wing", file: file, line: line)
         let origin = host.layout.visibleContentRect.origin

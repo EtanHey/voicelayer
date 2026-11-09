@@ -1057,7 +1057,7 @@ public struct BarView: View {
                 // control, so it registers no tooltip (R0856-09: tooltips sit on controls); VoiceOver reads it.
                 transcriptionSpinner
             } else if let playbackPauseControl {
-                playbackLeadingControls(playbackPauseControl)
+                readingTransportControls(playbackPauseControl)
             } else if notchPresentation.visualState == .compactStatus,
                       state.mode == .idle, VoiceBarPresentation.readQueueControl(for: state) != nil {
                 playbackLeadingControls(nil)
@@ -1103,6 +1103,83 @@ public struct BarView: View {
         // 2.3 U2: the reading wing is the fixed two-slot wing. Without the mock's speed control (no playback-rate
         // logic exists yet) Pause takes the core-side slot, which is where its hit rect is counted from.
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    /// T1/T6 (Etan QA 2026-11-09: "the backwards and forwards button need to go next to the pause button. There's
+    /// also a ton of space next to it ... They can be disabled or enabled depending on if there is something queued or
+    /// not" and "the 1× can probably just go to the top next to the play pause backwards and forwards"). From the
+    /// outer edge: speed, Back, Pause/Play, Forward. Back and Forward walk the CURRENT queue only and are disabled
+    /// when nothing waits in that direction. One control slot each from the core, so the hit rects match; the speed
+    /// chip is the outermost, wider control (`VoiceBarPresentation.readingSpeedChipWidth`).
+    private func readingTransportControls(_ pause: VoiceBarPlaybackPauseControl) -> some View {
+        let forward = VoiceBarPresentation.readingForwardControl(for: state)
+        let material = VoiceBarNotchContract.material
+        return HStack(spacing: material.compactControlSpacing) {
+            readingSpeedChip
+            notchButton(
+                icon: "backward.end.fill",
+                accessibilityLabel: "Previous read",
+                accessibilityHint: "Replay the read before this one in the queue"
+            ) {
+                state.playPreviousRead()
+            }
+            .disabled(!state.previousReadAvailable)
+            .opacity(state.previousReadAvailable ? 1 : VoiceBarPresentation.disabledTransportOpacity)
+            playbackPauseButton(pause)
+            if forward.showsProcessingSpinner {
+                // Q1 (open): with nothing queued, an Ask answer still transcribing shows its spinner in Forward's slot.
+                transcriptionSpinner
+            } else {
+                notchButton(
+                    icon: "forward.end.fill",
+                    accessibilityLabel: "Next read",
+                    accessibilityHint: forward.accessibilityHint
+                ) {
+                    state.skipToNextRead()
+                }
+                .disabled(!forward.isEnabled)
+                .opacity(forward.isEnabled ? 1 : VoiceBarPresentation.disabledTransportOpacity)
+                .overlay(alignment: .topTrailing) {
+                    if let count = forward.countLabel {
+                        Text(count)
+                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .fixedSize()
+                            .foregroundStyle(notchPrimaryLabelColor)
+                            .padding(.horizontal, 2.5)
+                            .background(Capsule().fill(Theme.speakingColor.opacity(0.85)))
+                            .offset(x: 5, y: -4)
+                            .allowsHitTesting(false)
+                            .accessibilityLabel(forward.countAccessibilityLabel ?? "")
+                    }
+                }
+            }
+        }
+        .fixedSize()
+        .animation(.easeOut(duration: 0.2), value: state.readQueueCount)
+        // The row is 6 pt wider than the wing's nominal lane: it lays out at the lane's width, so its core-side slots
+        // stay on their hit rects, and draws into the outer inset (8 pt from the edge, like the fixed wings).
+        .padding(.leading, VoiceBarNotchContract.fixedWingContentInset - VoiceBarNotchContract.material.compactContentInset)
+    }
+
+    /// T6: the listening speed, a real control (each click steps 0.75× · 1× · 1.25× · 1.5× · 2×).
+    private var readingSpeedChip: some View {
+        Button { state.cyclePlaybackSpeed() } label: {
+            Text(VoiceState.speedLabel(state.playbackSpeed))
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: VoiceBarPresentation.readingSpeedChipWidth, height: 18)
+                .background(Capsule().fill(notchPalette.subtleTrack.color))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(notchPalette.secondary.color)
+        .frame(height: VoiceBarNotchContract.material.compactControlSize)
+        .background(PillControlTooltip(text: "Playback speed"))
+        .accessibilityLabel("Playback speed")
+        .accessibilityValue(VoiceState.speedLabel(state.playbackSpeed))
     }
 
     /// P16: Pause collapses the teleprompter and Play expands it again; the shell's own morph animates both.
@@ -1195,37 +1272,56 @@ public struct BarView: View {
         }
     }
 
-    /// 2.3 U2 (3-wings mock): reading aloud shows the time and Stop in the fixed right wing. A dismissed-but-playing
-    /// read swaps the time for Show teleprompter, so the wing never carries a third control. 2.3 U5: the wing Stop is
-    /// the live one with the teleprompter open too; the teleprompter's lower row no longer has a Stop.
+    /// T5/T7 (Etan QA 2026-11-09: "the waveform is blue but is consistent with the same waveform and time stuff that
+    /// we have when recording" and "maybe just the red stop button goes to the bottom"): reading aloud lays the right
+    /// wing out exactly like recording, time then level meter (blue: the playback level), in the recording wing's
+    /// geometry. With the teleprompter open, the red Stop sits in its eye row and the wing's outer region is empty, as
+    /// when recording. Collapsed (paused or hidden) there is no eye row, so Stop takes that outer region; a hidden
+    /// but playing read puts Show teleprompter beside it.
     private var notchSpeakingTrailingContent: some View {
         let isCompact = notchPresentation.visualState == .compactStatus
-        return HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-            if isCompact, state.isTeleprompterDismissed, !state.isPlaybackPaused {
-                notchTeleprompterButton(
-                    icon: "eye",
-                    accessibilityLabel: "Show teleprompter"
-                ) {
-                    state.showTeleprompter()
+        let showsReveal = isCompact && state.isTeleprompterDismissed && !state.isPlaybackPaused
+        return HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
+            VoiceBarReadingTimeRegion(
+                elapsedMilliseconds: { state.playbackElapsedMilliseconds() },
+                color: notchPrimaryLabelColor,
+                showsClock: { state.showsPlaybackClock }
+            )
+            ZStack(alignment: .trailing) {
+                notchWaveform
+                    .opacity(showsReveal ? 0 : 1)
+                if showsReveal {
+                    notchTeleprompterButton(
+                        icon: "eye",
+                        accessibilityLabel: "Show teleprompter"
+                    ) {
+                        state.showTeleprompter()
+                    }
+                    // The meter's trailing edge is exactly one control pitch inside Stop (4 pt gap + 2 pt inset),
+                    // so the wing's hit rects stay slot-aligned from the outer edge.
                 }
-                .frame(width: VoiceBarReadingTimeLabel.width)
-            } else {
-                VoiceBarReadingTimeLabel(
-                    elapsedMilliseconds: { state.playbackElapsedMilliseconds() },
-                    // The palette's secondary ink (the mock's ink-2), which holds its contrast on the light glass.
-                    color: notchPalette.secondary.color,
-                    showsClock: { state.showsPlaybackClock }
-                )
             }
-            notchTeleprompterButton(
-                icon: "stop.fill",
-                isDestructive: true,
-                accessibilityLabel: "Stop speaking"
-            ) {
-                commandRouter.handleStop()
+            .frame(width: WaveformLayout.viewportWidth, alignment: .trailing)
+            ZStack {
+                if isCompact { playbackStopButton }
             }
-            .background(playbackStopHostProbe)
+            .frame(width: VoiceBarRecordingWingLabel.outerRegionWidth,
+                   height: VoiceBarNotchContract.material.compactControlSize)
         }
+        // As when recording, the time starts 8 pt past the PHYSICAL notch (the glass hides the wing's first points).
+        .padding(.leading, max(0, notchPresentation.visibleCoreOcclusionInset))
+    }
+
+    /// The live red Stop. Collapsed it sits in the right wing; with the teleprompter open, in the eye row (T7).
+    private var playbackStopButton: some View {
+        notchTeleprompterButton(
+            icon: "stop.fill",
+            isDestructive: true,
+            accessibilityLabel: "Stop speaking"
+        ) {
+            commandRouter.handleStop()
+        }
+        .background(playbackStopHostProbe)
     }
 
     private var notchWaveform: some View {
@@ -1323,24 +1419,45 @@ public struct BarView: View {
                 .frame(maxHeight: .infinity, alignment: .top)
                 .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress))
         } else if isMorphTeleprompterContentPresented {
-            VStack(spacing: 7) {
+            // T2/T8 (Etan QA 2026-11-09): text, then the scrubber close to the eye row, then the height handle under
+            // the eye row. No footer row; the tight gaps leave the room to the text.
+            VStack(spacing: 0) {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
                     .frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA
-                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines) + TeleprompterA.handleBandHeight
+                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines)
                         : Theme.teleprompterViewportHeight : nil)
                 if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
+                        .drawingTimingNotice(false)
+                        .padding(.top, TeleprompterA.scrubberGap)
                 }
-                if state.showsTeleprompterScrubber { Spacer(minLength: 0) }
+                // Live reading fits the shell exactly, so this is the 3 pt gap; a readback's shorter text leaves more.
+                Spacer(minLength: TeleprompterA.controlsGap)
                 notchTeleprompterControls
+                if showsTeleprompterA {
+                    TeleprompterAHeightHandle(
+                        visibleLines: state.teleprompterVisibleLines,
+                        onVisibleLinesChange: { lines in
+                            // The hit region takes the lines before the pull lets go of the pointer
+                            // (formal/teleprompter-a-handle).
+                            state.teleprompterVisibleLines = lines
+                            presentationModel?.setTeleprompterLines(lines)
+                        },
+                        onHandleDrag: { presentationModel?.setTeleprompterHandlePullActive($0) }
+                    )
+                    .padding(.top, TeleprompterA.handleGap)
+                } else {
+                    // The row keeps one height from the bottom (the hit region's `lowerControlBottomInset`).
+                    Color.clear.frame(height: TeleprompterA.handleGap + TeleprompterA.handleBandHeight)
+                }
             }
             .padding(
                 .horizontal,
                 VoiceBarNotchContract.material.teleprompterBodyHorizontalInset
             )
-            .padding(.top, 16)
-            .padding(.bottom, 14)
+            .padding(.top, TeleprompterA.bodyTopInset)
+            .padding(.bottom, TeleprompterA.bodyBottomInset)
             .transition(.opacity)
         }
     }
@@ -1408,24 +1525,13 @@ public struct BarView: View {
                     isPaused: state.isPlaybackPaused,
                     footerState: TeleprompterA.footerState(isPaused: state.isPlaybackPaused,
                                                            isPausedForDictation: state.isF5SpeechPausedDuringCapture),
-                    queuedCount: state.queuedSpeakCount,
                     visibleLines: state.teleprompterVisibleLines,
-                    onVisibleLinesChange: { lines in
-                        // The hit region takes the lines before the pull lets go of the pointer (formal/teleprompter-a-handle).
-                        state.teleprompterVisibleLines = lines
-                        presentationModel?.setTeleprompterLines(lines)
-                    },
-                    onHandleDrag: { presentationModel?.setTeleprompterHandlePullActive($0) },
                     // Lane B: the column is the body's whole text width (no 404 pt cap).
                     columnWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth),
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
                     onSpeechSeek: { state.seekSpeechWord(utteranceID: $0, wordIndex: $1) },
                     onSeek: state.seek,
-                    speed: state.playbackSpeed,
-                    onCycleSpeed: { state.cyclePlaybackSpeed() },
-                    previousAvailable: state.previousReadAvailable,
-                    onPrevious: { state.playPreviousRead() },
                     onTextLinesChange: { state.reportTeleprompterTextLines($0) },
                     narrationOrigin: state.narrationOrigin
                 )
@@ -1461,14 +1567,12 @@ public struct BarView: View {
     /// U5: live reading uses Teleprompter A; an idle-retained readback keeps its scrolling view.
     private var showsTeleprompterA: Bool { state.mode == .speaking && !state.isTeleprompterReadback }
 
+    /// T4/T7 (Etan QA 2026-11-09: "Still has the centered eye, but not the centered replay button ... they're not in
+    /// one flex box together centered" and "maybe just the red stop button goes to the bottom"): Replay and the eye are
+    /// one group centred in the body. The terminal control (the live red Stop while reading, X on an ended readback)
+    /// sits one control pitch to the group's right and never moves it.
     private var notchTeleprompterControls: some View {
-        HStack(spacing: 10) {
-            if state.queuedSpeakCount > 0, !showsTeleprompterA {
-                Text("+\(state.queuedSpeakCount) queued")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(notchPalette.secondary.color)
-                    .accessibilityLabel("\(state.queuedSpeakCount) queued speeches")
-            }
+        HStack(spacing: VoiceBarPresentation.teleprompterLowerControlSpacing) {
             if state.canReplay {
                 notchTeleprompterButton(
                     icon: "arrow.counterclockwise",
@@ -1489,15 +1593,39 @@ public struct BarView: View {
                     state.dismissTeleprompter()
                 }
             }
-            // Keep Replay and Eye fixed when the terminal X appears after speaking.
-            if state.isTeleprompterReadback {
-                notchTeleprompterDismissButton
-            } else {
-                notchTeleprompterDismissButton
-                    .hidden()
+        }
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .leading) {
+            // T8: "Word timing unavailable" sits at the row's leading edge, clear of the centred group, so it adds no
+            // height between the scrubber and this row.
+            if state.showsTeleprompterScrubber, let notice = TeleprompterPlaybackScrubBar(state: state).timingNotice {
+                Text(notice)
+                    .font(.system(size: 10))
+                    .foregroundStyle(notchPalette.tertiary.color)
+                    .lineLimit(1)
                     .allowsHitTesting(false)
-                    .accessibilityHidden(true)
             }
+        }
+        .overlay {
+            // The terminal control rides beside the centred group without taking part in its width.
+            GeometryReader { proxy in
+                notchTeleprompterTerminal
+                    .position(
+                        x: proxy.size.width / 2 + VoiceBarPresentation.teleprompterTerminalOffset(
+                            groupControlCount: VoiceBarPresentation.teleprompterLowerGroupCount(canReplay: state.canReplay)),
+                        y: proxy.size.height / 2
+                    )
+            }
+        }
+        .frame(height: TeleprompterA.controlsHeight)
+    }
+
+    @ViewBuilder
+    private var notchTeleprompterTerminal: some View {
+        if state.isTeleprompterReadback {
+            notchTeleprompterDismissButton
+        } else if state.mode == .speaking {
+            playbackStopButton
         }
     }
 

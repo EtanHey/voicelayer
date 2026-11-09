@@ -24,6 +24,8 @@ public final class VoiceBarNotchPresentationModel {
     private var recordingLeadingWingWidth: CGFloat?
     private var recordingTrailingWingWidth: CGFloat?
     private var teleprompterLeadingWingWidth: CGFloat?
+    /// T5/T7: a live read's right wing is the recording-style time + meter wing, open or collapsed.
+    private var teleprompterTrailingWingWidth: CGFloat?
     private var coreWidth = VoiceBarNotchContract.coreWidth
     private var visibleCoreOcclusionInset: CGFloat = 0
     private var virtualNotchIdleCoreHeight: CGFloat?
@@ -61,6 +63,7 @@ public final class VoiceBarNotchPresentationModel {
         recordingLeadingWingWidth: CGFloat? = nil,
         recordingTrailingWingWidth: CGFloat? = nil,
         teleprompterLeadingWingWidth: CGFloat? = nil,
+        teleprompterTrailingWingWidth: CGFloat? = nil,
         keepsIdleExpanded: Bool = false,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
         visibleCoreOcclusionInset: CGFloat = 0,
@@ -76,6 +79,7 @@ public final class VoiceBarNotchPresentationModel {
         self.recordingLeadingWingWidth = recordingLeadingWingWidth
         self.recordingTrailingWingWidth = recordingTrailingWingWidth
         self.teleprompterLeadingWingWidth = teleprompterLeadingWingWidth
+        self.teleprompterTrailingWingWidth = teleprompterTrailingWingWidth
         self.keepsIdleExpanded = keepsIdleExpanded
         self.coreWidth = coreWidth
         self.visibleCoreOcclusionInset = visibleCoreOcclusionInset
@@ -165,6 +169,7 @@ public final class VoiceBarNotchPresentationModel {
             recordingLeadingWingWidth: recordingLeadingWingWidth,
             recordingTrailingWingWidth: recordingTrailingWingWidth,
             teleprompterLeadingWingWidth: teleprompterLeadingWingWidth,
+            teleprompterTrailingWingWidth: teleprompterTrailingWingWidth,
             isHovered: isHovered || keepsIdleExpanded || isMenuPresented,
             isKeyboardFocused: isKeyboardFocused,
             coreWidth: coreWidth,

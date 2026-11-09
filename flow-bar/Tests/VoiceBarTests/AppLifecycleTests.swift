@@ -267,45 +267,52 @@ final class AppLifecycleTests: XCTestCase {
         state.canReplay = true
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
-            // 2.3 U5: Stop lives in the right wing; the lower row keeps Replay and Hide.
+            // T1/T6 (Etan QA 2026-11-09): speed, Back, Pause, Forward on the left. T4/T7: Replay + Hide centred in
+            // the lower row with the live Stop beside them; the right wing is time + meter only.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 1,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
                 lowerControlCount: 2,
-                lowerSurfaceIsInteractive: true
+                lowerSurfaceIsInteractive: true,
+                leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth,
+                lowerTerminalControl: true,
+                lowerControlBottomInset: VoiceBarPresentation.teleprompterLowerControlBottomInset
             )
         )
 
-        // P16: the pause control sits left of the core while speaking; the hidden read's eye joins Stop.
+        // Collapsed: Stop in the reading wing's outer region; the hidden read's eye joins it.
         state.dismissTeleprompter()
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
                 trailingControlCountFromOuter: 2,
                 trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
+                    + VoiceBarPresentation.readingStopOuterRegionInset,
+                leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth
             )
         )
     }
 
-    func testReadQueueWidensTheLeadingWingForNextAndTheCount() {
+    /// T1 (Etan QA 2026-11-09): the transport never reshuffles with the queue; Forward is disabled, not removed.
+    func testReadQueueKeepsTheWholeTransportWhateverIsQueued() {
         let state = VoiceState()
+        let transport = VoiceBarPresentation.readingTransportSlotCount
         state.handleEvent(["type": "state", "state": "speaking", "text": "Queued read", "request_id": "r-A"])
         state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 3)
-        // PILL1: the last item has nothing waiting, so Next and its slot go.
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, transport)
+        XCTAssertTrue(VoiceBarPresentation.readingForwardControl(for: state).isEnabled)
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 1)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, transport)
+        XCTAssertFalse(VoiceBarPresentation.readingForwardControl(for: state).isEnabled, "nothing queued: Forward disabled")
         state.dismissTeleprompter()
         state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 3)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, transport)
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": NSNull()])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 1)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, transport)
     }
 
     func testPausedSpeechKeepsPlayAndStopReachable() {
@@ -319,9 +326,11 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
                 trailingControlCountFromOuter: 1,
-                trailingOuterInset: WaveformLayout.outerInset
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
+                    + VoiceBarPresentation.readingStopOuterRegionInset,
+                leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth
             )
         )
     }

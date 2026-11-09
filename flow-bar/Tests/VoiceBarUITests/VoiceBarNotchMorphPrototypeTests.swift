@@ -136,7 +136,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32 + VoiceBarNotchContract.transientNoteCanvasReserve)
         // 2.3 U5: the teleprompter canvas holds eight Teleprompter A lines (+5 × 24 pt over the 3-line body).
         XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight,
-                       228 + 5 * TeleprompterA.lineHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
+                       195 + 5 * TeleprompterA.lineHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertEqual(
             recording.geometry.coreOriginX + recordingCanvas.contentOffsetX,
             recordingCanvas.canvasGeometry.coreOriginX
@@ -204,7 +204,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
 
         XCTAssertEqual(recordingLayout.panelSize.height, 49 + VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertEqual(teleprompterLayout.panelSize.height,
-                       245 + 5 * TeleprompterA.lineHeight + VoiceBarNotchContract.transientNoteCanvasReserve) // U5 8-line reserve
+                       212 + 5 * TeleprompterA.lineHeight + VoiceBarNotchContract.transientNoteCanvasReserve) // U5 8-line reserve
         XCTAssertNotEqual(recordingFrame, teleprompterFrame)
         XCTAssertEqual(recordingFrame.maxY, teleprompterFrame.maxY)
         XCTAssertEqual(recordingCoreMidX, screen.housingFrame.midX)

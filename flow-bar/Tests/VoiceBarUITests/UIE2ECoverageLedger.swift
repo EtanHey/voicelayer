@@ -111,7 +111,7 @@ struct UIE2EControlContext {
 enum UIE2EKnownIssue: String {
     case listNewlines = "P14b", supersedePreparing = "SEL1", pasteFeedback = "P1e", selectionFeedback = "P1f"
     case qaN1 = "N1", qaN4 = "N4", qaN5 = "N5", qaN6 = "N6", qaN7 = "N7", qaN9 = "N9", qaN10 = "N10"
-    case qaT1 = "T1", qaT2 = "T2", qaT4 = "T4", qaT5 = "T5", qaT6 = "T6", qaT7 = "T7", qaT8 = "T8"
+    // T1-T8 fixed on feat/2.4-teleprompter-etan: their native rows are plain verified steps now.
     var marker: String { "[" + rawValue + "]" }
     func matches(_ description: String) -> Bool { description.contains(marker) }
 }

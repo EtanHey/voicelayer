@@ -38,9 +38,13 @@ final class TeleprompterAModelTests: XCTestCase {
         // Lane B: the column follows the teleprompter body's whole text width (was a 404 pt cap).
         XCTAssertEqual(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth)
         XCTAssertEqual(TeleprompterA.topFadeHeight, 16)
-        XCTAssertEqual(TeleprompterA.footerHeight, 20)
         XCTAssertEqual(TeleprompterA.handleSize, CGSize(width: 34, height: 4))
-        XCTAssertEqual(TeleprompterA.bodyHeight(lines: 3), 92)
+        // T1/T3/T6 (Etan QA 2026-11-09): no footer row under the text.
+        XCTAssertEqual(TeleprompterA.bodyHeight(lines: 3), 72)
+        // T2/T8: text, scrubber, eye row 3 pt under it (≤ 7), the handle under the eye row.
+        XCTAssertLessThanOrEqual(TeleprompterA.controlsGap, 7)
+        XCTAssertEqual(TeleprompterA.chromeHeight, 91)
+        XCTAssertEqual(TeleprompterA.lowerSurfaceHeight(lines: 3), 163)
     }
 
     func testHandleRubberBandsPastEitherEndAndSnapsToWholeLines() {
@@ -59,14 +63,12 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual([0, 3, 5, 8, 12].map(TeleprompterA.clamp), [3, 3, 5, 8, 8])
     }
 
-    func testFooterStateAndQueuedChip() {
-        // Lane B: the speed is the footer's own chip now.
-        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "Reading")
+    func testFooterStateHasNoReadingProse() {
+        // T3 (Etan QA 2026-11-09): reading draws no status words; the pause words are VoiceOver-only.
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "")
         XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: false), "Paused")
         XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: true),
                        "Paused for your dictation · resumes after paste")
-        XCTAssertNil(TeleprompterA.queuedChip(0))
-        XCTAssertEqual(TeleprompterA.queuedChip(2), "+2 queued")
     }
 
     func testWrapHonoursWidthForcedBreaksAndGlue() {

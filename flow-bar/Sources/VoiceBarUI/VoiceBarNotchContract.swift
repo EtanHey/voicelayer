@@ -340,6 +340,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         recordingLeadingWingWidth: CGFloat? = nil,
         recordingTrailingWingWidth: CGFloat? = nil,
         teleprompterLeadingWingWidth: CGFloat? = nil,
+        teleprompterTrailingWingWidth: CGFloat? = nil,
         isHovered: Bool,
         isKeyboardFocused: Bool,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
@@ -407,12 +408,14 @@ public struct VoiceBarNotchPresentation: Equatable {
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(historyRows))
             )
-        } else if visualState == .teleprompter, let teleprompterLeadingWingWidth {
+        } else if visualState == .teleprompter,
+                  teleprompterLeadingWingWidth != nil || teleprompterTrailingWingWidth != nil {
             VoiceBarNotchGeometry(
                 coreWidth: baseGeometry.coreWidth,
                 topHeight: baseGeometry.topHeight,
-                leadingWingWidth: teleprompterLeadingWingWidth,
-                trailingWingWidth: baseGeometry.trailingWingWidth,
+                leadingWingWidth: teleprompterLeadingWingWidth ?? baseGeometry.leadingWingWidth,
+                trailingWingWidth: min(teleprompterTrailingWingWidth ?? baseGeometry.trailingWingWidth,
+                                       VoiceBarNotchContract.morphCanvasWingCapacity),
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
@@ -625,9 +628,10 @@ public enum VoiceBarNotchContract {
     }
 
     /// 2.3 U2: the reading-aloud right wing is the fixed wing (time + Stop), like every other state.
-    /// U5: the teleprompter's lower surface for `lines` Teleprompter A lines (196 pt holds three).
+    /// U5: the teleprompter's lower surface for `lines` Teleprompter A lines. T8 (Etan QA 2026-11-09): the footer
+    /// row is gone and the gaps are tight, so three lines take 163 pt (was 196).
     public static func teleprompterLowerSurfaceHeight(lines: Int) -> CGFloat {
-        196 + CGFloat(TeleprompterA.clamp(lines) - TeleprompterA.lineRange.lowerBound) * TeleprompterA.lineHeight
+        TeleprompterA.lowerSurfaceHeight(lines: lines)
     }
 
     public static func teleprompterWaveformWingWidth(

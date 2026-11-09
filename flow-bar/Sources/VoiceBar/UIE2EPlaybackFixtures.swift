@@ -69,7 +69,9 @@ extension UIE2EModel {
             voice.handleEvent(["type": "ack", "command": cmd, "id": id, "outcome": "accept"])
         case "set_playback_speed":
             voice.handleEvent(["type": "ack", "command": cmd, "id": id, "outcome": "accept"])
-            voice.handleEvent(["type": "playback_session", "speed": message["speed"] ?? 1, "previous_available": true])
+            // T1: a speed change never invents a previous read; Back keeps the queue's own availability.
+            voice.handleEvent(["type": "playback_session", "speed": message["speed"] ?? 1,
+                               "previous_available": voice.previousReadAvailable])
         default:
             return false
         }

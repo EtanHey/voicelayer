@@ -161,3 +161,36 @@ public struct VoiceBarRecordingTimeRegion: View {
         .background(PillControlTooltip(text: microphoneName))
     }
 }
+
+/// T5/T7 (Etan QA 2026-11-09: "consistent with the same waveform and time stuff that we have when recording"): the
+/// reading time drawn exactly like the recording time (same region, font and ink), beside the same level meter.
+public struct VoiceBarReadingTimeRegion: View {
+    let elapsedMilliseconds: () -> Int
+    let color: Color
+    /// "Preparing speech…" has no player, so it shows no counter; the region keeps its width so nothing moves.
+    var showsClock: () -> Bool = { true }
+
+    public init(elapsedMilliseconds: @escaping () -> Int, color: Color, showsClock: @escaping () -> Bool = { true }) {
+        self.elapsedMilliseconds = elapsedMilliseconds
+        self.color = color
+        self.showsClock = showsClock
+    }
+
+    public var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            // The accessibility value is computed with the visible text on every tick (U2 review R1).
+            let shows = showsClock()
+            let time = shows ? VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds()) : ""
+            Text(time)
+                .font(.system(size: VoiceBarRecordingWingLabel.timeFontSize, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: VoiceBarRecordingWingLabel.width, alignment: .trailing)
+                .accessibilityElement()
+                .accessibilityLabel("Reading time")
+                .accessibilityValue(shows ? time : "Preparing")
+        }
+    }
+}

@@ -370,6 +370,6 @@ final class NotchStatusFeedbackTests: XCTestCase {
     func testTeleprompterRetainsItsOriginalViewportBelowFeedback() {
         let p = resolve(.init(mode: .speaking, hasTeleprompterText: true, statusText: "Speaking…", transientNote: String(repeating: long, count: 2)))
         XCTAssertEqual(p.visualState, .teleprompter)
-        XCTAssertEqual(p.geometry.lowerSurfaceHeight - p.feedbackHeight, 196)
+        XCTAssertEqual(p.geometry.lowerSurfaceHeight - p.feedbackHeight, 163) // T8: no footer row, tight gaps (was 196)
     }
 }
