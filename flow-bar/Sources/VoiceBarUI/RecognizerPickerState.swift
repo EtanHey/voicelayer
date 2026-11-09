@@ -354,8 +354,9 @@ public struct RecognizerPickerState: Equatable, Sendable {
         RecognizerProvenance(backend: lastTranscriptionBackend)?.notice(about: Self.pickerSubject)
     }
     public var explanation: String? {
-        if let warning = deliveredWarning { return warning }
+        // The result of the user's own click comes first; the delivered-transcript warning outlasts status lines only.
         if let commandNotice { return commandNotice }
+        if let warning = deliveredWarning { return warning }
         if downloads.values.contains(where: { $0.isActive }) { return nil }
         for engine in RecognizerPickerEngine.allCases {
             if let failure = downloads[engine], failure.state == "error", let reason = failure.error {
@@ -398,7 +399,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
     static let pickerSubject = "your last recording"
     /// Orange only for a hand-off that happened or failed; work in progress reads as a normal status line.
     public var explanationIsWarning: Bool {
-        if deliveredWarning != nil { return true }
+        if commandNotice == nil, deliveredWarning != nil { return true }
         if let effective, fallbackReason != nil, residency(for: effective) == .loading,
            commandNotice == nil, explanation == provenanceNotice { return false }
         return fallbackReason != nil || parakeet == .error

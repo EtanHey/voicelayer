@@ -18,6 +18,9 @@ final class FallbackTruthTests: XCTestCase {
         engines["parakeet"] = parakeet; payload["engines"] = engines
         let downloading = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
         XCTAssertEqual(downloading.explanation, state.explanation)
+        // Lead review: the result of the user's own click is never hidden behind the standing warning.
+        let clicked = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)), notice: "Couldn't load Parakeet.")
+        XCTAssertEqual(clicked.explanation, "Couldn't load Parakeet.")
         payload["last_transcription_backend"] = "parakeet-resident"
         let recovered = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
         XCTAssertFalse(recovered.explanation?.contains("last recording") == true)
