@@ -40,3 +40,21 @@ policy update; these models specify the newly authorized design, rather than
 claiming that the pinned source already implements it. Temporal properties assume
 fair clock, timeout and decoder settlement; archive failures and speech-classifier
 accuracy remain outside this small model.
+
+## Bare-stop scoping (2026-11-08)
+
+A take now starts `opening` (record accepted, mic not yet open); `Open` applies any buffered control.
+`ScopedStop` is the take's own stop (its take id: F5/side button, Stop button, PTT release).
+`UnscopedStop` is a stop with no take id (`voicelayer speak --stop`, a read Stop, Hide over speech).
+In the fixed design it stops speech only and never touches the capture.
+
+`UnscopedStopNeverEndsCapture`: a dictation capture ends only through its scoped stop or its silence
+timeout. Two mutants restore the pre-fix routes and must fail it:
+
+| Mutant | Pre-fix route |
+| --- | --- |
+| `UnscopedEndsCaptureMutant` | `src/socket-handlers.ts` `hasF5Capture()` branch stamped the live take's id into an id-less stop |
+| `OpeningFallbackMutant` | `src/f5-capture.ts` `bufferOpeningCaptureControl(undefined, …)` fell back to the first opening take |
+
+`NoTimeoutDuringSpeech` now constrains takes the timeout ended (`endedBy = "timeout"`), since a take can also end
+through its scoped stop. Its mutant (`WallClockMutant`) still fails it.

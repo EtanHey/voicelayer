@@ -285,7 +285,7 @@ if [[ "$APPLY" -eq 1 ]]; then
   log "Backups (if any) in: $DEST_BACKUP"
   log "Remaining bundles:"; mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null | sed 's/^/  /' || true
   ls -d "$CANONICAL_APP" >/dev/null 2>&1 && log "Canonical present: $CANONICAL_APP"
-  log "Running:"; pgrep -afl VoiceBar | grep -v dedupe-voicebar | sed 's/^/  /' || log "  (none yet — relaunch with: open $CANONICAL_APP)"
+  log "Running:"; pgrep -afl VoiceBar | grep -v dedupe-voicebar | sed 's/^/  /' || log "  (none yet — relaunch with: voicelayer bar)"
 else
   log "DRY-RUN complete. Re-run with --apply to execute. Nothing was changed."
 fi

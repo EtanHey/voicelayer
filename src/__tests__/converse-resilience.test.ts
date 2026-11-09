@@ -222,7 +222,7 @@ describe("handleConverse resilience — P0-2", () => {
     rmSync(recordingStateRoot, { recursive: true, force: true });
   });
 
-  for (const caller of ["turn", "admitted"] as const) for (const state of ["open", "closed", "cancelled", "inherited"] as const)
+  for (const caller of ["turn", "admitted"] as const) for (const state of ["open", "draining", "closed", "cancelled", "inherited"] as const)
     it(`typed admission boundary: ${caller}/${state}`, async () => {
     const savedGatePath = process.env.VOICELAYER_UPDATE_GATE_PATH;
     const gateRoot = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "typed-gate-"));
@@ -232,7 +232,13 @@ describe("handleConverse resilience — P0-2", () => {
     mkdirSync(gatePath + ".admissions");
     const lease = { generation: 1, operationId: "10000000-0000-4000-8000-000000000001",
       ownerId: "20000000-0000-4000-8000-000000000001", targetSha: "a".repeat(40) };
-    const closeGate = () => expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+    const closeGate = () => {
+      expect(updateVoiceGate({ kind: "REQUEST", lease }).kind).toBe("APPLIED");
+      if (state === "closed") {
+        const ack = { lease, activeOperations: 0, openArchives: 0 };
+        expect(updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, () => true).kind).toBe("APPLIED");
+      }
+    };
     const call = async () => {
       if (caller === "turn") return runVoiceAskTurn({ args: { message: "question" } });
       const result = await runAdmittedVoiceAsk({ args: { message: "question" } });
@@ -246,7 +252,7 @@ describe("handleConverse resilience — P0-2", () => {
     });
     waitSpy = spyOn(input, "waitForInput").mockResolvedValue("typed answer");
     try {
-      if (state === "closed") closeGate();
+      if (state === "closed" || state === "draining") closeGate();
       if (state === "cancelled") mkdirSync(gatePath + ".lock");
       const pending = state === "inherited" ? withAsyncVoiceAdmission(() => { closeGate(); return call(); }) : call();
       if (state === "cancelled") {
@@ -254,7 +260,7 @@ describe("handleConverse resilience — P0-2", () => {
         rmdirSync(gatePath + ".lock");
       }
       const outcome = await pending;
-      if (state === "open" || state === "inherited") {
+      if (state === "open" || state === "draining" || state === "inherited") {
         expect(outcome).toEqual({ kind: "answered", transcript: "typed answer", archiveId: null, promptPlayback: undefined });
         expect(speakSpy).toHaveBeenCalledTimes(1);
         expect(waitSpy).toHaveBeenCalledTimes(1);

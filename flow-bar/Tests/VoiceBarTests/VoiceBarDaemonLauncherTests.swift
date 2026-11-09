@@ -12,6 +12,43 @@ private let launcherTestBundledDaemonPath = "/Applications/VoiceBar.app/Contents
 private let launcherTestInstalledInfoPlistPath = "/Applications/VoiceBar.app/Contents/Info.plist"
 
 final class VoiceBarDaemonLauncherTests: XCTestCase {
+    func testUnbundledDaemonCannotInheritAnotherBuildTag() {
+        let inherited = ["VOICEBAR_VERSION": "stale", "VOICEBAR_GIT_COMMIT": "stale",
+            "VOICEBAR_BUILD_TIME_UTC": "stale", "VOICEBAR_BUILD_SOURCE": "stale", "VOICEBAR_GIT_DESCRIBE": "stale"]
+        for info: [String: Any] in [[:], ["CFBundleShortVersionString": "foreign"], ["GitCommit": "unknown"]] {
+            let env = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(from: inherited, path: "/fixture", bundleInfo: info)
+            for key in inherited.keys { XCTAssertNil(env[key], key) }
+        }
+    }
+    func testBundleFactsReplaceInheritedBuildIdentity() {
+        let expected = ["VOICEBAR_VERSION": "2.3.0", "VOICEBAR_GIT_COMMIT": String(repeating: "a", count: 40),
+            "VOICEBAR_BUILD_TIME_UTC": "2026-11-08T00:00:00Z", "VOICEBAR_BUILD_SOURCE": "VoiceBar.Info.plist",
+            "VOICEBAR_GIT_DESCRIBE": "v2.3.0-dirty"]
+        let info = ["CFBundleShortVersionString": expected["VOICEBAR_VERSION"]!, "GitCommit": expected["VOICEBAR_GIT_COMMIT"]!,
+            "BuildTimeUTC": expected["VOICEBAR_BUILD_TIME_UTC"]!, "GitDescribe": expected["VOICEBAR_GIT_DESCRIBE"]!]
+        for bundleInfo in [info, [:]] {
+            let env = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(from: expected.merging(["VOICEBAR_GIT_DESCRIBE": "stale"]) { _, new in new }, path: "/fixture", bundleInfo: bundleInfo)
+            for key in expected.keys { XCTAssertEqual(env[key], bundleInfo.isEmpty ? nil : expected[key], key) }
+            XCTAssertEqual(env["VOICEBAR_DAEMON_SOURCE"], "unknown")
+        }
+    }
+    func testSelectedCheckoutDaemonOriginReachesSpawnEnvironment() throws {
+        let previous = ProcessInfo.processInfo.environment["VOICEBAR_DAEMON_SOURCE"]
+        setenv("VOICEBAR_DAEMON_SOURCE", "stale", 1)
+        defer { if let previous { setenv("VOICEBAR_DAEMON_SOURCE", previous, 1) } else { unsetenv("VOICEBAR_DAEMON_SOURCE") } }
+        for source in ["checkout", "bundled", "homebrew"] {
+            let executable = URL(fileURLWithPath: source == "checkout" ? "/fixture/flow-bar/.build/VoiceBar" : "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
+            let picked = try XCTUnwrap(VoiceBarDaemonLaunchConfiguration.configuration(for: executable,
+                fileExists: { $0 == launcherTestBunPath || $0 == (source == "bundled" ? launcherTestBundledDaemonPath : launcherTestHomebrewDaemonPath) },
+                fileData: { launcherTestVersionData[$0] }, environment: [:]))
+            let process = ProcessSpy()
+            let launcher = VoiceBarDaemonLauncher(executableURLProvider: { executable }, configurationProvider: { _ in picked },
+                socketBindingAllowed: { _ in true }, processFactory: { process })
+            launcher.startIfNeeded()
+            XCTAssertTrue(process.didRun)
+            XCTAssertEqual(process.capturedEnvironment?["VOICEBAR_DAEMON_SOURCE"], source)
+        }
+    }
     func testDefaultSocketsAreRefusedBeforeSpawningFromNonResidentBundle() {
         let keys = ["VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "QA_VOICE_SOCKET_PATH",
                     "QA_VOICE_MCP_SOCKET_PATH", "DISABLE_VOICELAYER", "QA_VOICE_DISABLE_FLAG_PATH"]

@@ -17,7 +17,9 @@ incarnation and lowercase full target merge SHA. The owner ID is retained across
 job reconnect, but a new owner incarnation cannot assume the previous owner's lease.
 An ID is a fencing identity, not authentication, proof of process liveness or a PID.
 
-OPEN alone permits admission. DRAINING, PREPARED and COMMITTED all close admission.
+OPEN and DRAINING admit registered voice work. Only PREPARED and COMMITTED
+refuse with UPDATE_BUSY. DRAINING registrations use the current lease generation;
+PREPARE and COMMIT recheck the empty ledger under the admission lock.
 REQUEST advances exactly one generation from OPEN. An identical duplicate request
 returns UNCHANGED even after preparation or commit. PREPARE needs native and daemon
 acknowledgements for that exact lease, with zero active operations and archive writes.

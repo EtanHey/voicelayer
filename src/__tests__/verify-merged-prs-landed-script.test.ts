@@ -9,8 +9,8 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 
-// Real subprocesses: standalone p95 <= 672 ms; 4x rounded up, with a 5 s scheduling floor.
-const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// Subprocess fixtures exceeded the 5 s budget on the shared M4; allow scheduling under load.
+const SUBPROCESS_TEST_TIMEOUT_MS = 30_000;
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const script = join(repoRoot, "scripts", "verify-merged-prs-landed.sh");

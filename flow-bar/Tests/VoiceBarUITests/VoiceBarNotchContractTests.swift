@@ -215,15 +215,17 @@ final class VoiceBarNotchContractTests: XCTestCase {
 
     func testHardwareCompactContentDoesNotDoubleCountTheCalibratedBezel() {
         let material = VoiceBarNotchContract.material
-        let layout = material.wingContentLayout(
-            for: .trailing,
-            state: .recording,
-            visibleCoreOcclusionInset: 8.5
-        )
-
-        XCTAssertEqual(layout.coreInset, VoiceBarNotchContract.fixedWingContentInset)
-        XCTAssertEqual(layout.outerInset, VoiceBarNotchContract.fixedWingContentInset)
-        XCTAssertEqual(layout.alignment, .center)
+        for state in [VoiceBarNotchVisualState.compactStatus, .teleprompter] {
+            let layout = material.wingContentLayout(for: .trailing, state: state, visibleCoreOcclusionInset: 8.5)
+            XCTAssertEqual(layout.coreInset, VoiceBarNotchContract.fixedWingContentInset, "\(state)")
+            XCTAssertEqual(layout.outerInset, VoiceBarNotchContract.fixedWingContentInset, "\(state)")
+            XCTAssertEqual(layout.alignment, .center)
+        }
+        // 2.3 N1 (Etan's real M4, 2026-11-08): the recording time sat under the physical notch, so the recording right
+        // wing's content starts past the glass-hidden inset, 8 pt clear of the real notch edge.
+        let recording = material.wingContentLayout(for: .trailing, state: .recording, visibleCoreOcclusionInset: 8.5)
+        XCTAssertEqual(recording.coreInset, 8.5 + VoiceBarNotchContract.fixedWingContentInset)
+        XCTAssertEqual(recording.outerInset, VoiceBarNotchContract.fixedWingContentInset)
     }
 
     func testTeleprompterTextWidthTracksTheMeasuredHardwareCoreWidth() {

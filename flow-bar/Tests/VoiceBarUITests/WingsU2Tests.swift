@@ -44,7 +44,6 @@ final class WingsU2Tests: XCTestCase {
         let states: [(String, VoiceBarNotchPresentation, VoiceBarNotchVisualState)] = [
             ("idle launcher", resolve(.idle, hovered: true), .hoverLauncher),
             ("history", resolve(.idle, hovered: true, historyOpen: true), .history),
-            ("recording (F5)", resolve(.recording), .recording),
             ("transcribing", resolve(.transcribing), .compactStatus),
         ]
         for (name, presentation, visualState) in states {
@@ -71,6 +70,17 @@ final class WingsU2Tests: XCTestCase {
         }
     }
 
+    /// 2.3 N1 (Etan, QA round 1, S2-F3): recording keeps Stop + Cancel in the fixed left wing; the right wing grows
+    /// to hold the live time and 2.2.61's level meter, the meter centred in the visible wing.
+    func testRecordingKeepsTheFixedLeftWingAndARightWingThatHugsItsPayload() {
+        let recording = resolve(.recording)
+        XCTAssertEqual(recording.visualState, .recording)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
+        XCTAssertEqual(recording.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth,
+                       accuracy: 0.001)
+        XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 120, accuracy: 0.001)
+    }
+
     /// Deviation (mock silent): an Ask recording's lock is a third control, and a queued read's Next + "+N" are
     /// extra slots. They keep today's wider left wing instead of losing the control.
     func testOnlyControlsTheMockDoesNotDrawWidenTheLeftWing() {
@@ -79,19 +89,8 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertGreaterThan(resolve(.speaking, isTeleprompterDismissed: true, readQueueLeadingSlotCount: 3)
             .geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
         XCTAssertEqual(resolve(.recording, showsRecordingHold: true).geometry.trailingWingWidth,
-                       VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001, "the right wing never grows")
-    }
-
-    func testTheRecordingWingLevelMeterIsSixThinBars() {
-        let style = WaveformBarStyle.wingLevels
-        XCTAssertEqual(style.barCount, 6)
-        XCTAssertEqual(style.barWidth, 3)
-        XCTAssertEqual(style.barSpacing, 3)
-        XCTAssertEqual(style.maxHeight, 16)
-        XCTAssertEqual(style.viewportWidth, 33)
-        let lane = VoiceBarNotchContract.fixedWingWidth - 2 * VoiceBarNotchContract.fixedWingContentInset
-        XCTAssertLessThanOrEqual(style.viewportWidth, lane)
-        XCTAssertEqual(WaveformBarStyle.standard.barCount, WaveformLayout.barCount, "the standard meter is unchanged")
+                       VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001,
+                       "the hold control never widens the right wing")
     }
 
     func testTheReadingTimeAndStopFillTheFixedRightWingExactly() {

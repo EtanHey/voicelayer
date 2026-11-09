@@ -1,3 +1,4 @@
+import { DISABLE_POLL_INTERVAL_MS } from "../daemon-disable-poll";
 import { withChildFixtureEnv } from "./setup/child-env";
 import { testSocket, testTmp } from "./setup/test-tmp";
 import { afterEach, beforeEach, expect, it } from "bun:test";
@@ -9,6 +10,11 @@ import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
 
 // Real subprocesses: standalone p95 <= 51 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+const STARTUP_BUDGET_MS = 10_000;
+const SHUTDOWN_BUDGET_MS = 5_000;
+// One full poll plus a scheduling poll and graceful shutdown, separate from startup.
+const FLAG_EXIT_BUDGET_MS = 2 * DISABLE_POLL_INTERVAL_MS + SHUTDOWN_BUDGET_MS;
+const FLAG_TEST_BUDGET_MS = STARTUP_BUDGET_MS + FLAG_EXIT_BUDGET_MS + SHUTDOWN_BUDGET_MS;
 
 const TEST_DIR = testTmp("disable");
 const TEST_MCP_SOCKET_PATH = testSocket("df.sock");
@@ -136,26 +142,30 @@ describe("DISABLE_VOICELAYER env", () => {
 
   it(
     "running daemon self-terminates when flag file appears",
-    { timeout: 8000 },
+    { timeout: FLAG_TEST_BUDGET_MS },
     async () => {
       const daemon = spawnDaemon();
 
-      expect(await waitForFile(TEST_MCP_SOCKET_PATH, 2000)).toBe(true);
-      expect(await waitForFile(TEST_MCP_PID_PATH, 2000)).toBe(true);
-
-      writeFileSync(TEST_DISABLE_FLAG_PATH, "disabled");
-
-      const exitCode = await Promise.race([
-        daemon.exited,
-        Bun.sleep(6000).then(() => null),
-      ]);
-
-      if (exitCode === null) {
-        daemon.kill();
+      const output = new Response(daemon.stdout).text();
+      const errors = new Response(daemon.stderr).text();
+      try {
+        expect(await Promise.all([
+          waitForFile(TEST_MCP_SOCKET_PATH, STARTUP_BUDGET_MS),
+          waitForFile(TEST_MCP_PID_PATH, STARTUP_BUDGET_MS),
+        ])).toEqual([true, true]);
+        writeFileSync(TEST_DISABLE_FLAG_PATH, "disabled");
+        const exitCode = await Promise.race([
+          daemon.exited,
+          Bun.sleep(FLAG_EXIT_BUDGET_MS).then(() => null),
+        ]);
+        expect(exitCode).toBe(0);
+        expect(existsSync(TEST_MCP_SOCKET_PATH)).toBe(false);
+        expect(existsSync(TEST_MCP_PID_PATH)).toBe(false);
+      } finally {
+        if (daemon.exitCode === null) daemon.kill();
         await daemon.exited;
+        await Promise.all([output, errors]);
       }
-
-      expect(exitCode).toBe(0);
     },
   );
 });

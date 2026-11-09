@@ -3,11 +3,12 @@
   "kind": "invariant",
   "target": "SpeechRenewsDeadline",
   "status": "EXPECTED_FAIL",
-  "generated": 12,
-  "distinct": 12,
+  "generated": 27,
+  "distinct": 23,
   "trace": [
-    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "s = [ phase |-> \"recording\",\n  speech |-> TRUE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"speech\",\n  pcm |-> <<TRUE>>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
+    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"open\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> TRUE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"speech\",\n  pcm |-> <<TRUE>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]"
   ]
 }

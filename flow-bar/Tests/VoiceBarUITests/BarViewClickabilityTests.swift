@@ -152,8 +152,9 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            // 2.3 U2: an Ask's hold lock widens the left wing by one slot (99.5); the right wing stays 73.5.
-            NSSize(width: 358, height: 32)
+            // 2.3 U2: an Ask's hold lock widens the left wing by one slot (99.5). 2.3 N1: the right wing holds the
+            // time and the level meter, centred by an empty outer region (120 on a flat display).
+            NSSize(width: 405, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -565,7 +566,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let source = try barViewSource()
         // T3: the reading right wing (time, eye, 1× or X) and left wing (Replay, Stop, Pause) keep the compact optics.
         let trailingStart = try XCTUnwrap(source.range(of: "private var notchReadingTrailingContent"))
-        let waveformStart = try XCTUnwrap(source.range(of: "private func notchWaveform"))
+        let waveformStart = try XCTUnwrap(source.range(of: "private var notchWaveform"))
         let trailing = String(source[trailingStart.lowerBound..<waveformStart.lowerBound])
         XCTAssertFalse(trailing.contains("notchButton("))
         XCTAssertEqual(trailing.components(separatedBy: "notchTeleprompterButton(").count - 1, 1)

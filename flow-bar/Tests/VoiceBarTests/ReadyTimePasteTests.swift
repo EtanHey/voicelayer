@@ -58,9 +58,9 @@ final class ReadyTimePasteTests: XCTestCase {
                 ["take_id": id, "kind": "live", "phase": "processing"]]])
             return id
         }
-        func final(_ id: String) {
+        func final(_ id: String, text: String = "whole fu… שלום") {
             state.handleEvent(["type": "transcription", "take_id": id, "job_kind": "live",
-                "delivery_id": id, "text": "whole fu… שלום"])
+                "delivery_id": id, "text": text])
         }
     }
     func testMovedDuringTranscriptionDeliversToReadyFocusExactlyOnce() throws {
@@ -125,21 +125,130 @@ final class ReadyTimePasteTests: XCTestCase {
         XCTAssertEqual(kit.typed, ["cmux:whole fu… שלום"])
     }
 
-    /// Companion to the pin above: the same terminal with a NON-text focused element is refused (P1 #683),
-    /// so the role is what decides delivery. Documents the known 2.3 behaviour for terminals whose focus is
-    /// not a text-role AX element: nothing is typed and the take stays in History.
-    func testTerminalNonTextFocusIsNotTyped() throws {
+    func testTerminalNonTextFocusIsTypedExactlyOnce() throws {
+        // Explicit inventory keeps a missing terminal (including Warp) fail-first.
+        for bundle in ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "dev.warp.Warp-Preview", "dev.warp.WarpOss",
+                       "com.mitchellh.ghostty", "com.cmuxterm.app", "net.kovidgoyal.kitty",
+                       "org.alacritty", "com.github.wez.wezterm"] {
+            let kit = Kit(), id = try kit.start()
+            let terminal = App(bundle, 10006)
+            kit.front = terminal; kit.field = "originating terminal input"
+            kit.state.focusedTargetEligibilityProvider = {
+                DictationFocusedTargetEligibility(processIdentifier: terminal.processIdentifier, role: "AXGroup",
+                    isEditable: false, isSecure: false,
+                    matchesCurrentFocus: { kit.field == "originating terminal input" })
+            }
+            kit.final(id); kit.final(id)
+            XCTAssertEqual(kit.writes, [], bundle)
+            XCTAssertEqual(kit.typed, ["originating terminal input:whole fu… שלום"], bundle)
+            XCTAssertEqual(kit.state.latestDictationInsertionStatus, .typed, bundle)
+        }
+    }
+
+    func testTerminalControlsKeepTakeInHistory() throws {
+        for role in ["AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXList", "AXTable", "AXOutline", "AXMenuItem", "AXScrollArea", "AXUnknown"] {
+            let kit = Kit(), id = try kit.start()
+            kit.front = App("com.apple.Terminal", 10006)
+            kit.state.focusedTargetEligibilityProvider = {
+                DictationFocusedTargetEligibility(processIdentifier: 10006, role: role,
+                    isEditable: false, isSecure: false, matchesCurrentFocus: { true })
+            }
+            kit.final(id)
+            XCTAssertEqual(kit.writes, [], role); XCTAssertEqual(kit.typed, [], role)
+            XCTAssertEqual(kit.state.latestDictationInsertionStatus, .notInserted, role)
+            XCTAssertEqual(kit.state.latestReusableTranscript, "whole fu… שלום", role)
+            XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; kept in History", role)
+        }
+    }
+
+    func testTerminalMultilineTakeNeverPlansReturnExceptUnchangedCmux() throws {
+        for bundle in ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "dev.warp.Warp-Preview", "dev.warp.WarpOss",
+                       "com.mitchellh.ghostty", "com.cmuxterm.app", "net.kovidgoyal.kitty", "org.alacritty", "com.github.wez.wezterm"] {
+            let kit = Kit(), id = try kit.start()
+            kit.front = App(bundle, 10006)
+            kit.state.focusedTargetEligibilityProvider = {
+                DictationFocusedTargetEligibility(processIdentifier: 10006, role: "AXGroup",
+                    isEditable: false, isSecure: false, matchesCurrentFocus: { true })
+            }
+            let raw = "whole fu…\n\r\nשלום\nlast words\n"
+            var posted: [String] = []
+            kit.state.ownedTextTypingHandler = { text, _, matches in
+                guard matches() else { return .focusChanged }
+                posted.append(text)
+                let plan = SynthesizedTyping.keystrokes(for: text)
+                if bundle == "com.cmuxterm.app" {
+                    XCTAssertEqual(plan.filter { $0 == .newline }.count, 3)
+                } else {
+                    XCTAssertFalse(plan.contains(.newline), bundle)
+                    guard let events = SynthesizedKeyEvents.events(for: plan, source: nil) else {
+                        XCTFail("Could not construct the unposted event plan"); return .failed
+                    }
+                    XCTAssertFalse(events.contains { $0.getIntegerValueField(.keyboardEventKeycode) == Int64(SynthesizedKeyEvents.returnKeyCode) }, bundle)
+                    XCTAssertFalse(events.contains { $0.flags.contains(.maskShift) }, bundle)
+                }
+                return .posted
+            }
+            kit.final(id, text: raw); kit.final(id, text: raw)
+            XCTAssertEqual(posted, [bundle == "com.cmuxterm.app" ? "whole fu…\n\r\nשלום\nlast words" : "whole fu… שלום last words"], bundle)
+            XCTAssertEqual(kit.state.latestReusableTranscript, "whole fu…\n\r\nשלום\nlast words", bundle)
+            XCTAssertEqual(kit.writes, [], bundle)
+        }
+    }
+
+    func testNonTerminalNonTextFocusKeepsHistory() throws {
         let kit = Kit(), id = try kit.start()
-        let cmux = App("com.cmuxterm.app", 10006)
-        kit.front = cmux; kit.field = "cmux"
+        kit.front = App("com.apple.finder", 10006)
         kit.state.focusedTargetEligibilityProvider = {
-            DictationFocusedTargetEligibility(processIdentifier: cmux.processIdentifier, role: "AXGroup",
-                isEditable: false, isSecure: false, matchesCurrentFocus: { kit.field == "cmux" })
+            DictationFocusedTargetEligibility(processIdentifier: 10006, role: "AXGroup",
+                isEditable: false, isSecure: false, matchesCurrentFocus: { true })
         }
         kit.final(id)
-        XCTAssertEqual(kit.writes, [])
-        XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.writes, []); XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.state.latestReusableTranscript, "whole fu… שלום")
+        XCTAssertEqual(kit.state.confirmationText, "Nothing to paste into; kept in History")
     }
+
+    func testTerminalPostingBoundaryCannotRetargetOriginatingInput() throws {
+        let kit = Kit()
+        kit.front = App("com.apple.Terminal", 10006)
+        let id = try kit.start()
+        kit.state.focusedTargetEligibilityProvider = {
+            let originatingInput = kit.field
+            return DictationFocusedTargetEligibility(processIdentifier: 10006, role: "AXGroup",
+                isEditable: false, isSecure: false, matchesCurrentFocus: { kit.field == originatingInput })
+        }
+        var postingAttempts = 0
+        kit.state.ownedTextTypingHandler = { _, _, matches in
+            postingAttempts += 1
+            kit.field = "different input in same terminal"
+            XCTAssertFalse(matches())
+            return .focusChanged
+        }
+        kit.final(id); kit.final(id)
+        XCTAssertEqual(postingAttempts, 1)
+        XCTAssertEqual(kit.writes, []); XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.state.latestReusableTranscript, "whole fu… שלום")
+        XCTAssertEqual(kit.state.latestDictationInsertionStatus, .notInserted)
+    }
+
+    func testTerminalNonTextFocusStillRequiresIdentityAndSecurity() throws {
+        for reason in ["secure", "secure_event_input", "disabled", "enabled_read_failed", "pid_changed", "focus_changed", "no_focus"] {
+            let kit = Kit(), id = try kit.start()
+            kit.front = App("com.apple.Terminal", 10006)
+            kit.secureInput = reason == "secure_event_input"
+            kit.state.focusedTargetEligibilityProvider = {
+                guard reason != "no_focus" else { return nil }
+                return DictationFocusedTargetEligibility(processIdentifier: reason == "pid_changed" ? 7 : 10006,
+                    role: "AXGroup", isEditable: false, isSecure: reason == "secure",
+                    matchesCurrentFocus: { reason != "focus_changed" },
+                    diagnosticDetails: ["enabledAttribute": reason == "disabled" ? "false" : reason == "enabled_read_failed" ? "error" : "nil"])
+            }
+            kit.final(id)
+            XCTAssertEqual(kit.writes, [], reason); XCTAssertEqual(kit.typed, [], reason)
+            XCTAssertEqual(kit.state.latestDictationInsertionStatus, .notInserted, reason)
+        }
+    }
+
     func testFocusMoveAfterWriteNeverRetargetsOrRetries() throws {
         let kit = Kit(), id = try kit.start()
         kit.afterWrite = { kit.field = "elsewhere"; kit.front = App("test.other", 10004) }

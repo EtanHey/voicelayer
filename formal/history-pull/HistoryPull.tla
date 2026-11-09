@@ -17,6 +17,9 @@
 (*      "NoSlop":   mutant, a press moves the panel before the 3 pt slop.   *)
 (*      "NoCancel": mutant, a cancelled pull is dropped without a spring.   *)
 (*      "NoSnap":   mutant, a released extend handle stays between rows.    *)
+(*      "WholeRow": mutant, the pre-11-08 snap to the nearest whole row: a  *)
+(*                  pull could stop one row short of expanded (Etan: "it   *)
+(*                  only adds one more row").                               *)
 (*      "NoPublish": mutant, the settled rows never reach the hit region.   *)
 (*      "NoPendingCancel": mutant, a press the system cancels inside the    *)
 (*                  slop stays pending (Codex R1: the next gesture reuses   *)
@@ -26,9 +29,11 @@
 (*                  R1: the panel jumps), not from what is drawn.           *)
 (*                                                                          *)
 (* V6 extend handle (BarView.dragHistoryRows / endHistoryRowsPull): rows    *)
-(* are counted in half-rows 0..2R above the 7-row panel (even = a whole     *)
-(* row). "presented" is the rows the presentation model (the hit region)    *)
-(* holds; a handle press inside the slop is a click and changes nothing.    *)
+(* are counted in half-rows 0..2R above the collapsed 6-row panel (even = a *)
+(* whole row). Etan, 2026-11-08: two detents, collapsed (0) and expanded   *)
+(* (R = 2, i.e. 8 rows); one pull goes all the way. "presented" is the rows *)
+(* the presentation model (the hit region) holds; a handle press inside the *)
+(* slop is a click and changes nothing.                                     *)
 EXTENDS Naturals, FiniteSets
 CONSTANTS Mode, N, MaxEvents, MaxGen, R
 VARIABLES phase, slopCrossed, level, target, intent, mounted, gen, completions,
@@ -163,8 +168,10 @@ HMove == /\ Step /\ live /\ hphase \in {"pending", "dragging"}
          /\ UNCHANGED live
          /\ UNCHANGED Other /\ UNCHANGED <<clickMovedPanel, presented>>
 
-(* Snap to a whole row next to where it was let go (either neighbour of a half-row). *)
-Snaps(h) == IF h % 2 = 0 THEN {h \div 2} ELSE {h \div 2, h \div 2 + 1}
+(* Snap to the nearer detent, collapsed 0 or expanded R; exactly halfway may go either way. *)
+(* "WholeRow" keeps the old snap to a whole row next to where it was let go.           *)
+Snaps(h) == IF Mode = "WholeRow" THEN (IF h % 2 = 0 THEN {h \div 2} ELSE {h \div 2, h \div 2 + 1})
+            ELSE IF h < R THEN {0} ELSE IF h > R THEN {R} ELSE {0, R}
 
 HEnd == /\ hphase \in {"pending", "dragging"} /\ hphase' = "idle"
         /\ IF hphase = "pending"
@@ -200,8 +207,8 @@ NoClippedPanel == level > 0 => mounted
 ClickNeverMoves == ~clickMovedPanel
 \* No pull ever leaves the panel hanging part-open with nothing driving it.
 NoStrandedPanel == (phase = "idle" /\ level \notin {0, N}) => target # "none"
-\* A released handle never leaves the panel resting between two rows.
-NoStrandedRows == (hphase = "idle" /\ rowsTarget = NoRows) => rows % 2 = 0
+\* A released handle never leaves the panel resting anywhere but collapsed or expanded (6 or 8 rows).
+NoStrandedRows == (hphase = "idle" /\ rowsTarget = NoRows) => rows \in {0, 2 * R}
 \* At rest the hit region is exactly the rows drawn: no drawn row ignores clicks, no clicks land on air.
 HitMatchesRows == (hphase = "idle" /\ rowsTarget = NoRows) => 2 * presented = rows
 \* Once the system gesture is gone, no press is left half-open for the next gesture to reuse.

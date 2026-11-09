@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "UnscopedStopNeverEndsCapture",
+  "status": "EXPECTED_FAIL",
+  "generated": 13,
+  "distinct": 12,
+  "trace": [
+    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]",
+    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"unscoped-stop\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"unscoped\",\n  endedBy |-> \"none\" ]",
+    "s = [ phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"open\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"unscoped\",\n  endedBy |-> \"unscoped\" ]"
+  ]
+}

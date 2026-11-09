@@ -3,6 +3,7 @@
  * synthesis is complete, held in memory and one temp file only, and either transferred exactly once into
  * the read's chunk-0 synthesis or disposed exactly once. Never played, broadcast or saved to history here.
  */
+import type { SynthesisDiagnostics } from "../speech-archive-live";
 import type { SpeakableText } from "../speakable-text";
 import type { LongReadChunk } from "./long-read";
 
@@ -11,6 +12,7 @@ export interface PreparedChunk {
   voice: string;
   engine: string;
   spokenText?: string;
+  synthesis?: SynthesisDiagnostics;
   /** Clone chunks carry their speakable projection for alignment, as on-demand synthesis does. */
   projection?: SpeakableText;
 }
