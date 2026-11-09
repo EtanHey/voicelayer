@@ -98,7 +98,9 @@ final class EtanQA0510Tests: XCTestCase {
         ]
         for tab in SettingsTab.allCases {
             let drawer = NotchSettingsDrawer(selectedTab: tab, appearance: .dark, context: Self.settingsPaneContext(),
-                history: { AnyView(Text("QA history row").font(.system(size: 13))) }, onSelectTab: { _ in })
+                // An explicit ink: a bare Text follows the system appearance, so a light-mode CI runner drew it black on
+                // the black drawer (CI run 42689942140). The real NotchHistoryPanel uses the notch palette.
+                history: { AnyView(Text("QA history row").font(.system(size: 13)).foregroundStyle(.white)) }, onSelectTab: { _ in })
             let (text, host) = try Self.paintedText(drawer, expecting: expectedSetting[tab]!)
             XCTAssertTrue(text.contains(tab.title.lowercased()), "fixture: OCR reads the tab bar")
             print("[N1] \(tab.title) painted=\(text.prefix(160))")
