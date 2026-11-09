@@ -1,0 +1,43 @@
+{
+  "module": "ReadyTimePaste",
+  "sources": [
+    "formal/legacy_receipts.py",
+    "formal/ready-time-paste/DoubleMutant.cfg",
+    "formal/ready-time-paste/Fixed.cfg",
+    "formal/ready-time-paste/Old.cfg",
+    "formal/ready-time-paste/ReadyTimePaste.tla",
+    "formal/ready-time-paste/SecureMutant.cfg",
+    "formal/ready-time-paste/check.sh",
+    "formal/setup-tlc.py",
+    "formal/tlc.lock.json",
+    "formal/tlc_support.py"
+  ],
+  "receiptRunner": true,
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Old": {
+      "role": "mutant",
+      "target": "DeliversToReadyTimeFocus",
+      "kind": "invariant"
+    },
+    "DoubleMutant": {
+      "role": "mutant",
+      "target": "DeliveredAtMostOnce",
+      "kind": "invariant"
+    },
+    "SecureMutant": {
+      "role": "mutant",
+      "target": "NeverIntoSecureField",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "DeliveredAtMostOnce",
+    "DeliversToReadyTimeFocus",
+    "NeverIntoSecureField"
+  ]
+}

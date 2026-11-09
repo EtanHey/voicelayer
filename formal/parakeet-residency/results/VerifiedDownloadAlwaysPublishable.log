@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "VerifiedDownloadAlwaysPublishable",
+  "status": "EXPECTED_FAIL",
+  "generated": 29,
+  "distinct": 19
+}

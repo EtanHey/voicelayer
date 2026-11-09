@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "EventuallyRunningIfAutostart",
+  "status": "EXPECTED_FAIL",
+  "generated": 55,
+  "distinct": 26
+}

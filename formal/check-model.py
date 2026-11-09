@@ -8,6 +8,7 @@ import re
 import subprocess
 from graph_retention import graph_run
 from tlc_support import tlc_jar
+from receipt_support import tracked_files
 
 # Fresh-HOME M4 maxima * hosted slowdown 3.6 * margin 1.5, rounded up.
 # RecordWhileProcessing: 43.645s -> 235.7s; RuntimeOwnership: 57.605s -> 311.1s.
@@ -22,13 +23,19 @@ directory = args.directory.resolve()
 root = directory.parents[1]
 cache = root / ".build.noindex" / directory.name
 cache.mkdir(parents=True, exist_ok=True)
+manifest = json.loads((directory / "checks.json").read_text())
+if manifest.get("receiptRunner"):
+    if args.only:
+        parser.error("--only is unavailable for preserved legacy runners")
+    from legacy_receipts import record
+    record(directory, root, cache, manifest, args.record)
+    raise SystemExit(0)
 with graph_run(cache, prefix="tlc-", keep_runs=0) as run:
     manifest = json.loads((directory / "checks.json").read_text())
     assert {file.stem for file in directory.glob("*.cfg")} == set(manifest["checks"]), "Unregistered config"
     jar = tlc_jar()
     digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-    tracked = [directory / f'{manifest["module"]}.tla', directory / "checks.json", Path(__file__), Path(__file__).with_name("graph_retention.py"),
-               *directory.glob("*.cfg"), *(root / file for file in manifest["sources"])]
+    tracked = tracked_files(directory, root, manifest)
     hashes = {str(path.relative_to(root)): digest(path) for path in tracked}
     declared = set()
     all_declared = set()

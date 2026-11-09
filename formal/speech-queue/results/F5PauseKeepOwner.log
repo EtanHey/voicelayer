@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "OwnerConsistent",
+  "status": "EXPECTED_FAIL",
+  "generated": 51,
+  "distinct": 44
+}

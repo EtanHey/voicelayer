@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoDeleteDuringCapture",
+  "status": "EXPECTED_FAIL",
+  "generated": 23,
+  "distinct": 15
+}

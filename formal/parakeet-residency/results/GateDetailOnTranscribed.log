@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoFailureDetailOnTranscript",
+  "status": "EXPECTED_FAIL",
+  "generated": 56,
+  "distinct": 50
+}

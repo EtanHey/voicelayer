@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "StartupBound",
+  "status": "EXPECTED_FAIL",
+  "generated": 273,
+  "distinct": 259
+}

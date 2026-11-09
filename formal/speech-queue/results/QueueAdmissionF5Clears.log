@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "F5KeepsQueue",
+  "status": "EXPECTED_FAIL",
+  "generated": 860,
+  "distinct": 860
+}

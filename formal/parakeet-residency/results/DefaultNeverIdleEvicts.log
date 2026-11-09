@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "DefaultNeverIdleEvicts",
+  "status": "EXPECTED_FAIL",
+  "generated": 10,
+  "distinct": 9
+}

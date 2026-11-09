@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "F5DuringTranscriptionStartsCapture",
+  "status": "EXPECTED_FAIL",
+  "generated": 361,
+  "distinct": 254
+}

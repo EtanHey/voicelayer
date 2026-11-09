@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "CancellationFinishes",
+  "status": "EXPECTED_FAIL",
+  "generated": 2,
+  "distinct": 2
+}

@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "FinalTranscriptEvidence",
+  "status": "EXPECTED_FAIL",
+  "generated": 52,
+  "distinct": 44
+}

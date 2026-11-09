@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoSpeechDuringOpenMic",
+  "status": "EXPECTED_FAIL",
+  "generated": 64,
+  "distinct": 53
+}

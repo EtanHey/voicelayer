@@ -1,0 +1,261 @@
+{
+  "module": "ResidentRecognizer",
+  "sources": [
+    "formal/legacy_receipts.py",
+    "formal/parakeet-residency/ArchiveGateEvidence.tla",
+    "formal/parakeet-residency/Fixed.cfg",
+    "formal/parakeet-residency/FixedArchiveGate.cfg",
+    "formal/parakeet-residency/FixedAssetsGate.cfg",
+    "formal/parakeet-residency/FixedDelete.cfg",
+    "formal/parakeet-residency/FixedDownload.cfg",
+    "formal/parakeet-residency/FixedMemoryPressure.cfg",
+    "formal/parakeet-residency/FixedReadyReselect.cfg",
+    "formal/parakeet-residency/FixedSetupCancel.cfg",
+    "formal/parakeet-residency/MemoryPressure.tla",
+    "formal/parakeet-residency/OldCircularGate.cfg",
+    "formal/parakeet-residency/OldDeleteLoaded.cfg",
+    "formal/parakeet-residency/OldDownloadBlocks.cfg",
+    "formal/parakeet-residency/OldLegacyRace.cfg",
+    "formal/parakeet-residency/OldReadyReselect.cfg",
+    "formal/parakeet-residency/OldRecoveryRace.cfg",
+    "formal/parakeet-residency/OldSetupCancel.cfg",
+    "formal/parakeet-residency/ResidentRecognizer.tla",
+    "formal/parakeet-residency/RuntimeSetup.tla",
+    "formal/parakeet-residency/check.py",
+    "formal/parakeet-residency/check.sh",
+    "formal/parakeet-residency/mutants.json",
+    "formal/parakeet-residency/mutants/BootCaptureAllowed.cfg",
+    "formal/parakeet-residency/mutants/CancellationFinishes.cfg",
+    "formal/parakeet-residency/mutants/CleanupAfterExit.cfg",
+    "formal/parakeet-residency/mutants/DefaultNeverIdleEvicts.cfg",
+    "formal/parakeet-residency/mutants/DeleteExcludesRequest.cfg",
+    "formal/parakeet-residency/mutants/DeletedModelNotResident.cfg",
+    "formal/parakeet-residency/mutants/DownloadNeverBlocksAdmittedRequest.cfg",
+    "formal/parakeet-residency/mutants/GateDetailOnTranscribed.cfg",
+    "formal/parakeet-residency/mutants/GateDoesNotLoad.cfg",
+    "formal/parakeet-residency/mutants/GateMarkerStale.cfg",
+    "formal/parakeet-residency/mutants/GateRecordBeforeCommit.cfg",
+    "formal/parakeet-residency/mutants/IdleLoadedCanDelete.cfg",
+    "formal/parakeet-residency/mutants/MissingAssetsBlocked.cfg",
+    "formal/parakeet-residency/mutants/NoDeleteDuringCapture.cfg",
+    "formal/parakeet-residency/mutants/OneModel.cfg",
+    "formal/parakeet-residency/mutants/PartialRemovalDropped.cfg",
+    "formal/parakeet-residency/mutants/PressureNeverUnloadsBusy.cfg",
+    "formal/parakeet-residency/mutants/ProvisionedSelectable.cfg",
+    "formal/parakeet-residency/mutants/ReadyDuplicateKeepsLoaded.cfg",
+    "formal/parakeet-residency/mutants/ReadySelectionIsNoop.cfg",
+    "formal/parakeet-residency/mutants/UnknownBlocks.cfg",
+    "formal/parakeet-residency/mutants/VerifiedDownloadAlwaysPublishable.cfg",
+    "formal/parakeet-residency/test_tlc_result.py",
+    "formal/parakeet-residency/tlc_result.py",
+    "formal/setup-tlc.py",
+    "formal/tlc.lock.json",
+    "formal/tlc_support.py"
+  ],
+  "receiptRunner": true,
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FixedArchiveGate": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FixedAssetsGate": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FixedDelete": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FixedDownload": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FixedMemoryPressure": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FixedReadyReselect": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FixedSetupCancel": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OneModel": {
+      "role": "mutant",
+      "target": "OneModel",
+      "kind": "invariant",
+      "config": "mutants/OneModel.cfg"
+    },
+    "UnknownBlocks": {
+      "role": "mutant",
+      "target": "UnknownBlocks",
+      "kind": "invariant",
+      "config": "mutants/UnknownBlocks.cfg"
+    },
+    "ProvisionedSelectable": {
+      "role": "mutant",
+      "target": "ProvisionedSelectable",
+      "kind": "invariant",
+      "config": "mutants/ProvisionedSelectable.cfg"
+    },
+    "MissingAssetsBlocked": {
+      "role": "mutant",
+      "target": "MissingAssetsBlocked",
+      "kind": "invariant",
+      "config": "mutants/MissingAssetsBlocked.cfg"
+    },
+    "GateDoesNotLoad": {
+      "role": "mutant",
+      "target": "GateDoesNotLoad",
+      "kind": "invariant",
+      "config": "mutants/GateDoesNotLoad.cfg"
+    },
+    "DownloadNeverBlocksAdmittedRequest": {
+      "role": "mutant",
+      "target": "DownloadNeverBlocksAdmittedRequest",
+      "kind": "invariant",
+      "config": "mutants/DownloadNeverBlocksAdmittedRequest.cfg"
+    },
+    "VerifiedDownloadAlwaysPublishable": {
+      "role": "mutant",
+      "target": "VerifiedDownloadAlwaysPublishable",
+      "kind": "invariant",
+      "config": "mutants/VerifiedDownloadAlwaysPublishable.cfg"
+    },
+    "IdleLoadedCanDelete": {
+      "role": "mutant",
+      "target": "IdleLoadedCanDelete",
+      "kind": "invariant",
+      "config": "mutants/IdleLoadedCanDelete.cfg"
+    },
+    "DeletedModelNotResident": {
+      "role": "mutant",
+      "target": "DeletedModelNotResident",
+      "kind": "invariant",
+      "config": "mutants/DeletedModelNotResident.cfg"
+    },
+    "DeleteExcludesRequest": {
+      "role": "mutant",
+      "target": "DeleteExcludesRequest",
+      "kind": "invariant",
+      "config": "mutants/DeleteExcludesRequest.cfg"
+    },
+    "NoDeleteDuringCapture": {
+      "role": "mutant",
+      "target": "NoDeleteDuringCapture",
+      "kind": "invariant",
+      "config": "mutants/NoDeleteDuringCapture.cfg"
+    },
+    "ReadyDuplicateKeepsLoaded": {
+      "role": "mutant",
+      "target": "ReadyDuplicateKeepsLoaded",
+      "kind": "invariant",
+      "config": "mutants/ReadyDuplicateKeepsLoaded.cfg"
+    },
+    "ReadySelectionIsNoop": {
+      "role": "mutant",
+      "target": "ReadySelectionIsNoop",
+      "kind": "temporal",
+      "config": "mutants/ReadySelectionIsNoop.cfg"
+    },
+    "CleanupAfterExit": {
+      "role": "mutant",
+      "target": "CleanupAfterExit",
+      "kind": "invariant",
+      "config": "mutants/CleanupAfterExit.cfg"
+    },
+    "CancellationFinishes": {
+      "role": "mutant",
+      "target": "CancellationFinishes",
+      "kind": "temporal",
+      "config": "mutants/CancellationFinishes.cfg"
+    },
+    "PartialRemovalDropped": {
+      "role": "mutant",
+      "target": "FinalTranscriptEvidence",
+      "kind": "invariant",
+      "config": "mutants/PartialRemovalDropped.cfg"
+    },
+    "GateRecordBeforeCommit": {
+      "role": "mutant",
+      "target": "FinalTranscriptEvidence",
+      "kind": "invariant",
+      "config": "mutants/GateRecordBeforeCommit.cfg"
+    },
+    "GateMarkerStale": {
+      "role": "mutant",
+      "target": "FinalTranscriptEvidence",
+      "kind": "invariant",
+      "config": "mutants/GateMarkerStale.cfg"
+    },
+    "GateDetailOnTranscribed": {
+      "role": "mutant",
+      "target": "NoFailureDetailOnTranscript",
+      "kind": "invariant",
+      "config": "mutants/GateDetailOnTranscribed.cfg"
+    },
+    "PressureNeverUnloadsBusy": {
+      "role": "mutant",
+      "target": "PressureNeverUnloadsBusy",
+      "kind": "invariant",
+      "config": "mutants/PressureNeverUnloadsBusy.cfg"
+    },
+    "DefaultNeverIdleEvicts": {
+      "role": "mutant",
+      "target": "DefaultNeverIdleEvicts",
+      "kind": "invariant",
+      "config": "mutants/DefaultNeverIdleEvicts.cfg"
+    },
+    "BootCaptureAllowed": {
+      "role": "mutant",
+      "target": "BootCaptureAllowed",
+      "kind": "invariant",
+      "config": "mutants/BootCaptureAllowed.cfg"
+    }
+  },
+  "acceptance": [
+    "BootCaptureAllowed",
+    "CancellationFinishes",
+    "CleanupAfterExit",
+    "DefaultNeverIdleEvicts",
+    "DeleteExcludesRequest",
+    "DeletedModelNotResident",
+    "DownloadNeverBlocksAdmittedRequest",
+    "FinalTranscriptEvidence",
+    "GateDoesNotLoad",
+    "IdleLoadedCanDelete",
+    "MissingAssetsBlocked",
+    "NoDeleteDuringCapture",
+    "NoFailureDetailOnTranscript",
+    "OneModel",
+    "PressureNeverUnloadsBusy",
+    "ProvisionedSelectable",
+    "ReadyDuplicateKeepsLoaded",
+    "ReadySelectionIsNoop",
+    "UnknownBlocks",
+    "VerifiedDownloadAlwaysPublishable"
+  ],
+  "unusedConfigs": [
+    "OldCircularGate.cfg",
+    "OldDeleteLoaded.cfg",
+    "OldDownloadBlocks.cfg",
+    "OldLegacyRace.cfg",
+    "OldReadyReselect.cfg",
+    "OldRecoveryRace.cfg",
+    "OldSetupCancel.cfg"
+  ]
+}

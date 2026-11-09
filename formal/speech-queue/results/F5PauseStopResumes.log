@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "StopWins",
+  "status": "EXPECTED_FAIL",
+  "generated": 355,
+  "distinct": 248
+}

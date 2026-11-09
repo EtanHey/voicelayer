@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "PauseAtWordBoundary",
+  "status": "EXPECTED_FAIL",
+  "generated": 1230,
+  "distinct": 729
+}

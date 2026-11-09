@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "BootCaptureAllowed",
+  "status": "EXPECTED_FAIL",
+  "generated": null,
+  "distinct": null
+}

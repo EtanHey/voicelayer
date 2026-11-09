@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "OneModel",
+  "status": "EXPECTED_FAIL",
+  "generated": 404,
+  "distinct": 192
+}

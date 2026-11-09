@@ -1,0 +1,57 @@
+{
+  "module": "SelectionSnapshotStartup",
+  "sources": [
+    "formal/legacy_receipts.py",
+    "formal/selection-snapshot-startup/Current.cfg",
+    "formal/selection-snapshot-startup/Fixed.cfg",
+    "formal/selection-snapshot-startup/MutantInvalid.cfg",
+    "formal/selection-snapshot-startup/MutantRead.cfg",
+    "formal/selection-snapshot-startup/MutantStartup.cfg",
+    "formal/selection-snapshot-startup/MutantType.cfg",
+    "formal/selection-snapshot-startup/SelectionSnapshotStartup.tla",
+    "formal/selection-snapshot-startup/check.sh",
+    "formal/setup-tlc.py",
+    "formal/tlc.lock.json",
+    "formal/tlc_support.py"
+  ],
+  "receiptRunner": true,
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Current": {
+      "role": "mutant",
+      "target": "ColdDelivery",
+      "kind": "invariant"
+    },
+    "MutantStartup": {
+      "role": "mutant",
+      "target": "StartupBound",
+      "kind": "invariant"
+    },
+    "MutantRead": {
+      "role": "mutant",
+      "target": "ReadBound",
+      "kind": "invariant"
+    },
+    "MutantInvalid": {
+      "role": "mutant",
+      "target": "ValidDelivery",
+      "kind": "invariant"
+    },
+    "MutantType": {
+      "role": "mutant",
+      "target": "TypeOK",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "ColdDelivery",
+    "ReadBound",
+    "StartupBound",
+    "TypeOK",
+    "ValidDelivery"
+  ]
+}

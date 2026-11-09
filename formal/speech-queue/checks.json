@@ -1,0 +1,413 @@
+{
+  "module": "SpeechQueue",
+  "sources": [
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+    "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift",
+    "flow-bar/Tests/VoiceBarTests/F5ResumeIdentityTests.swift",
+    "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift",
+    "flow-bar/Tests/VoiceBarUITests/SpeechDataConformanceTests.swift",
+    "formal/corpus_support.py",
+    "formal/graph_retention.py",
+    "formal/legacy_receipts.py",
+    "formal/setup-tlc.py",
+    "formal/speech-queue/Admission.tla",
+    "formal/speech-queue/AdmissionCurrent.cfg",
+    "formal/speech-queue/AdmissionFinding.cfg",
+    "formal/speech-queue/AdmissionOlderMatch.cfg",
+    "formal/speech-queue/AdmissionProposed.cfg",
+    "formal/speech-queue/Current.cfg",
+    "formal/speech-queue/F5-IMPLEMENTATION.md",
+    "formal/speech-queue/F5Pause.tla",
+    "formal/speech-queue/F5PauseCancelPrevious.cfg",
+    "formal/speech-queue/F5PauseCurrent.cfg",
+    "formal/speech-queue/F5PauseCurrentCancelPostRelease.cfg",
+    "formal/speech-queue/F5PauseCurrentPostRelease.cfg",
+    "formal/speech-queue/F5PauseCurrentPreparing.cfg",
+    "formal/speech-queue/F5PauseCurrentQueued.cfg",
+    "formal/speech-queue/F5PauseCurrentRelease.cfg",
+    "formal/speech-queue/F5PauseCurrentTiming.cfg",
+    "formal/speech-queue/F5PauseCurrentTranscribing.cfg",
+    "formal/speech-queue/F5PauseCurrentWordBoundary.cfg",
+    "formal/speech-queue/F5PauseDoubleResume.cfg",
+    "formal/speech-queue/F5PauseDropAtEnd.cfg",
+    "formal/speech-queue/F5PauseFixed.cfg",
+    "formal/speech-queue/F5PauseFixedTranscribing.cfg",
+    "formal/speech-queue/F5PauseIgnoreF5.cfg",
+    "formal/speech-queue/F5PauseIgnorePreparing.cfg",
+    "formal/speech-queue/F5PauseInvalidOwner.cfg",
+    "formal/speech-queue/F5PauseKeepOwner.cfg",
+    "formal/speech-queue/F5PauseManualResume.cfg",
+    "formal/speech-queue/F5PauseN6DropsRead.cfg",
+    "formal/speech-queue/F5PauseOpenFirst.cfg",
+    "formal/speech-queue/F5PauseParkNextWord.cfg",
+    "formal/speech-queue/F5PauseParkZero.cfg",
+    "formal/speech-queue/F5PausePostRelease.cfg",
+    "formal/speech-queue/F5PauseQueueCount.cfg",
+    "formal/speech-queue/F5PauseReleaseDrops.cfg",
+    "formal/speech-queue/F5PauseResumeEarly.cfg",
+    "formal/speech-queue/F5PauseResumeOnPaste.cfg",
+    "formal/speech-queue/F5PauseResumePosition.cfg",
+    "formal/speech-queue/F5PauseStaleResumesPaused.cfg",
+    "formal/speech-queue/F5PauseStartDuringCapture.cfg",
+    "formal/speech-queue/F5PauseStopResumes.cfg",
+    "formal/speech-queue/F5PauseStuck.cfg",
+    "formal/speech-queue/F5PauseTimingBlank.cfg",
+    "formal/speech-queue/F5PauseWordBoundary.cfg",
+    "formal/speech-queue/History.cfg",
+    "formal/speech-queue/History.tla",
+    "formal/speech-queue/MutableTerminal.cfg",
+    "formal/speech-queue/QueueAdmission.tla",
+    "formal/speech-queue/QueueAdmissionClear.cfg",
+    "formal/speech-queue/QueueAdmissionDuplicate.cfg",
+    "formal/speech-queue/QueueAdmissionF5Clears.cfg",
+    "formal/speech-queue/QueueAdmissionFixed.cfg",
+    "formal/speech-queue/QueueAdmissionFreshClears.cfg",
+    "formal/speech-queue/QueueAdmissionInferredPlaying.cfg",
+    "formal/speech-queue/QueueAdmissionSameQueues.cfg",
+    "formal/speech-queue/QueueAdmissionStopLeaves.cfg",
+    "formal/speech-queue/SpeechQueue.tla",
+    "formal/speech-queue/StaleClear.cfg",
+    "formal/speech-queue/StaleNext.cfg",
+    "formal/speech-queue/StopLeaves.cfg",
+    "formal/speech-queue/admission_source.py",
+    "formal/speech-queue/check.py",
+    "formal/speech-queue/check.sh",
+    "formal/speech-queue/cross_tlc.py",
+    "formal/speech-queue/f5_checks.py",
+    "formal/speech-queue/f5_conformance.py",
+    "formal/speech-queue/speech_data_conformance.py",
+    "formal/speech-queue/supervision.py",
+    "formal/speech-queue/test_graph_retention.py",
+    "formal/speech-queue/test_speech_data_conformance.py",
+    "formal/speech-queue/test_supervision.py",
+    "formal/tlc.lock.json",
+    "formal/tlc_support.py",
+    "src/__tests__/click2-groundwork.test.ts",
+    "src/__tests__/error-recovery.test.ts",
+    "src/__tests__/mcp-handler.test.ts",
+    "src/__tests__/pause-ask.test.ts",
+    "src/__tests__/playback-timing.test.ts",
+    "src/__tests__/recording-review-regressions.test.ts",
+    "src/__tests__/setup/recording-jobs-fixture.ts",
+    "src/__tests__/socket-handlers-idempotency.test.ts",
+    "src/__tests__/socket-residency.test.ts",
+    "src/__tests__/test-safety-lifecycle.test.ts",
+    "src/__tests__/tts-chunking.test.ts",
+    "src/__tests__/tts-long-read-runtime.test.ts",
+    "src/__tests__/tts-pause.test.ts",
+    "src/__tests__/update-gate-installer-participant.test.ts",
+    "src/__tests__/update-gate-installer-short-holder.test.ts",
+    "src/__tests__/update-gate-round1.test.ts",
+    "src/__tests__/whisper-residency.test.ts",
+    "src/f5-capture.ts",
+    "src/recording-jobs.ts",
+    "src/recording-state.ts",
+    "src/recording-take-queue.ts",
+    "src/selection-read-queue.ts",
+    "src/socket-handlers.ts",
+    "src/socket-protocol.ts",
+    "src/tts.ts",
+    "src/tts/long-read.ts",
+    "src/tts/playback-timing.ts",
+    "src/tts/prosody.ts",
+    "src/tts/retained-readback.ts"
+  ],
+  "receiptRunner": true,
+  "checks": {
+    "StaleClear": {
+      "role": "mutant",
+      "target": "StaleCannotAdvance",
+      "kind": "invariant"
+    },
+    "Current": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "StaleNext": {
+      "role": "mutant",
+      "target": "StaleCannotAdvance",
+      "kind": "invariant"
+    },
+    "StopLeaves": {
+      "role": "mutant",
+      "target": "StopClearsQueues",
+      "kind": "invariant"
+    },
+    "History": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "MutableTerminal": {
+      "role": "mutant",
+      "target": "FirstAcceptedTerminalImmutable",
+      "kind": "invariant"
+    },
+    "AdmissionCurrent": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "AdmissionFinding": {
+      "role": "mutant",
+      "target": "NonemptySelectionDoesNotStop",
+      "kind": "invariant"
+    },
+    "AdmissionProposed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "AdmissionOlderMatch": {
+      "role": "mutant",
+      "target": "EveryQueuedMatchStops",
+      "kind": "invariant"
+    },
+    "QueueAdmissionFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "QueueAdmissionClear": {
+      "role": "mutant",
+      "target": "NoSilentClear",
+      "kind": "invariant"
+    },
+    "QueueAdmissionDuplicate": {
+      "role": "mutant",
+      "target": "NoDuplicateIdentity",
+      "kind": "invariant"
+    },
+    "QueueAdmissionStopLeaves": {
+      "role": "mutant",
+      "target": "StopClearsAll",
+      "kind": "invariant"
+    },
+    "QueueAdmissionF5Clears": {
+      "role": "mutant",
+      "target": "F5KeepsQueue",
+      "kind": "invariant"
+    },
+    "QueueAdmissionFreshClears": {
+      "role": "mutant",
+      "target": "NoSilentClear",
+      "kind": "invariant"
+    },
+    "QueueAdmissionInferredPlaying": {
+      "role": "mutant",
+      "target": "NoBlindAdvance",
+      "kind": "invariant"
+    },
+    "QueueAdmissionSameQueues": {
+      "role": "mutant",
+      "target": "NoDuplicateIdentity",
+      "kind": "invariant"
+    },
+    "F5PauseCurrent": {
+      "role": "mutant",
+      "target": "F5PausesPlayingSpeech",
+      "kind": "invariant"
+    },
+    "F5PauseCurrentRelease": {
+      "role": "mutant",
+      "target": "ReleaseNeverDropsRead",
+      "kind": "invariant"
+    },
+    "F5PauseCurrentWordBoundary": {
+      "role": "mutant",
+      "target": "PauseAtWordBoundary",
+      "kind": "invariant"
+    },
+    "F5PauseCurrentQueued": {
+      "role": "mutant",
+      "target": "QueuedCountExcludesCurrent",
+      "kind": "invariant"
+    },
+    "F5PauseCurrentTiming": {
+      "role": "mutant",
+      "target": "TimingNeverBlankWhilePlaying",
+      "kind": "invariant"
+    },
+    "F5PauseCurrentPreparing": {
+      "role": "mutant",
+      "target": "F5HoldsPreparingRead",
+      "kind": "invariant"
+    },
+    "F5PauseCurrentTranscribing": {
+      "role": "mutant",
+      "target": "F5DuringTranscriptionStartsCapture",
+      "kind": "invariant"
+    },
+    "F5PauseCurrentPostRelease": {
+      "role": "mutant",
+      "target": "ReleaseNeverDropsRead",
+      "kind": "invariant"
+    },
+    "F5PauseCurrentCancelPostRelease": {
+      "role": "mutant",
+      "target": "ReleaseNeverDropsRead",
+      "kind": "invariant"
+    },
+    "F5PauseInvalidOwner": {
+      "role": "mutant",
+      "target": "TypeOK",
+      "kind": "invariant"
+    },
+    "F5PauseOpenFirst": {
+      "role": "mutant",
+      "target": "NoSpeechDuringOpenMic",
+      "kind": "invariant"
+    },
+    "F5PauseIgnoreF5": {
+      "role": "mutant",
+      "target": "F5PausesPlayingSpeech",
+      "kind": "invariant"
+    },
+    "F5PauseManualResume": {
+      "role": "mutant",
+      "target": "ManualPausePersists",
+      "kind": "invariant"
+    },
+    "F5PauseResumeOnPaste": {
+      "role": "mutant",
+      "target": "NoF5PauseOutsideCapture",
+      "kind": "invariant"
+    },
+    "F5PauseResumePosition": {
+      "role": "mutant",
+      "target": "ResumeFromPausedPosition",
+      "kind": "invariant"
+    },
+    "F5PauseDoubleResume": {
+      "role": "mutant",
+      "target": "NoDoubleResume",
+      "kind": "invariant"
+    },
+    "F5PauseStopResumes": {
+      "role": "mutant",
+      "target": "StopWins",
+      "kind": "invariant"
+    },
+    "F5PauseKeepOwner": {
+      "role": "mutant",
+      "target": "OwnerConsistent",
+      "kind": "invariant"
+    },
+    "F5PauseReleaseDrops": {
+      "role": "mutant",
+      "target": "ReleaseNeverDropsRead",
+      "kind": "invariant"
+    },
+    "F5PauseWordBoundary": {
+      "role": "mutant",
+      "target": "PauseAtWordBoundary",
+      "kind": "invariant"
+    },
+    "F5PauseQueueCount": {
+      "role": "mutant",
+      "target": "QueuedCountExcludesCurrent",
+      "kind": "invariant"
+    },
+    "F5PauseTimingBlank": {
+      "role": "mutant",
+      "target": "TimingNeverBlankWhilePlaying",
+      "kind": "invariant"
+    },
+    "F5PauseStuck": {
+      "role": "mutant",
+      "target": "AutoPauseNeverStuck",
+      "kind": "temporal"
+    },
+    "F5PausePostRelease": {
+      "role": "mutant",
+      "target": "ReleaseNeverDropsRead",
+      "kind": "invariant"
+    },
+    "F5PauseStaleResumesPaused": {
+      "role": "mutant",
+      "target": "NoDoubleResume",
+      "kind": "invariant"
+    },
+    "F5PauseParkZero": {
+      "role": "mutant",
+      "target": "PauseAtWordBoundary",
+      "kind": "invariant"
+    },
+    "F5PauseParkNextWord": {
+      "role": "mutant",
+      "target": "PauseAtWordBoundary",
+      "kind": "invariant"
+    },
+    "F5PauseStartDuringCapture": {
+      "role": "mutant",
+      "target": "NoSpeechDuringOpenMic",
+      "kind": "invariant"
+    },
+    "F5PauseIgnorePreparing": {
+      "role": "mutant",
+      "target": "F5HoldsPreparingRead",
+      "kind": "invariant"
+    },
+    "F5PauseCancelPrevious": {
+      "role": "mutant",
+      "target": "F5DuringTranscriptionStartsCapture",
+      "kind": "invariant"
+    },
+    "F5PauseResumeEarly": {
+      "role": "mutant",
+      "target": "NoSpeechDuringOpenMic",
+      "kind": "invariant"
+    },
+    "F5PauseN6DropsRead": {
+      "role": "mutant",
+      "target": "F5DuringTranscriptionStartsCapture",
+      "kind": "invariant"
+    },
+    "F5PauseDropAtEnd": {
+      "role": "mutant",
+      "target": "ResumeFromPausedPosition",
+      "kind": "invariant"
+    },
+    "F5PauseFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "F5PauseFixedTranscribing": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    }
+  },
+  "acceptance": [
+    "AutoPauseNeverStuck",
+    "EveryQueuedMatchStops",
+    "F5DuringTranscriptionStartsCapture",
+    "F5HoldsPreparingRead",
+    "F5KeepsQueue",
+    "F5PausesPlayingSpeech",
+    "FirstAcceptedTerminalImmutable",
+    "ManualPausePersists",
+    "NoBlindAdvance",
+    "NoDoubleResume",
+    "NoDuplicateIdentity",
+    "NoF5PauseOutsideCapture",
+    "NoSilentClear",
+    "NoSpeechDuringOpenMic",
+    "NonemptySelectionDoesNotStop",
+    "OwnerConsistent",
+    "PauseAtWordBoundary",
+    "QueuedCountExcludesCurrent",
+    "ReleaseNeverDropsRead",
+    "ResumeFromPausedPosition",
+    "StaleCannotAdvance",
+    "StopClearsAll",
+    "StopClearsQueues",
+    "StopWins",
+    "TimingNeverBlankWhilePlaying",
+    "TypeOK"
+  ]
+}
