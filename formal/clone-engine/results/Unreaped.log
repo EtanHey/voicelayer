@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "EventuallyStopped",
+  "status": "EXPECTED_FAIL",
+  "generated": 126,
+  "distinct": 48
+}

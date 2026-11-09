@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "AtMostOneEngine",
+  "status": "EXPECTED_FAIL",
+  "generated": 20,
+  "distinct": 15
+}

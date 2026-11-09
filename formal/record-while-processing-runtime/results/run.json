@@ -26,7 +26,7 @@
     "src/recording-jobs.ts": "53141c07bad351d39f27edd5ec64faa8743f68b9be235d7ad3e16d6543a39d52",
     "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
     "src/socket-handlers.ts": "29df4b4578b6ef655380f3f3567762853de18743e0dea7602e438cbe3e6e8b1a",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e2dde5e682f69da856fb2f6814df1f7e19ed40f7f6fda810ec923679bf73b175",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "ad4ff7878e73b91fec74c5f12b84f110fdf0e8de54ed7af3e4a489b720ab8cfb",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
@@ -116,8 +116,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 171237,
-      "distinct": 57627
+      "generated": 161534,
+      "distinct": 54739
     },
     "RetargetMutant": {
       "role": "mutant",
@@ -156,16 +156,16 @@
       "kind": "temporal",
       "target": "DeliveryAckBound",
       "status": "EXPECTED_FAIL",
-      "generated": 103913,
-      "distinct": 37572
+      "generated": 104151,
+      "distinct": 37634
     },
     "StallMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 98999,
-      "distinct": 30903
+      "generated": 101901,
+      "distinct": 31363
     },
     "FailedMicMutant": {
       "role": "mutant",
@@ -212,8 +212,8 @@
       "kind": "temporal",
       "target": "QueuedCaptureStarts",
       "status": "EXPECTED_FAIL",
-      "generated": 110596,
-      "distinct": 39120
+      "generated": 98934,
+      "distinct": 35765
     }
   }
 }

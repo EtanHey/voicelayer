@@ -14,7 +14,7 @@
     "formal/ptt-silence-timeout/TrimWordsMutant.cfg": "9b357bb658c9c4d3bd3ed7da91d23c87387de6d0857887a7c734a133924536f1",
     "formal/ptt-silence-timeout/NoRenewalMutant.cfg": "8086bcbf5f618d61bab9ba9946a7009d172548f64f5d7deff4a5b8b8846c05fd",
     "formal/ptt-silence-timeout/Fixed.cfg": "fa8256778f9f3f30f6da1aa8f5c94a4de06d0480f9645275dcf05f859c020178",
-    "src/input.ts": "b4f12797d524c7a0b8a4070291cf6b0c850dc347d9eabc8446cb9996b2b033eb",
+    "src/input.ts": "0101756c7f95f7ff2d3c80c6c5b2a6ceae029bc2f93242b5db8669ad4d3e3390",
     "src/__tests__/input-durability.test.ts": "37604eeb69a21bc3596194240980c542d5a195edf7e495713fc0931050dec790",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },

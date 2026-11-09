@@ -14,9 +14,9 @@
     "formal/f5-gesture-preview/Fixed.cfg": "6c013dde2567e6138e2355049f1d98466bf47bfabfee6217cb129f39c2f2f74c",
     "formal/f5-gesture-preview/StaleShowMutant.cfg": "b87699b9abeb202829948576a8af5064b7e6917b871656638d458dba3b1c4e3e",
     "flow-bar/Sources/VoiceBar/HotkeyManager.swift": "aae1623f2d79a60b052a96698cc2cd51a05d81e1c3b743317709c8273e01524f",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e2dde5e682f69da856fb2f6814df1f7e19ed40f7f6fda810ec923679bf73b175",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "14c3460b96852b65d2bf6a4c0eb6f4d0af5cf620c5fd8e8b1398d90056d54074",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "c297977531c3bd8ae71f71aa761adb0c5c6f237bb7aca52e4c8a671771e25062",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "ad4ff7878e73b91fec74c5f12b84f110fdf0e8de54ed7af3e4a489b720ab8cfb",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "a13cc3cedbd4cc27ace097ee47748aa35c0a0591388a20e33cf1b6c9ac7151a4",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "8d6c8102a3b82b73e46f24ac6401e1391bc9ee925beaca87eee3c11f4b3c4e07",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
