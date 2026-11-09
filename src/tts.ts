@@ -293,14 +293,19 @@ let ttsCounter = 0;
 /**
  * T9 (Etan QA 2026-11-09: "It also sounds kind of hollow or weird when it speaks fast or slow"). afplay's -r/-q 1 is
  * Apple's spectral time-pitch, whose phasiness is what sounds hollow on speech. A scaled speed on the resident stack
- * plays through SoX's WSOLA `tempo -s` (speech-tuned, pitch-preserving, streamed, so there is no pre-render delay).
- * Its output is the source at exactly 1/rate: measured offline, interior events land within 11 ms of D/rate at
- * 0.75×-2×, so the player clock (audio ms = wall ms × rate), seek and pause mapping are unchanged. WSOLA drops its
- * last partial segment (~26 ms of source; a burst ending at the file end was lost at 2×), so 30 ms of silence is
- * appended first: every word is kept, at the cost of at most 40 ms of trailing silence.
- * `VOICELAYER_TEMPO_PLAYER=afplay` restores afplay's time-pitch; a missing `play` falls back to it too.
+ * plays through SoX's WSOLA `tempo -s` (speech, pitch-preserving, streamed, so there is no pre-render delay).
+ *
+ * Codex round 1: with SoX's default speech profile a 20 ms burst ending at EOF vanished at 2× for some file lengths
+ * (4.013 s), and no pad recovered it. Root cause (offline sweeps, file to file): not end truncation (a tone running to
+ * EOF survives within 0.7 ms at every rate) but WSOLA's resolution. At 2× the default profile works in ~44 ms segments
+ * with a ~20 ms search, so it skips input spans longer than a short isolated transient, anywhere in the file: 20 ms
+ * bursts were lost at 20/60 interior positions and 18/60 padded end positions. Explicit 20 ms segments, a 5 ms search
+ * and an 8 ms overlap keep every 20 ms burst at every supported rate (0/1440 across 0.75×-2×, interior and at EOF,
+ * over 240 file lengths around 2 s and 4 s), with onsets within 8 ms of source time / rate and output exactly D/rate
+ * (so no pad is needed and the clock, seek, pause and watchdog arithmetic are unchanged). Receipt:
+ * `src/__tests__/tempo-wsola.test.ts`. `VOICELAYER_TEMPO_PLAYER=afplay` restores afplay; a missing `play` falls back.
  */
-export const TEMPO_TAIL_PAD_SECONDS = 0.03;
+export const TEMPO_WSOLA_PARAMS = ["20", "5", "8"] as const;
 
 let tempoPlayerCache: string | null | undefined;
 export function pitchPreservingTempoPlayer(): string | null {
@@ -325,7 +330,7 @@ export function buildPlaybackArgv(
   // T9: only the resident stack is audible; a muted harness keeps afplay -v 0 (the silence guarantee below).
   if (scaled && player === "afplay" && isResidentStack) {
     const sox = tempoPlayer === undefined ? pitchPreservingTempoPlayer() : tempoPlayer;
-    if (sox) return [sox, "-q", audioFile, "pad", "0", String(TEMPO_TAIL_PAD_SECONDS), "tempo", "-s", String(rate)];
+    if (sox) return [sox, "-q", audioFile, "tempo", "-s", String(rate), ...TEMPO_WSOLA_PARAMS];
   }
   const speed = !scaled ? [] : player === "afplay" ? ["-r", String(rate), "-q", "1"]
     : player === "mpv" ? [`--speed=${rate}`] : player === "ffplay" ? ["-af", `atempo=${rate}`] : [];

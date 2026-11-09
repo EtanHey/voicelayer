@@ -1,25 +1,27 @@
 /**
- * T9 (Etan QA 2026-11-09, "hollow or weird when it speaks fast or slow"): the resident player's scaled speed is
- * SoX's WSOLA `tempo -s` behind a 30 ms tail pad (see buildPlaybackArgv). File-to-file only: SoX renders into the
- * isolated test directory, so no audio device is opened. Skips loudly when SoX is not installed.
+ * T9 (Etan QA 2026-11-09, "hollow or weird when it speaks fast or slow"; Codex round 1, finding 2): the resident
+ * player's scaled speed is SoX's WSOLA `tempo -s <rate> 20 5 8` (see buildPlaybackArgv). File-to-file only: SoX
+ * renders into the isolated test directory, so no audio device is opened. Skips loudly when SoX is not installed.
  */
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { TEMPO_TAIL_PAD_SECONDS } from "../tts";
+import { buildPlaybackArgv, TEMPO_WSOLA_PARAMS } from "../tts";
 import { TEST_TMP } from "./setup/test-tmp";
 
 const sox = Bun.which("sox");
 const SR = 24_000;
-const SECONDS = 4;
-const BURSTS = [1.0, 2.0, 3.0, SECONDS - 0.02];
+const BURST = 0.02;
+const RATES = [0.75, 1.25, 1.5, 2];
+const PEAK = Math.round(0.8 * 32767);
 
-function writeMarks(path: string): void {
-  const n = SR * SECONDS;
+/** Silence with 20 ms 1 kHz bursts at `starts` (seconds). */
+function writeBursts(path: string, seconds: number, starts: number[]): void {
+  const n = Math.round(SR * seconds);
   const pcm = new Int16Array(n);
-  for (const start of BURSTS) {
-    for (let i = Math.round(start * SR); i < Math.min(n, Math.round((start + 0.02) * SR)); i++) {
-      pcm[i] = Math.round(0.8 * 32767 * Math.sin((2 * Math.PI * 1000 * i) / SR));
+  for (const start of starts) {
+    for (let i = Math.round(start * SR); i < Math.min(n, Math.round((start + BURST) * SR)); i++) {
+      pcm[i] = Math.round(PEAK * Math.sin((2 * Math.PI * 1000 * i) / SR));
     }
   }
   const header = Buffer.alloc(44);
@@ -30,47 +32,75 @@ function writeMarks(path: string): void {
   writeFileSync(path, Buffer.concat([header, Buffer.from(pcm.buffer)]));
 }
 
-/** Burst onsets (s) in a 16-bit mono WAV written by SoX, and its duration. */
-function onsets(path: string): { onsets: number[]; duration: number } {
+function readPcm(path: string): Int16Array {
   const bytes = readFileSync(path);
   const data = bytes.indexOf("data");
   const length = bytes.readUInt32LE(data + 4);
-  const pcm = new Int16Array(bytes.buffer, bytes.byteOffset + data + 8, Math.floor(length / 2));
-  const found: number[] = [];
-  for (let i = 0; i < pcm.length; i++) {
-    if (Math.abs(pcm[i]) > 3000) { found.push(i / SR); i += Math.round(0.3 * SR); }
-  }
-  return { onsets: found, duration: pcm.length / SR };
+  return new Int16Array(bytes.buffer.slice(bytes.byteOffset + data + 8, bytes.byteOffset + data + 8 + length));
+}
+
+/** Each burst's output peak and first onset, looked for around its source time / rate (the last one to EOF). */
+function measure(pcm: Int16Array, starts: number[], rate: number) {
+  return starts.map((start, index) => {
+    const from = Math.max(0, Math.round((start / rate - 0.03) * SR));
+    const to = index === starts.length - 1 ? pcm.length : Math.min(pcm.length, Math.round((start / rate + BURST / rate + 0.06) * SR));
+    let peak = 0, onset = -1;
+    for (let i = from; i < to; i++) {
+      const value = Math.abs(pcm[i]);
+      peak = Math.max(peak, value);
+      if (onset < 0 && value > 3000) onset = i / SR;
+    }
+    return { peak, onsetError: onset < 0 ? Infinity : Math.abs(onset - start / rate) };
+  });
+}
+
+function stretch(source: string, output: string, rate: number, params: readonly string[]): void {
+  const run = Bun.spawnSync([sox!, source, output, "tempo", "-s", String(rate), ...params],
+    { env: process.env, stdout: "ignore", stderr: "pipe" });
+  expect(run.exitCode).toBe(0);
 }
 
 describe("T9 pitch-preserving speed (SoX WSOLA tempo)", () => {
-  it.skipIf(!sox)("keeps every burst, the last included, at its source time / rate", () => {
-    const directory = join(TEST_TMP, "tempo-wsola");
-    mkdirSync(directory, { recursive: true });
-    const source = join(directory, "marks.wav");
-    writeMarks(source);
-    for (const rate of [0.75, 1.25, 1.5, 2]) {
-      const output = join(directory, `out-${rate}.wav`);
-      const run = Bun.spawnSync([sox!, source, output, "pad", "0", String(TEMPO_TAIL_PAD_SECONDS), "tempo", "-s", String(rate)],
-        { env: process.env, stdout: "ignore", stderr: "pipe" });
-      expect(run.exitCode).toBe(0);
-      const measured = onsets(output);
-      expect(measured.onsets).toHaveLength(BURSTS.length);
-      measured.onsets.forEach((at, index) => expect(Math.abs(at - BURSTS[index] / rate)).toBeLessThan(0.015));
-      // Only trailing silence is added: at most the pad, scaled.
-      expect(measured.duration - SECONDS / rate).toBeGreaterThanOrEqual(-0.005);
-      expect(measured.duration - SECONDS / rate).toBeLessThanOrEqual(TEMPO_TAIL_PAD_SECONDS / rate + 0.005);
-    }
+  it("plays the production argv: tempo -s <rate> with the swept 20/5/8 ms windows", () => {
+    expect(buildPlaybackArgv("afplay", "/x/a.mp3", true, 2, "/sox/play").slice(-5)).toEqual(["-s", "2", ...TEMPO_WSOLA_PARAMS]);
   });
 
-  it.skipIf(!sox)("without the pad WSOLA drops the final burst at 2× (why the pad exists)", () => {
-    const directory = join(TEST_TMP, "tempo-wsola-nopad");
+  it.skipIf(!sox)("keeps every 20 ms burst, interior and at EOF, across rates and nearby file lengths", () => {
+    const directory = join(TEST_TMP, "tempo-wsola");
     mkdirSync(directory, { recursive: true });
-    const source = join(directory, "marks.wav");
-    writeMarks(source);
-    const output = join(directory, "out.wav");
-    expect(Bun.spawnSync([sox!, source, output, "tempo", "-s", "2"], { env: process.env, stdout: "ignore", stderr: "pipe" }).exitCode).toBe(0);
-    expect(onsets(output).onsets.length).toBeLessThan(BURSTS.length);
+    // Two bands of lengths, 2.6 ms apart (not a multiple of any window), and Codex's exact 4.000 s / 4.013 s pair.
+    const lengths = [...Array.from({ length: 10 }, (_, k) => 2 + k * 0.0026), ...Array.from({ length: 10 }, (_, k) => 3.98 + k * 0.0026), 4, 4.013];
+    let cases = 0;
+    for (const [index, seconds] of lengths.entries()) {
+      const starts = [0.5, 1 + index * 0.0017, seconds - BURST];
+      const source = join(directory, `bursts-${index}.wav`);
+      writeBursts(source, seconds, starts);
+      for (const rate of RATES) {
+        const output = join(directory, `out-${index}-${rate}.wav`);
+        stretch(source, output, rate, TEMPO_WSOLA_PARAMS);
+        const pcm = readPcm(output);
+        for (const [burst, result] of measure(pcm, starts, rate).entries()) {
+          const label = `${seconds.toFixed(4)} s at ${rate}x, burst ${burst}`;
+          expect(result.peak, label).toBeGreaterThanOrEqual(0.5 * PEAK);
+          expect(result.onsetError, label).toBeLessThan(0.012);
+          cases++;
+        }
+        // Output is the source at exactly 1/rate: the clock's audio-ms = wall-ms x rate holds to the end.
+        expect(Math.abs(pcm.length / SR - seconds / rate)).toBeLessThan(0.002);
+      }
+    }
+    expect(cases).toBe(lengths.length * RATES.length * 3);
+  });
+
+  it.skipIf(!sox)("RED witness: SoX's default speech profile loses Codex's 4.013 s EOF burst at 2x", () => {
+    const directory = join(TEST_TMP, "tempo-wsola-default");
+    mkdirSync(directory, { recursive: true });
+    const starts = [1, 2, 3, 4.013 - BURST];
+    const source = join(directory, "codex-4013.wav");
+    writeBursts(source, 4.013, starts);
+    const output = join(directory, "default.wav");
+    stretch(source, output, 2, []);
+    expect(measure(readPcm(output), starts, 2).at(-1)!.peak).toBeLessThan(0.5 * PEAK);
   });
 
   if (!sox) it("SKIPPED: SoX is not installed, so the WSOLA timing receipts did not run", () => {});
