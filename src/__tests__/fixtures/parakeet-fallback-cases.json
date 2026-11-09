@@ -420,11 +420,11 @@
       "capture_complete": true,
       "identity_mismatch": false,
       "expected": {
-        "must_fallback": true,
-        "terminal": "FALLBACK_NONEMPTY_COMPLETENESS_UNKNOWN",
+        "must_fallback": false,
+        "terminal": "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN",
         "unqualified_SUCCESS_allowed": false,
-        "retained_attempts": 2,
-        "reason": "Native out-of-range times require fallback; retain raw times unchanged."
+        "retained_attempts": 1,
+        "reason": "Invalid native times disable coverage checks; preserve native words and raw times without Whisper."
       }
     },
     {

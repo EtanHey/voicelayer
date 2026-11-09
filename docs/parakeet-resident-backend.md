@@ -66,8 +66,10 @@ and dictionary aliases remain a separate post-decode operation.
 
 With Parakeet selected and available, Whisper is a failure fallback only:
 provider/startup errors, unusable response or input identity/format, and an empty
-response with verified Silero speech. Sparse text, internal gaps and late speech
-are not failures and cannot admit Whisper. Full-input coverage is checked before
+response without verified silence (including unavailable/failed Silero). Sparse text, internal gaps and late speech
+are not failures and cannot admit Whisper. Bad timestamps keep native text and
+log that coverage cannot be checked; raw timing evidence remains private.
+Full-input coverage is checked before
 any repair; an incomplete provider response is unusable.
 
 Internal token gaps containing at least .5 s consecutive Silero-positive windows
@@ -75,8 +77,9 @@ Internal token gaps containing at least .5 s consecutive Silero-positive windows
 Parakeet decode on bounded windows. Parakeet stays loaded. Each clip includes at
 most 2 s context on either side; original PCM and the full recording stay intact.
 Native token text must reconstruct the original transcript exactly. Matching
-words on both clip edges anchor an internal insertion; a tail append requires a
-matching left anchor. Empty, ambiguous or failed window decodes keep every native
+words near both clip edges anchor an internal insertion; each anchor must match
+uniquely within one word of its edge. Only words between the anchors are inserted;
+outer neighbour fragments stay out. A tail append requires a matching left anchor. Empty, ambiguous or failed window decodes keep every native
 character. Multiple repairs apply from the end backwards. These routes remain
 Parakeet provenance and never claim a Whisper fallback.
 
@@ -93,10 +96,11 @@ truth. Alternatives remain private; stderr logs times, reasons and counts only.
 A complete native empty response first runs an isolated Silero VAD session on the
 exact full snapshot, using threshold 0.3. Complete input-SHA/frame-matched negative
 evidence can deliver empty as `VAD_NO_SPEECH`; exact zero PCM delivers
-`VERIFIED_ZERO_PCM` directly. Both leave Whisper NOT_RUN. Verified speech admits
-failure fallback. Missing/partial/invalid speech evidence produces
-`UNRESOLVED_NATIVE_EMPTY` without loading Whisper. P provider errors still admit
-failure fallback independently of VAD.
+`VERIFIED_ZERO_PCM` directly. Any returned text on exact-zero PCM also resolves
+without another model. Both leave Whisper NOT_RUN. Every other native empty,
+including missing/partial/invalid speech evidence, admits the guarded failure
+fallback: an empty result with no evidence of silence must not lose the dictation.
+The retained recording remains available for History re-transcribe.
 The gate exists because SPEED found likely hallucinated Whisper fallback text
 on three detector-negative originals: 174 valid lexical intervals lay outside
 detected speech, with 6 timing unknowns. This is machine evidence, not audio
@@ -126,9 +130,9 @@ decode are still snapshotted byte-for-byte and delegated to Whisper without
 making a zero-signal claim.
 
 One narrow silence rule applies **only when every PCM16 sample is exactly zero**:
-A returned native empty is delivered as empty without another model. If native
-output is unusable or the provider fails, the failure retry remains available,
-but generated words are never delivered from a zero-signal input. There is no RMS/VAD silence threshold;
+A complete all-zero PCM recording resolves empty without Whisper, including
+nonempty Parakeet output or a provider failure. Raw alternatives are retained;
+generated words are never delivered from a zero-signal input. There is no RMS/VAD silence threshold;
 even one nonzero sample disables this rule. This was motivated by a real lab
 case where P returned empty and W produced three raw letters on synthetic zeros.
 

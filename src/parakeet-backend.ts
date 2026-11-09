@@ -15,7 +15,7 @@ import { z } from "zod";
 import { probeParakeetLanguage, PARAKEET_LID_MIN_CONFIDENCE, type ParakeetLanguageInput, type ParakeetLanguageEvidence } from "./parakeet-lid";
 
 const WHISPER_FAILURE_REASONS = new Set(["parakeet-startup-failed", "input-format", "input-identity", "invalid-response",
-  "invalid-timing", "incomplete-response", "empty-response", "zero-pcm-response"]);
+  "incomplete-response", "empty-response"]);
 
 export class STTQualificationError extends Error {
   constructor(readonly outcome: STTOutcome, readonly attempt: unknown) {
@@ -72,14 +72,15 @@ export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, last
   if (evidence?.status && !["RETURNED", "EMPTY_RESPONSE"].includes(evidence.status)) return "provider-" + evidence.status.toLowerCase();
   if (evidence?.processExitCode !== undefined && evidence.processExitCode !== null && evidence.processExitCode !== 0) return "provider-error";
   if (evidence?.decodeCoverage === "PARTIAL" || evidence?.tail === "KNOWN_MISSING") return "incomplete-response";
-  if (evidence?.timesValid === false) return "invalid-timing";
   if (!result.complete || result.sample_rate !== info.sampleRate || result.input_frames !== info.frames || result.covered_frames !== info.frames) return "incomplete-response";
   if (!result.text.trim()) return "empty-response";
   if (info.allZero) return "zero-pcm-response";
   const duration = info.frames / info.sampleRate;
   // Coverage suspicion requests another Parakeet window, never another engine.
   // A sparse but usable full response is not a provider failure.
-  if (result.last_token_end_s !== null && (result.last_token_end_s < 0 || result.last_token_end_s > duration)) return "invalid-timing";
+  const times = result.raw_token_times === undefined ? undefined : tokenTimeSchema.safeParse(result.raw_token_times);
+  if ((times && (!times.success || times.data.some(t => t.end > duration))) || evidence?.timesValid === false || (result.last_token_end_s !== null &&
+      (typeof result.last_token_end_s !== "number" || !Number.isFinite(result.last_token_end_s) || result.last_token_end_s < 0 || result.last_token_end_s > duration))) return "invalid-timing";
   if (duration >= 8 && result.last_token_end_s !== null && lastSpeechSeconds !== undefined && lastSpeechSeconds - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))) return "uncovered-tail";
   return null;
 }
@@ -230,7 +231,14 @@ export class ParakeetBackend implements STTBackend {
       }
       console.error(`[voicelayer] Parakeet optional language detection: ${languageEvidence.status}; language=${languageEvidence.status === "COMPLETE" ? languageEvidence.language : "unknown"}; confidence=${languageEvidence.status === "COMPLETE" ? languageEvidence.probability : "unknown"}; warning=${languageWarning ?? "none"}; selected recognizer unchanged`);
     };
+    const zeroPCM = (parakeet: unknown): STTResult => {
+      const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason: "zero-pcm-response", parakeet,
+        whisper: null, whisperStatus: "NOT_RUN", errorType: null, deliveryText: "", outcome: "VERIFIED_ZERO_PCM", stage: "native-terminal" });
+      return { text: "", backend: this.name + "+zero-pcm-empty", durationMs: Date.now() - started,
+        outcome: "VERIFIED_ZERO_PCM", fallbackEvidencePath, languageWarning, languageEvidence };
+    };
     const fallback = async (reason: string, parakeet: unknown = null, parakeetErrorStatus?: string, parakeetCleanupFailure?: { name: string; message: string }): Promise<STTResult> => {
+      if (info?.allZero) return zeroPCM(parakeet);
       if (!WHISPER_FAILURE_REASONS.has(reason) && !reason.startsWith("provider-")) throw new Error("Whisper requires a Parakeet failure");
       console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_fallback", reason, uncovered_spans_s: uncoveredSpans })}`);
       await finishLanguage(); // No fallback model while a language child is still owned.
@@ -291,10 +299,19 @@ export class ParakeetBackend implements STTBackend {
     try {
       const result = returned = await (this.deps.transcribe ?? (path => parakeetServer.transcribe(path)))(inputPath);
       await finishLanguage();
+      if (info.allZero) return zeroPCM(result);
       if ((result.attemptEvidence?.inputSha256 && result.attemptEvidence.inputSha256 !== inputSha256) ||
           (result.attemptEvidence?.inputPath && result.attemptEvidence.inputPath !== inputPath)) return fallback("input-identity", result);
       let reason = parakeetOutputRisk(result, info);
       const duration = info.frames / info.sampleRate;
+      if (reason === "invalid-timing") {
+        console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_coverage_unavailable", reason })}`);
+        const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result,
+          whisper: null, whisperStatus: "NOT_RUN", errorType: "InvalidTiming", deliveryText: result.text,
+          outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", stage: "native-terminal" });
+        return { text: result.text, backend: this.name + "+coverage-unavailable", durationMs: Date.now() - started,
+          outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", fallbackEvidencePath, languageWarning, languageEvidence };
+      }
       const gaps = internalTokenGaps(result, duration);
       if (!reason && duration >= 8 && (gaps.length > 0 || (result.last_token_end_s !== null &&
           duration - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))))) {
@@ -312,12 +329,6 @@ export class ParakeetBackend implements STTBackend {
           if (!reason && uncoveredSpans.length) reason = "uncovered-internal";
         }
       }
-      if (reason === "empty-response" && info.allZero) {
-        const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason: "zero-pcm-empty", parakeet: result,
-          whisper: null, whisperStatus: "NOT_RUN", errorType: null, deliveryText: "", outcome: "VERIFIED_ZERO_PCM", stage: "native-terminal" });
-        return { text: "", backend: this.name + "+zero-pcm-empty", durationMs: Date.now() - started,
-          outcome: "VERIFIED_ZERO_PCM", fallbackEvidencePath, languageWarning, languageEvidence };
-      }
       if (reason === "empty-response") {
         nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result, whisper: null, errorType: null, stage: "native-or-input-boundary" });
         try { speechEvidence = await (this.deps.speechProbe ?? probeParakeetSpeech)(inputPath); }
@@ -333,17 +344,9 @@ export class ParakeetBackend implements STTBackend {
         }
         nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result, whisper: null,
           speechEvidence, errorType: null, previousAttemptPath: nativeBoundaryPath, stage: "vad-boundary" }) ?? nativeBoundaryPath;
-        const e = speechEvidence;
-        if (!(e.status === "COMPLETE" && e.threshold === PARAKEET_EMPTY_SPEECH_THRESHOLD && e.inputSha256 === inputSha256 &&
-            e.frames === info.frames && e.analyzedFrames === info.frames && typeof e.speechFrames === "number" &&
-            Number.isFinite(e.speechFrames) && e.speechFrames > 0 && e.speechFrames <= info.frames &&
-            typeof e.maxProbability === "number" && Number.isFinite(e.maxProbability) && e.maxProbability >= e.threshold && e.maxProbability <= 1 &&
-            (!e.probabilities || sileroProbabilities(e, info, inputSha256)))) {
-          retain({ audioPath, submittedPath: inputPath, inputSha256, reason: "empty-speech-unverified", parakeet: result,
-            whisper: null, whisperStatus: "NOT_RUN", speechEvidence, errorType: "UnverifiedSpeech", outcome: "UNRESOLVED_NATIVE_EMPTY",
-            previousAttemptPath: nativeBoundaryPath, stage: "native-terminal" });
-          throw new STTQualificationError("UNRESOLVED_NATIVE_EMPTY", result);
-        }
+        // A native empty plus unavailable/invalid VAD is a provider failure,
+        // not evidence of silence. Keep the recording and admit guarded W.
+        console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_empty_failure", speech_evidence: speechEvidence.status })}`);
       }
       if (reason === "uncovered-internal" || reason === "uncovered-tail") {
         console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_coverage_retry", reason, uncovered_spans_s: uncoveredSpans })}`);
@@ -359,7 +362,7 @@ export class ParakeetBackend implements STTBackend {
             const clipPath = join(dirname(inputPath), `${randomUUID()}.wav`);
             let repairParakeet: ParakeetResponse | null = null, rejection: string | undefined, accepted = false;
             try {
-              const clip = spanWav(inputBytes, info.dataOffset, plan);
+              const clip = spanWav(inputBytes, info.dataOffset, plan, info.sampleRate);
               writeFileSync(clipPath, clip, { flag: "wx", mode: 0o400 });
               repairParakeet = await (this.deps.transcribe ?? (path => parakeetServer.transcribe(path)))(clipPath);
               const clipInfo = parakeetWavInfo(clip);
@@ -372,14 +375,15 @@ export class ParakeetBackend implements STTBackend {
                   evidence?.decodeCoverage === "PARTIAL" || evidence?.tail === "KNOWN_MISSING") throw new Error("UnqualifiedSpanResponse");
               const probabilities = speechEvidence!.probabilities!;
               let speechSeconds = 0;
-              for (let i = Math.floor(plan.start / .032); i * .032 < plan.end; i++) {
+              const windowSeconds = VAD_CHUNK_SAMPLES / info.sampleRate;
+              for (let i = Math.floor(plan.start / windowSeconds); i * windowSeconds < plan.end; i++) {
                 if (probabilities[i]! >= PARAKEET_EMPTY_SPEECH_THRESHOLD)
-                  speechSeconds += Math.max(0, Math.min(plan.end, (i + 1) * .032) - Math.max(plan.start, i * .032));
+                  speechSeconds += Math.max(0, Math.min(plan.end, (i + 1) * windowSeconds) - Math.max(plan.start, i * windowSeconds));
               }
               const qualified = qualifySpanRepair(repairParakeet.text, plan, speechSeconds);
               accepted = qualified.accepted;
               if (qualified.accepted && qualified.insertion) {
-                text = text.slice(0, plan.offset) + " " + qualified.insertion + text.slice(plan.offset);
+                text = text.slice(0, plan.offset) + (/^[,.;:!?…)}\]]/u.test(qualified.insertion) ? "" : " ") + qualified.insertion + text.slice(plan.offset);
               } else if (!qualified.accepted) rejection = qualified.reason;
             } catch (error) { rejection = error instanceof Error ? error.name : "unknown"; }
             finally { try { unlinkSync(clipPath); } catch {} }

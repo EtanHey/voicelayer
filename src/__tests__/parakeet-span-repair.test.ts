@@ -6,6 +6,7 @@ import type { ParakeetResponse } from "../parakeet-server";
 import type { ParakeetFallbackAttempt } from "../parakeet-attempts";
 import { fallbackReasonFromBackend } from "../recording-provenance";
 import { finalizeTranscriptionResultForSurface } from "../input";
+import { qualifySpanRepair, spanWav } from "../parakeet-span-repair";
 import { testTmp } from "./setup/test-tmp";
 
 function fixture() {
@@ -32,12 +33,19 @@ function fixture() {
   return { path, native, speech, tokens };
 }
 
-async function repair(candidate: string, mode: "speech" | "silence" | "untimed" | "error" | "whole" | "multi" | "mismatch" | "cleanup" | "identity" | "tail" = "speech") {
+async function repair(candidate: string, mode: "speech" | "silence" | "untimed" | "error" | "whole" | "multi" | "mismatch" | "cleanup" | "identity" | "tail" | "zero" | "bad-timing" | "out-of-range" | "invalid-tokens" = "speech") {
   const f = fixture(), clips: Buffer[] = [], retained: ParakeetFallbackAttempt[] = [];
   if (mode === "silence") f.speech.probabilities.fill(.01);
   if (mode === "untimed") f.native.raw_token_times = f.tokens.map(({ start, end }) => ({ start, end }));
   if (mode === "multi") for (let i = Math.ceil(112.8 / .032); i * .032 < 113.7; i++) f.speech.probabilities[i] = .9;
   if (mode === "mismatch") f.native.text += " unmatched";
+  if (mode === "zero") {
+    const bytes = readFileSync(f.path); bytes.fill(0, 44); writeFileSync(f.path, bytes);
+    f.speech.inputSha256 = createHash("sha256").update(bytes).digest("hex");
+  }
+  if (mode === "invalid-tokens") f.native.raw_token_times = [{ start: 10, end: 2 }];
+  if (mode === "bad-timing") f.native.attemptEvidence = { timesValid: false };
+  if (mode === "out-of-range") f.native.last_token_end_s = 999;
   if (mode === "whole") f.native.text = "Keep this native thought.";
   if (mode === "identity") f.native.attemptEvidence = { inputPath: "another-recording.wav" };
   if (mode === "tail") {
@@ -166,4 +174,44 @@ test("polish rejection logs its reason and latency without transcript text", asy
 
 test("a looping alternate cannot authorize delivery of native words from the wrong input", async () => {
   await expect(repair("one two three four five six ".repeat(12), "identity")).rejects.toThrow("UNRESOLVED_FALLBACK_INCOMPLETE");
+});
+
+test.each([
+  "edgeleft before this recovered clause after this",
+  "before this recovered clause after this edgeright",
+  "edgeleft before this recovered clause after this edgeright",
+])("edge words outside unique anchors are never inserted: %s", async candidate => {
+  const r = await repair(candidate);
+  expect(r.result.text).toBe(r.native.text.replace("this after", "this recovered clause after"));
+  expect(r.whisperCalls).toBe(0);
+  expect(r.result.text).not.toMatch(/edgeleft|edgeright/);
+});
+
+test("ambiguous edge anchors are rejected without inventing an insertion", () => {
+  const gap = { start: 1, end: 2 };
+  for (const [candidate, left, right] of [["go go add end", ["go"], ["end"]], ["start add end end", ["start"], ["end"]]] as const) {
+    expect(qualifySpanRepair(candidate, { gap, start: 0, end: 3, offset: 1, left: [...left], right: [...right] }, 3).accepted).toBe(false);
+  }
+});
+
+test("punctuation at the insertion boundary does not gain a preceding space", async () => {
+  const r = await repair("before this, um, recovered clause after this");
+  expect(r.result.text).toBe(r.native.text.replace("this after", "this, um, recovered clause after"));
+});
+
+test("clip cutting refuses an unsupported sample rate", () => {
+  const f = fixture();
+  expect(() => spanWav(readFileSync(f.path), 44, { gap: { start: 1, end: 2 }, start: 0, end: 3, offset: 0, left: [], right: [] }, 48000)).toThrow("sample rate");
+});
+
+test("nonempty Parakeet text on exact-zero PCM never starts Whisper", async () => {
+  const r = await repair("must not load Whisper", "zero");
+  expect(r.result.text).toBe(""); expect(r.result.outcome).toBe("VERIFIED_ZERO_PCM");
+  expect(r.whisperCalls).toBe(0);
+});
+
+test.each(["bad-timing", "out-of-range", "invalid-tokens"] as const)("%s retains native words and logs unavailable coverage, no Whisper", async mode => {
+  const r = await repair("must never replace native", mode);
+  expect(r.result.text).toBe(r.native.text); expect(r.whisperCalls).toBe(0); expect(r.parakeetCalls).toBe(1);
+  expect(r.logs.some(l => l.includes('"event":"parakeet_coverage_unavailable"'))).toBe(true);
 });
