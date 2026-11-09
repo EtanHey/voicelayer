@@ -1,3 +1,4 @@
+import AppKit
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
@@ -7,6 +8,11 @@ import XCTest
 /// F5 / tap route stays closed until the bar is shown again.
 @MainActor
 final class HiddenVoiceBarTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        _ = NSApplication.shared
+    }
+
     private let until = Date(timeIntervalSince1970: 1_790_000_000)
 
     private func connectedState() -> VoiceState {

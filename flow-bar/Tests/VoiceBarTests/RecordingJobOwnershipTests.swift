@@ -545,6 +545,39 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(state.recentTranscriptionEntries.first?.deliveryNote, expectTyped ? nil : "Nothing to paste into; kept in History", file: file, line: line)
     }
 
+    func testE2E24EveryTerminalDeliversTheWholeTakeExactlyOnce() throws {
+        for (bundle, terminal) in [("com.googlecode.iterm2", true), ("dev.warp.Warp-Stable", false), ("com.apple.Terminal", true),
+                       ("com.cmuxterm.app", true), ("com.mitchellh.ghostty", true), ("test.native", false)] {
+            let state = makeState(identity: { { true } }), app = FakeApp(bundle, 12001)
+            var commands: [[String: Any]] = [], typed: [String] = [], ax: [String] = []
+            state.frontmostAppProvider = { app }
+            state.sendCommand = { commands.append($0) }
+            state.targetAppActivator = { _ in }
+            state.pasteScheduler = { _, work in work() }
+            state.ownedTextTypingHandler = { text, _, matches in
+                XCTAssertTrue(matches()); typed.append(text); return .posted
+            }
+            state.guardedTextTypingHandler = { text, _ in typed.append(text); return .posted }
+            state.asyncDictationInsertionHandlerProvider = { { text, done in ax.append(text); done(.verified); return true } }
+            state.record(pressToTalk: true)
+            let id = try XCTUnwrap(commands.last?["take_id"] as? String)
+            micOpened(state, id: id, jobs: [(id, "live", "capturing")])
+            snapshot(state, jobs: [(id, "live", "processing")])
+            let text = "whole fu…\nשלום\n"
+            let event: [String: Any] = ["type": "transcription", "take_id": id, "job_kind": "live", "delivery_id": id, "text": text]
+            state.handleEvent(event); state.handleEvent(event)
+            XCTAssertEqual(TerminalPasteTargets.isTerminal(bundle), terminal)
+            if terminal {
+                XCTAssertEqual(typed, ["whole fu…\nשלום"], bundle)
+                XCTAssertEqual(ax, [], "A terminal must never use AX insertion")
+            } else {
+                // Warp currently follows native AX routing. WARP-TERM belongs to a product lane.
+                XCTAssertEqual(typed, [], bundle)
+                XCTAssertEqual(ax, [text], bundle)
+            }
+        }
+    }
+
     func testUnreadableIdentitySingleElectronTakeTypesExactlyOnce() throws {
         try assertIdentityDelivery(bundle: "com.todesktop.230313mzl4w4u92", identity: { nil }, expectTyped: true)
     }

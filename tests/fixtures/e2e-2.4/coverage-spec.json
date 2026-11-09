@@ -1,0 +1,126 @@
+[
+  {
+    "flow": "F5 tap, hold, double tap lock, tap again lock, hint timing",
+    "source": "flow-bar/Tests/VoiceBarTests/GesturePreviewTimingTests.swift"
+  },
+  {
+    "flow": "F5 tap, hold, double tap lock, tap again lock, hint timing",
+    "source": "flow-bar/Tests/VoiceBarTests/HotkeyManagerTests.swift"
+  },
+  {
+    "flow": "Option F5 read, pause, resume",
+    "source": "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift"
+  },
+  {
+    "flow": "Option F5 read, pause, resume",
+    "source": "flow-bar/Tests/VoiceBarTests/F5ResumeIdentityTests.swift"
+  },
+  {
+    "flow": "Option F5 read, pause, resume",
+    "source": "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift"
+  },
+  {
+    "flow": "Paste target and History fallback",
+    "source": "flow-bar/Tests/VoiceBarTests/ReadyTimePasteTests.swift"
+  },
+  {
+    "flow": "iTerm2, Warp, Terminal, cmux, Ghostty whole take typing",
+    "source": "flow-bar/Tests/VoiceBarTests/RecordingJobOwnershipTests.swift"
+  },
+  {
+    "flow": "Queued recordings spinner and record after record",
+    "source": "flow-bar/Tests/VoiceBarTests/RecordingJobOwnershipTests.swift"
+  },
+  {
+    "flow": "Queued recordings spinner and record after record",
+    "source": "flow-bar/Tests/VoiceBarUITests/VoiceStateTests.swift"
+  },
+  {
+    "flow": "Cancel and hide",
+    "source": "flow-bar/Tests/VoiceBarTests/HiddenVoiceBarTests.swift"
+  },
+  {
+    "flow": "Cancel and hide",
+    "source": "flow-bar/Tests/VoiceBarTests/PhysicalPressStopTests.swift"
+  },
+  {
+    "flow": "History play, copy, paste, retranscribe, details",
+    "source": "flow-bar/Tests/VoiceBarUITests/SettingsHistoryArchiveTests.swift"
+  },
+  {
+    "flow": "History play, copy, paste, retranscribe, details",
+    "source": "flow-bar/Tests/VoiceBarUITests/SettingsSpeechHistoryTests.swift"
+  },
+  {
+    "flow": "History play, copy, paste, retranscribe, details",
+    "source": "flow-bar/Tests/VoiceBarUITests/HistoryRetranscribeStateTests.swift"
+  },
+  {
+    "flow": "History outside close and drag close",
+    "source": "flow-bar/Tests/VoiceBarUITests/NotchHistoryPanelTests.swift"
+  },
+  {
+    "flow": "History outside close and drag close",
+    "source": "flow-bar/Tests/VoiceBarUITests/NotchHistoryHandleDragHostTests.swift"
+  },
+  {
+    "flow": "Teleprompter and typed feedback",
+    "source": "flow-bar/Tests/VoiceBarUITests/TeleprompterFormattingTests.swift"
+  },
+  {
+    "flow": "Teleprompter and typed feedback",
+    "source": "flow-bar/Tests/VoiceBarUITests/VoiceStateCommandModeTests.swift"
+  },
+  {
+    "flow": "Recording wings mic name and time",
+    "source": "flow-bar/Tests/VoiceBarUITests/WingsU2HostTests.swift"
+  },
+  {
+    "flow": "Tooltip on every control",
+    "source": "flow-bar/Tests/VoiceBarUITests/NotchIconButtonTooltipTests.swift"
+  },
+  {
+    "flow": "Mic priority reorder",
+    "source": "flow-bar/Tests/VoiceBarUITests/MicrophoneDevicePriorityTests.swift"
+  },
+  {
+    "flow": "Mic priority reorder",
+    "source": "flow-bar/Tests/VoiceBarUITests/MicrophonePrioritySettingsTests.swift"
+  },
+  {
+    "flow": "Dictionary add edit delete",
+    "source": "flow-bar/Tests/VoiceBarUITests/DictionaryAddExistingTermTests.swift"
+  },
+  {
+    "flow": "Dictionary add edit delete",
+    "source": "flow-bar/Tests/VoiceBarUITests/DictionaryRenameSameTermTests.swift"
+  },
+  {
+    "flow": "Dictionary add edit delete",
+    "source": "flow-bar/Tests/VoiceBarUITests/DictionaryDeletionTests.swift"
+  },
+  {
+    "flow": "Recognizer load unload",
+    "source": "flow-bar/Tests/VoiceBarUITests/ModelsSettingsStateTests.swift"
+  },
+  {
+    "flow": "Permission fake revocation",
+    "source": "flow-bar/Tests/VoiceBarTests/PermissionHealthAppPropagationTests.swift"
+  },
+  {
+    "flow": "Permission fake revocation",
+    "source": "flow-bar/Tests/VoiceBarUITests/PermissionHealthTests.swift"
+  },
+  {
+    "flow": "History timestamp and day header",
+    "source": "flow-bar/Tests/VoiceBarUITests/RecentTranscriptionTimeTests.swift"
+  },
+  {
+    "flow": "Measured physical notch control clearance and offscreen renders",
+    "source": "flow-bar/Tests/VoiceBarUITests/E2E24MeasuredGeometryTests.swift"
+  },
+  {
+    "flow": "QA pause resume and word seek outcomes",
+    "source": "flow-bar/Tests/VoiceBarTests/UIE2EPlaybackFixtureTests.swift"
+  }
+]

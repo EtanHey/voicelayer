@@ -603,6 +603,9 @@ final class UIE2EModel {
         recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
         transcriptionVocabularyLoader: { [] }, transcriptionVocabularyAliasLoader: { [] })
     var entries = [STTDictionaryEntry(canonical: "QA initial", variants: ["initial variant"])]
+    /// Lane B answers playback commands only while one of its own fixtures is presented; every other fixture
+    /// (for example `speaking`, pinned by UIE2EPlaybackFixtureTests) keeps the host's pause/resume/seek fakes.
+    var playbackFixturePresented = false
     var revision: UInt64 = 0
     var hidden = false { didSet { onVisibilityChange?(hidden) } }
     var onVisibilityChange: ((Bool) -> Void)?
@@ -742,6 +745,32 @@ final class UIE2EModel {
                 "long_read": ["id": message["id"] as? String ?? "qa-selection",
                               "chunk_start_ms": 0]])
             return
+        case "speech_seek":
+            guard let table = voice.speechWords,
+                  message["utteranceId"] as? String == table.utteranceID,
+                  let index = message["wordIndex"] as? Int, table.words.indices.contains(index),
+                  let word = table.words[index] else { return }
+            voice.handleEvent(["type": "state", "state": "speaking", "text": voice.statusText,
+                "utteranceId": table.utteranceID, "playback_offset_ms": word.startMs,
+                "playback_id": "qa-player", "generation": 1,
+                "duration_ms": max(1, table.words.compactMap { $0?.endMs }.max() ?? 1)])
+            return
+        case "pause", "resume":
+            voice.handleEvent(["type": "ack", "command": cmd, "id": message["id"] ?? "", "outcome": "accept"])
+            if cmd == "resume" {
+                var speaking: [String: Any] = ["type": "state", "state": "speaking", "text": voice.statusText,
+                    "duration_ms": 600_000, "playback_offset_ms": voice.playbackElapsedMilliseconds(),
+                    "playback_id": message["playback_id"] ?? "qa-player", "generation": message["generation"] ?? 1]
+                if let table = voice.speechWords { speaking["utteranceId"] = table.utteranceID }
+                voice.handleEvent(speaking)
+            }
+            var event = message
+            event["type"] = "playback_state"
+            event["state"] = cmd == "pause" ? "paused" : "resumed"
+            event["pause_owner"] = "user"
+            event["offset_ms"] = message["playback_elapsed_ms"]
+            voice.handleEvent(event)
+            return
         case "replay", "stop":
             // Synthetic daemon responses only, for native layout transitions. This
             // proves BarView geometry, never real replay admission or audio lifecycle.
@@ -860,7 +889,8 @@ final class UIE2EModel {
             voice.beginModalInteraction()
             holdsFixturePresentation = true
         }
-        if applyPlaybackFixture(name) { receipt("fixture:" + name); onFixtureApplied(); return } // Lane B
+        playbackFixturePresented = applyPlaybackFixture(name)
+        if playbackFixturePresented { receipt("fixture:" + name); onFixtureApplied(); return } // Lane B
         switch name {
         case "preparing":
             // Establish the actual original selection request before the daemon's
@@ -882,7 +912,8 @@ final class UIE2EModel {
         case "speaking", "readback":
             voice.isHovering = true
             voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
-                "text": "First QA item\nSecond QA item", "readback_id": "qa-readback"])
+                "text": "First QA item\nSecond QA item", "readback_id": "qa-readback",
+                "playback_id": "qa-player", "generation": 1, "utteranceId": "qa-utterance"])
             // Decode the legacy wire shape too: works on both main and CLN1b's typed boundaries.
             voice.handleEvent(["type": "subtitle", "words": [
                 ["offset_ms": 0, "duration_ms": 1000, "text": "First"],
@@ -924,7 +955,8 @@ final class UIE2EModel {
             voice.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
         case "speaking-collapsed":
             voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
-                "text": "First QA item\nSecond QA item", "readback_id": "qa-readback"])
+                "text": "First QA item\nSecond QA item", "readback_id": "qa-readback",
+                "playback_id": "qa-player", "generation": 1, "utteranceId": "qa-utterance"])
             voice.dismissTeleprompter()
         case "disconnected": voice.setConnectionStatus(false)
         case let lane where lane.hasPrefix("2.4-"): apply24(String(lane.dropFirst(4)))
