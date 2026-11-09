@@ -69,6 +69,7 @@ Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 mi
 - Cached outputs: `/tmp/voicelayer-history-{0-19}.mp3`.
 - Metadata: `/tmp/voicelayer-history.json`.
 - Stop playback with `pkill afplay` (macOS) or configured hotkey.
+- T9 (Etan QA 2026-11-09, "hollow or weird when it speaks fast or slow"): a speed other than 1× on the resident stack plays through SoX `play <file> pad 0 0.03 tempo -s <rate>` (speech-tuned WSOLA, pitch-preserving, streamed) instead of afplay's spectral `-r <rate> -q 1`. Output is the source at 1/rate (interior events within 11 ms, measured offline in `src/__tests__/tempo-wsola.test.ts`), so the player clock, seek and pause mapping are unchanged; the 30 ms pad keeps the last word, which WSOLA otherwise drops. `VOICELAYER_TEMPO_PLAYER=afplay` restores afplay; a missing `play` falls back to it. 1× and every harness (muted `afplay -v 0`) are unchanged.
 
 ## Playback session engine (2.4 Lane B)
 - One PlaybackSession machine (`src/playback/session.ts`, model `formal/playback-session`) owns session identity, the word-index cursor, the audible owner, the Ask park/restore, the mic gate and read history. `src/playback/ledger.ts` is the daemon's single ledger, fed by the player driver in `src/tts.ts`; it checks the model's invariants on every edge, logs violations (no text) and publishes `playback_session` (field `phase`, additive).

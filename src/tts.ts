@@ -290,15 +290,43 @@ let ttsCounter = 0;
  * so the Swift assertions that count `afplay` children are unaffected. Muting is
  * an audibility change only; nothing about what is verified changes.
  */
+/**
+ * T9 (Etan QA 2026-11-09: "It also sounds kind of hollow or weird when it speaks fast or slow"). afplay's -r/-q 1 is
+ * Apple's spectral time-pitch, whose phasiness is what sounds hollow on speech. A scaled speed on the resident stack
+ * plays through SoX's WSOLA `tempo -s` (speech-tuned, pitch-preserving, streamed, so there is no pre-render delay).
+ * Its output is the source at exactly 1/rate: measured offline, interior events land within 11 ms of D/rate at
+ * 0.75×-2×, so the player clock (audio ms = wall ms × rate), seek and pause mapping are unchanged. WSOLA drops its
+ * last partial segment (~26 ms of source; a burst ending at the file end was lost at 2×), so 30 ms of silence is
+ * appended first: every word is kept, at the cost of at most 40 ms of trailing silence.
+ * `VOICELAYER_TEMPO_PLAYER=afplay` restores afplay's time-pitch; a missing `play` falls back to it too.
+ */
+export const TEMPO_TAIL_PAD_SECONDS = 0.03;
+
+let tempoPlayerCache: string | null | undefined;
+export function pitchPreservingTempoPlayer(): string | null {
+  if (process.env.VOICELAYER_TEMPO_PLAYER === "afplay") return null;
+  if (tempoPlayerCache === undefined) {
+    tempoPlayerCache = resolveBinary("play", ["/opt/homebrew/bin/play", "/usr/local/bin/play"]);
+  }
+  return tempoPlayerCache;
+}
+
 export function buildPlaybackArgv(
   player: string,
   audioFile: string,
   isResidentStack: boolean = isDefaultVoiceBarSocketPath(),
   rate = 1,
+  /** T9: the SoX `play` binary for a scaled resident speed; resolved lazily when omitted, null forces afplay. */
+  tempoPlayer?: string | null,
 ): string[] {
-  // Lane B: 1× is a real speed step. afplay scales the rate with its high-quality time-pitch (-q 1);
-  // the Linux players get their own pitch-preserving tempo so the scaled player clock matches the audio.
+  // Lane B: 1× is a real speed step. The Linux players get their own pitch-preserving tempo so the scaled player
+  // clock matches the audio.
   const scaled = rate !== 1 && Number.isFinite(rate) && rate > 0;
+  // T9: only the resident stack is audible; a muted harness keeps afplay -v 0 (the silence guarantee below).
+  if (scaled && player === "afplay" && isResidentStack) {
+    const sox = tempoPlayer === undefined ? pitchPreservingTempoPlayer() : tempoPlayer;
+    if (sox) return [sox, "-q", audioFile, "pad", "0", String(TEMPO_TAIL_PAD_SECONDS), "tempo", "-s", String(rate)];
+  }
   const speed = !scaled ? [] : player === "afplay" ? ["-r", String(rate), "-q", "1"]
     : player === "mpv" ? [`--speed=${rate}`] : player === "ffplay" ? ["-af", `atempo=${rate}`] : [];
   if (player !== "afplay") return [player, ...speed, audioFile];
