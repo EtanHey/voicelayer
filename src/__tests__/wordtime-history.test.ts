@@ -97,7 +97,8 @@ describe("WORDTIME1 replay re-broadcasts stored timings", () => {
     spies.push(spyOn(tts, "getHistoryEntry").mockReturnValue({ id: 0, text: "Retained speech.", voice: "v", file, timestamp: 0, alignedWords, wordBoundaries }));
     const enqueue = spyOn(tts, "playAudioNonBlocking").mockImplementation(() => undefined as any); spies.push(enqueue);
     expect(handleSocketCommand({ cmd: "replay" })).toMatchObject({ outcome: "accept" });
-    expect(enqueue).toHaveBeenCalledWith(file, { text: "Retained speech.", voice: "v", alignedWords, wordBoundaries });
+    expect(enqueue).toHaveBeenCalledWith(file, { text: "Retained speech.", voice: "v", historyRef: { id: 0, timestamp: 0 },
+      alignedWords, wordBoundaries });
   });
 });
 
