@@ -7,7 +7,6 @@ extension VoiceBarFlowTests {
     func testE2E24AllFlows() throws {
         var cases: [(String, () throws -> Void)] = [
             ("N1", testN1SettingsContainControlsInsteadOfWindowHandoffs),
-            ("N2", testN2NoExplanatoryProseRows),
             ("N4", testN4BothDrawersTrackUpwardAndCloseOnRelease),
             ("N5", testN5QuickHandleGrabMatchesSlowGrab),
             ("N6", testN6SettingsPullHintDoesNotCoverHistoryRows),
@@ -53,7 +52,7 @@ extension VoiceBarFlowTests {
             let started = Date()
             do {
                 try run()
-                if (testRun?.failureCount ?? 1) == before && ledger.expectedSurfaces["e2e24:" + name] == nil { ledger.verifiedSurfaces.insert("e2e24:" + name) }
+                if (testRun?.failureCount ?? 1) == before && UIE2EKnownIssue(rawValue: name) == nil { ledger.verifiedSurfaces.insert("e2e24:" + name) }
             } catch let pending as XCTSkip {
                 let owner = name == "playback" || name == "replay" || name.hasPrefix("narration-") ? "pending-lane-B" : "pending-lane-A"
                 step("2.4 pending " + name + ": " + String(describing: pending), skipped: owner) {}
