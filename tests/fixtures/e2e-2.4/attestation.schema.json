@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voicelayer.e2e24-attestation.v1",
+  "type": "object",
+  "required": ["schema", "row", "head", "candidateBundleSha256", "host", "timestamp", "producer", "evidence", "result"],
+  "properties": {
+    "schema": {"const": "voicelayer.e2e24-attestation.v1"},
+    "row": {"enum": ["F5 physical gestures", "native paste target and terminal typing", "installed update and restore", "NarrationLayer transport", "mute audio exclusion"]},
+    "head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "candidateBundleSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "host": {"type": "string", "minLength": 1},
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "producer": {"type": "string", "pattern": "^scripts/[A-Za-z0-9_./-]+$"},
+    "evidence": {"type": "array", "minItems": 1, "items": {
+      "type": "object", "required": ["path", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+    }},
+    "result": {"const": "PASS"}
+  }
+}
