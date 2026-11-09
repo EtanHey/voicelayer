@@ -33,7 +33,7 @@ for (const f of fixtures.fixtures) test(`SPEED adapter boundary: ${f.id}`, async
   const ledger: ParakeetFallbackAttempt[] = []; let pCalls = 0, wCalls = 0;
   const expectsVad = f.native.status === "EMPTY_RESPONSE";
   const backend = new ParakeetBackend({ env: () => ({ QA_VOICE_WHISPER_LANG: "en" }), unload: async () => {},
-    speechProbe: async () => ({ status: "UNKNOWN", threshold: 0.3, errorType: "FixtureVadUnavailable" }),
+    speechProbe: async () => ({ status: "COMPLETE", threshold: 0.3, inputSha256: hash, frames: 32000, analyzedFrames: 32000, speechFrames: 512, maxProbability: .8 }),
     retainFallback: value => { ledger.push(value); return "synthetic-attempt-" + ledger.length; },
     transcribe: async submitted => {
       pCalls++; expect(readFileSync(submitted)).toEqual(bytes);
@@ -47,7 +47,7 @@ for (const f of fixtures.fixtures) test(`SPEED adapter boundary: ${f.id}`, async
       wCalls++; expect(readFileSync(submitted)).toEqual(bytes);
       // The native/input boundary must already be durable before W starts.
       expect(ledger.map(row => row.stage)).toEqual(expectsVad ? ["native-or-input-boundary", "vad-boundary"] : ["native-or-input-boundary"]);
-      if (expectsVad) expect(ledger[1].speechEvidence).toMatchObject({ status: "UNKNOWN", errorType: "FixtureVadUnavailable" });
+      if (expectsVad) expect(ledger[1].speechEvidence).toMatchObject({ status: "COMPLETE", speechFrames: 512 });
       const w = f.whisper!;
       if (["ERROR", "TIMEOUT"].includes(w.status)) throw new STTQualificationError("UNRESOLVED_FALLBACK_FAILED", w);
       return { text: w.text, backend: "whisper-fixture", durationMs: 1,
@@ -57,9 +57,9 @@ for (const f of fixtures.fixtures) test(`SPEED adapter boundary: ${f.id}`, async
   let terminal: string | undefined;
   try { terminal = (await backend.transcribe(path)).outcome; }
   catch (error) { if (error instanceof STTQualificationError) terminal = error.outcome; else throw error; }
-  expect(terminal).toBe(f.expected.terminal); expect(wCalls).toBe(1);
+  expect(terminal).toBe(f.expected.terminal); expect(wCalls).toBe(f.expected.must_fallback ? 1 : 0);
   expect(pCalls).toBe(f.capture_complete ? 1 : 0);
-  expect(ledger.length).toBe(expectsVad ? 3 : 2); expect<string | undefined>(ledger.at(-1)!.outcome).toBe(terminal);
+  expect(ledger.length).toBe(expectsVad ? 3 : f.expected.must_fallback ? 2 : 1); expect<string | undefined>(ledger.at(-1)!.outcome).toBe(terminal);
   expect(ledger.at(-1)!.audioPath).toBe(path); expect(ledger.at(-1)!.inputSha256).toBe(hash);
   // A truncated container is refused before P: do not manufacture a model
   // attempt merely to match an abstract fixture's earlier native-partial stage.

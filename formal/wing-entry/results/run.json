@@ -4,12 +4,14 @@
   "hashes": {
     "formal/wing-entry/WingEntry.tla": "ecd7b05630d4a6d86c50fbb8cd4e5ea1ce39f6fbad5d07f74c4eacb6f11b360f",
     "formal/wing-entry/checks.json": "861b84b4fb508ef35d38d6535188624092dd1286e75361fc657ee518797ebc2f",
-    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/wing-entry/Old.cfg": "c3b034f6d95bad2d1f8a81383683ca62e6a9639b51d46be67855801b961ca540",
     "formal/wing-entry/MutantNeverShown.cfg": "56b4efafae276e1e35853f246f6539a78eacdfcea57d106bb9603010c5b60d19",
     "formal/wing-entry/Fixed.cfg": "3a763fbb97949a53f53a61118671ffa6922d82965ab867722b1c42e918d2937c",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift": "2c8780574261d3b8c5333542e9f816290574363a49e9c0568c351a03211bf47f",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "5efb8e53dd0411242149e2849de5fa7706692fb010add7768e38f691ef05fe2f"
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "0b3fc66fa2a443152213cebd45f06fcfd25249f06f11a462785dd291e735a09e",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "ControlsAppear": [

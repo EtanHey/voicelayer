@@ -178,6 +178,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
                 compactStatusLeadingWingWidth: feed.geometry.leadingWingWidth, compactStatusTrailingWingWidth: feed.geometry.trailingWingWidth,
                 recordingLeadingWingWidth: feed.geometry.leadingWingWidth, recordingTrailingWingWidth: feed.geometry.trailingWingWidth,
                 teleprompterLeadingWingWidth: input.mode == .speaking ? feed.geometry.leadingWingWidth : nil,
+                teleprompterTrailingWingWidth: feed.visualState == .teleprompter ? feed.geometry.trailingWingWidth : nil,
                 keepsIdleExpanded: input.mode == .idle && !input.isCollapsed, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback)
             if resident.presentation != p { errors["Resident"]!.append(tag) }
             if p.geometry.leadingWingWidth > 132 || p.geometry.trailingWingWidth > 132 { errors["WingBounds"]!.append(tag) }

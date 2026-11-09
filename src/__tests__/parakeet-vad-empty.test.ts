@@ -13,14 +13,14 @@ beforeEach(() => {
   for (let i = 44; i < b.length; i += 2) b.writeInt16LE(1, i); // quiet/nonzero is NOT an energy-silence oracle
   writeFileSync(path, b);
 });
-function setup(modify: (e: ParakeetSpeechEvidence) => void = () => {}) {
+function setup(modify: (e: ParakeetSpeechEvidence) => void = () => {}, whisperText = "Quiet speech remains.") {
   let w = 0, vad = 0, unload = 0; const retained: any[] = [];
   const backend = new ParakeetBackend({
     env: () => ({ QA_VOICE_WHISPER_LANG: "en" }),
     transcribe: async () => ({ text: "", complete: true, input_frames: 16000, covered_frames: 16000, sample_rate: 16000, last_token_end_s: null, inference_s: 0, language: null }),
     speechProbe: async p => { vad++; const e: ParakeetSpeechEvidence = { status: "COMPLETE", threshold: 0.3, inputSha256: createHash("sha256").update(readFileSync(p)).digest("hex"), frames: 16000, analyzedFrames: 16000, speechFrames: 0, maxProbability: 0.1 }; modify(e); return e; },
     unload: async () => { unload++; },
-    fallbackBackend: { name: "W-fixture", isAvailable: async () => true, transcribe: async () => { w++; return { text: "Quiet speech remains.", backend: "W-fixture", durationMs: 1 }; } },
+    fallbackBackend: { name: "W-fixture", isAvailable: async () => true, transcribe: async () => { w++; return { text: whisperText, backend: "W-fixture", durationMs: 1 }; } },
     retainFallback: a => { retained.push(a); return "private-fixture-" + retained.length; },
   });
   return { backend, retained, counts: () => ({ w, vad, unload }) };
@@ -42,7 +42,7 @@ const controls: Record<string, (e: ParakeetSpeechEvidence) => void> = {
   unknown: e => { e.status = "UNKNOWN"; }, partial: e => { e.analyzedFrames = 512; }, wrong_audio: e => { e.inputSha256 = "wrong"; },
   invalid_timebase: e => { e.frames = 8000; }, invalid_probability: e => { e.maxProbability = NaN; }, wrong_threshold: e => { e.threshold = 0.9; }, boundary: e => { e.maxProbability = 0.3; },
 };
-for (const [name, mutate] of Object.entries(controls)) test(`VAD ${name} cannot suppress the Whisper retry`, async () => {
+for (const [name, mutate] of Object.entries(controls)) test(`VAD ${name} cannot prove silence for native empty; guarded Whisper recovers`, async () => {
   const s = setup(mutate); expect((await s.backend.transcribe(path)).text).toBe("Quiet speech remains."); expect(s.counts().w).toBe(1);
 });
 
@@ -50,10 +50,22 @@ test("completed raw VAD is durable before a pending Whisper retry", async () => 
   const started=Promise.withResolvers<void>(),finish=Promise.withResolvers<any>(),records:any[]=[];
   const b=new ParakeetBackend({env:()=>({QA_VOICE_WHISPER_LANG:"en"}),
     transcribe:async()=>({text:"",complete:true,input_frames:16000,covered_frames:16000,sample_rate:16000,last_token_end_s:null,inference_s:0,language:null}),
-    speechProbe:async p=>({status:"COMPLETE",threshold:0.3,inputSha256:createHash("sha256").update(readFileSync(p)).digest("hex"),frames:16000,analyzedFrames:16000,speechFrames:512,maxProbability:0.8,probabilities:[0.8]}),
+    speechProbe:async p=>({status:"COMPLETE",threshold:0.3,inputSha256:createHash("sha256").update(readFileSync(p)).digest("hex"),frames:16000,analyzedFrames:16000,speechFrames:512,maxProbability:0.8,probabilities:Array.from({length:Math.ceil(16000/512)},(_,i)=>i===0?0.8:0.01)}),
     unload:async()=>{},retainFallback:a=>{records.push(a);return "event-"+records.length;},
     fallbackBackend:{name:"W",isAvailable:async()=>true,transcribe:async()=>{started.resolve();return finish.promise;}}});
   const pending=b.transcribe(path);await started.promise;
-  try {expect(records).toHaveLength(2);expect(records[1]).toMatchObject({stage:"vad-boundary",previousAttemptPath:"event-1",speechEvidence:{probabilities:[0.8]},whisper:null});}
+  try {expect(records).toHaveLength(2);expect(records[1]).toMatchObject({stage:"vad-boundary",previousAttemptPath:"event-1",speechEvidence:{probabilities:Array.from({length:Math.ceil(16000/512)},(_,i)=>i===0?0.8:0.01)},whisper:null});}
   finally {finish.resolve({text:"Speech retained.",backend:"W",durationMs:1});await pending;}
+});
+
+test("empty Parakeet plus a failed Silero probe admits Whisper and preserves the recording", async () => {
+  const s = setup(() => { throw new Error("Silero unavailable"); });
+  expect((await s.backend.transcribe(path)).text).toBe("Quiet speech remains.");
+  expect(s.counts().w).toBe(1); expect(readFileSync(path)).toHaveLength(32044);
+});
+
+test("uncertain empty failure fallback still rejects a looping Whisper hypothesis", async () => {
+  const s = setup(e => { e.status = "UNKNOWN"; }, "one two three four five six ".repeat(12));
+  await expect(s.backend.transcribe(path)).rejects.toThrow("UNRESOLVED_FALLBACK_INCOMPLETE");
+  expect(s.counts().w).toBe(1); expect(readFileSync(path)).toHaveLength(32044);
 });

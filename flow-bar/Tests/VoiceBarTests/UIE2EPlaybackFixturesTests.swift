@@ -63,7 +63,11 @@ final class UIE2EPlaybackFixturesTests: XCTestCase {
         model.voice.cyclePlaybackSpeed()
         XCTAssertTrue(model.events.contains("command:set_playback_speed"))
         XCTAssertEqual(model.voice.playbackSpeed, 1.25)
-        XCTAssertTrue(model.voice.previousReadAvailable)
+        // T1 (Etan QA 2026-11-09): a speed change never invents a previous read; Back follows the current queue.
+        XCTAssertFalse(model.voice.previousReadAvailable)
+        model.voice.playPreviousRead()
+        XCTAssertFalse(model.events.contains("command:previous_read"), "a disabled Back sends nothing")
+        model.voice.handleEvent(["type": "playback_session", "speed": 1.25, "previous_available": true])
         model.voice.playPreviousRead()
         XCTAssertTrue(model.events.contains("command:previous_read"))
     }

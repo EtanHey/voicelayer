@@ -49,7 +49,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
                 trailingWingWidth: 73.5,
                 bodyLeadingExtent: 180,
                 bodyTrailingExtent: 180,
-                lowerSurfaceHeight: 196
+                lowerSurfaceHeight: 163 // T8 (Etan QA 2026-11-09): no footer row, tight gaps (was 196)
             )
         )
     }
@@ -71,7 +71,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(teleprompter.topWidth, 258.5)
         XCTAssertEqual(teleprompter.bodyWidth, 545, "2.4: the widened teleprompter")
         XCTAssertEqual(teleprompter.totalWidth, 545)
-        XCTAssertEqual(teleprompter.totalHeight, 228)
+        XCTAssertEqual(teleprompter.totalHeight, 195)
     }
 
     func testCompactStatesKeepOneGlassShapeWhileRecordingFitsEachWing() {

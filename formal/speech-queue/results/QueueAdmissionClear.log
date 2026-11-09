@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoSilentClear",
+  "status": "EXPECTED_FAIL",
+  "generated": 152,
+  "distinct": 152
+}

@@ -23,7 +23,7 @@ async function replay(path: string, native: ParakeetResponse, speech: ParakeetSp
 }
 
 const privatePaths = privateCorpusPaths("parakeet-internal-coverage");
-test.skipIf(!privatePaths)("V32: later tokens cannot hide the nine-word internal clause omission", async () => {
+test.skipIf(!privatePaths)("V32: legacy untimed tokens retain native text instead of a whole-take replacement", async () => {
   const root = privatePaths!.recordings;
   const native: ParakeetResponse = JSON.parse(readFileSync(join(root, "native.json"), "utf8"));
   const speech: ParakeetSpeechEvidence = JSON.parse(readFileSync(join(root, "speech.json"), "utf8"));
@@ -32,9 +32,9 @@ test.skipIf(!privatePaths)("V32: later tokens cannot hide the nine-word internal
   expect(native.text.toLowerCase().replace(/[^a-z0-9 ]/g, "")).not.toContain(clause);
   expect(recovered.toLowerCase().replace(/[^a-z0-9 ]/g, "")).toContain(clause);
   const { result, retries } = await replay(join(root, "internal.wav"), native, speech, recovered);
-  expect(retries).toBe(1);
-  expect(result.backend).toContain("fallback-uncovered-internal");
-  expect(result.text).toBe(recovered);
+  expect(retries).toBe(0);
+  expect(result.backend).toContain("uncovered-internal");
+  expect(result.text).toBe(native.text);
 });
 
 function fixture() {
@@ -56,10 +56,10 @@ function fixture() {
   return { path, native, speech };
 }
 
-test("internal speech requests the existing full-input retry without losing retractions", async () => {
+test("legacy time-only internal evidence cannot authorize an unaligned replacement", async () => {
   const f = fixture(), recovered = "Keep these earlier words and fu… no, the complete final thought.";
   const r = await replay(f.path, f.native, f.speech, recovered);
-  expect(r.retries).toBe(1); expect(r.result.text).toBe(recovered);
+  expect(r.retries).toBe(0); expect(r.result.text).toBe(f.native.text);
 });
 
 test.each(["silence", "wrong-hash", "partial", "invalid-probabilities", "covered", "missing-tokens", "invalid-tokens"])("%s cannot establish an internal omission", async mode => {

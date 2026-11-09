@@ -30,6 +30,10 @@ extension VoiceBarFlowTests {
         RunLoop.current.run(until: Date().addingTimeInterval(0.6))
     }
     var qa0510Grip: XCUIElement { qa0510Pill.descendants(matching: .any)["notch-drawer-grip"] }
+    /// A fixed row: a plain step on its exact e2e24 surface, never an expected failure.
+    func qa0510Fixed(_ row: String, _ body: () throws -> Void) {
+        step(row + " Etan QA 0510", surface: "e2e24:" + row, surfaces: ["e2e24:" + row], body)
+    }
     func qa0510Speaking() throws {
         try e2e24Fixture("speaking", owner: "lane-B")
         try qa0510Require(qa0510Pill.buttons["Pause"])
@@ -230,7 +234,7 @@ extension VoiceBarFlowTests {
 
     func testT1QueueBackAndForwardSitBesidePause() throws {
         try qa0510Speaking()
-        qa0510Expected(.qaT1) {
+        qa0510Fixed("T1") {
             let back = self.qa0510Pill.buttons["Previous read"]
             let forward = self.qa0510Pill.buttons["Next read"]
             XCTAssertTrue(back.exists && forward.exists, "[T1] both queue directions must be represented")
@@ -244,13 +248,13 @@ extension VoiceBarFlowTests {
         let handle = qa0510Pill.descendants(matching: .any)["Teleprompter height"]
         let eye = qa0510Pill.buttons["Hide teleprompter"]
         try qa0510Require(handle); try qa0510Require(eye)
-        qa0510Expected(.qaT2) { XCTAssertGreaterThan(handle.frame.minY, eye.frame.maxY, "[T2] handle must be under eye/replay") }
+        qa0510Fixed("T2") { XCTAssertGreaterThan(handle.frame.minY, eye.frame.maxY, "[T2] handle must be under eye/replay") }
     }
     func testT4EyeAndReplayFormOneCentredGroup() throws {
         try e2e24Fixture("readback", owner: "lane-B")
         let eye = qa0510Pill.buttons["Hide teleprompter"], replay = qa0510Pill.buttons["Replay"]
         try qa0510Require(eye); try qa0510Require(replay)
-        qa0510Expected(.qaT4) {
+        qa0510Fixed("T4") {
             XCTAssertEqual(eye.frame.midY, replay.frame.midY, accuracy: 1, "[T4] one row")
             XCTAssertEqual(eye.frame.union(replay.frame).midX, self.qa0510Pill.frame.midX, accuracy: 2,
                            "[T4] centre the pair independently of the terminal X")
@@ -258,7 +262,7 @@ extension VoiceBarFlowTests {
     }
     func testT5SpeakingWingHasAudioWaveformAndTime() throws {
         try qa0510Speaking()
-        qa0510Expected(.qaT5) {
+        qa0510Fixed("T5") {
             let waveform = self.qa0510Pill.descendants(matching: .any)["Input level"]
             XCTAssertTrue(waveform.exists, "[T5] speech waveform missing")
             if waveform.exists { XCTAssertEqual(waveform.frame.midY, self.qa0510Pill.descendants(matching: .any)["Reading time"].frame.midY,
@@ -269,19 +273,19 @@ extension VoiceBarFlowTests {
         try qa0510Speaking()
         let speed = qa0510Pill.buttons["Playback speed"], pause = qa0510Pill.buttons["Pause"]
         try qa0510Require(speed)
-        qa0510Expected(.qaT6) { XCTAssertEqual(speed.frame.midY, pause.frame.midY, accuracy: 4, "[T6] speed belongs beside playback controls") }
+        qa0510Fixed("T6") { XCTAssertEqual(speed.frame.midY, pause.frame.midY, accuracy: 4, "[T6] speed belongs beside playback controls") }
     }
     func testT7StopMovesBesideEyeRow() throws {
         try qa0510Speaking()
         let stop = qa0510Pill.buttons["Stop speaking"], eye = qa0510Pill.buttons["Hide teleprompter"]
         try qa0510Require(stop); try qa0510Require(eye)
-        qa0510Expected(.qaT7) { XCTAssertEqual(stop.frame.midY, eye.frame.midY, accuracy: 4, "[T7] move at least red Stop to eye row") }
+        qa0510Fixed("T7") { XCTAssertEqual(stop.frame.midY, eye.frame.midY, accuracy: 4, "[T7] move at least red Stop to eye row") }
     }
     func testT8ScrubberIsCloseToEyeReplayRow() throws {
         try qa0510Speaking()
         let scrub = qa0510Pill.descendants(matching: .any)["Playback position, agent speech"], eye = qa0510Pill.buttons["Hide teleprompter"]
         try qa0510Require(scrub); try qa0510Require(eye)
-        qa0510Expected(.qaT8) {
+        qa0510Fixed("T8") {
             XCTAssertLessThanOrEqual(eye.frame.minY - scrub.frame.maxY, 7, "[T8] proposed 7 pt gap budget (existing stack spacing)")
         }
     }

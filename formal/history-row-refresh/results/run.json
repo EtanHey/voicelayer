@@ -1,0 +1,54 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/history-row-refresh/HistoryRowRefresh.tla": "9097deaa700c11b8ea9904b56f3500ff9a84b40779067ff1f090cf84382a8798",
+    "formal/history-row-refresh/checks.json": "4fc73eb6f465ddb58127da338f7678b5e75a61603fdd73d55a9159f3715679cf",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/history-row-refresh/OldReload.cfg": "252c69fd9a1deb3f9753fcfe73e7de04e35d325258df0d3c0a8421a7813072d9",
+    "formal/history-row-refresh/UnfencedPatch.cfg": "62d9ceaa689aca6f655faaef2555c6d008fc96c713b571107e8e6366ef8e0db2",
+    "formal/history-row-refresh/Fixed.cfg": "a409d23df0f18950e628f01d4f93099bee023019f40b7f97b1eb72a8b98b201b",
+    "formal/history-row-refresh/check.sh": "3185f5eb61e65d8551286a85ac877cd5947907ee52f838d55c7ae9370a58f906",
+    "formal/legacy_receipts.py": "83fae1948d340e3e253cbd19aac05814ee2457664397616ffce0de4b502998f0",
+    "formal/setup-tlc.py": "ada6a1d5fa6376d4abd8eb8309900bde02e757f53ee2a97e6614aeaee134c391",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "PagingNotCancelled": [
+      "OldReload"
+    ],
+    "SettledPageIsFresh": [
+      "UnfencedPatch"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 81,
+      "distinct": 47
+    },
+    "OldReload": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PagingNotCancelled",
+      "status": "EXPECTED_FAIL",
+      "generated": 10,
+      "distinct": 10
+    },
+    "UnfencedPatch": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "SettledPageIsFresh",
+      "status": "EXPECTED_FAIL",
+      "generated": 64,
+      "distinct": 44
+    }
+  }
+}

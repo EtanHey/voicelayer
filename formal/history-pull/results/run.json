@@ -1,0 +1,133 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/history-pull/HistoryPull.tla": "64f05f75f9101392c8fd1efc273d2be4d8c83fe91bd51ad1adf81cc57d90a9d6",
+    "formal/history-pull/checks.json": "811f6e66e4e311d83f0c96ee4c4d383fe79424e7fda8d0f486c1fccc5b312fbe",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/history-pull/MutantNoSnap.cfg": "e048491826c6b2a32f5c98b56d47fab1d041c7a95f6aa04e28cddfa99ace3a69",
+    "formal/history-pull/MutantSeedFromTarget.cfg": "872bb449d2cbdc119815cd6baa5e3f487b19caf1a30bf09b3a30794e12e26383",
+    "formal/history-pull/Old.cfg": "cb43dc23e00167a619a8cce72fc2519048e773638cca53ad4a83a0ff56b0e430",
+    "formal/history-pull/MutantNoPendingCancel.cfg": "45f4da98b3ca1768b0d30524990c8b7f97a30529458a742c0cdb6fde36cb76fc",
+    "formal/history-pull/MutantNoPublish.cfg": "13055ee43b4a62291cfbb6432479d5e4e13e60686b474a8ce576cd3e8599ad9b",
+    "formal/history-pull/MutantNoSlop.cfg": "707fbccb03474420cf70b9f25d90727e38459fd95864e8fa26bd129daffb1c90",
+    "formal/history-pull/MutantNoGeneration.cfg": "4dc090a29f2844934cdfebfc7cea744d72ec0e6612220ecdc6161f2bfcace3c9",
+    "formal/history-pull/MutantWholeRow.cfg": "6544ab0197d83ed41e5656ed651b684a93e1ab7a365c01e437301f1ceb7d351f",
+    "formal/history-pull/MutantNoCancel.cfg": "357b152262aea12ebf2f57e912ae60887da0f0b557985172a8ef0d77b50e4314",
+    "formal/history-pull/Fixed.cfg": "c6b2a0faf9545471c78f1e04cc2c7a9c126dc3397b13927903a16c43cce8b7e7",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "0b3fc66fa2a443152213cebd45f06fcfd25249f06f11a462785dd291e735a09e",
+    "flow-bar/Sources/VoiceBarUI/NotchHistoryMorph.swift": "7b8ebc12776b630d6f3c653acfe69089a92e9b16b0d87073c48ebba0893ea18b",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "NoClippedPanel": [
+      "Old",
+      "MutantNoGeneration"
+    ],
+    "ClickNeverMoves": [
+      "MutantNoSlop"
+    ],
+    "NoStrandedPanel": [
+      "MutantNoCancel"
+    ],
+    "NoStrandedRows": [
+      "MutantNoSnap",
+      "MutantWholeRow"
+    ],
+    "HitMatchesRows": [
+      "MutantNoPublish"
+    ],
+    "NoStalePress": [
+      "MutantNoPendingCancel"
+    ],
+    "NoGrabJump": [
+      "MutantSeedFromTarget"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "188bb48f0246a1d0afb87a5075912129c380c92e2c0f3d6d733a47c6efc28886"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 3145,
+      "distinct": 899
+    },
+    "Old": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoClippedPanel",
+      "status": "EXPECTED_FAIL",
+      "generated": 23,
+      "distinct": 19
+    },
+    "MutantNoGeneration": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoClippedPanel",
+      "status": "EXPECTED_FAIL",
+      "generated": 201,
+      "distinct": 104
+    },
+    "MutantNoSlop": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ClickNeverMoves",
+      "status": "EXPECTED_FAIL",
+      "generated": 8,
+      "distinct": 7
+    },
+    "MutantNoCancel": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoStrandedPanel",
+      "status": "EXPECTED_FAIL",
+      "generated": 45,
+      "distinct": 32
+    },
+    "MutantNoSnap": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoStrandedRows",
+      "status": "EXPECTED_FAIL",
+      "generated": 1484,
+      "distinct": 474
+    },
+    "MutantWholeRow": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoStrandedRows",
+      "status": "EXPECTED_FAIL",
+      "generated": 2402,
+      "distinct": 714
+    },
+    "MutantNoPublish": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "HitMatchesRows",
+      "status": "EXPECTED_FAIL",
+      "generated": 2387,
+      "distinct": 705
+    },
+    "MutantNoPendingCancel": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoStalePress",
+      "status": "EXPECTED_FAIL",
+      "generated": 12,
+      "distinct": 11
+    },
+    "MutantSeedFromTarget": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoGrabJump",
+      "status": "EXPECTED_FAIL",
+      "generated": 18,
+      "distinct": 15
+    }
+  }
+}

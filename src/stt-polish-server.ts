@@ -316,11 +316,12 @@ async function startAndWaitForPolishServer(
   void proc.exited?.then(
     () => {
       exited = true;
+      // A normal or unexpected exit is just as final as an explicit stop.
+      // A late callback from a superseded child must not mark its successor stopped.
+      if (polishProcess !== proc && stoppingPolishProcess !== proc) return;
       if (polishProcess === proc) polishProcess = null;
-      if (stoppingPolishProcess === proc) {
-        stoppingPolishProcess = null;
-        publishSTTPolishServerStatus({ status: "stopped" });
-      }
+      if (stoppingPolishProcess === proc) stoppingPolishProcess = null;
+      publishSTTPolishServerStatus({ status: "stopped" });
     },
     () => {},
   );

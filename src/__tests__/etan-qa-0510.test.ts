@@ -26,6 +26,7 @@ beforeAll(() => {
   ownsHistory = true;
   observed = hasPreviousRead();
   console.log(`[T1] current queue has no submitted fixture; archiveOnlyPreviousAvailable=${observed}`);
+  console.log(`[isolation] VOICELAYER_TEST_ISOLATED=${process.env.VOICELAYER_TEST_ISOLATED} root=${relative(process.cwd(), root)}`);
 });
 
 afterAll(() => {
@@ -34,7 +35,7 @@ afterAll(() => {
   else unlinkSync(TTS_HISTORY_FILE);
 });
 
-// Bun's strict expected-failure counterpart; arrangement/errors remain outside the inverted callback.
-test.failing("T1_BackIgnoresArchiveOnlyItemsOutsideTheCurrentQueue [T1]", () => {
+// Fixed (T1): Back walks the current queue only; an archive-only History entry is never a Back target.
+test("T1_BackIgnoresArchiveOnlyItemsOutsideTheCurrentQueue [T1]", () => {
   expect(observed).toBe(false);
 });

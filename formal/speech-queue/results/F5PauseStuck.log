@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "AutoPauseNeverStuck",
+  "status": "EXPECTED_FAIL",
+  "generated": 1637135,
+  "distinct": 178577
+}

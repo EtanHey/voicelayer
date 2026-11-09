@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "DeletedModelNotResident",
+  "status": "EXPECTED_FAIL",
+  "generated": 21,
+  "distinct": 13
+}

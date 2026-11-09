@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterEach, spyOn } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { testTmp } from "./setup/test-tmp";
 import { ParakeetServer, ParakeetServiceError, parakeetCommand } from "../parakeet-server";
@@ -33,6 +33,8 @@ for await (const line of rl) {
   if(p==='delay')await new Promise(r=>setTimeout(r,80));
   out={...out,text:'A complete response.',complete:true,input_frames:16000,covered_frames:16000,sample_rate:16000,last_token_end_s:1,inference_s:0.01,language:null};
   if(p==='empty')out.text='';
+  if(p==='bad-time')out.last_token_end_s=5;
+  if(p==='bad-time-type')out.last_token_end_s='invalid';
   if(p==='wrong-id')out.id++;
   if(p==='bad-frames')out.covered_frames=2;
   if(p==='provider-error')out={id:r.id,ok:false,code:'RuntimeError'};
@@ -50,6 +52,14 @@ for await (const line of rl) {
   test("persistent child serves empty then success without restarting serve", async () => {
     const s = make(); await s.start(); expect(await s.health()).toBe(true);
     expect((await s.transcribe("empty")).text).toBe(""); expect((await s.transcribe("normal")).text).toBe("A complete response."); expect(await s.health()).toBe(true);
+  });
+  test.each(["bad-time", "bad-time-type"])("%s keeps returned words and the owned model; coverage unavailable", async path => {
+    const s = make(); await s.start(); const pid = s.pid;
+    const result = await s.transcribe(path);
+    expect(result.text).toBe("A complete response."); expect(result.complete).toBe(true);
+    expect(result.attemptEvidence?.timesValid).toBe(false);
+    expect(result.raw_last_token_end_s).toBe(path === "bad-time" ? 5 : "invalid");
+    expect(s.pid).toBe(pid); expect(await s.health()).toBe(true);
   });
   test("concurrent requests preserve command identities", async () => {
     const s = make(); const rs = await Promise.all([s.transcribe("delay"), s.transcribe("normal"), s.transcribe("normal")]); expect(rs.length).toBe(3);
@@ -115,6 +125,18 @@ for await (const line of rl) {
       expect((caught as ParakeetServiceError).attempt).toMatchObject({ ready: false, protocol: 1 });
       expect((caught as ParakeetServiceError).cleanupFailure).toBeDefined();
     } finally { await Bun.sleep(450); await s.shutdown(); }
+  });
+  test.each(["start", "transcribe", "health"] as const)("%s refuses a child whose stop was not confirmed", async operation => {
+    const s = make({ stopMs: 5 }); await s.start();
+    // Keep this protocol-only owned child alive across both stop deadlines.
+    const child = (s as unknown as { child: { proc: Bun.Subprocess } }).child;
+    const kill = spyOn(child.proc, "kill").mockImplementation(() => {});
+    try {
+      await expect(s.unload()).rejects.toThrow("did not stop");
+      if (operation === "health") expect(await s.health()).toBe(false);
+      else await expect(operation === "start" ? s.start() : s.transcribe("normal")).rejects.toThrow("did not stop");
+      expect(s.pid).toBe(child.proc.pid); // custody remains until exit is confirmed
+    } finally { kill.mockRestore(); await s.shutdown(); }
   });
   test("owned restart and unload are usable without permanent shutdown", async () => {
     const s = make(); await s.start(); await s.restart(); expect(await s.health()).toBe(true); await s.unload(); expect(await s.health()).toBe(false); await s.start();

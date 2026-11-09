@@ -150,7 +150,9 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(resumed)
         let position = state.playbackElapsedMilliseconds()
         XCTAssertTrue(state.showsReadingProcessingSpinner)
-        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 2)
+        // T1: the transport keeps its four slots; with nothing queued the spinner takes Forward's (Q1).
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), VoiceBarPresentation.readingTransportSlotCount)
+        XCTAssertTrue(VoiceBarPresentation.readingForwardControl(for: state).showsProcessingSpinner)
         XCTAssertEqual(state.mode, .speaking)
         state.handleEvent(["type": "transcription", "text": ""])
         state.handleEvent(["type": "error", "message": "Transcription failed", "recoverable": true])
@@ -162,7 +164,8 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(resumed)
         state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": false])
         XCTAssertFalse(state.showsReadingProcessingSpinner)
-        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 1)
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), VoiceBarPresentation.readingTransportSlotCount)
+        XCTAssertFalse(VoiceBarPresentation.readingForwardControl(for: state).showsProcessingSpinner)
         XCTAssertEqual(state.mode, .speaking)
     }
 
@@ -308,9 +311,8 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(pausedEvent())
         let paused = presentation(for: state)
         XCTAssertEqual(paused.visualState, .compactStatus)
-        // Paused shows the time + Stop (2.3 U2: in the fixed 73.5 pt wing); the eye belongs to a hidden-but-playing
-        // read and takes the time's place, so the wing never widens for it.
-        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        // T5/T7 (Etan QA 2026-11-09): paused keeps the recording-style wing (time, meter, Stop in its outer region).
+        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
 
         resume(state, offset: 2500)
         XCTAssertFalse(state.isPlaybackPaused)

@@ -17,17 +17,18 @@ final class TeleprompterAHandleTests: XCTestCase {
     }
 
     func testSurfaceHeightFollowsTheSettledLines() {
-        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 3), 196)
-        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 8), 316)
-        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 12), 316)
-        XCTAssertEqual(VoiceBarNotchContract.geometry(for: .teleprompter).lowerSurfaceHeight, 196)
+        // T8 (Etan QA 2026-11-09): no footer row and tight gaps; 91 pt of chrome plus 24 pt per line.
+        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 3), 163)
+        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 8), 283)
+        XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 12), 283)
+        XCTAssertEqual(VoiceBarNotchContract.geometry(for: .teleprompter).lowerSurfaceHeight, 163)
         let resolve = { (lines: Int) in
             VoiceBarNotchPresentation.resolve(hasTeleprompter: true, isRecording: false, hasCompactStatus: false,
                                               teleprompterLines: lines, isHovered: false, isKeyboardFocused: false)
         }
-        XCTAssertEqual(resolve(3).geometry.lowerSurfaceHeight, 196)
-        XCTAssertEqual(resolve(5).geometry.lowerSurfaceHeight, 244)
-        XCTAssertEqual(resolve(8).geometry.lowerSurfaceHeight, 316)
+        XCTAssertEqual(resolve(3).geometry.lowerSurfaceHeight, 163)
+        XCTAssertEqual(resolve(5).geometry.lowerSurfaceHeight, 211)
+        XCTAssertEqual(resolve(8).geometry.lowerSurfaceHeight, 283)
         // Lines never leak into another surface.
         let history = VoiceBarNotchPresentation.resolve(hasTeleprompter: false, isRecording: false, hasCompactStatus: false,
                                                         hasHistoryPanel: true, teleprompterLines: 8,
@@ -54,7 +55,7 @@ final class TeleprompterAHandleTests: XCTestCase {
         model.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false)
         model.setTeleprompterLines(6)
         XCTAssertEqual(model.teleprompterLines, 6)
-        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, 268, "the hit region takes the lines synchronously")
+        XCTAssertEqual(model.presentation.geometry.lowerSurfaceHeight, 235, "the hit region takes the lines synchronously")
         model.setTeleprompterLines(40)
         XCTAssertEqual(model.teleprompterLines, 8)
     }
@@ -66,16 +67,17 @@ final class TeleprompterAHandleTests: XCTestCase {
         state.teleprompterVisibleLines = 7
         var input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true, readQueueLeadingSlotCount: 1)
         input.teleprompterLines = state.teleprompterVisibleLines
-        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.lowerSurfaceHeight, 292)
+        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.lowerSurfaceHeight, 259)
     }
 
-    func testLowerRowHasNoStopAndTheHandleIsKeyboardOnlyFocusable() throws {
+    /// T7 (Etan QA 2026-11-09) reverses 2.3 U5: the red Stop sits in the eye row again, as its terminal control.
+    func testLowerRowCarriesTheStopAndTheHandleIsKeyboardOnlyFocusable() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"), encoding: .utf8)
         let lower = try XCTUnwrap(bar.components(separatedBy: "private var notchTeleprompterControls").dropFirst().first)
             .components(separatedBy: "// MARK: - Error state")[0]
-        XCTAssertFalse(lower.contains("stop.fill"), "the teleprompter's lower row carries no Stop")
+        XCTAssertTrue(lower.contains("playbackStopButton"), "the teleprompter's lower row carries the live Stop")
         let view = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterAView.swift"),
                               encoding: .utf8)
         XCTAssertTrue(view.contains(".focusable(interactions: .activate)"))
@@ -90,7 +92,7 @@ final class TeleprompterAHandleTests: XCTestCase {
         let handle: NSPoint
     }
 
-    private func mount(_ view: TeleprompterAView) throws -> Mounted {
+    private func mount(_ view: TeleprompterAHeightHandle) throws -> Mounted {
         let host = NSHostingView(rootView: AnyView(view))
         host.frame = NSRect(x: 0, y: 0, width: 440, height: 140)
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
@@ -118,9 +120,8 @@ final class TeleprompterAHandleTests: XCTestCase {
         drain(mounted.host)
     }
 
-    private func handleView(_ holds: @escaping (Bool) -> Void) -> TeleprompterAView {
-        TeleprompterAView(text: "Synthetic handle ownership probe.", onVisibleLinesChange: { _ in },
-                          onHandleDrag: holds, playbackElapsedMilliseconds: { 0 })
+    private func handleView(_ holds: @escaping (Bool) -> Void) -> TeleprompterAHeightHandle {
+        TeleprompterAHeightHandle(visibleLines: 3, onVisibleLinesChange: { _ in }, onHandleDrag: holds)
     }
 
     func testNormalReleaseLetsGoOfTheHoldOnce() throws {
@@ -144,7 +145,7 @@ final class TeleprompterAHandleTests: XCTestCase {
         try send(.leftMouseDown, mounted.handle, 1, in: mounted)
         try send(.leftMouseDragged, NSPoint(x: mounted.handle.x, y: mounted.handle.y - 3), 2, in: mounted)
         XCTAssertEqual(holds, [true])
-        mounted.host.rootView = AnyView(TeleprompterAView(text: "Handle removed.", playbackElapsedMilliseconds: { 0 }))
+        mounted.host.rootView = AnyView(Text("Handle removed."))
         drain(mounted.host)
         XCTAssertEqual(holds, [true, false], "the handle's disappearance releases its hold")
         XCTAssertFalse(model.isPointerHeldByPull)

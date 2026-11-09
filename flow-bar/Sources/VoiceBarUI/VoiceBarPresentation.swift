@@ -98,6 +98,19 @@ public struct VoiceBarPlaybackPauseControl: Equatable {
     public let accessibilityHint: String
 }
 
+/// T1 (Etan QA 2026-11-09): the reading wing's Forward. It walks the current queue only (QUEUE1's queued Option+F5
+/// reads) and is disabled when nothing waits; agent speech waiting behind the read shows its count but cannot be
+/// skipped.
+public struct VoiceBarReadingForwardControl: Equatable {
+    public let isEnabled: Bool
+    /// The waiting count on Forward's corner; nil when nothing waits.
+    public let countLabel: String?
+    public let countAccessibilityLabel: String?
+    public let accessibilityHint: String
+    /// Q1 (open for Etan): nothing queued and an Ask answer still transcribing, so its spinner takes Forward's slot.
+    public let showsProcessingSpinner: Bool
+}
+
 /// QUEUE1: Next and the "+N" count beside P16's pause/play while queued Option+F5 reads wait.
 public struct VoiceBarReadQueueControl: Equatable {
     public let iconName: String
@@ -289,6 +302,9 @@ public enum VoiceBarPresentation {
             teleprompterLeadingWingWidth: input.mode == .speaking
                 ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
                 : nil,
+            teleprompterTrailingWingWidth: input.mode == .speaking && !input.isTeleprompterReadback
+                ? readingTrailingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
+                : nil,
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
             coreWidth: input.coreWidth,
@@ -324,7 +340,9 @@ public enum VoiceBarPresentation {
     }
 
     /// QUEUE1: the leading wing fits its control slots exactly, so the hit rects (from the core outward) match.
+    /// T1/T6: the reading transport (speed, Back, Pause, Forward) is its own fixed width.
     public static func playbackLeadingWingWidth(slotCount: Int) -> CGFloat {
+        if slotCount >= readingTransportSlotCount { return readingTransportWingWidth }
         let material = VoiceBarNotchContract.material
         let slots = CGFloat(max(1, slotCount))
         return VoiceBarNotchContract.compactContentFitWingWidth(
@@ -358,8 +376,81 @@ public enum VoiceBarPresentation {
     }
 
     public static func playbackLeadingSlotCount(for state: VoiceState) -> Int {
-        (readQueueControl(for: state)?.leadingSlotCount ?? 1) + (state.showsReadingProcessingSpinner ? 1 : 0)
+        // T1/T6: a live read always shows the whole transport, whatever is queued.
+        if playbackPauseControl(for: state) != nil { return readingTransportSlotCount }
+        return (readQueueControl(for: state)?.leadingSlotCount ?? 1) + (state.showsReadingProcessingSpinner ? 1 : 0)
     }
+
+    // MARK: - T1/T6 reading transport (Etan QA 2026-11-09)
+
+    /// Speed, Back, Pause/Play and Forward: four controls, counted from the core like every wing slot.
+    public static let readingTransportSlotCount = 4
+    /// T6: "1×" up to "1.25×" at 10.5 pt; the outermost control, wider than a slot.
+    public static let readingSpeedChipWidth: CGFloat = 30
+    public static let disabledTransportOpacity: Double = 0.4
+    /// Three slots, then the chip; the wing keeps the fixed wings' 8 pt outer inset, inside the 130 pt morph canvas.
+    public static var readingTransportContentWidth: CGFloat {
+        let material = VoiceBarNotchContract.material
+        return 3 * material.compactControlSize + 3 * material.compactControlSpacing + readingSpeedChipWidth
+    }
+    public static var readingTransportWingWidth: CGFloat {
+        VoiceBarNotchContract.compactCoreContentInset + readingTransportContentWidth +
+            VoiceBarNotchContract.fixedWingContentInset
+    }
+
+    public static func readingForwardControl(for state: VoiceState) -> VoiceBarReadingForwardControl {
+        readingForwardControl(readQueue: readQueueControl(for: state), readQueueCount: state.readQueueCount,
+                              queuedSpeech: state.queuedSpeakCount,
+                              showsProcessingSpinner: state.showsReadingProcessingSpinner)
+    }
+
+    public static func readingForwardControl(readQueue: VoiceBarReadQueueControl?, readQueueCount: Int,
+                                             queuedSpeech: Int, showsProcessingSpinner: Bool) -> VoiceBarReadingForwardControl {
+        if readQueue != nil {
+            let waiting = max(0, readQueueCount)
+            return VoiceBarReadingForwardControl(
+                isEnabled: true, countLabel: "\(waiting)", countAccessibilityLabel: "\(waiting) queued",
+                accessibilityHint: "Skip to the next queued selection; \(waiting) waiting",
+                showsProcessingSpinner: false)
+        }
+        let speech = max(0, queuedSpeech)
+        return VoiceBarReadingForwardControl(
+            isEnabled: false,
+            countLabel: speech > 0 ? "\(speech)" : nil,
+            countAccessibilityLabel: speech > 0 ? "\(speech) queued speeches" : nil,
+            accessibilityHint: speech > 0 ? "Agent speech plays after this read" : "Nothing queued after this read",
+            showsProcessingSpinner: showsProcessingSpinner && speech == 0)
+    }
+
+    /// Collapsed Stop sits centred in the recording wing's outer region (26 pt since 0510 N10), 3 pt in from each side.
+    public static var readingStopOuterRegionInset: CGFloat {
+        (VoiceBarRecordingWingLabel.outerRegionWidth - VoiceBarNotchContract.material.compactControlSize) / 2
+    }
+
+    /// T5/T7: the reading right wing is the recording wing (time, meter, outer region).
+    public static func readingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
+        VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+    }
+
+    // MARK: - T4/T7 teleprompter lower row (Etan QA 2026-11-09)
+
+    /// The lower row's pitch is a control plus 10 pt (`VoiceBarNotchHitRegion`).
+    public static let teleprompterLowerControlSpacing: CGFloat = 10
+
+    /// Replay (when available) and the eye: the group centred in the body.
+    public static func teleprompterLowerGroupCount(canReplay: Bool) -> Int { canReplay ? 2 : 1 }
+
+    /// The terminal control (Stop or X) centre, from the body's centre: one pitch past the group's trailing edge.
+    public static func teleprompterTerminalOffset(groupControlCount: Int) -> CGFloat {
+        let size = VoiceBarNotchContract.material.compactControlSize
+        let count = CGFloat(max(1, groupControlCount))
+        let groupWidth = count * size + (count - 1) * teleprompterLowerControlSpacing
+        return groupWidth / 2 + teleprompterLowerControlSpacing + size / 2
+    }
+
+    /// The lower row's distance from the body's bottom edge: the handle band (or its reserve) sits under it.
+    public static let teleprompterLowerControlBottomInset: CGFloat =
+        TeleprompterA.bodyBottomInset + TeleprompterA.handleBandHeight + TeleprompterA.handleGap
 
     public static func readQueueControl(for state: VoiceState) -> VoiceBarReadQueueControl? {
         readQueueControl(
@@ -377,8 +468,11 @@ public enum VoiceBarPresentation {
         let material = VoiceBarNotchContract.material
         let insets = WaveformLayout.coreGap + WaveformLayout.outerInset
         switch input.mode {
-        case .transcribing, .speaking:
-            // 2.3 U2: History + Settings while transcribing; the time (or Show teleprompter) + Stop while reading.
+        case .speaking:
+            // T5/T7: reading is laid out like recording (time, meter, and Stop in the outer region while collapsed).
+            return readingTrailingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
+        case .transcribing:
+            // 2.3 U2: History + Settings while transcribing.
             return VoiceBarNotchContract.fixedWingWidth
         case .error:
             return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +

@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoClippedPanel",
+  "status": "EXPECTED_FAIL",
+  "generated": 23,
+  "distinct": 19,
+  "trace": [
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 0\n/\\ level = 0\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = FALSE\n/\\ mounted = FALSE\n/\\ jumped = FALSE\n/\\ target = \"none\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 0\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 1\n/\\ level = 0\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 1\n/\\ level = 1\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 2\n/\\ level = 1\n/\\ hphase = \"idle\"\n/\\ completions = {2}\n/\\ rowsTarget = 3\n/\\ intent = FALSE\n/\\ mounted = FALSE\n/\\ jumped = FALSE\n/\\ target = \"closed\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 2\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0"
+  ]
+}

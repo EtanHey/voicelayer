@@ -119,8 +119,9 @@ final class PlaybackEngineTeleprompterTests: XCTestCase {
         }
     }
 
-    func testFooterReadsReadingAndTheSpeedIsItsOwnControl() {
-        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "Reading")
+    func testNoReadingProseAndTheSpeedIsItsOwnControl() {
+        // T3 (Etan QA 2026-11-09): no "Reading" prose.
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "")
         XCTAssertEqual(VoiceState.speedLabel(1), "1×")
         XCTAssertEqual(VoiceState.speedLabel(1.25), "1.25×")
         XCTAssertEqual(VoiceState.speedLabel(0.75), "0.75×")
@@ -249,10 +250,9 @@ final class PlaybackEngineTeleprompterTests: XCTestCase {
         table.apply(["utteranceId": "laneb", "wordOffset": 0, "words": rows])
         for (appearanceName, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             for (name, lines, speed) in [("3-line", 3, 1.0), ("8-line", 8, 1.5)] {
+                _ = speed // T6: the speed chip lives in the leading wing now, not under the text.
                 let view = TeleprompterAView(text: Self.longWords, speechWords: table, visibleLines: lines,
-                                             onVisibleLinesChange: { _ in }, columnWidth: column,
-                                             playbackElapsedMilliseconds: { 2_700 }, speed: speed, onCycleSpeed: {},
-                                             previousAvailable: true, onPrevious: {})
+                                             columnWidth: column, playbackElapsedMilliseconds: { 2_700 })
                 try render(view, column: column, appearance: appearance,
                            to: directory.appendingPathComponent("laneb-teleprompter-\(name)-\(appearanceName).png"))
             }

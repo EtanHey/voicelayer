@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoF5PauseOutsideCapture",
+  "status": "EXPECTED_FAIL",
+  "generated": 66,
+  "distinct": 57
+}

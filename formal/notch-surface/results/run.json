@@ -4,7 +4,7 @@
   "hashes": {
     "formal/notch-surface/NotchSurface.tla": "3fe486175db400bf6754f69252f5c05ab0aa5edf9f1a2d2933060d83528cc104",
     "formal/notch-surface/checks.json": "375ada09347838ee795809aaac4fa1c9d343cde1925a04c8bcb10441fbb4bd2c",
-    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/notch-surface/MutantHistoryOnlyDismissStuck.cfg": "1085feb86beaa8dabe13f80d4e2eeea77f9880db28add4e5af898713ea9d7ac0",
     "formal/notch-surface/MutantRecordingRefusesDrawer.cfg": "5a9e331db76b061229cd1d50ea1906861e2a36fbb0990ba6891e80fce6ea6b60",
@@ -16,7 +16,8 @@
     "formal/notch-surface/Fixed.cfg": "40cc0de75cda652284f32e5e3ac430a344f7a54c1598202aaa016e5956ea56d0",
     "flow-bar/Sources/VoiceBarUI/NotchSurface.swift": "0d677ddf0829e3ca0c570e9b98a68d7cc672d7e06193d7873dc5feb6350a06d2",
     "flow-bar/Sources/VoiceBarUI/NotchDrawerDismissal.swift": "c3b5e6d1db1da827df5084e91512ab32a0b08c082bbe8eadd68375ebd320c288",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "97d9ca55eecb5b50b45a8c2e3dabf9baf934b4a2a7c93f6337cc066e575e6407"
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "0b3fc66fa2a443152213cebd45f06fcfd25249f06f11a462785dd291e735a09e",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "AtMostOneDrawer": [

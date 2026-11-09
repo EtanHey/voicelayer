@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "DeliversToReadyTimeFocus",
+  "status": "EXPECTED_FAIL",
+  "generated": 166,
+  "distinct": 61
+}

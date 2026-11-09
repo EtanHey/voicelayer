@@ -9,6 +9,12 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public let lowerControlCount: Int
     /// The whole lower surface takes clicks, hover and scroll (the History panel's rows).
     public let lowerSurfaceIsInteractive: Bool
+    /// T6: the outermost leading control may be wider than a slot (the reading speed chip); it grows outward.
+    public let leadingOutermostControlWidth: CGFloat?
+    /// T4/T7: one more lower control one pitch past the centred group's trailing edge (Stop or X), outside its centring.
+    public let lowerTerminalControl: Bool
+    /// The lower row's bottom edge, from the body's bottom.
+    public let lowerControlBottomInset: CGFloat
 
     public init(
         leadingControlCount: Int = 0,
@@ -16,7 +22,10 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         trailingControlCountFromOuter: Int = 0,
         trailingOuterInset: CGFloat = VoiceBarNotchContract.material.compactContentInset,
         lowerControlCount: Int = 0,
-        lowerSurfaceIsInteractive: Bool = false
+        lowerSurfaceIsInteractive: Bool = false,
+        leadingOutermostControlWidth: CGFloat? = nil,
+        lowerTerminalControl: Bool = false,
+        lowerControlBottomInset: CGFloat = 14
     ) {
         self.leadingControlCount = max(0, leadingControlCount)
         self.trailingControlCountFromCore = max(0, trailingControlCountFromCore)
@@ -24,6 +33,9 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         self.trailingOuterInset = max(0, trailingOuterInset)
         self.lowerControlCount = max(0, lowerControlCount)
         self.lowerSurfaceIsInteractive = lowerSurfaceIsInteractive
+        self.leadingOutermostControlWidth = leadingOutermostControlWidth.map { max(0, $0) }
+        self.lowerTerminalControl = lowerTerminalControl
+        self.lowerControlBottomInset = max(0, lowerControlBottomInset)
     }
 
     /// The History panel: the launcher's buttons stay live (History closes it again) and the body is live.
@@ -91,14 +103,17 @@ public struct VoiceBarNotchHitRegion: Equatable {
         var rects: [CGRect] = []
 
         for index in 0 ..< configuration.leadingControlCount {
+            let isOutermost = index == configuration.leadingControlCount - 1
+            let width = isOutermost ? max(size, configuration.leadingOutermostControlWidth ?? size) : size
             rects.append(
                 CGRect(
                     x: geometry.coreOriginX
                         - VoiceBarNotchContract.compactCoreContentInset
                         - size
-                        - (CGFloat(index) * pitch),
+                        - (CGFloat(index) * pitch)
+                        - (width - size),
                     y: topY,
-                    width: size,
+                    width: width,
                     height: size
                 )
             )
@@ -142,7 +157,17 @@ public struct VoiceBarNotchHitRegion: Equatable {
                 rects.append(
                     CGRect(
                         x: rowOriginX + (CGFloat(index) * lowerPitch),
-                        y: 14,
+                        y: configuration.lowerControlBottomInset,
+                        width: size,
+                        height: size
+                    )
+                )
+            }
+            if configuration.lowerTerminalControl {
+                rects.append(
+                    CGRect(
+                        x: rowOriginX + rowWidth + 10,
+                        y: configuration.lowerControlBottomInset,
                         width: size,
                         height: size
                     )

@@ -373,10 +373,9 @@ final class EtanQA0510Tests: XCTestCase {
         }
     }
 
+    /// Fixed (T3): reading draws no "Reading" prose.
     func testT3NoReadingProse() {
-        expected("T3") {
-            XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "", "[T3] remove Reading prose")
-        }
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "", "[T3] remove Reading prose")
     }
 
     /// Render every tab selected in turn. A declaration of Image is not proof that its glyph painted.

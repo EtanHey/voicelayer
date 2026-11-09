@@ -258,7 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Hotkey management — CGEventTap + gesture state machine. The lifecycle holds the running manager and starts a
     /// fresh one on "Restart F5 listener".
-    private lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
+    lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
     private let gestureStateMachine = GestureStateMachine()
     private var stoppingFromPhysicalPress = false
     var appliedActivationPolicy: NSApplication.ActivationPolicy = .accessory
@@ -1630,6 +1630,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Starts with the native F5 listener, so QA launches that skip the listener keep their seeded setup state.
     func startPermissionHealth() {
         guard !permissionHealth.isPolling else { return }
+        permissionHealth.onRefresh = { [weak self] in self?.refreshHotkeyListenerHealth() }
         permissionHealth.onChange = { [weak self] reading, trigger in
             self?.applyPermissionHealth(reading, trigger: trigger)
         }
@@ -1657,6 +1658,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         permissionHealth.refresh(trigger, force: force)
     }
 
+    /// The tap can stop without a permission transition. Sample it on every health read.
+    private func refreshHotkeyListenerHealth() {
+        let enabled = hotkeyListener.isRunning
+        guard hotkeyEnabled != enabled else { return }
+        hotkeyEnabled = enabled
+        voiceState.setHotkeyEnabled(enabled)
+        refreshSettingsWindowAnchorState()
+    }
+
     /// The popover's setup row: General › Setup's first broken step from the latest health reading. Nil when healthy,
     /// and nil before the monitor starts (QA launches that skip the listener).
     func menuBarSetupAlert() -> MenuBarSetupAlert? {
@@ -1667,8 +1677,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ))
     }
 
-    /// Status only: the F5 listener's running state (`hotkeyEnabled`) is never changed here; a listener that is off
-    /// once the permissions are back offers "Restart F5 listener" in Settings.
+    /// Permission status only. The paired onRefresh callback samples live tap health without restarting it;
+    /// a stopped listener offers "Restart F5 listener" in Settings.
     private func applyPermissionHealth(_ reading: PermissionHealthReading, trigger: PermissionHealthTrigger) {
         if trigger != .launch, trigger != .listenerChanged {
             NSLog("[VoiceBar] Permission health changed (%@): missing %@", trigger.rawValue,
@@ -2155,7 +2165,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     static func playbackLeadingSlotCount(for state: VoiceState) -> Int {
-        VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1
+        VoiceBarPresentation.playbackLeadingSlotCount(for: state)
+    }
+
+    /// T6: the reading transport's outermost control is the speed chip, wider than a slot.
+    static func playbackLeadingOutermostWidth(for state: VoiceState) -> CGFloat? {
+        playbackLeadingSlotCount(for: state) >= VoiceBarPresentation.readingTransportSlotCount
+            ? VoiceBarPresentation.readingSpeedChipWidth : nil
     }
 
     static func notchInteractionConfiguration(
@@ -2187,12 +2203,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // microphone control takes the left wing's core-side slot.
                 return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1, trailingControlCountFromCore: 2)
             case .speaking:
-                // P16: pause/play on the left; QUEUE1: Next and the "+N" count share it.
-                // 2.3 U2: Stop at the right wing's outer edge (its time, or a hidden read's eye, beside it).
+                // T1/T6: speed, Back, pause/play and Forward on the left.
+                // T5/T7: collapsed, Stop sits in the recording-style wing's outer region (a hidden read's eye beside it).
                 return VoiceBarNotchInteractionConfiguration(
                     leadingControlCount: playbackLeadingSlotCount(for: state),
                     trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
                     trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
+                        + VoiceBarPresentation.readingStopOuterRegionInset,
+                    leadingOutermostControlWidth: playbackLeadingOutermostWidth(for: state)
                 )
             case .error:
                 return VoiceBarNotchInteractionConfiguration(
@@ -2202,30 +2220,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 )
             case .idle:
                 // D2: Next and "+N" wait in the left wing after F5 interrupted a queued read. 0510 N9: otherwise the
-                // launcher's mic and its microphone control.
+                // launcher's mic and its microphone control. T6: a paused read's outermost control is the speed chip.
+                let showsMicrophoneControl = VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
                 return VoiceBarNotchInteractionConfiguration(
-                    leadingControlCount: VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
-                        ? 2 : playbackLeadingSlotCount(for: state)
+                    leadingControlCount: showsMicrophoneControl ? 2 : playbackLeadingSlotCount(for: state),
+                    leadingOutermostControlWidth: showsMicrophoneControl ? nil : playbackLeadingOutermostWidth(for: state)
                 )
             case .disconnected, .recording:
                 return .none
             }
         case .teleprompter:
-            var lowerControlCount = 1
-            if state.canReplay {
-                lowerControlCount += 1
-            }
-            if state.isTeleprompterReadback {
-                lowerControlCount += 1
-            }
+            // T4/T7 (Etan QA 2026-11-09): Replay + eye centred; the live Stop (or X on a readback) one pitch beside
+            // them. The right wing holds time + meter only, as when recording.
             return VoiceBarNotchInteractionConfiguration(
-                // 2.3 U5: reading aloud keeps its time and the live Stop in the right wing (SPEC wing states); the
-                // teleprompter's lower row no longer carries a Stop.
                 leadingControlCount: state.mode == .speaking ? playbackLeadingSlotCount(for: state) : 0,
-                trailingControlCountFromOuter: state.mode == .speaking ? 1 : 0,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
-                lowerControlCount: lowerControlCount,
-                lowerSurfaceIsInteractive: state.mode == .speaking
+                lowerControlCount: VoiceBarPresentation.teleprompterLowerGroupCount(canReplay: state.canReplay),
+                lowerSurfaceIsInteractive: state.mode == .speaking,
+                leadingOutermostControlWidth: state.mode == .speaking ? playbackLeadingOutermostWidth(for: state) : nil,
+                lowerTerminalControl: state.isTeleprompterReadback || state.mode == .speaking,
+                lowerControlBottomInset: VoiceBarPresentation.teleprompterLowerControlBottomInset
             )
         case .history:
             return .historyPanel
@@ -2296,6 +2309,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 : nil,
             teleprompterLeadingWingWidth: resolved.visualState == .teleprompter
                 ? resolved.geometry.leadingWingWidth
+                : nil,
+            // T5/T7: the resident shell takes the reading wing's width too, so drawn and hit geometry agree.
+            teleprompterTrailingWingWidth: resolved.visualState == .teleprompter
+                ? resolved.geometry.trailingWingWidth
                 : nil,
             keepsIdleExpanded: voiceState.mode == .idle && !voiceState.isCollapsed,
             coreWidth: coreWidth,

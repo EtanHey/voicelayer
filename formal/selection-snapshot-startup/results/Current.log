@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "ColdDelivery",
+  "status": "EXPECTED_FAIL",
+  "generated": 162,
+  "distinct": 160
+}

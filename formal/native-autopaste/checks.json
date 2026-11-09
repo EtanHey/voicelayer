@@ -1,0 +1,96 @@
+{
+  "module": "NativeAutoPaste",
+  "sources": [
+    "formal/legacy_receipts.py",
+    "formal/native-autopaste/Current.cfg",
+    "formal/native-autopaste/Fixed.cfg",
+    "formal/native-autopaste/Mutant.cfg",
+    "formal/native-autopaste/MutantAXElement.cfg",
+    "formal/native-autopaste/MutantAXWritable.cfg",
+    "formal/native-autopaste/MutantDouble.cfg",
+    "formal/native-autopaste/MutantEligible.cfg",
+    "formal/native-autopaste/MutantFallbackElement.cfg",
+    "formal/native-autopaste/MutantFallbackWritable.cfg",
+    "formal/native-autopaste/MutantRetention.cfg",
+    "formal/native-autopaste/MutantType.cfg",
+    "formal/native-autopaste/MutantWrongApp.cfg",
+    "formal/native-autopaste/NativeAutoPaste.tla",
+    "formal/native-autopaste/check.sh",
+    "formal/setup-tlc.py",
+    "formal/tlc.lock.json",
+    "formal/tlc_support.py"
+  ],
+  "receiptRunner": true,
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Current": {
+      "role": "mutant",
+      "target": "EligibleDelivery",
+      "kind": "invariant"
+    },
+    "Mutant": {
+      "role": "mutant",
+      "target": "NoDisabledDelivery",
+      "kind": "invariant"
+    },
+    "MutantType": {
+      "role": "mutant",
+      "target": "TypeOK",
+      "kind": "invariant"
+    },
+    "MutantWrongApp": {
+      "role": "mutant",
+      "target": "NoWrongApp",
+      "kind": "invariant"
+    },
+    "MutantDouble": {
+      "role": "mutant",
+      "target": "NoDoubleDelivery",
+      "kind": "invariant"
+    },
+    "MutantRetention": {
+      "role": "mutant",
+      "target": "Retention",
+      "kind": "invariant"
+    },
+    "MutantEligible": {
+      "role": "mutant",
+      "target": "EligibleDelivery",
+      "kind": "invariant"
+    },
+    "MutantAXElement": {
+      "role": "mutant",
+      "target": "NoChangedElementDelivery",
+      "kind": "invariant"
+    },
+    "MutantFallbackElement": {
+      "role": "mutant",
+      "target": "NoChangedElementDelivery",
+      "kind": "invariant"
+    },
+    "MutantAXWritable": {
+      "role": "mutant",
+      "target": "NoUnwritableDelivery",
+      "kind": "invariant"
+    },
+    "MutantFallbackWritable": {
+      "role": "mutant",
+      "target": "NoUnwritableDelivery",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "EligibleDelivery",
+    "NoChangedElementDelivery",
+    "NoDisabledDelivery",
+    "NoDoubleDelivery",
+    "NoUnwritableDelivery",
+    "NoWrongApp",
+    "Retention",
+    "TypeOK"
+  ]
+}

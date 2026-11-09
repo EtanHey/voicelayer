@@ -16,7 +16,8 @@ SCENARIOS = {'e2e24': 'testE2E24AllFlows', 'full': 'testFullUIOnlyFlow', 'focuse
 
 
 # 0510 N rows are fixed and verified normally; Q2 is the open recording-wing part of N9 (Etan's decision).
-QA_ROW_PACKETS = {'Q2', 'T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8'}
+# T1-T8 were fixed on feat/2.4-teleprompter-etan; they verify like any other row now.
+QA_ROW_PACKETS = {'Q2'}
 
 def selected_scenario(output, scenario=None):
     path = output / 'scenario.json'
@@ -45,7 +46,7 @@ def expected_packet(step):
             or not isinstance(descriptions, list) or not descriptions
             or not all(isinstance(d, str) and '[' + packet + ']' in d for d in descriptions)):
         raise ValueError('Invalid or unmatched expected product failure')
-    if re.fullmatch(r'(N(?:[1-9]|10)|T[1-8]|Q2)', packet):
+    if re.fullmatch(r'(N(?:[1-9]|10)|Q2)', packet):
         if expected.get('surface') != 'e2e24:' + packet or expected.get('surfaces') != ['e2e24:' + packet]:
             raise ValueError('QA row failure lacks its exact e2e24 surface')
     if 'surfaces' in expected:

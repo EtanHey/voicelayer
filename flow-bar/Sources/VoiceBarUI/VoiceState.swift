@@ -1807,6 +1807,9 @@ public final class VoiceState {
     /// The correlated read whose response may re-base the revision after a daemon restart (answered once).
     private var recognizerRebasableReadID: String?
     private var recognizerSelectionID: String?
+    /// Reply correlation outlives the UI latch; replaced only by a newer request or disconnect.
+    private var recognizerSelectionReplyID: String?
+    private var recognizerDownloadReplyID: String?
     private var recognizerSelectionTarget: RecognizerPickerEngine?
     /// The keep-warm value the user just chose, until the daemon answers (K2: `set_model_unload_when_idle`).
     public private(set) var recognizerUnloadWhenIdlePending: Bool?
@@ -1887,13 +1890,15 @@ public final class VoiceState {
         if action == .cancelDownload {
             recognizerCancelID = id
         } else if action == .download {
-            recognizerDownloadID = id
+            recognizerDownloadID = id; recognizerDownloadReplyID = id
             recognizerNotice = nil; onRecognizerStatusChange?()
         } else {
-            recognizerSelectionID = id; recognizerPendingCommand = action.command; recognizerSelectionTarget = nil
+            recognizerSelectionID = id; recognizerSelectionReplyID = id
+            recognizerPendingCommand = action.command; recognizerSelectionTarget = nil
             recognizerNotice = nil; onRecognizerStatusChange?()
         }
         sendCommand(command)
+        if action != .cancelDownload { scheduleRecognizerTimeout(id, engine: engine) }
     }
 
     /// Keep-warm switch (row 2). Refused while the daemon does not report the setting or the environment owns it.
@@ -1907,12 +1912,36 @@ public final class VoiceState {
         recognizerNotice = nil
         onRecognizerStatusChange?()
         sendCommand(["cmd": RecognizerUnloadWhenIdle.command, "value": value, "id": id])
+        scheduleRecognizerTimeout(id)
+    }
+
+    /// A missing terminal reply must not hold controls forever. Each deadline belongs
+    /// to one request ID; a settled or disconnected request cannot clear a later one.
+    private func scheduleRecognizerTimeout(_ id: String, engine: RecognizerPickerEngine? = nil) {
         let timeout = processingAckTimeout
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
-            guard let self, self.recognizerUnloadWhenIdleID == id else { return }
-            self.recognizerUnloadWhenIdleID = nil; self.recognizerUnloadWhenIdlePending = nil
-            self.recognizerNotice = "Couldn't confirm the Unload when idle change; showing VoiceLayer's current setting."
+            guard let self else { return }
+            if self.recognizerSelectionID == id || self.recognizerDownloadID == id,
+               let engine, let snapshot = self.recognizerSnapshot {
+                let status = engine == .parakeet ? snapshot.parakeet : snapshot.whisper
+                if status.download?.isActive == true || status.phase == .loading
+                    || snapshot.switchRefusalReason == "transition-active" {
+                    self.scheduleRecognizerTimeout(id, engine: engine)
+                    self.refreshRecognizerStatus()
+                    return
+                }
+            }
+            if self.recognizerUnloadWhenIdleID == id {
+                self.recognizerUnloadWhenIdleID = nil; self.recognizerUnloadWhenIdlePending = nil
+                self.recognizerNotice = "Couldn't confirm the Unload when idle change; showing VoiceLayer's current setting."
+            } else if self.recognizerSelectionID == id {
+                self.recognizerSelectionID = nil; self.recognizerSelectionTarget = nil
+                self.recognizerNotice = "Couldn't confirm the recognizer change; refreshing VoiceLayer's status."
+            } else if self.recognizerDownloadID == id {
+                self.recognizerDownloadID = nil
+                self.recognizerNotice = "Couldn't confirm the download; refreshing VoiceLayer's status."
+            } else { return }
             self.refreshRecognizerStatus()
             self.onRecognizerStatusChange?()
         }
@@ -1937,12 +1966,13 @@ public final class VoiceState {
         guard isConnected, let sendCommand,
               recognizerPickerState.canSelect(engine) else { return }
         let id = UUID().uuidString
-        recognizerSelectionID = id
+        recognizerSelectionID = id; recognizerSelectionReplyID = id
         recognizerPendingCommand = "set_recognizer"
         recognizerSelectionTarget = engine
         recognizerNotice = nil
         onRecognizerStatusChange?()
         sendCommand(["cmd": "set_recognizer", "recognizer": engine.rawValue, "id": id])
+        scheduleRecognizerTimeout(id, engine: engine)
     }
 
     private func handleRecognizerEvent(_ event: [String: Any]) {
@@ -1964,16 +1994,16 @@ public final class VoiceState {
                 return
             }
             if event["command"] as? String == "download_recognizer" {
-                guard let id = event["id"] as? String, id == recognizerDownloadID,
+                guard let id = event["id"] as? String, id == recognizerDownloadReplyID,
                       let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return }
-                recognizerDownloadID = nil
+                recognizerDownloadID = nil; recognizerDownloadReplyID = nil
             } else {
                 guard event["command"] as? String == recognizerPendingCommand,
-                      let id = event["id"] as? String, id == recognizerSelectionID,
+                      let id = event["id"] as? String, id == recognizerSelectionReplyID,
                       let outcome = event["outcome"] as? String, ["accept", "reject"].contains(outcome) else { return }
                 // Terminal correlation settles intent independently of snapshot authority.
-                recognizerSelectionID = nil
-                recognizerSelectionTarget = nil
+                recognizerSelectionID = nil; recognizerSelectionReplyID = nil
+                recognizerPendingCommand = nil; recognizerSelectionTarget = nil
             }
         } else if let id = event["id"] as? String {
             guard id == recognizerRefreshID else { return }
@@ -4222,7 +4252,8 @@ public final class VoiceState {
         recognizerRevision = -1
         recognizerAcceptedSnapshot = nil
         recognizerRefreshID = nil
-        recognizerSelectionID = nil
+        recognizerSelectionID = nil; recognizerSelectionReplyID = nil
+        recognizerDownloadReplyID = nil
         recognizerPendingCommand = nil; recognizerCancelID = nil
         recognizerDownloadID = nil; recognizerRebasableReadID = nil
         recognizerSelectionTarget = nil

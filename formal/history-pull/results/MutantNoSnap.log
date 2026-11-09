@@ -1,0 +1,18 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoStrandedRows",
+  "status": "EXPECTED_FAIL",
+  "generated": 1484,
+  "distinct": 474,
+  "trace": [
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 0\n/\\ level = 0\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = FALSE\n/\\ mounted = FALSE\n/\\ jumped = FALSE\n/\\ target = \"none\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 0\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 1\n/\\ level = 0\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 1\n/\\ level = 1\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 1\n/\\ level = 2\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 1\n/\\ level = 3\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 0\n/\\ live = FALSE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 2\n/\\ level = 3\n/\\ hphase = \"pending\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 0\n/\\ live = TRUE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 3\n/\\ level = 3\n/\\ hphase = \"dragging\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 1\n/\\ live = TRUE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0",
+    "/\\ phase = \"idle\"\n/\\ slopCrossed = FALSE\n/\\ events = 4\n/\\ level = 3\n/\\ hphase = \"idle\"\n/\\ completions = {}\n/\\ rowsTarget = 3\n/\\ intent = TRUE\n/\\ mounted = TRUE\n/\\ jumped = FALSE\n/\\ target = \"open\"\n/\\ rows = 1\n/\\ live = FALSE\n/\\ gen = 1\n/\\ clickMovedPanel = FALSE\n/\\ presented = 0"
+  ]
+}

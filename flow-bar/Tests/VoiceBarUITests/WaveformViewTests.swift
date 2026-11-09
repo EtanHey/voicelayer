@@ -35,10 +35,10 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(WaveformLayout.leadingX(coreMaxX: 220), 244)
     }
 
-    /// 2.3 U2 (3-wings mock): the transcribing and reading-aloud right wings are the fixed 73.5 pt wing and hold
-    /// History + Settings or the time + Stop, not a waveform; their content sits between equal 8 pt insets whatever
-    /// the hardware calibration. Only recording draws level bars (2.2.61's 46 pt meter, in the same fixed wing).
-    func testTranscribingAndReadingRightWingsAreTheFixedWingAtEveryCalibration() {
+    /// 2.3 U2: the transcribing right wing is the fixed 73.5 pt wing (History + Settings). T5/T7 (Etan QA 2026-11-09:
+    /// "the waveform is blue but is consistent with the same waveform and time stuff that we have when recording"):
+    /// the reading right wing is the recording wing (time + meter), clearing the physical notch the same way.
+    func testTranscribingIsTheFixedWingAndReadingIsTheRecordingWingAtEveryCalibration() {
         let processing = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .transcribing, statusText: "Transcribing")
         )
@@ -60,8 +60,10 @@ final class WaveformViewTests: XCTestCase {
         )
         XCTAssertEqual(speakingSlot.coreInset, VoiceBarNotchContract.fixedWingContentInset)
         XCTAssertEqual(speakingSlot.outerInset, VoiceBarNotchContract.fixedWingContentInset)
-        XCTAssertEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth,
-                       "the reading wing keeps the fixed width when calibration changes")
+        XCTAssertEqual(speaking.geometry.trailingWingWidth,
+                       VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: calibratedInset),
+                       "the reading wing is the recording wing at every calibration")
+        XCTAssertLessThanOrEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         XCTAssertLessThanOrEqual(
             WaveformLayout.viewportWidth,
             VoiceBarNotchContract.fixedWingWidth - 2 * VoiceBarNotchContract.fixedWingContentInset,
@@ -113,15 +115,15 @@ final class WaveformViewTests: XCTestCase {
             .components(separatedBy: "private var notchWaveform")[0]
         XCTAssertTrue(compact.contains("case .speaking:\n            notchSpeakingTrailingContent"))
         XCTAssertTrue(speaking.contains("return HStack("))
-        // 2.3 U2: the reading wing shows the time, not a waveform.
-        XCTAssertEqual(speaking.components(separatedBy: "notchWaveform").count - 1, 0)
-        XCTAssertTrue(speaking.contains("VoiceBarReadingTimeLabel("))
+        // T5: the reading wing draws the same notch meter as recording, beside the recording-style time.
+        XCTAssertEqual(speaking.components(separatedBy: "notchWaveform").count - 1, 1)
+        XCTAssertTrue(speaking.contains("VoiceBarReadingTimeRegion("))
     }
 
     @MainActor
-    func testRenderedTranscribingAndReadingRightWingsDrawNoWaveform() throws {
-        // 2.3 U2: History + Settings (transcribing) and the time + Stop (reading) replace the blue waveform; the
-        // right wing never carries a third element.
+    func testRenderedTranscribingWingDrawsNoWaveformAndReadingWingDrawsTheBlueMeter() throws {
+        // 2.3 U2: History + Settings replace the waveform while transcribing. T5 (Etan QA 2026-11-09): reading draws
+        // the blue speech meter again, the same component as recording.
         let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
 
         let processingState = VoiceState()
@@ -160,9 +162,9 @@ final class WaveformViewTests: XCTestCase {
             )
         )
 
-        for (state, presentation, label) in [
-            (processingState, processingPresentation, "processing"),
-            (speakingState, speakingPresentation, "speaking"),
+        for (state, presentation, label, drawsMeter) in [
+            (processingState, processingPresentation, "processing", false),
+            (speakingState, speakingPresentation, "speaking", true),
         ] {
             let image = try renderBar(
                 state: state,
@@ -179,10 +181,12 @@ final class WaveformViewTests: XCTestCase {
             )
             // The top row only: a teleprompter body below the wing is not the wing.
             let topRow = Int((presentation.geometry.topHeight * scale).rounded())
-            XCTAssertNil(
-                blueHorizontalBounds(in: image, xRange: wingMinX ..< min(wingMaxX, image.width), rowLimit: topRow),
-                "no blue waveform pixels in the \(label) trailing wing"
-            )
+            let blue = blueHorizontalBounds(in: image, xRange: wingMinX ..< min(wingMaxX, image.width), rowLimit: topRow)
+            if drawsMeter {
+                XCTAssertNotNil(blue, "[T5] blue speech meter pixels in the \(label) trailing wing")
+            } else {
+                XCTAssertNil(blue, "no blue waveform pixels in the \(label) trailing wing")
+            }
         }
     }
 

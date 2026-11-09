@@ -74,6 +74,7 @@ final class Tip2PausedTooltipTests: XCTestCase {
         state.handleEvent(["type": "playback_state", "state": "paused", "offset_ms": 0, "playback_id": "tip2", "generation": 2])
         XCTAssertTrue(state.isPlaybackPaused)
         let paused = try stopHost()
+        func stopHosts() -> Int { descendants(host).filter { $0.identifier?.rawValue == "real-stop" }.count }
         state.handleEvent(["type": "playback_state", "state": "resumed", "offset_ms": 0, "playback_id": "tip2", "generation": 3])
         XCTAssertFalse(state.isPlaybackPaused)
         // Drain the actual expanded layout before pausing again.
@@ -84,7 +85,11 @@ final class Tip2PausedTooltipTests: XCTestCase {
         wait(for: [expanded], timeout: 3)
         state.handleEvent(["type": "playback_state", "state": "paused", "offset_ms": 0, "playback_id": "tip2", "generation": 4])
         let pausedAgain = try stopHost()
-        XCTAssertTrue(paused === pausedAgain, "The real compact Stop host must survive resume and pause")
+        // T7 (Etan QA 2026-11-09): Stop moves between the collapsed wing and the open teleprompter's eye row, so its
+        // host is not one view across both; each state mounts exactly one live Stop, never a stale second one.
+        XCTAssertNotNil(paused)
+        XCTAssertEqual(stopHosts(), 1, "The paused notch mounts exactly one real Stop")
+        XCTAssertNotNil(pausedAgain)
     }
 
     func testRealPlaybackTooltipsInPlayingAndPausedStates() throws {
@@ -141,10 +146,11 @@ final class Tip2PausedTooltipTests: XCTestCase {
         let playing = try controls("Pause speech")
         let stops = descendants(host).filter { $0.toolTip == "Stop speaking" }
         XCTAssertEqual(stops.count, 1, "Hidden compact Stop must clear its native registration")
-        // 2.3 U5: the expanded Stop moved from the lower row into the right wing, Pause's top row.
+        // T7 (Etan QA 2026-11-09, reversing 2.3 U5): the expanded Stop sits in the eye row, not the top row.
+        let eye = try XCTUnwrap(descendants(host).first { $0.toolTip == "Hide teleprompter" && !$0.visibleRect.isEmpty })
         XCTAssertEqual(try XCTUnwrap(stops.first).convert(stops.first!.bounds, to: nil).midY,
-                       playing[0].convert(playing[0].bounds, to: nil).midY, accuracy: 1,
-                       "Expanded Stop belongs in the right wing")
+                       eye.convert(eye.bounds, to: nil).midY, accuracy: 1,
+                       "Expanded Stop belongs in the eye row")
         for tooltip in playing {
             XCTAssertNil(tooltip.hitTest(NSPoint(x: tooltip.bounds.midX, y: tooltip.bounds.midY)),
                          "Tooltip registration must leave button clicks to SwiftUI")

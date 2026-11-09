@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "EveryQueuedMatchStops",
+  "status": "EXPECTED_FAIL",
+  "generated": 147,
+  "distinct": 147
+}

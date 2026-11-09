@@ -4,18 +4,19 @@
   "hashes": {
     "formal/speech-word-seek/SpeechWordSeek.tla": "b3b6f5336f65d8d561eac2652c88b7dff9bc56b14686de4b15d9a79b73a8d15f",
     "formal/speech-word-seek/checks.json": "22f8da52ea2fa80ca7f8b1a8ff18df2f340b538d7d6994a451760c712889fc91",
-    "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/speech-word-seek/StopMutant.cfg": "1007c9db171fef8454848cd12533a549aa97ef15be558d66ad8b57d01964bd25",
     "formal/speech-word-seek/OverlapMutant.cfg": "5adb3622b43117ab0811bcb9d0ac7ad0c8a3514cf84ab7c44fb16d6ee106684a",
     "formal/speech-word-seek/StaleMutant.cfg": "dce40e330519dcdaeb8faeadceb3f0ff4f2df11e66d383a8855d570e9d18e04f",
     "formal/speech-word-seek/Fixed.cfg": "6fb0a1974c339c408f06715758dd45ea13598a3c72d2acf6be38e96b0bdbc921",
-    "src/tts.ts": "03c5c6634762bdc2d572b646c9837869f0026739301626adaa294a40a2f96791",
-    "src/tts/speech-words.ts": "474cbea2fbc17626d6a6eb9f538cd90c6446f0efb29d8a9929dea8e3c74a42e3",
+    "src/tts.ts": "cc4e551ba64e9a0bf6950981f45e6cebbff0673e512f0df14db6977bd0120ebe",
+    "src/tts/speech-words.ts": "e5b1b01485c5b27b8bc7c5ee0bd24c4900e719924d304187fab1eb0151d73c52",
     "src/__tests__/speech-words.test.ts": "ae10c21b242fe47d3930bffa974c00032cbe4e5e373aa314eb52a6ea25cf0d78",
-    "src/socket-protocol.ts": "33c0fc0d5315fec56d3f7083be3db11e60b13e749978819dcb1fa7f3e3290124",
-    "src/socket-handlers.ts": "3bc7354fcbd082582ffa6646c010df5c8ba58757189c5f101ab53915688632b5",
-    "src/__tests__/tts-long-read-runtime.test.ts": "7dbf72a458b654fdc0029ccbfe0a8f471d2f972df3cbc8dd2818f83aebfd7521"
+    "src/socket-protocol.ts": "00a5805b984f1c599ea5fd906853fbb3938b08f1ae2029b65649de719fcb491a",
+    "src/socket-handlers.ts": "29df4b4578b6ef655380f3f3567762853de18743e0dea7602e438cbe3e6e8b1a",
+    "src/__tests__/tts-long-read-runtime.test.ts": "5cc72db55a287ed312626bcc17e57b321bdb33c381799890ae7cd558befee368",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "SinglePlayer": [

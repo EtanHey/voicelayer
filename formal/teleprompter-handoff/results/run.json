@@ -4,12 +4,14 @@
   "hashes": {
     "formal/teleprompter-handoff/PreparingHandoff.tla": "c65f2ebb8d8a0c357fb905e67e6d7310e94005c152262edbcda2c0af8d96778a",
     "formal/teleprompter-handoff/checks.json": "ad2de732cb650ea66b8dbfea30660e0356982bafa9ef75458f91fc0c4ca86a83",
-    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/teleprompter-handoff/Old.cfg": "b1a3dfd025f66a8ce3c01b87cfb8a74060d9ec277217713563c3ebfe3815fa7a",
     "formal/teleprompter-handoff/MutantNoEntry.cfg": "3f77165907cd00b9236f2f3d2ab0f1b596ba6aa2d894b4b6f347f5b661f89fc0",
     "formal/teleprompter-handoff/Fixed.cfg": "f1ee953518951f06402c9e8cbb31727864f77ff7d5af5604ef8acbc7ac7f2bf4",
     "flow-bar/Sources/VoiceBarUI/TeleprompterPreparingHandoff.swift": "69eb35440a5a91b8d062a29a3c1dc6abcf26103cd59f277d0bb250cc5a706335",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "5efb8e53dd0411242149e2849de5fa7706692fb010add7768e38f691ef05fe2f"
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "0b3fc66fa2a443152213cebd45f06fcfd25249f06f11a462785dd291e735a09e",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "NewestShows": [

@@ -105,7 +105,7 @@ class ReportTests(unittest.TestCase):
             results.report(self.root, [step], [dict(attachments=[attachment])])
 
     def test_etan_qa_row_xfail_needs_matching_marker_and_exact_surface(self):
-        for row in ['Q2', 'T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8']:
+        for row in ['Q2']:
             expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] product assertion'],
                             surfaces=['e2e24:' + row])
             step = dict(passed=True, expectedFailure=expected)
@@ -115,24 +115,33 @@ class ReportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     results.expected_packet(dict(step, expectedFailure=invalid))
 
+    def test_fixed_teleprompter_rows_are_no_longer_expected_failures(self):
+        # T1-T8 (feat/2.4-teleprompter-etan): a fixed row verifies; an XFAIL tag on it is refused.
+        for row in ['T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8']:
+            self.assertNotIn(row, results.QA_ROW_PACKETS)
+            expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] product assertion'],
+                            surfaces=['e2e24:' + row])
+            with self.assertRaises(ValueError):
+                results.expected_packet(dict(passed=True, expectedFailure=expected))
+
     def test_etan_qa_row_exports_as_expected_never_verified(self):
         directory, ledger, manifest = self.attachment_run()
-        expected = dict(packet='T6', surface='e2e24:T6', surfaces=['e2e24:T6'],
-                        descriptions=['[T6] speed sits outside the playback row'])
+        expected = dict(packet='Q2', surface='e2e24:Q2', surfaces=['e2e24:Q2'],
+                        descriptions=['[Q2] recording wing has no microphone control'])
         ledger['steps'][0]['expectedFailure'] = expected
-        ledger['coverage'].update(expectedSurfaces={'e2e24:T6': 'T6'}, missingSurfaces=[], verifiedSurfaces=[])
+        ledger['coverage'].update(expectedSurfaces={'e2e24:Q2': 'Q2'}, missingSurfaces=[], verifiedSurfaces=[])
         (directory / 'step.json').write_text(json.dumps(ledger['steps'][0]))
         (directory / 'ledger.json').write_text(json.dumps(ledger))
         self.assertTrue(self.export_attached_run())
-        self.assertIn('XFAIL [T6]', (directory / 'index.html').read_text())
-        ledger['coverage']['verifiedSurfaces'] = ['e2e24:T6']
+        self.assertIn('XFAIL [Q2]', (directory / 'index.html').read_text())
+        ledger['coverage']['verifiedSurfaces'] = ['e2e24:Q2']
         (directory / 'ledger.json').write_text(json.dumps(ledger))
         with self.assertRaises(ValueError):
             self.export_attached_run()
 
     def test_known_qa_unexpected_pass_cannot_become_verified(self):
         directory, ledger, manifest = self.attachment_run()
-        ledger['coverage'].update(expectedSurfaces={}, missingSurfaces=[], verifiedSurfaces=['e2e24:T5'])
+        ledger['coverage'].update(expectedSurfaces={}, missingSurfaces=[], verifiedSurfaces=['e2e24:Q2'])
         (directory / 'ledger.json').write_text(json.dumps(ledger))
         with self.assertRaises(ValueError):
             self.export_attached_run()
