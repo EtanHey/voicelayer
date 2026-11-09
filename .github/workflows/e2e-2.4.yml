@@ -21,6 +21,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: python3 scripts/generate-e2e-2.4-coverage.py --check
       - run: python3 scripts/test-e2e-2.4.py
+      - run: python3 scripts/test-e2e-2.4-attest.py
+      - run: python3 scripts/test-voicebar-ui-e2e-results.py
       - run: bun test tests/e2e-2.4-geometry.test.ts
       - run: bash scripts/e2e-2.4.sh --report .build.noindex/e2e-2.4/report.json
       - uses: actions/upload-artifact@v4

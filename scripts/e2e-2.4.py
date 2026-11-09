@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Bounded isolated regression gate. Pending native coverage never counts as PASS."""
 import argparse
+from datetime import datetime
+import hashlib
+import plistlib
 import json
 import math
 import os
@@ -51,10 +54,110 @@ NATIVE_CASES = {
     'mute audio exclusion': ('pending-lane-A', []),
 }
 
-def native_rows(verified):
-    return [dict(flow=flow, owner=owner, surfaces=['e2e24:'+s for s in surfaces],
+ATTEST_ROWS = {row for row, (_, surfaces) in NATIVE_CASES.items() if not surfaces}
+ATTEST_SCHEMA = 'voicelayer.e2e24-attestation.v1'
+# Only reviewed real producers may discharge a row. No producer exists yet for
+# these complete flows; schema-valid hand-authored receipts remain UNPROVED.
+ATTEST_PRODUCERS = {row: set() for row in ATTEST_ROWS}
+
+
+def file_sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def iso_time(value):
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z', value):
+        raise ValueError('timestamp must be ISO UTC')
+    return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+
+
+def validate_attestation(row, path, head, digest, build_time, candidate_app=None, now=None):
+    if row not in ATTEST_ROWS:
+        raise ValueError('unknown attestation row: ' + row)
+    path = Path(path)
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError('receipt must be an object')
+        t3 = data.get('schema') == 'voicelayer.t3-optf5-proof.v2'
+        stamp = iso_time(data.get('timestamp'))
+        current = time.time() if now is None else now
+        if stamp < iso_time(build_time) or stamp < current - 86400 or stamp > current + 300:
+            raise ValueError('receipt stale, pre-build or future-dated')
+        if data.get('gitCommit' if t3 else 'head') != head:
+            raise ValueError('receipt HEAD differs from candidate HEAD')
+        if t3:
+            if row != 'F5 physical gestures' or candidate_app is None:
+                raise ValueError('T3 proof requires F5 row and --candidate-app')
+            result = run_bounded(['bun', str(ROOT/'scripts/t3-optf5-proof.ts'), 'check',
+                '--proof', str(path), '--app', str(candidate_app)], timeout=60, text=True)
+            if result.returncode != 0:
+                raise ValueError('existing T3 proof validator rejected receipt')
+            status, reason = 'UNPROVED-native', 'Option+F5 proved only; tap/hold/lock/hint producer missing'
+        else:
+            if data.get('schema') != ATTEST_SCHEMA or data.get('row') != row or data.get('result') != 'PASS':
+                raise ValueError('wrong schema, row or result')
+            if not re.fullmatch(r'[0-9a-f]{64}', data.get('candidateBundleSha256', '')) or data['candidateBundleSha256'] != digest:
+                raise ValueError('candidate bundle digest differs')
+            if not isinstance(data.get('host'), str) or not data['host'].strip():
+                raise ValueError('missing host')
+            producer = data.get('producer')
+            if not isinstance(producer, str) or not re.fullmatch(r'scripts/[A-Za-z0-9_./-]+', producer) or '..' in Path(producer).parts or not (ROOT/producer).resolve().is_relative_to(ROOT) or not (ROOT/producer).is_file():
+                raise ValueError('missing/unsafe producer script')
+            evidence = data.get('evidence')
+            if not isinstance(evidence, list) or not evidence:
+                raise ValueError('missing evidence')
+            seen = set()
+            for entry in evidence:
+                if not isinstance(entry, dict):
+                    raise ValueError('invalid evidence entry')
+                relative = entry['path']
+                target = (path.parent / relative).resolve()
+                if (not isinstance(relative, str) or Path(relative).is_absolute()
+                    or not target.is_relative_to(path.parent.resolve()) or not target.is_file()
+                    or target in seen or not re.fullmatch(r'[0-9a-f]{64}', entry.get('sha256', ''))
+                    or file_sha256(target) != entry['sha256']):
+                    raise ValueError('missing, unsafe, duplicate or altered evidence')
+                seen.add(target)
+            status = 'PASS' if producer in ATTEST_PRODUCERS[row] else 'UNPROVED-native'
+            reason = 'validated registered real producer' if status == 'PASS' else 'real producer not registered for this row'
+        return dict(status=status, reason=reason, receipt=str(path.resolve()),
+                    receiptSha256=file_sha256(path), schema=data['schema'], timestamp=data['timestamp'],
+                    head=head, candidateBundleSha256=digest, producer=data.get('producer', 'scripts/t3-optf5-proof.ts'))
+    except (OSError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+        raise ValueError('invalid attestation: ' + str(error)) from error
+
+
+def load_attestations(values, candidate_app):
+    if not values:
+        return {}
+    if candidate_app is None:
+        raise ValueError('--attest requires --candidate-app')
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    with (candidate_app/'Contents/Info.plist').open('rb') as stream:
+        info = plistlib.load(stream)
+    if not re.fullmatch(r'[0-9a-f]{40}', head) or info.get('GitCommit') != head:
+        raise ValueError('candidate GitCommit must match current HEAD')
+    result = run_bounded(['bun', str(ROOT/'scripts/t3-optf5-proof.ts'), 'bundle-digest',
+                          '--app', str(candidate_app)], timeout=60, text=True)
+    digest = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', digest):
+        raise ValueError('candidate bundle digest unavailable')
+    attestations = {}
+    for value in values:
+        row, separator, receipt = value.partition('=')
+        if not separator or not receipt or row in attestations:
+            raise ValueError('expected unique --attest <row>=<receipt>')
+        attestations[row] = validate_attestation(row, Path(receipt), head, digest,
+                                                info.get('BuildTimeUTC'), candidate_app)
+    return attestations
+
+
+def native_rows(verified, attestations=None):
+    attestations = attestations or {}
+    return [dict(flow=flow, owner=owner, attestation=attestations.get(flow), surfaces=['e2e24:'+s for s in surfaces],
                  status='PASS' if surfaces and all('e2e24:'+s in verified for s in surfaces)
-                 else ('UNPROVED-native' if not surfaces else owner))
+                 else (attestations.get(flow, {}).get('status', 'UNPROVED-native') if not surfaces else owner))
             for flow, (owner, surfaces) in NATIVE_CASES.items()]
 
 
@@ -88,11 +191,17 @@ def main():
     parser.add_argument('--native-output', type=Path, help='existing guarded e2e24 runner output from M1')
     parser.add_argument('--release', action='store_true', help='fail while native coverage is pending')
     parser.add_argument('--swift', action='store_true', help='run scoped native unit/offscreen cases, without UI driving')
+    parser.add_argument('--attest', action='append', default=[], metavar='ROW=RECEIPT', help='validate existing real proof; repeat per row')
+    parser.add_argument('--candidate-app', type=Path, help='read-only candidate bundle, GitCommit must match HEAD')
     args = parser.parse_args()
+    start = time.monotonic()
+    try:
+        attestations = load_attestations(args.attest, args.candidate_app)
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+        parser.error(str(error))
     if args.report.exists():
         parser.error('report already exists')
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    start = time.monotonic()
     rows = []
     try:
         for flow, suites in CASES.items():
@@ -155,7 +264,7 @@ def main():
             if not receipt_valid:
                 native_seconds = 0.0
             rows.append(dict(flow='native e2e24 receipt', status='FAIL'))
-    rows.extend(native_rows(verified))
+    rows.extend(native_rows(verified, attestations))
     local_seconds = time.monotonic() - start
     combined_seconds = local_seconds + native_seconds
     if native_passed and combined_seconds > 900:
@@ -163,7 +272,7 @@ def main():
     failed = any(row['status'] == 'FAIL' for row in rows)
     report = dict(seconds=round(local_seconds, 2), nativeSeconds=round(native_seconds, 2),
                   combinedSeconds=round(combined_seconds, 2), rows=rows,
-                  releaseReady=not failed and native_passed and args.swift and all(row['status'] == 'PASS' for row in native_rows(verified)) and not any(row.get('skips', 0) for row in rows), isolatedPassed=not isolated_failed)
+                  releaseReady=not failed and native_passed and args.swift and all(row['status'] == 'PASS' for row in native_rows(verified, attestations)) and not any(row.get('skips', 0) for row in rows), isolatedPassed=not isolated_failed)
     args.report.write_text(json.dumps(report, indent=2)+'\n')
     return 1 if failed or (args.release and not report["releaseReady"]) else 0
 

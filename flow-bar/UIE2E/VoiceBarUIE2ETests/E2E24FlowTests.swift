@@ -45,7 +45,7 @@ extension VoiceBarFlowTests {
             } catch {
                 step("2.4 failed " + name) { XCTFail(String(describing: error)) }
             }
-            attachJSON("E2E24-TIMING-" + name, ["case": name, "seconds": Date().timeIntervalSince(started)])
+            attachJSON("UIE2E-E2E24-TIMING-" + name, ["case": name, "seconds": Date().timeIntervalSince(started)])
         }
         completed = true
     }
@@ -65,16 +65,81 @@ extension VoiceBarFlowTests {
         }
     }
 
+    /// Complete the safe controls exposed by these Settings pages. Domain actions
+    /// (delete, retranscribe, pagination) still belong to the explicit flows below.
+    /// Unknown controls stay missing and fail; inventory is never promoted to clicks.
+    func e2e24SettingsControls(_ page: String) {
+        tab(page)
+        for direction: CGFloat in [-1, 1] {
+            var previousFrames: [CGRect]?
+            for _ in 0..<8 {
+                let window = app.windows["VoiceBar QA Settings"]
+                let frames = window.descendants(matching: .button).allElementsBoundByIndex
+                    .filter { $0.isHittable }.map { $0.frame }
+                if frames == previousFrames { break }
+                previousFrames = frames
+                observeControls()
+                for type: XCUIElement.ElementType in [.textField, .switch, .checkBox, .disclosureTriangle, .button] {
+                    let controls = window.descendants(matching: type).allElementsBoundByIndex
+                    for control in controls where control.exists && control.isEnabled && control.isHittable {
+                        let key = controlKey(control)
+                        guard observed.contains(key), !exercised.contains(key) else { continue }
+                        let label = control.label
+                        if type == .textField {
+                            let original = controlValue(control)
+                            click(control, "focus Settings \(label)")
+                            step("focusing Settings field preserves its contents") {
+                                XCTAssertEqual(controlValue(control), original)
+                            }
+                        } else if type == .switch || type == .checkBox || type == .disclosureTriangle
+                                    || label.hasPrefix("Your terms") || label.hasPrefix("Included terms") {
+                            let original = controlValue(control)
+                            click(control, "exercise Settings \(label)")
+                            step("Settings \(label) changes value") {
+                                XCTAssertNotNil(original)
+                                XCTAssertNotEqual(controlValue(control), original)
+                            }
+                            click(control, "restore Settings \(label)")
+                            step("Settings \(label) restores value") { XCTAssertEqual(controlValue(control), original) }
+                        } else if label.hasPrefix("Copy term ") {
+                            assertCopy(label, equals: String(label.dropFirst("Copy term ".count)))
+                        } else if label == "Open General settings" {
+                            click(control)
+                            step("Settings navigation opens General") { XCTAssertTrue(app.buttons["Check shortcut"].exists) }
+                            tab(page)
+                        }
+                    }
+                }
+                scroll(direction, times: 1)
+            }
+        }
+    }
+
+    func e2e24AssertSettingsControls(_ page: String) {
+        step("all observed \(page) controls clicked") {
+            let missing = observed.subtracting(exercised).filter { $0.contains(page) || $0.contains("Navigation") }.sorted()
+            XCTAssertTrue(missing.isEmpty, "Unexercised Settings controls: \(missing)")
+        }
+    }
+
     func testE2E24UnifiedSettingsDictionary() throws {
+        walk("Dictionary")
+        e2e24SettingsControls("Dictionary")
         dictionaryFlow()
+        e2e24SettingsControls("Dictionary")
+        e2e24AssertSettingsControls("Dictionary")
     }
 
     func testE2E24UnifiedSettingsRecognizer() throws {
         transcriptionFlow()
+        e2e24SettingsControls("Transcription")
+        e2e24AssertSettingsControls("Transcription")
     }
 
     func testE2E24HistoryAllActions() throws {
         historyFlow()
+        e2e24SettingsControls("History")
+        e2e24AssertSettingsControls("History")
     }
 
     func testE2E24PlaybackPauseResumeSeekReplay() throws {
