@@ -64,7 +64,15 @@ struct SettingsPlaybackScrubBar: View {
             step(by: delta)
             return .handled
         }
-        .help(allowsSeeking ? "Drag to seek; ← and → step \(Int(SettingsAudioPlayback.keyboardSeekStep)) seconds" : "No word timing available")
+        .help(helpText)
+        // T2 (QA 2026-11-08 S2-F8, "tooltips on every control"): `.help` never shows in the non-activating notch
+        // panel, so the teleprompter's scrubber registers the same native tooltip as every notch control.
+        // A scrubber that cannot seek is not a control (and says why in the notice below it).
+        .background { if isTeleprompter, allowsSeeking { PillControlTooltip(text: helpText) } }
+    }
+
+    private var helpText: String {
+        allowsSeeking ? "Drag to seek; ← and → step \(Int(SettingsAudioPlayback.keyboardSeekStep)) seconds" : "No word timing available"
     }
 
     private var tickingContent: some View {

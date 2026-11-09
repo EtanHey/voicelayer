@@ -5,12 +5,19 @@ import CoreFoundation
 /// G1's mkdir lock and G2's readable-ledger predicate. Never repairs or reaps evidence.
 @MainActor public final class NativeUpdateGate {
     public static let shared = NativeUpdateGate()
-    public static let busyMessage = "Update in progress. Try Play again when it finishes."
+    public static let busyMessage = "Updating VoiceBar…"
     public enum Fault: Error { case busy, unknown }
     private let path: String
     private let tryLock: (String) -> Bool
     private let monotonicNow: () -> UInt64
     private let incarnation = UUID().uuidString
+    private static let ownerStartTime: String? = {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(getpid(), PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.pbi_pid == getpid(), info.pbi_start_tvsec > 0 else { return nil }
+        return "\(info.pbi_start_tvsec):\(info.pbi_start_tvusec)"
+    }()
     private var degraded = false
     private var lastDiagnostic = Date.distantPast
 
@@ -150,13 +157,14 @@ import CoreFoundation
                 if absent(path) { return {} }
                 let current = try state()
                 if current["kind"] as? String != "OPEN" {
-                    // Match TS readLedger: only readable closed evidence can refuse voice.
+                    // DRAINING also requires the readable ledger used by TS.
                     _ = try readLedger()
-                    return nil
+                    if current["kind"] as? String != "DRAINING" { return nil }
                 }
                 // UUIDs and validated integers need no escaping. Match TS insertion order and newline.
-                let generation = (current["generation"] as! NSNumber).int64Value
-                let bytes = Data("{\"token\":\"\(token)\",\"pid\":\(getpid()),\"incarnation\":\"\(incarnation)\",\"generation\":\(generation)}\n".utf8)
+                let generation = ((current["generation"] ?? (current["lease"] as? [String: Any])?["generation"]) as! NSNumber).int64Value
+                let birth = Self.ownerStartTime.map { ",\"startTime\":\"\($0)\"" } ?? ""
+                let bytes = Data("{\"token\":\"\(token)\",\"pid\":\(getpid()),\"incarnation\":\"\(incarnation)\",\"generation\":\(generation)\(birth)}\n".utf8)
                 let staged = path + ".lock/admission.json"
                 let fd = open(staged, O_WRONLY | O_CREAT | O_EXCL, 0o600)
                 guard fd >= 0 else { throw Fault.unknown }

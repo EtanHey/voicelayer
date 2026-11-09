@@ -156,6 +156,42 @@ final class RecordingPauseTests: XCTestCase {
         XCTAssertEqual(state.recordingActiveElapsedMilliseconds(), 14_400)
     }
 
+    /// N1's wing time and the Pause spans run on one injected clock (`recordingTimingClock`): the time stands
+    /// still while paused and resumes from where it stopped.
+    func testWingTimeStandsStillWhilePaused() throws {
+        let (state, commands, advance) = recordingState()
+        advance(1)
+        state.handleEvent(["type": "audio_level", "rms": 0.2]) // capture opens: the wing's 0:00
+        XCTAssertTrue(state.isRecordingCaptureOpen)
+        advance(5)
+        XCTAssertEqual(state.recordingElapsedMilliseconds(), 5_000)
+        state.setRecordingPaused(true)
+        state.handleEvent(["type": "ack", "command": "set_recording_pause", "outcome": "accept",
+                           "id": try XCTUnwrap(commands().last?["id"] as? String)])
+        advance(30)
+        XCTAssertEqual(state.recordingElapsedMilliseconds(), 5_000, "the wing time stands still while paused")
+        state.setRecordingPaused(false)
+        advance(2)
+        XCTAssertEqual(state.recordingElapsedMilliseconds(), 7_000)
+    }
+
+    /// A PTT take can be paused between its `recording` event and its first frame; that pause never eats time
+    /// the wing has not counted yet.
+    func testPauseBeforeCaptureOpensNeverEatsWingTime() throws {
+        let (state, commands, advance) = recordingState()
+        state.setRecordingPaused(true)
+        state.handleEvent(["type": "ack", "command": "set_recording_pause", "outcome": "accept",
+                           "id": try XCTUnwrap(commands().last?["id"] as? String)])
+        advance(2)
+        state.handleEvent(["type": "audio_level", "rms": 0.2])
+        XCTAssertTrue(state.isRecordingCaptureOpen)
+        advance(3)
+        XCTAssertEqual(state.recordingElapsedMilliseconds(), 0, "still paused since before the open")
+        state.setRecordingPaused(false)
+        advance(4)
+        XCTAssertEqual(state.recordingElapsedMilliseconds(), 4_000)
+    }
+
     func testPausedMeterIsStill() {
         let (state, _, _) = recordingState()
         state.handleEvent(["type": "audio_level", "rms": 0.6])

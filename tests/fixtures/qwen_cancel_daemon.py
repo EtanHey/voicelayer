@@ -78,7 +78,10 @@ listener.bind(("127.0.0.1", 0))
 port = listener.getsockname()[1]
 app = create_app("stub", port=port, auth_token_file=str(root / "secret"),
                  voices_root=str(sample.parent))
-(root / "ready.json").write_text(json.dumps({"port": port}))
+ready = root / "ready.json"
+pending_ready = root / "ready.json.tmp"
+pending_ready.write_text(json.dumps({"port": port}))
+os.replace(pending_ready, ready)
 import uvicorn
 
 uvicorn.Server(uvicorn.Config(app, log_level="error")).run(sockets=[listener])

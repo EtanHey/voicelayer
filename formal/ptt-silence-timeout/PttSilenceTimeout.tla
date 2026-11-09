@@ -6,10 +6,30 @@ vars == <<s>>
 \* Frames are "word" (speech), "quiet" (silence) or "aside": what the mic hears while the take is paused.
 \* `said` and `quiet`, `owed` are spec ghosts: the frames the user is owed, the unpaused quiet minutes, and
 \* the one tail frame (~200 ms) still owed after a Pause click. Everything else is the implementation.
-Init == s = [phase |-> "recording", speech |-> FALSE, silence |-> 0, quiet |-> 0,
-             wall |-> 0, event |-> "init", endedBy |-> "none",
+\* BARE-STOP (2026-11-08): a take starts "opening" (record accepted, mic not yet open). A control that
+\* arrives then is buffered and applied when the mic opens. `endedBy` records what ended the take.
+Init == s = [phase |-> "opening", speech |-> FALSE, silence |-> 0, quiet |-> 0,
+             wall |-> 0, event |-> "init", endedBy |-> "none", buffered |-> "none",
              paused |-> FALSE, grace |-> 0, owed |-> 0, spanOpen |-> FALSE, spans |-> 0,
              pcm |-> <<>>, said |-> <<>>, saved |-> <<>>, text |-> <<>>]
+Open == /\ s.phase = "opening"
+        /\ s' = IF s.buffered = "none" THEN [s EXCEPT !.phase = "recording", !.event = "open"]
+                ELSE [s EXCEPT !.phase = "ended", !.event = "open", !.endedBy = s.buffered, !.saved = s.pcm]
+\* The take's own stop while the mic is still opening: F5/side button, Stop button or PTT release, carrying its
+\* take id. It is buffered and applied at Open. Once recording, the take's own stop is Finish("stop").
+ScopedStop == /\ s.phase = "opening"
+              /\ s' = [s EXCEPT !.buffered = "stop", !.event = "scoped-stop"]
+\* A stop with no take id (speak --stop, a read Stop, Hide over speech). Fixed: it stops speech only.
+\* "unscopedEndsCapture" is the pre-fix redirect of a bare stop onto the live take (socket-handlers hasF5Capture
+\* stamping); "openingFallback" is the pre-fix opening fallback (f5-capture bufferOpeningCaptureControl).
+UnscopedStop ==
+  /\ s.phase \in {"opening", "recording"}
+  /\ s' = IF Policy = "unscopedEndsCapture" /\ s.phase = "recording"
+            THEN [s EXCEPT !.phase = "ended", !.event = "unscoped-stop", !.endedBy = "unscoped", !.saved = s.pcm,
+                           !.paused = FALSE, !.grace = 0, !.owed = 0, !.spanOpen = FALSE]
+          ELSE IF Policy = "openingFallback" /\ s.phase = "opening" /\ s.buffered = "none"
+            THEN [s EXCEPT !.buffered = "unscoped", !.event = "unscoped-stop"]
+          ELSE [s EXCEPT !.event = "speech-stop"]
 \* One timer step is one minute. Wall age is only a saturated observation monitor.
 SilenceDeadline == 10
 ObservationLimit == 20
@@ -61,9 +81,11 @@ Transcribe == /\ s.phase = "ended" /\ Policy # "stall"
                                 !.text = IF Policy = "trim" /\ Len(s.pcm) > 0
                                          THEN SubSeq(s.pcm, 1, Len(s.pcm) - 1) ELSE s.pcm]
 Next == (\E spoken \in BOOLEAN: Frame(spoken)) \/ Tick \/ Timeout \/ Pause \/ Resume
-        \/ Finish("stop") \/ Finish("cancel") \/ Transcribe
-Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Timeout) /\ WF_vars(Transcribe)
+        \/ Finish("stop") \/ Finish("cancel") \/ Transcribe \/ Open \/ ScopedStop \/ UnscopedStop
+Spec == Init /\ [][Next]_vars /\ WF_vars(Open) /\ WF_vars(Tick) /\ WF_vars(Timeout) /\ WF_vars(Transcribe)
 NoTimeoutDuringSpeech == s.endedBy = "timeout" => ~s.speech /\ s.silence = SilenceDeadline
+\* BARE-STOP: only the take's own stop, a cancel, or its silence timeout ends a dictation capture.
+UnscopedStopNeverEndsCapture == s.endedBy \in {"none", "stop", "cancel", "timeout"}
 EveryEndedTakeRetained == s.phase # "recording" => s.saved = s.pcm
 RawAccurate == s.phase = "transcribed" => s.text = s.pcm
 SettlesAfterSilence == s.phase = "ended" ~> s.phase = "transcribed"

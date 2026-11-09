@@ -1,7 +1,7 @@
 import { appendControlLayerEvent } from "./control-layer-journal";
 import { edgeVoiceForText } from "./tts-language";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withAsyncVoiceAdmission, withVoiceAdmission, withFreshVoiceAdmission, holdVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
-import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
+import { settleSpeechArchivesForUpdate, beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive, type SynthesisDiagnostics } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { displayTokens } from "./tts/display-tokens";
 import { structuredReadDisplay, type StructuredChunkDisplay } from "./tts/structured-display";
@@ -839,6 +839,7 @@ async function playClonedAudio(
     "audioArtifact" | "playbackId" | "playbackOutcome"
   >
 > {
+  options?.speechArchive?.synthesisConfiguredRate(options?.rate ?? "+0%");
   const percentage = parseInt(options?.rate ?? "+0%", 10);
   if (Number.isFinite(percentage) && percentage !== 0) {
     const adjusted = ttsFile.replace(/\.mp3$/, ".rate.mp3");
@@ -1165,6 +1166,43 @@ class PlaybackQueueManager {
   private alignments = new Set<Promise<void>>();
   private seekPreparation?: { job: PlaybackJob; controller: AbortController };
   private parked?: ParkedPlayback;
+  /** Ask borrows the speaker; the user's silent read retains its cursor and generation. */
+  private captureParkedRead?: ParkedPlayback;
+  private captureParkedScope?: ControlScope;
+
+  private processingReadID?: string;
+  private processingReadSettled?: () => void;
+  settleRead(id: string, completed: boolean, settle: () => void): void {
+    // A queued successor has no processing permission; admit it after Ask releases the speaker.
+    if (completed && this.isProcessingRead(id)) this.processingReadSettled = settle;
+    else settle();
+  }
+  isProcessingRead(id?: string): boolean {
+    return id !== undefined && id === this.processingReadID && this.captureAdmission !== undefined && getEffectiveRecordingState() !== "recording";
+  }
+  releaseReadSuccessor(): void {
+    const settled = this.processingReadSettled; this.processingReadSettled = undefined;
+    try { settled?.(); } catch (error) {
+      console.error(`[voicelayer] Read queue settle failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  hasProcessingRead(): boolean { return this.isProcessingRead(this.processingReadID); }
+  assertReadSpeakerClear(id?: string): void {
+    if (this.isProcessingRead(id) && getEffectiveRecordingState() === "transcribing") return;
+    assertSpeakerClear();
+  }
+  beginReadProcessing(id: string): boolean {
+    const read = this.captureParkedRead;
+    if (!this.captureAdmission || this.parked || getEffectiveRecordingState() !== "transcribing" ||
+        (read ? read.job.completed || read.job.wordTimeline.utteranceId !== id : preparationParkedRead()?.id !== id)) return false;
+    this.processingReadID = id;
+    this.parked = read;
+    this.captureParkedRead = undefined; this.captureParkedScope = undefined;
+    broadcast({ type: "read_processing", utterance_id: id, active: true });
+    return true;
+  }
+
+  preservesPausedRead(): boolean { return this.captureParkedScope !== undefined; }
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
   hasCaptureAdmission(): boolean { return this.captureAdmission !== undefined; }
@@ -1173,6 +1211,12 @@ class PlaybackQueueManager {
     if (this.captureAdmission || this.depth() > 0 || this.conversions.size > 0) return;
     const owned = new Set<string>();
     this.captureAdmission = owned;
+    const pending = preparationParkedRead()?.pendingChunk;
+    this.captureParkedRead = this.parked;
+    this.captureParkedScope = this.parked
+      ? { id: this.parked.job.id, generation: this.parked.job.lifecycle.generation }
+      : pending?.identity;
+    this.parked = undefined;
     let released = false;
     return {
       admit: (handle, onParkedChange) => {
@@ -1187,7 +1231,25 @@ class PlaybackQueueManager {
         if (released) return;
         released = true;
         if (this.captureAdmission === owned) this.captureAdmission = undefined;
+        const processing = this.processingReadID;
+        this.processingReadID = undefined;
+        if (processing) broadcast({ type: "read_processing", utterance_id: processing, active: false });
+        const scope = this.captureParkedScope;
+        const read = this.captureParkedRead;
+        if (read && !read.job.completed) {
+          if (!this.parked) this.parked = read;
+          else this.cancel({ id: read.job.id }, undefined, "replaced");
+        }
+        this.captureParkedRead = undefined;
+        this.captureParkedScope = undefined;
+        const pending = preparationParkedRead()?.pendingChunk;
+        if (scope && ((read && this.parked === read) ||
+            (pending?.identity.id === scope.id && pending?.identity.generation === scope.generation))) {
+          broadcast({ type: "state", state: "idle", source: "playback", restores_paused_read: true,
+            playback_id: scope.id, generation: scope.generation });
+        }
         this.processNext();
+        if (processing) broadcastPlaybackIdleIfSpeakerClear();
       },
     };
   }
@@ -1262,8 +1324,13 @@ class PlaybackQueueManager {
     const job = this.jobs.get(scope.id);
     if (!job || job.completed || !job.lifecycle.matches(scope)) return false;
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
-    const parked = this.parked?.job === job ? this.parked : undefined;
-    if (parked) { this.parked = undefined; parked.controller.abort(); }
+    const parked = this.parked?.job === job ? this.parked
+      : this.captureParkedRead?.job === job ? this.captureParkedRead : undefined;
+    if (parked) {
+      if (this.parked === parked) this.parked = undefined;
+      if (this.captureParkedRead === parked) { this.captureParkedRead = undefined; this.captureParkedScope = undefined; }
+      parked.controller.abort();
+    }
     const active = this.current?.job === job ? this.current
       : [...this.terminating.values()].find(candidate => candidate.job === job);
     if (this.current?.job === job) { this.current = null; this.stopProgressTimer(); this.terminate(active!); }
@@ -1303,7 +1370,7 @@ class PlaybackQueueManager {
 
   stop(playbackElapsedMs?: number, cancelled = false): boolean {
     if (cancelled) {
-      const jobs = [this.current?.job, this.preparing?.job, this.restartAfterTermination, this.parked?.job, ...this.pending];
+      const jobs = [this.current?.job, this.preparing?.job, this.restartAfterTermination, this.parked?.job, this.captureParkedRead?.job, ...this.pending];
       for (const job of jobs) job?.metadata?.speechArchive?.finish("cancelled", "USER_CANCEL");
     }
     const seekJob = this.seekPreparation?.job;
@@ -1316,10 +1383,14 @@ class PlaybackQueueManager {
     const preparing = this.preparing;
     const restarting = this.restartAfterTermination;
     const parked = this.parked;
+    const borrowed = this.captureParkedRead;
+    this.captureParkedRead = undefined; this.captureParkedScope = undefined;
+    borrowed?.controller.abort();
+    if (borrowed) completeJob(borrowed.job, buildPlaybackOutcome(borrowed.job, "interrupted", "stopped", borrowed.offsetMs));
     this.parked = undefined;
     parked?.controller.abort();
     const hadActivity =
-      parked !== undefined ||
+      borrowed !== undefined || parked !== undefined ||
       this.pending.length > 0 ||
       preparing !== null ||
       active !== null ||
@@ -1389,7 +1460,8 @@ class PlaybackQueueManager {
   }
 
   isPaused(utteranceId?: string): boolean {
-    return this.parked !== undefined && (utteranceId === undefined || this.parked.job.metadata?.longRead?.id === utteranceId);
+    const parked = this.parked ?? this.captureParkedRead;
+    return parked !== undefined && (utteranceId === undefined || parked.job.metadata?.longRead?.id === utteranceId);
   }
 
   replaceParked(): void {
@@ -1421,11 +1493,12 @@ class PlaybackQueueManager {
         : { outcome: "noop", reason: "already paused", offset_ms: globalOffset(this.parked.job) };
     }
     const active = this.current;
-    const job = active?.job ?? this.restartAfterTermination ?? this.preparing?.job;
+    const job = active?.job ?? this.restartAfterTermination ?? this.preparing?.job ??
+      this.pending.find(candidate => candidate.id === scope.id);
     if (!job || job.completed) return { outcome: "noop", reason: "nothing playing" };
     if (this.isStale(job, scope)) return staleControl(staleIdentity(job));
-    if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
-    if (!job.metadata || ((job.priority === "critical" || this.captureAdmission) && !this.ownsPausablePrompt(job))) return { outcome: "reject", reason: "unsupported" };
+    if (getEffectiveRecordingState() !== "idle" && !this.isProcessingRead(job.wordTimeline.utteranceId)) return { outcome: "reject", reason: "busy" };
+    if (!job.metadata || ((job.priority === "critical" || this.captureAdmission) && !this.ownsPausablePrompt(job) && !this.isProcessingRead(job.wordTimeline.utteranceId))) return { outcome: "reject", reason: "unsupported" };
     const chunkStart = job.metadata.longRead?.chunk_start_ms ?? 0;
     const elapsed = !active ? job.metadata.localOffsetMs ?? 0
       : elapsedMs !== undefined ? elapsedMs - chunkStart : Date.now() - active.startedAt;
@@ -1449,6 +1522,7 @@ class PlaybackQueueManager {
     if (this.preparing?.job === job) { const preparing = this.preparing; this.preparing = null; preparing.cancel(); }
     if (this.restartAfterTermination === job) this.restartAfterTermination = null;
     if (this.replayPreparingJob === job) this.replayPreparingJob = null;
+    this.pending = this.pending.filter(candidate => candidate !== job);
     this.stopProgressTimer();
     this.park(job, offset, owner);
     return { outcome: "accept", offset_ms: chunkStart + offset };
@@ -1467,13 +1541,22 @@ class PlaybackQueueManager {
     metadata.playbackOffsetMs = (metadata.longRead?.chunk_start_ms ?? 0) + offset;
     const parked: ParkedPlayback = { owner, job, offsetMs: offset, controller: new AbortController(),
       ready: offset === 0, failed: false, resumeRequested: false };
-    this.parked = parked;
+    if (this.captureParkedScope && !this.captureAdmission?.has(job.id) &&
+        (this.captureParkedScope.id === job.id || this.captureParkedScope.id === metadata.longRead?.id)) {
+      this.captureParkedRead = parked;
+    } else this.parked = parked;
     job.onParkedChange?.(true);
     if (offset < (metadata.durationMs ?? Infinity)) metadata.speechArchive?.move("paused");
     else metadata.speechArchive?.playerEnded();
     if (!parked.ready) this.prepareParked(parked);
     this.broadcastPlaybackState(job, "paused");
     this.emitQueueSnapshot();
+  }
+
+  pauseReadForAsk(id: string): boolean {
+    const job = this.current?.job ?? this.restartAfterTermination ?? this.preparing?.job ??
+      this.pending.find(candidate => candidate.wordTimeline.utteranceId === id);
+    return job?.wordTimeline.utteranceId === id && this.pause({ id: job.id }).outcome === "accept";
   }
 
   capturePauseIdentity(): string | undefined {
@@ -1496,9 +1579,10 @@ class PlaybackQueueManager {
 
   resume(scope: ControlScope): SeekResult {
     const parked = this.parked;
-    if (!parked) return { outcome: "noop", reason: "not paused" };
+    if (!parked) return this.captureParkedScope ? { outcome: "reject", reason: "busy" }
+      : { outcome: "noop", reason: "not paused" };
     if (this.isStale(parked.job, scope)) return staleControl(staleIdentity(parked.job));
-    if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) return { outcome: "reject", reason: "busy" };
+    if (f5CaptureActive || (getEffectiveRecordingState() !== "idle" && !this.isProcessingRead(parked.job.wordTimeline.utteranceId)) || (this.captureAdmission && !this.ownsPausablePrompt(parked.job) && !this.isProcessingRead(parked.job.wordTimeline.utteranceId))) return { outcome: "reject", reason: "busy" };
     const offset_ms = (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
     if (parked.resumeRequested) return { outcome: "noop", reason: "resuming", offset_ms };
     parked.resumeRequested = true;
@@ -1513,12 +1597,12 @@ class PlaybackQueueManager {
     const conversion = (async () => {
       try {
         const slice = await prepareSeekSlice(job.audioFile, parked.offsetMs, parked.controller.signal);
-        if (this.parked !== parked || job.completed) { disposeSeekSlice(slice); return; }
+        if ((this.parked !== parked && this.captureParkedRead !== parked) || job.completed) { disposeSeekSlice(slice); return; }
         job.sliceFile = slice;
         parked.ready = true;
         if (parked.resumeRequested) this.releaseParked(parked);
       } catch (error) {
-        if (this.parked !== parked) return;
+        if (this.parked !== parked && this.captureParkedRead !== parked) return;
         parked.failed = true;
         broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true });
         if (parked.resumeRequested) { parked.resumeRequested = false; this.broadcastPlaybackState(job, "paused"); }
@@ -1535,13 +1619,13 @@ class PlaybackQueueManager {
     if (this.parked !== parked) return false;
     try {
       // A capture that began while the slice was cut keeps the item parked.
-      assertSpeakerClear();
-      if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || (this.captureAdmission && !this.ownsPausablePrompt(parked.job))) throw new Error("Resume refused: voice is busy");
+      this.assertReadSpeakerClear(parked.job.wordTimeline.utteranceId);
+      if (f5CaptureActive || (getEffectiveRecordingState() !== "idle" && !this.isProcessingRead(parked.job.wordTimeline.utteranceId)) || (this.captureAdmission && !this.ownsPausablePrompt(parked.job) && !this.isProcessingRead(parked.job.wordTimeline.utteranceId))) throw new Error("Resume refused: voice is busy");
     } catch (error) {
       parked.resumeRequested = false;
       if (parked.owner === "f5") cancelRefusedCaptureRead(parked.job.metadata?.longRead?.id ?? parked.job.id);
       else {
-        broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
+        broadcast({ type: "error", source: "playback", message: error instanceof Error ? error.message : String(error), recoverable: true });
         this.broadcastPlaybackState(parked.job, "paused");
       }
       return false;
@@ -1702,7 +1786,7 @@ class PlaybackQueueManager {
       this.replayPreparingJob = null;
     }
     broadcast({
-      type: "error",
+      type: "error", source: "playback",
       message: error instanceof Error ? error.message : String(error),
       recoverable: true,
     });
@@ -1723,7 +1807,7 @@ class PlaybackQueueManager {
     }
 
     while (this.pending.length > 0) {
-      const index = this.captureAdmission ? this.pending.findIndex(job => this.captureAdmission!.has(job.id)) : 0;
+      const index = this.captureAdmission ? this.pending.findIndex(job => this.captureAdmission!.has(job.id) || this.isProcessingRead(job.wordTimeline.utteranceId)) : 0;
       if (index < 0) return;
       const [next] = this.pending.splice(index, 1);
       if (next.expiresAt <= Date.now()) {
@@ -1732,7 +1816,7 @@ class PlaybackQueueManager {
       }
 
       try {
-        assertSpeakerClear();
+        this.assertReadSpeakerClear(next.wordTimeline.utteranceId);
       } catch (err) {
         this.refuseQueuedPlayback(next, err);
         continue;
@@ -1796,7 +1880,7 @@ class PlaybackQueueManager {
     // timeout/failure starts playback with the explicit unavailable envelope.
 
     try {
-      assertSpeakerClear();
+      this.assertReadSpeakerClear(next.wordTimeline.utteranceId);
     } catch (err) {
       this.refuseQueuedPlayback(next, err);
       this.processNext();
@@ -1815,7 +1899,7 @@ class PlaybackQueueManager {
     const durationMs = expectedDurationMs && Number.isFinite(expectedDurationMs) && expectedDurationMs > 0
       ? expectedDurationMs : probeAudioDurationMs(next.audioFile, 1_000);
     try {
-      assertSpeakerClear();
+      this.assertReadSpeakerClear(next.wordTimeline.utteranceId);
     } catch (err) {
       this.refuseQueuedPlayback(next, err);
       this.processNext();
@@ -1858,6 +1942,7 @@ class PlaybackQueueManager {
       broadcast({
         type: "state",
         state: "speaking",
+        ...(this.captureAdmission?.has(next.id) && this.preservesPausedRead() ? { preserves_paused_read: true } : {}),
         utteranceId: next.wordTimeline.utteranceId,
         text: next.metadata.text,
         ...(next.metadata.display ? { display: next.metadata.display } : {}),
@@ -2135,7 +2220,7 @@ class PlaybackQueueManager {
       );
       const message = `Playback watchdog: ${active.job.id} generation ${generation} exceeded ${remainingMs}ms + ${PLAYER_WATCHDOG_MARGIN_MS}ms margin; forcing SIGKILL`;
       console.warn(`[voicelayer] ${message}`);
-      broadcast({ type: "error", message, recoverable: true });
+      broadcast({ type: "error", source: "playback", message, recoverable: true });
       this.emitQueueSnapshot();
       this.resolveIfIdle();
       this.processNext();
@@ -2199,6 +2284,10 @@ export function reserveCaptureAdmission(): CaptureAdmission | undefined {
   return playbackQueueManager.reserveCaptureAdmission();
 }
 
+export function releaseAskReadSuccessor(): void { playbackQueueManager.releaseReadSuccessor(); }
+
+export function isAskReadProcessing(): boolean { return playbackQueueManager.hasProcessingRead(); }
+
 export function isCaptureAdmissionReserved(): boolean {
   return playbackQueueManager.hasCaptureAdmission();
 }
@@ -2211,7 +2300,7 @@ function playAudioNonBlockingAdmitted(
   metadata?: PlaybackMetadata,
 ): QueuedPlaybackHandle {
   // A start-paused admission holds no player, exactly like a P16 park; Play re-checks the speaker.
-  if (!metadata?.startPaused) assertSpeakerClear();
+  if (!metadata?.startPaused) playbackQueueManager.assertReadSpeakerClear(metadata?.wordTimeline?.utteranceId);
   const handle = playbackQueueManager.enqueue(audioFile, metadata);
   holdVoiceAdmission(handle.playerExited.finally(() => settleSpeechArchivesForUpdate(metadata?.speechArchive)));
   return handle;
@@ -2232,7 +2321,7 @@ const PLAYBACK_WAIT_TIMEOUT_MS = 35_000;
 export async function awaitCurrentPlayback(options: { forCaptureAdmission?: boolean } = {}): Promise<void> {
   // Snapshot generation ownership before yielding, including already-aborted cleanup.
   const generations = [...cancelledLongReadTeardowns, ...(options.forCaptureAdmission ? [] : speechPreparationSettlements)];
-  if (activeLongRead) generations.push(activeLongRead.done);
+  if (activeLongRead && !(options.forCaptureAdmission && isPlaybackPaused())) generations.push(activeLongRead.done);
   // Capture the queue now; later unrelated speech must not join this acknowledgement.
   const queueDrained = options.forCaptureAdmission ? undefined : playbackQueueManager.awaitDrained();
   const settled = async () => {
@@ -2318,21 +2407,21 @@ export function pausePlayback(scope: { id?: string; generation?: number } = {}, 
         utterance_id: read.wordTimeline.utteranceId, chunk_start_ms: admission.info.chunk_start_ms });
   const publish = (parked: PendingReadChunk & { phase: "paused" }) => publishPlaybackState({ type: "playback_state", state: "paused",
     playback_id: parked.identity.id, generation: parked.identity.generation, pause_owner: parked.owner,
-    offset_ms: parked.info.chunk_start_ms, chunk_offset_ms: 0, word_index: 0,
+    offset_ms: parked.info.chunk_start_ms + (parked.offsetMs ?? 0), chunk_offset_ms: parked.offsetMs ?? 0, word_index: 0,
     long_read: { ...parked.info, preparing: true } }, parked.owner);
-  if (isCaptureAdmissionReserved() && owner !== "f5") return { outcome: "reject", reason: "unsupported" };
+  if (isCaptureAdmissionReserved() && owner !== "f5" && !playbackQueueManager.isProcessingRead(read.id)) return { outcome: "reject", reason: "unsupported" };
   if (admission.phase === "paused") {
     if (owner === "user" && admission.owner === "f5") {
       admission.owner = "user"; publish(admission);
-      return { outcome: "accept", reason: "manual pause", offset_ms: admission.info.chunk_start_ms };
+      return { outcome: "accept", reason: "manual pause", offset_ms: admission.info.chunk_start_ms + (admission.offsetMs ?? 0) };
     }
-    return { outcome: "noop", reason: "already paused", offset_ms: admission.info.chunk_start_ms };
+    return { outcome: "noop", reason: "already paused", offset_ms: admission.info.chunk_start_ms + (admission.offsetMs ?? 0) };
   }
   const parked: PendingReadChunk & { phase: "paused" } = { ...admission, phase: "paused", owner,
     identity: { id: admission.identity.id, generation: admission.identity.generation + (admission.info.chunk_index > 0 ? 1 : 0) } };
   read.pendingChunk = parked;
   read.archive?.move("paused"); publish(parked);
-  return { outcome: "accept", reason: "parked", offset_ms: admission.info.chunk_start_ms };
+  return { outcome: "accept", reason: "parked", offset_ms: admission.info.chunk_start_ms + (admission.offsetMs ?? 0) };
 }
 
 /** F5 owns only this read until capture settlement. A stale settlement never touches a replacement. */
@@ -2361,7 +2450,8 @@ export function resumePlayback(scope: { id?: string; generation?: number } = {})
   const read = playbackQueueManager.isPaused() ? undefined : preparationParkedRead();
   if (!playbackQueueManager.isPaused() && !read) return { outcome: "noop", reason: "not paused" };
   if (!read) return playbackQueueManager.resume(scope);
-  if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
+  if (f5CaptureActive || ((getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) &&
+      !playbackQueueManager.isProcessingRead(read.id))) return { outcome: "reject", reason: "busy" };
   const admission = read.pendingChunk;
   if (!admission || admission.phase !== "paused") return { outcome: "noop", reason: "not paused" };
   if ((scope.id !== undefined && scope.id !== admission.identity.id) ||
@@ -2370,7 +2460,7 @@ export function resumePlayback(scope: { id?: string; generation?: number } = {})
   read.pendingChunk = { ...admission, phase: "resuming",
     identity: { id: admission.info.chunk_index === 0 ? nextPlaybackId() : admission.identity.id,
       generation: admission.identity.generation + 1 } };
-  return { outcome: "accept", offset_ms: admission.info.chunk_start_ms };
+  return { outcome: "accept", offset_ms: admission.info.chunk_start_ms + (admission.offsetMs ?? 0) };
 }
 
 /** Current seeks never resurrect a stopped generation; readback is explicit and idle-only. */
@@ -2423,7 +2513,7 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
     initialOffsetMs: offsetMs,
     registerSeek: control => {
       const advance = (result: SeekResult) => { if (result.outcome === "accept") generation++; return result; };
-      handle.seek = { seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };
+      handle.seek = { ...control, seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };
     },
     synthesize: async (text, index) => {
       const metadata = chunks[index].metadata;
@@ -2506,6 +2596,7 @@ export interface LongReadHandle {
 }
 type PendingReadChunk = {
   info: NonNullable<StateEvent["long_read"]>;
+  offsetMs?: number;
   identity: { id: string; generation: number };
 } & ({ phase: "preparing" } | { phase: "paused"; owner: PlaybackPauseOwner } | { phase: "resuming"; owner: PlaybackPauseOwner });
 type OwnedLongRead = LongReadHandle & { archive?: LiveSpeechArchive; controller: AbortController; seek?: LongReadSeek;
@@ -2534,11 +2625,34 @@ export function setExternalSpeechPreemptionListener(listener: typeof externalSpe
   externalSpeechListener = listener;
 }
 
+/** Any live read lends Ask an automatic return; a user's existing pause never does. */
+export function parkReadForAsk(): ((processing?: boolean) => boolean) | undefined {
+  const read = activeLongRead;
+  // Parking requires a runner that can retain and resume its position.
+  // Otherwise cancel it and let the bounded teardown wait retain ownership.
+  if (!read || !read.seek || read.controller.signal.aborted || isPlaybackPaused()) return;
+  read.seek?.cancelPendingSeek?.();
+  const pending = read.seek?.pendingPosition?.();
+  if (pending && !read.pendingChunk) read.pendingChunk = { ...pending, phase: "preparing",
+    identity: { id: nextPlaybackId(), generation: read.generation } };
+  const parked = playbackQueueManager.pauseReadForAsk(read.id) ||
+    (read.pendingChunk && read.pendingChunk.phase !== "paused" && pausePlayback(read.pendingChunk.identity).outcome === "accept");
+  if (!parked) return;
+  return (processing = false) => {
+    if (activeLongRead !== read || read.controller.signal.aborted) return true;
+    if (processing) {
+      if (!playbackQueueManager.beginReadProcessing(read.id)) return false;
+    } else if (playbackQueueManager.capturePauseIdentity() !== read.id && preparationParkedRead() !== read) return true;
+    return resumePlayback().outcome !== "reject";
+  };
+}
+
 /** Preempt only a long read; ordinary short speech retains its existing queue policy.
- * `successor` is a user read replacing the current one; anything else (agent speech, Ask) is external. */
-export function preemptLongRead(by: "external" | "successor" = "external"): boolean {
-  if (by === "external") externalSpeechListener?.();
-  // New accepted speech (and Ask) replaces a parked item so held speech cannot strand a waiter.
+ * `successor` replaces a user read; `ask` preserves an existing park in any admission phase. */
+export function preemptLongRead(by: "external" | "successor" | "ask" = "external"): boolean {
+  if (by === "ask" && (isPlaybackPaused() || playbackQueueManager.preservesPausedRead())) return false;
+  if (by !== "successor") externalSpeechListener?.();
+  // Other accepted speech replaces a parked item so held speech cannot strand a waiter.
   playbackQueueManager.replaceParked();
   activeLongRead?.archive?.finish("stopped", "REPLACED");
   if (!cancelLongRead()) return false;
@@ -2603,15 +2717,16 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
   const projection = projected ?? projectSpeakableText(displayChunk, rules, profile.engine);
   const spoken = projection.speechText;
   try {
-    const synthesizeEdge = async (voice: string, rate: string): Promise<PreparedChunk> => {
+    const synthesizeEdge = async (voice: string, rate: string, fallbackReason: string | null = null): Promise<PreparedChunk> => {
       const edge = projected ?? (profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge"));
       const chunk = await synthesizeEdgeChunk(edge.speechText, voice, rate, audioFile,
         new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal, edgeRetries);
       chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, edge.speechText, chunk.wordBoundaries, edge.ranges);
-      return { chunk, voice, engine: "edge-tts", spokenText: edge.speechText };
+      return { chunk, voice, engine: "edge-tts", spokenText: edge.speechText,
+        synthesis: { rate, attempts: fallbackReason === "clone_synthesis_failed" ? ["qwen3-tts", "edge-tts"] : ["edge-tts"], unavailable: fallbackReason === "clone_profile_missing" ? ["clone-profile"] : [], fallbackReason } };
     };
     if (profile.engine === "edge") {
-      return await synthesizeEdge(profile.voice, profile.rate);
+      return await synthesizeEdge(profile.voice, profile.rate, profile.requestedClone ? "clone_profile_missing" : null);
     }
     const audio = await synthesizeCloned(spoken, profile.voice, signal);
     throwIfAbortedSafe(signal);
@@ -2619,7 +2734,7 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
       if (requireClone) throw new VoiceProfileUnavailableError(profile.voice, "synthesis-failed");
       const voice = resolveVoice(profile.fallbackVoice || loadProfile(profile.voice)?.fallback || defaultVoice(), "edge").voice;
       console.error(`[voicelayer] Cloned voice "${profile.voice}" unavailable — falling back to edge-tts (${voice})`);
-      return await synthesizeEdge(voice, edgeFallbackRate);
+      return await synthesizeEdge(voice, edgeFallbackRate, "clone_synthesis_failed");
     }
     writeFileSync(audioFile, audio);
     const speed = clonePlaybackSpeed(profile.rate);
@@ -2638,7 +2753,8 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
     throwIfAbortedSafe(signal);
     const durationMs = probeDuration ? probeAudioDurationMs(audioFile) : 0;
     if (probeDuration && (!durationMs || durationMs <= 0)) throw new Error("Cloned audio has no readable duration");
-    return { chunk: { audioFile, durationMs: durationMs ?? 0, wordBoundaries: [] }, voice: profile.voice, engine: "qwen3-tts", projection, spokenText: spoken };
+    return { chunk: { audioFile, durationMs: durationMs ?? 0, wordBoundaries: [] }, voice: profile.voice, engine: "qwen3-tts", projection, spokenText: spoken,
+      synthesis: { rate: profile.rate, attempts: ["qwen3-tts"], unavailable: [], fallbackReason: null } };
   } catch (error) {
     disposeLongReadChunkFiles(audioFile);
     throw error;
@@ -2704,6 +2820,7 @@ async function prepareSelectionReadStartAdmitted(
         spokenText: chunk.spokenText, ...read.provenance(0) };
     } finally { await read.close(); }
   } else prepared = await synthesizeLongReadChunk(displayChunk, profile, signal, policy, 0, rules);
+  archive?.synthesisDiagnostics(prepared.synthesis);
   archive?.generated(prepared.chunk.audioFile, prepared.spokenText ?? displayChunk, prepared.voice, profile.kind ?? "long", prepared.engine, 0, prepared.chunk.durationMs);
   if (signal.aborted) { disposeLongReadChunkFiles(prepared.chunk.audioFile); throwIfAbortedSafe(signal); }
   return start = new PreparedReadStart(identity, prepared,
@@ -2754,18 +2871,19 @@ async function synthesizeProsodySegment(plan: ProsodyPlan, segment: ProsodyPlan[
   try {
     const chunk = await synthesizeEdgeChunk(segment.text, profile.voice, segment.emphasis ? emphasisRate(profile.rate) : profile.rate,
       audioFile, scriptPath, signal, edgeRetries, segment.emphasis ? EDGE_EMPHASIS : undefined);
-    return { chunk, voice: profile.voice, engine: "edge-tts", spokenText: segment.text };
+    return { chunk, voice: profile.voice, engine: "edge-tts", spokenText: segment.text,
+      synthesis: { rate: segment.emphasis ? emphasisRate(profile.rate) : profile.rate, attempts: ["edge-tts"], unavailable: [], fallbackReason: null } };
   } catch (error) { disposeLongReadChunkFiles(audioFile); throw error; }
 }
 
 function createStructuredProsodyRead(plan: ProsodyPlan, profile: LongReadProfile, signal: AbortSignal, policy: ChunkSynthesisPolicy,
   prepared?: PreparedReadStart, { lookahead, edgeRetries = 1 }: { lookahead?: number; edgeRetries?: number } = {}) {
-  const provenance = new Map<ProsodyPlan["segments"][number], Pick<PreparedChunk, "voice" | "engine">>();
+  const provenance = new Map<ProsodyPlan["segments"][number], Pick<PreparedChunk, "voice" | "engine" | "synthesis">>();
   const cached = prepared?.take(preparedStartIdentity(plan.chunks[0].text, profile, policy) + plan.renderIdentity);
   const read = createProsodyRead(plan, {
     synthesize: async (segment, signal) => {
       const result = await synthesizeProsodySegment(plan, segment, profile, signal, policy, edgeRetries);
-      provenance.set(segment, { voice: result.voice, engine: result.engine });
+      provenance.set(segment, { voice: result.voice, engine: result.engine, synthesis: result.synthesis });
       return { audioFile: result.chunk.audioFile, words: result.chunk.wordBoundaries, durationMs: result.chunk.durationMs };
     },
     decode: decodeAudioToPCM,
@@ -2781,10 +2899,18 @@ function createStructuredProsodyRead(plan: ProsodyPlan, profile: LongReadProfile
       words: cached.chunk.wordBoundaries, spokenText: cached.spokenText
         ?? plan.segments.slice(0, plan.chunks[0].end).map(segment => segment.text).join(" ") } : undefined });
   return { ...read, provenance(index: number) {
-    if (index === 0 && cached) return { voice: cached.voice, engine: cached.engine };
+    if (index === 0 && cached) return { voice: cached.voice, engine: cached.engine, synthesis: cached.synthesis };
     const sources = plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map(segment =>
-      provenance.get(segment) ?? { voice: profile.voice, engine: profile.engine === "clone" ? "qwen3-tts" : "edge-tts" });
-    return { voice: [...new Set(sources.map(source => source.voice))].join(","),
+      provenance.get(segment) ?? { voice: profile.voice, engine: profile.engine === "clone" ? "qwen3-tts" : "edge-tts", synthesis: undefined });
+    const diagnostics = sources.map(source => source.synthesis);
+    const rates = new Set(diagnostics.map(item => item?.rate ?? null));
+    const synthesis: SynthesisDiagnostics = {
+      rate: rates.size === 1 ? diagnostics[0]?.rate ?? null : null,
+      attempts: [...new Set(diagnostics.flatMap(item => item?.attempts ?? []))],
+      unavailable: [...new Set(diagnostics.flatMap(item => item?.unavailable ?? []))],
+      fallbackReason: diagnostics.find(item => item?.fallbackReason)?.fallbackReason ?? null,
+    };
+    return { synthesis, voice: [...new Set(sources.map(source => source.voice))].join(","),
       engine: [...new Set(sources.map(source => source.engine))].join("+") };
   } };
 }
@@ -2868,14 +2994,14 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
   const run = async () => {
     if (signal.aborted) return;
     // A recording may have begun while the predecessor was settling.
-    assertSpeakerClear();
+    playbackQueueManager.assertReadSpeakerClear(id);
     prosodyRead = prosodyPlan ? createStructuredProsodyRead(prosodyPlan, profile, signal, policy, preparedStart) : undefined;
     // PROSODY: in-flight utterance requests are reaped, and never-delivered files removed, however the read ends.
     try { await runLongRead(texts, id, signal, {
       archiveContext: identity.archiveContext,
       registerSeek: (control) => {
         const advance = (result: SeekResult) => { if (result.outcome === "accept") generation++; return result; };
-        handle.seek = { seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };
+        handle.seek = { ...control, seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };
       },
       canReplay: (chunk) => existsSync(chunk.audioFile),
       prepareSeek: (chunk, offset, seekSignal) => offset < chunk.durationMs
@@ -2895,6 +3021,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
           : lease?.take(preparedStartIdentity(displayChunk, profile, policy))
           ?? await synthesizeLongReadChunk(displayChunk, profile, signal, policy);
         const { audioFile } = result.chunk;
+        archive.synthesisDiagnostics(result.synthesis);
         archive.generated(audioFile, result.spokenText ?? result.projection?.speechText ?? displayChunk,
           result.voice, profile.kind ?? "long", result.engine, index, result.chunk.durationMs);
         chunkVoices.set(audioFile, result.voice);
@@ -2932,7 +3059,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
           speechArchive: archive,
           wordTimeline: handle.wordTimeline,
           ...(startPaused ? { startPaused: true, startPauseOwner } : {}),
-          ...(admission && admission.phase !== "preparing" && (info.chunk_index > 0 || admission.phase === "resuming") ? { readAdmission: {
+          ...(admission && admission.phase !== "preparing" && (info.chunk_index > 0 || admission.phase === "resuming" || playbackQueueManager.preservesPausedRead()) ? { readAdmission: {
             ...admission.identity, phase: admission.phase, owner: admission.owner } } : {}),
           text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs,
           longRead: { ...info, ...(displays[info.chunk_index] ? { display: displays[info.chunk_index] } : {}) }, speechIdentity,
@@ -3011,7 +3138,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
     if (activeLongRead === handle) {
       controller.abort();
       playbackQueueManager.cancelUtterance(id);
-      broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
+      broadcast({ type: "error", source: "playback", message: error instanceof Error ? error.message : String(error), recoverable: true });
     }
   }).finally(() => {
     longReads.delete(id);
@@ -3025,7 +3152,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
     try { archive.finish(failure ? "failed" : signal.aborted && !audioStarted ? "cancelled" : outcome, failure || !playedToEnd && !signal.aborted ? "SPEECH_FAILED" : signal.aborted ? "USER_STOP" : "PLAYBACK_COMPLETED"); }
     catch { console.error("[speech] terminal archive write failed"); }
     finally {
-      try { longReadSettledListener?.(speechIdentity.request_id, outcome); } catch (error) {
+      try { playbackQueueManager.settleRead(id, outcome === "completed", () => longReadSettledListener?.(speechIdentity.request_id, outcome)); } catch (error) {
         console.error(`[voicelayer] Read queue settle failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         if (owned && !activeLongRead && playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
@@ -3153,7 +3280,7 @@ async function prepareSpeech(
   const chars = text?.length ?? 0;
   if (!text?.trim()) return {};
   assertSpeakerClear();
-  preemptLongRead();
+  preemptLongRead(options?.mode === "converse" ? "ask" : "external");
   if (cancelledLongReadTeardowns.size) {
     await Promise.all([...cancelledLongReadTeardowns]);
     throwIfAbortedSafe(signal);
@@ -3184,6 +3311,8 @@ async function prepareSpeech(
     if (!(error instanceof VoiceProfileUnavailableError) || requireClone) throw error;
     const warning = `Cloned voice "${selectedVoice}" is missing — falling back to edge-tts (${TTS_DEFAULTS.voice})`;
     console.error(`[voicelayer] ${warning}`);
+    options?.speechArchive?.synthesisFallback("clone_profile_missing");
+    options?.speechArchive?.synthesisUnavailable("clone-profile");
     resolved = {voice: TTS_DEFAULTS.voice, engine: "edge-tts", warning};
   }
   // Keep engine-specific text and ranges together, including clone→Edge fallback.
@@ -3257,6 +3386,7 @@ async function prepareSpeech(
 
     // Tier 0: XTTS-v2 fine-tuned (best quality -- captures cadence + timbre)
     if (isXTTSAvailable(profileAssetVoice) && profile?.reference_clip) {
+      options?.speechArchive?.synthesisAttempt("xtts-v2");
       const wavPath = await synthesizeXTTS(
         spokenText,
         profileAssetVoice,
@@ -3286,9 +3416,12 @@ async function prepareSpeech(
           ...playback,
         };
       }
+      options?.speechArchive?.synthesisFallback("clone_synthesis_failed");
       console.error(
         `[voicelayer] XTTS inference failed for "${resolved.voice}" -- trying F5-TTS`,
       );
+    } else {
+      options?.speechArchive?.synthesisUnavailable("xtts-v2");
     }
 
     // Tier 1a: F5-TTS MLX (local zero-shot, no daemon needed)
@@ -3298,6 +3431,7 @@ async function prepareSpeech(
       profile.reference_clip &&
       profile.reference_text
     ) {
+      options?.speechArchive?.synthesisAttempt("f5-tts-mlx");
       const wavPath = await synthesizeF5TTS(
         spokenText,
         profile.reference_clip,
@@ -3327,12 +3461,16 @@ async function prepareSpeech(
           ...playback,
         };
       }
+      options?.speechArchive?.synthesisFallback("clone_synthesis_failed");
       console.error(
         `[voicelayer] F5-TTS synthesis failed for "${resolved.voice}" -- trying Qwen3 daemon`,
       );
+    } else {
+      options?.speechArchive?.synthesisUnavailable("f5-tts-mlx");
     }
 
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
+    options?.speechArchive?.synthesisAttempt("qwen3-tts");
     const audioBuffer = await synthesizeCloned(spokenText, resolved.voice, signal);
     throwIfAbortedSafe(signal);
     if (audioBuffer) {
@@ -3357,6 +3495,8 @@ async function prepareSpeech(
         ...playback,
       };
     }
+
+    options?.speechArchive?.synthesisFallback("clone_synthesis_failed");
 
     // All cloned engines failed. Fail-closed when the clone is mandated;
     // otherwise keep the resilient edge-tts fallback.
@@ -3418,6 +3558,8 @@ async function speakWithEdgeTTS(
 
   // Auto-slow for long text
   rate = adjustRateForLength(rate, spokenText.length);
+  options?.speechArchive?.synthesisConfiguredRate(rate);
+  options?.speechArchive?.synthesisAttempt("edge-tts");
 
   const ttsFile = ttsFilePath(process.pid, ttsCounter++);
   const scriptPath = new URL("../scripts/edge-tts-words.py", import.meta.url)
@@ -3461,7 +3603,7 @@ async function speakWithEdgeTTS(
     const textOnlyAllowed = error instanceof EdgeSynthesisUnavailableError && options?.textOnlyOnSynthesisFailure &&
       !options.textOnlyOnSynthesisFailure.aborted && !signal?.aborted;
     if (!signal?.aborted && !textOnlyAllowed) broadcast({
-      type: "error",
+      type: "error", source: "playback",
       message: "TTS synthesis failed (edge-tts)",
       recoverable: true,
     });

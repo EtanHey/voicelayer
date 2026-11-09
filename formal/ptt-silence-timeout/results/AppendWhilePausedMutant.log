@@ -3,12 +3,13 @@
   "kind": "invariant",
   "target": "NoPausedAudio",
   "status": "EXPECTED_FAIL",
-  "generated": 134,
-  "distinct": 101,
+  "generated": 200,
+  "distinct": 123,
   "trace": [
-    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  endedBy |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"pause\",\n  endedBy |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 1,\n  owed |-> 1,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"silence\",\n  endedBy |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<\"quiet\">>,\n  said |-> <<\"quiet\">>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"silence\",\n  endedBy |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<\"quiet\", \"aside\">>,\n  said |-> <<\"quiet\">>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
+    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"open\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"pause\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 1,\n  owed |-> 1,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"silence\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<\"quiet\">>,\n  said |-> <<\"quiet\">>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"silence\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> TRUE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> TRUE,\n  spans |-> 1,\n  pcm |-> <<\"quiet\", \"aside\">>,\n  said |-> <<\"quiet\">>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
   ]
 }

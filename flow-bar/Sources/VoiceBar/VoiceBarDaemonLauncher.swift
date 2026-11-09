@@ -43,7 +43,7 @@ final class VoiceBarDaemonLauncher {
         process.arguments = configuration.arguments
         process.currentDirectoryURL = URL(fileURLWithPath: configuration.workingDirectory)
         let daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
-            path: VoiceBarDaemonController.daemonPATH
+            path: VoiceBarDaemonController.daemonPATH, daemonSource: configuration.daemonSource
         )
         guard socketBindingAllowed(daemonEnvironment) else {
             NSLog("[VoiceBar] SOCKET_ISOLATION_REFUSED: refusing MCP child with resident socket paths")

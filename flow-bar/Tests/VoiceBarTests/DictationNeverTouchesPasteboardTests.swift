@@ -52,7 +52,7 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
             let harness = PasteHarness(bundleIdentifier: bundle, pasteboard: "WHAT HE COPIED")
             harness.state.asyncDictationInsertionHandlerProvider = { { _, _ in XCTFail("Terminals must keep skipping AX"); return false } }
             harness.dictate("ADD שלום 👩‍💻\nsecond line")
-            XCTAssertEqual(harness.typed.map(\.text), ["ADD שלום 👩‍💻\nsecond line"], bundle)
+            XCTAssertEqual(harness.typed.map(\.text), [bundle == "com.cmuxterm.app" ? "ADD שלום 👩‍💻\nsecond line" : "ADD שלום 👩‍💻 second line"], bundle)
             XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", bundle)
             XCTAssertEqual(harness.pasteboardWrites, [], bundle)
             XCTAssertEqual(harness.state.latestDictationInsertionStatus, .typed, "Posted events are typed, not readback")
@@ -62,20 +62,21 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
     func testEveryTerminalKeepsTranscriptConfirmationAndTypedStatus() {
         let text = "ADD שלום 👩‍💻\nsecond line"
         for bundle in TerminalPasteTargets.bundleIdentifiers.sorted() {
+            let delivered = bundle == "com.cmuxterm.app" ? text : "ADD שלום 👩‍💻 second line"
             let harness = PasteHarness(bundleIdentifier: bundle, pasteboard: "WHAT HE COPIED")
             harness.state.asyncDictationInsertionHandlerProvider = {
                 { _, _ in XCTFail("Terminals must keep skipping AX: \(bundle)"); return false }
             }
             harness.dictate(text)
-            XCTAssertEqual(harness.state.confirmationText, text, "Automatic delivery: \(bundle)")
+            XCTAssertEqual(harness.state.confirmationText, delivered, "Automatic delivery: \(bundle)")
             XCTAssertEqual(harness.state.latestDictationInsertionStatus, .typed, bundle)
-            XCTAssertEqual(harness.typed.map(\.text), [text], "Exactly one automatic delivery: \(bundle)")
+            XCTAssertEqual(harness.typed.map(\.text), [delivered], "Exactly one automatic delivery: \(bundle)")
             XCTAssertEqual(harness.state.latestReusableTranscript, text, bundle)
 
             harness.state.repasteLastTranscript(source: "shift_f5")
-            XCTAssertEqual(harness.state.confirmationText, text, "Explicit recovery: \(bundle)")
+            XCTAssertEqual(harness.state.confirmationText, delivered, "Explicit recovery: \(bundle)")
             XCTAssertEqual(harness.state.latestDictationInsertionStatus, .typed, bundle)
-            XCTAssertEqual(harness.typed.map(\.text), [text, text], "One explicit recovery, no duplicate fallback: \(bundle)")
+            XCTAssertEqual(harness.typed.map(\.text), [delivered, delivered], "One explicit recovery, no duplicate fallback: \(bundle)")
             XCTAssertEqual(harness.state.latestReusableTranscript, text, bundle)
             XCTAssertEqual(harness.pasteboardWrites, [], bundle)
             XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", bundle)

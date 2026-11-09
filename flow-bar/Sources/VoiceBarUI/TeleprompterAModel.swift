@@ -44,6 +44,12 @@ public enum TeleprompterA {
         reduceMotion ? nil : .timingCurve(0.77, 0, 0.175, 1, duration: 0.24)
     }
 
+    /// T2 (QA 2026-11-08 S3-F1): only a reading step slides. A seek jumps several lines; sliding the lines that
+    /// stay mounted across that distance drew them through the newly mounted ones, so a jump lands instead.
+    public static func slide(reduceMotion: Bool, fromLine: Int, toLine: Int) -> Animation? {
+        abs(toLine - fromLine) <= 1 ? slide(reduceMotion: reduceMotion) : nil
+    }
+
     public static let pull = Animation.spring(response: 0.38, dampingFraction: 0.86)
 
     public static func bodyHeight(lines: Int) -> CGFloat { CGFloat(lines) * lineHeight + footerHeight }
@@ -72,7 +78,8 @@ public enum TeleprompterA {
     public static func clamp(_ lines: Int) -> Int { min(lineRange.upperBound, max(lineRange.lowerBound, lines)) }
 
     public static func footerState(isPaused: Bool, isPausedForDictation: Bool, rate: String = "1×") -> String {
-        isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : "Reading · \(rate)"
+        // T2 (QA 2026-11-08, Etan: "Reading is kind of redundant there"): plain reading shows only its rate.
+        isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : rate
     }
 
     public static func queuedChip(_ count: Int) -> String? { count > 0 ? "+\(count) queued" : nil }

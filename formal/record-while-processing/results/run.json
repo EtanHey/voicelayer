@@ -63,13 +63,13 @@
     "formal/record-while-processing/OldUnguardedCancel.cfg": "70dbca0c9a0d9ef0b2086f42f3d24c1794a3328e705cb506a81ff2756c8808d2",
     "formal/record-while-processing/Fixed.cfg": "4933ae51c46ec4d14dc2310d2ab6ba63907bd9a81cb7a5e1eea77aba1b7b7c68",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "0ceac32ad79f932891c321cf83c6bcf604fce6ad3e9a410f94fffd7f984967a2",
-    "src/input.ts": "7d664485da9ffc59803bd07df4289f93f6892b01914a258ae148a603f285d188",
-    "src/socket-handlers.ts": "0d3735b7a2d7f1bd4f3c18df0ded933a60aa0e77e3399dcf13a62ed53f67ab05",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "b64306f096c3a7d8e022c8330b320d7c5ec51ab6be79f80563d4f2d4abb5e3f9",
+    "src/input.ts": "43d2be3c86d017511f1d45bbd12dba8e28e409758a1d7295a2a06d6ce77219ea",
+    "src/socket-handlers.ts": "334d80508a9906699734eba0f6b450a8e609f289c9222dd235dde717ed17abe3",
     "src/recording-state.ts": "db2b9617e38ed6da0fea264ead439f3a4ba88619252b84ac76bbb420274b90da",
     "src/session-booking.ts": "8354241ad3c54e1b2333630c095178e2da77dce049e8ca3a44ae55c5653b5b62",
-    "src/mcp-server-daemon.ts": "a920961a9913ed8febcce8e83e4873676108142ea571f89a224eaa793eb8fdf8",
-    "src/recording-jobs.ts": "9bdba55a4c85b5d4435ef1fc3d7f6258b9ad22172f537972d98e99551d3041aa",
+    "src/mcp-server-daemon.ts": "6a7dde04f7945902d57d621ea6c4a08ca76c7240d2d6159ff57f4f00f6819129",
+    "src/recording-jobs.ts": "b93de1bd6033ad59ec273c768a47317538b5f50dc482d088303422d40c134b6a",
     "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368"
   },
@@ -450,24 +450,24 @@
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 219523,
-      "distinct": 9950
+      "generated": 233490,
+      "distinct": 10461
     },
     "MutNoOverlapProgress": {
       "role": "mutant",
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 193026,
-      "distinct": 9584
+      "generated": 180974,
+      "distinct": 9123
     },
     "MutNoIdle": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 299883,
-      "distinct": 13307
+      "generated": 282160,
+      "distinct": 12777
     },
     "MutHeldDecode": {
       "role": "mutant",
@@ -490,16 +490,16 @@
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 214615,
-      "distinct": 9974
+      "generated": 218623,
+      "distinct": 10142
     },
     "MutNoDecodeFairness": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 289631,
-      "distinct": 12993
+      "generated": 293378,
+      "distinct": 13117
     },
     "MutSpeechNoRenew": {
       "role": "mutant",
@@ -562,8 +562,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 243233,
-      "distinct": 10726
+      "generated": 244166,
+      "distinct": 10753
     },
     "ConcurrentGlobalCancel": {
       "role": "mutant",

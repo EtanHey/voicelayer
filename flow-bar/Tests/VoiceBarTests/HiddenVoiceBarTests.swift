@@ -26,6 +26,21 @@ final class HiddenVoiceBarTests: XCTestCase {
 
     // MARK: - Copy
 
+    /// BARE-STOP: Hide over speech sends a speech-scoped stop. An id-less stop must never be able to land
+    /// on a dictation take that opened a moment earlier; a capture Hide means to end goes through cancel.
+    func testHideOverSpeechSendsASpeechScopedStop() {
+        let state = connectedState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.handleEvent(["type": "state", "state": "speaking", "text": "agent update"])
+        XCTAssertEqual(state.mode, .speaking)
+        state.snooze(until: until)
+        let stops = commands.filter { $0["cmd"] as? String == "stop" }
+        XCTAssertEqual(stops.count, 1)
+        XCTAssertEqual(stops.first?["scope"] as? String, "speech")
+        XCTAssertNil(stops.first?["take_id"])
+    }
+
     func testHiddenAndConnectedReadsHiddenUntilNeverDisconnected() {
         let state = connectedState()
 

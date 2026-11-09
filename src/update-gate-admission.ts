@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { updateGateFilePath } from "./paths";
 import { readUpdateGate, transitionUpdateGate, type UpdateGateLease, type UpdateGateState, type UpdateGateTransition } from "./update-gate";
 import { withUpdateGateLock, persistUpdateGateState, resolveUpdateGatePath } from "./update-gate-storage";
+import { admissionOwnerProbe, reconcileDeadAdmissions } from "./update-gate-owner";
+const ownerStartTime = admissionOwnerProbe.startTime(process.pid);
 export class UpdateBusyError extends Error {
   constructor() { super("UPDATE_BUSY: update gate closed; retry when the update finishes"); }
 }
@@ -40,7 +42,7 @@ function snapshot(path: string) {
   try {
     const state = diskState(path);
     if (state.kind === "UNKNOWN" || degraded.has(path) || hasDiagnostic(path)) return null;
-    return { state, active: readLedger(path) };
+    return { state, active: reconcileDeadAdmissions(path, readLedger(path)) };
   } catch { return null; }
 }
 const degraded = new Set<string>();
@@ -158,9 +160,9 @@ function acquire(retryContention = false): Admission {
   const body = (path: string): Admission | null => {
     const state = initializeUnderLock(path);
     if (state.kind === "UNKNOWN") return unregistered();
-    if (state.kind !== "OPEN") return null;
+    if (state.kind !== "OPEN" && state.kind !== "DRAINING") return null;
     const token = randomUUID(), file = join(path + ".admissions", token);
-    const owner = { token, pid: process.pid, incarnation, generation: state.generation };
+    const owner = { token, pid: process.pid, incarnation, generation: state.kind === "OPEN" ? state.generation : state.lease.generation, ...(ownerStartTime ? { startTime: ownerStartTime } : {}) };
     persistVisible(path, file, owner);
     return { refs: 0, release: () => releaseWhenUnlocked(() => withUpdateGateLock(() => {
       // An anomalous owner is a recoverable registration, never an orphaned host lock.
@@ -212,16 +214,18 @@ export function withVoiceAdmission<T>(work: () => T): T {
   const inherited = context.getStore();
   return runAdmitted(inherited && inherited.refs > 0 ? inherited : acquire(), work);
 }
-export type VoiceAdmissionOptions = { maxWaitMs?: number; kind?: "capture" | "speech" };
-type PendingAdmission = { cancelled: boolean; kind: "capture" | "speech" };
+/** `scoped`: a capture start whose client named the take (VoiceBar). Only its own take id may stop it. */
+export type VoiceAdmissionOptions = { maxWaitMs?: number; kind?: "capture" | "speech"; scoped?: boolean };
+type PendingAdmission = { cancelled: boolean; kind: "capture" | "speech"; scoped: boolean };
 const pendingAdmissions = new Set<PendingAdmission>();
 export class VoiceAdmissionCancelledError extends Error {
   constructor() { super("Voice admission cancelled before start"); }
 }
-/** Controls invalidate only their own kind of work before its media body starts. */
-export function cancelPendingVoiceAdmissions(kind: "capture" | "speech"): boolean {
+/** Controls invalidate only their own kind of work before its media body starts.
+ *  BARE-STOP: an id-less stop passes `spareScoped`, leaving client-named capture starts alone. */
+export function cancelPendingVoiceAdmissions(kind: "capture" | "speech", options: { spareScoped?: boolean } = {}): boolean {
   let cancelled = false;
-  for (const pending of pendingAdmissions) if (pending.kind === kind && !pending.cancelled) {
+  for (const pending of pendingAdmissions) if (pending.kind === kind && !pending.cancelled && !(options.spareScoped && pending.scoped)) {
     pending.cancelled = true; cancelled = true;
   }
   return cancelled;
@@ -251,7 +255,7 @@ export function withDeferredVoiceAdmission<T>(work: () => T, options: VoiceAdmis
   try { admission = inherited && inherited.refs > 0 ? inherited : acquire(true); }
   catch (error) {
     if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
-    const pending: PendingAdmission = { cancelled: false, kind: options.kind ?? "speech" }; pendingAdmissions.add(pending);
+    const pending: PendingAdmission = { cancelled: false, kind: options.kind ?? "speech", scoped: options.scoped === true }; pendingAdmissions.add(pending);
     return retryGate(() => acquire(true), () => acquire(), options.maxWaitMs ?? 1500, pending).then(value => {
       pendingAdmissions.delete(pending);
       if (pending.cancelled) { value.release(); throw new VoiceAdmissionCancelledError(); }
@@ -265,8 +269,8 @@ export function withAsyncVoiceAdmission<T>(work: () => T, options?: VoiceAdmissi
   catch (error) { return Promise.reject(error); }
 }
 /** All capture starts have a <=20ms contention budget, before any microphone opens. */
-export function withCaptureVoiceAdmission<T>(work: () => T): Promise<Awaited<T>> {
-  return withAsyncVoiceAdmission(work, { maxWaitMs: 20, kind: "capture" });
+export function withCaptureVoiceAdmission<T>(work: () => T, options: { scoped?: boolean } = {}): Promise<Awaited<T>> {
+  return withAsyncVoiceAdmission(work, { maxWaitMs: 20, kind: "capture", scoped: options.scoped === true });
 }
 export function withFreshAsyncVoiceAdmission<T>(work: () => T, options?: VoiceAdmissionOptions): Promise<Awaited<T>> {
   return context.exit(() => withAsyncVoiceAdmission(work, options));

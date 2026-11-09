@@ -12,3 +12,4 @@
 | SpeechRenewsDeadline | NoRenewalMutant |
 | StopCancelFromPaused | NoStopWhilePausedMutant |
 | UnpausedRetained | ClipAtPauseMutant, NewTakeOnResumeMutant |
+| UnscopedStopNeverEndsCapture | UnscopedEndsCaptureMutant, OpeningFallbackMutant |

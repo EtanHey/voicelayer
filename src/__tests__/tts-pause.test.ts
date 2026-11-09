@@ -83,6 +83,21 @@ async function pauseAt4200() {
   return { ...started, paused, trim };
 }
 
+it("W1 release keeps a newer prompt park and settles the borrowed read", async () => {
+  const { handle } = await pauseAt4200();
+  await tts.awaitCurrentPlayback({ forCaptureAdmission: true });
+  const admission = tts.reserveCaptureAdmission()!;
+  const prompt = tts.playAudioNonBlocking(`${TEST_TMP}/prompt.mp3`, { text: "Question?", durationMs: 1000,
+    onQueued: job => { admission.admit(job, () => {}); } });
+  try {
+    await players.at(1);
+    expect(tts.pausePlayback({ id: prompt.id }, 0).outcome).toBe("accept");
+    admission.release();
+    expect(events.find(e => e.type === "playback_outcome" && e.playback_id === handle.id)).toMatchObject({ reason: "replaced" });
+    expect(tts.resumePlayback({ id: prompt.id }).outcome).toBe("accept");
+  } finally { admission.release(); tts.cancelPlayback({ id: prompt.id }); }
+});
+
 describe("playback transition journal", () => {
   it.each(["user", "f5", "f5-to-user"] as const)("records every owned %s pause/resume without text", async (variant) => {
     const lines: string[] = [];
@@ -698,8 +713,11 @@ for (const state of ["idle", "recording", "transcribing"] as const) {
   });
 }
 
+// BARE-STOP (lead ruling 2026-11-08) supersedes R2-01's "unscoped Stop targets the F5 take": an id-less Stop is a
+// speech stop. It ends the parked read and never the dictation take, opening or capturing; only the take's id stops it.
 for (const phase of ["opening", "capturing"] as const) {
-  it(`R2-01 unscoped Stop targets only its F5 take (${phase})`, async () => {
+  it(`BARE-STOP unscoped Stop ends only speech, never its F5 take (${phase})`, async () => {
+    clearStopSignal();
     await startTenSecondRead();
     const opened = deferred<void>(), result = deferred<string | null>();
     const wait = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
@@ -710,20 +728,20 @@ for (const phase of ["opening", "capturing"] as const) {
       expect(handleSocketCommand({ cmd: "record", take_id: `unscoped-${phase}`, playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept" });
       if (phase === "capturing") await opened.promise;
       expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
-      await opened.promise;
-      expect(JSON.parse(readFileSync(STOP_FILE, "utf8"))).toMatchObject({ take_id: `unscoped-${phase}`, physical_press: false });
-      expect(tts.isPlaybackPaused()).toBe(true);
-      expect(events.filter(e => e.type === "playback_outcome")).toEqual([]);
-      (await trims.at(0)).exit.resolve(0);
+      await opened.promise; await fixtureCheckpoint();
+      // The synthetic fixture hands the take to transcription at once; the real-recorder mic is pinned in
+      // bare-stop-scoping.test.ts. Here: no stop was written for the take and it never entered its drain.
+      expect(existsSync(STOP_FILE)).toBe(false);
+      expect(recordingJobsSnapshot().recording_jobs).toContainEqual(expect.objectContaining({ take_id: `unscoped-${phase}` }));
+      expect(recordingJobsSnapshot().recording_jobs.some(job => job.phase === "draining")).toBe(false);
       result.resolve(null);
       await settleRecordingJobs(); await fixtureCheckpoint();
-      await players.at(1);
       expect(tts.hasF5Capture()).toBe(false);
     } finally { result.resolve(null); await settleRecordingJobs(); wait.mockRestore(); clearStopSignal(); }
   });
 }
 
-it("R2-01 unscoped Stop picks the first opening capture, never a later rejected take", async () => {
+it("BARE-STOP unscoped Stop never reaches the first opening capture or a later rejected take", async () => {
   clearStopSignal();
   const { player } = await startTenSecondRead();
   holdPlayerExit = true;
@@ -735,18 +753,15 @@ it("R2-01 unscoped Stop picks the first opening capture, never a later rejected 
   try {
     expect(handleSocketCommand({ cmd: "record", take_id: "first-opening", playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept" });
     expect(handleSocketCommand({ cmd: "record", take_id: "later-opening" })).toMatchObject({ outcome: "accept" });
-    expect(handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+    expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
     player.exit.resolve(143); holdPlayerExit = false;
-    await opened.promise;
-    expect(existsSync(STOP_FILE)).toBe(true);
-    expect(JSON.parse(readFileSync(STOP_FILE, "utf8"))).toMatchObject({ take_id: "first-opening", physical_press: false });
-    expect(tts.isPlaybackPaused()).toBe(true);
-    (await trims.at(0)).exit.resolve(0);
+    await opened.promise; await fixtureCheckpoint();
+    expect(existsSync(STOP_FILE)).toBe(false);
+    expect(recordingJobsSnapshot().recording_jobs).toContainEqual(expect.objectContaining({ take_id: "first-opening" }));
+    expect(recordingJobsSnapshot().recording_jobs.some(job => job.phase === "draining")).toBe(false);
     result.resolve(null);
     await settleRecordingJobs(tts.hasF5Capture);
-    await players.at(1);
     expect(wait).toHaveBeenCalledTimes(1);
-    expect(players.values).toHaveLength(2);
   } finally {
     player.exit.resolve(143); holdPlayerExit = false; result.resolve(null);
     await settleRecordingJobs(tts.hasF5Capture); wait.mockRestore(); clearStopSignal();

@@ -2586,6 +2586,7 @@ function processEnv(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string") env[key] = value;
   }
+  env.PYTHONDONTWRITEBYTECODE = "1";
   return env;
 }
 

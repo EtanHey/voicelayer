@@ -37,6 +37,7 @@ import * as tts from "../tts";
 import * as vad from "../vad";
 import * as voiceBarLauncher from "../voice-bar-launcher";
 import * as inputDevice from "../recording-input-device";
+import { recordingAppBuild } from "../recording-build";
 
 // Real subprocesses: standalone p95 <= 353 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
@@ -2931,6 +2932,9 @@ describe("input recording durability", () => {
     broadcasts = [];
     expect(await (surface === "archive" ? retranscribeRecordingCapture(archive) : retranscribeLastCapture())).toBe(backendText);
     const metadata = voiceBarArchiveMetadata(archive);
+    expect(metadata.app_build).toEqual(recordingAppBuild());
+    expect(metadata.transcribed_by).toEqual(recordingAppBuild());
+    expect(metadata.retranscribed_by).toBeUndefined();
     expect(metadata.transcription_status).toBe("transcribed");
     expect(metadata).not.toHaveProperty("last_stt_gate_removal");
     expect(metadata).not.toHaveProperty("not_transcribed_detail");
@@ -4863,16 +4867,21 @@ describe("input recording durability", () => {
 
     it("successful Ask re-transcribe clears the previous gate-removal note from History", async () => {
       const archive = writeAskArchive();
+      const capturedBuild = { version: "2.2.0", git_commit: "c".repeat(40), build_time_utc: "2026-11-01T00:00:00Z", source: "VoiceBar.Info.plist" };
+      writeFileSync(join(archive.archiveDir, "metadata.json"), JSON.stringify({ ...archive.metadata, app_build: capturedBuild }));
       const { retranscribeVoiceAskArchive } = await import("../input");
       backendText = "";
       backendAttemptEvidence = { status: "EMPTY_RESPONSE", gateRemoval: { gate: "cjk-outro", removedSpans: 1, rawCharacters: 16 } };
       await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow("empty retranscription");
       const audioPath = join(archive.archiveDir, "audio.wav");
       expect(voiceBarArchiveMetadata(audioPath)).toHaveProperty("last_stt_gate_removal");
+      expect(voiceBarArchiveMetadata(audioPath).app_build).toEqual(capturedBuild);
       backendText = "Recovered Ask words.";
       backendAttemptEvidence = undefined;
       expect(await retranscribeVoiceAskArchive(archive.id)).toBe(backendText);
       const metadata = voiceBarArchiveMetadata(audioPath);
+      expect(metadata.app_build).toEqual(capturedBuild);
+      expect(metadata.retranscribed_by).toEqual(recordingAppBuild());
       expect(metadata.transcription_status).toBe("transcribed");
       expect(metadata).not.toHaveProperty("last_stt_gate_removal");
       expect(metadata).not.toHaveProperty("not_transcribed_detail");
