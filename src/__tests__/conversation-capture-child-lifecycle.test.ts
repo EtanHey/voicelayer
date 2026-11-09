@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { dirname, join, resolve } from "node:path";
 import {
   createConversationCapturePolicy as create, requestConversationCaptureStop as stop,
   runRegisteredConversationCapture as run, waitForConversationCaptureSafety as wait,
@@ -17,7 +18,8 @@ const timers = new Map<ReturnType<typeof setTimeout>, () => void>();
 let serial = 0, setTimer: ReturnType<typeof spyOn>, clearTimer: ReturnType<typeof spyOn>;
 beforeEach(() => {
   expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");
-  expect(process.env.VOICELAYER_TEST_RUN_ROOT).toStartWith(`${process.cwd()}/.test-tmp/`);
+  // src/ and tests/ cwds sandbox at the repo root (preload `sourceCwd`); other cwds at their own.
+  expect([resolve(import.meta.dir, "../.."), process.cwd()].map(base => join(base, ".test-tmp"))).toContain(dirname(process.env.VOICELAYER_TEST_RUN_ROOT!));
   setTimer = spyOn(globalThis, "setTimeout").mockImplementation((callback, delay) => {
     expect(delay).toBe(300);
     const token = ++serial as unknown as ReturnType<typeof setTimeout>;
