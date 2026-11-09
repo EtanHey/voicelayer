@@ -1,0 +1,36 @@
+{
+  "module": "HistoryRowRefresh",
+  "sources": [
+    "formal/history-row-refresh/Fixed.cfg",
+    "formal/history-row-refresh/HistoryRowRefresh.tla",
+    "formal/history-row-refresh/OldReload.cfg",
+    "formal/history-row-refresh/UnfencedPatch.cfg",
+    "formal/history-row-refresh/check.sh",
+    "formal/legacy_receipts.py",
+    "formal/setup-tlc.py",
+    "formal/tlc.lock.json",
+    "formal/tlc_support.py"
+  ],
+  "receiptRunner": true,
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OldReload": {
+      "role": "mutant",
+      "target": "PagingNotCancelled",
+      "kind": "invariant"
+    },
+    "UnfencedPatch": {
+      "role": "mutant",
+      "target": "SettledPageIsFresh",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "PagingNotCancelled",
+    "SettledPageIsFresh"
+  ]
+}

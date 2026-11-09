@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from receipt_support import tracked_files
+from receipt_support import tracked_files, config_files
 
 
 def verify(root):
@@ -48,7 +48,7 @@ def verify(root):
                     mutants.setdefault(check['target'], []).append(name)
             if receipt.get('mutants') != mutants or not all(mutants.values()):
                 errors.append('results/run.json: exact-property mutant coverage differs from checks.json')
-            if {p.stem for p in directory.glob('*.cfg')} != set(manifest['checks']):
+            if set(config_files(directory, manifest)) != set(manifest['checks']):
                 errors.append('checks.json: config inventory differs')
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             errors.append(str(exc).replace(str(root) + '/', ''))

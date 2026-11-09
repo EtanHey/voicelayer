@@ -23,6 +23,13 @@ directory = args.directory.resolve()
 root = directory.parents[1]
 cache = root / ".build.noindex" / directory.name
 cache.mkdir(parents=True, exist_ok=True)
+manifest = json.loads((directory / "checks.json").read_text())
+if manifest.get("receiptRunner"):
+    if args.only:
+        parser.error("--only is unavailable for preserved legacy runners")
+    from legacy_receipts import record
+    record(directory, root, cache, manifest, args.record)
+    raise SystemExit(0)
 with graph_run(cache, prefix="tlc-", keep_runs=0) as run:
     manifest = json.loads((directory / "checks.json").read_text())
     assert {file.stem for file in directory.glob("*.cfg")} == set(manifest["checks"]), "Unregistered config"
