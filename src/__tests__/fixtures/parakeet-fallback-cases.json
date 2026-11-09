@@ -197,7 +197,7 @@
         "terminal": "UNRESOLVED_BOTH_EMPTY",
         "unqualified_SUCCESS_allowed": false,
         "retained_attempts": 2,
-        "reason": "Acoustic speech UNKNOWN; never silently call silence or success."
+        "reason": "Verified speech but both providers empty; never silently call silence or success."
       }
     },
     {

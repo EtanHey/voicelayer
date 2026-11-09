@@ -35,16 +35,17 @@ export function planSpanRepairs(native: ParakeetResponse, gaps: SpeechGap[], dur
   });
   return gaps.flatMap(gap => {
     const next = tokens.findIndex(t => t.start >= gap.end);
-    const previous = tokens[next - 1];
+    const tail = next < 0;
+    const previous = tail ? tokens.at(-1) : tokens[next - 1];
     if (!previous || previous.end > gap.start) return [];
-    const offset = previous.to;
+    const offset = tail ? native.text.length : previous.to;
     // A hole inside a subword is not an unambiguous insertion boundary.
-    if (!/\s/u.test(native.text[offset] ?? "")) return [];
+    if (!tail && !/\s/u.test(native.text[offset] ?? "")) return [];
     const left = timedWords.filter(w => w.end <= offset && w.startS >= gap.start - 2).slice(-2);
-    const right = timedWords.filter(w => w.start >= offset && w.endS <= gap.end + 2).slice(0, 2);
-    if (!left.length || !right.length) return [];
+    const right = tail ? [] : timedWords.filter(w => w.start >= offset && w.endS <= gap.end + 2).slice(0, 2);
+    if (!left.length || (!tail && !right.length)) return [];
     return [{ gap, offset, start: Math.max(0, gap.start - 2, left[0]!.startS - .16),
-      end: Math.min(duration, gap.end + 2, right.at(-1)!.endS + .16),
+      end: Math.min(duration, gap.end + 2, tail ? gap.end + .25 : right.at(-1)!.endS + .16),
       left: left.map(w => w.key), right: right.map(w => w.key) }];
   }).sort((a, b) => b.offset - a.offset);
 }
@@ -74,7 +75,7 @@ export function qualifySpanRepair(candidate: string, plan: SpanRepair, speechSec
     return { accepted: false, reason: "unmatched-context" };
   }
   const insertion = ws.length === plan.left.length + plan.right.length ? "" :
-    candidate.slice(ws[plan.left.length - 1]!.end, ws[ws.length - plan.right.length]!.start).trim();
+    candidate.slice(ws[plan.left.length - 1]!.end, plan.right.length ? ws[ws.length - plan.right.length]!.start : undefined).trim();
   return { accepted: true, insertion };
 }
 
