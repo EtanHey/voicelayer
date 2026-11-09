@@ -193,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var terminationGateForTesting: NativeUpdateGate?
     var terminationOwnsServerForTesting: Bool?
     var terminationCleanupForTesting: (() -> Void)?
+    var terminationSaveNowForTesting: (() -> ContinuousClock.Instant)?
     var terminationSaveSleepForTesting: ((Duration) async -> Void)?
     #endif
 
@@ -581,7 +582,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 _ = application.terminate()
             }
 
-            waitForTermination(ofExactPIDs: exactPIDs, timeout: VoiceBarDaemonController.acceptedQuitWait)
+            waitForTermination(ofExactPIDs: exactPIDs)
             // A refused quit can mean live capture or a closed update gate. Never escalate it to SIGKILL.
             let survivorPIDs = exactPIDs.filter { processIsAlive(exactPID: $0) }
             guard survivorPIDs.isEmpty else {
@@ -600,13 +601,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func waitForTermination(
-        ofExactPIDs exactPIDs: [pid_t],
-        timeout: TimeInterval
+        ofExactPIDs exactPIDs: [pid_t]
     ) {
-        _ = Self.waitForIncumbents(exactPIDs, timeout: timeout, isAlive: processIsAlive)
+        _ = Self.waitForIncumbents(exactPIDs, isAlive: processIsAlive)
     }
 
-    static func waitForIncumbents(_ pids: [pid_t], timeout: TimeInterval = VoiceBarDaemonController.acceptedQuitWait,
+    static func waitForIncumbents(_ pids: [pid_t], timeout: TimeInterval = VoiceBarQuitDeferral.maximumWait + VoiceBarDaemonController.acceptedQuitWait,
         isAlive: (pid_t) -> Bool, now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) -> Bool {
         let deadline = now() + timeout
@@ -1409,11 +1409,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             voiceState.stop()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                var now: () -> ContinuousClock.Instant = { ContinuousClock().now }
                 var sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
                 #if VOICEBAR_QA
+                now = self.terminationSaveNowForTesting ?? now
                 sleep = self.terminationSaveSleepForTesting ?? sleep
                 #endif
-                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, sleep: sleep)
+                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, now: now, sleep: sleep)
                 self.quitSavePending = false
                 #if VOICEBAR_QA
                 if let cleanup = self.terminationCleanupForTesting { cleanup(); return }

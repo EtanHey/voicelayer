@@ -497,10 +497,15 @@ final class AppLifecycleTests: XCTestCase {
 
     @MainActor func testQuitSaveDeferralIsBoundedAndEndsWhenSaveEnds() async {
         var ticks = 0
-        await VoiceBarQuitDeferral.waitWhileSaving({ true }, sleep: { _ in ticks += 1 })
+        var instant = ContinuousClock().now
+        await VoiceBarQuitDeferral.waitWhileSaving({ true }, now: { instant }, sleep: { duration in
+            ticks += 1; instant = instant.advanced(by: duration)
+        })
         XCTAssertEqual(ticks, 60, "Quit proceeds after six seconds even if save evidence never settles")
         ticks = 0
-        await VoiceBarQuitDeferral.waitWhileSaving({ ticks < 3 }, sleep: { _ in ticks += 1 })
+        await VoiceBarQuitDeferral.waitWhileSaving({ ticks < 3 }, now: { instant }, sleep: { duration in
+            ticks += 1; instant = instant.advanced(by: duration)
+        })
         XCTAssertEqual(ticks, 3, "Quit proceeds as soon as save work settles")
         let state = VoiceState()
         state.mode = .speaking

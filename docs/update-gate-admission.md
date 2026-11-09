@@ -58,8 +58,8 @@ main after the socket queue attempts the ACK write, even if that write fails or
 is skipped because the daemon peer disconnected. Singleton replacement
 never escalates an incumbent's graceful refusal to force termination. SIGKILL and
 OS force-quit cannot be prevented. A supervising SIGTERM timeout can escalate to
-SIGKILL. Singleton replacement waits both daemon stop intervals plus a one-second
-margin (3 seconds) before treating a surviving incumbent as a refusal. Startup
+SIGKILL. Singleton replacement waits the six-second dictation save window plus both
+daemon stop intervals and a one-second margin (9 seconds total) before treating a surviving incumbent as a refusal. Startup
 failures can leave before owning a server.
 
 The authenticated daemon control endpoint adds `cmd:update_gate_drain|update_gate_quit`,
