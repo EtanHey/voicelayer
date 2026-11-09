@@ -335,10 +335,15 @@ _spec.loader.exec_module(supervisor)
 
 
 class SupervisorCompletion(unittest.TestCase):
-    """Controlled observations plus a native Linux exit/read interleaving."""
+    """Controlled observations plus a native Linux exit/read interleaving.
+
+    The zero-byte environ branch is locked by the forced ps -> environ
+    observation below, not by the native zombie test: a WNOWAIT zombie's
+    environ open fails with EACCES (the OSError path), never a b"" read.
+    """
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'requires native /proc exit semantics')
-    def test_linux_native_exit_between_cmdline_and_environ(self):
+    def test_linux_native_zombie_environ_is_unavailable_identity(self):
         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
                                  env={'HOOK_EXIT_CANARY': '1'})
         read_bytes = Path.read_bytes
@@ -346,8 +351,9 @@ class SupervisorCompletion(unittest.TestCase):
             data = read_bytes(path)
             if path == Path('/proc') / str(child.pid) / 'cmdline':
                 child.kill()
-                # Observe exit without reaping: /proc still exists, but its
-                # environ is empty. No sleeps or scheduler luck establish it.
+                # Observe exit without reaping: /proc still exists, but the
+                # zombie's environ open fails (EACCES on Linux 6.12), so this
+                # guards the OSError path. No sleeps or scheduler luck.
                 os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
             return data
         try:
