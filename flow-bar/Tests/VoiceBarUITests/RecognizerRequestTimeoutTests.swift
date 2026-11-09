@@ -3,6 +3,12 @@ import XCTest
 
 @MainActor
 final class RecognizerRequestTimeoutTests: XCTestCase {
+    /// Polls a positive condition so a loaded CI runner can't fire the 10 ms deadline late and fail a fixed 60 ms sleep.
+    private static func waitUntil(_ limit: Duration = .seconds(3), _ condition: () -> Bool) async throws {
+        let clock = ContinuousClock(); let deadline = clock.now + limit
+        while !condition() && clock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
     func testMissingSelectionOrManagementReplyReleasesOnlyItsPendingRequest() async throws {
         for action in ["select", "unload", "download"] {
             let voice = RecognizerBindingTests.voice()
@@ -20,7 +26,7 @@ final class RecognizerRequestTimeoutTests: XCTestCase {
             send()
             let original = try XCTUnwrap(sent.last?["id"] as? String)
             XCTAssertEqual(sent.count, 1)
-            try await Task.sleep(for: .milliseconds(60))
+            try await Self.waitUntil { sent.last?["cmd"] as? String == "get_recognizer_status" }
             XCTAssertFalse(voice.recognizerPickerState.isSelectionDisabled, action)
             XCTAssertNotNil(voice.recognizerNotice, action)
             XCTAssertEqual(sent.last?["cmd"] as? String, "get_recognizer_status", action)
@@ -107,7 +113,7 @@ final class RecognizerRequestTimeoutTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(60))
             XCTAssertNil(voice.recognizerNotice, kind)
             voice.handleEvent(RecognizerBindingTests.event(3))
-            try await Task.sleep(for: .milliseconds(60))
+            try await Self.waitUntil { voice.recognizerNotice != nil }
             XCTAssertNotNil(voice.recognizerNotice, "\(kind): re-armed deadline must still detect a lost reply")
             XCTAssertEqual(sent.last?["cmd"] as? String, "get_recognizer_status")
             voice.setConnectionStatus(false)
