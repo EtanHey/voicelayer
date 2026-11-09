@@ -41,6 +41,8 @@ def check_run(runner, RUN, f5_only=False, receipt=False):
                 "QueueAdmissionClear": "NoSilentClear", "QueueAdmissionDuplicate": "NoDuplicateIdentity", "QueueAdmissionStopLeaves": "StopClearsAll",
                 "QueueAdmissionF5Clears": "F5KeepsQueue", "QueueAdmissionFreshClears": "NoSilentClear",
                 "QueueAdmissionInferredPlaying": "NoBlindAdvance",
+                # Lane B (Etan 2026-11-08): the same text queued behind its own read is a duplicate.
+                "QueueAdmissionSameQueues": "NoDuplicateIdentity",
                 **F5_EXPECTED}
     check_mutant_coverage(SPEC)
     check_temporal_controls()

@@ -311,6 +311,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Button("Release menu queue") { self.releaseMenuQueue() }
                     .accessibilityIdentifier("qa-fixture-release-menu-queue")
             }.controlSize(.small).padding(2).fixtureFrame("wings")
+            playbackFixtureRow().fixtureFrame("playback-2.4") // Lane B providers (UIE2EPlaybackFixtures.swift)
             // 2.4 #813 (Lane A): one provider per E2E flow, `qa-fixture-2.4-<name>`, each ending in the receipt
             // `fixture:2.4-<name>`. Synthetic only: no device, no audio, nothing outside the sandbox.
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8), spacing: 2) {
@@ -347,7 +348,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
             isPlaybackPaused: state.isPlaybackPaused,
-            readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+            readQueueLeadingSlotCount: VoiceBarPresentation.playbackLeadingSlotCount(for: state),
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker,
@@ -731,6 +732,7 @@ final class UIE2EModel {
         sandbox.writeObject(["messages": commands], file: "commands.json")
         let cmd = message["cmd"] as? String ?? ""
         receipt("command:" + cmd)
+        if answerPlaybackCommand(cmd, message) { return } // Lane B (UIE2EPlaybackFixtures.swift)
         switch cmd {
         case "health": refresh(); return
         case "speak_text":
@@ -858,6 +860,7 @@ final class UIE2EModel {
             voice.beginModalInteraction()
             holdsFixturePresentation = true
         }
+        if applyPlaybackFixture(name) { receipt("fixture:" + name); onFixtureApplied(); return } // Lane B
         switch name {
         case "preparing":
             // Establish the actual original selection request before the daemon's

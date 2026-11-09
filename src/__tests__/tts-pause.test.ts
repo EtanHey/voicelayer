@@ -83,6 +83,21 @@ async function pauseAt4200() {
   return { ...started, paused, trim };
 }
 
+it("W1 release keeps a newer prompt park and settles the borrowed read", async () => {
+  const { handle } = await pauseAt4200();
+  await tts.awaitCurrentPlayback({ forCaptureAdmission: true });
+  const admission = tts.reserveCaptureAdmission()!;
+  const prompt = tts.playAudioNonBlocking(`${TEST_TMP}/prompt.mp3`, { text: "Question?", durationMs: 1000,
+    onQueued: job => { admission.admit(job, () => {}); } });
+  try {
+    await players.at(1);
+    expect(tts.pausePlayback({ id: prompt.id }, 0).outcome).toBe("accept");
+    admission.release();
+    expect(events.find(e => e.type === "playback_outcome" && e.playback_id === handle.id)).toMatchObject({ reason: "replaced" });
+    expect(tts.resumePlayback({ id: prompt.id }).outcome).toBe("accept");
+  } finally { admission.release(); tts.cancelPlayback({ id: prompt.id }); }
+});
+
 describe("playback transition journal", () => {
   it.each(["user", "f5", "f5-to-user"] as const)("records every owned %s pause/resume without text", async (variant) => {
     const lines: string[] = [];
@@ -509,6 +524,8 @@ it("admitted paused playback restarts during drain without new admission", async
 describe("R2-01 F5 capture ownership", () => {
   it("snaps an arbitrary pause to the containing word, including nonzero words", async () => {
     await startTenSecondRead();
+    // #818: the player's clock is at the claimed position (a client clock ahead of the player never moves a pause).
+    at(4200);
     expect(tts.pausePlayback({}, 4200)).toMatchObject({ outcome: "accept", offset_ms: 4000 });
     expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ word_index: 4, offset_ms: 4000 });
   });
@@ -552,7 +569,9 @@ describe("R2-01 F5 capture ownership", () => {
 
 it("R2-01 N6 all takes and actual paste delivery settle before exactly one resume", async () => {
   await startTenSecondRead();
-  at(4300);
+  // Lane B: the player clock agrees with the 2.5 s client clock sent below (a client far behind
+  // the player no longer rewinds the read; playback-engine.test.ts proves that).
+  at(2600);
   const a = deferred<void>(), b = deferred<void>(), bMic = deferred<void>();
   let captures = 0;
   const wait = spyOn(input, "waitForInput").mockImplementation(() => {
@@ -591,6 +610,8 @@ it("R2-01 N6 all takes and actual paste delivery settle before exactly one resum
     expect(events.filter(e => e.type === "playback_state" && e.state === "resumed")).toHaveLength(1);
     expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 2000 });
     // Stale delivery plus stale recording idle cannot change a later manual pause.
+    // #818: the player's clock is at the claimed position (a client clock ahead of the player never moves a pause).
+    at(4100);
     expect(await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 3500 })).toMatchObject({ outcome: "accept", offset_ms: 3000 });
     expect(acknowledgeDictationDelivery("A", "A")).toBe(false);
     expect(acknowledgeDictationDelivery("B", "B")).toBe(false);
@@ -606,7 +627,9 @@ it("R2-01 N6 all takes and actual paste delivery settle before exactly one resum
 
 it("R2-01 N6 actual early B failure keeps the read parked for processing A", async () => {
   await startTenSecondRead();
-  at(4300);
+  // Lane B: the player clock agrees with the 2.5 s client clock sent below (a client far behind
+  // the player no longer rewinds the read; playback-engine.test.ts proves that).
+  at(2600);
   const finishA = deferred<void>(), processingA = deferred<void>();
   const first = runBarCaptureWithPausedRead("early-failure-A", async (opened) => {
     opened();
@@ -707,6 +730,7 @@ for (const phase of ["opening", "capturing"] as const) {
       return finishSyntheticCapture(() => result.promise);
     });
     try {
+      at(4200); // #818: the player's clock is at the claimed position (a client clock ahead of the player never moves a pause).
       expect(handleSocketCommand({ cmd: "record", take_id: `unscoped-${phase}`, playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept" });
       if (phase === "capturing") await opened.promise;
       expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
@@ -733,6 +757,7 @@ it("R2-01 unscoped Stop picks the first opening capture, never a later rejected 
     return finishSyntheticCapture(() => result.promise);
   });
   try {
+    at(4200); // #818: the player's clock is at the claimed position (a client clock ahead of the player never moves a pause).
     expect(handleSocketCommand({ cmd: "record", take_id: "first-opening", playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept" });
     expect(handleSocketCommand({ cmd: "record", take_id: "later-opening" })).toMatchObject({ outcome: "accept" });
     expect(handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
@@ -767,6 +792,7 @@ it("R2-01 a fresh daemon has no loan or parked read after restart", async () => 
 
 it("R2-01 refused automatic resume after slice preparation releases the read", async () => {
   const { handle } = await startTenSecondRead();
+  at(4200); // #818: the player's clock is at the claimed position.
   const capture = tts.pauseForF5Capture(4200);
   await capture.ready;
   capture.settle(); // Resume waits for the owned trim; a new busy state wins before it completes.
@@ -782,6 +808,7 @@ it("R2-01 refused automatic resume after slice preparation releases the read", a
 
 it("R2-01 refused automatic resume releases the read instead of stranding its F5 park", async () => {
   const { handle } = await startTenSecondRead();
+  at(4200); // #818: the player's clock is at the claimed position.
   const capture = tts.pauseForF5Capture(4200);
   await capture.ready;
   (await trims.at(0)).exit.resolve(0);
@@ -810,6 +837,8 @@ it("R2-01 stale capture settlement cannot unpause a later user pause", async () 
   await fixtureCheckpoint();
   capture.settle();
   await players.at(1);
+  // #818: the player's clock is at the claimed position (a client clock ahead of the player never moves a pause).
+  at(4000);
   expect(tts.pausePlayback({}, 3500)).toMatchObject({ outcome: "accept", offset_ms: 3000 });
   capture.settle(); capture.settle();
   await fixtureCheckpoint();
@@ -823,6 +852,8 @@ it("R2-01 retains the containing word at a nonzero chunk offset", async () => {
     voice: "test", durationMs: 10000, wordBoundaries: words,
     longRead: { id: "long", chunk_index: 1, chunk_count: 2, chunk_start_ms: 10000 } });
   await players.at(0);
+  // #818: the player's clock is at the claimed position (a client clock ahead of the player never moves a pause).
+  at(3500);
   expect(tts.pausePlayback({}, 13500)).toMatchObject({ outcome: "accept", offset_ms: 13000 });
   (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
   expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 13000 });
@@ -839,6 +870,8 @@ it("R2-01 uses clone alignment and retains its display word index", async () => 
       { word_index: 2, text: "three", offset_ms: 2000, duration_ms: 8000 },
     ] });
   await players.at(0);
+  // #818: the player's clock is at the claimed position (a client clock ahead of the player never moves a pause).
+  at(4200);
   expect(tts.pausePlayback({}, 4200)).toMatchObject({ outcome: "accept", offset_ms: 2000 });
   (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
   expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ word_index: 2, offset_ms: 2000 });

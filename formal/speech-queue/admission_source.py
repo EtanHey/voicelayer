@@ -27,7 +27,9 @@ def check_admission(run, runner):
                           decision=re.search(r'\bdecision = "(\w+)"', label)[1]))
     assert any(row["preempted"] and len(row["pending"]) == 2 for row in cases)
     assert cases and {row["event"] for row in cases} == {"selection", "stop", "f5"}
-    assert {row["decision"] for row in cases} == {"stop", "read_next", "hint", "speak_text"}
+    # Lane B (Etan 2026-11-08): the same selection as the read is a hint now, never Next; read_next stays the button's.
+    assert {row["decision"] for row in cases} == {"stop", "hint", "speak_text"}
+    assert any(row["event"] == "selection" and row["decision"] == "hint" and row["selected"] == row["playing"] for row in cases)
     assert any(len(row["pending"]) == 2 and row["selected"] not in [row["playing"], *row["pending"]] for row in cases)
     assert any(row["playing"] == 5 and row["event"] == "selection" and row["decision"] == "hint" and not row["preempted"] and not row["suspended"] for row in cases)
     path = run / "admission.json"

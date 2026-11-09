@@ -341,6 +341,10 @@ public enum VoiceBarPresentation {
         )
     }
 
+    public static func playbackLeadingSlotCount(for state: VoiceState) -> Int {
+        (readQueueControl(for: state)?.leadingSlotCount ?? 1) + (state.showsReadingProcessingSpinner ? 1 : 0)
+    }
+
     public static func readQueueControl(for state: VoiceState) -> VoiceBarReadQueueControl? {
         readQueueControl(
             // 2.4 Lane A: a paused read waiting out "Typed" keeps the paused layout (Play, Next, +N).

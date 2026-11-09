@@ -1,7 +1,7 @@
 import Foundation
 
 enum SelectionAdmission: String {
-    case submit, advance, stop, alreadyQueued
+    case submit, advance, stop, alreadyQueued, alreadyReading
 
     static func identity(_ text: String) -> String {
         var fence: (marker: Unicode.Scalar, length: Int)?
@@ -33,7 +33,8 @@ enum SelectionAdmission: String {
 
     static func decide(_ text: String, playing: String?, pending: [String], count: Int) -> Self {
         let selected = identity(text)
-        if let playing, selected == identity(playing) { return count > 0 ? .advance : .stop }
+        // Etan, 2026-11-08 4:40 pm: the read already playing or paused dedupes and says so (never Next or Stop).
+        if let playing, selected == identity(playing) { return .alreadyReading }
         if pending.contains(where: { identity($0) == selected }) { return .alreadyQueued }
         return .submit
     }

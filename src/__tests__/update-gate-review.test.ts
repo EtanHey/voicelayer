@@ -117,7 +117,7 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       } finally { exit.resolve(0); await tick(); }
     });
   }
-  test("same-selection re-press advances and stops admitted reads during drain; new text registers", async () => {
+  test("same-selection re-press dedupes during drain, Next and Stop still control admitted reads; new text registers", async () => {
     const starts: string[] = [], exits: ReturnType<typeof deferred<void>>[] = [];
     const stop = spyOn(tts, "stopPlayback").mockImplementation(() => { exits.forEach(exit => exit.resolve()); return true; }); spies.push(stop);
     spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(1),
@@ -135,12 +135,19 @@ describe("G2 review regressions (synthetic media, isolated gate)", () => {
       expect(await command("A", "selection A")).toMatchObject({ outcome: "accept" });
       expect(await command("B", "selection B", true)).toMatchObject({ outcome: "accept", reason: "queued" });
       drain();
-      expect(await command("A-next", "selection A")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
+      // Etan, 2026-11-08: the same text dedupes with a notice; it starts no voice, so the drain never refuses it.
+      expect(await command("A-again", "selection A")).toMatchObject({ outcome: "noop", reason: "Already reading this" });
+      expect(starts).toEqual(["A"]);
+      // Next stays the user's control during drain: it advances the admitted queue.
+      expect(await handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "accept" });
       expect(starts).toEqual(["A", "B"]);
+      // integration/2.3: new text admitted during drain registers in the queue.
       expect(await command("C", "new selection", true)).toMatchObject({ outcome: "accept", reason: "queued" });
-      expect(await command("B-next", "selection B")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
+      expect(await command("B-again", "selection B")).toMatchObject({ outcome: "noop", reason: "Already reading this" });
+      expect(await handleSocketCommand({ cmd: "read_next", request_id: "B" })).toMatchObject({ outcome: "accept" });
       expect(starts).toEqual(["A", "B", "C"]);
-      expect(await command("C-stop", "new selection")).toMatchObject({ outcome: "accept", reason: "selection advanced" });
+      // Stop stays the user's control too.
+      expect(await handleSocketCommand({ cmd: "stop", scope: "speech" })).toMatchObject({ outcome: "accept" });
       expect(stop).toHaveBeenCalledTimes(1);
       await flushSpeechArchives(); await tick();
       expect(prepare().kind).toBe("APPLIED");

@@ -54,6 +54,24 @@ export class SpeechWordTimeline {
       words: chunk.words.map(word => ({ ...word, startMs: startMs + word.startMs, endMs: startMs + word.endMs })) };
   }
 
+  /** Lane B: the read-global index of chunk `index`'s first word, when every earlier chunk is known. */
+  wordOffsetOf(index: number): number | undefined {
+    let offset = 0;
+    for (let i = 0; i < index; i++) {
+      const chunk = this.chunks.get(i);
+      if (!chunk) return undefined;
+      offset += chunk.words.length;
+    }
+    return offset;
+  }
+
+  /** Words known so far across the synthesized prefix. */
+  wordCount(): number {
+    let count = 0;
+    for (const chunk of this.chunks.values()) count += chunk.words.length;
+    return count;
+  }
+
   seek(wordIndex: number, perform: (offsetMs: number) => SeekResult, commandId?: string): SeekResult {
     const receipt = commandId ? this.receipts.get(commandId) : undefined;
     if (receipt) return receipt.wordIndex === wordIndex ? receipt.result : { outcome: "reject", reason: "seek id reused" };

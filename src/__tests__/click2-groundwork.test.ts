@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime, spyOn } from "bun:test";
+
+/** #818: the player's clock reaches the claimed position before the pause (a client clock ahead of it never moves one). */
+const playFor = (ms: number) => setSystemTime(new Date(Date.now() + ms));
 import * as tts from "../tts";
 import * as runner from "../tts/long-read";
 import * as amplitude from "../playback-amplitude";
@@ -65,6 +68,7 @@ describe("CLICK2 groundwork RED contracts", () => {
   });
 
   afterEach(async () => {
+    setSystemTime();
     resetSelectionReadQueueForTests();
     tts.stopPlayback(); gate.resolve();
     for (const player of players.values) player.exit.resolve(143);
@@ -112,6 +116,7 @@ describe("CLICK2 groundwork RED contracts", () => {
 
   it("c: Replay while paused accepts, resets to zero and plays the retained current read", async () => {
     await preparing(); gate.resolve(); await players.at(0);
+    playFor(4200);
     expect(await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept", offset_ms: 4000 });
     expect(tts.isPlaybackPaused()).toBe(true);
     expect(await handleSocketCommand({ cmd: "replay", id: "click2-replay" })).toMatchObject({ outcome: "accept" });
@@ -214,6 +219,7 @@ describe("CLICK2 groundwork RED contracts", () => {
 
   it("Replay while paused is refused during a capture and leaves the park untouched", async () => {
     await preparing(); gate.resolve(); await players.at(0);
+    playFor(4200);
     expect(await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept", offset_ms: 4000 });
     effectiveState.mockReturnValue("recording");
     expect(await handleSocketCommand({ cmd: "replay" })).toMatchObject({ outcome: "reject", reason: "busy" });
@@ -229,6 +235,7 @@ describe("CLICK2 groundwork RED contracts", () => {
       wordBoundaries: [{ text: "Short", offset_ms: 0, duration_ms: 4200 }, { text: "speech", offset_ms: 4200, duration_ms: 5800 }] });
     let exited = false; void playback.exited.then(() => { exited = true; });
     await players.at(0);
+    playFor(4200);
     expect(await handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 4200 })).toMatchObject({ outcome: "accept", offset_ms: 4200 });
     await fixtureCheckpoint();
     expect(await handleSocketCommand({ cmd: "replay", id: "replay-ordinary" })).toMatchObject({ outcome: "accept" });
