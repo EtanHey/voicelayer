@@ -9,6 +9,13 @@ public enum VoiceBarRetainedReadbackPolicy {
 public final class VoiceBarNotchPresentationModel {
     public private(set) var presentation: VoiceBarNotchPresentation
     public private(set) var motionCoordinator: VoiceBarNotchMotionCoordinator
+    /// Changes only when a hidden panel is prepared for presentation. Hover keeps its shell identity.
+    public private(set) var presentationGeneration: UInt = 0
+
+    public func prepareForPresentation() {
+        presentationGeneration &+= 1
+    }
+
     public private(set) var isHovered = false
     public private(set) var isKeyboardFocused = false
     public private(set) var isHistoryPanelOpen = false
