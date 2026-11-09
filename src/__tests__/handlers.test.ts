@@ -127,6 +127,14 @@ describe("handleToggle", () => {
     expect(existsSync(TEST_VOICE_DISABLED_FILE)).toBe(false);
   });
 
+  it("mic-on after all-off clears the combined flag and keeps TTS muted", async () => {
+    await handleToggle({ enabled: false, scope: "all" });
+    await handleToggle({ enabled: true, scope: "mic" });
+    expect(existsSync(TEST_VOICE_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(true);
+  });
+
   it("returns descriptive action text", async () => {
     const result = await handleToggle({ enabled: false, scope: "tts" });
     const text = (result.content[0] as { text: string }).text;
