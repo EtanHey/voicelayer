@@ -4,7 +4,7 @@
   "hashes": {
     "formal/playback-session/PlaybackSession.tla": "c5317f3dd930c49968ee1cf16b69e3a6124e2a4d088ae38258877a6526dd1d99",
     "formal/playback-session/checks.json": "657a846565cecae49048ba32b49644b33eb0a5cfeb76b6e00d1341ce924145c1",
-    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/playback-session/ZombieMutant.cfg": "de1104c0baad47a9cad54e360a1eba98ab33435e05687bddd637c3bf4798b456",
     "formal/playback-session/AskClearsQueueMutant.cfg": "493360d95cea090d165c93828ea81eff1cc0ea9142b8d99fa572efaa82c7376e",
@@ -25,7 +25,8 @@
     "formal/playback-session/Fixed.cfg": "c5a15e0068009bb6cd0831461703dbda114e870d039294b23478e9b65a62f79d",
     "src/playback/session.ts": "84ddaf10eec452305703fc2b9f425aaf3bd253a15590471fa35447720226022c",
     "src/playback/ledger.ts": "d57b969ab6147f269362dae68faad29ff7675338003366e6b473c57a6e3ea166",
-    "src/__tests__/playback-session.test.ts": "37911a0c7f01cbc95f178bbb8339ac9a34183d67eb9fc30f6b0c94fab128a0a0"
+    "src/__tests__/playback-session.test.ts": "37911a0c7f01cbc95f178bbb8339ac9a34183d67eb9fc30f6b0c94fab128a0a0",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "ResumeExact": [
@@ -181,8 +182,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 155407,
-      "distinct": 52448
+      "generated": 149971,
+      "distinct": 50676
     },
     "AskCancelsReadMutant": {
       "role": "mutant",

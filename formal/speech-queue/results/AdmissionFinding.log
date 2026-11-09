@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NonemptySelectionDoesNotStop",
+  "status": "EXPECTED_FAIL",
+  "generated": 69,
+  "distinct": 69
+}

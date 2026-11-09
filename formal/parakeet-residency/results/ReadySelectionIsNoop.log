@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "ReadySelectionIsNoop",
+  "status": "EXPECTED_FAIL",
+  "generated": 58,
+  "distinct": 38
+}

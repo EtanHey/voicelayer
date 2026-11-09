@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "StopClearsQueues",
+  "status": "EXPECTED_FAIL",
+  "generated": 468,
+  "distinct": 90
+}

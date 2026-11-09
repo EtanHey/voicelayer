@@ -4,7 +4,7 @@
   "hashes": {
     "formal/notch-presentation/NotchPresentation.tla": "86c7c689f02449c1b6fadb23a109ebb021a911a90400ac7fbc0238db5c62b1d2",
     "formal/notch-presentation/checks.json": "aa16eb1b8fb5ba95fb48582cdc95d68ea435994b85f643a3c65f022452c8dc39",
-    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/notch-presentation/MutantNoShell.cfg": "bc37b20cedc1993180f1e4bf4c708c191c4a41e54fcda27c7aaa31cb26a5b66d",
     "formal/notch-presentation/MutWideWing.cfg": "b22f3ef5491a57166731040142c9090c0ea4acba918d6dc52ffd676c5169dca3",
@@ -32,12 +32,13 @@
     "formal/notch-presentation/Fixed.cfg": "87d27589a3cf2adf8e4c1e7652b70d9826bebb861b8a406e59db80e09e559029",
     "formal/notch-presentation/OldQuitCause.cfg": "6c6fc8f33a06e3fd7babba4d98b5e7cb980fd966daf42659204397f0424a80b6",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "e682d2559447944de364bcfdceafa8cd1064d79a874e5a48fa0bd912ab02af3e",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "fb570014b4c35fa142187e46a42ed2f02148648a48c950eed6ac92f40557d27f",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "62b081d9b0a4960ba8d56f65f3c1b38ee354ef467e0f9d1fe6313c0c34f50b1c",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "192998017375294a13990c9a38cf4c35daf51d8c6255e56489591613f5028ab0",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "5db6d9bfc34565c7c3502f2776466f70c84286f9da9ecf248fa89c105cbedcd0",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e2cbdde438605566b27f8545115076edbc200cee0e972c7e5abc2ea52c7c02ed",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "e6ce3a7d93728aa37d2a6ea616714380108e7cd14bd7053fadc2094c6ffd0141",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "1729de475351e231203ba236a11c2c25ea2c0b3e5a808fc317268f5b7543ba51"
+    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "1014bee959ed606eb634a40f0e8712ba930e8674fcce183fca4c006fea420dad",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e2dde5e682f69da856fb2f6814df1f7e19ed40f7f6fda810ec923679bf73b175",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "c297977531c3bd8ae71f71aa761adb0c5c6f237bb7aca52e4c8a671771e25062",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "14c3460b96852b65d2bf6a4c0eb6f4d0af5cf620c5fd8e8b1398d90056d54074",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "N1CompactNote": [
@@ -249,8 +250,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 100508,
-      "distinct": 17964
+      "generated": 213756,
+      "distinct": 24552
     },
     "MutantNoShell": {
       "role": "mutant",
@@ -273,8 +274,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 109340,
-      "distinct": 22490
+      "generated": 141830,
+      "distinct": 26308
     },
     "MutTypedTab": {
       "role": "mutant",

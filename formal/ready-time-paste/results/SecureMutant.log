@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NeverIntoSecureField",
+  "status": "EXPECTED_FAIL",
+  "generated": 140,
+  "distinct": 55
+}

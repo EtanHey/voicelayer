@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "TypeOK",
+  "status": "EXPECTED_FAIL",
+  "generated": 12,
+  "distinct": 10
+}

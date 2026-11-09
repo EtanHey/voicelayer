@@ -1,0 +1,66 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/ready-time-paste/ReadyTimePaste.tla": "2be027328bea6e0fca85df4a32adaee631dc7b3abd3bbec8922a6e9479e91640",
+    "formal/ready-time-paste/checks.json": "320ee66073ccb993b8f4e8ce6d634f9854937ce2677ddf9ec061073d5b4882ef",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/ready-time-paste/SecureMutant.cfg": "ab5d755583be15fb0b3677cc19b714bd32c4d7b8ea4df2d90b4b4e8eb51651eb",
+    "formal/ready-time-paste/Old.cfg": "77aa98f6cf2323485292d52c2d28eeb1daa1bb5e1b7d450795a68ba6a1a419ac",
+    "formal/ready-time-paste/DoubleMutant.cfg": "3fd93a9e1e9fbb3b8eaec1df1ffd2ac9972b8d6dd1834596cd94bafc26c96cdb",
+    "formal/ready-time-paste/Fixed.cfg": "bfa8e7e3bc1f7ffdfa7d86f401f6e82de63da25a8b4d1d71952e946c2d4c4a36",
+    "formal/legacy_receipts.py": "83fae1948d340e3e253cbd19aac05814ee2457664397616ffce0de4b502998f0",
+    "formal/ready-time-paste/check.sh": "b56694eea134b8eb9ae02471e855839addd69124cbaef86c5d2032a251460508",
+    "formal/setup-tlc.py": "ada6a1d5fa6376d4abd8eb8309900bde02e757f53ee2a97e6614aeaee134c391",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "DeliveredAtMostOnce": [
+      "DoubleMutant"
+    ],
+    "DeliversToReadyTimeFocus": [
+      "Old"
+    ],
+    "NeverIntoSecureField": [
+      "SecureMutant"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 935,
+      "distinct": 305
+    },
+    "Old": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DeliversToReadyTimeFocus",
+      "status": "EXPECTED_FAIL",
+      "generated": 166,
+      "distinct": 61
+    },
+    "DoubleMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DeliveredAtMostOnce",
+      "status": "EXPECTED_FAIL",
+      "generated": 175,
+      "distinct": 69
+    },
+    "SecureMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverIntoSecureField",
+      "status": "EXPECTED_FAIL",
+      "generated": 140,
+      "distinct": 55
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "ReleaseNeverDropsRead",
+  "status": "EXPECTED_FAIL",
+  "generated": 386,
+  "distinct": 268
+}

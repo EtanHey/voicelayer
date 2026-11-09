@@ -1,0 +1,648 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/speech-queue/SpeechQueue.tla": "c03ee49144ced04e955ff4dd76fdc60abd3a28b90e10ecb61676dfe9e7d0f9cb",
+    "formal/speech-queue/checks.json": "9d98cf178d3ceb27ef030e359f937bffe45af9b8995c0288392a5b1112d8b519",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/speech-queue/QueueAdmissionSameQueues.cfg": "5024805754326c91b2a9460e0b369e3c572a21d56ffff228368261f635b1514d",
+    "formal/speech-queue/QueueAdmissionFreshClears.cfg": "7ab33c74e1a2e4a54ac887a3ce0a334b676c4e7f01711d59165be1d2ac69574d",
+    "formal/speech-queue/F5PauseN6DropsRead.cfg": "10e5492c106e03c227fbaa4b0a53ca778f0eccfbd2dd9b7a4a0d3922a86c72d4",
+    "formal/speech-queue/F5PauseResumeEarly.cfg": "3db6dc34287175c28c43f897c47f9dc5957e6f6d260ec100f1f98ca94147e9ce",
+    "formal/speech-queue/F5PauseCurrentTranscribing.cfg": "26d06922ae71be00cd259e5648fec9c20eb968760e8c8fd4a4fc790cbea5826c",
+    "formal/speech-queue/F5PauseResumeOnPaste.cfg": "569947cead18e7c7bf85e0c68cd84be889e5ca6761a71c34b55ec1b0eb8a18b1",
+    "formal/speech-queue/QueueAdmissionF5Clears.cfg": "7bf274094c766984db1138958ba8a804f205236e322d53043a3faf160b7b00fc",
+    "formal/speech-queue/F5PauseCurrentCancelPostRelease.cfg": "3dbadfd97f556d22500f4b85bae1fd30ad08b998376defd35edc4d8e64ae77ce",
+    "formal/speech-queue/QueueAdmissionFixed.cfg": "317a8589c0c6e116f32c1371a62edea8077f529463d02177e7f4782d8a396a76",
+    "formal/speech-queue/F5PauseTimingBlank.cfg": "1587dbe1c2206aaceea70ccd55ed45c258349673ed1b2f56664143241ba31a6a",
+    "formal/speech-queue/AdmissionOlderMatch.cfg": "148d983dced143250a78c1e1be238c40a63f24b3bb74a4c94951bc46660d8347",
+    "formal/speech-queue/F5PauseKeepOwner.cfg": "04ae4f21c04ec7e63585b6c8a5c63e88c8c361d1a903f4214610bd1855380cf7",
+    "formal/speech-queue/AdmissionCurrent.cfg": "ab0557326a893f91f4ed05a78cdf1e87469b2058979d49708f45bf6b1c3a0910",
+    "formal/speech-queue/StaleClear.cfg": "40187b8098c4c87e21d6ea6d897efd4cab1d3e1f22adcd362b753dcdfaad12ff",
+    "formal/speech-queue/F5PauseCurrentPostRelease.cfg": "d2606e5e0bcc663011d7439c25255cb69ba916af4aae12ad4f2c83944f4e374e",
+    "formal/speech-queue/F5PauseCurrentPreparing.cfg": "bab9142643ba3ed98c48901828ca9b3036d7d714a020f05cd54d5598c7c3807b",
+    "formal/speech-queue/F5PauseWordBoundary.cfg": "95ac05ffed8dbbb139d8be3a7199b5ee22ec79cc96a51b75af5132c4292c61d1",
+    "formal/speech-queue/F5PausePostRelease.cfg": "d2606e5e0bcc663011d7439c25255cb69ba916af4aae12ad4f2c83944f4e374e",
+    "formal/speech-queue/F5PauseCurrentRelease.cfg": "1ee6aed3c3471ad433ea7cd7d7fef7b0696f32011916d74f7a862ba07250eb39",
+    "formal/speech-queue/F5PauseDropAtEnd.cfg": "1d5ded3572649f89f29aff51a6341ee2b389677483fe37d08f72ef5c7982a149",
+    "formal/speech-queue/F5PauseParkZero.cfg": "ee8268231205ccbe4f4fd6427b6bc78aa09149163867f3fdcb63244c46da8fa7",
+    "formal/speech-queue/F5PauseManualResume.cfg": "759bcca4596079fe78215e9512809afbd6c26d506aca9e2a7d705f86e74edfdf",
+    "formal/speech-queue/F5PauseStuck.cfg": "eba44239c3f5826650e1aa9579d858f6e401799ce1250358dd9c190a35491c8f",
+    "formal/speech-queue/F5PauseStopResumes.cfg": "1e1d2c7ab14afac02292cf22cec04328dc7ed399f16f209b5f5b12a59e135a0c",
+    "formal/speech-queue/F5PauseCurrentQueued.cfg": "d7ebf575a0a7b1bc365666602d3d1c291cf19003b2217b691b39c67db4ec2133",
+    "formal/speech-queue/F5PauseStartDuringCapture.cfg": "baaba6d04020fd8b257374d1370f4b762c96f44a7a96747a60c8df03fb8796ec",
+    "formal/speech-queue/QueueAdmissionStopLeaves.cfg": "579d3508395617e5129d29389270e2f97943eee7c72a55e215594a39b3e881dc",
+    "formal/speech-queue/AdmissionProposed.cfg": "657a2684908ebe267269038838d7b04bdddc12f19a67aec4d8c7f8215f4521ce",
+    "formal/speech-queue/F5PauseParkNextWord.cfg": "0c29a2864b4377a77617925fc6402445cbec52a1528b7e253668505752eb608d",
+    "formal/speech-queue/QueueAdmissionInferredPlaying.cfg": "a80eab53b6d73121b7026f5027e376ecb9132b0a8e0a0c7d26a46499f774e421",
+    "formal/speech-queue/History.cfg": "0f2c0cd10cb99a329d2382f5746f5353f5749d5168f83b4b0ad994037a3f2b51",
+    "formal/speech-queue/F5PauseFixed.cfg": "aec3d8b48c3c026d83f2ffe975cb257f765fa5d4c9f64cdb11d6033b78fa9013",
+    "formal/speech-queue/QueueAdmissionDuplicate.cfg": "61b54566b49ee79fe6ca5642e3e58b673dbd7523d322070ca4ec8a7121e21831",
+    "formal/speech-queue/F5PauseCancelPrevious.cfg": "a78276b90f4e67f3dc1def405f7ed49e464c5b6cbfe89fed49148e9e8a55d078",
+    "formal/speech-queue/QueueAdmissionClear.cfg": "0fe17f170a8170d475839d931d1982957e357e88678931abd5d5d87829917ff8",
+    "formal/speech-queue/F5PauseIgnorePreparing.cfg": "989756d166cd07202863a6fd4bf56ede2b3aa408054af8fe24f992f3ab5fddce",
+    "formal/speech-queue/MutableTerminal.cfg": "2a6e64a8755efd8cd549487cf5525c05d92695cd6176fbe2d531acf496ec7921",
+    "formal/speech-queue/StaleNext.cfg": "0c469ff088ec96a6af419b627a3c7d1bb75856d4b14636fa425e1763036ea85e",
+    "formal/speech-queue/F5PauseInvalidOwner.cfg": "deaf351087d8a43a808fcd0e18d7c735a106b3c31aed2b44f447be1a3bfbb040",
+    "formal/speech-queue/AdmissionFinding.cfg": "749ddd9466f44a47845ad4430078efbb5709e355dd60fec151d4644727d7e4f7",
+    "formal/speech-queue/F5PauseStaleResumesPaused.cfg": "40243aa359b4ec3441387c717d07a3a0b28dca42aa66580e354ff88ff6bdd209",
+    "formal/speech-queue/StopLeaves.cfg": "6a8da0cdd98dde95a24750ef3e44811df3cd722b4aa7e2bce3669c842061f5d1",
+    "formal/speech-queue/F5PauseOpenFirst.cfg": "a0ca07dd73515ed9ccdb3a5b3b48fd18dbb1f29b3aa4dd66bbff4b3b377a3b51",
+    "formal/speech-queue/F5PauseQueueCount.cfg": "7f1c1fc4292a16933a4544412a310b8f6e3f4c16e8483b6ef485a22760c991ff",
+    "formal/speech-queue/Current.cfg": "202100f529aae17c1555d693587aaec286929f4ac37d9cc9797dbfb4b3e668e5",
+    "formal/speech-queue/F5PauseIgnoreF5.cfg": "b2b92a8f0b5c6ed1c3d222e147c0c408d9b3d3726fbb812c72c843dc7db43011",
+    "formal/speech-queue/F5PauseCurrentWordBoundary.cfg": "2cad9b11ad124231d60dd9cd00f535876b3be2f10f1c3da1c0b4bb07b874c032",
+    "formal/speech-queue/F5PauseCurrentTiming.cfg": "8539da87c24cd39430381ad3045da68767e83def38d2152c9d443438768242a2",
+    "formal/speech-queue/F5PauseCurrent.cfg": "49f83def9aba832ff3d1c0570c821494e0ad81b7f795bacde86677c8f8bcd4eb",
+    "formal/speech-queue/F5PauseResumePosition.cfg": "829ed18b9641ccd4334f989acdd04cc07e445b1d63fc402dbe81f047e3a5ee96",
+    "formal/speech-queue/F5PauseFixedTranscribing.cfg": "e655bdcd646612a8a52ce7c85be05d567961dd88fc6adbf3df8bd01a4df90d8b",
+    "formal/speech-queue/F5PauseReleaseDrops.cfg": "016a87aa650937902959487f810fa45c4c08ccee5d84567c2f779068629734e1",
+    "formal/speech-queue/F5PauseDoubleResume.cfg": "d6a28c91556c0d88f0d557161dc1ff52dade071c8aeaf8a5fbb4af51e2875303",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "14c3460b96852b65d2bf6a4c0eb6f4d0af5cf620c5fd8e8b1398d90056d54074",
+    "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e2dde5e682f69da856fb2f6814df1f7e19ed40f7f6fda810ec923679bf73b175",
+    "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift": "6d85e0a93b4adceac6173a6e23a63f994603c76d59a5cb0f49868275166b2782",
+    "flow-bar/Tests/VoiceBarTests/F5ResumeIdentityTests.swift": "cf8800989d3d7a5bead74c26271bf21d13cb7bee9a375e4e8dd778321675a825",
+    "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift": "393c97a4a84c963c5d6c81ce83daad1aa594aec2d90e8082399b0a12fd0cc6a2",
+    "flow-bar/Tests/VoiceBarUITests/SpeechDataConformanceTests.swift": "b75b60dc19b7d5f663ef8bed1558abf3563fc4f16f8c2accf029fe851f589c3f",
+    "formal/corpus_support.py": "0d05415c571fe24ecd143b062344e65bec84a5078d2ab4f514d06fac045a319d",
+    "formal/legacy_receipts.py": "83fae1948d340e3e253cbd19aac05814ee2457664397616ffce0de4b502998f0",
+    "formal/setup-tlc.py": "ada6a1d5fa6376d4abd8eb8309900bde02e757f53ee2a97e6614aeaee134c391",
+    "formal/speech-queue/Admission.tla": "d3990a14b4af5f8ec1e688ec4eac74bfc46008232ad782f9831ca96eb6988d74",
+    "formal/speech-queue/F5-IMPLEMENTATION.md": "27a2668bfe74e693b95422a0b4a187e959f4cf3663f3d5d513691d92a32ccea3",
+    "formal/speech-queue/F5Pause.tla": "f006f11b2250df564c446c5d2f90c1be0250912bf018e6b57bea1a51d0a648ed",
+    "formal/speech-queue/History.tla": "0f2e8724bbe2c974224092d9aa074da905db59205ec150c897e570df5ca1368e",
+    "formal/speech-queue/QueueAdmission.tla": "379c6168fa2cd261f8315714b2cac42d91a749c1fce8b73ca86e061529291396",
+    "formal/speech-queue/admission_source.py": "057ad6cc186f0daf3ac9c89d609353108f2b1079bf5e693d46bb387d8aaba556",
+    "formal/speech-queue/check.py": "39e95b32458a3a38d26062e73b3f97aa676c7e61e45125c9fc9c83ab23daefbd",
+    "formal/speech-queue/check.sh": "75319408fe05b7f46073d6a2d2fa838a4db6bbf6b77c1b689ec66f7160479658",
+    "formal/speech-queue/cross_tlc.py": "1a65cf484b16b79c57ec7c199886c88fd0b4f9cc990126a81ef818488f9f9892",
+    "formal/speech-queue/f5_checks.py": "bcd954b2490ecada749a9bf2fb4aa0291d0bdbe2bd19b28599a5192b36870cae",
+    "formal/speech-queue/f5_conformance.py": "271da44ec9ddc3f04a2671a58defd1919eaecd873b8ebad223d5b38347bc5970",
+    "formal/speech-queue/speech_data_conformance.py": "86de22e91329376e50cd2bde434a796348505b1bd2a5b2516327d334a57ae77e",
+    "formal/speech-queue/supervision.py": "3c679b821fdc8ab39d49568596dd91e1f27b0fa12c06f22bb909fc37f7580b81",
+    "formal/speech-queue/test_graph_retention.py": "23458fcce0af00281d8f1040bf59e0d86669adb9051d71b4fb50dee77253e922",
+    "formal/speech-queue/test_speech_data_conformance.py": "560fcb0cd315f78ce91344ca8194ab66a7f57e71cb6471e7f6cd76b196541f09",
+    "formal/speech-queue/test_supervision.py": "b887d3eefbc7cb64ac8d7e60b3928d68211d1f4194dc35080b443afb87652f43",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "src/__tests__/click2-groundwork.test.ts": "58214bb1b7920f539431d5272391a2b2f1a7366c450e101a1595aa7c74d8f2d1",
+    "src/__tests__/error-recovery.test.ts": "dd842c6233163ff06ba9439da0c23ea9ab88611610be30f5d6b28a76ad45d769",
+    "src/__tests__/mcp-handler.test.ts": "a53d4eb8c9cd9c376bbaddd03a98527a7ca9c969e44466861ca31c6bef9b8603",
+    "src/__tests__/pause-ask.test.ts": "d070fd74011f87ac366bd58676db854d421bf16c74724208e62c7b58c0964a91",
+    "src/__tests__/playback-timing.test.ts": "11112a0455683e93c0cb995c1c39f102f271d9c5a8ec7eb9df10bbc4a65f8125",
+    "src/__tests__/recording-review-regressions.test.ts": "2191c022696f86a385b89172729b0153667229d961e4850fcfd496d00c5bd211",
+    "src/__tests__/setup/recording-jobs-fixture.ts": "28ee19f8bb2d1ac52d1616f3fb2f62754b2a1dd6f7823f06cc97fcdc177ded21",
+    "src/__tests__/socket-handlers-idempotency.test.ts": "f71f151ca814fd6d8970e5c6abb6c08ecedc7bb7a9fcb1038871fa27109b2666",
+    "src/__tests__/socket-residency.test.ts": "e9f232220f031e848cfd948ba388f1a969e46a90027a0c56eab93a4f708b4f1e",
+    "src/__tests__/test-safety-lifecycle.test.ts": "c21f6d539f68125c11a32aaf7916c0726353b87858257a8f927846734c368275",
+    "src/__tests__/tts-chunking.test.ts": "5e3af40d4e638e585051552b47707d4979edea0d19d9edf52b32a779ead5fbd7",
+    "src/__tests__/tts-long-read-runtime.test.ts": "3d7a4d23409140bc970d9012f94cb2f008c7110fb91cbd671f1628f04b676e72",
+    "src/__tests__/tts-pause.test.ts": "95bb8b1e7eb35a693a5bfe6e99c4a33bee8475adbd7850af9fc46858933b2d77",
+    "src/__tests__/update-gate-installer-participant.test.ts": "b8c46d7bba767466c6e0315fb79d15d1e9f0db789f71f963c8c23a392cb89024",
+    "src/__tests__/update-gate-installer-short-holder.test.ts": "f1743f964e5c6b5da5040e1beafc70231c06b20838c8078d538b8ffca8738c24",
+    "src/__tests__/update-gate-round1.test.ts": "dd1618e433df38643fa62011cface965de282792012382e7720cff595d923cb5",
+    "src/__tests__/whisper-residency.test.ts": "70206e9ccdd3a91867e2a56a8efadcd8b2c2f5ba88f5ad336eb9219ed057c1d1",
+    "src/f5-capture.ts": "d381fa75d2d80253ccdf3c4251c59a078e61d9bef95b041e27d5b587f7c9c034",
+    "src/recording-jobs.ts": "53141c07bad351d39f27edd5ec64faa8743f68b9be235d7ad3e16d6543a39d52",
+    "src/recording-state.ts": "db2b9617e38ed6da0fea264ead439f3a4ba88619252b84ac76bbb420274b90da",
+    "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
+    "src/selection-read-queue.ts": "563b79c5ae488665501d93d10d0a04aebaa6b6c7148c67118ba1cef73abbc52d",
+    "src/socket-handlers.ts": "29df4b4578b6ef655380f3f3567762853de18743e0dea7602e438cbe3e6e8b1a",
+    "src/socket-protocol.ts": "00a5805b984f1c599ea5fd906853fbb3938b08f1ae2029b65649de719fcb491a",
+    "src/tts.ts": "4dfd38f6253d7d6babfcec438c56fca4c71cf72b6998abdafaf7166644985a3c",
+    "src/tts/long-read.ts": "884cabc066c307dc047ba9b79c83bf0ef22016b20b6822657c11cfe4f429d526",
+    "src/tts/playback-timing.ts": "16aab4ec58c7610a1d28c6c06f12d8316a1de93141861a63bb0489b2b29fce3e",
+    "src/tts/prosody.ts": "633de0bd15a88fa2bc5bc91ab04b58c269e5bbfc82651c16ef0a476763e96c94",
+    "src/tts/retained-readback.ts": "eb68536420724290986dee7035c0c8e714e3159e83f6fe7233f103179a7e0cf8",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "AutoPauseNeverStuck": [
+      "F5PauseStuck"
+    ],
+    "EveryQueuedMatchStops": [
+      "AdmissionOlderMatch"
+    ],
+    "F5DuringTranscriptionStartsCapture": [
+      "F5PauseCurrentTranscribing",
+      "F5PauseCancelPrevious",
+      "F5PauseN6DropsRead"
+    ],
+    "F5HoldsPreparingRead": [
+      "F5PauseCurrentPreparing",
+      "F5PauseIgnorePreparing"
+    ],
+    "F5KeepsQueue": [
+      "QueueAdmissionF5Clears"
+    ],
+    "F5PausesPlayingSpeech": [
+      "F5PauseCurrent",
+      "F5PauseIgnoreF5"
+    ],
+    "FirstAcceptedTerminalImmutable": [
+      "MutableTerminal"
+    ],
+    "ManualPausePersists": [
+      "F5PauseManualResume"
+    ],
+    "NoBlindAdvance": [
+      "QueueAdmissionInferredPlaying"
+    ],
+    "NoDoubleResume": [
+      "F5PauseDoubleResume",
+      "F5PauseStaleResumesPaused"
+    ],
+    "NoDuplicateIdentity": [
+      "QueueAdmissionDuplicate",
+      "QueueAdmissionSameQueues"
+    ],
+    "NoF5PauseOutsideCapture": [
+      "F5PauseResumeOnPaste"
+    ],
+    "NoSilentClear": [
+      "QueueAdmissionClear",
+      "QueueAdmissionFreshClears"
+    ],
+    "NoSpeechDuringOpenMic": [
+      "F5PauseOpenFirst",
+      "F5PauseStartDuringCapture",
+      "F5PauseResumeEarly"
+    ],
+    "NonemptySelectionDoesNotStop": [
+      "AdmissionFinding"
+    ],
+    "OwnerConsistent": [
+      "F5PauseKeepOwner"
+    ],
+    "PauseAtWordBoundary": [
+      "F5PauseCurrentWordBoundary",
+      "F5PauseWordBoundary",
+      "F5PauseParkZero",
+      "F5PauseParkNextWord"
+    ],
+    "QueuedCountExcludesCurrent": [
+      "F5PauseCurrentQueued",
+      "F5PauseQueueCount"
+    ],
+    "ReleaseNeverDropsRead": [
+      "F5PauseCurrentRelease",
+      "F5PauseCurrentPostRelease",
+      "F5PauseCurrentCancelPostRelease",
+      "F5PauseReleaseDrops",
+      "F5PausePostRelease"
+    ],
+    "ResumeFromPausedPosition": [
+      "F5PauseResumePosition",
+      "F5PauseDropAtEnd"
+    ],
+    "StaleCannotAdvance": [
+      "StaleClear",
+      "StaleNext"
+    ],
+    "StopClearsAll": [
+      "QueueAdmissionStopLeaves"
+    ],
+    "StopClearsQueues": [
+      "StopLeaves"
+    ],
+    "StopWins": [
+      "F5PauseStopResumes"
+    ],
+    "TimingNeverBlankWhilePlaying": [
+      "F5PauseCurrentTiming",
+      "F5PauseTimingBlank"
+    ],
+    "TypeOK": [
+      "F5PauseInvalidOwner"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "StaleClear": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "StaleCannotAdvance",
+      "status": "EXPECTED_FAIL",
+      "generated": 29,
+      "distinct": 29
+    },
+    "Current": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 148729,
+      "distinct": 11163
+    },
+    "StaleNext": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "StaleCannotAdvance",
+      "status": "EXPECTED_FAIL",
+      "generated": 7,
+      "distinct": 7
+    },
+    "StopLeaves": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "StopClearsQueues",
+      "status": "EXPECTED_FAIL",
+      "generated": 468,
+      "distinct": 90
+    },
+    "History": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1369,
+      "distinct": 297
+    },
+    "MutableTerminal": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "FirstAcceptedTerminalImmutable",
+      "status": "EXPECTED_FAIL",
+      "generated": 60,
+      "distinct": 32
+    },
+    "AdmissionCurrent": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 257,
+      "distinct": 257
+    },
+    "AdmissionFinding": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NonemptySelectionDoesNotStop",
+      "status": "EXPECTED_FAIL",
+      "generated": 69,
+      "distinct": 69
+    },
+    "AdmissionProposed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 257,
+      "distinct": 257
+    },
+    "AdmissionOlderMatch": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "EveryQueuedMatchStops",
+      "status": "EXPECTED_FAIL",
+      "generated": 147,
+      "distinct": 147
+    },
+    "QueueAdmissionFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1430,
+      "distinct": 1430
+    },
+    "QueueAdmissionClear": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSilentClear",
+      "status": "EXPECTED_FAIL",
+      "generated": 152,
+      "distinct": 152
+    },
+    "QueueAdmissionDuplicate": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDuplicateIdentity",
+      "status": "EXPECTED_FAIL",
+      "generated": 264,
+      "distinct": 264
+    },
+    "QueueAdmissionStopLeaves": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "StopClearsAll",
+      "status": "EXPECTED_FAIL",
+      "generated": 829,
+      "distinct": 829
+    },
+    "QueueAdmissionF5Clears": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "F5KeepsQueue",
+      "status": "EXPECTED_FAIL",
+      "generated": 860,
+      "distinct": 860
+    },
+    "QueueAdmissionFreshClears": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSilentClear",
+      "status": "EXPECTED_FAIL",
+      "generated": 154,
+      "distinct": 154
+    },
+    "QueueAdmissionInferredPlaying": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoBlindAdvance",
+      "status": "EXPECTED_FAIL",
+      "generated": 173,
+      "distinct": 173
+    },
+    "QueueAdmissionSameQueues": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDuplicateIdentity",
+      "status": "EXPECTED_FAIL",
+      "generated": 117,
+      "distinct": 117
+    },
+    "F5PauseCurrent": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "F5PausesPlayingSpeech",
+      "status": "EXPECTED_FAIL",
+      "generated": 37,
+      "distinct": 36
+    },
+    "F5PauseCurrentRelease": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReleaseNeverDropsRead",
+      "status": "EXPECTED_FAIL",
+      "generated": 54,
+      "distinct": 52
+    },
+    "F5PauseCurrentWordBoundary": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PauseAtWordBoundary",
+      "status": "EXPECTED_FAIL",
+      "generated": 180,
+      "distinct": 133
+    },
+    "F5PauseCurrentQueued": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "QueuedCountExcludesCurrent",
+      "status": "EXPECTED_FAIL",
+      "generated": 2,
+      "distinct": 2
+    },
+    "F5PauseCurrentTiming": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TimingNeverBlankWhilePlaying",
+      "status": "EXPECTED_FAIL",
+      "generated": 7,
+      "distinct": 7
+    },
+    "F5PauseCurrentPreparing": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "F5HoldsPreparingRead",
+      "status": "EXPECTED_FAIL",
+      "generated": 10,
+      "distinct": 10
+    },
+    "F5PauseCurrentTranscribing": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "F5DuringTranscriptionStartsCapture",
+      "status": "EXPECTED_FAIL",
+      "generated": 62,
+      "distinct": 59
+    },
+    "F5PauseCurrentPostRelease": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReleaseNeverDropsRead",
+      "status": "EXPECTED_FAIL",
+      "generated": 386,
+      "distinct": 268
+    },
+    "F5PauseCurrentCancelPostRelease": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReleaseNeverDropsRead",
+      "status": "EXPECTED_FAIL",
+      "generated": 77,
+      "distinct": 50
+    },
+    "F5PauseInvalidOwner": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TypeOK",
+      "status": "EXPECTED_FAIL",
+      "generated": 12,
+      "distinct": 10
+    },
+    "F5PauseOpenFirst": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSpeechDuringOpenMic",
+      "status": "EXPECTED_FAIL",
+      "generated": 46,
+      "distinct": 40
+    },
+    "F5PauseIgnoreF5": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "F5PausesPlayingSpeech",
+      "status": "EXPECTED_FAIL",
+      "generated": 46,
+      "distinct": 40
+    },
+    "F5PauseManualResume": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ManualPausePersists",
+      "status": "EXPECTED_FAIL",
+      "generated": 301,
+      "distinct": 212
+    },
+    "F5PauseResumeOnPaste": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoF5PauseOutsideCapture",
+      "status": "EXPECTED_FAIL",
+      "generated": 66,
+      "distinct": 57
+    },
+    "F5PauseResumePosition": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ResumeFromPausedPosition",
+      "status": "EXPECTED_FAIL",
+      "generated": 5440,
+      "distinct": 2385
+    },
+    "F5PauseDoubleResume": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDoubleResume",
+      "status": "EXPECTED_FAIL",
+      "generated": 1511,
+      "distinct": 841
+    },
+    "F5PauseStopResumes": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "StopWins",
+      "status": "EXPECTED_FAIL",
+      "generated": 355,
+      "distinct": 248
+    },
+    "F5PauseKeepOwner": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "OwnerConsistent",
+      "status": "EXPECTED_FAIL",
+      "generated": 51,
+      "distinct": 44
+    },
+    "F5PauseReleaseDrops": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReleaseNeverDropsRead",
+      "status": "EXPECTED_FAIL",
+      "generated": 64,
+      "distinct": 55
+    },
+    "F5PauseWordBoundary": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PauseAtWordBoundary",
+      "status": "EXPECTED_FAIL",
+      "generated": 243,
+      "distinct": 178
+    },
+    "F5PauseQueueCount": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "QueuedCountExcludesCurrent",
+      "status": "EXPECTED_FAIL",
+      "generated": 2,
+      "distinct": 2
+    },
+    "F5PauseTimingBlank": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TimingNeverBlankWhilePlaying",
+      "status": "EXPECTED_FAIL",
+      "generated": 8,
+      "distinct": 7
+    },
+    "F5PauseStuck": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "AutoPauseNeverStuck",
+      "status": "EXPECTED_FAIL",
+      "generated": 1637135,
+      "distinct": 178577
+    },
+    "F5PausePostRelease": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReleaseNeverDropsRead",
+      "status": "EXPECTED_FAIL",
+      "generated": 386,
+      "distinct": 268
+    },
+    "F5PauseStaleResumesPaused": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDoubleResume",
+      "status": "EXPECTED_FAIL",
+      "generated": 1942,
+      "distinct": 1050
+    },
+    "F5PauseParkZero": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PauseAtWordBoundary",
+      "status": "EXPECTED_FAIL",
+      "generated": 1230,
+      "distinct": 729
+    },
+    "F5PauseParkNextWord": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PauseAtWordBoundary",
+      "status": "EXPECTED_FAIL",
+      "generated": 12,
+      "distinct": 10
+    },
+    "F5PauseStartDuringCapture": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSpeechDuringOpenMic",
+      "status": "EXPECTED_FAIL",
+      "generated": 64,
+      "distinct": 53
+    },
+    "F5PauseIgnorePreparing": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "F5HoldsPreparingRead",
+      "status": "EXPECTED_FAIL",
+      "generated": 12,
+      "distinct": 10
+    },
+    "F5PauseCancelPrevious": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "F5DuringTranscriptionStartsCapture",
+      "status": "EXPECTED_FAIL",
+      "generated": 89,
+      "distinct": 80
+    },
+    "F5PauseResumeEarly": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSpeechDuringOpenMic",
+      "status": "EXPECTED_FAIL",
+      "generated": 1819,
+      "distinct": 982
+    },
+    "F5PauseN6DropsRead": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "F5DuringTranscriptionStartsCapture",
+      "status": "EXPECTED_FAIL",
+      "generated": 361,
+      "distinct": 254
+    },
+    "F5PauseDropAtEnd": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ResumeFromPausedPosition",
+      "status": "EXPECTED_FAIL",
+      "generated": 66,
+      "distinct": 57
+    },
+    "F5PauseFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1637135,
+      "distinct": 178577
+    },
+    "F5PauseFixedTranscribing": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 415239,
+      "distinct": 55317
+    }
+  }
+}

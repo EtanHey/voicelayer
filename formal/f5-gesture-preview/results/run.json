@@ -4,7 +4,7 @@
   "hashes": {
     "formal/f5-gesture-preview/F5GesturePreview.tla": "0cb096b7364913ffb4cb0592006b5d1bd44bc80e588ea827081ca79664ec764f",
     "formal/f5-gesture-preview/checks.json": "6cc7fd15c7482628a7ec763c5f84a139edfbcf35d15dbe54b0d9631e250a4179",
-    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/f5-gesture-preview/ImmediateAwaitMutant.cfg": "23b72adc737f0ff116ec3c0ceaceda303a3be2f4bd6fd516c13cf22aafe4d0b6",
     "formal/f5-gesture-preview/FutureHintWitness.cfg": "cc720d2e1643f82bc0a258fd05637287966de4017f6f9917e8dd5d96f80944fa",
@@ -14,9 +14,10 @@
     "formal/f5-gesture-preview/Fixed.cfg": "6c013dde2567e6138e2355049f1d98466bf47bfabfee6217cb129f39c2f2f74c",
     "formal/f5-gesture-preview/StaleShowMutant.cfg": "b87699b9abeb202829948576a8af5064b7e6917b871656638d458dba3b1c4e3e",
     "flow-bar/Sources/VoiceBar/HotkeyManager.swift": "aae1623f2d79a60b052a96698cc2cd51a05d81e1c3b743317709c8273e01524f",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "45df4b21857310e0f23195ae2cd6c5cb3a9485d67cd56fadb88ce50e688b9c08",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "3c7e2cfedde3d5cf6fd19d0b37c8450f275ddb86b7c301280dc069d01214a713",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "7a076d828909aa8f92e65602edadcb6fb5ce98744b548232e557ef2828274ea5"
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e2dde5e682f69da856fb2f6814df1f7e19ed40f7f6fda810ec923679bf73b175",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "14c3460b96852b65d2bf6a4c0eb6f4d0af5cf620c5fd8e8b1398d90056d54074",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "c297977531c3bd8ae71f71aa761adb0c5c6f237bb7aca52e4c8a671771e25062",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "NoQuickDoubleTapHint": [

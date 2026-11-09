@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "ReadyDuplicateKeepsLoaded",
+  "status": "EXPECTED_FAIL",
+  "generated": 5,
+  "distinct": 5
+}

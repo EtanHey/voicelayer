@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoChangedElementDelivery",
+  "status": "EXPECTED_FAIL",
+  "generated": 116,
+  "distinct": 69
+}

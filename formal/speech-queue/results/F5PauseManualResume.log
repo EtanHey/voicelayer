@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "ManualPausePersists",
+  "status": "EXPECTED_FAIL",
+  "generated": 301,
+  "distinct": 212
+}

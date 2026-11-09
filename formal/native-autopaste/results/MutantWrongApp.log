@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoWrongApp",
+  "status": "EXPECTED_FAIL",
+  "generated": 60,
+  "distinct": 48
+}

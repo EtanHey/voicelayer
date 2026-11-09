@@ -1,0 +1,156 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/native-autopaste/NativeAutoPaste.tla": "6c14a172fc6434ca3b35fd76a2788ea98144d36ae482881406cb21de6458fa83",
+    "formal/native-autopaste/checks.json": "41f5bf70665e895bc0773b97b5ddba47eb9f7c950dd706bcc6d7be8ed8aa3065",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/native-autopaste/Mutant.cfg": "aaace393bffeaccf809599210d5eedbc05324b03b9aedc944f30b9be05ce7864",
+    "formal/native-autopaste/MutantFallbackElement.cfg": "bf238ef4d36865f93ca06ce193531c2c516011634136394222b0fb62c8aa500c",
+    "formal/native-autopaste/MutantWrongApp.cfg": "e4dabf827f85ca36bfada2d5e8822ae124e43ff656a19530e4bd2dd58c98ee01",
+    "formal/native-autopaste/MutantFallbackWritable.cfg": "7caef76f6c371005a7dc33d69f5708021c74281ea0b81a4f67f925b1b6ec2d88",
+    "formal/native-autopaste/MutantDouble.cfg": "48eeeee52c11db51c92ba186e6feb53ff0c956d38c5dffd87ce89f5dd34614b9",
+    "formal/native-autopaste/MutantEligible.cfg": "24321324a6e1ee4c77cf3cf3974cfd1a779155d25981830121487074031d0fd4",
+    "formal/native-autopaste/MutantAXWritable.cfg": "4da1f983fa1f86153553fc4d226478c3ed4966841511fc26fbca6b8c2c274374",
+    "formal/native-autopaste/Current.cfg": "480d9c8cfc37cba2ad3a6080007f0bd0b027b4f0fd346deb11608dd4fe0c92b2",
+    "formal/native-autopaste/MutantType.cfg": "1f21d54e53a0421d6886ca86c5f2b1dfd9de03f728ffefb5bdd341143b836813",
+    "formal/native-autopaste/MutantAXElement.cfg": "3a0d7d3bec8376d27ed7b0e0e431cf34680d38fc89c792a42aee7c1a87c482e8",
+    "formal/native-autopaste/MutantRetention.cfg": "56862633d6afa4d90a2f05c381ca363819c8ed4aed9f1b0d0a9d204f75c5f7dd",
+    "formal/native-autopaste/Fixed.cfg": "12d795c8253f250b7a6a54149ae1a2695fd730f29df7f837bbe2e815f573f21f",
+    "formal/legacy_receipts.py": "83fae1948d340e3e253cbd19aac05814ee2457664397616ffce0de4b502998f0",
+    "formal/native-autopaste/check.sh": "04e11523db97d8b9b49d48fdb16253069a87f49f9367e23079e6b14e57b99837",
+    "formal/setup-tlc.py": "ada6a1d5fa6376d4abd8eb8309900bde02e757f53ee2a97e6614aeaee134c391",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "EligibleDelivery": [
+      "Current",
+      "MutantEligible"
+    ],
+    "NoChangedElementDelivery": [
+      "MutantAXElement",
+      "MutantFallbackElement"
+    ],
+    "NoDisabledDelivery": [
+      "Mutant"
+    ],
+    "NoDoubleDelivery": [
+      "MutantDouble"
+    ],
+    "NoUnwritableDelivery": [
+      "MutantAXWritable",
+      "MutantFallbackWritable"
+    ],
+    "NoWrongApp": [
+      "MutantWrongApp"
+    ],
+    "Retention": [
+      "MutantRetention"
+    ],
+    "TypeOK": [
+      "MutantType"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 200,
+      "distinct": 110
+    },
+    "Current": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "EligibleDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 133,
+      "distinct": 79
+    },
+    "Mutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDisabledDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 39,
+      "distinct": 39
+    },
+    "MutantType": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TypeOK",
+      "status": "EXPECTED_FAIL",
+      "generated": 34,
+      "distinct": 34
+    },
+    "MutantWrongApp": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoWrongApp",
+      "status": "EXPECTED_FAIL",
+      "generated": 60,
+      "distinct": 48
+    },
+    "MutantDouble": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDoubleDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 34,
+      "distinct": 34
+    },
+    "MutantRetention": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "Retention",
+      "status": "EXPECTED_FAIL",
+      "generated": 34,
+      "distinct": 34
+    },
+    "MutantEligible": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "EligibleDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 133,
+      "distinct": 79
+    },
+    "MutantAXElement": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoChangedElementDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 116,
+      "distinct": 69
+    },
+    "MutantFallbackElement": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoChangedElementDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 192,
+      "distinct": 102
+    },
+    "MutantAXWritable": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoUnwritableDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 22,
+      "distinct": 22
+    },
+    "MutantFallbackWritable": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoUnwritableDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 99,
+      "distinct": 60
+    }
+  }
+}
