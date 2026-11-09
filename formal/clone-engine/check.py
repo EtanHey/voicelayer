@@ -27,3 +27,6 @@ for name, failure in expected.items():
     if not okay:
         print(result.stdout)
         sys.exit(1)
+
+# Expose the completed original gate logs to the standard receipt adapter.
+print(f"logs: {output}", flush=True)
