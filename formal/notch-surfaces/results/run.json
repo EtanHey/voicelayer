@@ -4,7 +4,7 @@
   "hashes": {
     "formal/notch-surfaces/NotchSurfaces.tla": "08d8521f57f76d3a2444b8c1a327d871eb64197ccef181c82ea618669258b96d",
     "formal/notch-surfaces/checks.json": "4c2fea7b82a89f86fac4142a388c0aa2ddcce693999d23007b3e6e19bc64ae91",
-    "formal/check-model.py": "644ee76ca31ab07898931a3803ccb873f8399c6d067b1c3c04ff4109e9fdb069",
+    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/notch-surfaces/MutantForgetReading.cfg": "4e657b9dc436dc21b5b4dc8432c9f65bf938e29624fa5756dc8a6e1f787a50f0",
     "formal/notch-surfaces/Old.cfg": "8f57cf4c904cc5bac30fb78ab643847ff85c970d95d17a09812e89624a5f2c36",
@@ -13,12 +13,12 @@
     "formal/notch-surfaces/MutantNoReopenCancel.cfg": "ecf170488a511d95b0fedd3d2814d99a8911c0538e614dd9449f7ad15bde2638",
     "formal/notch-surfaces/MutantPresentStale.cfg": "c4e392d37fff16d053e401fa0ffa8d0f8e2c2dd0f81a6e09f082c005f1b88c01",
     "formal/notch-surfaces/Fixed.cfg": "faa99d7f69bc7b7e700b969498156b12b15360fc558d7d78bc4565682bce8f22",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "17bb4ac2fb3a2fe84e1cd0156678a2f9bc168f63f3e8aaec017df0bda60052ee",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "b1b478e1cf1fbbd320f5ffd55e00376daa6bab4ffa8ca80e633b65be631b18e3",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "d4ad24da5f2ad4cbd2da5fa75119d45f35b4e0cc73d5e408aeb28f2bc64e2c12",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "3b076a66a3e6d895fa0f3b0b038b0b1a6272b1e9bad0e408e824029271fa1c2f",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "622e63ec2144eabeeb2e97e553218d4d0655224beef7b7d0c423b6ffb9264710",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "e682d2559447944de364bcfdceafa8cd1064d79a874e5a48fa0bd912ab02af3e",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift": "d37e537343919a323d7d06b9e00d1f777f72ef0b433376724e780f94b66719ca",
     "flow-bar/Sources/VoiceBarUI/BareNotchMenuControl.swift": "a7dc2ca4c1e4afe7b3d1477e40307a7c8c4647ef047d2604d5bc9141813432ac",
-    "flow-bar/Sources/VoiceBar/UIE2EHost.swift": "555a7f7c8c02e4a833dd6bb7cc35ebb8b8b70805a982e66751b8ec2a8fced3a1"
+    "flow-bar/Sources/VoiceBar/UIE2EHost.swift": "651eb5e3573267421d2a42254bb9d8f9c0f2bde0ee638861342e1c225fb54840"
   },
   "mutants": {
     "ExclusiveSurfaces": [

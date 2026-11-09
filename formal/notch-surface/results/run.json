@@ -16,7 +16,7 @@
     "formal/notch-surface/Fixed.cfg": "40cc0de75cda652284f32e5e3ac430a344f7a54c1598202aaa016e5956ea56d0",
     "flow-bar/Sources/VoiceBarUI/NotchSurface.swift": "0d677ddf0829e3ca0c570e9b98a68d7cc672d7e06193d7873dc5feb6350a06d2",
     "flow-bar/Sources/VoiceBarUI/NotchDrawerDismissal.swift": "67e7b6505a6b57106b4e34f723c4194f44734590bc10bd5e6239dcc9f1d4d44c",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "99a4ccfb8c8b87e4b987f952963c960d5dcce7d7d1e4842bae3b6211159bc5f0"
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "622e63ec2144eabeeb2e97e553218d4d0655224beef7b7d0c423b6ffb9264710"
   },
   "mutants": {
     "AtMostOneDrawer": [
