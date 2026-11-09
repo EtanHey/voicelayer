@@ -216,6 +216,75 @@ describe("socket E2E: the playback engine through real commands (VoiceBar's wire
     expect(players.values).toHaveLength(1);
   });
 
+  /** Codex round 1 (P2): Back keeps narration identity and occurrence order, never unique text. */
+  async function hearInOrder(items: { file: string; text: string; voice?: string; ref?: ReturnType<typeof addToHistory> }[]) {
+    for (const item of items) {
+      tts.playAudioNonBlocking(item.file, { text: item.text, voice: item.voice ?? "heard", durationMs: 2000,
+        ...(item.ref ? { historyRef: item.ref } : {}) });
+    }
+    for (let i = 0; i < items.length - 1; i++) { (await players.at(i)).exit.resolve(0); await players.at(i + 1); }
+  }
+  async function back(): Promise<any> {
+    expect(await handleSocketCommand({ cmd: "previous_read" })).toMatchObject({ outcome: "accept" });
+    for (const trim of trims.values) trim.exit.resolve(0);
+    await fixtureCheckpoint();
+    return events.filter(e => e.state === "speaking").at(-1);
+  }
+  const audio = (name: string) => { const path = `${TEST_TMP}/${name}.mp3`; writeFileSync(path, name); return path; };
+
+  it("T1 r2: a heard A, B, A, C goes back from C to the SECOND A (its own retained audio)", async () => {
+    const a1 = audio("order-a1"), b = audio("order-b"), a2 = audio("order-a2"), c = audio("order-c");
+    const refA1 = addToHistory("Narration A", a1, "first-a");
+    const refB = addToHistory("Narration B", b, "heard");
+    const refA2 = addToHistory("Narration A", a2, "second-a");
+    const refC = addToHistory("Narration C", c, "heard");
+    await hearInOrder([{ file: a1, text: "Narration A", voice: "first-a", ref: refA1 }, { file: b, text: "Narration B", ref: refB },
+      { file: a2, text: "Narration A", voice: "second-a", ref: refA2 }, { file: c, text: "Narration C", ref: refC }]);
+    const replay = await back();
+    expect(replay).toMatchObject({ text: "Narration A", voice: "second-a" });
+  });
+
+  it("T1 r2: while the second A plays, Back is available and goes to B", async () => {
+    const a1 = audio("again-a1"), b = audio("again-b"), a2 = audio("again-a2");
+    const refA1 = addToHistory("Narration A", a1, "first-a");
+    const refB = addToHistory("Narration B", b, "heard");
+    const refA2 = addToHistory("Narration A", a2, "second-a");
+    await hearInOrder([{ file: a1, text: "Narration A", voice: "first-a", ref: refA1 }, { file: b, text: "Narration B", ref: refB },
+      { file: a2, text: "Narration A", voice: "second-a", ref: refA2 }]);
+    expect(tts.hasPreviousRead()).toBe(true);
+    expect(await back()).toMatchObject({ text: "Narration B" });
+  });
+
+  it("T1 r2: Back replays the audio that was heard, never a newer unheard archive entry with the same text", async () => {
+    const heard = audio("identity-heard"), b = audio("identity-b"), unheard = audio("identity-unheard");
+    const refHeard = addToHistory("Narration A", heard, "heard-voice");
+    const refB = addToHistory("Narration B", b, "heard");
+    await hearInOrder([{ file: heard, text: "Narration A", voice: "heard-voice", ref: refHeard },
+      { file: b, text: "Narration B", ref: refB }]);
+    at(50);
+    addToHistory("Narration A", unheard, "UNHEARD-voice");
+    expect(await back()).toMatchObject({ text: "Narration A", voice: "heard-voice" });
+  });
+
+  it("T1 r2: a referenced entry is the identity even when its saved text differs from the spoken text", async () => {
+    const heard = audio("clone-heard"), b = audio("clone-b");
+    const refHeard = addToHistory("Display text of A", heard, "clone-voice");
+    const refB = addToHistory("Narration B", b, "heard");
+    await hearInOrder([{ file: heard, text: "Spoken text of A", voice: "clone-voice", ref: refHeard },
+      { file: b, text: "Narration B", ref: refB }]);
+    expect(await back()).toMatchObject({ text: "Display text of A", voice: "clone-voice" });
+  });
+
+  it("T1 r2: without an explicit reference, the entry bound when it started (a later same-text entry never wins)", async () => {
+    const heard = audio("bare-heard"), b = audio("bare-b"), unheard = audio("bare-unheard");
+    addToHistory("Narration A", heard, "heard-voice");
+    addToHistory("Narration B", b, "heard");
+    await hearInOrder([{ file: heard, text: "Narration A", voice: "heard-voice" }, { file: b, text: "Narration B" }]);
+    // Same millisecond on purpose: identity is bound at start, not compared by timestamp.
+    addToHistory("Narration A", unheard, "UNHEARD-voice");
+    expect(await back()).toMatchObject({ text: "Narration A", voice: "heard-voice" });
+  });
+
   it("T1: a queue that ended starts over; the next queue's Back cannot reach the old one", async () => {
     const old = `${TEST_TMP}/old-queue.mp3`;
     writeFileSync(old, "fake audio");

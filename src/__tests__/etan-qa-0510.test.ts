@@ -26,6 +26,7 @@ beforeAll(() => {
   ownsHistory = true;
   observed = hasPreviousRead();
   console.log(`[T1] current queue has no submitted fixture; archiveOnlyPreviousAvailable=${observed}`);
+  console.log(`[isolation] VOICELAYER_TEST_ISOLATED=${process.env.VOICELAYER_TEST_ISOLATED} root=${relative(process.cwd(), root)}`);
 });
 
 afterAll(() => {
