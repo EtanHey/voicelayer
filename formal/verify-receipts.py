@@ -69,7 +69,12 @@ def verify(root):
     except (OSError, ValueError, SyntaxError) as exc:
         failures.append(f'.github/workflows/formal.yml: cannot verify trigger coverage: {exc}')
         triggers = {}
-    runners = sorted((root / 'formal').glob('*/check.sh'))
+    for directory in sorted((root / 'formal').iterdir()):
+        if directory.is_dir() and (any(directory.glob('*.tla')) or any(directory.glob('*.cfg'))
+                                   or (directory / 'checks.json').exists() or (directory / 'results').is_dir()):
+            if not (directory / 'check.sh').is_file():
+                failures.append(f'{directory.name}: missing check.sh for model directory')
+    runners = sorted(p for p in (root / 'formal').glob('*/check.sh') if p.is_file())
     if not runners:
         return failures + ['formal: no model check.sh files found']
     pin = json.loads((root / 'formal/tlc.lock.json').read_text())['sha256']

@@ -84,7 +84,25 @@ class ReceiptTests(unittest.TestCase):
         self.write_workflow()
         self.assertTrue(verifier.verify(self.root))
 
+    def test_deleted_runner_is_not_silently_dropped(self):
+        (self.model / 'check.sh').unlink()
+        self.assertTrue(any('example: missing check.sh' in e for e in verifier.verify(self.root)))
 
+    def test_orphan_model_markers_require_runner(self):
+        for marker in ('Example.tla', 'Fixed.cfg', 'checks.json', 'results'):
+            directory = self.root / 'formal' / ('orphan-' + marker.replace('.', '-'))
+            directory.mkdir()
+            if marker == 'results':
+                (directory / marker).mkdir()
+            else:
+                (directory / marker).touch()
+            with self.subTest(marker=marker):
+                self.assertTrue(any(directory.name + ': missing check.sh' in e for e in verifier.verify(self.root)))
+        vendor = self.root / 'formal/vendor'
+        vendor.mkdir()
+        (vendor / 'tool.jar').touch()
+        # Ordinary support directories are not model candidates.
+        self.assertFalse(any('vendor: missing check.sh' in e for e in verifier.verify(self.root)))
 
     def test_workflow_block_lists_and_fail_closed_syntax(self):
         workflow = self.root / '.github/workflows/formal.yml'
@@ -98,6 +116,11 @@ class ReceiptTests(unittest.TestCase):
         workflow.unlink()
         self.assertTrue(any('cannot verify trigger coverage' in e for e in verifier.verify(self.root)))
 
+    def test_support_directories_are_allowed(self):
+        vendor = self.root / 'formal/vendor'
+        vendor.mkdir()
+        (vendor / 'tool.jar').touch()
+        self.assertEqual(verifier.verify(self.root), [])
 
     def test_reject_invalid_receipts(self):
         for field, value in [('complete', False), ('tlcJarSHA256', 'wrong'), ('mutants', {}), ('checks', {})]:
