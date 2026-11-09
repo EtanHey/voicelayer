@@ -65,6 +65,20 @@ export class SpeechWordTimeline {
     return offset;
   }
 
+  /** Lane B: the read-global index of the word a read-global offset is in (the last word whose start it reached). */
+  wordAt(offsetMs: number): number | undefined {
+    let start = 0, offset = 0;
+    for (let i = 0; i < this.chunks.size; i++) {
+      const chunk = this.chunks.get(i);
+      if (!chunk) return undefined;
+      if (offsetMs < start + chunk.duration || i === this.chunks.size - 1) {
+        return offset + Math.max(0, chunk.words.findLastIndex(word => word.startMs <= offsetMs - start));
+      }
+      start += chunk.duration; offset += chunk.words.length;
+    }
+    return undefined;
+  }
+
   /** Words known so far across the synthesized prefix. */
   wordCount(): number {
     let count = 0;

@@ -92,8 +92,8 @@ import { narrationSource, setNarrationSource } from "./narration/source";
 import { createNarrationSource } from "./narration/adapter";
 import { planUtterances, synthesizeBounded, type AssembleNarration } from "./narration/utterances";
 import type { NarrationAudio } from "./narration/source";
-import { ledgerAskBegin, ledgerAskRestore, ledgerRecorderExit, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
-  ledgerPreviousHold, ledgerPreviousReturn, ledgerReplayFromStart, ledgerResumed, ledgerStopAll, ledgerStopped, ledgerWord, currentPlaybackSpeed,
+import { ledgerAskBegin, ledgerAskCouldNotPark, ledgerAskRestore, ledgerRecorderExit, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
+  ledgerPreviousHold, ledgerPreviousReturn, ledgerReplayFromStart, ledgerResumed, ledgerSeek, ledgerStopAll, ledgerStopped, ledgerWord, currentPlaybackSpeed,
   setLedgerPlaybackSpeed, setPreviousReadProbe } from "./playback/ledger";
 import { startCloneTiming } from "./tts/clone-timing";
 import { combineHistoryTimings, clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
@@ -1288,6 +1288,9 @@ class PlaybackQueueManager {
   /** Lane B: a read voice_ask parked. It holds no player, never freezes the queue (the prompt must play),
    * is never replaced by new speech, and is restored by the ask's end. */
   private askHeld?: { parked: ParkedPlayback; from: "paused" | "playing" };
+  /** Lane B: the read "previous read" holds aside while the previous narration replays. Its own slot, so an ask
+   * during the replay parks the replay (what the user sees) and the held read stays held (statechart gap 4). */
+  private previousHeld?: ParkedPlayback;
   private interrupting = new Set<string>();
 
   /** Capture-end r2: the read an ask restored at its recorder's exit plays while the answer transcribes. */
@@ -1354,6 +1357,8 @@ class PlaybackQueueManager {
         this.endReadProcessing();
         this.processNext();
         if (processing) broadcastPlaybackIdleIfSpeakerClear();
+        // Lane B: a previous-read return the ask deferred happens once the ask has released the voice.
+        flushPreviousReturn();
       },
     };
   }
@@ -1428,8 +1433,14 @@ class PlaybackQueueManager {
     const job = this.jobs.get(scope.id);
     if (!job || job.completed || !job.lifecycle.matches(scope)) return false;
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
-    const parked = this.parked?.job === job ? this.parked : this.askHeld?.parked.job === job ? this.askHeld.parked : undefined;
-    if (parked) { if (this.parked === parked) this.parked = undefined; else this.askHeld = undefined; parked.controller.abort(); }
+    const parked = this.parked?.job === job ? this.parked : this.askHeld?.parked.job === job ? this.askHeld.parked
+      : this.previousHeld?.job === job ? this.previousHeld : undefined;
+    if (parked) {
+      if (this.parked === parked) this.parked = undefined;
+      else if (this.previousHeld === parked) this.previousHeld = undefined;
+      else this.askHeld = undefined;
+      parked.controller.abort();
+    }
     const active = this.current?.job === job ? this.current
       : [...this.terminating.values()].find(candidate => candidate.job === job);
     if (this.current?.job === job) { this.current = null; this.stopProgressTimer(); this.terminate(active!); }
@@ -1601,7 +1612,8 @@ class PlaybackQueueManager {
     if (!job || job.completed) return { outcome: "noop", reason: "nothing playing" };
     if (this.isStale(job, scope)) return staleControl(staleIdentity(job));
     if (getEffectiveRecordingState() !== "idle" && !this.isProcessingRead(job.wordTimeline.utteranceId)) return { outcome: "reject", reason: "busy" };
-    if (!job.metadata || ((job.priority === "critical" || this.captureAdmission) && !this.ownsPausablePrompt(job) && !this.isProcessingRead(job.wordTimeline.utteranceId))) return { outcome: "reject", reason: "unsupported" };
+    // An ask parks a critical-priority read like any read (statechart gap 1); only a user pause refuses it.
+    if (!job.metadata || (((job.priority === "critical" && owner !== "ask") || this.captureAdmission) && !this.ownsPausablePrompt(job) && !this.isProcessingRead(job.wordTimeline.utteranceId))) return { outcome: "reject", reason: "unsupported" };
     const chunkStart = job.metadata.longRead?.chunk_start_ms ?? 0;
     // Lane B: a client clock behind the player (VoiceBar's 0 while "preparing", or a chunk-local value)
     // never rewinds the read; the daemon's own player clock wins then (Etan, QA 2026-11-08: pause → 0:00).
@@ -1866,6 +1878,8 @@ class PlaybackQueueManager {
     if (job.completed || (this.current?.job !== job && this.preparing?.job !== job && this.restartAfterTermination !== job)) {
       disposeSeekSlice(slice); return;
     }
+    // Lane B (statechart gap 3): the engine sees the live seek (and a speed change, which rides it) as Seek/SeekDone.
+    if (job.metadata) ledgerSeek(sessionIdOf(job), globalWord(job, wordAtLocalOffset(job, offset).word_index));
     disposeSeekSlice(job.sliceFile);
     job.lifecycle.generation++;
     job.reanchor = "seek";
@@ -1889,15 +1903,22 @@ class PlaybackQueueManager {
   }
 
   private holds(parked: ParkedPlayback): boolean {
-    return this.parked === parked || this.askHeld?.parked === parked;
+    return this.parked === parked || this.askHeld?.parked === parked || this.previousHeld === parked;
   }
 
-  /** Lane B: voice_ask preempts the read on screen; it is parked at its exact word and held aside. */
+  /**
+   * Lane B: voice_ask preempts the read on screen; it is parked at its exact word and held aside. Statechart gap 1: a
+   * read is parked in every case the old guards refused. Its chunk queued behind other speech is parked where it
+   * waits; a critical-priority read is parked like any read. Only a capture admission already reserved (another ask
+   * still owns the voice) refuses, and the daemon refuses that ask before it touches the read.
+   */
   holdForAsk(options: { anySpeech?: boolean; utteranceId?: string } = {}): { held: boolean; from?: "paused" | "playing"; sessionId?: string; word?: number } {
     if (this.askHeld) return { held: true, from: this.askHeld.from, sessionId: sessionIdOf(this.askHeld.parked.job) };
     // An ask parks only reads; short agent speech keeps its contract: the ask waits for it (FX-2).
-    // "Previous read" holds whatever narration is on screen.
-    const holdable = (job: PlaybackJob) => options.anySpeech ? job.metadata !== undefined : job.metadata?.longRead !== undefined;
+    // "Previous read" (and an ask during its replay) holds whatever narration is on screen.
+    const holdable = (job: PlaybackJob) => !job.completed && (options.anySpeech ? job.metadata !== undefined && (job.priority !== "critical" ||
+      job.metadata.longRead !== undefined) : job.metadata?.longRead !== undefined) &&
+      (options.utteranceId === undefined || job.wordTimeline.utteranceId === options.utteranceId);
     if (this.parked && holdable(this.parked.job)) {
       const parked = this.parked;
       this.parked = undefined;
@@ -1906,17 +1927,61 @@ class PlaybackQueueManager {
       this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext();
       return { held: true, from: "paused", sessionId: sessionIdOf(parked.job), word: globalWord(parked.job, parked.job.pausedWordIndex ?? 0) };
     }
-    // Paused-ask stack (D1/D2): a resumed decode or a seek's slice can sit in the queue as a pending job of the read.
-    const job = this.current?.job ?? this.restartAfterTermination ?? this.preparing?.job ??
-      (options.utteranceId ? this.pending.find(candidate => candidate.wordTimeline.utteranceId === options.utteranceId) : undefined);
-    if (!job || job.completed || !holdable(job) || job.priority === "critical" || this.captureAdmission) return { held: false };
+    if (this.captureAdmission) return { held: false };
+    // Paused-ask stack (D1/D2): a resumed decode or a seek's slice can sit in the queue as a pending job of the read;
+    // so can its chunk queued behind short agent speech that is playing now.
+    const owner = [this.current?.job, this.restartAfterTermination ?? undefined, this.preparing?.job].find(job => job !== undefined);
+    const job = owner && holdable(owner) ? owner : this.pending.find(holdable);
+    if (!job) return { held: false };
     this.askHeld = undefined;
-    const result = this.pause({ id: job.id }, undefined, "ask");
-    if (result.outcome !== "accept" || !this.askHeld) return { held: false };
-    const held = this.askHeld as { parked: ParkedPlayback; from: "paused" | "playing" };
+    if (job !== owner) {
+      // Waiting behind another job: it holds no player, so it is parked where it waits, at the word it will start on.
+      this.pending = this.pending.filter(candidate => candidate !== job);
+      job.pausedWordIndex = job.metadata ? wordAtLocalOffset(job, job.metadata.localOffsetMs ?? 0).word_index : 0;
+      this.park(job, job.metadata?.localOffsetMs ?? 0, "ask");
+    } else {
+      const result = this.pause({ id: job.id }, undefined, "ask");
+      if (result.outcome !== "accept" || !this.askHeld) return { held: false };
+    }
+    // park()/pause() set askHeld; read it back without the narrowing from the reset above.
+    const held = this.askHeld as { parked: ParkedPlayback; from: "paused" | "playing" } | undefined;
+    if (!held) return { held: false };
     held.from = "playing";
     this.resolveIfIdle(); this.processNext();
     return { held: true, from: "playing", sessionId: sessionIdOf(job), word: globalWord(job, job.pausedWordIndex ?? 0) };
+  }
+
+  /** The read job an ask would park (playing, preparing, or queued behind other speech), if any. */
+  onScreenRead(anySpeech = false): { id: string; sessionId: string } | undefined {
+    const job = [this.current?.job, this.restartAfterTermination ?? undefined, this.preparing?.job, ...this.pending]
+      .find(candidate => candidate && !candidate.completed && (anySpeech ? candidate.metadata !== undefined : candidate.metadata?.longRead !== undefined));
+    return job ? { id: job.id, sessionId: sessionIdOf(job) } : undefined;
+  }
+
+  /** Lane B: "previous read" holds the narration on screen aside at its word, in its own slot. */
+  holdForPrevious(): { held: boolean; word?: number } {
+    if (this.previousHeld) return { held: false };
+    const result = this.holdForAsk({ anySpeech: true });
+    if (!result.held || !this.askHeld) return { held: false };
+    this.previousHeld = this.askHeld.parked;
+    this.askHeld = undefined;
+    return { held: true, word: result.word };
+  }
+
+  isHeldForPrevious(): boolean { return this.previousHeld !== undefined; }
+
+  /** The replay is over: the held read comes back paused at its word. */
+  releasePreviousHold(): SeekResult {
+    const parked = this.previousHeld;
+    if (!parked) return { outcome: "noop", reason: "nothing held" };
+    this.previousHeld = undefined;
+    return this.restoreHeld(parked, "paused");
+  }
+
+  /** The held read was superseded by a new read: it ends without coming back. */
+  dropPreviousHold(): void {
+    const parked = this.previousHeld;
+    if (parked) this.cancel({ id: parked.job.id }, undefined, "replaced");
   }
 
   /** Lane B: a speed change restarts the playing player at the word it is on, at the new rate. */
@@ -1930,13 +1995,6 @@ class PlaybackQueueManager {
 
   onScreenText(): string | undefined {
     return (this.current?.job ?? this.preparing?.job ?? this.parked?.job)?.metadata?.text;
-  }
-
-  /** Lane B: the held read was superseded; it ends without coming back. */
-  dropAskHold(): void {
-    const held = this.askHeld;
-    if (!held) return;
-    this.cancel({ id: held.parked.job.id }, undefined, "replaced");
   }
 
   isHeldForAsk(id?: string): boolean {
@@ -1955,7 +2013,10 @@ class PlaybackQueueManager {
     const held = this.askHeld;
     if (!held) return { outcome: "noop", reason: "nothing held" };
     this.askHeld = undefined;
-    const { parked } = held;
+    return this.restoreHeld(held.parked, target);
+  }
+
+  private restoreHeld(parked: ParkedPlayback, target: "paused" | "playing"): SeekResult {
     if (parked.job.completed) return { outcome: "noop", reason: "held read ended" };
     if (this.parked) this.replaceParked();
     parked.owner = target === "playing" ? "ask" : "user";
@@ -2704,7 +2765,8 @@ export function pauseForF5Capture(playbackElapsedMs?: number): { ready: Promise<
 }
 export function hasF5Capture(): boolean { return f5CaptureActive; }
 
-/** Lane B: the read a voice_ask parked. `from` is what the ask's end restores (a Stop during the ask makes it paused). */
+/** Lane B: the read a voice_ask parked. `from` is what the ask's end restores: playing from its word, or paused at it.
+ * A Stop during the ask ends the ask and this read (stopPlayback; model StopAll). */
 interface AskReadHold { from: "paused" | "playing"; longReadId?: string; restored: boolean }
 let askHold: AskReadHold | undefined;
 
@@ -2715,7 +2777,7 @@ function holdsLongRead(read: OwnedLongRead | undefined): boolean {
 }
 
 /** Lane B: the read "previous read" set aside while the previous narration replays. */
-interface PreviousHold { longReadId?: string; replayId?: string; restored: boolean }
+interface PreviousHold { longReadId?: string; replayId?: string; restored: boolean; returnPending?: boolean }
 let previousHold: PreviousHold | undefined;
 
 function normalizedReadText(text: string): string { return text.replace(/\s+/g, " ").trim(); }
@@ -2755,7 +2817,7 @@ export function playPreviousRead(): SeekResult {
   const hold: PreviousHold = { ...(read ? { longReadId: read.id } : {}), restored: false };
   if (live) {
     previousHold = hold;
-    const held = playbackQueueManager.holdForAsk({ anySpeech: true });
+    const held = playbackQueueManager.holdForPrevious();
     if (!held.held) {
       // A read between chunks has no player to hold for a few hundred ms; ask the user to retry.
       previousHold = undefined;
@@ -2778,17 +2840,28 @@ export function playPreviousRead(): SeekResult {
 
 function restorePreviousHold(hold: PreviousHold): void {
   if (hold.restored || previousHold !== hold) return;
+  // The replay ended (or was stopped) during an ask: the held read comes back once the ask has released the voice
+  // (model PrevReturn needs ask = "none"); the ask's end calls this again.
+  if (askInProgress()) { hold.returnPending = true; return; }
   hold.restored = true;
   previousHold = undefined;
   // A new read took the screen meanwhile: the held read was superseded, so it ends.
   const superseded = hold.longReadId !== undefined && activeLongRead !== undefined && activeLongRead.id !== hold.longReadId;
-  if (superseded || !playbackQueueManager.isHeldForAsk()) {
-    playbackQueueManager.dropAskHold();
+  if (superseded || !playbackQueueManager.isHeldForPrevious()) {
+    playbackQueueManager.dropPreviousHold();
     ledgerPreviousReturn(true);
     return;
   }
-  playbackQueueManager.releaseAskHold("paused");
+  playbackQueueManager.releasePreviousHold();
   ledgerPreviousReturn(false);
+}
+
+/** An ask holds the voice: its read hold is live, or its capture admission is still reserved (answer transcribing). */
+function askInProgress(): boolean { return isReadHeldForAsk() || isCaptureAdmissionReserved(); }
+
+/** The ask is over: a previous-read return it deferred happens now. */
+function flushPreviousReturn(): void {
+  if (previousHold?.returnPending && !askInProgress()) restorePreviousHold(previousHold);
 }
 
 /** Lane B: the listening speed (1× is a real step). A playing player continues from its word at the new rate. */
@@ -2809,6 +2882,8 @@ export function isReadHeldForAsk(): boolean { return askHold !== undefined && !a
 export interface AskReadHoldHandle {
   /** True when a read was parked; false when nothing was on screen. */
   held: boolean;
+  /** Set when the ask may not run at all: another ask still owns capture admission. Nothing was touched. */
+  refused?: "capture-owned";
   /**
    * Idempotent. Puts the read back where the ask found it: playing from its word, or paused at it.
    * `recorderExited`: the ask's recorder has exited and its answer is transcribing (capture-end r2, Etan:
@@ -2818,18 +2893,37 @@ export interface AskReadHoldHandle {
   restore(options?: { recorderExited?: boolean }): SeekResult;
 }
 
+/** The read's next chunk has no queue job yet (synthesizing, or waiting on a predecessor's teardown): the ask parks
+ * that admission directly. It holds no player, so nothing can refuse the park (statechart gap 1). */
+function parkPendingAdmissionForAsk(read: OwnedLongRead, admission: PendingReadChunk): void {
+  if (admission.phase === "paused") { read.pendingChunk = { ...admission, owner: "ask" }; return; }
+  const parked: PendingReadChunk & { phase: "paused" } = { ...admission, phase: "paused", owner: "ask",
+    identity: { id: admission.identity.id, generation: admission.identity.generation + (admission.info.chunk_index > 0 ? 1 : 0) } };
+  read.pendingChunk = parked;
+  read.archive?.move("paused");
+  publishPlaybackState({ type: "playback_state", state: "paused", playback_id: parked.identity.id, generation: parked.identity.generation,
+    pause_owner: "ask", offset_ms: parked.info.chunk_start_ms + (parked.offsetMs ?? 0), chunk_offset_ms: parked.offsetMs ?? 0,
+    word_index: 0, long_read: { ...parked.info, preparing: true } }, "ask");
+}
+
 /**
  * Lane B (2.4): voice_ask PARKS the read on screen at its exact word instead of cancelling it
  * (formal/playback-session AskPreempt / AskRestore). A user-paused read stays paused; a playing
  * read resumes from the same word once the ask's recorder has exited (capture-end r2). Call restore()
  * at recorder exit and on every ask end: answer, failed capture, cancel, timeout. A Stop ends both.
+ *
+ * Statechart gap 1: an ask never cancels a read. Every case the queue used to refuse parks now; a second ask while
+ * another still owns capture is refused before anything is touched. A read that still cannot be parked (not reachable
+ * from voice_ask) is ended in the player AND the engine, with the violation logged: never a silent mismatch.
+ * Gap 4: during a "previous read" replay the ask parks the REPLAY at its word; the read held aside stays held.
  */
 export function holdReadForAsk(): AskReadHoldHandle {
   const none: AskReadHoldHandle = { held: false, restore: () => ({ outcome: "noop", reason: "nothing held" }) };
   if (askHold && !askHold.restored) return none;
-  // An ask during a "previous read" replay ends the replay; the held read returns paused and is parked below.
-  if (previousHold && !previousHold.restored && previousHold.replayId) cancelPlayback({ id: previousHold.replayId });
-  const read = activeLongRead && !activeLongRead.controller.signal.aborted ? activeLongRead : undefined;
+  if (isCaptureAdmissionReserved()) return { ...none, refused: "capture-owned" };
+  const replaying = previousHold !== undefined && !previousHold.restored;
+  // During a replay the read on screen is the replay; the long read is the one held aside.
+  const read = !replaying && activeLongRead && !activeLongRead.controller.signal.aborted ? activeLongRead : undefined;
   // Paused-ask stack (D6): a seek in flight is committed to its target, so the ask parks the word asked for.
   if (read?.seek) {
     read.seek.cancelPendingSeek?.();
@@ -2841,26 +2935,32 @@ export function holdReadForAsk(): AskReadHoldHandle {
   // A user pause made before the ask is kept as a pause.
   if (playbackQueueManager.isPaused() || read?.pendingChunk?.phase === "paused") hold.from = "paused";
   askHold = hold;
-  const queued = playbackQueueManager.holdForAsk(read ? { utteranceId: read.id } : {});
-  let word = queued.word;
+  const queued = playbackQueueManager.holdForAsk(replaying ? { anySpeech: true } : read ? { utteranceId: read.id } : {});
+  let parked = queued.held && queued.sessionId !== undefined ? { id: queued.sessionId, word: queued.word ?? 0 } : undefined;
   if (!queued.held && read?.pendingChunk) {
     const admission = read.pendingChunk;
-    if (admission.phase === "paused") {
-      read.pendingChunk = { ...admission, owner: "ask" };
-    } else if (pausePlayback(admission.identity, undefined, "ask").outcome !== "accept") {
-      askHold = undefined;
-      return none;
-    }
-    word = read.wordTimeline.wordOffsetOf(admission.info.chunk_index) ?? 0;
+    parkPendingAdmissionForAsk(read, admission);
+    parked = { id: read.id, word: read.wordTimeline.wordOffsetOf(admission.info.chunk_index) ?? 0 };
   } else if (!queued.held) {
     askHold = undefined;
+    // A read on screen that still could not be parked (not reachable from voice_ask: the recorder check before this
+    // call is synchronous) ends in the player AND the engine, with the violation logged.
+    const job = read ? undefined : playbackQueueManager.onScreenRead(replaying);
+    if (read) {
+      ledgerAskCouldNotPark(read.id);
+      read.archive?.finish("stopped", "REPLACED");
+      cancelLongRead(undefined, read);
+    } else if (job) {
+      ledgerAskCouldNotPark(job.sessionId);
+      playbackQueueManager.cancel({ id: job.id }, undefined, "replaced");
+    }
     ledgerAskBegin();
     return { held: false, restore: (options) => {
       if (options?.recorderExited) { ledgerRecorderExit(); return { outcome: "noop", reason: "nothing held" }; }
-      ledgerAskRestore(); return { outcome: "noop", reason: "nothing held" };
+      ledgerAskRestore(); flushPreviousReturn(); return { outcome: "noop", reason: "nothing held" };
     } };
   }
-  ledgerAskBegin(word);
+  ledgerAskBegin(parked);
   return { held: true, restore: (options) => restoreReadAfterAsk(hold, options?.recorderExited === true) };
 }
 
@@ -2879,6 +2979,10 @@ function restoreReadAfterAsk(hold: AskReadHold, recorderExited: boolean): SeekRe
   hold.restored = true;
   askHold = undefined;
   ledgerAskRestore();
+  try { return restoreHeldRead(read, target); } finally { flushPreviousReturn(); }
+}
+
+function restoreHeldRead(read: OwnedLongRead | undefined, target: "paused" | "playing"): SeekResult {
   if (playbackQueueManager.isHeldForAsk()) {
     const job = playbackQueueManager.heldJobIdentity();
     const result = playbackQueueManager.releaseAskHold(target);
@@ -2990,6 +3094,7 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
     prepareSeek: (chunk, offset, signal) => prepareSeekSlice(chunk.audioFile, offset, signal),
     disposeSeek: disposeSeekSlice,
     seekFailed: error => broadcast({ type: "error", source: "seek", message: String(error), recoverable: true }),
+    seekCommitted: offset => ledgerSeek(id, handle.wordTimeline.wordAt(offset) ?? 0),
     play: (chunk, _text, info, position) => {
       let resolveStarted!: (value: boolean) => void;
       const started = new Promise<boolean>(resolve => { resolveStarted = resolve; });
@@ -3025,8 +3130,10 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
 export function stopPlayback(playbackElapsedMs?: number, cancelled = false): boolean {
   cancelPendingVoiceAdmissions("speech");
   // Stop during an ask ends the ask and the read it held (paused-ask stack W1 "stopped": Stop means stop). Only a
-  // "previous read" replay's held read survives its Stop, and comes back paused at its word (PrevReturn).
-  const heldRead = !isReadHeldForAsk() && holdsLongRead(activeLongRead);
+  // "previous read" replay's held read survives its Stop (an ask during the replay parked the replay, not it), and
+  // comes back paused at its word once any ask is over (PrevReturn).
+  const heldRead = previousHold !== undefined && !previousHold.restored && activeLongRead !== undefined &&
+    previousHold.longReadId === activeLongRead.id;
   if (cancelled) {
     for (const controller of speechPreparations) preparationArchives.get(controller)?.finish("cancelled", "USER_CANCEL");
     if (!heldRead) activeLongRead?.archive?.finish("cancelled", "USER_CANCEL");
@@ -3096,12 +3203,15 @@ export function setExternalSpeechPreemptionListener(listener: typeof externalSpe
 }
 
 /** Preempt only a long read; ordinary short speech retains its existing queue policy.
- * `successor` replaces a user read; `ask` preserves an existing park in any admission phase; anything else
- * (agent speech) is external. */
-export function preemptLongRead(by: "external" | "successor" | "ask" = "external"): boolean {
+ * `successor` replaces a user read; agent speech is external. `ask` (voice_ask, which owns capture admission) never
+ * cancels a read and never touches the narration queue (statechart gaps 1 and 2): holdReadForAsk parked or explicitly
+ * ended the read on screen already. `converse` is other converse speech (the Voice SDK turn), which keeps its earlier
+ * policy: a paused read waits, a playing one is replaced. */
+export function preemptLongRead(by: "external" | "successor" | "ask" | "converse" = "external"): boolean {
   // Lane B: neither the ask prompt nor agent speech cancels the read an ask holds, nor the reads waiting after it.
   if (by !== "successor" && isReadHeldForAsk()) return false;
-  if (by === "ask" && isPlaybackPaused()) return false;
+  if (by === "ask") return false;
+  if (by === "converse" && isPlaybackPaused()) return false;
   if (by !== "successor") externalSpeechListener?.();
   // Other accepted speech replaces a parked item so held speech cannot strand a waiter.
   playbackQueueManager.replaceParked();
@@ -3458,6 +3568,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
         ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
       disposeSeek: disposeSeekSlice,
       seekFailed: (error) => broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true }),
+      seekCommitted: offset => ledgerSeek(id, handle.wordTimeline.wordAt(offset) ?? 0),
       onDuration: (totalMs, final) => {
         if (final) resolveSynthesized();
         broadcast({ type: "playback_duration", long_read_id: id, duration_ms: totalMs, final });
@@ -3730,7 +3841,7 @@ async function prepareSpeech(
   const chars = text?.length ?? 0;
   if (!text?.trim()) return {};
   assertSpeakerClear();
-  preemptLongRead(options?.mode === "converse" ? "ask" : "external");
+  preemptLongRead(options?.mode === "converse" ? (isCaptureAdmissionReserved() ? "ask" : "converse") : "external");
   if (cancelledLongReadTeardowns.size) {
     await Promise.all([...cancelledLongReadTeardowns]);
     throwIfAbortedSafe(signal);

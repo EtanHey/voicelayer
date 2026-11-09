@@ -100,7 +100,7 @@ export function ledgerPlayerStarted(id: string, kind: SessionKind, word: number,
   // mirrors that guarantee instead of keeping a stale "exiting" entry that would refuse this player.
   for (const exiting of [...engine.exiting]) engine.playerExited(exiting);
   if (isPrompt) {
-    if (engine.ask === "none") engine.askBegin();
+    if (engine.ask === "none") engine.askBegin(undefined, null);
     engine.askPromptStart();
     return after("prompt-start");
   }
@@ -109,7 +109,7 @@ export function ledgerPlayerStarted(id: string, kind: SessionKind, word: number,
     engine.begin(id, kind, wordCount);
   } else {
     engine.extend(id, wordCount);
-    if (session.state === "playing") nextChunk(id);
+    if (session.state === "playing") engine.nextChunk(id);
     else if (session.state === "seeking") engine.seekDone(id);
     else if (session.state === "paused") engine.resume(id);
   }
@@ -135,15 +135,6 @@ export function ledgerPlayerStarted(id: string, kind: SessionKind, word: number,
   after("player-started");
 }
 
-/** Chunk boundary inside one read: the next chunk's player continues the same session. */
-function nextChunk(id: string): void {
-  const session = engine.get(id) as PlaybackSession | undefined;
-  if (!session || session.state !== "playing") return;
-  session.state = "preparing";
-  engine.players.delete(id);
-  engine.preparing.add(id);
-}
-
 export function ledgerWord(id: string, word: number): void {
   if (engine.get(id)?.state !== "playing") return;
   engine.word(id, word);
@@ -162,6 +153,8 @@ export function ledgerReplayFromStart(id: string): void { pausedOffsets.delete(i
 
 export function ledgerPaused(id: string, word: number, owner: PauseOwner, offsetMs?: number): void {
   if (offsetMs !== undefined) pausedOffsets.set(id, offsetMs);
+  // A Pause between a seek's commit and its new player: the seek landed (model SeekDone), then the pause.
+  if (engine.get(id)?.state === "seeking") engine.seekDone(id);
   engine.pause(id, word, owner);
   // The paused playback_state tells VoiceBar this word: that is what its teleprompter shows now.
   engine.teleprompter(word, id);
@@ -174,7 +167,10 @@ export function ledgerResumed(id: string): number | undefined {
   return result.ok ? result.word : undefined;
 }
 
+/** A live seek or speed change committed: the playing player is replaced at read-global word `word` (model Seek; its
+ * new player's start is SeekDone). A session that is not playing (preparing, paused) is left as it is. */
 export function ledgerSeek(id: string, word: number): void {
+  if (engine.get(id)?.state !== "playing") return;
   engine.seek(id, word);
   after("seek");
 }
@@ -214,10 +210,26 @@ export function ledgerPreviousReturn(dropped: boolean): void {
   after(dropped ? "previous-drop" : "previous-return");
 }
 
-export function ledgerAskBegin(word?: number): { id: string; word: number } | undefined {
-  const result = engine.askBegin(word);
+/**
+ * The ask begins. `parked` is the session the driver parked at `word`, or undefined when it parked nothing (no read on
+ * screen, or short speech the ask waits for). The engine parks exactly that session, never another one.
+ */
+export function ledgerAskBegin(parked?: { id: string; word: number }): { id: string; word: number } | undefined {
+  const result = engine.askBegin(parked?.word, parked?.id ?? null);
+  // Driver conformance (AskKeepsRead): a read still on screen that the driver did not park is a silent mismatch.
+  for (const session of engine.positionedSessions()) {
+    if (session.kind === "read" && session.id !== parked?.id)
+      reportViolation("ask-begin", `AskKeepsRead(driver): ${session.id} is ${session.state} but the ask did not park it`);
+  }
   after("ask-begin");
   return result.ok && result.id !== undefined ? { id: result.id, word: result.word ?? 0 } : undefined;
+}
+
+/** The driver could not park the read on screen (never expected from voice_ask): it ends in the engine too, and the
+ * evidence is kept. Called before ledgerAskBegin, so the engine's Esc ends the read rather than an ask. */
+export function ledgerAskCouldNotPark(id: string): void {
+  reportViolation("ask-begin", `AskKeepsRead(driver): ${id} could not be parked and was ended`);
+  ledgerStopped(id);
 }
 
 export function ledgerAskPromptSkipped(): void { engine.askPromptSkipped(); after("prompt-skipped"); }

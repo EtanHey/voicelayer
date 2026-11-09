@@ -76,6 +76,21 @@
       "role": "mutant",
       "target": "ParkedEventuallyReleased",
       "kind": "temporal"
+    },
+    "AskCancelsReadMutant": {
+      "role": "mutant",
+      "target": "AskKeepsRead",
+      "kind": "invariant"
+    },
+    "AskClearsQueueMutant": {
+      "role": "mutant",
+      "target": "QueueSurvivesAsk",
+      "kind": "invariant"
+    },
+    "EarlySuccessorMutant": {
+      "role": "mutant",
+      "target": "SuccessorWaitsForRelease",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -88,6 +103,8 @@
     "OneLiveSession",
     "NoZombie",
     "NoSameQueued",
-    "ParkedEventuallyReleased"
+    "ParkedEventuallyReleased",
+    "QueueSurvivesAsk",
+    "SuccessorWaitsForRelease"
   ]
 }
