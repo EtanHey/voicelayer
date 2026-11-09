@@ -3,6 +3,7 @@ import OffscreenTestSupport
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
+import Vision
 
 /// Raw product assertions for the 00b9d380 QA. Strict XFAIL never absorbs fixture/render errors.
 @MainActor
@@ -12,6 +13,41 @@ final class EtanQA0510Tests: XCTestCase {
         options.isStrict = true
         options.issueMatcher = { $0.type == .assertionFailure && $0.compactDescription.contains("[" + row + "]") }
         XCTExpectFailure("[" + row + "] Etan 2026-11-09", options: options, failingBlock: body)
+    }
+
+    /// AX hit-testing is not visibility: use the actual painted copy, with an OCR positive control.
+    func testN2NoExplanatoryProsePaintedInDrawer() throws {
+        var seen: [String: Bool] = [:]
+        for tab in [SettingsTab.transcription, .dictionary] {
+            let drawer = NotchSettingsDrawer(selectedTab: tab, palette: .resolve(for: .dark),
+                missingPermissions: [], context: NotchSettingsDrawerContext(shortcutHint: { "QA" },
+                defaultMicrophoneName: { "QA" }, updates: nil, openSettingsWindow: { _, _ in }),
+                onSelectTab: { _ in }, onOpenWindow: { _, _ in })
+            let host = NSHostingView(rootView: drawer.frame(width: 420, height: 348).background(Color.black))
+            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 420, height: 348),
+                                  styleMask: .borderless, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            defer { window.contentView = nil; window.close() }
+            VLOrderTestWindow(window)
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([request])
+            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ").lowercased()
+            XCTAssertTrue(text.contains(tab.title.lowercased()), "fixture: OCR must read the selected tab")
+            let phrase = tab == .transcription ? "local recognizer" : "spell your way"
+            seen[tab.title] = text.contains(phrase)
+            print("[N2] \(tab.title) paintedProse=\(seen[tab.title]!)")
+        }
+        expected("N2") {
+            for (tab, present) in seen { XCTAssertFalse(present, "[N2] explanatory prose painted in \(tab)") }
+        }
     }
 
     func testN7DrawersCanOpenDuringRecording() {

@@ -253,7 +253,7 @@ final class VoiceBarFlowTests: XCTestCase {
                 requireFrame(capture, contract: evidenceContract)
             }
         }
-        let passed = (testRun?.failureCount ?? 0) == before
+        let passed = (testRun?.failureCount ?? 0) == before && (issue == nil || !matched.isEmpty)
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed,
                                       "capture": capture, "evidenceContract": evidenceContract]
         if let skipped { receipt["skipped"] = skipped }

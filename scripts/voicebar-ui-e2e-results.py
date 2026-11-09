@@ -15,6 +15,8 @@ import sys
 SCENARIOS = {'e2e24': 'testE2E24AllFlows', 'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow', 'wings-u2': 'testWingsU2Flow'}
 
 
+QA_ROW_PACKETS = {'N1', 'N4', 'N5', 'N6', 'N7', 'N9', 'N10', 'T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8'}
+
 def selected_scenario(output, scenario=None):
     path = output / 'scenario.json'
     recorded = json.loads(path.read_text())['scenario'] if path.exists() else None
@@ -38,10 +40,13 @@ def expected_packet(step):
         return None
     packet = expected.get('packet')
     descriptions = expected.get('descriptions')
-    if (step.get('passed') is not True or packet not in {'P14b', 'SEL1', 'P1e', 'P1f'}
+    if (step.get('passed') is not True or packet not in ({'P14b', 'SEL1', 'P1e', 'P1f'} | QA_ROW_PACKETS)
             or not isinstance(descriptions, list) or not descriptions
             or not all(isinstance(d, str) and '[' + packet + ']' in d for d in descriptions)):
         raise ValueError('Invalid or unmatched expected product failure')
+    if re.fullmatch(r'(N(?:[1-9]|10)|T[1-8])', packet):
+        if expected.get('surface') != 'e2e24:' + packet or expected.get('surfaces') != ['e2e24:' + packet]:
+            raise ValueError('QA row failure lacks its exact e2e24 surface')
     if 'surfaces' in expected:
         surfaces = expected['surfaces']
         if (not isinstance(surfaces, list) or not surfaces
@@ -250,6 +255,8 @@ def receipts(directory, manifest):
         if ledger['version'] != 1 or ledger['steps'] != ordered:
             raise ValueError('Final ledger differs from individual action receipts')
         coverage = ledger['coverage']
+        if set(coverage.get('verifiedSurfaces', [])) & {'e2e24:' + row for row in QA_ROW_PACKETS}:
+            raise ValueError('Known QA expected-failure row cannot be verified; remove its XFAIL contract after fixing it')
         expected_surfaces = coverage.get('expectedSurfaces', {})
         for step in ordered:
             if expected_packet(step) == 'P1f':
