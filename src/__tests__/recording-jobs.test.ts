@@ -52,7 +52,9 @@ describe("recording job runtime (isolated fake recorder, never real mic)", () =>
   });
 
   for (const scenario of ["capturing-bare", "opening-bare", "opening-scoped", "opening-cancel"]) {
-    it(`review817 characterizes ${scenario} control provenance without changing routing`, async () => {
+    // BARE-STOP: the bare scenarios now pin the fix. The bare stop is traced as ignored, writes no stop and the take
+    // keeps recording; only its own scoped stop ends it. The scoped scenarios are unchanged.
+    it(`review817 characterizes ${scenario} control provenance${scenario.endsWith("bare") ? " and the bare stop leaves the take recording" : " without changing routing"}`, async () => {
       const events: SocketEvent[] = [], logs: string[] = [];
       spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(event); }));
       spies.push(spyOn(console, "error").mockImplementation((...args) => { logs.push(args.join(" ")); }));
@@ -82,14 +84,38 @@ describe("recording job runtime (isolated fake recorder, never real mic)", () =>
       expect(await handleSocketCommand({ cmd: "record", id: randomUUID(), take_id: id, press_to_talk: true })).toMatchObject({ outcome: "accept" });
       if (scenario === "capturing-bare") await until(() => events.some(e => e.type === "state" && e.capture_id !== undefined));
       const scoped = scenario === "opening-scoped" || scenario === "opening-cancel";
+      const bare = !scoped;
+      const rows = () => logs.filter(line => line.startsWith("[voicelayer][capture-lifecycle] ")).map(line => JSON.parse(line.slice(line.indexOf("{"))));
       expect(await handleSocketCommand({ cmd: scenario === "opening-cancel" ? "cancel" : "stop", id: controlID,
         ...(scoped ? { take_id: id, physical_press: true } : {}) })).toMatchObject({ outcome: "accept" });
       open.resolve();
+      if (bare) {
+        expect(rows().find(row => row.event === "ignore-unscoped-stop")).toMatchObject({ route: "unscoped-speech-only",
+          command_id: controlID, command_take_id: null, take_id: id });
+        // The take is still live 600 ms on (and past the opening fixture's first PCM); nothing wrote a stop.
+        await until(() => recordingJobsSnapshot().mic_take_id === id);
+        if (scenario === "opening-bare") await until(() => rows().some(row => row.event === "first-pcm"));
+        await Bun.sleep(600);
+        expect(recordingJobsSnapshot().mic_take_id).toBe(id);
+        expect(rows().filter(row => row.event === "write-stop" || row.event === "buffer-control")).toEqual([]);
+        expect(await handleSocketCommand({ cmd: "stop", take_id: id, physical_press: true })).toMatchObject({ outcome: "accept" });
+      }
       await until(() => recordingJobsSnapshot().recording_jobs.length === 0 && logs.some(line => line.includes('"event":"finish"')));
-      const trace = logs.filter(line => line.startsWith("[voicelayer][capture-lifecycle] ")).map(line => JSON.parse(line.slice(line.indexOf("{"))));
+      const trace = rows();
       const writer = trace.find(row => row.event === "write-stop");
-      expect(writer).toMatchObject({ route: scenario.startsWith("opening") ? "buffered-in-opening" : "fallback-to-live",
-        command_id: controlID, command_take_id: scoped ? id : null, stamped_take_id: id });
+      if (bare) {
+        // The only writer is the take's own scoped stop.
+        expect(writer).toMatchObject({ route: "scoped", command_take_id: id, stamped_take_id: id });
+        expect(trace.find(row => row.event === "finish")).toMatchObject({ take_id: id, control_cancelled: false, job_cancelled: false });
+        expect(trace.every(row => Number.isFinite(row.t_ms) && Number.isFinite(row.monotonic_ms) && Number.isFinite(row.since_accept_ms) && row.since_accept_ms >= 0)).toBe(true);
+        if (scenario === "opening-bare") {
+          const audio = readdirSync(root, { recursive: true }).filter(name => typeof name === "string" && name.endsWith("audio.wav") && !before.has(name));
+          expect(audio).toHaveLength(1);
+          expect(readFileSync(join(root, String(audio[0]))).byteLength).toBeGreaterThan(44); // no header-only take
+        }
+        return;
+      }
+      expect(writer).toMatchObject({ route: "buffered-in-opening", command_id: controlID, command_take_id: id, stamped_take_id: id });
       const finish = trace.find(row => row.event === "finish");
       expect(finish).toMatchObject({ take_id: id, control_cancelled: scenario === "opening-cancel", job_cancelled: scenario === "opening-cancel" });
       expect(trace.every(row => Number.isFinite(row.t_ms) && Number.isFinite(row.monotonic_ms) && Number.isFinite(row.since_accept_ms) && row.since_accept_ms >= 0)).toBe(true);
@@ -100,7 +126,6 @@ describe("recording job runtime (isolated fake recorder, never real mic)", () =>
         expect(audio).toHaveLength(1);
         expect(readFileSync(join(root, String(audio[0]))).byteLength).toBe(44);
       }
-      // Bare controls currently end this take: characterize the defect, do not fix routing here.
       expect(recordingJobsSnapshot().mic_take_id).toBeNull();
     });
   }

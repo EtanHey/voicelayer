@@ -7,3 +7,4 @@
 | SettlesAfterSilence | StallMutant |
 | SilenceTimesOut | NoTimeoutMutant |
 | SpeechRenewsDeadline | NoRenewalMutant |
+| UnscopedStopNeverEndsCapture | UnscopedEndsCaptureMutant, OpeningFallbackMutant |

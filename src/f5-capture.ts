@@ -5,10 +5,25 @@ import { pauseForF5Capture } from "./tts";
 
 /** Lane I owns mic, transcription, delivery and cancellation. This adapter only lends it the read. */
 const opening = new Map<string, { control?: "stop" | "cancel"; physicalPress?: boolean; origin?: Record<string, unknown> }>();
-/** Preserve a physical up-edge that arrives while the old speech player is still exiting. */
+/** Takes whose client named them (VoiceBar always does). Only a stop carrying that id may end one. */
+const scopedTakes = new Set<string>();
+/** A client-named take is opening or holds the mic. An unscoped stop must leave it recording. */
+export function hasScopedCapture(micTakeID: string | null): boolean {
+  return (micTakeID !== null && scopedTakes.has(micTakeID)) || [...opening.keys()].some(id => scopedTakes.has(id));
+}
+/** The client-named take an unscoped stop leaves alone: the mic owner, else the first opening one (for the trace). */
+export function scopedCaptureTakeID(micTakeID: string | null): string | null {
+  if (micTakeID !== null && scopedTakes.has(micTakeID)) return micTakeID;
+  return [...opening.keys()].find(id => scopedTakes.has(id)) ?? null;
+}
+/** Preserve a physical up-edge that arrives while the old speech player is still exiting.
+ *  An id-less stop falls back only to an anonymous (daemon-named) opening take; a cancel keeps its fallback. */
 export function bufferOpeningCaptureControl(id: string | undefined, control: "stop" | "cancel", physicalPress = false, origin: Record<string, unknown> = {}): boolean {
   const commandTakeID = id;
-  id ??= opening.keys().next().value;
+  if (id === undefined) {
+    id = opening.keys().next().value;
+    if (id !== undefined && control === "stop" && scopedTakes.has(id)) return false;
+  }
   if (!id) return false;
   const pending = opening.get(id);
   if (!pending) return false;
@@ -45,7 +60,7 @@ onRecordingStateChange(() => {
 
 export function runBarCaptureWithPausedRead(id: string, record: (opened: () => void) => Promise<string | null>,
   held: () => void, settled: () => void, playbackElapsedMs?: number,
-  options?: Parameters<typeof runBarCapture>[2]): Promise<string | null> {
+  options?: Parameters<typeof runBarCapture>[2], scoped = false): Promise<string | null> {
   if (!canStartBarCapture() || loan?.takes.has(id)) return Promise.reject(new Error("Recording already in progress"));
   beginCaptureTrace(id);
   if (!loan) {
@@ -55,6 +70,7 @@ export function runBarCaptureWithPausedRead(id: string, record: (opened: () => v
   }
   const current = loan;
   current.takes.add(id);
+  if (scoped) scopedTakes.add(id);
   const pending: { control?: "stop" | "cancel"; physicalPress?: boolean; origin?: Record<string, unknown> } = {};
   opening.set(id, pending);
   return current.pause.ready.then(() => runBarCapture(id, () => record(() => {
@@ -64,8 +80,9 @@ export function runBarCaptureWithPausedRead(id: string, record: (opened: () => v
     else if (pending.control === "stop") markBarCaptureDraining(id);
     if (pending.control) writeCaptureStop(JSON.stringify({ take_id: id,
       ...(pending.control === "cancel" ? { cancelled: true } : { physical_press: pending.physicalPress === true }) }), "buffered-in-opening", pending.origin ?? {}, id);
-  }), options)).finally(() => {
+  }), { ...options, clientNamed: scoped })).finally(() => {
     opening.delete(id);
+    scopedTakes.delete(id);
     current.finished.add(id);
     settleLoan(current);
   });

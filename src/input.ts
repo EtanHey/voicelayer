@@ -85,7 +85,7 @@ import {
 } from "./vad";
 import { broadcastInputEvent as broadcast, setInputRecordingState as setRecordingState,
   finishBarCapture, ownsRecordingJob, ownsHistoryJob, ownsBarCapture, mayUpdateRetainedCapture,
-  recordingJobCancelled, deliverInputTranscription, registerBarRecorderExit, recordingJobsSnapshot } from "./recording-jobs";
+  recordingJobCancelled, deliverInputTranscription, registerBarRecorderExit, recordingJobsSnapshot, ownsClientNamedCapture } from "./recording-jobs";
 import {
   calculateRMS,
   detectNativeInputFormat,
@@ -2312,6 +2312,11 @@ export function isPushToEndStopDrainComplete(
   return nowMs - stopRequestedAtMs >= drainMs;
 }
 
+/** BARE-STOP: the mic admission of a client-named VoiceBar take is scoped (an id-less stop spares it while it waits on
+ *  the update-gate lock). Anonymous records and voice_ask stay unscoped, so an id-less stop still cancels them (SF1). */
+function withScopedCaptureAdmission<T>(work: () => T): Promise<Awaited<T>> {
+  return withCaptureVoiceAdmission(work, { scoped: ownsClientNamedCapture() });
+}
 /**
  * Record audio from mic to a PCM buffer.
  * Returns the raw PCM data as a Uint8Array.
@@ -2333,7 +2338,7 @@ export async function recordToBuffer(
   preserveNoSpeechCapture = false,
   captureState?: RecordingCaptureState,
 ): Promise<Uint8Array | null> {
-  return withCaptureVoiceAdmission(async () => {
+  return withScopedCaptureAdmission(async () => {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
   if (isMicDisabled()) {
@@ -3092,7 +3097,7 @@ export async function waitForInput(
   } };
   return withTakeStageTimings(timings, async () => {
   try {
-  return await withCaptureVoiceAdmission(async () => {
+  return await withScopedCaptureAdmission(async () => {
   throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
   if (currentRecordingState !== "idle" && !ownsBarCapture()) {

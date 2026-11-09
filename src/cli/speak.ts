@@ -8,7 +8,7 @@ import { readSpeechSecret } from "../speech-control";
 import { createSpeakReceipt } from "../speak-archive";
 import { updateSpeakLifecycle } from "../speak-archive-store";
 
-export type SpeechRequest = { cmd: "stop" } | {
+export type SpeechRequest = { cmd: "stop"; scope: "speech" } | {
   cmd: "speak_text"; text: string; profile: "auto" | "short" | "long";
   format: "plain" | "markdown"; wait: boolean;
 };
@@ -46,7 +46,8 @@ export async function parseSpeakArgs(args: string[], io: IO): Promise<SpeechRequ
   }
   if (stop) {
     if (args.length !== 1) throw new Error("--stop cannot be combined with speech options");
-    return { cmd: "stop" };
+    // BARE-STOP: speech only; a stop without a take id must never end a dictation take.
+    return { cmd: "stop", scope: "speech" };
   }
   if (file !== undefined && input !== undefined) throw new Error("Choose text, stdin or --file");
   const text = file !== undefined ? await io.readFile(file) : input === undefined || input === "-" ? await io.readStdin() : input;
