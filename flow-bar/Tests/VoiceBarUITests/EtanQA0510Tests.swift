@@ -43,8 +43,24 @@ final class EtanQA0510Tests: XCTestCase {
         })
     }
 
+    /// Draws `host` at a fixed 2x backing scale. `bitmapImageRepForCachingDisplay` follows the machine's screen, so a
+    /// 1x CI runner got half the pixels: OCR misread the tab bar and the N10 gap rounded to 5 pt (CI run 42680588819).
+    static func fixedScaleBitmap(_ host: NSView, scale: CGFloat = 2) throws -> NSBitmapImageRep {
+        let size = host.bounds.size
+        let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale),
+                                                 pixelsHigh: Int(size.height * scale), bitsPerSample: 8,
+                                                 samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        rep.size = size
+        host.cacheDisplay(in: host.bounds, to: rep)
+        return rep
+    }
+
     /// Renders `view` offscreen and returns the painted text (Vision OCR), lowercased, plus the host for view checks.
-    static func paintedText(_ view: some View, size: CGSize = CGSize(width: 420, height: 394)) throws -> (String, NSView) {
+    /// `expecting` re-reads (up to ~3 s) until that text appears, so a slow runner that paints a pane late is not a
+    /// false failure; a pane that never paints it still fails the caller's assertion.
+    static func paintedText(_ view: some View, size: CGSize = CGSize(width: 420, height: 394),
+                            expecting: String? = nil) throws -> (String, NSView) {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(Color.black))
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: .borderless,
                               backing: .buffered, defer: false)
@@ -53,16 +69,20 @@ final class EtanQA0510Tests: XCTestCase {
         defer { window.contentView = nil; window.close() }
         VLOrderTestWindow(window)
         host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["en-US"]
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([request])
-        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        return (text.lowercased(), host)
+        var text = ""
+        for _ in 0 ..< 5 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            let bitmap = try Self.fixedScaleBitmap(host)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([request])
+            text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                .joined(separator: " ").lowercased()
+            guard let expecting, !text.contains(expecting) else { break }
+        }
+        return (text, host)
     }
 
     static func containsScrollView(_ view: NSView) -> Bool {
@@ -79,7 +99,7 @@ final class EtanQA0510Tests: XCTestCase {
         for tab in SettingsTab.allCases {
             let drawer = NotchSettingsDrawer(selectedTab: tab, appearance: .dark, context: Self.settingsPaneContext(),
                 history: { AnyView(Text("QA history row").font(.system(size: 13))) }, onSelectTab: { _ in })
-            let (text, host) = try Self.paintedText(drawer)
+            let (text, host) = try Self.paintedText(drawer, expecting: expectedSetting[tab]!)
             XCTAssertTrue(text.contains(tab.title.lowercased()), "fixture: OCR reads the tab bar")
             print("[N1] \(tab.title) painted=\(text.prefix(160))")
             XCTAssertFalse(text.contains("all settings") || text.contains("open \(tab.title.lowercased()) settings"),
@@ -177,8 +197,7 @@ final class EtanQA0510Tests: XCTestCase {
         VLOrderTestWindow(window)
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try Self.fixedScaleBitmap(host)
         var lastDigit = -1, firstBar = Int.max
         for x in 0 ..< bitmap.pixelsWide {
             for y in 0 ..< bitmap.pixelsHigh {
@@ -292,8 +311,7 @@ final class EtanQA0510Tests: XCTestCase {
             VLOrderTestWindow(window)
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(1.0))
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let bitmap = try Self.fixedScaleBitmap(host)
             let ocr = VNRecognizeTextRequest()
             ocr.recognitionLevel = .accurate
             ocr.usesLanguageCorrection = false
@@ -395,8 +413,7 @@ final class EtanQA0510Tests: XCTestCase {
             VLOrderTestWindow(window)
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let bitmap = try Self.fixedScaleBitmap(host)
             let scale = CGFloat(bitmap.pixelsWide) / 420
             for (index, tab) in SettingsTab.allCases.enumerated() {
                 // 8 pt horizontal padding, 5 equal tabs separated by 2 pt; icons sit above the text baseline.
