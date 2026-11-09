@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterEach, spyOn } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { testTmp } from "./setup/test-tmp";
 import { ParakeetServer, ParakeetServiceError, parakeetCommand } from "../parakeet-server";
@@ -125,6 +125,18 @@ for await (const line of rl) {
       expect((caught as ParakeetServiceError).attempt).toMatchObject({ ready: false, protocol: 1 });
       expect((caught as ParakeetServiceError).cleanupFailure).toBeDefined();
     } finally { await Bun.sleep(450); await s.shutdown(); }
+  });
+  test.each(["start", "transcribe", "health"] as const)("%s refuses a child whose stop was not confirmed", async operation => {
+    const s = make({ stopMs: 5 }); await s.start();
+    // Keep this protocol-only owned child alive across both stop deadlines.
+    const child = (s as unknown as { child: { proc: Bun.Subprocess } }).child;
+    const kill = spyOn(child.proc, "kill").mockImplementation(() => {});
+    try {
+      await expect(s.unload()).rejects.toThrow("did not stop");
+      if (operation === "health") expect(await s.health()).toBe(false);
+      else await expect(operation === "start" ? s.start() : s.transcribe("normal")).rejects.toThrow("did not stop");
+      expect(s.pid).toBe(child.proc.pid); // custody remains until exit is confirmed
+    } finally { kill.mockRestore(); await s.shutdown(); }
   });
   test("owned restart and unload are usable without permanent shutdown", async () => {
     const s = make(); await s.start(); await s.restart(); expect(await s.health()).toBe(true); await s.unload(); expect(await s.health()).toBe(false); await s.start();

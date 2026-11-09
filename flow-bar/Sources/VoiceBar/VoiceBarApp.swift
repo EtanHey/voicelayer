@@ -258,7 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Hotkey management — CGEventTap + gesture state machine. The lifecycle holds the running manager and starts a
     /// fresh one on "Restart F5 listener".
-    private lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
+    lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
     private let gestureStateMachine = GestureStateMachine()
     private var stoppingFromPhysicalPress = false
     var appliedActivationPolicy: NSApplication.ActivationPolicy = .accessory
@@ -1629,6 +1629,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Starts with the native F5 listener, so QA launches that skip the listener keep their seeded setup state.
     func startPermissionHealth() {
         guard !permissionHealth.isPolling else { return }
+        permissionHealth.onRefresh = { [weak self] in self?.refreshHotkeyListenerHealth() }
         permissionHealth.onChange = { [weak self] reading, trigger in
             self?.applyPermissionHealth(reading, trigger: trigger)
         }
@@ -1656,6 +1657,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         permissionHealth.refresh(trigger, force: force)
     }
 
+    /// The tap can stop without a permission transition. Sample it on every health read.
+    private func refreshHotkeyListenerHealth() {
+        let enabled = hotkeyListener.isRunning
+        guard hotkeyEnabled != enabled else { return }
+        hotkeyEnabled = enabled
+        voiceState.setHotkeyEnabled(enabled)
+        refreshSettingsWindowAnchorState()
+    }
+
     /// The popover's setup row: General › Setup's first broken step from the latest health reading. Nil when healthy,
     /// and nil before the monitor starts (QA launches that skip the listener).
     func menuBarSetupAlert() -> MenuBarSetupAlert? {
@@ -1666,8 +1676,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ))
     }
 
-    /// Status only: the F5 listener's running state (`hotkeyEnabled`) is never changed here; a listener that is off
-    /// once the permissions are back offers "Restart F5 listener" in Settings.
+    /// Permission status only. The paired onRefresh callback samples live tap health without restarting it;
+    /// a stopped listener offers "Restart F5 listener" in Settings.
     private func applyPermissionHealth(_ reading: PermissionHealthReading, trigger: PermissionHealthTrigger) {
         if trigger != .launch, trigger != .listenerChanged {
             NSLog("[VoiceBar] Permission health changed (%@): missing %@", trigger.rawValue,

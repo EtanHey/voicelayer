@@ -163,6 +163,44 @@ describe("stt-polish-server", () => {
     } finally { off(); resetSTTPolishServerManagerForTests(); }
   });
 
+  it.each([0, 9])("publishes stopped when the current ready child exits with code %s", async code => {
+    resetSTTPolishServerManagerForTests();
+    const exit = Promise.withResolvers<number>();
+    const statuses: string[] = [];
+    let spawned = false;
+    const off = onSTTPolishServerStatus(status => statuses.push(status.status));
+    try {
+      expect(await ensureSTTPolishServer({
+        env: { QA_VOICE_STT_POLISH: "on" }, findBinary: () => "/fixture/polish",
+        findPortOwnerPids: () => spawned ? [456] : [], isEndpointReady: async () => spawned,
+        spawn: () => { spawned = true; return { pid: 456, exited: exit.promise, kill: () => {} }; },
+        appendEvent: () => {}, log: () => {},
+      })).toEqual({ status: "ready", pid: 456 });
+      exit.resolve(code); await exit.promise; await Promise.resolve();
+      expect(statuses).toEqual(["ready", "stopped"]);
+    } finally { off(); resetSTTPolishServerManagerForTests(); }
+  });
+  it("ignores a superseded child's late exit after a replacement is ready", async () => {
+    resetSTTPolishServerManagerForTests();
+    const oldExit = Promise.withResolvers<number>();
+    const statuses: string[] = [];
+    const off = onSTTPolishServerStatus(status => statuses.push(status.status));
+    try {
+      for (const pid of [456, 457]) {
+        let spawned = false;
+        if (pid === 457) resetSTTPolishServerManagerForTests();
+        expect(await ensureSTTPolishServer({
+          env: { QA_VOICE_STT_POLISH: "on" }, findBinary: () => "/fixture/polish",
+          findPortOwnerPids: () => spawned ? [pid] : [], isEndpointReady: async () => spawned,
+          spawn: () => { spawned = true; return { pid, kill: () => {},
+            exited: pid === 456 ? oldExit.promise : new Promise<number>(() => {}) }; },
+          appendEvent: () => {}, log: () => {},
+        })).toEqual({ status: "ready", pid });
+      }
+      oldExit.resolve(9); await oldExit.promise; await Promise.resolve();
+      expect(statuses).toEqual(["ready", "ready"]);
+    } finally { off(); resetSTTPolishServerManagerForTests(); }
+  });
   it("releases an unconfirmed stopping hold only after the polish child eventually exits", async () => {
     resetSTTPolishServerManagerForTests();
     let exit!: (code: number) => void;

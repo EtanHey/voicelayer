@@ -27,7 +27,7 @@ final class HotkeyListenerLifecycle {
     }
 
     var isRunning: Bool {
-        running != nil
+        running?.isEnabled == true
     }
 
     /// At launch. A listener that fails to start is stopped before it is dropped, so no half-made tap survives.
