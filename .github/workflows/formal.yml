@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
   pull_request:
-    branches: [main, integration/2.2.61, integration/2.3, integration/2.4]
+    branches: [main, 'integration/*']
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
 
 concurrency: { group: 'formal-${{ github.ref }}', cancel-in-progress: true }
@@ -14,7 +14,19 @@ permissions:
   contents: read
 
 jobs:
+  receipts:
+    if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'integration/')
+    name: TLC receipts (recorded locally)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test receipt freshness guard
+        run: python3 -B formal/test_verify_receipts.py
+      - name: Verify local TLC receipts
+        run: python3 -B formal/verify-receipts.py
   runners:
+    if: github.event_name == 'push' || github.base_ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:

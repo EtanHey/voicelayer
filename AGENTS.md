@@ -232,3 +232,5 @@ with `python3 scripts/check-docslocal-hygiene.py docs.local`. Archive worktree
 receipts with `python3 scripts/archive-worktree-docs.py SOURCE DESTINATION`;
 it excludes apps, archives, DerivedData, `.build*`, symlinks, Mach-O and files
 over 5 MB. Never copy a worktree's docs.local wholesale.
+
+Before pushing a branch that touches `formal/` or a model's hashed sources, run `python3 -B formal/check-model.py formal/<model> --record` locally; CI on integration PRs verifies the receipt; full TLC runs on the integration → main PR, opened as a draft at the start of every release.

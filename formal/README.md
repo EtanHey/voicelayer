@@ -1,0 +1,3 @@
+# Formal receipts
+
+Before pushing changes to a model or its hashed sources, record local TLC evidence with `python3 -B formal/check-model.py formal/<model> --record`. Integration PRs run the Linux receipt verifier (`python3 -B formal/verify-receipts.py`), checking input freshness, the TLC pin, passing positive checks and exact-property mutant failures; this checks recorded evidence rather than executing TLC or conformance. Full TLC and conformance still run on main pushes and PRs into main. Open the integration → main PR as a draft at the start of every release. Legacy runners without standard receipts fail closed and require migration before integration CI can pass.
