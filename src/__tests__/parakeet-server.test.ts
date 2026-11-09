@@ -33,6 +33,8 @@ for await (const line of rl) {
   if(p==='delay')await new Promise(r=>setTimeout(r,80));
   out={...out,text:'A complete response.',complete:true,input_frames:16000,covered_frames:16000,sample_rate:16000,last_token_end_s:1,inference_s:0.01,language:null};
   if(p==='empty')out.text='';
+  if(p==='bad-time')out.last_token_end_s=5;
+  if(p==='bad-time-type')out.last_token_end_s='invalid';
   if(p==='wrong-id')out.id++;
   if(p==='bad-frames')out.covered_frames=2;
   if(p==='provider-error')out={id:r.id,ok:false,code:'RuntimeError'};
@@ -50,6 +52,14 @@ for await (const line of rl) {
   test("persistent child serves empty then success without restarting serve", async () => {
     const s = make(); await s.start(); expect(await s.health()).toBe(true);
     expect((await s.transcribe("empty")).text).toBe(""); expect((await s.transcribe("normal")).text).toBe("A complete response."); expect(await s.health()).toBe(true);
+  });
+  test.each(["bad-time", "bad-time-type"])("%s keeps returned words and the owned model; coverage unavailable", async path => {
+    const s = make(); await s.start(); const pid = s.pid;
+    const result = await s.transcribe(path);
+    expect(result.text).toBe("A complete response."); expect(result.complete).toBe(true);
+    expect(result.attemptEvidence?.timesValid).toBe(false);
+    expect(result.raw_last_token_end_s).toBe(path === "bad-time" ? 5 : "invalid");
+    expect(s.pid).toBe(pid); expect(await s.health()).toBe(true);
   });
   test("concurrent requests preserve command identities", async () => {
     const s = make(); const rs = await Promise.all([s.transcribe("delay"), s.transcribe("normal"), s.transcribe("normal")]); expect(rs.length).toBe(3);

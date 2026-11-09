@@ -48,9 +48,12 @@ function evidence(snapshot: string, tailSpeech: boolean): ParakeetSpeechEvidence
     frames: info.frames, analyzedFrames: info.frames, probabilities, maxProbability: 0.9,
     speechFrames: probabilities.filter(p => p >= 0.3).length * VAD_CHUNK_SAMPLES };
 }
-function router(fallbackBackend: STTBackend, speechProbe: (snapshot: string) => Promise<ParakeetSpeechEvidence>, result = native) {
-  return new ParakeetBackend({ fallbackBackend, speechProbe, transcribe: async () => result,
+function router(fallbackBackend: STTBackend, speechProbe: (snapshot: string) => Promise<ParakeetSpeechEvidence>, result = native, failed = false) {
+  return new ParakeetBackend({ fallbackBackend, speechProbe, transcribe: async () => { if (failed) throw new Error("Parakeet provider failed"); return result; },
     unload: async () => {}, retainFallback: () => "fixture-receipt", env: () => ({ QA_VOICE_WHISPER_LANG: "en" }) });
+}
+function failureRouter(fallback: STTBackend, probe: (snapshot: string) => Promise<ParakeetSpeechEvidence>) {
+  return router(fallback, probe, native, true);
 }
 function fakeCli(tail = "Thank you.", freshSpeech = false, outroSpeech: boolean | "unknown" = false) {
   const binary = join(root, "whisper-cli"), json = join(root, "response.json"), argsPath = join(root, "args.json");
@@ -110,19 +113,19 @@ describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
     }).transcribe(path);
     expect(result.text).toBe(nativeText); expect(whisperCalls).toBe(0);
   });
-  test("Silero-detected quiet tail speech still requests full-audio fallback", async () => {
+  test("Silero-detected tail with legacy time-only evidence keeps Parakeet without Whisper", async () => {
     writeFileSync(path, wav(false, 30)); let calls = 0;
     const result = await router({ name: "fake", isAvailable: async () => true, transcribe: async p => {
       calls++; expect(readFileSync(p)).toEqual(readFileSync(path));
       return { text: "All words including quiet tail speech.", backend: "fake", durationMs: 0 };
     } }, async p => evidence(p, true)).transcribe(path);
-    expect(calls).toBe(1); expect(result.backend).toContain("fallback-uncovered-tail");
-    expect(result.text).toBe("All words including quiet tail speech.");
+    expect(calls).toBe(0); expect(result.backend).toContain("uncovered-tail+kept-native");
+    expect(result.text).toBe(nativeText);
   });
   test("CLI fallback removes an invented Thank you over silence using JSON segments", async () => {
     const cli = fakeCli();
-    const result = await router(cli.backend, async p => evidence(p, true)).transcribe(path);
-    expect(result.text).toBe(nativeText); expect(result.backend).toContain("fallback-uncovered-tail->whisper.cpp+outro");
+    const result = await failureRouter(cli.backend, async p => evidence(p, true)).transcribe(path);
+    expect(result.text).toBe(nativeText); expect(result.backend).toContain("fallback-provider-error->whisper.cpp+outro");
     const args: string[] = JSON.parse(readFileSync(cli.argsPath, "utf8"));
     expect(args).toContain("-oj"); expect(args).not.toContain("--no-timestamps");
     expect(existsSync(args[args.indexOf("-of") + 1]! + ".json")).toBe(false);
@@ -132,17 +135,17 @@ describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
     const bytes = wav(false, peak);
     if (peak === 30) for (let i = 44; i < 44 + 26 * 32000; i += 2) bytes.writeInt16LE(Math.round(bytes.readInt16LE(i) / 200), i);
     writeFileSync(path, bytes);
-    const result = await router(fakeCli("Thank you.", false, true).backend, async p => evidence(p, true)).transcribe(path);
+    const result = await failureRouter(fakeCli("Thank you.", false, true).backend, async p => evidence(p, true)).transcribe(path);
     expect(result.text).toBe(nativeText + " Thank you."); expect(result.backend).not.toContain("+outro");
   });
   test.each([true, "unknown"] as const)("quiet closer after loud speech is kept when fresh Silero evidence is %s", async speech => {
     writeFileSync(path, wav(false, 30));
-    const result = await router(fakeCli("Thank you.", false, speech).backend, async p => evidence(p, true)).transcribe(path);
+    const result = await failureRouter(fakeCli("Thank you.", false, speech).backend, async p => evidence(p, true)).transcribe(path);
     expect(result.text).toBe(nativeText + " Thank you.");
   });
   test.each([false, true])("caption gate runs with both simulated Silero states; fresh speech=%s", async freshSpeech => {
     const cli = fakeCli("Subtitles by Example", freshSpeech);
-    const result = await router(cli.backend, async p => evidence(p, true)).transcribe(path);
+    const result = await failureRouter(cli.backend, async p => evidence(p, true)).transcribe(path);
     expect(cli.captionCalls()).toBe(1);
     expect(result.text).toBe(nativeText + (freshSpeech ? " Subtitles by Example" : ""));
     expect(result.backend.includes("+caption")).toBe(!freshSpeech);
@@ -156,7 +159,7 @@ describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
   test("an acoustically emptied fallback is qualified as gated empty, not provider failure", async () => {
     const cli = fakeCli();
     writeFileSync(cli.json, JSON.stringify({ transcription: [{ text: "Thank you.", offsets: { from: 70000, to: 72000 } }] }));
-    const result = await router(cli.backend, async p => evidence(p, true)).transcribe(path);
+    const result = await failureRouter(cli.backend, async p => evidence(p, true)).transcribe(path);
     expect(result.text).toBe(""); expect(result.outcome).toBe("ACOUSTIC_GATE_EMPTY");
     expect(result.attemptEvidence?.gateRemoval?.gate).toBe("closing-caption");
   });

@@ -64,15 +64,43 @@ unsupported speech as plausible Latin text. The user can explicitly select W.
 The native P API does not accept context prompts; a prompt does not force W,
 and dictionary aliases remain a separate post-decode operation.
 
-Parakeet errors, missing/full-frame coverage failures, extremely sparse
-responses and suspicious late speech/timestamp gaps trigger one full-audio
-Whisper retry. A COMPLETE native empty response first runs an isolated Silero
-VAD session on the exact full snapshot, using threshold0.3. Only complete,
-input-SHA/frame-matched evidence with every window below that threshold can
-deliver empty as `VAD_NO_SPEECH` (the UI says "No speech detected"). Whisper is
-then NOT_RUN; native output and raw VAD probabilities remain private. Speech
-detected, missing/partial/invalid VAD evidence or VAD failure still retries
-Whisper. P errors never become no-speech based on VAD.
+With Parakeet selected and available, Whisper is a failure fallback only:
+provider/startup errors, unusable response or input identity/format, and an empty
+response without verified silence (including unavailable/failed Silero). Sparse text, internal gaps and late speech
+are not failures and cannot admit Whisper. Bad timestamps keep native text and
+log that coverage cannot be checked; raw timing evidence remains private.
+Full-input coverage is checked before
+any repair; an incomplete provider response is unusable.
+
+Internal token gaps containing at least .5 s consecutive Silero-positive windows
+(after .25 s margins), and suspicious detected tail speech, request another
+Parakeet decode on bounded windows. Parakeet stays loaded. Each clip includes at
+most 2 s context on either side; original PCM and the full recording stay intact.
+Native token text must reconstruct the original transcript exactly. Matching
+words near both clip edges anchor an internal insertion; each anchor must match
+uniquely within one word of its edge. Only words between the anchors are inserted;
+outer neighbour fragments stay out. A tail append requires a matching left anchor. Empty, ambiguous or failed window decodes keep every native
+character. Multiple repairs apply from the end backwards. These routes remain
+Parakeet provenance and never claim a Whisper fallback.
+
+The Whisper failure fallback rejects its whole hypothesis when a six-word
+sequence occurs more than five times, or exceeds eight lexical words per detected
+speech second (with a twelve-word allowance for short clips). Eleven retained
+input hashes calibrated these conservative bounds: the ten nonincident hypotheses
+had maximum six-gram counts of 1–5 and at most 2.91 lexical words per speech second;
+the looping incident reached 46 and 9.65. Looping failure output is unresolved,
+never trimmed into a delivered transcript. The same conservative qualification
+protects Parakeet window insertions. These heuristics do not establish acoustic
+truth. Alternatives remain private; stderr logs times, reasons and counts only.
+
+A complete native empty response first runs an isolated Silero VAD session on the
+exact full snapshot, using threshold 0.3. Complete input-SHA/frame-matched negative
+evidence can deliver empty as `VAD_NO_SPEECH`; exact zero PCM delivers
+`VERIFIED_ZERO_PCM` directly. Any returned text on exact-zero PCM also resolves
+without another model. Both leave Whisper NOT_RUN. Every other native empty,
+including missing/partial/invalid speech evidence, admits the guarded failure
+fallback: an empty result with no evidence of silence must not lose the dictation.
+The retained recording remains available for History re-transcribe.
 The gate exists because SPEED found likely hallucinated Whisper fallback text
 on three detector-negative originals: 174 valid lexical intervals lay outside
 detected speech, with 6 timing unknowns. This is machine evidence, not audio
@@ -81,34 +109,37 @@ and all three public speech controls remain positive (9.952 / 7.248 / 3.296 seco
 The lower tested threshold protects quiet speech; equality counts as speech.
 Original audio and historical P/W attempts remain immutable. No conditional
 gain decode is justified for those originals without a supported speech region. The detector is not
-perfect acoustic truth, and never shares or resets live capture RNN state. Parakeet is unloaded first;
-fallback uses a one-shot Whisper CLI child so it does not leave a second model
-resident when the next Parakeet request arrives.
+perfect acoustic truth, and never shares or resets live capture RNN state. A
+Whisper failure fallback unloads Parakeet before using a one-shot CLI child;
+Parakeet coverage retries keep the model loaded.
 
-The sparse/tail tests are conservative retry heuristics. Native word timings
-do not prove acoustic completeness. Neither these tests nor a successful retry
-proves that all real words were recovered. No audio is cropped, faded, split by
-this adapter or matched to expected text. Native Parakeet runs the complete
+The tail and internal-gap tests are conservative Parakeet retry heuristics.
+Native word timings do not prove acoustic completeness. Neither these tests nor a successful retry
+proves that all real words were recovered. No original recording is cropped or
+faded. Span-repair clips copy PCM samples without changing them; native text is
+never replaced by a span hypothesis. Native Parakeet runs the complete
 input with the measured 30-second chunk/2-second overlap settings.
 
-Both providers receive the same private, read-only, byte-identical full-WAV
-snapshot. This prevents a replaced recording from invalidating completeness
-checks during fallback. The snapshot is removed only after the request settles;
+Native decode and full-input retries receive the same private, read-only,
+byte-identical full-WAV snapshot. Parakeet window retries receive temporary,
+read-only clips bound to that snapshot; those clips are removed after decoding.
+This prevents a replaced recording from invalidating completeness checks during
+fallback. The snapshot is removed only after the request settles;
 the original recording is never changed or deleted. Non-PCM formats P cannot
 decode are still snapshotted byte-for-byte and delegated to Whisper without
 making a zero-signal claim.
 
 One narrow silence rule applies **only when every PCM16 sample is exactly zero**:
-If the VAD no-speech branch did not apply, Whisper is still retried and its raw
-output retained, but generated words are
-not delivered from a zero-signal input. There is no RMS/VAD silence threshold;
+A complete all-zero PCM recording resolves empty without Whisper, including
+nonempty Parakeet output or a provider failure. Raw alternatives are retained;
+generated words are never delivered from a zero-signal input. There is no RMS/VAD silence threshold;
 even one nonzero sample disables this rule. This was motivated by a real lab
 case where P returned empty and W produced three raw letters on synthetic zeros.
 
 ## Raw text, dictionary and diagnostics
 
-The backend returns Parakeet text unchanged, including repetition, fragments and
-tails. VoiceLayer's existing `input.ts` finalization then applies the same built-in
+The backend preserves every native Parakeet character, including repetition,
+fragments and tails, and may insert qualified words from Parakeet window retries. VoiceLayer's existing `input.ts` finalization then applies the same built-in
 and personal dictionary aliases as for Whisper. No dictionary, expected text or
 prompt is sent to Parakeet. This route also omits vocabulary/initial prompts
 from the Whisper fallback; an explicit caller continuity prompt is honored. Existing identity/raw finalization mode still bypasses
