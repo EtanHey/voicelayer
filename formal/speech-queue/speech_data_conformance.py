@@ -99,7 +99,7 @@ def check_speech_data_runtime(run, runner):
         ("resume", "QueuedCountExcludesCurrent", [('    this.pending.unshift(job);\n    this.processNext();\n    this.emitQueueSnapshot();\n    return true;',
          '    this.pending.unshift(job);\n    this.emitQueueSnapshot();\n    this.processNext();\n    return true;'),
          ('is_current: job.resuming === true,', 'is_current: false,')]),
-        ("timing", "TimingNeverBlankWhilePlaying", [('        initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),\n', '')]),
+        ("timing", "TimingNeverBlankWhilePlaying", [('        initial_timing: initialPlaybackTiming(metadata.text, durationMs ?? undefined, metadata.wordBoundaries, metadata.alignedWords),\n', '')]),
     ]
     results = []
     for name, prop, edits in mutants:

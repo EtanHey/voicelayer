@@ -54,6 +54,11 @@ export class SpeechWordTimeline {
       words: chunk.words.map(word => ({ ...word, startMs: startMs + word.startMs, endMs: startMs + word.endMs })) };
   }
 
+  /** Full timing prefix for restoring a held presentation after another read owned the client. */
+  snapshot(): SpeechWordsEvent[] {
+    return [...this.chunks.keys()].sort((a, b) => a - b).map(index => this.event(index));
+  }
+
   /** Lane B: the read-global index of chunk `index`'s first word, when every earlier chunk is known. */
   wordOffsetOf(index: number): number | undefined {
     let offset = 0;

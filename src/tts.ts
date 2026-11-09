@@ -1048,6 +1048,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   historyRef?: TTSHistoryRef;
   /** T1: a "previous read" replay of an occurrence already in the heard queue; it adds no occurrence. */
   heardQueueReplay?: boolean;
+  previousReadHold?: StateEvent["previous_read_hold"];
   wordBoundaries?: WordBoundary[];
   /** Timings already measured for this file (replay, or a re-played chunk); broadcast at start. */
   preparedAmplitude?: PlaybackAmplitudeExtraction;
@@ -2011,12 +2012,17 @@ class PlaybackQueueManager {
 
   isHeldForPrevious(): boolean { return this.previousHeld !== undefined; }
 
+  previousHeldIdentity(): StateEvent["previous_read_hold"] {
+    const job = this.previousHeld?.job;
+    return job ? { playback_id: job.id, generation: job.lifecycle.generation } : undefined;
+  }
+
   /** The replay is over: the held read comes back paused at its word. */
-  releasePreviousHold(): SeekResult {
+  releasePreviousHold(fromPlaybackId?: string): SeekResult {
     const parked = this.previousHeld;
     if (!parked) return { outcome: "noop", reason: "nothing held" };
     this.previousHeld = undefined;
-    return this.restoreHeld(parked, "paused");
+    return this.restoreHeld(parked, "paused", fromPlaybackId);
   }
 
   /** The held read was superseded by a new read: it ends without coming back. */
@@ -2063,7 +2069,7 @@ class PlaybackQueueManager {
     return this.restoreHeld(held.parked, target);
   }
 
-  private restoreHeld(parked: ParkedPlayback, target: "paused" | "playing"): SeekResult {
+  private restoreHeld(parked: ParkedPlayback, target: "paused" | "playing", fromPlaybackId?: string): SeekResult {
     if (parked.job.completed) return { outcome: "noop", reason: "held read ended" };
     if (this.parked) this.replaceParked();
     parked.owner = target === "playing" ? "ask" : "user";
@@ -2075,6 +2081,16 @@ class PlaybackQueueManager {
       parked.owner = "user";
     }
     this.endReadProcessing();
+    if (fromPlaybackId && parked.job.metadata) {
+      const job = parked.job, metadata = job.metadata!;
+      const offset = (metadata.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
+      broadcast({ ...this.presentation(job, metadata.durationMs, currentPlaybackSpeed(), metadata.readbackID),
+        playback_offset_ms: offset, reanchor: "resync",
+        previous_read_return: { from_playback_id: fromPlaybackId, offset_ms: offset, pause_owner: "user" } });
+      job.wordTimeline.update(metadata.wordTimeline ? metadata.longRead?.chunk_index ?? 0 : 0, metadata.text,
+        metadata.durationMs ?? 0, displayTokenBoundaries(metadata.text, metadata.wordBoundaries ?? []), metadata.alignedWords);
+      for (const words of job.wordTimeline.snapshot()) broadcast(words);
+    }
     this.broadcastPlaybackState(parked.job, "paused");
     this.emitQueueSnapshot();
     return { outcome: "accept", reason: "paused", offset_ms: (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs };
@@ -2247,38 +2263,12 @@ class PlaybackQueueManager {
     const readbackID = next.metadata?.retainedReplay ? next.metadata.readbackID
       : next.metadata ? retainedReadback.remember(next.audioFile, next.metadata, next.id) : undefined;
     if (next.metadata) {
-      const utteranceMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ??
-        next.metadata.durationMs;
-      const edge: Record<string, unknown> = {
-        type: "state",
-        state: "speaking",
-        ...(this.captureAdmission?.has(next.id) && isReadHeldForAsk() ? { preserves_paused_read: true } : {}),
-        utteranceId: next.wordTimeline.utteranceId,
-        text: next.metadata.text,
-        ...(next.metadata.display ? { display: next.metadata.display } : {}),
-        voice: next.metadata.voice,
-        readback_id: readbackID,
-        ...(readbackID ? { readback_duration_ms: retainedReadback.seekableMs(readbackID) } : {}),
-        ...next.metadata.speechIdentity,
-        playback_id: next.id,
-        generation: next.lifecycle.generation,
-        ...(next.metadata.longRead ? { long_read: next.metadata.longRead } : {}),
-        ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
-        ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),
-        // T1: where this player's audio ends, from chunk_start_ms; the client clock never runs past it.
-        ...(durationMs && durationMs > 0 ? { chunk_duration_ms: durationMs } : {}),
-        // Lane B: the client clock runs at this speed (audio ms per wall ms).
-        ...(rate !== 1 ? { playback_rate: rate } : {}),
-        narration_source: narrationSource().id,
-        // Lane B (QA 11:47 k03-21/k07-29/k04-63): a client clock may move backwards only on a real re-anchor.
-        ...(next.reanchor ? { reanchor: next.reanchor } : {}),
-        playback_amplitude: next.playbackAmplitude,
-        initial_timing: initialPlaybackTiming(next.metadata.text, durationMs ?? undefined, next.metadata.wordBoundaries, next.metadata.alignedWords),
-      };
+      next.metadata.readbackID = readbackID;
+      const edge = this.presentation(next, durationMs ?? undefined, rate, readbackID);
       next.reanchor = undefined;
-      next.lastSpeakingEdge = edge;
+      next.lastSpeakingEdge = edge as unknown as Record<string, unknown>;
       noteHeardNarration(next);
-      broadcast(edge as unknown as StateEvent);
+      broadcast(edge);
       const words = next.wordTimeline.update(next.metadata.wordTimeline ? next.metadata.longRead?.chunk_index ?? 0 : 0, next.metadata.text, durationMs ?? 0,
         displayTokenBoundaries(next.metadata.text, next.metadata.wordBoundaries ?? []), next.metadata.alignedWords);
       next.lastSpeechWords = words as unknown as Record<string, unknown>;
@@ -2330,6 +2320,39 @@ class PlaybackQueueManager {
       .catch(() => {
         this.finish(next, proc, false);
       });
+  }
+
+  /** Shared geometry for a real player start and an explicitly paused held-read return. */
+  private presentation(next: PlaybackJob, durationMs: number | undefined, rate: number, readbackID?: string): StateEvent {
+    const metadata = next.metadata!;
+    const utteranceMs = metadata.getUtteranceDurationMs?.() ?? metadata.utteranceDurationMs ?? metadata.durationMs;
+    return {
+        type: "state",
+        state: "speaking",
+        ...(this.captureAdmission?.has(next.id) && isReadHeldForAsk() ? { preserves_paused_read: true } : {}),
+        ...(metadata.previousReadHold ? { previous_read_hold: metadata.previousReadHold } : {}),
+        utteranceId: next.wordTimeline.utteranceId,
+        text: metadata.text,
+        ...(metadata.display ? { display: metadata.display } : {}),
+        voice: metadata.voice,
+        readback_id: readbackID,
+        ...(readbackID ? { readback_duration_ms: retainedReadback.seekableMs(readbackID) } : {}),
+        ...metadata.speechIdentity,
+        playback_id: next.id,
+        generation: next.lifecycle.generation,
+        ...(metadata.longRead ? { long_read: metadata.longRead } : {}),
+        ...(metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: metadata.playbackOffsetMs } : {}),
+        ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),
+        // T1: where this player's audio ends, from chunk_start_ms; the client clock never runs past it.
+        ...(durationMs && durationMs > 0 ? { chunk_duration_ms: durationMs } : {}),
+        // Lane B: the client clock runs at this speed (audio ms per wall ms).
+        ...(rate !== 1 ? { playback_rate: rate } : {}),
+        narration_source: narrationSource().id,
+        // Lane B (QA 11:47 k03-21/k07-29/k04-63): a client clock may move backwards only on a real re-anchor.
+        ...(next.reanchor ? { reanchor: next.reanchor } : {}),
+        playback_amplitude: next.playbackAmplitude,
+        initial_timing: initialPlaybackTiming(metadata.text, durationMs ?? undefined, metadata.wordBoundaries, metadata.alignedWords),
+    };
   }
 
   private finish(job: PlaybackJob, proc: ActivePlayback["proc"], succeeded: boolean) {
@@ -2957,7 +2980,8 @@ export function playPreviousRead(): SeekResult {
     }
     ledgerPreviousHold(held.word);
   }
-  const metadata: PlaybackMetadata = { ...historyReplayMetadata(entry), heardQueueReplay: true };
+  const metadata: PlaybackMetadata = { ...historyReplayMetadata(entry), heardQueueReplay: true,
+    previousReadHold: playbackQueueManager.previousHeldIdentity() };
   try {
     const handle = playAudioNonBlocking(entry.file, { ...metadata, onCompleted: (outcome) => {
       try { metadata.onCompleted?.(outcome); } finally { if (live) restorePreviousHold(hold); }
@@ -2984,7 +3008,7 @@ function restorePreviousHold(hold: PreviousHold): void {
     ledgerPreviousReturn(true);
     return;
   }
-  playbackQueueManager.releasePreviousHold();
+  playbackQueueManager.releasePreviousHold(hold.replayId);
   ledgerPreviousReturn(false);
 }
 
