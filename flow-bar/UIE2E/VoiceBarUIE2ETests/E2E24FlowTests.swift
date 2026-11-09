@@ -6,6 +6,21 @@ import XCTest
 extension VoiceBarFlowTests {
     func testE2E24AllFlows() throws {
         var cases: [(String, () throws -> Void)] = [
+            ("N1", testN1SettingsContainControlsInsteadOfWindowHandoffs),
+            ("N2", testN2NoExplanatoryProseRows),
+            ("N4", testN4BothDrawersTrackUpwardAndCloseOnRelease),
+            ("N5", testN5QuickHandleGrabMatchesSlowGrab),
+            ("N6", testN6SettingsPullHintDoesNotCoverHistoryRows),
+            ("N7", testN7DrawersAreReachableInAllNonSpeechStates),
+            ("N9", testN9MicrophoneControlIsConsistentAcrossAllowedStates),
+            ("N10", testN10RecordingWaveformSitsCloseToTimer),
+            ("T1", testT1QueueBackAndForwardSitBesidePause),
+            ("T2", testT2HeightHandleIsBelowEyeReplayRow),
+            ("T4", testT4EyeAndReplayFormOneCentredGroup),
+            ("T5", testT5SpeakingWingHasAudioWaveformAndTime),
+            ("T6", testT6SpeedIsInTopPlaybackRow),
+            ("T7", testT7StopMovesBesideEyeRow),
+            ("T8", testT8ScrubberIsCloseToEyeReplayRow),
             ("dictionary", testE2E24UnifiedSettingsDictionary),
             ("recognizer", testE2E24UnifiedSettingsRecognizer),
             ("history", testE2E24HistoryAllActions),
@@ -38,7 +53,7 @@ extension VoiceBarFlowTests {
             let started = Date()
             do {
                 try run()
-                if (testRun?.failureCount ?? 1) == before { ledger.verifiedSurfaces.insert("e2e24:" + name) }
+                if (testRun?.failureCount ?? 1) == before && ledger.expectedSurfaces["e2e24:" + name] == nil { ledger.verifiedSurfaces.insert("e2e24:" + name) }
             } catch let pending as XCTSkip {
                 let owner = name == "playback" || name == "replay" || name.hasPrefix("narration-") ? "pending-lane-B" : "pending-lane-A"
                 step("2.4 pending " + name + ": " + String(describing: pending), skipped: owner) {}

@@ -37,10 +37,13 @@ def expected_packet(step):
         return None
     packet = expected.get('packet')
     descriptions = expected.get('descriptions')
-    if (step.get('passed') is not True or packet not in {'P14b', 'SEL1', 'P1e', 'P1f'}
+    if (step.get('passed') is not True or packet not in {'P14b', 'SEL1', 'P1e', 'P1f', 'N1', 'N2', 'N4', 'N5', 'N6', 'N7', 'N9', 'N10', 'T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8'}
             or not isinstance(descriptions, list) or not descriptions
             or not all(isinstance(d, str) and '[' + packet + ']' in d for d in descriptions)):
         raise ValueError('Invalid or unmatched expected product failure')
+    if re.fullmatch(r'(N(?:[1-9]|10)|T[1-8])', packet):
+        if expected.get('surface') != 'e2e24:' + packet or expected.get('surfaces') != ['e2e24:' + packet]:
+            raise ValueError('QA row failure lacks its exact e2e24 surface')
     if 'surfaces' in expected:
         surfaces = expected['surfaces']
         if (not isinstance(surfaces, list) or not surfaces

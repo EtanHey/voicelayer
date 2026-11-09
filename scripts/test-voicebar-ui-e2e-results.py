@@ -70,6 +70,32 @@ class ReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             results.report(self.root, [step], [dict(attachments=[attachment])])
 
+    def test_etan_qa_row_xfail_needs_matching_marker_and_exact_surface(self):
+        for row in ['N1', 'N2', 'N4', 'N5', 'N6', 'N7', 'N9', 'N10', 'T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8']:
+            expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] product assertion'],
+                            surfaces=['e2e24:' + row])
+            step = dict(passed=True, expectedFailure=expected)
+            self.assertEqual(results.expected_packet(step), row)
+            for key, value in [('descriptions', ['[OTHER] unrelated']), ('surfaces', ['e2e24:OTHER']), ('surface', 'e2e24:OTHER')]:
+                invalid = dict(expected, **{key: value})
+                with self.assertRaises(ValueError):
+                    results.expected_packet(dict(step, expectedFailure=invalid))
+
+    def test_etan_qa_row_exports_as_expected_never_verified(self):
+        directory, ledger, manifest = self.attachment_run()
+        expected = dict(packet='N6', surface='e2e24:N6', surfaces=['e2e24:N6'],
+                        descriptions=['[N6] hint overlaps last timestamp'])
+        ledger['steps'][0]['expectedFailure'] = expected
+        ledger['coverage'].update(expectedSurfaces={'e2e24:N6': 'N6'}, missingSurfaces=[], verifiedSurfaces=[])
+        (directory / 'step.json').write_text(json.dumps(ledger['steps'][0]))
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        self.assertTrue(self.export_attached_run())
+        self.assertIn('XFAIL [N6]', (directory / 'index.html').read_text())
+        ledger['coverage']['verifiedSurfaces'] = ['e2e24:N6']
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        with self.assertRaises(ValueError):
+            self.export_attached_run()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(suffix='.noindex', dir=BUILD_ROOT)
         self.root = pathlib.Path(self.temp.name)
