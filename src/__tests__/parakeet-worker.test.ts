@@ -41,10 +41,10 @@ class Broken:
 out=io.StringIO();assert w.serve(Broken(),MX(),NP(),io.StringIO(json.dumps({'id':1,'op':'transcribe','audio_path':str(short)})+'\\n'+json.dumps({'id':2,'op':'health'})+'\\n'),out)==1
 r=[json.loads(x) for x in out.getvalue().splitlines()];assert len(r)==1 and r[0]['fatal'] and r[0]['code']=='MemoryError'
 class BadCoverage:
- def generate(self,*a,**k):k['chunk_callback'](10,963584);return types.SimpleNamespace(text='partial',sentences=[types.SimpleNamespace(tokens=[types.SimpleNamespace(start=0,end=0.2)])])
+ def generate(self,*a,**k):k['chunk_callback'](10,963584);return types.SimpleNamespace(text='partial',sentences=[types.SimpleNamespace(tokens=[types.SimpleNamespace(start=0,end=0.2,text="partial")])])
 try:w.decode(BadCoverage(),MX(),NP(),long);assert False
 except ValueError as e:
- assert e.attempt['text']=='partial' and e.attempt['covered_frames']==10 and not e.attempt['complete'] and e.attempt['raw_token_times']==[{'start':0,'end':0.2}]
+ assert e.attempt['text']=='partial' and e.attempt['covered_frames']==10 and not e.attempt['complete'] and e.attempt['raw_token_times']==[{'start':0,'end':0.2,'text':'partial'}]
 out=io.StringIO();assert w.serve(BadCoverage(),MX(),NP(),io.StringIO(json.dumps({'id':1,'op':'transcribe','audio_path':str(long)})+'\\n'),out)==0
 r=json.loads(out.getvalue());assert not r['ok'] and r['status']=='PARTIAL' and r['attempt']['text']=='partial' and r['attempt']['covered_frames']==10
 print('7 groups passed: persistent object/empty-to-success/whole frames/foreign WAV/error continuation/fatal stop/partial coverage')
