@@ -1,3 +1,5 @@
+import { hashWhisperWeights, recordWhisperCliPath } from "./whisper-model-identity";
+import { availableWhisperModelPath, requireWhisperModelPath, whisperAssetPath } from "./recognizer-assets";
 import { measureTakeStageAsync } from "./take-stage-timings";
 /**
  * STT backend abstraction — whisper.cpp (local) or Wispr Flow (cloud fallback).
@@ -8,7 +10,7 @@ import { measureTakeStageAsync } from "./take-stage-timings";
  *
  * Environment variables:
  *   QA_VOICE_STT_BACKEND   — "parakeet" (opt-in) | "whisper-server" | "whisper" | "wispr" | "auto"
- *   QA_VOICE_WHISPER_MODEL — path to GGML model file (auto-detected if not set)
+ *   QA_VOICE_WHISPER_MODEL — explicit GGML model path (otherwise large-v3-turbo)
  *   QA_VOICE_WISPR_KEY     — Wispr Flow API key (required for wispr backend)
  */
 
@@ -2102,14 +2104,7 @@ function combinePromptOverride(
 // --- WhisperCpp Backend ---
 
 /** Default model search order (most preferred first) */
-const MODEL_SEARCH_PATHS = [
-  () => join(homedir(), ".cache", "whisper", "ggml-large-v3-turbo.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-large-v3-turbo-q5_0.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-base.en.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-base.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-small.en.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-small.bin"),
-];
+
 
 /** Known binary names in preference order (v1.8.3+ renamed to whisper-cli) */
 const WHISPER_BINARY_NAMES = ["whisper-cli", "whisper-cpp"];
@@ -2149,36 +2144,7 @@ export async function resolveWhisperCliBinaryAsync(
 
 /** Find a GGML model file. Returns null if none found. */
 function findModel(): string | null {
-  // 1. Explicit env var
-  const envModel = process.env.QA_VOICE_WHISPER_MODEL;
-  if (envModel) {
-    if (existsSync(envModel)) return envModel;
-    console.error(
-      `[voicelayer] Warning: QA_VOICE_WHISPER_MODEL path does not exist: ${envModel}`,
-    );
-  }
-
-  // 2. Search standard paths
-  for (const pathFn of MODEL_SEARCH_PATHS) {
-    const p = pathFn();
-    if (existsSync(p)) return p;
-  }
-
-  // 3. Scan ~/.cache/whisper/ for any ggml model
-  const cacheDir = join(homedir(), ".cache", "whisper");
-  if (existsSync(cacheDir)) {
-    try {
-      const files = readdirSync(cacheDir);
-      const model = files.find(
-        (f: string) => f.startsWith("ggml-") && f.endsWith(".bin"),
-      );
-      if (model) return join(cacheDir, model);
-    } catch {
-      // Ignore scan errors
-    }
-  }
-
-  return null;
+  return availableWhisperModelPath();
 }
 
 export function resolveWhisperCliModelPath(): string | null {
@@ -2225,6 +2191,7 @@ export class WhisperCppBackend implements STTBackend {
   constructor(private readonly lifecycle: { signal?: AbortSignal; noVocabularyPrompt?: boolean; captionGate?: typeof stripHallucinatedCaption; speechProbe?: typeof probeParakeetSpeech } = {}) {}
 
   async isAvailable(): Promise<boolean> {
+    requireWhisperModelPath();
     this.binaryPath = findWhisperBinary();
     this.modelPath = findModel();
     return this.binaryPath !== null && this.modelPath !== null;
@@ -2236,8 +2203,6 @@ export class WhisperCppBackend implements STTBackend {
   ): Promise<STTResult> {
     if (this.lifecycle.signal?.aborted) throw new Error("STT owner is shut down");
     if (!this.binaryPath) this.binaryPath = findWhisperBinary();
-    if (!this.modelPath) this.modelPath = findModel();
-
     if (!this.binaryPath) {
       throw new Error(
         "whisper-cpp binary not found (looked for: whisper-cli, whisper-cpp). Install:\n" +
@@ -2245,14 +2210,8 @@ export class WhisperCppBackend implements STTBackend {
           "  Linux: build from source — https://github.com/ggerganov/whisper.cpp",
       );
     }
-    if (!this.modelPath) {
-      throw new Error(
-        "No whisper model found. Download one:\n" +
-          "  mkdir -p ~/.cache/whisper\n" +
-          "  curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \\\n" +
-          "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
-      );
-    }
+
+    this.modelPath = requireWhisperModelPath();
 
     const start = Date.now();
 
@@ -2310,6 +2269,8 @@ export class WhisperCppBackend implements STTBackend {
     ];
 
     try {
+      await hashWhisperWeights(this.modelPath);
+      recordWhisperCliPath(this.modelPath);
       const proc = Bun.spawn(args, {
         stdout: "pipe",
         stderr: "pipe",
@@ -2464,6 +2425,7 @@ export class WhisperServerBackend implements STTBackend {
   }
 
   async isAvailable(): Promise<boolean> {
+    requireWhisperModelPath();
     return this.isResidentAvailable();
   }
 

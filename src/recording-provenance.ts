@@ -1,3 +1,4 @@
+import { executedWhisperHash, executedWhisperCliPath } from "./whisper-model-identity";
 /**
  * Recording provenance — the machine + STT stack facts stamped into every
  * `metadata.json` under `~/.local/share/voicelayer/recordings/`.
@@ -558,6 +559,8 @@ export function primeRecordingProvenanceProbes(): Promise<void> {
  */
 export function whisperModelSha256(modelPath: string | null): string | null {
   if (!modelPath) return null;
+  const actualHash = executedWhisperHash(modelPath);
+  if (actualHash) return actualHash;
   const sidecar = `${modelPath}.sha256`;
   if (!existsSync(sidecar)) return null;
   try {
@@ -668,9 +671,11 @@ export function buildRecordingProvenance(
     whisper_backend: input.backend,
     fallback_reason: fallbackReason,
     whisper_model_path: modelPath,
-    whisper_model_sha256: (probe.whisperModelSha256 ?? whisperModelSha256)(
-      modelPath,
-    ),
+    whisper_model_sha256: probe.whisperModelSha256
+      ? probe.whisperModelSha256(modelPath)
+      : kind === "server" && whisperServerLaunchRecord()?.modelSha256
+        ? whisperServerLaunchRecord()!.modelSha256!
+        : whisperModelSha256(modelPath),
     whisper_cpp_version: cppVersion.version,
     whisper_cpp_version_source: cppVersion.source,
     whisper_server_args: launchArgs,
@@ -699,7 +704,7 @@ export function buildRecordingProvenance(
  * so `kind: "cli"` always reports the configured model.
  */
 function defaultWhisperModelPath(kind: WhisperBackendKind): string | null {
-  if (kind === "cli") return resolveWhisperModelPath();
+  if (kind === "cli") return executedWhisperCliPath() ?? resolveWhisperModelPath();
   return whisperServerLaunchRecord()?.modelPath ?? resolveWhisperModelPath();
 }
 

@@ -1,3 +1,4 @@
+import { writeFileSync, rmSync } from "fs";
 import { testTmp } from "./setup/test-tmp";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "path";
@@ -105,9 +106,7 @@ describe("STT backends", () => {
 
     it("isAvailable checks for binary and model", async () => {
       const backend = new WhisperCppBackend();
-      // This may return true or false depending on the machine
-      const available = await backend.isAvailable();
-      expect(typeof available).toBe("boolean");
+      await expect(backend.isAvailable()).rejects.toThrow("Whisper model is missing");
     }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("getModelInfo returns binary and model paths", () => {
@@ -139,6 +138,10 @@ describe("STT backends", () => {
     }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("transcribe resolves brew by absolute path for launchd-style PATHs", async () => {
+      const savedModel = process.env.QA_VOICE_WHISPER_MODEL;
+      const fixtureModel = testTmp("cli-model.bin");
+      writeFileSync(fixtureModel, "fixture weights");
+      process.env.QA_VOICE_WHISPER_MODEL = fixtureModel;
       const savedGate = process.env.VOICELAYER_STT_OUTRO_GATE;
       process.env.VOICELAYER_STT_OUTRO_GATE = "0"; // This case isolates CLI environment/prompt wiring.
       const backend = new WhisperCppBackend();
@@ -154,7 +157,7 @@ describe("STT backends", () => {
       });
       Object.defineProperty(backend, "modelPath", {
         configurable: true,
-        get: () => "/tmp/test-model.bin",
+        get: () => fixtureModel,
         set: () => {},
       });
 
@@ -232,6 +235,9 @@ describe("STT backends", () => {
           "whisper-cpp",
         ]);
       } finally {
+        rmSync(fixtureModel, { force: true });
+        if (savedModel === undefined) delete process.env.QA_VOICE_WHISPER_MODEL;
+        else process.env.QA_VOICE_WHISPER_MODEL = savedModel;
         if (savedGate === undefined) delete process.env.VOICELAYER_STT_OUTRO_GATE;
         else process.env.VOICELAYER_STT_OUTRO_GATE = savedGate;
         Bun.spawn = originalSpawn;
@@ -240,6 +246,10 @@ describe("STT backends", () => {
     });
 
     it("transcribe uses the whisper-cli prompt flag for explicit language modes", async () => {
+      const savedModel = process.env.QA_VOICE_WHISPER_MODEL;
+      const fixtureModel = testTmp("cli-model.bin");
+      writeFileSync(fixtureModel, "fixture weights");
+      process.env.QA_VOICE_WHISPER_MODEL = fixtureModel;
       const savedGate = process.env.VOICELAYER_STT_OUTRO_GATE;
       process.env.VOICELAYER_STT_OUTRO_GATE = "0"; // This case isolates CLI environment/prompt wiring.
       const backend = new WhisperCppBackend();
@@ -256,7 +266,7 @@ describe("STT backends", () => {
       });
       Object.defineProperty(backend, "modelPath", {
         configurable: true,
-        get: () => "/tmp/test-model.bin",
+        get: () => fixtureModel,
         set: () => {},
       });
 
@@ -300,6 +310,9 @@ describe("STT backends", () => {
         expect(whisperCmd![promptIndex + 1]).toContain("Wispr Flow");
         expect(whisperCmd![promptIndex + 1]).toContain("VoiceLayer");
       } finally {
+        rmSync(fixtureModel, { force: true });
+        if (savedModel === undefined) delete process.env.QA_VOICE_WHISPER_MODEL;
+        else process.env.QA_VOICE_WHISPER_MODEL = savedModel;
         if (savedGate === undefined) delete process.env.VOICELAYER_STT_OUTRO_GATE;
         else process.env.VOICELAYER_STT_OUTRO_GATE = savedGate;
         if (savedLang) process.env.QA_VOICE_WHISPER_LANG = savedLang;
@@ -2510,13 +2523,7 @@ describe("STT backends", () => {
       process.env.QA_VOICE_STT_BACKEND = "whisper";
       process.env.QA_VOICE_WHISPER_MODEL = "/nonexistent/model.bin";
       try {
-        // May throw if whisper-cpp binary isn't installed,
-        // or succeed if binary exists and finds a different model
-        const backend = await getBackend();
-        expect(backend.name).toBe("whisper.cpp");
-      } catch (err: any) {
-        // Expected when whisper-cpp is not available
-        expect(err.message).toContain("whisper");
+        await expect(getBackend()).rejects.toThrow("Whisper model is missing: /nonexistent/model.bin");
       } finally {
         if (savedBackend) process.env.QA_VOICE_STT_BACKEND = savedBackend;
         else delete process.env.QA_VOICE_STT_BACKEND;
@@ -2549,7 +2556,7 @@ describe("STT backends", () => {
         const backend = await getBackend();
         expect(backend.name).toBe("whisper-server");
       } catch (err: any) {
-        expect(err.message).toContain("whisper-server");
+        expect(err.message).toContain("Whisper model is missing");
       } finally {
         if (saved) process.env.QA_VOICE_STT_BACKEND = saved;
         else delete process.env.QA_VOICE_STT_BACKEND;
