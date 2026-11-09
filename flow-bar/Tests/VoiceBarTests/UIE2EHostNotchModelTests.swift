@@ -41,7 +41,15 @@ final class UIE2EHostNotchModelTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
         AppDelegate.refreshNotchPresentationModel(model, for: state)
         XCTAssertEqual(model.presentation.visualState, .recording)
-        XCTAssertEqual(model.presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
-        XCTAssertEqual(model.presentation.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        // Recording pause: a PTT take's left wing is Stop · Pause · ✕, the three-control width Lock already uses
+        // on a VAD take (73.5 + 4 + 22 = 99.5 pt).
+        XCTAssertEqual(model.presentation.geometry.leadingWingWidth,
+                       VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
+        XCTAssertEqual(model.presentation.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        // One envelope feed: the QA host resolves the same geometry from the same state.
+        let host = UIE2EHost.panelLayout(for: state).presentation.geometry
+        XCTAssertEqual(host.leadingWingWidth, model.presentation.geometry.leadingWingWidth, accuracy: 0.001)
+        XCTAssertEqual(host.trailingWingWidth, model.presentation.geometry.trailingWingWidth, accuracy: 0.001)
+        XCTAssertEqual(host.topWidth, model.presentation.geometry.topWidth, accuracy: 0.001)
     }
 }

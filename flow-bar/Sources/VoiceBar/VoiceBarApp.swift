@@ -643,6 +643,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         terminationSignalSource.resume()
         self.terminationSignalSource = terminationSignalSource
 
+        let launchdLabel = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"]
+        if getppid() != 1 || launchdLabel != "com.voicelayer.voicebar" {
+            NSLog("[VoiceBar] WARNING: VoiceBar isn't running under launchd — restart it with voicelayer bar")
+        }
+
         // Register Apple Event handler for voicebar:// URL scheme.
         // Defer registration until the next run loop iteration after launch setup.
         DispatchQueue.main.async { [weak self] in
@@ -754,6 +759,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         configurePillContextMenu()
+        configureRecordingWing()
 
         server.onUpdateGateDrain = { [weak self] request in
             guard let self else { return nil }
@@ -993,6 +999,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         workspaceNotificationObservers.removeAll()
         terminationSignalSource?.cancel()
         terminationSignalSource = nil
+    }
+
+    /// 2.3 N1: the recording wing names the default input, the device sox opens (a property read only).
+    private func configureRecordingWing() {
+        voiceState.recordingMicrophoneNameProvider = { MicrophoneDeviceManager.selectedInputDeviceName() }
     }
 
     private func configurePillContextMenu() {
@@ -1478,7 +1489,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let typedHost = TerminalPasteTargets.isTerminal(bundle)
                     || ["com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS"].contains(bundle)
                     || app.map { ChromiumFamilyApps.contains(bundleURL: $0.bundleURL) } == true
-                return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost)
+                return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost,
+                    allowsTerminalGroup: TerminalPasteTargets.isTerminal(bundle))
             }
         }
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
@@ -2145,8 +2157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 trailingControlCountFromCore: 2
             )
         case .recording:
+            // Stop and Cancel, plus a third slot beside Stop: Lock on a VAD take, Pause on a PTT take. The count
+            // follows the same `showsRecordingHold || showsRecordingPause` the presentation sizes the wing from, so
+            // Stop, the outermost control, stays inside the hit region.
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: state.recordingMode == "vad" ? 3 : 2
+                leadingControlCount: state.recordingMode == "vad" || state.recordingMode == "ptt" ? 3 : 2
             )
         case .compactStatus:
             switch state.mode {
@@ -2285,7 +2300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
                 isPlaybackPaused: state?.isPlaybackPaused ?? false,
-                readQueueLeadingSlotCount: state.flatMap { VoiceBarPresentation.readQueueControl(for: $0)?.leadingSlotCount } ?? 1,
+                readQueueLeadingSlotCount: state.map { VoiceBarPresentation.playbackLeadingSlotCount(for: $0) } ?? 1,
                 confirmationText: state?.confirmationText,
                 commandModeState: state?.commandModeState,
                 activeClipMarker: state?.activeClipMarker,
@@ -2299,7 +2314,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 coreWidth: coreWidth,
                 visibleCoreOcclusionInset: visibleCoreOcclusionInset,
                 transientNote: state?.selectionFeedbackNote,
-                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory
+                transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory,
+                showsEarlierTakeProcessing: state.map(VoiceBarPresentation.showsEarlierTakeProcessing(for:)) ?? false
             )
         )
     }

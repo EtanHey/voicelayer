@@ -245,6 +245,12 @@ final class AppLifecycleTests: XCTestCase {
 
         state.mode = .recording
         state.recordingMode = "ptt"
+        // Recording pause: Stop · Pause · ✕, so Stop stays inside the hit region on a PTT take.
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+        )
+        state.recordingMode = nil
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
             VoiceBarNotchInteractionConfiguration(leadingControlCount: 2)
