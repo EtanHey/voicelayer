@@ -35,6 +35,7 @@ let restore: (() => void)[];
 beforeEach(() => {
   at(0);
   resetPlaybackSessionLedger();
+  tts.resetHeardQueueForTests();
   // History is process-wide in a combined run: another file's later-stamped narration must not become "previous".
   rmSync(TTS_HISTORY_FILE, { force: true });
   players = fixtureBarrier(); trims = fixtureBarrier(); events = []; restore = [];
@@ -115,6 +116,13 @@ const read = (id = "read-1", file = "read.mp3") => tts.playAudioNonBlocking(`${T
   text, voice: "test", durationMs: 10_000, wordBoundaries: words,
   longRead: { id, chunk_index: 0, chunk_count: 1, chunk_start_ms: 0 } });
 const states = (state: string) => events.filter(e => e.type === "playback_state" && e.state === state);
+/** T1: Back reaches only what this queue played. Hear `earlier` to its end, then put read-1 on screen (player 1). */
+async function hearThenRead(file: string, earlierText: string): Promise<void> {
+  tts.playAudioNonBlocking(file, { text: earlierText, voice: "test", durationMs: 2000 });
+  read();
+  (await players.at(0)).exit.resolve(0);
+  await players.at(1);
+}
 
 describe("socket E2E: the playback engine through real commands (VoiceBar's wire)", () => {
   it("pause → resume by socket lands on the paused word, even with VoiceBar's reset clock", async () => {
@@ -167,29 +175,57 @@ describe("socket E2E: the playback engine through real commands (VoiceBar's wire
     const earlier = `${TEST_TMP}/earlier.mp3`;
     writeFileSync(earlier, "fake audio");
     addToHistory("An earlier read about Codex", earlier, "test");
-    read();
-    await players.at(0);
+    // T1: the earlier narration was heard in this queue, right before the read on screen.
+    await hearThenRead(earlier, "An earlier read about Codex");
     at(5300);
     expect(await handleSocketCommand({ cmd: "previous_read" })).toMatchObject({ outcome: "accept" });
     (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
-    const replay = await players.at(1); await fixtureCheckpoint();
+    const replay = await players.at(2); await fixtureCheckpoint();
     expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text: "An earlier read about Codex" });
     expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "playing", word_index: 0 });
     replay.exit.resolve(0); await fixtureCheckpoint(); await fixtureCheckpoint();
     expect(states("paused").at(-1)).toMatchObject({ word_index: 5, offset_ms: 5000, pause_owner: "user" });
     expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ phase: "paused", session_id: "read-1", word_index: 5 });
     expect(await handleSocketCommand({ cmd: "resume" })).toMatchObject({ outcome: "accept", offset_ms: 5000 });
-    await players.at(2);
+    await players.at(3);
     expect(playbackSessionViolations()).toEqual([]);
   });
 
-  it("previous read with nothing on screen replays the last narration", async () => {
+  it("previous read with nothing on screen replays the last narration heard", async () => {
     const earlier = `${TEST_TMP}/earlier-idle.mp3`;
     writeFileSync(earlier, "fake audio");
     addToHistory("The last thing read", earlier, "test");
+    tts.playAudioNonBlocking(earlier, { text: "The last thing read", voice: "test", durationMs: 2000 });
+    (await players.at(0)).exit.resolve(0); await tts.awaitCurrentPlayback(); await fixtureCheckpoint();
     expect(await handleSocketCommand({ cmd: "previous_read" })).toMatchObject({ outcome: "accept" });
-    await players.at(0);
+    await players.at(1);
     expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text: "The last thing read" });
+  });
+
+  it("T1: Back is scoped to the current queue: archive-only and unheard narrations are never offered", async () => {
+    const archived = `${TEST_TMP}/archive-only.mp3`;
+    writeFileSync(archived, "fake audio");
+    // In History (synthesised earlier, or queued ahead and never played), but not heard in this queue.
+    addToHistory("Never heard in this queue", archived, "test");
+    expect(tts.hasPreviousRead()).toBe(false);
+    read();
+    await players.at(0);
+    expect(tts.hasPreviousRead()).toBe(false);
+    expect(events.filter(e => e.type === "playback_session").at(-1)).toMatchObject({ previous_available: false });
+    expect(await handleSocketCommand({ cmd: "previous_read" })).toMatchObject({ outcome: "noop", reason: "no previous read" });
+    expect(players.values).toHaveLength(1);
+  });
+
+  it("T1: a queue that ended starts over; the next queue's Back cannot reach the old one", async () => {
+    const old = `${TEST_TMP}/old-queue.mp3`;
+    writeFileSync(old, "fake audio");
+    addToHistory("A narration from an earlier queue", old, "test");
+    tts.playAudioNonBlocking(old, { text: "A narration from an earlier queue", voice: "test", durationMs: 2000 });
+    (await players.at(0)).exit.resolve(0); await tts.awaitCurrentPlayback(); await fixtureCheckpoint();
+    expect(events.filter(e => e.type === "state" && e.state === "idle").length).toBeGreaterThan(0);
+    read();
+    await players.at(1);
+    expect(tts.hasPreviousRead()).toBe(false);
   });
 
   it("set_playback_speed: 1.5× restarts the playing read at its word with afplay -r, and the clock scales", async () => {
@@ -501,12 +537,11 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     writeFileSync(earlier, "fake audio");
     addToHistory("An earlier read about stopping", earlier, "test", [], { wordBoundaries: "An earlier read about stopping".split(" ")
       .map((word, i) => ({ text: word, offset_ms: i * 1000, duration_ms: 800 })) });
-    read();
-    await players.at(0);
+    await hearThenRead(earlier, "An earlier read about stopping");
     at(5300);
     await handleSocketCommand({ cmd: "previous_read" });
     (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
-    await players.at(1); await fixtureCheckpoint();
+    await players.at(2); await fixtureCheckpoint();
     const answer = handleVoiceAsk({ message: "Question then Stop?", timeout_seconds: 5 });
     await fixtureCheckpoint();
     expect(playbackSessionEngine().previousHeld).toBe("read-1");
@@ -528,12 +563,11 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     const replayWords = "An earlier read about Codex and Claude together".split(" ")
       .map((word, i) => ({ text: word, offset_ms: i * 1000, duration_ms: 800 }));
     addToHistory("An earlier read about Codex and Claude together", earlier, "test", [], { wordBoundaries: replayWords });
-    read();
-    await players.at(0);
+    await hearThenRead(earlier, "An earlier read about Codex and Claude together");
     at(5300);
     expect(await handleSocketCommand({ cmd: "previous_read" })).toMatchObject({ outcome: "accept" });
     (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
-    const replay = await players.at(1); await fixtureCheckpoint();
+    const replay = await players.at(2); await fixtureCheckpoint();
     const replayId = events.filter(e => e.state === "speaking").at(-1).playback_id;
     const answer = handleVoiceAsk({ message: "Question over the replay?", timeout_seconds: 5 });
     await fixtureCheckpoint();
@@ -547,10 +581,10 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     void replay;
     for (const trim of trims.values.slice(1)) trim.exit.resolve(0);
     await fixtureCheckpoint();
-    (await players.at(2)).exit.resolve(0);
+    (await players.at(3)).exit.resolve(0);
     expect((await answer).isError).not.toBe(true);
     // After the ask the replay plays on from its word; the held read waits for it.
-    const replayed = await players.at(3); await fixtureCheckpoint();
+    const replayed = await players.at(4); await fixtureCheckpoint();
     expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text: "An earlier read about Codex and Claude together" });
     expect(playbackSessionEngine().previousHeld).toBe("read-1");
     replayed.exit.resolve(0); await fixtureCheckpoint(); await fixtureCheckpoint();

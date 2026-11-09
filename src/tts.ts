@@ -134,6 +134,7 @@ function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording", intent: "c
   // A parked item is not idle; only Stop/replacement settles it first.
   if (playbackQueueManager.isPaused()) return;
   if (activeLongRead && !activeLongRead.controller.signal.aborted && !nextState && intent !== "audio-completion") return;
+  endHeardQueueRun();
   broadcast({
     type: "state",
     state: "idle",
@@ -2230,6 +2231,7 @@ class PlaybackQueueManager {
       };
       next.reanchor = undefined;
       next.lastSpeakingEdge = edge;
+      noteHeardNarration(heardTextOf(next));
       broadcast(edge as unknown as StateEvent);
       const words = next.wordTimeline.update(next.metadata.wordTimeline ? next.metadata.longRead?.chunk_index ?? 0 : 0, next.metadata.text, durationMs ?? 0,
         displayTokenBoundaries(next.metadata.text, next.metadata.wordBoundaries ?? []), next.metadata.alignedWords);
@@ -2788,14 +2790,55 @@ function onScreenText(): string | undefined {
     : playbackQueueManager.onScreenText();
 }
 
-/** The previous finished narration that is not the one on screen. */
+/**
+ * T1 (Etan QA 2026-11-09: "it goes back in history to things I haven't heard yet ... and not just things that were
+ * in the current queue"). Back walks the CURRENT queue only: the narrations whose player started in this queue run,
+ * oldest first. A run ends at the playback idle edge; the next narration to start begins a new run. The History
+ * archive only supplies the retained audio of a narration listed here; an archive-only entry is never a target.
+ * This is the model's PreviousRead guard (`st[1] = "ended"`: the read before the one on screen, in the same queue).
+ */
+const heardQueue: { texts: string[]; ended: boolean } = { texts: [], ended: false };
+
+function noteHeardNarration(text: string | undefined): void {
+  const key = text === undefined ? "" : normalizedReadText(text);
+  if (!key) return;
+  if (heardQueue.ended) { heardQueue.texts = []; heardQueue.ended = false; }
+  if (heardQueue.texts.includes(key)) return;
+  heardQueue.texts.push(key);
+  if (heardQueue.texts.length > RING_BUFFER_SIZE) heardQueue.texts.shift();
+}
+
+/** The playback idle edge: the queue is over. Its list stays readable until the next narration starts. */
+function endHeardQueueRun(): void {
+  if (previousHold && !previousHold.restored) return;
+  heardQueue.ended = true;
+}
+
+/** What a starting player puts on screen: the whole read for a chunk of the live read, else the job's text. */
+function heardTextOf(job: PlaybackJob): string | undefined {
+  const longRead = job.metadata?.longRead;
+  if (longRead && activeLongRead?.id === longRead.id && activeLongRead.displayText) return activeLongRead.displayText;
+  return job.metadata?.text;
+}
+
+export function resetHeardQueueForTests(): void { heardQueue.texts = []; heardQueue.ended = false; }
+
+/** The narration heard in this queue just before the one on screen, with its retained audio. */
 function previousHistoryEntry(): TTSHistoryEntry | undefined {
   const live = onScreenText();
   const current = live === undefined ? undefined : normalizedReadText(live);
+  const heard = heardQueue.texts;
+  const at = current === undefined ? -1 : heard.lastIndexOf(current);
+  const candidates = (at >= 0 ? heard.slice(0, at) : heard.filter(key => key !== current)).reverse();
+  if (!candidates.length) return undefined;
   // Most recent first, like getHistoryEntry; equal timestamps keep the later write first.
   const entries = loadHistory().map((entry, index) => ({ entry, index }))
     .sort((a, b) => b.entry.timestamp - a.entry.timestamp || b.index - a.index).map(({ entry }) => entry);
-  return entries.find(entry => existsSync(entry.file) && (current === undefined || normalizedReadText(entry.text) !== current));
+  for (const key of candidates) {
+    const entry = entries.find(item => normalizedReadText(item.text) === key && existsSync(item.file));
+    if (entry) return entry;
+  }
+  return undefined;
 }
 
 export function hasPreviousRead(): boolean { return previousHistoryEntry() !== undefined; }
@@ -2804,7 +2847,8 @@ export function hasPreviousRead(): boolean { return previousHistoryEntry() !== u
  * Lane B (2.4): "previous read". Replays the previous finished narration from its first word,
  * with its retained audio and word timings (no re-synthesis). The read on screen is held aside
  * at its exact word and comes back PAUSED there when the replay ends or is stopped (model
- * PreviousRead / PrevReturn). With nothing on screen it simply replays the last narration.
+ * PreviousRead / PrevReturn). With nothing on screen it replays the last narration heard in the last queue.
+ * T1: only narrations heard in the current queue qualify (see `heardQueue`), never an archive-only entry.
  */
 export function playPreviousRead(): SeekResult {
   if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
