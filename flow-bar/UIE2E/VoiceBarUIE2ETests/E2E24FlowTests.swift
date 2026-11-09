@@ -12,6 +12,7 @@ extension VoiceBarFlowTests {
             ("N6", testN6SettingsPullHintDoesNotCoverHistoryRows),
             ("N7", testN7DrawersAreReachableInAllNonSpeechStates),
             ("N9", testN9MicrophoneControlIsConsistentAcrossAllowedStates),
+            ("Q2", testQ2RecordingWingMicrophoneControlAwaitsEtan),
             ("N10", testN10RecordingWaveformSitsCloseToTimer),
             ("T1", testT1QueueBackAndForwardSitBesidePause),
             ("T2", testT2HeightHandleIsBelowEyeReplayRow),

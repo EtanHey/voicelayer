@@ -431,14 +431,20 @@ final class WaveformViewTests: XCTestCase {
         let compact = try XCTUnwrap(source.components(separatedBy: "private var notchCompactStatusContent").dropFirst().first)
             .components(separatedBy: "private var notchSpeakingTrailingContent")[0]
 
-        XCTAssertTrue(leadingCompactStatusBranch.contains("if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {"))
+        // 0510 R3: the band (not the shell) decides the wings, so the same transcribing controls sit above a drawer.
+        let transcribingBranch = try XCTUnwrap(leadingCompactStatusBranch.components(
+            separatedBy: "if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {").dropFirst().first)
+            .components(separatedBy: "} else if")[0]
+        let spinner = try XCTUnwrap(transcribingBranch.range(of: "transcriptionSpinner")).lowerBound
+        let chevron = try XCTUnwrap(transcribingBranch.range(of: "microphonePickerButton")).lowerBound
+        XCTAssertLessThan(spinner, chevron, "the spinner sits left of the 0510 N9 microphone control")
         XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner()"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))
         XCTAssertTrue(trailingBranch.contains("notchWaveform"))
         // 2.3 N1: the recording wing's 2.2.61 level meter; transcribing keeps History + Settings, no waveform.
         XCTAssertFalse(trailingBranch.contains("notchWaveform(style:"))
-        XCTAssertTrue(trailingBranch.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent"))
+        XCTAssertTrue(trailingBranch.contains("} else if notchPresentation.bandState == .compactStatus {\n                notchCompactStatusContent"))
         XCTAssertTrue(compact.contains("historyButton\n                settingsButton"))
         XCTAssertFalse(compact.contains("notchWaveform"))
         XCTAssertTrue(source.contains("private var notchWaveform"))

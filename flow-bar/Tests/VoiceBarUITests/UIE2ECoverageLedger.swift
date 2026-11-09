@@ -110,7 +110,9 @@ struct UIE2EControlContext {
 /// Lead-assigned product packets, not generic waivers for missing controls.
 enum UIE2EKnownIssue: String {
     case listNewlines = "P14b", supersedePreparing = "SEL1", pasteFeedback = "P1e", selectionFeedback = "P1f"
-    case qaN1 = "N1", qaN4 = "N4", qaN5 = "N5", qaN6 = "N6", qaN7 = "N7", qaN9 = "N9", qaN10 = "N10"
+    // 0510 N1, N4-N7, N9 and N10 are fixed and verified normally. Q2 is Etan's open decision for N9's recording
+    // wing (pull-only or a wider wing): its microphone-control assertion stays a strict expected failure until he rules.
+    case qaQ2 = "Q2"
     case qaT1 = "T1", qaT2 = "T2", qaT4 = "T4", qaT5 = "T5", qaT6 = "T6", qaT7 = "T7", qaT8 = "T8"
     var marker: String { "[" + rawValue + "]" }
     func matches(_ description: String) -> Bool { description.contains(marker) }

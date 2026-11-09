@@ -17,10 +17,11 @@ extension VoiceBarFlowTests {
         step(row.rawValue + " Etan QA 0510", expected: row,
              surface: "e2e24:" + row.rawValue, surfaces: ["e2e24:" + row.rawValue], body)
     }
-    /// A fixed N row: a plain verified step (the product fix landed; its Swift proofs are in EtanQA0510Tests and
-    /// NotchSurfaceHostedFlowTests). A failure here is a failure, not an expected one.
-    func qa0510Verified(_ row: UIE2EKnownIssue, _ body: () throws -> Void) {
-        step(row.rawValue + " Etan QA 0510", surface: "e2e24:" + row.rawValue, surfaces: ["e2e24:" + row.rawValue], body)
+    /// A fixed N row: a plain step (the product fix landed; its Swift proofs are in EtanQA0510Tests and
+    /// NotchSurfaceHostedFlowTests). A failure here is a failure, not an expected one; the e2e24 case loop records
+    /// the row's surface as verified when it passes.
+    func qa0510Verified(_ row: String, _ body: () throws -> Void) {
+        step(row + " Etan QA 0510", body)
     }
     /// Pulls down from the bare notch (the core above the pill's centre) by `distance`, as a user grabs it.
     func qa0510PullFromNotch(_ distance: CGFloat) throws {
@@ -78,7 +79,7 @@ extension VoiceBarFlowTests {
             }
             observations.append((title, handoffs.count, controls.count))
         }
-        qa0510Verified(.qaN1) {
+        qa0510Verified("N1") {
             for (title, handoffs, controls) in observations {
                 XCTAssertEqual(handoffs, 0, "[N1] \(title) still hands off to a window")
                 XCTAssertGreaterThan(controls, 0, "[N1] \(title) has no settings control or History row in the drawer")
@@ -105,7 +106,7 @@ extension VoiceBarFlowTests {
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
             step("N4 released " + fixture) { observations.append((fixture, displacement, marker.exists)) }
         }
-        qa0510Verified(.qaN4) {
+        qa0510Verified("N4") {
             for (fixture, displacement, remains) in observations {
                 XCTAssertLessThan(displacement, -10, "[N4] \(fixture) must follow pointer before release")
                 XCTAssertFalse(remains, "[N4] \(fixture) stays open after release at the top")
@@ -128,7 +129,7 @@ extension VoiceBarFlowTests {
             }
         }
         XCTAssertEqual(results.first ?? nil, "8 of 8 rows", "fixture: slow grab is the positive control")
-        qa0510Verified(.qaN5) {
+        qa0510Verified("N5") {
             XCTAssertEqual(results.last ?? nil, "8 of 8 rows", "[N5] quick 0.01s grab must expand just like slow grab")
         }
     }
@@ -138,7 +139,7 @@ extension VoiceBarFlowTests {
         try qa0510Require(qa0510Handle)
         let from = CGPoint(x: qa0510Handle.frame.midX, y: qa0510Handle.frame.minY - 100)
         try qa0510Drag(from, CGPoint(x: from.x, y: from.y + 170)) {
-            self.qa0510Verified(.qaN6) {
+            self.qa0510Verified("N6") {
                 let hint = self.qa0510Pill.descendants(matching: .any)["notch-settings-pull-hint"]
                 XCTAssertTrue(hint.exists, "[N6] the overpull still arms Settings and shows its hint")
                 let rows = self.qa0510Pill.staticTexts.allElementsBoundByIndex.filter {
@@ -168,32 +169,49 @@ extension VoiceBarFlowTests {
                 observations.append((fixture, title, marker.waitForExistence(timeout: 3)))
             }
         }
-        qa0510Verified(.qaN7) {
+        qa0510Verified("N7") {
             for (fixture, title, opened) in observations {
                 XCTAssertTrue(opened, "[N7] \(title) unreachable in \(fixture)")
             }
         }
     }
 
-    /// R4: the same chevron in every allowed state with a left wing to spare (launcher, transcribing, Typed; the
-    /// recording wing's slots are Stop, Cancel and the hold), and it opens General at the microphone in the notch.
+    /// R4: the same chevron in every allowed state with a left wing to spare (launcher, transcribing, Typed), and it
+    /// opens General scrolled to Microphone priority in the notch. The recording wing is Etan's open Q2 (below).
     func testN9MicrophoneControlIsConsistentAcrossAllowedStates() throws {
-        var observations: [(String, Bool)] = []
+        var observations: [(String, Bool, Bool)] = []
         for fixture in ["tooltips-launcher", "tooltips-transcribing", "typed-feedback"] {
             try e2e24Fixture(fixture, owner: "lane-A")
             try qa0510Require(qa0510Pill)
             let mic = qa0510Pill.buttons["Choose microphone"]
-            var opened = false
+            var opened = false, atMicrophone = false
             if mic.exists && mic.isHittable {
                 click(mic)
                 opened = qa0510Pill.buttons["General"].waitForExistence(timeout: 3)
+                // The requested scroll target, not merely the tab: the section header sits at the pane's top.
+                let header = qa0510Pill.staticTexts["Microphone priority"]
+                atMicrophone = opened && header.waitForExistence(timeout: 3) && header.isHittable
+                    && header.frame.minY - qa0510Tabs.frame.maxY < 80
             }
-            observations.append((fixture, opened))
+            observations.append((fixture, opened, atMicrophone))
         }
-        qa0510Verified(.qaN9) {
-            for (fixture, opened) in observations {
+        qa0510Verified("N9") {
+            for (fixture, opened, atMicrophone) in observations {
                 XCTAssertTrue(opened, "[N9] microphone control missing or not opening the notch setting in \(fixture)")
+                XCTAssertTrue(atMicrophone, "[N9] \(fixture): the drawer is not scrolled to Microphone priority")
             }
+        }
+    }
+
+    /// Etan's open Q2: the recording wing has no microphone control (pull-only, or a wider wing). Until he rules, the
+    /// original N9 requirement for recording stays a visible strict expected failure, never a silent pass.
+    func testQ2RecordingWingMicrophoneControlAwaitsEtan() throws {
+        try e2e24Fixture("recording", owner: "lane-A")
+        try qa0510Require(qa0510Pill)
+        let mic = qa0510Pill.buttons["Choose microphone"]
+        let hittable = mic.exists && mic.isHittable
+        qa0510Expected(.qaQ2) {
+            XCTAssertTrue(hittable, "[Q2] recording wing microphone control (Etan: pull-only or a wider wing)")
         }
     }
 
@@ -203,7 +221,7 @@ extension VoiceBarFlowTests {
         try qa0510Require(clock)
         let meter = qa0510Pill.descendants(matching: .any)["Input level"]
         try qa0510Require(meter)
-        qa0510Verified(.qaN10) {
+        qa0510Verified("N10") {
             let gap = max(clock.frame.minX - meter.frame.maxX, meter.frame.minX - clock.frame.maxX)
             // The time's frame ends at its region's trailing edge; 2 pt of layout paints 4 pt of ink (EtanQA0510Tests).
             XCTAssertLessThanOrEqual(gap, 2, "[N10] waveform-to-time gap")
