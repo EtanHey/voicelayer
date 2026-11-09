@@ -69,22 +69,26 @@ export function qualifySpanRepair(candidate: string, plan: SpanRepair, speechSec
   const risk = fallbackOutputRisk(candidate, speechSeconds);
   if (risk) return { accepted: false, reason: risk };
   const ws = words(candidate);
-  if (ws.length < plan.left.length + plan.right.length ||
-      plan.left.some((key, i) => ws[i]?.key !== key) ||
-      plan.right.some((key, i) => ws[ws.length - plan.right.length + i]?.key !== key)) {
-    return { accepted: false, reason: "unmatched-context" };
-  }
-  const insertion = ws.length === plan.left.length + plan.right.length ? "" :
-    candidate.slice(ws[plan.left.length - 1]!.end, plan.right.length ? ws[ws.length - plan.right.length]!.start : undefined).trim();
+  const matches = (anchor: string[], positions: number[]) => positions.filter(at => at >= 0 &&
+    at + anchor.length <= ws.length && anchor.every((key, i) => ws[at + i]?.key === key));
+  const left = matches(plan.left, [0, 1]);
+  const right = plan.right.length ? matches(plan.right, [ws.length - plan.right.length - 1, ws.length - plan.right.length]) : [ws.length];
+  if (left.length !== 1 || right.length !== 1) return { accepted: false, reason: "unmatched-context" };
+  const leftEnd = left[0]! + plan.left.length, rightStart = right[0]!;
+  if (leftEnd > rightStart) return { accepted: false, reason: "overlapping-context" };
+  // Only interior words qualify; one outer neighbour on either edge is context.
+  const insertion = leftEnd === rightStart ? "" :
+    candidate.slice(ws[leftEnd - 1]!.end, plan.right.length ? ws[rightStart]!.start : undefined).trim();
   return { accepted: true, insertion };
 }
 
 /** Canonical clip header; every selected PCM sample is copied unchanged. */
-export function spanWav(bytes: Uint8Array, dataOffset: number, plan: SpanRepair): Uint8Array {
-  const start = Math.floor(plan.start * 16000), end = Math.ceil(plan.end * 16000);
+export function spanWav(bytes: Uint8Array, dataOffset: number, plan: SpanRepair, sampleRate: number): Uint8Array {
+  if (sampleRate !== 16000) throw new RangeError("Unsupported Parakeet clip sample rate");
+  const start = Math.floor(plan.start * sampleRate), end = Math.ceil(plan.end * sampleRate);
   const pcm = bytes.subarray(dataOffset + start * 2, dataOffset + end * 2), wav = Buffer.alloc(44 + pcm.length);
   wav.write("RIFF"); wav.writeUInt32LE(wav.length - 8, 4); wav.write("WAVEfmt ", 8);
   wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.writeUInt32LE(sampleRate, 24); wav.writeUInt32LE(sampleRate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
   wav.write("data", 36); wav.writeUInt32LE(pcm.length, 40); wav.set(pcm, 44); return wav;
 }

@@ -57,9 +57,9 @@ for (const f of fixtures.fixtures) test(`SPEED adapter boundary: ${f.id}`, async
   let terminal: string | undefined;
   try { terminal = (await backend.transcribe(path)).outcome; }
   catch (error) { if (error instanceof STTQualificationError) terminal = error.outcome; else throw error; }
-  expect(terminal).toBe(f.expected.terminal); expect(wCalls).toBe(1);
+  expect(terminal).toBe(f.expected.terminal); expect(wCalls).toBe(f.expected.must_fallback ? 1 : 0);
   expect(pCalls).toBe(f.capture_complete ? 1 : 0);
-  expect(ledger.length).toBe(expectsVad ? 3 : 2); expect<string | undefined>(ledger.at(-1)!.outcome).toBe(terminal);
+  expect(ledger.length).toBe(expectsVad ? 3 : f.expected.must_fallback ? 2 : 1); expect<string | undefined>(ledger.at(-1)!.outcome).toBe(terminal);
   expect(ledger.at(-1)!.audioPath).toBe(path); expect(ledger.at(-1)!.inputSha256).toBe(hash);
   // A truncated container is refused before P: do not manufacture a model
   // attempt merely to match an abstract fixture's earlier native-partial stage.
