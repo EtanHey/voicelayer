@@ -65,8 +65,25 @@ The native P API does not accept context prompts; a prompt does not force W,
 and dictionary aliases remain a separate post-decode operation.
 
 Parakeet errors, missing/full-frame coverage failures, extremely sparse
-responses and suspicious late speech/timestamp gaps trigger one full-audio
-Whisper retry. A COMPLETE native empty response first runs an isolated Silero
+responses and suspicious late speech trigger one full-audio Whisper retry.
+Internal token gaps containing at least .5 s consecutive Silero-positive windows
+(after .25 s margins) instead request span-only recovery. Each clip includes at
+most 2 s context on either side; original PCM and the full recording stay intact.
+Native token text must reconstruct the original transcript exactly. Matching
+words on both clip edges anchor an insertion; ambiguous or unavailable anchors
+keep every native character. Multiple repairs apply from the end backwards.
+
+Alternate Whisper output is rejected whole when a six-word sequence occurs more
+than five times, or exceeds eight lexical words per detected speech second
+(with a twelve-word allowance for short clips). Eleven retained input hashes
+calibrated these conservative bounds: the ten nonincident hypotheses had maximum
+six-gram counts of 1–5 and at most 2.91 lexical words per speech second; the looping
+incident reached 46 and 9.65. These heuristics do not establish acoustic truth.
+Rejection retains native words and any other accepted span insertions; it never
+deduplicates or trims words. Both alternatives and rejection reasons stay in
+private diagnostics, while stderr logs times, reasons and counts only.
+
+A COMPLETE native empty response first runs an isolated Silero
 VAD session on the exact full snapshot, using threshold0.3. Only complete,
 input-SHA/frame-matched evidence with every window below that threshold can
 deliver empty as `VAD_NO_SPEECH` (the UI says "No speech detected"). Whisper is
@@ -87,13 +104,16 @@ resident when the next Parakeet request arrives.
 
 The sparse/tail tests are conservative retry heuristics. Native word timings
 do not prove acoustic completeness. Neither these tests nor a successful retry
-proves that all real words were recovered. No audio is cropped, faded, split by
-this adapter or matched to expected text. Native Parakeet runs the complete
+proves that all real words were recovered. No original recording is cropped or
+faded. Span-repair clips copy PCM samples without changing them; native text is
+never replaced by a span hypothesis. Native Parakeet runs the complete
 input with the measured 30-second chunk/2-second overlap settings.
 
-Both providers receive the same private, read-only, byte-identical full-WAV
-snapshot. This prevents a replaced recording from invalidating completeness
-checks during fallback. The snapshot is removed only after the request settles;
+Native decode and full-input retries receive the same private, read-only,
+byte-identical full-WAV snapshot. Internal-gap retries receive temporary,
+read-only clips bound to that snapshot; those clips are removed after decoding.
+This prevents a replaced recording from invalidating completeness checks during
+fallback. The snapshot is removed only after the request settles;
 the original recording is never changed or deleted. Non-PCM formats P cannot
 decode are still snapshotted byte-for-byte and delegated to Whisper without
 making a zero-signal claim.

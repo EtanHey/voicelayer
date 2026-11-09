@@ -605,6 +605,9 @@ export async function finalizeTranscriptionResultForSurface(
     },
     { topic: "voice.transcription" },
   );
+  if (polished.status === "rejected") console.error(`[voicelayer] ${JSON.stringify({
+    event: "polish_rejected", reason: polished.reason ?? "unspecified", latency_ms: Math.round(polished.latencyMs),
+  })}`);
   if (polished.status === "failed" && polished.failureKind &&
       polished.failureKind !== "timeout" && polished.failureKind !== "endpoint-error") {
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
@@ -3530,7 +3533,8 @@ export async function waitForInput(
       throwIfWaitForInputAborted(options.signal);
       console.error(
         `[voicelayer] push-to-end speech gate: detected=${pushToEndSpeechGate.detected} ` +
-          `(speech-chunks=${pushToEndSpeechGate.speechChunks}/${pushToEndSpeechGate.totalChunks})`,
+          `(speech-chunks=${pushToEndSpeechGate.speechChunks}, scanned-chunks=${pushToEndSpeechGate.totalChunks}, ` +
+          `take-chunks=${Math.ceil(sttTrim.pcmData.byteLength / VAD_CHUNK_BYTES)}; scan stops at first speech confirmation)`,
       );
       if (!pushToEndSpeechGate.detected) {
         clearCancelSignal();
