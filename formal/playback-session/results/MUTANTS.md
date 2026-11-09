@@ -2,6 +2,7 @@
 | --- | --- |
 | AskKeepsRead | CancelPreparingMutant, AskCancelsReadMutant |
 | AskParksOne | StrandMutant |
+| EndedReplayNotShownRunning | OldReplayShownMutant |
 | MicExclusive | EarlyMicMutant, RecorderWaitMutant |
 | NoSameQueued | SameQueuesMutant |
 | NoZombie | ZombieMutant |
@@ -9,6 +10,7 @@
 | OneLiveSession | PrevOverlapMutant |
 | ParkedEventuallyReleased | NoRestoreMutant |
 | QueueSurvivesAsk | AskClearsQueueMutant |
+| RestoreReceiptApplied | OldPrevReturnMutant |
 | ResumeExact | JumpBackMutant, SecondAskMutant |
 | SuccessorWaitsForRelease | EarlySuccessorMutant |
 | TeleTracksAudio | ClockResetMutant |

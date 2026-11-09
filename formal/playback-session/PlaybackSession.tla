@@ -31,7 +31,11 @@ CONSTANTS
   CancelUnparkable,  \* the driver's park is refused (another job in front, a critical job, the pause refused) and the
                      \* ask cancels the read instead (statechart gap 1, #818: preemptLongRead("ask") after a refused hold)
   AskClearsQueue,    \* an ask that parks nothing empties the narration queue (statechart gap 2: selectionReads.clear())
-  SuccessorEarly     \* the next queued read starts while the ask still owns capture (its answer transcribing)
+  SuccessorEarly,    \* the next queued read starts while the ask still owns capture (its answer transcribing)
+  ClientLayer,       \* TRUE: the client observer below is checked (ClientFixed and its mutants); FALSE freezes it
+  MaxAsks,           \* asks per run: 2 for the engine configs, 1 for ClientFixed (state budget, see README)
+  BareReturn         \* (2.4 teleprompter freeze, M4 03:28:48.849) the previous-read return sends only a bare
+                     \* playback_state(paused) for the held player, which the client drops as wrong-owner
 
 Reads == {1, 2}
 Prompt == 3
@@ -42,9 +46,15 @@ Live == {"preparing", "playing", "paused", "seeking", "parked"}
 Positioned == {"preparing", "playing", "paused", "seeking"}
 
 VARIABLES st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
-          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice, askFound, restoring, lost
+          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice, askFound, restoring, lost,
+          cOwner, cPhase, cWord, restored, retReplay
+\* Client layer (VoiceBar VoiceState, the 2.4 teleprompter-freeze extension): cOwner is the read whose presentation
+\* (text, word table, playback identity) the client shows, cPhase what it shows that read doing, cWord the word it
+\* shows. restored / retReplay are history: the read the last previous-read return brought back (while it stays
+\* paused) and the replay that return ended (until the next replay is presented).
+clientVars == <<cOwner, cPhase, cWord, restored, retReplay>>
 vars == <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, players, exiting, prep,
-          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice, askFound, restoring, lost>>
+          ask, parked, parkedFrom, mic, recorder, asks, prevHeld, optq, notice, askFound, restoring, lost, clientVars>>
 
 Dist(a, b) == IF a >= b THEN a - b ELSE b - a
 Quiet == players \cup exiting = {}
@@ -62,6 +72,7 @@ Init == /\ st = [r \in Reads |-> "queued"]
         /\ ask = "none" /\ parked = None /\ parkedFrom = "none"
         /\ mic = FALSE /\ recorder = FALSE /\ asks = 0 /\ prevHeld = None
         /\ optq = {} /\ notice = FALSE /\ askFound = None /\ restoring = None /\ lost = FALSE
+        /\ cOwner = None /\ cPhase = "idle" /\ cWord = 0 /\ restored = None /\ retReplay = None
 
 \* Pause, resume and Esc work with no ask, and on the read an ask restored while its answer transcribes
 \* (the read_processing window; tts.ts isProcessingRead).
@@ -200,7 +211,7 @@ ParkForAsk(r) == /\ LET truth == CASE st[r] = "seeking" -> seekTo[r]
 CancelForAsk(r) == /\ st' = [st EXCEPT ![r] = "ended"] /\ parked' = None /\ parkedFrom' = "none"
                    /\ UNCHANGED <<pausedAt, mark, resumedAt>> /\ Leave(r)
 
-AskPreempt == /\ ask = "none" /\ asks < 2
+AskPreempt == /\ ask = "none" /\ asks < MaxAsks
               /\ ask' = "waiting" /\ asks' = asks + 1
               /\ IF \E r \in Reads : st[r] \in Positioned
                  THEN \E r \in Reads :
@@ -317,14 +328,54 @@ TrackRestore == restoring' = CASE ask = "closing" /\ ask' = "transcribing" /\ pa
 \* History: a read left the narration queue without going live (the queue was emptied under it).
 TrackLost == lost' = (lost \/ \E r \in optq : r \notin optq' /\ st'[r] \notin Live)
 
-Next == TrackStep /\ TrackAsk /\ TrackRestore /\ TrackLost
+(* The client applies, in socket order, the event each daemon step emits. A step and the delivery of its event are one
+   TLC step: the socket is FIFO and VoiceState applies events on the main queue in order, so delivery delay changes
+   when the client sees an event, never which events it accepts. (A stalled main queue is out of scope; see README.)
+
+   Presentations carry a read's identity and replace what the client shows:
+   - a read first going live (Start, and PreviousRead's replay of read 1): state(speaking) with its word table;
+   - the ask's release of a read the user had paused: state(idle, restores_paused_read) (tts.ts
+     broadcastRestoresPausedRead), which VoiceState accepts for the read it saw the ask park;
+   - Fixed only: the previous-read return's restore receipt (the held read's presentation, playback identity,
+     offset and pause owner). With BareReturn the return is only playback_state(paused) for the held player, and
+     VoiceState.ownsPlaybackEvent drops it as wrong-owner because the client still owns the replay's player.
+   Every other event is about one player and is applied only if the client owns that read (ownsPlaybackEvent).
+   A replay that ends while a read is held emits no playback idle: its completion runs the return instead, and the
+   daemon never sends a playback idle while a read is parked (VoiceState's "idle" arm). *)
+ClientApply ==
+  LET presented == {r \in Reads : st[r] \in {"queued", "ended"} /\ st'[r] = "preparing"}
+      returned == IF prevHeld # None /\ prevHeld' = None THEN prevHeld ELSE None
+      released == IF ask = "transcribing" /\ ask' = "none" /\ parked # None /\ st'[parked] = "paused" THEN parked ELSE None
+      r == cOwner
+  IN /\ IF presented # {} THEN
+           /\ cOwner' = (CHOOSE x \in presented : TRUE) /\ cPhase' = "running" /\ cWord' = 0
+        ELSE IF returned # None /\ ~BareReturn THEN
+           /\ cOwner' = returned /\ cPhase' = "paused" /\ cWord' = pausedAt'[returned]
+        ELSE IF released # None THEN
+           /\ cOwner' = released /\ cPhase' = "paused" /\ cWord' = pausedAt'[released]
+        ELSE IF r # None /\ st'[r] = "ended" /\ st[r] # "ended" THEN
+           /\ cPhase' = IF prevHeld # None /\ prevHeld # r THEN cPhase ELSE "ended"
+           /\ UNCHANGED <<cOwner, cWord>>
+        ELSE IF r # None /\ st'[r] \in {"paused", "parked"} THEN
+           /\ cPhase' = "paused" /\ cWord' = pausedAt'[r] /\ UNCHANGED cOwner
+        ELSE IF r # None /\ st'[r] \in {"preparing", "playing", "seeking"} THEN
+           /\ cPhase' = "running" /\ cWord' = (IF st'[r] = "seeking" THEN cWord ELSE tele') /\ UNCHANGED cOwner
+        ELSE UNCHANGED <<cOwner, cPhase, cWord>>
+     /\ restored' = IF returned # None THEN returned
+                    ELSE IF restored # None /\ st'[restored] = "paused" THEN restored ELSE None
+     /\ retReplay' = IF returned # None THEN (CHOOSE x \in Reads : x # returned)
+                     ELSE IF presented # {} THEN None ELSE retReplay
+
+ClientStep == IF ~ClientLayer THEN UNCHANGED clientVars ELSE ClientApply
+
+Next == TrackStep /\ TrackAsk /\ TrackRestore /\ TrackLost /\ ClientStep
 
 Spec == Init /\ [][Next]_vars
 
 \* #818 review: liveness. Once an ask has begun, its machinery keeps moving (prompt, capture, recorder exit, the
 \* player reaping, the restore) unless something else changes the state; nothing waits forever.
 Progress(A) == A /\ UNCHANGED <<prevHeld, notice>> /\ optq' = optq \ {r \in Reads : st'[r] \in Live} /\ TrackAsk
-               /\ TrackRestore /\ TrackLost
+               /\ TrackRestore /\ TrackLost /\ ClientStep
 FairSpec == Spec /\ WF_vars(Progress(AskPromptStart)) /\ WF_vars(Progress(AskPromptEnd)) /\ WF_vars(Progress(MicOpen))
                  /\ WF_vars(Progress(CaptureEnd)) /\ WF_vars(Progress(RecorderExit)) /\ WF_vars(Progress(AskRestore))
                  /\ WF_vars(Progress(AskRelease))
@@ -373,6 +424,15 @@ QueueSurvivesAsk == ~lost
 \* Statechart gap 5 (capture-end r2): while the ask's answer transcribes, the only read on screen is the one it
 \* restored; the next queued read waits for the ask to release.
 SuccessorWaitsForRelease == ask = "transcribing" => \A r \in Reads : st[r] \in Positioned => r = restoring
+
+\* 2.4 teleprompter freeze (V3-5, M4 03:28:48.842-.849): the previous-read return delivers the held read's restore
+\* receipt, so until something else moves that read the client shows it, paused, at the word the engine stored.
+RestoreReceiptApplied == restored # None =>
+                           /\ cOwner = restored /\ cPhase = "paused" /\ cWord = pausedAt[restored]
+
+\* V3-5 "the finished replay remains playing; pause does nothing": once the held read is back, the client no longer
+\* shows (or targets controls at) the replay that return ended. Stronger than "not shown running": not owned at all.
+EndedReplayNotShownRunning == retReplay # None => cOwner # retReplay
 
 \* A stopped or replaced session never starts a player.
 NoZombie == /\ \A r \in Reads : r \in players => st[r] = "playing"
