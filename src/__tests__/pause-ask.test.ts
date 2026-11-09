@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, jest, spyOn } from "bun:test";
+import { afterEach, beforeEach, expect, it, jest, setSystemTime, spyOn } from "bun:test";
 import * as tts from "../tts";
 import * as amplitude from "../playback-amplitude";
 import * as input from "../input";
@@ -63,6 +63,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  setSystemTime();
   tts.stopPlayback();
   for (const player of players.values) player.exit.resolve(143);
   for (const trim of trims.values) trim.resolve(143);
@@ -76,14 +77,19 @@ afterEach(async () => {
   expect(hasActiveVoiceOperation()).toBe(false);
 });
 
+/** #818: the prompt player's clock reaches the claimed position before a pause (a client clock ahead never moves one). */
+let askStartedAt = 0;
+const playTo = (ms: number) => setSystemTime(new Date(askStartedAt + ms));
 async function startAsk() {
   pending = handleVoiceAsk({ message: question, timeout_seconds: 5 });
   const player = await players.at(0);
+  askStartedAt = Date.now();
   return { player, handle: handles[0] };
 }
 async function pauseAsk(activeMs = 0) {
   const started = await startAsk();
   jest.advanceTimersByTime(activeMs);
+  playTo(4200);
   expect(tts.pausePlayback({ id: started.handle.id, generation: started.handle.generation }, 4200)).toMatchObject({ outcome: "accept", offset_ms: 4200 });
   return started;
 }
@@ -182,6 +188,7 @@ it("rejects Pause for an unadmitted critical job", async () => {
 
 it("Resume slice failure retains the capture fence", async () => {
   const { player, handle } = await startAsk();
+  playTo(4200);
   expect(tts.pausePlayback({ id: handle.id }, 4200).outcome).toBe("accept");
   const trim = await trims.at(0);
   expect(tts.resumePlayback({ id: handle.id, generation: handle.generation }).outcome).toBe("accept");
@@ -197,6 +204,7 @@ it("Resume slice failure retains the capture fence", async () => {
 for (const offset of [600_000, 650_000]) for (const exitCode of [0, 143])
 it(`Ask Resume at client EOF ${offset} never captures after terminated player exit ${exitCode}`, async () => {
   const { player, handle } = await startAsk();
+  playTo(offset);
   expect(await handleSocketCommand({ cmd: "pause", id: "eof-p", playback_id: handle.id,
     generation: handle.generation, playback_elapsed_ms: offset })).toMatchObject({ outcome: "accept", offset_ms: 600_000 });
   expect(player.signals).toContain("SIGTERM");
@@ -249,6 +257,7 @@ for (const exitCode of [1, 143]) it(`failed natural player exit ${exitCode} neve
 
 it("VoiceBar socket commands pause and resume the admitted Ask identity", async () => {
   const { player, handle } = await startAsk();
+  playTo(4200);
   expect(await handleSocketCommand({ cmd: "pause", id: "vb-p", playback_id: handle.id,
     generation: handle.generation, playback_elapsed_ms: 4200 })).toMatchObject({ command: "pause", outcome: "accept", offset_ms: 4200 });
   player.exit.resolve(143); (await trims.at(0)).resolve(0); await flush();

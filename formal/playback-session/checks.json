@@ -1,0 +1,93 @@
+{
+  "module": "PlaybackSession",
+  "sourceBaseline": "849483ae",
+  "sources": [
+    "src/playback/session.ts",
+    "src/playback/ledger.ts",
+    "src/__tests__/playback-session.test.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "JumpBackMutant": {
+      "role": "mutant",
+      "target": "ResumeExact",
+      "kind": "invariant"
+    },
+    "SecondAskMutant": {
+      "role": "mutant",
+      "target": "ResumeExact",
+      "kind": "invariant"
+    },
+    "OverlapMutant": {
+      "role": "mutant",
+      "target": "OneAudible",
+      "kind": "invariant"
+    },
+    "StrandMutant": {
+      "role": "mutant",
+      "target": "AskParksOne",
+      "kind": "invariant"
+    },
+    "CancelPreparingMutant": {
+      "role": "mutant",
+      "target": "AskKeepsRead",
+      "kind": "invariant"
+    },
+    "EarlyMicMutant": {
+      "role": "mutant",
+      "target": "MicExclusive",
+      "kind": "invariant"
+    },
+    "RecorderWaitMutant": {
+      "role": "mutant",
+      "target": "MicExclusive",
+      "kind": "invariant"
+    },
+    "ClockResetMutant": {
+      "role": "mutant",
+      "target": "TeleTracksAudio",
+      "kind": "invariant"
+    },
+    "PrevOverlapMutant": {
+      "role": "mutant",
+      "target": "OneLiveSession",
+      "kind": "invariant"
+    },
+    "ZombieMutant": {
+      "role": "mutant",
+      "target": "NoZombie",
+      "kind": "invariant"
+    },
+    "SameQueuesMutant": {
+      "role": "mutant",
+      "target": "NoSameQueued",
+      "kind": "invariant"
+    },
+    "Liveness": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "NoRestoreMutant": {
+      "role": "mutant",
+      "target": "ParkedEventuallyReleased",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "ResumeExact",
+    "OneAudible",
+    "AskParksOne",
+    "AskKeepsRead",
+    "MicExclusive",
+    "TeleTracksAudio",
+    "OneLiveSession",
+    "NoZombie",
+    "NoSameQueued",
+    "ParkedEventuallyReleased"
+  ]
+}

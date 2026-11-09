@@ -21,7 +21,9 @@ Select(t) ==
       clear == (active /\ t = known /\ PlayingPolicy = "clear")
                \/ (t = latest /\ Len(pending) > 0 /\ QueuedPolicy = "clear")
       advance == active /\ t = known /\ PlayingPolicy = "next"
-      hint == ~advance /\ t \in Members(pending) /\ QueuedPolicy = "hint"
+      \* Etan, 2026-11-08 4:40 pm: Option+F5 on the read already playing or paused dedupes and tells the user.
+      alreadyReading == active /\ t = known /\ PlayingPolicy = "hint"
+      hint == ~advance /\ (alreadyReading \/ (t \in Members(pending) /\ QueuedPolicy = "hint"))
   IN /\ (steps = 1 \/ (steps = 2 /\ event = "preempt")) /\ steps' = steps + 1 /\ event' = "selection" /\ selected' = t
      /\ decision' = IF clear THEN "stop" ELSE IF advance THEN IF Len(pending) > 0 THEN "read_next" ELSE "stop"
                     ELSE IF hint THEN "hint" ELSE "speak_text"

@@ -183,3 +183,14 @@ describe("recording job runtime (isolated fake recorder, never real mic)", () =>
     expect(parseCommand(JSON.stringify({ cmd: "dictation_delivered", take_id: "a" }))).toBeNull();
   });
 });
+
+it("R2 waits for unowned recorder exit before processing", async () => {
+  const exit = deferred<void>();
+  let processing = false;
+  const result = finishBarCapture(exit.promise, null, async () => { processing = true; return "answer"; });
+  await Promise.resolve();
+  const startedEarly = processing;
+  exit.resolve();
+  expect(await result).toBe("answer");
+  expect(startedEarly).toBe(false);
+});

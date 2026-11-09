@@ -555,6 +555,23 @@ public final class VoiceState {
     public private(set) var isPlaybackDurationGrowing = false
     public private(set) var playbackDurationMilliseconds: Int?
     private var playbackStartedAt: TimeInterval?
+    /// Lane B: audio ms per wall ms for the player on screen (its speaking edge's `playback_rate`; 1 = 1×).
+    public private(set) var playbackRate: Double = 1
+    /// Lane B: the listening speed the daemon applies to every player (`playback_session.speed`).
+    public private(set) var playbackSpeed: Double = 1
+    /// Lane B: a previous narration exists for "previous read" (`playback_session.previous_available`).
+    public private(set) var previousReadAvailable = false
+    /// Lane B: who produced the narration on screen (the speaking edge's `narration_source`), for display.
+    public private(set) var narrationOrigin: String?
+
+    public static func narrationOriginName(_ source: String?) -> String? {
+        switch source {
+        case nil, "": nil
+        case "narrationlayer": "NarrationLayer"
+        case "voicelayer-engines": "VoiceLayer engines"
+        case let other?: other
+        }
+    }
     /// T1 (QA 2026-11-08 S1-F6r): no player exists while a read prepares, so there is no clock to run.
     public private(set) var isPlaybackPreparing = false
     /// T1: the player on screen ends here (global ms). Its position cannot pass the end of the audio it holds,
@@ -620,6 +637,10 @@ public final class VoiceState {
     /// text, timings and timeline at the moment it went quiet.
     private struct ReadSnapshot {
         var text: String
+        var epoch: Int
+        var speechWords: SpeechWordTable?
+        var selection: (id: String?, requestID: String?, text: String?, hash: String?, preparing: Bool)
+        var timelineChunks: [Int: (text: String, words: [TeleprompterBoundary])]
         var words: [TeleprompterBoundary]
         var durationMs: Int?
         var isDurationGrowing: Bool
@@ -632,7 +653,8 @@ public final class VoiceState {
         var document: LongReadDocumentSnapshot
     }
 
-    private enum PlaybackPauseOwner: String { case user, f5 }
+    /// Lane B: `ask` is a read an Ask parked; the daemon restores it when the Ask ends.
+    private enum PlaybackPauseOwner: String { case user, f5, ask }
 
     private struct ParkedRead {
         let owner: PlaybackPauseOwner
@@ -647,6 +669,14 @@ public final class VoiceState {
     private var parkedRead: ParkedRead? {
         didSet { notifyPanelLayoutChangedIfNeeded((oldValue == nil) != (parkedRead == nil)) }
     }
+    private var processingReadID: String? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != processingReadID) }
+    }
+    var showsReadingProcessingSpinner: Bool {
+        mode == .speaking && processingReadID != nil && processingReadID == speechWords?.utteranceID
+    }
+    /// Ask has its own presentation/player; this snapshot stays silent until the read is returned.
+    private var askParkedRead: ParkedRead?
     /// The player the latest speaking frame named. Pause/Resume are scoped to it and its events must match it.
     private var currentPlayback: (id: String, generation: Int)?
     /// The read on screen when a capture took over, for a `paused` confirmation that lands mid-capture.
@@ -1547,7 +1577,8 @@ public final class VoiceState {
                     ? selectionSubmissions.min(by: { $0.value.order < $1.value.order }) : nil
                 let owner = selectionReadRequestID ?? readQueueCurrentRequestID ?? first?.key
                 let pending = selectionSubmissions.filter { $0.key != owner }.map { $0.value.text }
-                let playing = isPlaybackPaused || (mode == .idle && readQueueCurrentRequestID != nil) ? nil
+                // A paused read is still the read on screen: the same text dedupes against it too.
+                let playing = mode == .idle && readQueueCurrentRequestID != nil ? nil
                     : selectionReadText ?? first?.value.text
                         ?? (samePlaying || (selectionSubmittedText == nil && sameSelection) ? result.text
                             : playbackText ?? (readEnded ? pressPlaybackText : nil))
@@ -1562,8 +1593,26 @@ public final class VoiceState {
                     return
                 case .stop: stopSelectionRead(); return
                 case .alreadyQueued: showSelectionBusyNote(message: "Already queued"); return
+                case .alreadyReading: showSelectionBusyNote(message: Self.alreadyReadingNote); return
                 case .submit: break
                 }
+            }
+            // Etan, 2026-11-08 4:40 pm, Option+F5 over a read that is playing or paused:
+            // an empty selection pauses it (or resumes it when paused); the same text dedupes with a notice and keeps
+            // its position; different text joins the narration queue (below, `queue: true`).
+            // A capture that FAILED (copy timed out, secure field...) is not an empty selection: it keeps its old rule.
+            // A selection's same-text dedupe is the daemon's (it knows the read's identity, and answers "Already
+            // reading this"); Swift decides it only for a clipboard read, which the daemon would start afresh.
+            let readOnScreen = mode == .speaking
+            let emptySelection = result.outcome == .nothingSelected || result.outcome == .copyEmpty
+                || (result.outcome == .completed && normalized.isEmpty)
+            if replacing, readOnScreen, !fromClipboard, normalized.isEmpty, emptySelection {
+                togglePlaybackPause()
+                return
+            }
+            if replacing, readOnScreen, fromClipboard, sameSelection || samePlaying {
+                showSelectionBusyNote(message: Self.alreadyReadingNote)
+                return
             }
             if replacing, (!fromClipboard && normalized.isEmpty) || (fromClipboard && (sameSelection || samePlaying)) {
                 stopSelectionRead()
@@ -2211,6 +2260,10 @@ public final class VoiceState {
     }
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
+        if mode == .speaking, showsReadingProcessingSpinner {
+            sendCommand?(["cmd": "stop", "id": UUID().uuidString])
+            return
+        }
         if case let .queued(request) = deferredBarRecording {
             deferredBarRecording = nil
             locallyStartedDictationTakes.remove(request.takeID)
@@ -2461,6 +2514,24 @@ public final class VoiceState {
     /// U5: the daemon's word table for the utterance on screen (nil from a daemon without word timing).
     public private(set) var speechWords: SpeechWordTable?
     /// U5: Teleprompter A lines (3–8) from its handle; app session only (SPEC open question 4).
+    /// Lane B: the lines the read on screen wraps to at the current column (nil until the teleprompter measured it).
+    public private(set) var teleprompterTextLineCount: Int?
+
+    public func reportTeleprompterTextLines(_ count: Int) {
+        let count = max(0, count)
+        guard teleprompterTextLineCount != count else { return }
+        let before = teleprompterFittedLines
+        teleprompterTextLineCount = count
+        notifyPanelLayoutChangedIfNeeded(before != teleprompterFittedLines)
+    }
+
+    /// Lane B (Etan "less empty space"): the rows the shell needs: the handle's choice, but never more than the read
+    /// uses (a one-line read is a one-line box). The shell (Lane A) sizes the drawer from this.
+    public var teleprompterFittedLines: Int {
+        teleprompterTextLineCount.map { TeleprompterA.fittedLines(preferred: teleprompterVisibleLines, textLines: $0) }
+            ?? teleprompterVisibleLines
+    }
+
     public var teleprompterVisibleLines = TeleprompterA.lineRange.lowerBound {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != teleprompterVisibleLines) }
     }
@@ -2534,7 +2605,10 @@ public final class VoiceState {
             command["cmd"] = "resume"
         } else {
             command["cmd"] = "pause"
-            if sendsElapsed { command["playback_elapsed_ms"] = playbackElapsedMilliseconds() }
+            // Lane B (Etan, QA 2026-11-08 "pause jumps back to 0:00"): the clock reads 0 while a read prepares
+            // (between chunks, right after a resume). Only a live clock is sent; otherwise the daemon pauses at its
+            // own player position.
+            if sendsElapsed, sendsLivePlaybackClock { command["playback_elapsed_ms"] = playbackElapsedMilliseconds() }
             pendingPauseEpoch = playbackEpoch
         }
         pendingPlaybackPauseIDs.insert(id)
@@ -2546,6 +2620,10 @@ public final class VoiceState {
     private func currentReadSnapshot() -> ReadSnapshot {
         ReadSnapshot(
             text: statusText,
+            epoch: playbackEpoch,
+            speechWords: speechWords,
+            selection: (selectionReadID, selectionReadRequestID, selectionReadText, selectionReadHash, selectionReadIsPreparing),
+            timelineChunks: playbackTimelineChunks,
             words: wordBoundaries,
             durationMs: playbackDurationMilliseconds,
             isDurationGrowing: isPlaybackDurationGrowing,
@@ -2569,6 +2647,7 @@ public final class VoiceState {
     /// the paused read comes back. Never resumes audio by itself.
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
+        if mode == .disconnected { askParkedRead = nil; processingReadID = nil }
         if mode == .disconnected || (oldValue == .speaking && mode == .idle) {
             clearCurrentSelectionReadIdentity(advanceEpoch: false)
             retireParkedRead()
@@ -2594,6 +2673,11 @@ public final class VoiceState {
         let read = parked.read
         clearRetainedTeleprompter()
         statusText = read.text
+        playbackEpoch = read.epoch
+        speechWords = read.speechWords
+        (selectionReadID, selectionReadRequestID, selectionReadText, selectionReadHash, selectionReadIsPreparing) = read.selection
+        playbackTimelineReadID = read.longReadID
+        playbackTimelineChunks = read.timelineChunks
         restoreLongReadDocument(read.document)
         wordBoundaries = read.words
         playbackDurationMilliseconds = read.durationMs
@@ -2605,7 +2689,7 @@ public final class VoiceState {
         playbackLongReadID = read.longReadID
         playbackReadbackID = read.readbackID
         playbackReadbackDurationMilliseconds = read.readbackDurationMs
-        playbackStartedAt = playbackAmplitudeClock() - Double(parked.offsetMs) / 1000
+        playbackStartedAt = playbackAmplitudeClock() - Double(parked.offsetMs) / 1000 / playbackRate
         if let playbackID = parked.playbackID, let generation = parked.generation {
             currentPlayback = (playbackID, generation)
         }
@@ -2789,12 +2873,104 @@ public final class VoiceState {
     public func playbackElapsedMilliseconds() -> Int {
         guard mode == .speaking, let playbackStartedAt, !isPlaybackPreparing else { return 0 }
         if isPlaybackPaused, let parkedRead { return clampedPlaybackPosition(parkedRead.offsetMs) }
-        let running = Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000).rounded())
+        let running = Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000 * playbackRate).rounded())
         return clampedPlaybackPosition(max(running, playbackClockFloorMilliseconds))
     }
 
     /// Whether the reading time is a live player position (not preparing, not ended).
     public var showsPlaybackClock: Bool { mode == .speaking && !isPlaybackPreparing }
+
+    /// Lane B: the clock is a real player position worth sending with a Pause (never the 0 of "no player").
+    var sendsLivePlaybackClock: Bool { showsPlaybackClock && playbackStartedAt != nil && !isPlaybackPaused }
+
+    /// Lane B (S-01): the playback a resync was asked for, so a heartbeat asks once, not four times a second.
+    private var resyncRequestedFor: String?
+    /// Lane B: this daemon sends `playback_position` (and marks re-anchoring edges). Older daemons never set it.
+    private var daemonReportsPosition = false
+
+    /// Lane B (QA 11:47 clock rows): the daemon's player says where the audio is. The clock re-anchors to it with
+    /// that player's bounds, so a missed chunk edge can never freeze it ("Reading" stuck at 0:09) and a Pause shows
+    /// the position it already showed (no 0:09 → 0:43 jump). A read playing that the notch is not showing (S-01:
+    /// idle "F5 to talk" while the second Ask's restored read plays) asks the daemon to re-send it, once.
+    private func handlePlaybackPosition(_ event: [String: Any]) {
+        guard let playbackID = event["playback_id"] as? String,
+              let offset = (event["offset_ms"] as? NSNumber)?.intValue, offset >= 0 else { return }
+        daemonReportsPosition = true
+        let utterance = event["utterance_id"] as? String
+        let generation = (event["generation"] as? NSNumber)?.intValue
+        let showsThisRead = mode == .speaking
+            && (currentPlayback?.id == playbackID || (utterance != nil && utterance == currentUtteranceID))
+        guard showsThisRead, !isPlaybackPaused else {
+            // A capture owns the notch while recording or transcribing; the read resumes itself afterwards.
+            guard mode != .recording, mode != .transcribing, mode != .disconnected,
+                  resyncRequestedFor != playbackID, let sendCommand else { return }
+            resyncRequestedFor = playbackID
+            logDiagnostic("playback_resync_requested", details: ["mode": mode.rawValue])
+            sendCommand(["cmd": "resync_playback", "id": UUID().uuidString])
+            return
+        }
+        let rate = Self.playbackRate(event["playback_rate"])
+        let shown = playbackElapsedMilliseconds()
+        playbackRate = rate
+        isPlaybackPreparing = false
+        if let chunkStart = (event["chunk_start_ms"] as? NSNumber)?.intValue, chunkStart >= 0 {
+            playbackChunkStartMilliseconds = chunkStart
+            let chunkDuration = (event["chunk_duration_ms"] as? NSNumber)?.intValue
+            playbackChunkEndMilliseconds = chunkDuration.flatMap { $0 > 0 ? chunkStart + $0 : nil }
+        }
+        if let duration = (event["duration_ms"] as? NSNumber)?.intValue, duration > 0 {
+            playbackDurationMilliseconds = max(playbackDurationMilliseconds ?? 0, duration)
+        }
+        playbackStartedAt = playbackAmplitudeClock() - Double(offset) / 1000 / rate
+        // The client may run a few frames ahead of the player's report; it never steps back for that.
+        playbackClockFloorMilliseconds = shown > offset && shown - offset <= 300 ? shown : 0
+        if currentPlayback?.id != playbackID, let generation { currentPlayback = (playbackID, generation) }
+    }
+
+    static func playbackRate(_ value: Any?) -> Double {
+        guard let rate = (value as? NSNumber)?.doubleValue, rate.isFinite, rate > 0, rate <= 4 else { return 1 }
+        return rate
+    }
+
+    /// Lane B (Etan, 2026-11-08): Option+F5 on the text already being read.
+    public static let alreadyReadingNote = "Already reading this"
+
+    /// Lane B: the speed steps the teleprompter's speed chip cycles through. 1× is a real step.
+    public static let playbackSpeeds: [Double] = [0.75, 1, 1.25, 1.5, 2]
+
+    public static func nextPlaybackSpeed(after speed: Double) -> Double {
+        let index = playbackSpeeds.firstIndex(of: speed) ?? playbackSpeeds.firstIndex(of: 1)!
+        return playbackSpeeds[(index + 1) % playbackSpeeds.count]
+    }
+
+    public static func speedLabel(_ speed: Double) -> String {
+        let text = speed == speed.rounded() ? String(Int(speed)) : String(format: "%g", speed)
+        return "\(text)×"
+    }
+
+    /// Lane B: cycle the listening speed. A playing read continues from its word at the new speed.
+    @discardableResult
+    public func cyclePlaybackSpeed() -> String? {
+        guard let sendCommand else { return nil }
+        let id = UUID().uuidString
+        let next = Self.nextPlaybackSpeed(after: playbackSpeed)
+        playbackSpeed = next
+        sendCommand(["cmd": "set_playback_speed", "speed": next, "id": id])
+        return id
+    }
+
+    /// Lane B: replay the previous narration from its first word; the read on screen waits, paused at its word.
+    @discardableResult
+    public func playPreviousRead() -> String? {
+        guard let sendCommand else { return nil }
+        guard previousReadAvailable else {
+            showConfirmation("No previous read")
+            return nil
+        }
+        let id = UUID().uuidString
+        sendCommand(["cmd": "previous_read", "id": id])
+        return id
+    }
 
     private func clampedPlaybackPosition(_ milliseconds: Int) -> Int {
         let ends = [playbackChunkEndMilliseconds, playbackDurationMilliseconds].compactMap { $0 }.filter { $0 > 0 }
@@ -2805,7 +2981,7 @@ public final class VoiceState {
         guard !isPlaybackPaused, let envelope = playbackAmplitudeEnvelope,
               let startedAt = playbackAmplitudeStartedAt
         else { return 0 }
-        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000).rounded())
+        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000 * playbackRate).rounded())
         return envelope.level(elapsedMilliseconds: elapsedMilliseconds)
     }
 
@@ -2817,7 +2993,7 @@ public final class VoiceState {
         guard let envelope = playbackAmplitudeEnvelope,
               let startedAt = playbackAmplitudeStartedAt
         else { return nil }
-        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000).rounded())
+        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000 * playbackRate).rounded())
         return envelope.levels(elapsedMilliseconds: elapsedMilliseconds, barCount: 7)
     }
 
@@ -3241,8 +3417,24 @@ public final class VoiceState {
 
         case "state":
             guard let stateStr = event["state"] as? String else { return }
+            if event["preserves_paused_read"] as? Bool == true, askParkedRead == nil { askParkedRead = parkedRead }
             switch stateStr {
             case "idle":
+                if event["restores_paused_read"] as? Bool == true {
+                    guard let parked = askParkedRead,
+                          event["playback_id"] as? String == parked.playbackID,
+                          (event["generation"] as? NSNumber)?.intValue == parked.generation else { return }
+                    askParkedRead = nil
+                    guard (mode == .idle || mode == .speaking), deferredBarRecording == nil else {
+                        parkedRead = parked
+                        return // Another capture owns the surface; its recording-idle restores this park.
+                    }
+                    enterIdleState(clearQueue: false)
+                    parkedRead = parked
+                    isCaptureSettlementPending = false
+                    restoreParkedReadIfSettled()
+                    return
+                }
                 if !supportsRecordingJobs, queuedRecordingTakeID != nil,
                    event["source"] as? String == "recording" {
                     microphoneTakeID = nil
@@ -3259,7 +3451,12 @@ public final class VoiceState {
                 // never ends a paused read: that is playback's Stop, outcome or replacement, not capture's idle.
                 if idleSource == "recording" {
                     isCaptureSettlementPending = false
-                    if mode == .speaking { return }
+                    if mode == .speaking {
+                        modelsRecordingBusy = false
+                        modelsRecordingReason = nil
+                        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
+                        return
+                    }
                     if parkedRead != nil { scheduleParkedReadRestore() }
                 }
                 if barInitiatedRecording, mode == .transcribing {
@@ -3307,6 +3504,7 @@ public final class VoiceState {
                     logSpeakingDrop(event, reason: "older-receipt")
                     return
                 }
+                if event["preserves_paused_read"] as? Bool != true { askParkedRead = nil }
                 if let submission {
                     selectionQueueSnapshotIsEmpty = false
                     selectionReceiptOrder = submission.order
@@ -3357,6 +3555,18 @@ public final class VoiceState {
                 let shownPosition = mode == .speaking && !isPlaybackPaused ? playbackElapsedMilliseconds() : 0
                 // #809 P1: a new logical read (after idle, or another utterance) retires every pending click's read.
                 let edgeUtteranceID = event["utteranceId"] as? String
+                // Lane B (QA 11:47 k03-21/k07-29/k04-63): an edge of the read already playing that would move the clock
+                // backwards without a re-anchor (seek, resume, replay, resync) is stale: the clock it shows is kept.
+                let continuesRead = mode == .speaking && !isPlaybackPaused && edgeUtteranceID != nil
+                    && edgeUtteranceID == currentUtteranceID && playbackStartedAt != nil && !isPlaybackPreparing
+                // Only a daemon that reports its player's position also marks its re-anchors; an older one's seek
+                // edges carry no `reanchor`, so the guard never refuses them.
+                let keepsClock = continuesRead && daemonReportsPosition && event["reanchor"] == nil
+                    && ((event["playback_offset_ms"] as? NSNumber)?.intValue).map { $0 < shownPosition - 300 } == true
+                if keepsClock { logDiagnostic("stale_speaking_edge_clock_kept", details: ["shown_ms": String(shownPosition)]) }
+                let keptClock = keepsClock ? (startedAt: playbackStartedAt, start: playbackChunkStartMilliseconds,
+                                              end: playbackChunkEndMilliseconds, rate: playbackRate) : nil
+                if let id = event["playback_id"] as? String, id == resyncRequestedFor { resyncRequestedFor = nil }
                 if mode != .speaking || edgeUtteranceID != currentUtteranceID ||
                     (edgeUtteranceID == nil && (event["playback_id"] as? String) != currentPlayback?.id) {
                     logicalReadEpoch += 1
@@ -3366,7 +3576,9 @@ public final class VoiceState {
                 let playbackStart = playbackAmplitudeClock()
                 let offset = (event["playback_offset_ms"] as? NSNumber)?.doubleValue
                 let validOffset = offset.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
-                playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000
+                playbackRate = Self.playbackRate(event["playback_rate"])
+                narrationOrigin = Self.narrationOriginName(event["narration_source"] as? String)
+                playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000 / playbackRate
                 isPlaybackPreparing = isPreparing
                 playbackReadbackID = event["readback_id"] as? String
                 playbackReadbackDurationMilliseconds = (event["readback_duration_ms"] as? NSNumber)?.intValue
@@ -3395,6 +3607,13 @@ public final class VoiceState {
                 playbackClockFloorMilliseconds = advancesDocument ? shownPosition : 0
                 let chunkDuration = (event["chunk_duration_ms"] as? NSNumber)?.intValue
                 playbackChunkEndMilliseconds = chunkDuration.flatMap { $0 > 0 ? playbackChunkStartMilliseconds + $0 : nil }
+                if let keptClock {
+                    playbackStartedAt = keptClock.startedAt
+                    playbackChunkStartMilliseconds = keptClock.start
+                    playbackChunkEndMilliseconds = keptClock.end
+                    playbackRate = keptClock.rate
+                    playbackClockFloorMilliseconds = shownPosition
+                }
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
                 clearRetainedTeleprompter()
@@ -3515,7 +3734,7 @@ public final class VoiceState {
                 if let sttAudioMs = (event["stt_audio_ms"] as? NSNumber)?.intValue, sttAudioMs > 0 {
                     daemonSttAudioMs = sttAudioMs
                 }
-                if deferredRecordingTakeID == nil { enterTranscribingMode() }
+                if deferredRecordingTakeID == nil && !showsReadingProcessingSpinner { enterTranscribingMode() }
             default:
                 break
             }
@@ -3527,6 +3746,11 @@ public final class VoiceState {
             if ["set_recognizer", "set_recognizer_residency", "download_recognizer", "delete_recognizer", "cancel_recognizer_download",
                 RecognizerUnloadWhenIdle.command].contains(event["command"] as? String ?? "") { handleRecognizerEvent(event) }
             handleAckEvent(event)
+
+        case "read_processing":
+            guard let id = event["utterance_id"] as? String else { return }
+            if event["active"] as? Bool == true { processingReadID = id }
+            else if processingReadID == id { processingReadID = nil }
 
         case "read_queue":
             readQueueCount = max(0, (event["count"] as? NSNumber)?.intValue ?? 0)
@@ -3546,6 +3770,8 @@ public final class VoiceState {
             handlePlaybackStateEvent(event)
 
         case "playback_outcome":
+            if let id = event["playback_id"] as? String, let parked = askParkedRead,
+               id == parked.playbackID || id == parked.read.longReadID { askParkedRead = nil }
             // Stop or replacement settled the parked job: there is nothing left to resume.
             if let id = event["playback_id"] as? String, let parked = parkedRead,
                id == parked.playbackID || id == parked.read.longReadID {
@@ -3561,6 +3787,9 @@ public final class VoiceState {
                     if mode == .speaking { enterIdleState(clearQueue: false) }
                     showSelectionBusyNote(message: "Speech stopped")
                 }
+                // A terminal paused player cannot become a running highlight clock while its
+                // replacement is still synthesizing. Freeze its readback before removing the park.
+                if mode == .speaking { enterIdleState(clearQueue: true) }
                 clearCurrentSelectionReadIdentity()
                 retireParkedRead()
             }
@@ -3602,6 +3831,20 @@ public final class VoiceState {
             }
 
         case "transcription":
+            // The remote Ask owns this result; the returned read keeps its clock and presentation.
+            if showsReadingProcessingSpinner {
+                if event["partial"] as? Bool != true {
+                    let text = (event["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let path = event["recording_path"] as? String
+                    if !text.isEmpty {
+                        rememberRecentTranscription(text, recordingPath: path)
+                        refreshTranscriptionVocabulary()
+                    }
+                    if let path, !path.isEmpty { onHistoryArchiveChange?(path) }
+                    releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
+                }
+                return
+            }
             if let text = event["text"] as? String {
                 let isPartial = (event["partial"] as? Bool) == true
                 let recordingPath = (event["recording_path"] as? String)?
@@ -3663,6 +3906,13 @@ public final class VoiceState {
                 )
             }
 
+        case "playback_position":
+            handlePlaybackPosition(event)
+        case "playback_session":
+            // Lane B: the daemon's one PlaybackSession (formal/playback-session). Additive; the speaking and
+            // playback_state edges stay authoritative for what is on screen.
+            if let speed = (event["speed"] as? NSNumber)?.doubleValue, Self.playbackSpeeds.contains(speed) { playbackSpeed = speed }
+            previousReadAvailable = event["previous_available"] as? Bool ?? false
         case "playback_duration":
             // SCRUB1: a long read's total grows as chunks synthesize; `final` drops "so far".
             // Preparation has no duration yet; the first speaking edge carries its own.
@@ -3813,6 +4063,7 @@ public final class VoiceState {
                 else if isTeleprompterReadback { showConfirmation(event["message"] as? String ?? "Seek failed") }
                 return
             }
+            if showsReadingProcessingSpinner, event["source"] as? String != "playback" { return }
             let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
             let shouldShowError = showDuringBarRecording || !barInitiatedRecording
             if shouldShowError {
@@ -4269,6 +4520,7 @@ public final class VoiceState {
         playbackAmplitudeEnvelope = nil
         playbackAmplitudeStartedAt = nil
         playbackStartedAt = nil
+        playbackRate = 1
         playbackDurationMilliseconds = nil
         playbackLongReadID = nil
         playbackReadbackDurationMilliseconds = nil
@@ -4418,7 +4670,14 @@ public final class VoiceState {
             if !trimmed.isEmpty {
                 retainedReadbackID = playbackReadbackID
                 // An older daemon sends no retained range; its duration is the best it can say.
-                let readbackDuration = playbackReadbackDurationMilliseconds ?? playbackDurationMilliseconds
+                // Lane B (QA 11:47 k06-31: completion showed "0:10 / 0:13" then "0:06 / 0:06"): the end state never
+                // shows less than the read it just finished. A partial retained span is the seekable part, not the total.
+                // A read that played to its whole total completed; one stopped earlier shows only its retained range.
+                let total = playbackDurationMilliseconds ?? 0
+                let completed = total > 0 && playbackElapsedMilliseconds() >= total - 250
+                let readbackDuration = completed
+                    ? max(playbackReadbackDurationMilliseconds ?? 0, total)
+                    : playbackReadbackDurationMilliseconds ?? playbackDurationMilliseconds
                 retainedPlaybackDurationMilliseconds = readbackDuration
                 retainedPlaybackPositionMilliseconds = min(playbackElapsedMilliseconds(), readbackDuration ?? 0)
                 retainedTeleprompterText = teleprompterText ?? statusText
@@ -5665,13 +5924,14 @@ public final class VoiceState {
         if event["command"] as? String == "speak_text" {
             guard let id = event["id"] as? String, selectionSubmissions[id] != nil else { return }
             selectionUnacknowledgedRequestIDs.remove(id)
-            if ["selection advanced", "Already queued"].contains(event["reason"] as? String ?? "") {
+            if ["selection advanced", "Already queued", Self.alreadyReadingNote].contains(event["reason"] as? String ?? "") {
                 retireSelectionRequest(id)
                 if selectionSpeechRequestID == id {
                     selectionSpeechRequestID = nil
                     selectionSubmittedText = nil
                 }
                 if event["reason"] as? String == "Already queued" { showSelectionBusyNote(message: "Already queued") }
+                if event["reason"] as? String == Self.alreadyReadingNote { showSelectionBusyNote(message: Self.alreadyReadingNote) }
             }
             if event["outcome"] as? String == "reject" {
                 retireSelectionRequest(id)

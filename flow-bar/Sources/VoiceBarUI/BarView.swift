@@ -644,7 +644,7 @@ public struct BarView: View {
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
             isPlaybackPaused: state.isPlaybackPaused,
-            readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+            readQueueLeadingSlotCount: VoiceBarPresentation.playbackLeadingSlotCount(for: state),
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker,
@@ -1040,14 +1040,7 @@ public struct BarView: View {
             if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {
                 // 2.3 U2: the spinner sits where Stop was, in a control slot so it lines up with it. It is not a
                 // control, so it registers no tooltip (R0856-09: tooltips sit on controls); VoiceOver reads it.
-                ProcessingSpinner()
-                    .frame(
-                        width: VoiceBarNotchContract.material.compactControlSize,
-                        height: VoiceBarNotchContract.material.compactControlSize
-                    )
-                    .accessibilityElement()
-                    .accessibilityLabel("Transcribing")
-                    .accessibilityAddTraits(.updatesFrequently)
+                transcriptionSpinner
             } else if let playbackPauseControl {
                 playbackLeadingControls(playbackPauseControl)
             } else if notchPresentation.visualState == .compactStatus,
@@ -1059,6 +1052,15 @@ public struct BarView: View {
         }
     }
 
+    private var transcriptionSpinner: some View {
+        ProcessingSpinner()
+            .frame(width: VoiceBarNotchContract.material.compactControlSize,
+                   height: VoiceBarNotchContract.material.compactControlSize)
+            .accessibilityElement()
+            .accessibilityLabel("Transcribing")
+            .accessibilityAddTraits(.updatesFrequently)
+    }
+
     private var playbackPauseControl: VoiceBarPlaybackPauseControl? {
         VoiceBarPresentation.playbackPauseControl(for: state)
     }
@@ -1066,6 +1068,7 @@ public struct BarView: View {
     /// QUEUE1: pause/play, then Next and the "+N" count toward the core; one control slot each so the hit rects match.
     private func playbackLeadingControls(_ pause: VoiceBarPlaybackPauseControl?) -> some View {
         HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+            if state.showsReadingProcessingSpinner { transcriptionSpinner }
             if let pause { playbackPauseButton(pause) }
             if let readQueueControl = VoiceBarPresentation.readQueueControl(for: state) {
                 notchButton(
@@ -1391,11 +1394,18 @@ public struct BarView: View {
                         presentationModel?.setTeleprompterLines(lines)
                     },
                     onHandleDrag: { presentationModel?.setTeleprompterHandlePullActive($0) },
-                    columnWidth: min(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth(
-                        coreWidth: notchPresentation.geometry.coreWidth)),
+                    // Lane B: the column is the body's whole text width (no 404 pt cap).
+                    columnWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
+                        coreWidth: notchPresentation.geometry.coreWidth),
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
                     onSpeechSeek: { state.seekSpeechWord(utteranceID: $0, wordIndex: $1) },
-                    onSeek: state.seek
+                    onSeek: state.seek,
+                    speed: state.playbackSpeed,
+                    onCycleSpeed: { state.cyclePlaybackSpeed() },
+                    previousAvailable: state.previousReadAvailable,
+                    onPrevious: { state.playPreviousRead() },
+                    onTextLinesChange: { state.reportTeleprompterTextLines($0) },
+                    narrationOrigin: state.narrationOrigin
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {

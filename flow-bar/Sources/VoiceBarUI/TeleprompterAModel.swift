@@ -1,12 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// U5, SPEC § Teleprompter A: 24 pt lines of 17 pt text in a 404 pt column. Reading starts on the first line;
-/// once the focus line reaches the middle row it holds there and the text slides up one line at a time.
+/// U5, SPEC § Teleprompter A: 24 pt lines of 17 pt text. Reading starts on the first line; once the focus line
+/// reaches the middle row it holds there and the text slides up one line at a time.
 public enum TeleprompterA {
     public static let lineHeight: CGFloat = 24
     public static let fontSize: CGFloat = 17
-    public static let columnWidth: CGFloat = 404
+    /// Lane B (2.4, "the teleprompter is wider"): the column is the teleprompter body's whole text width (429 pt at
+    /// the 185 pt contract core; it was capped at 404). A wider body widens it with no change here.
+    public static var columnWidth: CGFloat { VoiceBarNotchContract.material.teleprompterTextWidth }
+    /// Lane B: the greedy wrap leaves this much room, so per-glyph rounding in SwiftUI can never push a line past
+    /// the column (that compression is what rendered "Codex" as "Cod…").
+    public static let wrapSlack: CGFloat = 2
     public static let lineRange = 3 ... 8
     public static let topFadeHeight: CGFloat = 16
     public static let footerHeight: CGFloat = 20
@@ -71,8 +76,15 @@ public enum TeleprompterA {
 
     public static func clamp(_ lines: Int) -> Int { min(lineRange.upperBound, max(lineRange.lowerBound, lines)) }
 
-    public static func footerState(isPaused: Bool, isPausedForDictation: Bool, rate: String = "1×") -> String {
-        isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : "Reading · \(rate)"
+    /// Lane B (Etan, 2026-11-08 "less empty space"): the rows a read needs. The handle's choice (3–8) is an upper
+    /// bound; a read that wraps to fewer lines needs only those (at least one). The shell sizes from this.
+    public static func fittedLines(preferred: Int, textLines: Int) -> Int {
+        max(1, min(clamp(preferred), textLines))
+    }
+
+    /// Lane B: the speed is its own control now (the footer chip), so the state reads "Reading" alone.
+    public static func footerState(isPaused: Bool, isPausedForDictation: Bool) -> String {
+        isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : "Reading"
     }
 
     public static func queuedChip(_ count: Int) -> String? { count > 0 ? "+\(count) queued" : nil }
@@ -172,6 +184,14 @@ struct TeleprompterAModel {
     let lines: [Range<Int>]
     let lineOfWord: [Int]
     let spacing: CGFloat
+    /// Lane B: measured width of each word as rendered (decoration, separator and text are separate Text views).
+    let widths: [CGFloat]
+    /// Lane B: a single word wider than the column scales down to fit on its own line; it is never cut.
+    let shrinks: [Bool]
+    /// Lane B: no space before this word. Glued punctuation, and every later piece of a long token (the
+    /// document splits tokens over 24 characters; drawn with a space they read "antidisestablishmentaria nism").
+    let glued: [Bool]
+    let column: CGFloat
 
     init(document: TeleprompterRenderedDocument, text: String, column: CGFloat) {
         words = document.words
@@ -182,12 +202,20 @@ struct TeleprompterAModel {
         }
         tokenOfWord = pieces.count == words.count ? pieces : nil
         spacing = Self.width(" ", heading: false)
-        let widths = layouts.map { layout in
-            Self.width((layout.decoration.map { $0 + " " } ?? "") + (layout.separator ?? "") + layout.displayText,
-                       heading: layout.isHeading)
+        let widths = layouts.map(Self.renderedWidth)
+        self.widths = widths
+        self.column = column
+        let usable = max(1, column - TeleprompterA.wrapSlack)
+        shrinks = widths.map { $0 > usable }
+        var glued: [Bool] = []
+        for index in layouts.indices {
+            var sameToken = false
+            if index > 0, let owner = tokenOfWord { sameToken = owner[index] == owner[index - 1] }
+            glued.append(layouts[index].gluesToPrevious || sameToken)
         }
-        lines = TeleprompterA.lines(widths: widths, breaks: layouts.map { $0.lineBreak != .none },
-                                    glues: layouts.map(\.gluesToPrevious), spacing: spacing, column: column)
+        self.glued = glued
+        lines = TeleprompterA.lines(widths: widths.map { min($0, usable) }, breaks: layouts.map { $0.lineBreak != .none },
+                                    glues: glued, spacing: spacing, column: usable)
         var lineOfWord = Array(repeating: 0, count: words.count)
         for (line, range) in lines.enumerated() { for word in range { lineOfWord[word] = line } }
         self.lineOfWord = lineOfWord
@@ -196,6 +224,14 @@ struct TeleprompterAModel {
     static func width(_ text: String, heading: Bool) -> CGFloat {
         let font = NSFont.systemFont(ofSize: TeleprompterA.fontSize, weight: heading ? .semibold : .medium)
         return NSAttributedString(string: text, attributes: [.font: font]).size().width.rounded(.up)
+    }
+
+    /// The word as `lineView` draws it: up to three Text views side by side, each rounded up on its own.
+    static func renderedWidth(_ layout: TeleprompterWordLayout) -> CGFloat {
+        let heading = layout.isHeading
+        return (layout.decoration.map { width($0 + " ", heading: heading) } ?? 0)
+            + (layout.separator.map { width($0, heading: heading) } ?? 0)
+            + width(layout.displayText, heading: heading)
     }
 
     /// The word the clock names: the daemon's table when it covers this text, else the subtitle timeline.

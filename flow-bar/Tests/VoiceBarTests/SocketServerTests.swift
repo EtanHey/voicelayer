@@ -218,7 +218,7 @@ final class SocketServerTests: XCTestCase {
         defer { fixture.cleanup() }
         fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
         var wire: [String] = []
-        func press(_ text: String, command: String?) throws -> String? {
+        func press(_ text: String, command: String?, note: String = "Already queued") throws -> String? {
             fixture.state.selectionTextCaptureHandler = { $0(.completed(text)) }
             fixture.state.speakSelection()
             let line = try readLine(from: fixture.commandClient, timeout: command == nil ? 0.01 : 1)
@@ -229,8 +229,16 @@ final class SocketServerTests: XCTestCase {
                 return payload["id"] as? String
             }
             XCTAssertNil(command)
-            XCTAssertEqual(fixture.state.selectionFeedbackNote, "Already queued")
+            XCTAssertEqual(fixture.state.selectionFeedbackNote, note)
             return nil
+        }
+        // Etan, 2026-11-08: Next is the button's job; the same text as the read is "Already reading this".
+        func next() throws {
+            fixture.state.skipToNextRead()
+            let line = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+            wire.append(line)
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+            XCTAssertEqual(payload["cmd"] as? String, "read_next")
         }
         let a = try XCTUnwrap(press("Alpha", command: "speak_text"))
         fixture.state.handleEvent(["type": "state", "state": "speaking", "text": "Alpha", "request_id": a,
@@ -239,12 +247,14 @@ final class SocketServerTests: XCTestCase {
         let c = try XCTUnwrap(press("Charlie", command: "speak_text"))
         fixture.state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": a])
         for text in ["Charlie", "* [ ] Bravo", "2. Charlie"] { _ = try press(text, command: nil) }
-        _ = try press("1. Alpha", command: "read_next")
+        _ = try press("1. Alpha", command: nil, note: "Already reading this")
+        try next()
         fixture.state.handleEvent(["type": "state", "state": "speaking", "text": "Bravo", "request_id": b,
                                   "long_read": ["id": "read-B", "preparing": false]])
         fixture.state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": b])
         _ = try press("2. Charlie", command: nil)
-        _ = try press("- [x] Bravo", command: "read_next")
+        _ = try press("- [x] Bravo", command: nil, note: "Already reading this")
+        try next()
         fixture.state.handleEvent(["type": "state", "state": "speaking", "text": "Charlie", "request_id": c,
                                   "long_read": ["id": "read-C", "preparing": false]])
         fixture.state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": c])
