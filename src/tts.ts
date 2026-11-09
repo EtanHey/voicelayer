@@ -893,6 +893,8 @@ export function historyReplayMetadata(entry: TTSHistoryEntry): PlaybackMetadata 
   return {
     text,
     voice: entry.voice,
+    // T1: an explicit replay is that exact entry; Back must never resolve it to newer same-text audio.
+    historyRef: { id: entry.id, timestamp: entry.timestamp },
     ...(display ? { display } : {}),
     ...(entry.alignedWords?.length ? { alignedWords: clipAlignedWordsToText(entry.alignedWords, text) } : {}),
     ...(entry.wordBoundaries?.length ? { wordBoundaries: text === entry.text ? entry.wordBoundaries

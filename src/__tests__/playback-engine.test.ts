@@ -285,6 +285,21 @@ describe("socket E2E: the playback engine through real commands (VoiceBar's wire
     expect(await back()).toMatchObject({ text: "Narration A", voice: "heard-voice" });
   });
 
+  it("T1 r3: an explicit History replay binds the SELECTED entry, never newer same-text audio (Codex r2 P2)", async () => {
+    const selected = audio("replay-selected"), newer = audio("replay-newer"), b = audio("replay-b");
+    addToHistory("Narration A", selected, "SELECTED-heard-voice");
+    at(10);
+    addToHistory("Narration A", newer, "UNHEARD-newer-voice");
+    const older = tts.loadHistory().find(e => e.voice === "SELECTED-heard-voice");
+    expect(older).toBeDefined();
+    // The MCP `voice_speak` replay and the socket `replay` both play an entry with historyReplayMetadata.
+    tts.playAudioNonBlocking(older!.file, tts.historyReplayMetadata(older!));
+    const refB = addToHistory("Narration B", b, "heard");
+    tts.playAudioNonBlocking(b, { text: "Narration B", voice: "heard", durationMs: 2000, historyRef: refB });
+    (await players.at(0)).exit.resolve(0); await players.at(1);
+    expect(await back()).toMatchObject({ text: "Narration A", voice: "SELECTED-heard-voice" });
+  });
+
   it("T1: a queue that ended starts over; the next queue's Back cannot reach the old one", async () => {
     const old = `${TEST_TMP}/old-queue.mp3`;
     writeFileSync(old, "fake audio");
