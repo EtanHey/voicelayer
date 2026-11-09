@@ -603,6 +603,9 @@ final class UIE2EModel {
         recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
         transcriptionVocabularyLoader: { [] }, transcriptionVocabularyAliasLoader: { [] })
     var entries = [STTDictionaryEntry(canonical: "QA initial", variants: ["initial variant"])]
+    /// Lane B answers playback commands only while one of its own fixtures is presented; every other fixture
+    /// (for example `speaking`, pinned by UIE2EPlaybackFixtureTests) keeps the host's pause/resume/seek fakes.
+    var playbackFixturePresented = false
     var revision: UInt64 = 0
     var hidden = false { didSet { onVisibilityChange?(hidden) } }
     var onVisibilityChange: ((Bool) -> Void)?
@@ -886,7 +889,8 @@ final class UIE2EModel {
             voice.beginModalInteraction()
             holdsFixturePresentation = true
         }
-        if applyPlaybackFixture(name) { receipt("fixture:" + name); onFixtureApplied(); return } // Lane B
+        playbackFixturePresented = applyPlaybackFixture(name)
+        if playbackFixturePresented { receipt("fixture:" + name); onFixtureApplied(); return } // Lane B
         switch name {
         case "preparing":
             // Establish the actual original selection request before the daemon's

@@ -53,6 +53,7 @@ extension UIE2EModel {
     /// Synthetic daemon answers for the playback commands these providers' controls send. Proves the UI dispatch
     /// and its state transitions, never daemon admission or audio. False for every other command.
     func answerPlaybackCommand(_ cmd: String, _ message: [String: Any]) -> Bool {
+        guard playbackFixturePresented else { return false }
         let id = message["id"] ?? ""
         switch cmd {
         case "pause":
