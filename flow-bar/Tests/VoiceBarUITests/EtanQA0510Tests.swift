@@ -15,38 +15,79 @@ final class EtanQA0510Tests: XCTestCase {
         XCTExpectFailure("[" + row + "] Etan 2026-11-09", options: options, failingBlock: body)
     }
 
-    /// AX hit-testing is not visibility: use the actual painted copy, with an OCR positive control.
+    /// AX hit-testing is not visibility: use the actual painted copy, with an OCR positive control. The panes are the
+    /// real Settings panes the app embeds (N1); descriptions may remain as tooltips.
     func testN2NoExplanatoryProsePaintedInDrawer() throws {
-        var seen: [String: Bool] = [:]
+        let prose = ["local recognizer", "spell your way", "used on every dictation"]
         for tab in [SettingsTab.transcription, .dictionary] {
-            let drawer = NotchSettingsDrawer(selectedTab: tab, palette: .resolve(for: .dark),
-                missingPermissions: [], context: NotchSettingsDrawerContext(shortcutHint: { "QA" },
-                defaultMicrophoneName: { "QA" }, updates: nil, openSettingsWindow: { _, _ in }),
-                onSelectTab: { _ in }, onOpenWindow: { _, _ in })
-            let host = NSHostingView(rootView: drawer.frame(width: 420, height: 348).background(Color.black))
-            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 420, height: 348),
-                                  styleMask: .borderless, backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            window.contentView = host
-            defer { window.contentView = nil; window.close() }
-            VLOrderTestWindow(window)
-            host.layoutSubtreeIfNeeded()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["en-US"]
-            request.usesLanguageCorrection = false
-            try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([request])
-            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ").lowercased()
+            let drawer = NotchSettingsDrawer(selectedTab: tab, appearance: .dark, context: Self.settingsPaneContext(),
+                                             onSelectTab: { _ in })
+            let (text, _) = try Self.paintedText(drawer)
             XCTAssertTrue(text.contains(tab.title.lowercased()), "fixture: OCR must read the selected tab")
-            let phrase = tab == .transcription ? "local recognizer" : "spell your way"
-            seen[tab.title] = text.contains(phrase)
-            print("[N2] \(tab.title) paintedProse=\(seen[tab.title]!)")
+            for phrase in prose {
+                XCTAssertFalse(text.contains(phrase), "[N2] explanatory prose '\(phrase)' painted in \(tab.title)")
+            }
         }
-        expected("N2") {
-            for (tab, present) in seen { XCTAssertFalse(present, "[N2] explanatory prose painted in \(tab)") }
+    }
+
+    /// The Settings window's own panes, from a minimal synthetic SettingsView (the app builds them from its stores).
+    static func settingsPaneContext() -> NotchSettingsDrawerContext {
+        NotchSettingsDrawerContext(updates: nil, pane: { tab, request in
+            AnyView(SettingsView(
+                hotkeyEnabled: true, missingPermissions: [],
+                availableDevices: { [MicrophoneDevice(id: "qa", name: "QA microphone A")] },
+                selectedDeviceID: { "qa" }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
+                initialTab: tab, tabRequest: request
+            ).notchDrawerPane(tab))
+        })
+    }
+
+    /// Renders `view` offscreen and returns the painted text (Vision OCR), lowercased, plus the host for view checks.
+    static func paintedText(_ view: some View, size: CGSize = CGSize(width: 420, height: 394)) throws -> (String, NSView) {
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(Color.black))
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        VLOrderTestWindow(window)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        return (text.lowercased(), host)
+    }
+
+    static func containsScrollView(_ view: NSView) -> Bool {
+        view is NSScrollView || view.subviews.contains(where: containsScrollView)
+    }
+
+    /// R2: every tab paints the window's own settings pane (it scrolls inside the drawer), or History's own rows,
+    /// and none hands off to the Settings window. Offscreen SwiftUI exposes no AX tree, so this reads what is painted.
+    func testN1EveryNotchTabHoldsRealSettingsNotAHandoff() throws {
+        let expectedSetting: [SettingsTab: String] = [
+            .general: "microphone priority", .transcription: "recognizer", .dictionary: "add term",
+            .speech: "voice profile threshold", .history: "qa history row",
+        ]
+        for tab in SettingsTab.allCases {
+            let drawer = NotchSettingsDrawer(selectedTab: tab, appearance: .dark, context: Self.settingsPaneContext(),
+                history: { AnyView(Text("QA history row").font(.system(size: 13))) }, onSelectTab: { _ in })
+            let (text, host) = try Self.paintedText(drawer)
+            XCTAssertTrue(text.contains(tab.title.lowercased()), "fixture: OCR reads the tab bar")
+            print("[N1] \(tab.title) painted=\(text.prefix(160))")
+            XCTAssertFalse(text.contains("all settings") || text.contains("open \(tab.title.lowercased()) settings"),
+                           "[N1] \(tab.title) still hands off to the window")
+            XCTAssertTrue(text.contains(expectedSetting[tab]!), "[N1] \(tab.title) does not show its real settings")
+            if tab != .history {
+                XCTAssertTrue(Self.containsScrollView(host), "[N1] \(tab.title) pane scrolls inside the drawer")
+            }
         }
     }
 
@@ -123,10 +164,8 @@ final class EtanQA0510Tests: XCTestCase {
     func testN3AllTabGlyphsPaintForEverySelection() throws {
         for controlState in ControlActiveState.allCases {
         for selected in SettingsTab.allCases {
-            let drawer = NotchSettingsDrawer(selectedTab: selected, palette: .resolve(for: .dark),
-                missingPermissions: [], context: NotchSettingsDrawerContext(shortcutHint: { "QA" },
-                defaultMicrophoneName: { "QA" }, updates: nil, openSettingsWindow: { _, _ in }),
-                onSelectTab: { _ in }, onOpenWindow: { _, _ in })
+            let drawer = NotchSettingsDrawer(selectedTab: selected, appearance: .dark,
+                context: NotchSettingsDrawerContext(updates: nil), onSelectTab: { _ in })
             let host = NSHostingView(rootView: drawer.frame(width: 420, height: 348).background(Color.black)
                 .environment(\.controlActiveState, controlState))
             let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 420, height: 348),

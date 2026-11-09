@@ -3270,15 +3270,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 2.4 Lane A: what the notch Settings drawer reads and opens.
     private func makeNotchSettingsDrawerContext() -> NotchSettingsDrawerContext {
         NotchSettingsDrawerContext(
-            shortcutHint: { [weak self] in
-                guard let self else { return "" }
-                return hotkeyEnabled ? "Hold F5 to dictate" : VoiceBarPresentation.hotkeyPermissionHint(
-                    hotkeyEnabled: hotkeyEnabled, missingPermissions: missingHotkeyPermissions
-                )
-            },
-            defaultMicrophoneName: { [weak self] in self?.defaultMicrophoneName() },
             updates: notchUpdates,
-            openSettingsWindow: { [weak self] tab, focus in self?.openSettingsWindow(tab: tab, focus: focus) }
+            pane: { [weak self] tab, request in
+                guard let self else { return AnyView(EmptyView()) }
+                return AnyView(makeSettingsView(notchRequest: request, embedded: true).notchDrawerPane(tab))
+            }
         )
     }
 
@@ -3410,11 +3406,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         [audioPath]
     }
 
-    func makeSettingsView() -> SettingsView {
-        voiceState.recognizerSettingsIsVisible = { [weak self] in
-            guard let self, let window = self.settingsWindow else { return false }
-            return window.isVisible && !window.isMiniaturized && !NSApp.isHidden
-                && self.lastSettingsTab == .transcription
+    /// The Settings window's view, or (`notchRequest` non-nil or `embedded`) the same stores for a notch drawer pane.
+    func makeSettingsView(notchRequest: SettingsTabRequest? = nil, embedded: Bool = false) -> SettingsView {
+        let isNotchPane = embedded || notchRequest != nil
+        if !isNotchPane {
+            voiceState.recognizerSettingsIsVisible = { [weak self] in
+                guard let self, let window = self.settingsWindow else { return false }
+                return window.isVisible && !window.isMiniaturized && !NSApp.isHidden
+                    && self.lastSettingsTab == .transcription
+            }
         }
         return SettingsView(
             hotkeyEnabled: hotkeyEnabled,
@@ -3582,8 +3582,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 )
             },
             initialTab: lastSettingsTab,
-            tabRequest: settingsTabRequest,
+            tabRequest: isNotchPane ? notchRequest : settingsTabRequest,
             onSelectedTabChange: { [weak self] tab in
+                guard !isNotchPane else { return }
                 self?.lastSettingsTab = tab
                 if tab == .transcription { self?.voiceState.refreshRecognizerStatus() }
             },

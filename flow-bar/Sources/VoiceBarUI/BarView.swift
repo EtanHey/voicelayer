@@ -168,7 +168,10 @@ extension VoiceBarNotchWingContentEntry {
     }
 }
 
-private extension View {
+extension View {
+    /// The notch's glyph treatment: a 0.75 pt contrast edge drawn as four hard shadows. It also renders the glyph
+    /// through its own shadow layer, the path every band glyph takes; Etan's 0510 S4 shows those painting while the
+    /// drawer's plain glyphs vanished in the same unfocused frame (N3), so every notch glyph takes it.
     func notchAdaptiveGlyphEdge(_ color: Color) -> some View {
         shadow(color: color, radius: 0, x: -0.75, y: 0)
             .shadow(color: color, radius: 0, x: 0.75, y: 0)
@@ -363,6 +366,9 @@ public struct BarView: View {
     /// The Settings drawer's data and actions. Without it the gear keeps opening the Settings window (2.3).
     private let settingsDrawer: NotchSettingsDrawerContext?
     @State private var modalObserver: NotchModalObserver?
+    /// The spot the Settings drawer was last opened at (0510 N9: the microphone control opens General at the
+    /// microphone priority list). Its id changes per request so the pane scrolls there again.
+    @State private var settingsRequest: SettingsTabRequest?
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     /// The History panel is on screen (open, opening, closing or being pulled). The window keeps the panel's size
@@ -1281,21 +1287,12 @@ public struct BarView: View {
     private var notchLowerPanelContent: some View {
         if notchPresentation.visualState == .history, case let .settings(tab) = surface.drawer, let settingsDrawer {
             NotchSettingsDrawer(
-                selectedTab: tab, palette: notchPalette, missingPermissions: state.setupMissingPermissions,
-                facts: { tab in
-                    NotchSettingsDrawerPresentation.facts(
-                        for: tab, recognizer: state.recognizerPickerState,
-                        dictionaryTerms: state.transcriptionVocabularyTerms.count,
-                        recentDictations: state.recentTranscriptionEntries.count
-                    )
+                selectedTab: tab, appearance: notchAppearance, context: settingsDrawer, request: settingsRequest,
+                history: {
+                    AnyView(historyPanelContent(listHeight: NotchSettingsDrawerPresentation.historyListHeight)
+                        .padding(.top, NotchHistoryMorph.listTopInset))
                 },
-                context: settingsDrawer,
-                onSelectTab: { surface.send(.selectSettingsTab($0)) },
-                onOpenWindow: { tab, focus in
-                    guard !drawerBodyDragJustHappened else { return }
-                    surface.send(.dismiss(.action))
-                    settingsDrawer.openSettingsWindow(tab, focus)
-                }
+                onSelectTab: { surface.send(.selectSettingsTab($0)) }
             )
             .frame(maxHeight: .infinity, alignment: .top)
             .simultaneousGesture(drawerBodyDragGesture)
@@ -1801,7 +1798,7 @@ public struct BarView: View {
     }
 
     /// Spec §4: the History panel inside the notch's lower surface.
-    private func historyPanelContent() -> some View {
+    private func historyPanelContent(listHeight fixedListHeight: CGFloat? = nil) -> some View {
         NotchHistoryPanel(
             entries: state.recentTranscriptionEntries,
             activeRetranscriptionPath: state.activeHistoryRetranscriptionPath,
@@ -1822,7 +1819,7 @@ public struct BarView: View {
                     onOpenHistory()
                 }
             },
-            listHeight: min(
+            listHeight: fixedListHeight ?? min(
                 NotchHistoryMorph.listHeight(rows: historyRowsExtent),
                 NotchHistoryMorph.historyCanvasLowerSurfaceHeight - notchPresentation.feedbackHeight
                     - NotchHistoryMorph.listTopInset - NotchHistoryMorph.handleBandHeight

@@ -38,7 +38,6 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         let host: PillHostingView<BarView>
         let panel: FloatingPillPanel
         let rects: [CGRect]
-        var opened: [(SettingsTab, SettingsFocus?)]
     }
 
     private func drain(_ seconds: TimeInterval = 0.05) {
@@ -107,11 +106,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         let model = VoiceBarNotchPresentationModel()
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
-        var opened: [(SettingsTab, SettingsFocus?)] = []
-        let context = NotchSettingsDrawerContext(
-            shortcutHint: { "Hold F5 to dictate" }, defaultMicrophoneName: { "Synthetic microphone" },
-            updates: nil, openSettingsWindow: { opened.append(($0, $1)) }
-        )
+        let context = NotchSettingsDrawerContext(updates: nil)
         let host = PillHostingView(rootView: BarView(
             state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
             presentationModel: model, includesPanelOutsets: true, surface: surface, settingsDrawer: context
@@ -133,8 +128,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
             geometry: launcher.presentation.geometry,
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, trailingControlCountFromCore: 2)
         ).rects.map { $0.offsetBy(dx: launcher.visibleContentRect.minX, dy: launcher.visibleContentRect.minY) }
-        _ = opened
-        return Harness(state: state, model: model, surface: surface, host: host, panel: panel, rects: rects, opened: [])
+        return Harness(state: state, model: model, surface: surface, host: host, panel: panel, rects: rects)
     }
 
     private func center(_ rect: CGRect) -> NSPoint { NSPoint(x: rect.midX, y: rect.midY) }
