@@ -552,12 +552,13 @@ public enum VoiceBarNotchContract {
     /// the level meter, with an equal empty region on the outer side so the meter is centred in the wing's VISIBLE
     /// part (review D3). On a hardware notch the camera glass hides the wing's first `visibleCoreOcclusionInset`
     /// points (the drawn core is AppKit's auxiliary gap pulled in by the calibration), so the visible wing starts
-    /// there and the time keeps 8 pt clear of the real notch edge: occlusion + 8 + 26 + 4 + 46 + 4 + 24 + 8, which
+    /// there and the time keeps 8 pt clear of the real notch edge: occlusion + 8 + 26 + 2 + 46 + 4 + 26 + 8, which
     /// is 120 pt on a flat display and 128.5 pt on the M4, inside the 130 pt morph canvas and the 132 pt bound.
     /// The left wing keeps its controls at the fixed width.
     public static func recordingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
         max(0, visibleCoreOcclusionInset) + 2 * fixedWingContentInset + VoiceBarRecordingWingLabel.width +
-            2 * VoiceBarRecordingWingLabel.meterGap + WaveformLayout.viewportWidth + VoiceBarRecordingWingLabel.outerRegionWidth
+            VoiceBarRecordingWingLabel.timeGap + VoiceBarRecordingWingLabel.meterGap + WaveformLayout.viewportWidth +
+            VoiceBarRecordingWingLabel.outerRegionWidth
     }
 
     /// The flat-display (no hidden notch) recording right wing.

@@ -157,6 +157,44 @@ final class EtanQA0510Tests: XCTestCase {
         XCTAssertFalse(VoiceBarPresentation.showsIdleMicrophoneControl(for: state))
     }
 
+    /// N10: the recording wing's painted gap from the last digit to the first meter bar. S1 measured 6 pt (12 px at
+    /// 2x); the production row now paints 4 pt, and never lets the two touch.
+    func testN10RecordingWaveformSitsCloseToTheTimer() throws {
+        let row = VoiceBarRecordingTrailingRow {
+            VoiceBarRecordingTimeRegion(elapsedMilliseconds: { 2_000 }, isCaptureOpen: true, microphoneName: nil,
+                                        color: .white)
+        } meter: {
+            VoiceBarNotchWaveform(mode: .recording, isListening: false, isCaptureLive: true,
+                                  recordingLevel: { 0 }, playbackLevel: { nil })
+        }
+        .environment(\.visualRenderTime, 1)
+        let host = NSHostingView(rootView: row.frame(width: 130, height: 32).background(Color.black))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 130, height: 32), styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        VLOrderTestWindow(window)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        var lastDigit = -1, firstBar = Int.max
+        for x in 0 ..< bitmap.pixelsWide {
+            for y in 0 ..< bitmap.pixelsHigh {
+                let c = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                if min(c.redComponent, c.greenComponent, c.blueComponent) > 0.6 { lastDigit = max(lastDigit, x) }
+                if c.redComponent > 0.5, c.greenComponent < 0.45 { firstBar = min(firstBar, x) }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(lastDigit, 0, "fixture: the time paints")
+        XCTAssertLessThan(firstBar, Int.max, "fixture: the meter paints")
+        let gap = CGFloat(firstBar - lastDigit) * 130 / CGFloat(bitmap.pixelsWide)
+        print("[N10] painted waveform-to-time gap=\(gap) pt")
+        XCTAssertLessThanOrEqual(gap, 4.5, "[N10] tighten the waveform-to-timer gap (S1 painted 6 pt)")
+        XCTAssertGreaterThanOrEqual(gap, 2, "[N10] the digits and the bars never touch")
+    }
+
     func testN7DrawersCanOpenDuringRecording() {
         for event in [NotchSurfaceEvent.openHistory, .openSettings(.general)] {
             var machine = NotchSurfaceMachine()

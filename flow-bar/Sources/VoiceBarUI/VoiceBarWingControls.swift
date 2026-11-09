@@ -118,13 +118,33 @@ public struct VoiceBarReadingTimeLabel: View {
 public enum VoiceBarRecordingWingLabel {
     /// The time's region: "9:59" / "0:54" at 11 pt is 25.0 pt (26 rounded up to whole points).
     public static let width: CGFloat = 26
-    /// The empty region outside the meter: 2 pt narrower than the time's, which keeps the meter within 1 pt of the
-    /// visible wing's centre (review D3 allows 2) and the M4 wing inside the 130 pt morph canvas.
-    public static let outerRegionWidth: CGFloat = 24
-    /// Between each region and the meter.
+    /// The empty region outside the meter. With the 2 pt time gap it keeps the meter within 1 pt of the visible
+    /// wing's centre (review D3 allows 2) and the wing at its 2.3 width, inside the 130 pt morph canvas.
+    public static let outerRegionWidth: CGFloat = 26
+    /// Etan, QA 0510 N10: "big padding between the waveform and the seconds counter". Between the time and the meter:
+    /// 2 pt, which paints a 4 pt gap from the last digit to the first bar (the digits' side bearing is the rest).
+    /// The 4 pt gap that was here painted 6 pt.
+    public static let timeGap: CGFloat = 2
+    /// Between the meter and the outer region.
     public static let meterGap: CGFloat = 4
     public static let timeFontSize: CGFloat = 11
     public static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: timeFontSize, weight: .medium)
+}
+
+/// The recording right wing's row: the time, the level meter, and the empty region that centres the meter.
+struct VoiceBarRecordingTrailingRow<Time: View, Meter: View>: View {
+    @ViewBuilder let time: Time
+    @ViewBuilder let meter: Meter
+
+    var body: some View {
+        HStack(spacing: VoiceBarRecordingWingLabel.timeGap) {
+            time
+            HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
+                meter
+                Color.clear.frame(width: VoiceBarRecordingWingLabel.outerRegionWidth, height: 1)
+            }
+        }
+    }
 }
 
 public struct VoiceBarRecordingTimeRegion: View {

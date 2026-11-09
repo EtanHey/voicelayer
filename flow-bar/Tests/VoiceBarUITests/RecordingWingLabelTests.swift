@@ -107,16 +107,16 @@ final class RecordingWingLabelTests: XCTestCase {
     /// changes width when it appears. RecordingWingNotchClearanceTests covers the M4's hidden inset.
     func testTheMeterStaysCentredInTheRecordingWingWithAndWithoutTheLabels() {
         let inset = VoiceBarNotchContract.fixedWingContentInset
-        let gap = VoiceBarRecordingWingLabel.meterGap
+        let timeGap = VoiceBarRecordingWingLabel.timeGap, gap = VoiceBarRecordingWingLabel.meterGap
         for hold in [false, true] {
             let wing = resolve(.recording, hold: hold).geometry.trailingWingWidth
-            XCTAssertEqual(wing, 2 * inset + VoiceBarRecordingWingLabel.width + 2 * gap + WaveformLayout.viewportWidth +
+            XCTAssertEqual(wing, 2 * inset + VoiceBarRecordingWingLabel.width + timeGap + gap + WaveformLayout.viewportWidth +
                            VoiceBarRecordingWingLabel.outerRegionWidth, accuracy: 0.001)
             XCTAssertEqual(wing, VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001)
             XCTAssertEqual(wing, 120, accuracy: 0.001)
             XCTAssertLessThanOrEqual(wing, VoiceBarNotchContract.morphCanvasWingCapacity)
             // The production HStack order: time region, meter, empty outer region, from the wing's inner edge.
-            let meterCentre = inset + VoiceBarRecordingWingLabel.width + gap + WaveformLayout.viewportWidth / 2
+            let meterCentre = inset + VoiceBarRecordingWingLabel.width + timeGap + WaveformLayout.viewportWidth / 2
             XCTAssertEqual(meterCentre, wing / 2, accuracy: 2, "the meter is centred whatever the time shows")
             XCTAssertEqual(resolve(.recording, hold: hold).geometry.leadingWingWidth, hold
                 ? VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl
@@ -133,11 +133,18 @@ final class RecordingWingLabelTests: XCTestCase {
             .components(separatedBy: "private var notchCompactStatusContent")[0]
         let recording = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
             .components(separatedBy: "case .compactStatus")[0]
+        XCTAssertTrue(recording.contains("VoiceBarRecordingTrailingRow {"), "0510 N10: one row lays out time, meter, outer")
         let time = try XCTUnwrap(recording.range(of: "VoiceBarRecordingTimeRegion(")).lowerBound
         let meter = try XCTUnwrap(recording.range(of: "notchWaveform")).lowerBound
-        let outer = try XCTUnwrap(recording.range(of: "VoiceBarRecordingWingLabel.outerRegionWidth")).lowerBound
         XCTAssertLessThan(time, meter)
-        XCTAssertLessThan(meter, outer)
+        let controls = try String(contentsOf: url.deletingLastPathComponent().appendingPathComponent("VoiceBarWingControls.swift"),
+                                  encoding: .utf8)
+        let row = try XCTUnwrap(controls.components(separatedBy: "struct VoiceBarRecordingTrailingRow").dropFirst().first)
+            .components(separatedBy: "public struct VoiceBarRecordingTimeRegion")[0]
+        let rowMeter = try XCTUnwrap(row.range(of: "            meter\n")).lowerBound
+        let outer = try XCTUnwrap(row.range(of: "VoiceBarRecordingWingLabel.outerRegionWidth")).lowerBound
+        XCTAssertLessThan(try XCTUnwrap(row.range(of: "            time\n")).lowerBound, rowMeter)
+        XCTAssertLessThan(rowMeter, outer)
         XCTAssertTrue(recording.contains("isCaptureOpen: state.isRecordingCaptureOpen"))
         XCTAssertTrue(recording.contains("state.recordingMicrophoneName"))
     }
