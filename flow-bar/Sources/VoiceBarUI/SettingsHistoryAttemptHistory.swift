@@ -400,7 +400,7 @@ struct SettingsHistoryDiagnosticsCopy {
     static func engineFacts(_ backend: String?) -> [SettingsHistoryFact] {
         guard let provenance = RecognizerProvenance(backend: backend), let writer = provenance.writer else { return [] }
         var facts = [SettingsHistoryFact(title: "Engine", value: writer.name)]
-        if let notice = provenance.notice { facts.append(.init(title: "How it was transcribed", value: notice)) }
+        if let notice = provenance.errorNotice { facts.append(.init(title: "Transcription error", value: notice)) }
         return facts
     }
 

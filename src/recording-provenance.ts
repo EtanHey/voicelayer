@@ -178,11 +178,10 @@ export function normalizeWhisperBackend(
 export function fallbackReasonFromBackend(
   backend: string | null,
 ): string | null {
-  return (
-    backend?.match(
-      /\+fallback-(timeout|empty-response|server-error|parakeet-startup-failed|whisper-startup-failed|language|prompt|input-format|input-identity|provider-error|provider-timeout|provider-partial|provider-invalid|invalid-response|invalid-timing|incomplete-response|unsupported-language|sparse-response|uncovered-tail|uncovered-internal|zero-pcm-response)(?=->|$)/,
-    )?.[1] ?? null
-  );
+  const reason = backend?.match(/\+fallback-([^+>]+)(?=->|\+|$)/)?.[1];
+  if (reason) return reason;
+  const engines = backend?.split("->").map(part => part.startsWith("parakeet") ? "parakeet" : part.startsWith("whisper") ? "whisper" : part.startsWith("wispr") ? "wispr" : null);
+  return engines && engines.length > 1 && engines[0] !== engines.at(-1) ? "unknown" : null;
 }
 
 /**
