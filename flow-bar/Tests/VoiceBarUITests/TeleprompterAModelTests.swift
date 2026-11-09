@@ -37,9 +37,10 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual(TeleprompterA.fontSize, 17)
         XCTAssertEqual(TeleprompterA.columnWidth, 404)
         XCTAssertEqual(TeleprompterA.topFadeHeight, 16)
-        XCTAssertEqual(TeleprompterA.footerHeight, 20)
-        XCTAssertEqual(TeleprompterA.handleSize, CGSize(width: 34, height: 4))
-        XCTAssertEqual(TeleprompterA.bodyHeight(lines: 3), 92)
+        // T3: no footer; the home-bar handle sits under the scrubber row.
+        XCTAssertEqual(TeleprompterA.handleSize, CGSize(width: 112, height: 5))
+        XCTAssertEqual(TeleprompterA.bodyHeight(lines: 3), 72)
+        XCTAssertEqual(TeleprompterA.panelStackHeight(lines: 3), 72 + 7 + 40 + 4 + 14)
     }
 
     func testHandleRubberBandsPastEitherEndAndSnapsToWholeLines() {
@@ -68,12 +69,7 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertNil(TeleprompterA.slide(reduceMotion: true, fromLine: 4, toLine: 5))
     }
 
-    func testFooterStateAndQueuedChip() {
-        // T2 (QA 2026-11-08, Etan: "Reading is kind of redundant there"): only the rate is left.
-        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "1×")
-        XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: false), "Paused")
-        XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: true),
-                       "Paused for your dictation · resumes after paste")
+    func testQueuedChip() {
         XCTAssertNil(TeleprompterA.queuedChip(0))
         XCTAssertEqual(TeleprompterA.queuedChip(2), "+2 queued")
     }

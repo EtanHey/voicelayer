@@ -193,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var terminationGateForTesting: NativeUpdateGate?
     var terminationOwnsServerForTesting: Bool?
     var terminationCleanupForTesting: (() -> Void)?
+    var terminationSaveNowForTesting: (() -> ContinuousClock.Instant)?
     var terminationSaveSleepForTesting: ((Duration) async -> Void)?
     #endif
 
@@ -581,7 +582,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 _ = application.terminate()
             }
 
-            waitForTermination(ofExactPIDs: exactPIDs, timeout: VoiceBarDaemonController.acceptedQuitWait)
+            waitForTermination(ofExactPIDs: exactPIDs)
             // A refused quit can mean live capture or a closed update gate. Never escalate it to SIGKILL.
             let survivorPIDs = exactPIDs.filter { processIsAlive(exactPID: $0) }
             guard survivorPIDs.isEmpty else {
@@ -600,13 +601,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func waitForTermination(
-        ofExactPIDs exactPIDs: [pid_t],
-        timeout: TimeInterval
+        ofExactPIDs exactPIDs: [pid_t]
     ) {
-        _ = Self.waitForIncumbents(exactPIDs, timeout: timeout, isAlive: processIsAlive)
+        _ = Self.waitForIncumbents(exactPIDs, isAlive: processIsAlive)
     }
 
-    static func waitForIncumbents(_ pids: [pid_t], timeout: TimeInterval = VoiceBarDaemonController.acceptedQuitWait,
+    static func waitForIncumbents(_ pids: [pid_t], timeout: TimeInterval = VoiceBarQuitDeferral.maximumWait + VoiceBarDaemonController.acceptedQuitWait,
         isAlive: (pid_t) -> Bool, now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) -> Bool {
         let deadline = now() + timeout
@@ -1409,11 +1409,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             voiceState.stop()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                var now: () -> ContinuousClock.Instant = { ContinuousClock().now }
                 var sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
                 #if VOICEBAR_QA
+                now = self.terminationSaveNowForTesting ?? now
                 sleep = self.terminationSaveSleepForTesting ?? sleep
                 #endif
-                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, sleep: sleep)
+                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, now: now, sleep: sleep)
                 self.quitSavePending = false
                 #if VOICEBAR_QA
                 if let cleanup = self.terminationCleanupForTesting { cleanup(); return }
@@ -2143,6 +2145,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1
     }
 
+    /// T3 (Etan, QA 2026-11-08 7:52–8:21): left wing, from the core outward, Replay, (Next while reads wait,) Pause,
+    /// Stop; a stopped read: Replay (+ Next). Right wing, from the outer edge, 1× (a stopped read: X) then
+    /// Show/Hide teleprompter.
+    static func readingInteractionConfiguration(
+        for state: VoiceState,
+        lowerSurfaceIsInteractive: Bool
+    ) -> VoiceBarNotchInteractionConfiguration {
+        let queued = playbackLeadingSlotCount(for: state) > 1 ? 1 : 0
+        return VoiceBarNotchInteractionConfiguration(
+            leadingControlCount: (state.mode == .speaking ? 3 : 1) + queued,
+            trailingControlCountFromOuter: 2,
+            trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+            lowerSurfaceIsInteractive: lowerSurfaceIsInteractive,
+            controlSpacing: VoiceBarNotchContract.readingControlSpacing
+        )
+    }
+
     static func notchInteractionConfiguration(
         for state: VoiceState,
         visualState: VoiceBarNotchVisualState
@@ -2169,13 +2188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // 2.3 U2: the spinner is not a control; History and Settings stay live on the right.
                 return VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
             case .speaking:
-                // P16: pause/play on the left; QUEUE1: Next and the "+N" count share it.
-                // 2.3 U2: Stop at the right wing's outer edge (its time, or a hidden read's eye, beside it).
-                return VoiceBarNotchInteractionConfiguration(
-                    leadingControlCount: playbackLeadingSlotCount(for: state),
-                    trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
-                    trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-                )
+                return readingInteractionConfiguration(for: state, lowerSurfaceIsInteractive: false)
             case .error:
                 return VoiceBarNotchInteractionConfiguration(
                     leadingControlCount: 1,
@@ -2189,22 +2202,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return .none
             }
         case .teleprompter:
-            var lowerControlCount = 1
-            if state.canReplay {
-                lowerControlCount += 1
-            }
-            if state.isTeleprompterReadback {
-                lowerControlCount += 1
-            }
-            return VoiceBarNotchInteractionConfiguration(
-                // 2.3 U5: reading aloud keeps its time and the live Stop in the right wing (SPEC wing states); the
-                // teleprompter's lower row no longer carries a Stop.
-                leadingControlCount: state.mode == .speaking ? playbackLeadingSlotCount(for: state) : 0,
-                trailingControlCountFromOuter: state.mode == .speaking ? 1 : 0,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
-                lowerControlCount: lowerControlCount,
-                lowerSurfaceIsInteractive: state.mode == .speaking
-            )
+            // T3: no control row in the panel; its text, scrubber and handle take clicks, live or stopped.
+            return readingInteractionConfiguration(for: state, lowerSurfaceIsInteractive: true)
         case .history:
             return .historyPanel
         }

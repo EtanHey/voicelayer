@@ -292,6 +292,7 @@ public enum VoiceBarPresentation {
                 : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
                 ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+                : input.isTeleprompterReadback ? stoppedReadingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
                 : nil,
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
@@ -319,10 +320,15 @@ public enum VoiceBarPresentation {
         }
     }
 
-    /// 2.3 U2: reading aloud keeps the fixed wing; only a queued read's Next + "+N" (which the mock does not
-    /// draw) can still widen it past two slots.
+    /// T3 (Etan, QA 2026-11-08 7:52: "the replay the stop and the pause could all go on the left"): Replay, Stop
+    /// and Pause, plus Next (with its "+N" badge) when reads are queued (`slotCount` > 1).
     public static func readingLeadingWingWidth(slotCount: Int) -> CGFloat {
-        max(VoiceBarNotchContract.fixedWingWidth, playbackLeadingWingWidth(slotCount: slotCount))
+        VoiceBarNotchContract.readingLeadingWingWidth(slots: slotCount > 1 ? 4 : 3)
+    }
+
+    /// T3: a stopped read keeps Replay, plus Next (with its "+N" badge) while reads are queued.
+    public static func stoppedReadingLeadingWingWidth(slotCount: Int) -> CGFloat {
+        VoiceBarNotchContract.readingLeadingWingWidth(slots: slotCount > 1 ? 2 : 1)
     }
 
     /// QUEUE1: the leading wing fits its control slots exactly, so the hit rects (from the core outward) match.
@@ -363,6 +369,12 @@ public enum VoiceBarPresentation {
         (readQueueControl(for: state)?.leadingSlotCount ?? 1) + (state.showsReadingProcessingSpinner ? 1 : 0)
     }
 
+    /// The reading wing's fourth slot holds either the Ask-answer spinner or a queued read's Next; five slots do not
+    /// fit the 130 pt morph canvas, so Next (a control) keeps the slot when both apply.
+    public static func showsReadingWingSpinner(for state: VoiceState) -> Bool {
+        state.showsReadingProcessingSpinner && readQueueControl(for: state) == nil
+    }
+
     public static func readQueueControl(for state: VoiceState) -> VoiceBarReadQueueControl? {
         readQueueControl(
             mode: state.mode,
@@ -378,9 +390,12 @@ public enum VoiceBarPresentation {
         let material = VoiceBarNotchContract.material
         let insets = WaveformLayout.coreGap + WaveformLayout.outerInset
         switch input.mode {
-        case .transcribing, .speaking:
-            // 2.3 U2: History + Settings while transcribing; the time (or Show teleprompter) + Stop while reading.
+        case .transcribing:
+            // 2.3 U2: History + Settings while transcribing.
             return VoiceBarNotchContract.fixedWingWidth
+        case .speaking:
+            // T3: the time, Show/Hide teleprompter and 1×.
+            return VoiceBarNotchContract.readingTrailingWingWidth
         case .error:
             return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
                 3 + material.compactControlSize +
