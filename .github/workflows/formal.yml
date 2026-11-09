@@ -3,10 +3,10 @@ name: Formal models and source conformance
 on:
   push:
     branches: [main]
-    paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
+    paths: ['formal/**', 'flow-bar/**', 'src/**', 'scripts/**', 'bun.lock', '.github/workflows/formal.yml']
   pull_request:
     branches: [main, 'integration/*']
-    paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
+    paths: ['formal/**', 'flow-bar/**', 'src/**', 'scripts/**', 'bun.lock', '.github/workflows/formal.yml']
 
 concurrency: { group: 'formal-${{ github.ref }}', cancel-in-progress: true }
 
