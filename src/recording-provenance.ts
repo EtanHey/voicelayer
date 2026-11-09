@@ -673,8 +673,8 @@ export function buildRecordingProvenance(
     whisper_model_path: modelPath,
     whisper_model_sha256: probe.whisperModelSha256
       ? probe.whisperModelSha256(modelPath)
-      : kind === "server" && whisperServerLaunchRecord()?.modelSha256
-        ? whisperServerLaunchRecord()!.modelSha256!
+      : kind === "server"
+        ? whisperServerLaunchRecord()?.modelSha256 ?? null
         : whisperModelSha256(modelPath),
     whisper_cpp_version: cppVersion.version,
     whisper_cpp_version_source: cppVersion.source,

@@ -818,8 +818,9 @@ function adoptedFlagsMatch(record: {
 function adoptHealthyServer(port: number): void {
   const record = readWhisperServerOwnership(port);
   const listeners = findPortListenerPids(port);
-  if (!testHooks.findModel && (!record || record.model_path !== requireWhisperModelPath() || !record.model_sha256)) {
-    throw new Error(`Whisper server model identity does not match configured file: ${whisperAssetPath()}`);
+  const configured = testHooks.findModel?.() ?? requireWhisperModelPath();
+  if (record && record.model_path !== configured) {
+    throw new Error(`Whisper server model mismatch: serving ${record.model_path}; configured ${configured}`);
   }
 
   if (record && listeners.includes(record.pid) && isPidAlive(record.pid)) {

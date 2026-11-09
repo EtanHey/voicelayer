@@ -106,7 +106,7 @@ describe("STT backends", () => {
 
     it("isAvailable checks for binary and model", async () => {
       const backend = new WhisperCppBackend();
-      await expect(backend.isAvailable()).rejects.toThrow("Whisper model is missing");
+      expect(await backend.isAvailable()).toBe(false);
     }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("getModelInfo returns binary and model paths", () => {
@@ -131,10 +131,17 @@ describe("STT backends", () => {
         set: () => {},
       });
 
-      // Verify it throws with helpful error message
-      await expect(backend.transcribe("/tmp/test.wav")).rejects.toThrow(
-        "whisper-cpp",
-      );
+      const savedModel = process.env.QA_VOICE_WHISPER_MODEL;
+      const fixtureModel = testTmp("missing-binary-model.bin");
+      writeFileSync(fixtureModel, "fixture weights");
+      process.env.QA_VOICE_WHISPER_MODEL = fixtureModel;
+      try {
+        await expect(backend.transcribe("/tmp/test.wav")).rejects.toThrow("whisper-cpp");
+      } finally {
+        rmSync(fixtureModel, { force: true });
+        if (savedModel === undefined) delete process.env.QA_VOICE_WHISPER_MODEL;
+        else process.env.QA_VOICE_WHISPER_MODEL = savedModel;
+      }
     }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("transcribe resolves brew by absolute path for launchd-style PATHs", async () => {

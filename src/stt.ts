@@ -2191,9 +2191,9 @@ export class WhisperCppBackend implements STTBackend {
   constructor(private readonly lifecycle: { signal?: AbortSignal; noVocabularyPrompt?: boolean; captionGate?: typeof stripHallucinatedCaption; speechProbe?: typeof probeParakeetSpeech } = {}) {}
 
   async isAvailable(): Promise<boolean> {
-    requireWhisperModelPath();
-    this.binaryPath = findWhisperBinary();
     this.modelPath = findModel();
+    if (!this.modelPath) return false;
+    this.binaryPath = findWhisperBinary();
     return this.binaryPath !== null && this.modelPath !== null;
   }
 
@@ -2202,6 +2202,7 @@ export class WhisperCppBackend implements STTBackend {
     options?: STTTranscribeOptions,
   ): Promise<STTResult> {
     if (this.lifecycle.signal?.aborted) throw new Error("STT owner is shut down");
+    this.modelPath = requireWhisperModelPath();
     if (!this.binaryPath) this.binaryPath = findWhisperBinary();
     if (!this.binaryPath) {
       throw new Error(
@@ -2210,8 +2211,6 @@ export class WhisperCppBackend implements STTBackend {
           "  Linux: build from source — https://github.com/ggerganov/whisper.cpp",
       );
     }
-
-    this.modelPath = requireWhisperModelPath();
 
     const start = Date.now();
 
@@ -2425,8 +2424,7 @@ export class WhisperServerBackend implements STTBackend {
   }
 
   async isAvailable(): Promise<boolean> {
-    requireWhisperModelPath();
-    return this.isResidentAvailable();
+    return availableWhisperModelPath() !== null && this.isResidentAvailable();
   }
 
   async transcribe(
@@ -3642,6 +3640,7 @@ export async function getBackend(): Promise<STTBackend> {
   }
 
   if (preference === "whisper") {
+    requireWhisperModelPath();
     const backend = new WhisperCppBackend({ signal: parakeetOwnerShutdownSignal });
     if (await backend.isAvailable()) {
       cachedBackend = observeRecognizerBackend(backend);
@@ -3654,6 +3653,7 @@ export async function getBackend(): Promise<STTBackend> {
   }
 
   if (preference === "whisper-server" || preference === "resident") {
+    requireWhisperModelPath();
     const backend = new WhisperServerBackend();
     if (await backend.isAvailable()) {
       cachedBackend = observeRecognizerBackend(backend);
