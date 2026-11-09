@@ -292,6 +292,7 @@ require_file "VoiceBar.zip" "$ZIP_PATH"
 require_file "repo package.json" "$PACKAGE_ROOT/package.json"
 require_file "bundled package.json" "$APP_PATH/Contents/Resources/package.json"
 require_file "app Info.plist" "$APP_PATH/Contents/Info.plist"
+bash "$SCRIPT_DIR/check-voicebar-python-cache-free.sh" "$APP_PATH"
 if [ "$SKIP_TAP_CHECK" -ne 1 ]; then
     require_file "Homebrew formula" "$TAP_ROOT/Formula/voicelayer.rb"
     require_file "Homebrew cask" "$TAP_ROOT/Casks/voicebar.rb"

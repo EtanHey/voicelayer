@@ -117,7 +117,7 @@ describe("build-app.sh bundles runtime assets", () => {
 
   test("bundles the Silero VAD model (regression: #241)", () => {
     expect(buildScript).toContain("models/silero_vad.onnx");
-    expect(buildScript).toMatch(/cp -R "\$REPO_ROOT\/models"/);
+    expect(buildScript).toContain('rsync -a --exclude=\'__pycache__\' --exclude=\'*.pyc\' "$REPO_ROOT/models/" "$APP_DIR/Contents/Resources/models/"');
   });
 
   test("bundles scripts/edge-tts-words.py (TTS word-boundary synth)", () => {

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Python helpers may run from the signed app bundle.
+export PYTHONDONTWRITEBYTECODE=1
 # VoiceLayer CLI wrapper
 # Routes subcommands to the appropriate handler
 
