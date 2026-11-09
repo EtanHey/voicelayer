@@ -3281,7 +3281,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// "Next dictation". Side-effect free (it never observes devices or triggers an apply).
     /// 2.4 Lane A: what the notch Settings drawer reads and opens.
     private func makeNotchSettingsDrawerContext() -> NotchSettingsDrawerContext {
-        NotchSettingsDrawerContext(
+        installRecognizerSettingsVisibility()
+        return NotchSettingsDrawerContext(
             updates: notchUpdates,
             pane: { [weak self] tab, request in
                 guard let self else { return AnyView(EmptyView()) }
@@ -3289,6 +3290,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         )
     }
+
+    /// Recognizer status reads only while a Transcription pane is on screen: the Settings window's tab, or (0510 N1,
+    /// review F1) the notch Settings drawer's Transcription tab, which mounts the same pane with the window closed.
+    func installRecognizerSettingsVisibility() {
+        voiceState.recognizerSettingsIsVisible = { [weak self] in
+            guard let self, NSApp?.isHidden != true else { return false }
+            let window = settingsWindow.map {
+                $0.isVisible && !$0.isMiniaturized && self.lastSettingsTab == .transcription
+            } ?? false
+            return window || notchSurface.drawer == .settings(.transcription)
+        }
+    }
+
+    /// Tests: the app's own notch surface and the drawer context it hands BarView.
+    var notchSurfaceForTesting: NotchSurfaceModel { notchSurface }
+    func notchSettingsDrawerContextForTesting() -> NotchSettingsDrawerContext { makeNotchSettingsDrawerContext() }
 
     func defaultMicrophoneName() -> String? {
         microphonePrioritySnapshot(devices: MicrophoneDeviceManager.availableInputDevices()).nextVisibleDeviceName
@@ -3421,13 +3438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The Settings window's view, or (`notchRequest` non-nil or `embedded`) the same stores for a notch drawer pane.
     func makeSettingsView(notchRequest: SettingsTabRequest? = nil, embedded: Bool = false) -> SettingsView {
         let isNotchPane = embedded || notchRequest != nil
-        if !isNotchPane {
-            voiceState.recognizerSettingsIsVisible = { [weak self] in
-                guard let self, let window = self.settingsWindow else { return false }
-                return window.isVisible && !window.isMiniaturized && !NSApp.isHidden
-                    && self.lastSettingsTab == .transcription
-            }
-        }
+        installRecognizerSettingsVisibility()
         return SettingsView(
             hotkeyEnabled: hotkeyEnabled,
             missingPermissions: missingHotkeyPermissions,

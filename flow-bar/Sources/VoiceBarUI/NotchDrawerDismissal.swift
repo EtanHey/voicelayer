@@ -29,6 +29,8 @@ public final class NotchDrawerDismissal {
     public weak var panelWindow: NSWindow?
     /// Whether Esc inside VoiceBar belongs to someone else right now (a sheet, a modal, IME composition).
     public var escapeIsOwnedElsewhere: () -> Bool = NotchDrawerDismissal.escapeIsOwnedByModalOrComposition
+    /// A cover inside the drawer (Dictionary's term editor) that takes Esc before the drawer does (0510 review F2).
+    public var escapeOwnership: NotchEscapeOwnership = .shared
 
     public init(onDismiss: @escaping (NotchDismissReason) -> Void) {
         self.onDismiss = onDismiss
@@ -99,9 +101,11 @@ public final class NotchDrawerDismissal {
         onDismiss(.escape)
     }
 
-    /// Esc delivered to VoiceBar, whichever window it was routed to. Returns whether it was consumed.
+    /// Esc delivered to VoiceBar, whichever window it was routed to. Returns whether it was consumed. A cover inside
+    /// the drawer cancels first and the drawer stays (0510 review F2); the next Esc closes the drawer.
     public func handleLocalKeyDown(keyCode: UInt16) -> Bool {
         guard keyCode == Self.escapeKeyCode, !escapeIsOwnedElsewhere() else { return false }
+        if escapeOwnership.cancelNewest() { return true }
         onDismiss(.escape)
         return true
     }
@@ -112,6 +116,36 @@ public final class NotchDrawerDismissal {
         if key.attachedSheet != nil || key.isSheet { return true }
         if let editor = key.firstResponder as? NSTextView, editor.hasMarkedText() { return true }
         return false
+    }
+}
+
+/// 0510 review F2: a cover inside a notch drawer (Dictionary's Add/Edit term editor) owns Esc while it shows, the
+/// way an AppKit sheet owns it by modality: Esc cancels the cover and the drawer stays. A cover is not a sheet (a
+/// sheet on the notch panel would close the drawer it belongs to), so it claims Esc here instead.
+@MainActor
+public final class NotchEscapeOwnership {
+    public static let shared = NotchEscapeOwnership()
+    private var owners: [(id: UUID, cancel: () -> Void)] = []
+
+    public init() {}
+
+    public var isOwned: Bool { !owners.isEmpty }
+
+    public func claim(_ id: UUID, cancel: @escaping () -> Void) {
+        release(id)
+        owners.append((id, cancel))
+    }
+
+    public func release(_ id: UUID) {
+        owners.removeAll { $0.id == id }
+    }
+
+    /// Runs the newest owner's cancel; whether one did.
+    @discardableResult
+    public func cancelNewest() -> Bool {
+        guard let newest = owners.last else { return false }
+        newest.cancel()
+        return true
     }
 }
 

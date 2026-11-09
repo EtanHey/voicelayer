@@ -171,7 +171,8 @@ extension VoiceBarNotchWingContentEntry {
 extension View {
     /// The notch's glyph treatment: a 0.75 pt contrast edge drawn as four hard shadows. It also renders the glyph
     /// through its own shadow layer, the path every band glyph takes; Etan's 0510 S4 shows those painting while the
-    /// drawer's plain glyphs vanished in the same unfocused frame (N3), so every notch glyph takes it.
+    /// drawer's plain glyphs vanished in the same unfocused frame (N3), so every notch glyph takes it. HYPOTHESIS:
+    /// the unfocused vanishing was never reproduced and its root cause is unknown; confirm on the real app.
     func notchAdaptiveGlyphEdge(_ color: Color) -> some View {
         shadow(color: color, radius: 0, x: -0.75, y: 0)
             .shadow(color: color, radius: 0, x: 0.75, y: 0)
@@ -479,7 +480,8 @@ public struct BarView: View {
         switch surface.drawer {
         case .settings: return NotchSettingsDrawerPresentation.rows
         case let .history(detent): return detent.rows(entryCount: entries)
-        case nil: return surface.historyDetent.rows(entryCount: entries)
+        case nil: return pullOpensSettings ? NotchSettingsDrawerPresentation.rows
+            : surface.historyDetent.rows(entryCount: entries)
         }
     }
 
@@ -758,7 +760,7 @@ public struct BarView: View {
                 if case .idle = historyPull.phase, case .idle = historyRowsPull.phase {
                     historyPressIsBare = abs(value.startLocation.x - historyPanelCentreX) <= notchPresentation.geometry.coreWidth / 2
                         && NotchHistoryPull.accepts(y: value.startLocation.y)
-                    guard canPullHistory || isSettingsDrawerOpen || historyPressIsBare else { return }
+                    guard canPullDrawer || isSettingsDrawerOpen || historyPressIsBare else { return }
                     if NotchHistoryPull.accepts(y: value.startLocation.y) {
                         historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
                     } else if isHistoryPresented, NotchHistoryPull.acceptsHandle(
@@ -777,7 +779,7 @@ public struct BarView: View {
                 if max(abs(value.translation.width), abs(value.translation.height)) > NotchHistoryMorph.dragSlop {
                     historyPressIsBare = false
                 }
-                guard canPullHistory || isSettingsDrawerOpen else { return }
+                guard canPullDrawer || isSettingsDrawerOpen else { return }
                 followHistoryPull(y: value.location.y, time: time, openHeight: openHeight)
             }
             .onEnded { _ in
@@ -974,7 +976,7 @@ public struct BarView: View {
         presentationModel?.setHistoryPullActive(false)
         switch historyPull.release(progress: historyProgress, cancelled: cancelled) {
         case let .settle(open, velocity):
-            if open, opensSettings {
+            if open, opensSettings || pullOpensSettings && !isHistoryPresented {
                 // Pulled past open: Settings, at the same spot and on the same spring.
                 surface.send(.openSettings(.general))
                 animateHistory(toOpen: true, velocity: velocity)
@@ -997,14 +999,25 @@ public struct BarView: View {
         }
     }
 
-    /// History pulls down from the launcher, from itself, and (0510 N7) while recording, transcribing or on a
-    /// compact status such as Typed; never over the teleprompter, during agent speech or an Ask, or with nothing
-    /// to show.
-    private var canPullHistory: Bool {
+    /// A drawer pulls down from the launcher, from itself, and (0510 N7) while recording, transcribing or on a
+    /// compact status such as Typed; never over the teleprompter, during agent speech or an Ask. With no History
+    /// rows the pull is Settings' (review F3: the recording wing has no gear, so the pull is its only route), when
+    /// this notch has a Settings drawer at all.
+    private var canPullDrawer: Bool {
         let visual = notchPresentation.visualState
         let speaking = state.mode == .speaking || state.isAskCapture
         return [.hoverLauncher, .history, .recording, .compactStatus].contains(visual) && !speaking
-            && !state.recentTranscriptionEntries.isEmpty
+            && (!state.recentTranscriptionEntries.isEmpty || settingsDrawer != nil)
+    }
+
+    /// History itself never opens empty.
+    private var canPullHistory: Bool {
+        canPullDrawer && !state.recentTranscriptionEntries.isEmpty
+    }
+
+    /// With no History rows, a pull from the notch draws and opens Settings instead (review F3).
+    private var pullOpensSettings: Bool {
+        settingsDrawer != nil && state.recentTranscriptionEntries.isEmpty
     }
 
     private var notchPresentationOpenHistoryHeight: CGFloat {
@@ -1345,7 +1358,7 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLowerPanelContent: some View {
-        if notchPresentation.visualState == .history, case let .settings(tab) = surface.drawer, let settingsDrawer {
+        if notchPresentation.visualState == .history, let tab = settingsTabShown, let settingsDrawer {
             VStack(spacing: 0) {
                 NotchSettingsDrawer(
                     selectedTab: tab, appearance: notchAppearance, context: settingsDrawer, request: settingsRequest,
@@ -1409,6 +1422,13 @@ public struct BarView: View {
             .padding(.bottom, 14)
             .transition(.opacity)
         }
+    }
+
+    /// The Settings tab the lower panel draws: the open Settings drawer's, or General while a pull with no History
+    /// rows previews Settings (review F3).
+    private var settingsTabShown: SettingsTab? {
+        if case let .settings(tab) = surface.drawer { return tab }
+        return surface.drawer == nil && pullOpensSettings ? .general : nil
     }
 
     /// Shown while a pull past open is armed: releasing opens Settings. It fits the handle's 18 pt band (0510 N6).

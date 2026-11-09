@@ -38,7 +38,11 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         let host: PillHostingView<BarView>
         let panel: FloatingPillPanel
         let rects: [CGRect]
+        let paneRequests: PaneRequests
     }
+
+    /// The requests the Settings drawer hands its panes (the microphone control's scroll target, 0510 N9 / F4).
+    final class PaneRequests { var all: [SettingsTabRequest?] = [] }
 
     private func drain(_ seconds: TimeInterval = 0.05) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
@@ -89,7 +93,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         harness.host.layoutSubtreeIfNeeded()
     }
 
-    private func makeHarness() -> Harness {
+    private func makeHarness(entries: Int = 20) -> Harness {
         let state = VoiceState(
             recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
@@ -99,14 +103,18 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         state.isConnected = true
         state.isCollapsed = false
         state.isHovering = true
-        state.recentTranscriptionEntries = (0 ..< 20).map { index in
+        state.recentTranscriptionEntries = (0 ..< entries).map { index in
             RecentTranscriptionEntry(text: "Synthetic history row \(index + 1).", recordingPath: "/synthetic/\(index).wav",
                                      createdAt: Date().addingTimeInterval(Double(-60 * index)))
         }
         let model = VoiceBarNotchPresentationModel()
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
-        let context = NotchSettingsDrawerContext(updates: nil)
+        let paneRequests = PaneRequests()
+        let context = NotchSettingsDrawerContext(updates: nil, pane: { _, request in
+            paneRequests.all.append(request)
+            return AnyView(EmptyView())
+        })
         let host = PillHostingView(rootView: BarView(
             state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
             presentationModel: model, includesPanelOutsets: true, surface: surface, settingsDrawer: context
@@ -128,7 +136,8 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
             geometry: launcher.presentation.geometry,
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, trailingControlCountFromCore: 2)
         ).rects.map { $0.offsetBy(dx: launcher.visibleContentRect.minX, dy: launcher.visibleContentRect.minY) }
-        return Harness(state: state, model: model, surface: surface, host: host, panel: panel, rects: rects)
+        return Harness(state: state, model: model, surface: surface, host: host, panel: panel, rects: rects,
+                       paneRequests: paneRequests)
     }
 
     private func center(_ rect: CGRect) -> NSPoint { NSPoint(x: rect.midX, y: rect.midY) }
@@ -289,6 +298,19 @@ extension NotchSurfaceHostedFlowTests {
         }
     }
 
+    /// Review F3: with no History rows, the pull is Settings' own route while recording, transcribing and on the
+    /// launcher (the recording wing has no gear); History never opens empty.
+    func testF3WithNoHistoryThePullOpensSettingsEvenWhileRecording() throws {
+        for activity in [Activity.launcher, .recording, .transcribing] {
+            let harness = makeHarness(entries: 0)
+            enter(activity, harness)
+            try pull(harness, fromTop: 12, toTop: 300)
+            wait { harness.surface.drawer != nil }
+            XCTAssertEqual(harness.surface.drawer, .settings(.general), "[F3] Settings pulls down while \(activity)")
+            harness.panel.orderOut(nil)
+        }
+    }
+
     /// 0510 N9 (R4): the microphone control is in the same core-side slot in every allowed state that has a left
     /// wing to spare (launcher, transcribing, Typed), and it opens Settings › General at the microphone in the notch.
     func testN9TheMicrophoneControlOpensTheNotchMicrophoneSettingEverywhere() throws {
@@ -305,6 +327,9 @@ extension NotchSurfaceHostedFlowTests {
             try click(center(chevron), in: harness.panel)
             wait { harness.surface.drawer != nil }
             XCTAssertEqual(harness.surface.drawer, .settings(.general), "[N9] \(activity): the chevron opens General")
+            wait { harness.paneRequests.all.last??.focus != nil }
+            XCTAssertEqual(harness.paneRequests.all.last??.focus, .microphonePriority,
+                           "[N9] \(activity): General is asked to scroll to Microphone priority")
             harness.panel.orderOut(nil)
         }
     }

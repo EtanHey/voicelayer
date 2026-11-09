@@ -3252,10 +3252,13 @@ public struct SettingsView: View {
 /// The one Add/Edit term editor. In the window it is a sheet (Etan's 2.2.24 review #3). In the notch drawer it covers
 /// the drawer's pane instead: a sheet on the notch panel would count as a modal (NotchModalObserver) and close the very
 /// drawer it belongs to.
+/// The cover owns Esc while it shows (0510 review F2): Esc cancels it and returns to Dictionary, the drawer kept.
 struct DictionaryTermEditorPresentation<Editor: View>: ViewModifier {
     @Binding var edit: DictionaryTermEdit?
     let inDrawer: Bool
+    var escapeOwnership: NotchEscapeOwnership = .shared
     @ViewBuilder let editor: (DictionaryTermEdit) -> Editor
+    @State private var escapeClaim = UUID()
 
     func body(content: Content) -> some View {
         if inDrawer {
@@ -3266,6 +3269,8 @@ struct DictionaryTermEditorPresentation<Editor: View>: ViewModifier {
                     }
                     .background(.regularMaterial)
                     .accessibilityAddTraits(.isModal)
+                    .onAppear { escapeOwnership.claim(escapeClaim) { self.edit = nil } }
+                    .onDisappear { escapeOwnership.release(escapeClaim) }
                 }
             }
         } else {

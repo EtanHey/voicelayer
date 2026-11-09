@@ -195,6 +195,126 @@ final class EtanQA0510Tests: XCTestCase {
         XCTAssertGreaterThanOrEqual(gap, 2, "[N10] the digits and the bars never touch")
     }
 
+    /// Review F2: in the notch drawer, Dictionary's Add/Edit cover owns Esc. Esc cancels the cover and returns to
+    /// Dictionary with the drawer kept (the next Esc closes the drawer); Return saves and Cancel cancels through the
+    /// editor's own buttons; the drawer stays open throughout.
+    func testF2TheDictionaryCoverOwnsEscapeAndKeepsTheDrawer() throws {
+        let ownership = NotchEscapeOwnership()
+        let surface = NotchSurfaceModel()
+        surface.log = { _ in }
+        surface.send(.openSettings(.dictionary))
+        let dismissal = NotchDrawerDismissal { surface.send(.dismiss($0)) }
+        dismissal.escapeOwnership = ownership
+        dismissal.escapeIsOwnedElsewhere = { false }
+
+        final class Box: ObservableObject { @Published var edit: DictionaryTermEdit? }
+        struct Host: View {
+            @ObservedObject var box: Box
+            let ownership: NotchEscapeOwnership
+            let onSave: (DictionaryTermEdit) -> Void
+            let onCancel: () -> Void
+            var body: some View {
+                Color.black.modifier(DictionaryTermEditorPresentation(
+                    edit: $box.edit, inDrawer: true, escapeOwnership: ownership) { edit in
+                    DictionaryAddSheetView(edit: edit, existingEntries: [], onSave: onSave, onCancel: onCancel)
+                })
+            }
+        }
+        let box = Box()
+        var saved: [String] = [], cancelled = 0
+        let host = NSHostingView(rootView: Host(box: box, ownership: ownership,
+            onSave: { saved.append($0.correct); box.edit = nil }, onCancel: { cancelled += 1; box.edit = nil }))
+        host.frame = CGRect(x: 0, y: 0, width: 404, height: 330)
+        let panel = FloatingPillPanel(content: host)
+        panel.isPillDragEnabled = false
+        defer { panel.orderOut(nil); panel.close() }
+        VLOrderTestWindow(panel)
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.3)) }
+        func key(_ characters: String, _ code: UInt16) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+        }
+
+        // Escape: the cover cancels, the drawer stays on Dictionary.
+        box.edit = DictionaryTermEdit(correct: "Kubernetes draft")
+        settle()
+        XCTAssertTrue(ownership.isOwned, "fixture: the open cover claims Esc")
+        XCTAssertTrue(dismissal.handleLocalKeyDown(keyCode: NotchDrawerDismissal.escapeKeyCode), "Esc is consumed")
+        settle()
+        XCTAssertNil(box.edit, "[F2] Esc cancels the cover")
+        XCTAssertEqual(surface.drawer, .settings(.dictionary), "[F2] and the drawer stays on Dictionary")
+        XCTAssertFalse(ownership.isOwned, "the closed cover releases Esc")
+
+        // Return: the editor saves through its default action; the drawer stays.
+        box.edit = DictionaryTermEdit(correct: "Kubernetes")
+        settle()
+        XCTAssertTrue(host.performKeyEquivalent(with: try key("\r", 36)), "Return reaches the editor")
+        settle()
+        XCTAssertEqual(saved, ["Kubernetes"], "[F2] Return saves the term")
+        XCTAssertEqual(surface.drawer, .settings(.dictionary))
+
+        // Cancel: the editor's Cancel (its cancel action) closes the cover only.
+        box.edit = DictionaryTermEdit(correct: "Draft")
+        settle()
+        XCTAssertTrue(host.performKeyEquivalent(with: try key("\u{1b}", NotchDrawerDismissal.escapeKeyCode)))
+        settle()
+        XCTAssertEqual(cancelled, 1, "[F2] Cancel cancels the cover")
+        XCTAssertNil(box.edit)
+        XCTAssertEqual(surface.drawer, .settings(.dictionary), "[F2] the drawer is retained")
+
+        // With no cover, Esc closes the drawer as before.
+        XCTAssertTrue(dismissal.handleLocalKeyDown(keyCode: NotchDrawerDismissal.escapeKeyCode))
+        XCTAssertNil(surface.drawer, "the next Esc closes the drawer")
+    }
+
+    /// Review F4: the chevron's destination is the Microphone priority list itself, not merely General. With three
+    /// permissions missing, Setup fills the top of General; the chevron's request scrolls the list to the top.
+    func testF4TheMicrophoneRequestScrollsGeneralToMicrophonePriority() throws {
+        func headerTop(_ request: SettingsTabRequest?) throws -> CGFloat? {
+            let context = NotchSettingsDrawerContext(updates: nil, pane: { tab, request in
+                AnyView(SettingsView(
+                    hotkeyEnabled: false, missingPermissions: [.microphone, .accessibility, .inputMonitoring],
+                    availableDevices: { [MicrophoneDevice(id: "qa", name: "QA microphone A")] },
+                    selectedDeviceID: { "qa" }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                    vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
+                    initialTab: tab, tabRequest: request
+                ).notchDrawerPane(tab))
+            })
+            let drawer = NotchSettingsDrawer(selectedTab: .general, appearance: .dark, context: context,
+                                             request: request, onSelectTab: { _ in })
+            let host = NSHostingView(rootView: drawer.frame(width: 420, height: 394).background(Color.black))
+            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 420, height: 394), styleMask: .borderless,
+                                  backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            defer { window.contentView = nil; window.close() }
+            VLOrderTestWindow(window)
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let ocr = VNRecognizeTextRequest()
+            ocr.recognitionLevel = .accurate
+            ocr.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([ocr])
+            let header = (ocr.results ?? []).first {
+                $0.topCandidates(1).first?.string.lowercased().contains("microphone priority") == true
+            }
+            // Vision boxes are normalised with a bottom-left origin; return points from the drawer's top.
+            return header.map { (1 - $0.boundingBox.maxY) * 394 }
+        }
+        let focused = try XCTUnwrap(
+            headerTop(SettingsTabRequest(tab: .general, focus: .microphonePriority, id: 1)),
+            "[F4] Microphone priority is on screen after the chevron's request")
+        XCTAssertLessThan(focused, 46 + 6 + 60, "[F4] the requested list sits at the top of the pane, under the tabs")
+        let unfocused = try headerTop(nil)
+        print("[F4] Microphone priority header top: focused=\(focused) unfocused=\(String(describing: unfocused))")
+        if let unfocused {
+            XCTAssertGreaterThan(unfocused, focused + 20, "fixture: without the request, Setup sits above the list")
+        }
+    }
+
     func testN7DrawersCanOpenDuringRecording() {
         for event in [NotchSurfaceEvent.openHistory, .openSettings(.general)] {
             var machine = NotchSurfaceMachine()

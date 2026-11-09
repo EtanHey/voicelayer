@@ -77,6 +77,7 @@ public enum NotchSettingsDrawerPresentation {
 
 /// One notch glyph: the band's treatment (`notchAdaptiveGlyphEdge`), so the drawer's tab and row icons take the same
 /// rendering path as the band's, which kept painting unfocused in Etan's 0510 S4 while the drawer's vanished (N3).
+/// A hypothesis, not a confirmed fix: the unfocused vanishing was never reproduced and its root cause is unknown.
 struct NotchGlyph: View {
     let systemName: String
     var pointSize: CGFloat = NotchSettingsDrawerPresentation.tabGlyphSize
