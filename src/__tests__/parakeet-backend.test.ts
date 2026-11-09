@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, writeFileSync, readFileSync, statSync, existsSync } from "fs";
+import { createHash } from "crypto";
 import { testTmp } from "./setup/test-tmp";
 import { ParakeetBackend, parakeetLanguage, parakeetOutputRisk, parakeetWavInfo } from "../parakeet-backend";
 import { getBackend, resetBackendCache, buildWhisperServerOptions, type STTBackend } from "../stt";
@@ -15,6 +16,11 @@ function wav(seconds = 1): Uint8Array {
   for (let i = 44; i < b.length; i += 2) b.writeInt16LE(1000, i);
   return b;
 }
+function speech(snapshot: string) {
+  const bytes = readFileSync(snapshot), frames = parakeetWavInfo(bytes).frames;
+  return { status: "COMPLETE" as const, threshold: .3, inputSha256: createHash("sha256").update(bytes).digest("hex"),
+    frames, analyzedFrames: frames, speechFrames: 512, maxProbability: .9 };
+}
 const response = (text = "Keep every word and the last tail.", seconds = 1): ParakeetResponse => ({
   text, complete: true, input_frames: seconds * 16000, covered_frames: seconds * 16000,
   sample_rate: 16000, last_token_end_s: seconds, inference_s: 0.1, language: null,
@@ -28,7 +34,7 @@ describe("opt-in resident Parakeet router", () => {
   function setup(result = response()) {
     const calls: string[] = [];
     const fallback: STTBackend = { name: "whisper-test", isAvailable: async () => true, transcribe: async p => { calls.push("W"); expect(readFileSync(p)).toEqual(readFileSync(path)); return { text: "Whisper kept the whole recording.", backend: "whisper-test", durationMs: 3 }; } };
-    const backend = new ParakeetBackend({ fallbackBackend: fallback, transcribe: async p => { calls.push("P"); expect(readFileSync(p)).toEqual(readFileSync(path)); return result; }, unload: async () => { calls.push("unload"); }, env: () => ({ QA_VOICE_WHISPER_LANG: "en" }) });
+    const backend = new ParakeetBackend({ fallbackBackend: fallback, speechProbe: async p => speech(p), transcribe: async p => { calls.push("P"); expect(readFileSync(p)).toEqual(readFileSync(path)); return result; }, unload: async () => { calls.push("unload"); }, env: () => ({ QA_VOICE_WHISPER_LANG: "en" }) });
     return { backend, calls, fallback };
   }
   test("backend choice is explicit and returns the selected P backend", async () => {
@@ -63,7 +69,7 @@ describe("opt-in resident Parakeet router", () => {
   test("a continuity prompt cannot override the selected P backend", async () => {
     const { backend, calls } = setup(); expect((await backend.transcribe(path, { promptOverride: "previous phrase" })).backend).toBe("parakeet-resident"); expect(calls).toEqual(["P"]);
   });
-  test.each(["", "   "])("empty returned text falls back on the original audio", async text => {
+  test.each(["", "   "])("empty returned text with verified speech falls back on the original audio", async text => {
     const { backend, calls } = setup(response(text)); expect((await backend.transcribe(path)).backend).toContain("fallback-empty-response"); expect(calls).toEqual(["P", "unload", "W"]);
   });
   test("frame loss cannot pass as a completed response", async () => {
@@ -76,7 +82,7 @@ describe("opt-in resident Parakeet router", () => {
   test("truncated tails are retry signals, never trimmed", () => {
     const info = parakeetWavInfo(wav(20));
     expect(parakeetOutputRisk({ ...response("one two three four five six seven", 20), last_token_end_s: 3 }, info, 20)).toBe("uncovered-tail");
-    expect(parakeetOutputRisk(response("short", 20), info)).toBe("sparse-response");
+    expect(parakeetOutputRisk(response("short", 20), info)).toBeNull();
     expect(parakeetWavInfo(wav(20)).frames).toBe(320000);
   });
   test("tail silence is not declared lost speech", () => {
@@ -135,12 +141,12 @@ describe("opt-in resident Parakeet router", () => {
     const value = JSON.parse(readFileSync(p, "utf8")); expect(value.parakeet.text).toBe(""); expect(value.whisper.text).toBe("Whisper kept the whole recording.");
     expect(statSync(p).mode & 0o777).toBe(0o600);
   });
-  test("zero PCM still retries Whisper but does not deliver invented words", async () => {
+  test("empty Parakeet on exact zero PCM does not launch Whisper", async () => {
     const bytes = wav(); bytes.fill(0, 44); writeFileSync(path, bytes);
     const { backend, calls } = setup(response("")); const result = await backend.transcribe(path);
-    expect(calls).toEqual(["P", "unload", "W"]); expect(result.text).toBe("");
+    expect(calls).toEqual(["P"]); expect(result.text).toBe("");
     const evidence = JSON.parse(readFileSync(result.fallbackEvidencePath!, "utf8"));
-    expect(evidence.whisper.text).toBe("Whisper kept the whole recording."); expect(evidence.deliveryText).toBe("");
+    expect(evidence.whisper).toBeNull(); expect(evidence.whisperStatus).toBe("NOT_RUN"); expect(evidence.deliveryText).toBe("");
   });
   test("one nonzero sample cannot be suppressed as zero PCM", async () => {
     const bytes = wav(); bytes.fill(0, 44); new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setInt16(44, 1, true); writeFileSync(path, bytes);
@@ -150,6 +156,7 @@ describe("opt-in resident Parakeet router", () => {
     const bytes = wav(); let pPath = "", wPath = "";
     const b = new ParakeetBackend({
       env: () => ({ QA_VOICE_WHISPER_LANG: "en" }), unload: async () => {},
+      speechProbe: async p => speech(p),
       transcribe: async snapshot => {
         pPath = snapshot; expect(snapshot).not.toBe(path); expect(readFileSync(snapshot)).toEqual(Buffer.from(bytes));
         expect(statSync(snapshot).mode & 0o777).toBe(0o400);
