@@ -135,6 +135,7 @@ import {
   isRecordingConflictError,
 } from "./recording-state";
 import { appendControlLayerEvent } from "./control-layer-journal";
+import { RecordingPauseGate, type RecordingPauseSpan } from "./recording-pause";
 import {
   RecordingSilenceAutoClosePolicy,
   clearRecordingHold,
@@ -706,6 +707,13 @@ export interface RecordingCaptureState {
   micDisconnect?: MicDisconnect;
   /** MICDROP3: a CoreAudio report the audio after it did not confirm. Journal-only, never shown. */
   unconfirmedDeviceLoss?: { reason: DeviceLossReason; eventOffsetMs: number };
+  /** Recording pause: the take's paused spans, written to the archive as `paused_spans`. */
+  pausedSpans?: RecordingPauseSpan[];
+  /**
+   * The take ended while paused. Its end is the Pause click, not the user's own end of speech, so STT, the
+   * archive and recovery all keep the complete gated PCM: no trailing-silence trim and no physical-stop cut.
+   */
+  endedWhilePaused?: true;
   /**
    * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
    * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
@@ -719,6 +727,26 @@ export interface RecordingCaptureState {
 let captureGeneration = 0;
 // The live capture's sink for VoiceBar's CoreAudio device-loss evidence.
 let activeDeviceLoss: { captureId: number; sink: (reason: DeviceLossReason) => void } | null = null;
+// The live capture's pause control. Only push-to-talk takes can pause: a VAD take ends on its own silence.
+type RecordingPauseOutcome = { outcome: "accept" | "noop" | "reject"; reason?: string };
+let activeRecordingPause: { captureId: number; set: (paused: boolean) => RecordingPauseOutcome } | null = null;
+let activeCaptureId: number | null = null;
+
+/**
+ * Pauses or resumes the live take. While paused no audio joins it (after a ~200 ms click tail) and the
+ * silence deadline stands still; resume continues the same take. `captureId` guards a stale click.
+ */
+export function setRecordingPaused(paused: boolean, captureId?: number): RecordingPauseOutcome {
+  if (captureId !== undefined && activeCaptureId !== null && captureId !== activeCaptureId) {
+    return { outcome: "noop", reason: "stale capture" };
+  }
+  if (!activeRecordingPause) {
+    return activeCaptureId === null
+      ? { outcome: "noop", reason: "not recording" }
+      : { outcome: "reject", reason: "pause needs push-to-talk" };
+  }
+  return activeRecordingPause.set(paused);
+}
 
 /**
  * Records that capture `captureId`'s input device went away. Evidence only: the capture keeps
@@ -2456,6 +2484,10 @@ export async function recordToBuffer(
     const captureId = ++captureGeneration;
     const takeID = ownsBarCapture() ? recordingJobsSnapshot().mic_take_id : null;
     const recoveryWriter = new IncrementalRecoveryWavWriter(null);
+    // Recording pause gates PCM where it enters the take; the recorder itself keeps running.
+    const pauseGate = pushToEnd ? new RecordingPauseGate(Date.now()) : null;
+    // Silence deadlines run on this clock, which stands still while the take is paused.
+    const activeNow = () => pauseGate ? pauseGate.activeNow(Date.now()) : Date.now();
     const silencePolicy = new RecordingSilenceAutoClosePolicy({
       preSpeechChunks,
       postSpeechSilenceChunks: silenceChunksNeeded,
@@ -2481,7 +2513,9 @@ export async function recordToBuffer(
       const normalizedTail = needsResample
         ? resamplePCM16(monoTail, nativeRate, SAMPLE_RATE)
         : monoTail;
-      if (normalizedTail.byteLength > 0) pendingChunks.push(normalizedTail);
+      if (normalizedTail.byteLength > 0 && (!pauseGate || pauseGate.admit(normalizedTail.byteLength))) {
+        pendingChunks.push(normalizedTail);
+      }
       return pendingChunks;
     };
 
@@ -2504,7 +2538,8 @@ export async function recordToBuffer(
     };
     const beginPushToEndStopDrain = () => {
       if (pushToEndStopRequestedAtMs !== null) return;
-      traceConsumedStop(true);
+      // A press while paused is not in the take's audio, so it can never mark where the take ends.
+      traceConsumedStop(!pauseGate?.isPaused());
       pushToEndStopRequestedAtMs = Date.now();
       console.error(
         `[voicelayer] Stop signal received — capturing ${PUSH_TO_END_STOP_CAPTURE_DRAIN_MS}ms push-to-end tail before ending recording`,
@@ -2531,6 +2566,7 @@ export async function recordToBuffer(
       const recorderPid = recorder?.pid ?? null;
       deviceSnapshots?.finish();
       if (activeDeviceLoss?.captureId === captureId) activeDeviceLoss = null;
+      if (activeCaptureId === captureId) { activeCaptureId = null; activeRecordingPause = null; }
       setRecordingState("idle");
       try {
         clearRecordingHold();
@@ -2563,6 +2599,12 @@ export async function recordToBuffer(
 
       let finishError = error;
       const capturedChunks = [...pcmChunks, ...drainPendingCapturedPcm()];
+      if (captureState && pauseGate) {
+        if (pauseGate.isPaused()) captureState.endedWhilePaused = true;
+        // A take that ends while paused closes its open span here.
+        const spans = pauseGate.spans(Date.now());
+        if (spans.length > 0) captureState.pausedSpans = spans;
+      }
       const capturedPcmBytes = capturedChunks.reduce(
         (sum, chunk) => sum + chunk.byteLength,
         0,
@@ -2648,7 +2690,7 @@ export async function recordToBuffer(
     // HOLD already suppresses VAD silence close. The wall-clock deadline must
     // obey the same lock, including when the recorder produces no PCM chunks.
     // PTT has a silence deadline, renewed by detected speech; Stop still keeps its full tail.
-    let pttLastSpeechAtMs = Date.now();
+    let pttLastSpeechAtMs = activeNow();
     let pttVadPending = false;
     let recordingHeld = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -2686,20 +2728,22 @@ export async function recordToBuffer(
     const onTimeout = () => {
       const previouslyHeld = recordingHeld;
       if (resolved) return;
+      // Time out on silence, not on a pause: resume re-arms the deadline with the paused time left out.
+      if (pauseGate?.isPaused()) return;
       const held = synchronizeRecordingHold();
       if (!voiceAsk && (held || previouslyHeld)) return;
       if (voiceAskVad && hasSpeech && !held) return;
       if (voiceAsk && !hasSpeech && !held) {
         if (!pttSpeechDetectionAvailable) return; // Missing VAD evidence cannot prove absence.
-        if (Date.now() < noAnswerDeadlineAtMs) {
-          timer = setTimeout(onTimeout, noAnswerDeadlineAtMs - Date.now());
+        if (activeNow() < noAnswerDeadlineAtMs) {
+          timer = setTimeout(onTimeout, noAnswerDeadlineAtMs - activeNow());
           return;
         }
         // Classify queued/in-flight PCM before concluding that no speech occurred.
         const unclassified = pttVadPending || chunkQueue.length > 0;
         if (unclassified) {
           classificationGraceEndsAtMs ??= noAnswerDeadlineAtMs + NO_ANSWER_CLASSIFY_GRACE_MS;
-          if (Date.now() < classificationGraceEndsAtMs) {
+          if (activeNow() < classificationGraceEndsAtMs) {
             timer = setTimeout(onTimeout, STOP_POLL_MS);
             return;
           }
@@ -2711,7 +2755,7 @@ export async function recordToBuffer(
       if (pushToEnd || (voiceAskVad && held)) {
         if (!pttSpeechDetectionAvailable) return;
         // A slow inference or queued PCM may contain speech. Classify it before deciding it was silence.
-        const remaining = pttSilenceTimeoutMs - (Date.now() - pttLastSpeechAtMs);
+        const remaining = pttSilenceTimeoutMs - (activeNow() - pttLastSpeechAtMs);
         if (pttVadPending || chunkQueue.length > 0 || remaining > 0) {
           timer = setTimeout(onTimeout, pttVadPending || chunkQueue.length > 0 ? STOP_POLL_MS : remaining);
           return;
@@ -2805,13 +2849,37 @@ export async function recordToBuffer(
       }
 
       if (voiceAsk || (pushToEnd && pttSpeechDetectionAvailable)) {
-        pttLastSpeechAtMs = Date.now();
+        pttLastSpeechAtMs = activeNow();
         const remaining = voiceAsk
           ? Math.max(Math.min(timeoutMs, MIN_ASK_LISTEN_MS), timeoutMs - (Date.now() - (captureState?.noAnswerStartedAtMs ?? Date.now())))
           : pttSilenceTimeoutMs;
-        noAnswerDeadlineAtMs = Date.now() + remaining;
+        noAnswerDeadlineAtMs = activeNow() + remaining;
         timer = setTimeout(onTimeout, remaining);
       }
+      if (!resolved) activeCaptureId = captureId;
+      if (pauseGate && !resolved) activeRecordingPause = { captureId, set: (paused) => {
+        if (resolved) return { outcome: "noop", reason: "not recording" };
+        // Stop already asked for the push-to-end tail; a late Pause must not drop it.
+        if (pushToEndStopRequestedAtMs !== null) return { outcome: "noop", reason: "stopping" };
+        const now = Date.now();
+        if (paused) {
+          if (!pauseGate.pause(now)) return { outcome: "noop", reason: "already paused" };
+          clearTimeout(timer);
+          timer = undefined;
+          console.error("[voicelayer] Recording paused — keeping a 200 ms tail, then no audio joins the take");
+        } else {
+          if (!pauseGate.resume(now)) return { outcome: "noop", reason: "not paused" };
+          if (voiceAsk || pttSpeechDetectionAvailable) {
+            const remaining = voiceAsk && !hasSpeech
+              ? noAnswerDeadlineAtMs - activeNow()
+              : pttSilenceTimeoutMs - (activeNow() - pttLastSpeechAtMs);
+            timer = setTimeout(onTimeout, Math.max(0, remaining));
+          }
+          console.error("[voicelayer] Recording resumed — same take");
+        }
+        appendControlLayerEvent(paused ? "capture.paused" : "capture.resumed", { capture_id: captureId });
+        return { outcome: "accept" };
+      } };
       if (captureState?.archiveSource === "voicebar") userVoicePresent();
       invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
       if (resolved) return;
@@ -2913,6 +2981,8 @@ export async function recordToBuffer(
             const chunk = needsResample
               ? resamplePCM16(monoChunk, nativeRate, SAMPLE_RATE)
               : monoChunk;
+            // Paused: the mic still runs, but this audio never joins the take (STT, archive or recovery WAV).
+            if (pauseGate && !pauseGate.admit(chunk.byteLength)) continue;
             chunkQueue.push(chunk);
             capturedPcmBytesSoFar += chunk.byteLength;
           }
@@ -2956,7 +3026,7 @@ export async function recordToBuffer(
                 const detected = isSpeech(await processVADChunk(chunk));
                 if (resolved) continue;
                 if (detected) {
-                  pttLastSpeechAtMs = Date.now();
+                  pttLastSpeechAtMs = activeNow();
                   if (!resolved) userVoicePresent();
                   if (voiceAsk && !hasSpeech && !resolved) {
                     hasSpeech = true;
@@ -3009,7 +3079,7 @@ export async function recordToBuffer(
             hasSpeech = silenceObservation.hasSpeech;
 
             if (speechDetected) {
-              pttLastSpeechAtMs = Date.now();
+              pttLastSpeechAtMs = activeNow();
               classificationGraceEndsAtMs = undefined;
               if (captureState) captureState.pttLastSpeechEndSample = processedPcmBytes / BYTES_PER_SAMPLE;
               userVoicePresent();
@@ -3095,8 +3165,10 @@ export async function waitForInput(
   const timings = new TakeStageTimings();
   const archives = new Set<string>();
   const onArchiveCreated = options.onArchiveCreated;
+  let pausedSpans: RecordingPauseSpan[] | undefined;
   options = { ...options, onArchiveCreated: path => {
     archives.add(path);
+    stampPausedSpans(path, pausedSpans);
     onArchiveCreated?.(path);
   } };
   return withTakeStageTimings(timings, async () => {
@@ -3132,15 +3204,17 @@ export async function waitForInput(
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
     : undefined;
   try {
-    pcmData = await recordToBuffer(
-      timeoutMs,
-      silenceMode,
-      pushToEnd,
-      chunkedSession,
-      options.signal,
-      options.archiveSource !== undefined,
-      captureState,
-    );
+    try {
+      pcmData = await recordToBuffer(
+        timeoutMs,
+        silenceMode,
+        pushToEnd,
+        chunkedSession,
+        options.signal,
+        options.archiveSource !== undefined,
+        captureState,
+      );
+    } finally { pausedSpans = captureState.pausedSpans; }
     timings.captureEnded();
     captureState.inputDevice = await captureState.inputDeviceSnapshot;
   } catch (err) {
@@ -3307,7 +3381,9 @@ export async function waitForInput(
     pcmData: pttDecodePcm, trimmed: pttDecodePcm.byteLength < pcmData.byteLength,
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pttDecodePcm),
-  } : hasMicLossEvidence ? {
+  } : hasMicLossEvidence || captureState.endedWhilePaused ? {
+    // Recording pause: a take stopped while paused ends at the click, so a quiet tail before it may be
+    // quiet speech; STT gets every gated byte, exactly as archived (Etan's law: never trim his words).
     pcmData, trimmed: false,
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pcmData),
@@ -3776,6 +3852,7 @@ export async function waitForInput(
         }
       }
       if (archivedRecordingPath) {
+        stampPausedSpans(archivedRecordingPath, pausedSpans);
         linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
         recordArchivedGateRemoval(join(archivedRecordingPath, "audio.wav"), gateRemoval);
       }
@@ -4044,6 +4121,14 @@ function archivedRecordingIsLatest(audioPath: string): boolean {
     // Incomplete/unreadable archives leave legacy age unknown.
   }
   return false;
+}
+
+/** Recording pause: the take's paused spans, so an eval can tell a pause from lost words. */
+function stampPausedSpans(archivePath: string, spans: RecordingPauseSpan[] | undefined): void {
+  if (!spans?.length) return;
+  updateArchivedRecordingMetadata(join(archivePath, "audio.wav"), (metadata) => {
+    metadata.paused_spans = spans;
+  });
 }
 
 function updateArchivedRecordingMetadata(

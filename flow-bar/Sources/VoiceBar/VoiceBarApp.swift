@@ -2176,8 +2176,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 trailingControlCountFromCore: 2
             )
         case .recording:
+            // Stop and Cancel, plus a third slot beside Stop: Lock on a VAD take, Pause on a PTT take. The count
+            // follows the same `showsRecordingHold || showsRecordingPause` the presentation sizes the wing from, so
+            // Stop, the outermost control, stays inside the hit region.
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: state.recordingMode == "vad" ? 3 : 2
+                leadingControlCount: state.recordingMode == "vad" || state.recordingMode == "ptt" ? 3 : 2
             )
         case .compactStatus:
             switch state.mode {
@@ -2291,6 +2294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             from: VoiceBarNotchOperationalInput(
                 mode: mode,
                 showsRecordingHold: mode == .recording && state?.recordingMode == "vad",
+                showsRecordingPause: mode == .recording && state?.recordingMode == "ptt",
                 hasTeleprompterText: state?.teleprompterText != nil,
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,

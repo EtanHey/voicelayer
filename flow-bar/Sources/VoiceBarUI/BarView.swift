@@ -561,6 +561,7 @@ public struct BarView: View {
         var input = VoiceBarNotchOperationalInput(
             mode: state.mode,
             showsRecordingHold: recordingHoldControl != nil,
+            showsRecordingPause: recordingPauseControl != nil,
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
@@ -877,6 +878,20 @@ public struct BarView: View {
                 ) {
                     commandRouter.handleStop()
                 }
+                // Recording pause sits beside Stop, in its own control slot.
+                if let recordingPauseControl {
+                    notchButton(
+                        icon: recordingPauseControl.iconName,
+                        isSelected: recordingPauseControl.isSelected,
+                        selectionStyle: .recordingState,
+                        accessibilityLabel: recordingPauseControl.accessibilityLabel,
+                        accessibilityHint: recordingPauseControl.accessibilityHint
+                    ) {
+                        state.setRecordingPaused(!state.isRecordingPaused)
+                    }
+                    .contentTransition(.symbolEffect(.replace))
+                    .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
+                }
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel recording") {
                     commandRouter.handleCancel()
                 }
@@ -1034,7 +1049,7 @@ public struct BarView: View {
             // 2.3 N1 (Etan, QA round 1; real M4): the live time 8 pt clear of the physical notch, then 2.2.61's
             // 46 × 24 pt level meter, centred in the visible wing by an equal empty region outside it (review D3). The
             // time shows only once capture has opened (review D1); the capturing microphone is its tooltip and VoiceOver
-            // value, never wing text.
+            // value, never wing text. Paused, the meter holds still and dims and the time stands still.
             HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
                 VoiceBarRecordingTimeRegion(
                     elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
@@ -1042,7 +1057,16 @@ public struct BarView: View {
                     microphoneName: state.recordingMicrophoneName,
                     color: notchPrimaryLabelColor
                 )
-                notchWaveform
+                if state.isRecordingPaused {
+                    notchWaveform(isPaused: true)
+                        .accessibilityElement()
+                        .accessibilityLabel("Recording paused")
+                        // VoiceOver reads the same frozen time the wing shows.
+                        .accessibilityValue(VoiceBarReadingTimeLabel.text(
+                            elapsedMilliseconds: state.recordingElapsedMilliseconds()))
+                } else {
+                    notchWaveform
+                }
                 Color.clear.frame(width: VoiceBarRecordingWingLabel.outerRegionWidth, height: 1)
             }
         case .compactStatus, .teleprompter:
@@ -1136,13 +1160,17 @@ public struct BarView: View {
     }
 
     private var notchWaveform: some View {
+        notchWaveform(isPaused: false)
+    }
+
+    private func notchWaveform(isPaused: Bool) -> some View {
         VoiceBarNotchWaveform(
             mode: state.mode,
             isListening: !state.speechDetected,
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() },
-            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused
+            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused || isPaused
         )
         .help("Input level")
         .accessibilityLabel("Input level")
@@ -1497,6 +1525,14 @@ public struct BarView: View {
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker
+        )
+    }
+
+    private var recordingPauseControl: VoiceBarRecordingPauseControl? {
+        VoiceBarPresentation.recordingPauseControl(
+            mode: state.mode,
+            recordingMode: state.recordingMode,
+            isPaused: state.isRecordingPaused
         )
     }
 

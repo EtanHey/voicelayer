@@ -3,12 +3,12 @@
   "kind": "invariant",
   "target": "SpeechRenewsDeadline",
   "status": "EXPECTED_FAIL",
-  "generated": 27,
-  "distinct": 23,
+  "generated": 39,
+  "distinct": 29,
   "trace": [
-    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]",
-    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"open\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]",
-    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"tick\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]",
-    "s = [ phase |-> \"recording\",\n  speech |-> TRUE,\n  silence |-> 1,\n  wall |-> 1,\n  event |-> \"speech\",\n  pcm |-> <<TRUE>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]"
+    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"open\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> FALSE,\n  silence |-> 1,\n  quiet |-> 1,\n  wall |-> 1,\n  event |-> \"tick\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"recording\",\n  speech |-> TRUE,\n  silence |-> 1,\n  quiet |-> 0,\n  wall |-> 1,\n  event |-> \"speech\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<\"word\">>,\n  said |-> <<\"word\">>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
   ]
 }

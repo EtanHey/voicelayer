@@ -2,24 +2,32 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/ptt-silence-timeout/PttSilenceTimeout.tla": "31c0ce33056b3e6f2385e1b5552b555c8e0b39cd0d0be2964bd851cf6c2c4bab",
-    "formal/ptt-silence-timeout/checks.json": "a8f3e0fe5d1c9144274ff628b68a54fd40c218f9bfb762049ec2e6788931f67a",
+    "formal/ptt-silence-timeout/PttSilenceTimeout.tla": "c99139d46b32e75499b5a92e745995aab8608a3bf50be5622e61ed1f085cc854",
+    "formal/ptt-silence-timeout/checks.json": "240c59f55cb234741af7408c9d742ecf9ff73767959801da1629c06c12451a22",
     "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/ptt-silence-timeout/StallMutant.cfg": "b4efb53c3296eb89a6a359b31e1ec4a09c2840c2740b34768ba95755cb7f1439",
+    "formal/ptt-silence-timeout/PauseCountsTowardTimeoutMutant.cfg": "383940d32c63d607c6aee6e44ea9a128b545c33002ecc10595fd94d979a06e47",
+    "formal/ptt-silence-timeout/ClipAtPauseMutant.cfg": "0fccf59ac2a1fa7c180ea37a28ad2ae7c3c0c8c2d34735730bf779d75c5ae402",
     "formal/ptt-silence-timeout/OpeningFallbackMutant.cfg": "e98443558b0279216c83823549d228d2142765bff1b0de68ca6afa7c8560b280",
     "formal/ptt-silence-timeout/WallClockMutant.cfg": "5d024379304538d9cc4770250f91e59dc33d3ee16101f9e215a19c39d60942cb",
     "formal/ptt-silence-timeout/NoTimeoutMutant.cfg": "2adee00fb431994f52940a8180e5f144e1bb85f21f6794768302dad728cccaab",
+    "formal/ptt-silence-timeout/NoStopWhilePausedMutant.cfg": "56dde4b4333621e8f1ffe2ef28c62b2a70e6334ffdeedb0fecdbb381201fd48c",
+    "formal/ptt-silence-timeout/TimeoutWhilePausedMutant.cfg": "d6481f85fc3576b7b484992740db4c9dc8c1a62c534e064f5a9a6a717f66899d",
     "formal/ptt-silence-timeout/ReintroducedCapMutant.cfg": "cc3837973230da96205f7125e6bf9c298d0cfd0fdca54689ef377998bc21f0e1",
     "formal/ptt-silence-timeout/UnscopedEndsCaptureMutant.cfg": "b07d3bed3c5aeaf2a925c754415ff468d308312aa5bd51c85ff42c4d395d87b1",
+    "formal/ptt-silence-timeout/OpenSpanMutant.cfg": "3875b53c5b0ed495c75a38d50ae0004430ca15139b01a0ffcb18f6dd8acbd42e",
     "formal/ptt-silence-timeout/DropArchiveMutant.cfg": "14b8648e4ab7e2580aded9137d23679ca95a4a55092e1f3f8492ef46dd144943",
     "formal/ptt-silence-timeout/TrimWordsMutant.cfg": "9b357bb658c9c4d3bd3ed7da91d23c87387de6d0857887a7c734a133924536f1",
+    "formal/ptt-silence-timeout/NewTakeOnResumeMutant.cfg": "c5e791c1f8fcd5d2d3d56f752d32b485e436a64a2306dc4917316a1c9bb66da9",
     "formal/ptt-silence-timeout/NoRenewalMutant.cfg": "8086bcbf5f618d61bab9ba9946a7009d172548f64f5d7deff4a5b8b8846c05fd",
-    "formal/ptt-silence-timeout/Fixed.cfg": "e570ad6f8c031ce4ddff618e066161c8edc11f074398e11e2e17d5bc3f31486f",
-    "src/input.ts": "b4f12797d524c7a0b8a4070291cf6b0c850dc347d9eabc8446cb9996b2b033eb",
-    "src/__tests__/input-durability.test.ts": "37604eeb69a21bc3596194240980c542d5a195edf7e495713fc0931050dec790",
-    "src/socket-handlers.ts": "9bf497723b8f8c49660fdda830d4e4645fb17f2c2faae129b39d97ba334c3c12",
-    "src/f5-capture.ts": "c1ddb835e5275b4ed0d17699f1e52a841d6610388eaa822fea51d7cd8b5fd1a0"
+    "formal/ptt-silence-timeout/AppendWhilePausedMutant.cfg": "703863d43d6decfc4cedd9455c98c8593c749b9bc32f70193913edbc9a2893c2",
+    "formal/ptt-silence-timeout/Fixed.cfg": "e31cf7a878a931cee158e890f87c6ea42673471eb986e7838e199ee1351284bf",
+    "src/input.ts": "43d2be3c86d017511f1d45bbd12dba8e28e409758a1d7295a2a06d6ce77219ea",
+    "src/__tests__/input-durability.test.ts": "82dd8fb57771d70bd905471a84de242baeb89e1edea257948d781a94c92c28ae",
+    "src/socket-handlers.ts": "334d80508a9906699734eba0f6b450a8e609f289c9222dd235dde717ed17abe3",
+    "src/f5-capture.ts": "3eb13a5ba0640038a0f611ebae5b1b79762f013de4762fd97abf51268ead7924",
+    "src/recording-pause.ts": "210914f612dcf9363f33a6175809ef2563118cd89efdb1490b653225ad2251be"
   },
   "mutants": {
     "EveryEndedTakeRetained": [
@@ -46,10 +54,27 @@
     "UnscopedStopNeverEndsCapture": [
       "UnscopedEndsCaptureMutant",
       "OpeningFallbackMutant"
+    ],
+    "NoPausedAudio": [
+      "AppendWhilePausedMutant"
+    ],
+    "UnpausedRetained": [
+      "ClipAtPauseMutant",
+      "NewTakeOnResumeMutant"
+    ],
+    "NoTimeoutDuringPause": [
+      "PauseCountsTowardTimeoutMutant",
+      "TimeoutWhilePausedMutant"
+    ],
+    "StopCancelFromPaused": [
+      "NoStopWhilePausedMutant"
+    ],
+    "PausedSpansClosed": [
+      "OpenSpanMutant"
     ]
   },
   "graphHashes": {
-    "Fixed": "11cf5e987f45353e3be2e67065cbb639e639077509370c633a788e096ee24c2b"
+    "Fixed": "a06dc7793e453088e37fafcc2d91f5c69472a620184201b89686cc09b406f371"
   },
   "checks": {
     "Fixed": {
@@ -57,80 +82,136 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 78600,
-      "distinct": 26069
+      "generated": 1043498,
+      "distinct": 187804
     },
     "WallClockMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "NoTimeoutDuringSpeech",
       "status": "EXPECTED_FAIL",
-      "generated": 96,
-      "distinct": 68
+      "generated": 177,
+      "distinct": 111
     },
     "DropArchiveMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "EveryEndedTakeRetained",
       "status": "EXPECTED_FAIL",
-      "generated": 13415,
-      "distinct": 5174
+      "generated": 109636,
+      "distinct": 25998
     },
     "TrimWordsMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "RawAccurate",
       "status": "EXPECTED_FAIL",
-      "generated": 56,
-      "distinct": 44
+      "generated": 102,
+      "distinct": 72
     },
     "StallMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "SettlesAfterSilence",
       "status": "EXPECTED_FAIL",
-      "generated": 72738,
-      "distinct": 20207
+      "generated": 454678,
+      "distinct": 85159
     },
     "NoRenewalMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "SpeechRenewsDeadline",
       "status": "EXPECTED_FAIL",
-      "generated": 27,
-      "distinct": 23
+      "generated": 39,
+      "distinct": 29
     },
     "ReintroducedCapMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "RecurringSpeechNeverTimesOut",
       "status": "EXPECTED_FAIL",
-      "generated": 54801,
-      "distinct": 19090
+      "generated": 614110,
+      "distinct": 120833
     },
     "NoTimeoutMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "SilenceTimesOut",
       "status": "EXPECTED_FAIL",
-      "generated": 77208,
-      "distinct": 25325
+      "generated": 1038578,
+      "distinct": 185572
     },
     "UnscopedEndsCaptureMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "UnscopedStopNeverEndsCapture",
       "status": "EXPECTED_FAIL",
-      "generated": 9,
-      "distinct": 9
+      "generated": 13,
+      "distinct": 11
     },
     "OpeningFallbackMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "UnscopedStopNeverEndsCapture",
       "status": "EXPECTED_FAIL",
-      "generated": 13,
-      "distinct": 12
+      "generated": 17,
+      "distinct": 14
+    },
+    "AppendWhilePausedMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPausedAudio",
+      "status": "EXPECTED_FAIL",
+      "generated": 200,
+      "distinct": 123
+    },
+    "ClipAtPauseMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "UnpausedRetained",
+      "status": "EXPECTED_FAIL",
+      "generated": 47,
+      "distinct": 35
+    },
+    "NewTakeOnResumeMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "UnpausedRetained",
+      "status": "EXPECTED_FAIL",
+      "generated": 98,
+      "distinct": 68
+    },
+    "PauseCountsTowardTimeoutMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoTimeoutDuringPause",
+      "status": "EXPECTED_FAIL",
+      "generated": 358747,
+      "distinct": 87766
+    },
+    "TimeoutWhilePausedMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoTimeoutDuringPause",
+      "status": "EXPECTED_FAIL",
+      "generated": 127668,
+      "distinct": 29715
+    },
+    "NoStopWhilePausedMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "StopCancelFromPaused",
+      "status": "EXPECTED_FAIL",
+      "generated": 8,
+      "distinct": 8
+    },
+    "OpenSpanMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PausedSpansClosed",
+      "status": "EXPECTED_FAIL",
+      "generated": 51,
+      "distinct": 39
     }
   }
 }

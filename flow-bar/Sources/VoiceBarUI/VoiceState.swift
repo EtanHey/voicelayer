@@ -441,10 +441,13 @@ public final class VoiceState {
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
+                resetRecordingPause()
                 // N1 review D1: leaving (or optimistically entering) recording clears the wing's time and microphone;
                 // only the capture-open edge (`captureLive`) stamps them.
-                stampRecordingWing(isCaptureOpen: false)
+                stampRecordingWing(openedAtUptimeMs: nil)
             }
+            // A finished take's capture id must never ride on the next take's Pause.
+            if oldValue == .recording, mode != .recording { recordingCaptureID = nil }
             notifyPanelLayoutChangedIfNeeded(oldValue != mode)
         }
     }
@@ -455,20 +458,35 @@ public final class VoiceState {
     /// optimistic press. Never opens, selects or routes a device.
     @ObservationIgnored public var recordingMicrophoneNameProvider: () -> String? = { nil }
     public private(set) var recordingMicrophoneName: String?
-    private var recordingStartedAt: TimeInterval?
+    /// The capture-open edge on `recordingTimingClock`, the one clock the recording wing, Pause spans and
+    /// `recordingStateUptimeMs` all share.
+    private var recordingStartedAtUptimeMs: Int?
+    /// Paused time already counted when capture opened (a PTT take can be paused before its first frame), so
+    /// the wing never subtracts pause time from before its own start.
+    private var recordingPausedBaselineMs = 0
     /// True from this take's capture-open edge until it leaves recording: the wing's clock runs only then.
-    public var isRecordingCaptureOpen: Bool { recordingStartedAt != nil }
+    public var isRecordingCaptureOpen: Bool { recordingStartedAtUptimeMs != nil }
 
-    /// Milliseconds since this take's capture opened, on the panel's uptime clock; 0 before it opens and after.
+    /// Milliseconds since this take's capture opened, with paused spans left out (recording pause: the live time
+    /// stands still while paused); 0 before it opens and after.
     public func recordingElapsedMilliseconds() -> Int {
-        guard let recordingStartedAt else { return 0 }
-        return max(0, Int(((playbackAmplitudeClock() - recordingStartedAt) * 1000).rounded()))
+        guard let startedAt = recordingStartedAtUptimeMs else { return 0 }
+        let now = currentRecordingUptimeMs()
+        let closedPausedMs = max(0, recordingPausedTotalMs - recordingPausedBaselineMs)
+        let openPausedMs = recordingPausedAtUptimeMs.map { max(0, now - max($0, startedAt)) } ?? 0
+        return max(0, now - startedAt - closedPausedMs - openPausedMs)
     }
 
-    /// The capture-open edge stamps the clock and reads the microphone once; anything else clears both.
-    private func stampRecordingWing(isCaptureOpen: Bool) {
-        recordingStartedAt = isCaptureOpen ? playbackAmplitudeClock() : nil
-        let name = isCaptureOpen ? recordingMicrophoneNameProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+    /// The capture-open edge stamps the clock and reads the microphone once; `nil` clears both. Clearing never
+    /// reads `recordingTimingClock`, and opening reuses the first-audio diagnostic's own reading, so the wing adds
+    /// no read to the record/first-audio latency timeline.
+    private func stampRecordingWing(openedAtUptimeMs: Int?) {
+        recordingStartedAtUptimeMs = openedAtUptimeMs
+        recordingPausedBaselineMs = openedAtUptimeMs.map { now in
+            recordingPausedTotalMs + (recordingPausedAtUptimeMs.map { max(0, now - $0) } ?? 0)
+        } ?? 0
+        let name = openedAtUptimeMs != nil
+            ? recordingMicrophoneNameProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
         recordingMicrophoneName = name?.isEmpty == false ? name : nil
     }
 
@@ -565,6 +583,21 @@ public final class VoiceState {
     public var silenceMode: String? // "quick" | "standard" | "thoughtful"
     public private(set) var isRecordingHoldEngaged = false
     private var pendingRecordingHold: (id: String, previous: Bool)?
+    /// Recording pause (Etan, 2026-11-08): the daemon stops adding audio to the PTT take until Resume. This mirrors
+    /// that optimistically, like Lock; the daemon owns the audio gate and its silence deadline.
+    public private(set) var isRecordingPaused = false
+    /// The optimistic intent in flight, with the clock bookkeeping from before it, so a refused intent restores
+    /// the clock exactly: the daemon never paused (or never resumed), so no time may be added or lost.
+    private var pendingRecordingPause: (id: String, previous: RecordingPauseClock)?
+    private struct RecordingPauseClock {
+        var isPaused: Bool
+        var pausedAtUptimeMs: Int?
+        var pausedTotalMs: Int
+    }
+    /// The daemon's `capture_id` for the live take, so a late Pause cannot reach the next take.
+    private var recordingCaptureID: Int?
+    private var recordingPausedAtUptimeMs: Int?
+    private var recordingPausedTotalMs = 0
 
     /// Brief confirmation text shown after paste (e.g., "Pasted!").
     public var confirmationText: String? {
@@ -626,7 +659,8 @@ public final class VoiceState {
     public private(set) var captureLive = false {
         didSet {
             guard captureLive != oldValue else { return }
-            stampRecordingWing(isCaptureOpen: captureLive && mode == .recording)
+            // The open edge is stamped where the first frame is timed (`noteFirstRecordingAudioLevelIfNeeded`).
+            if !captureLive { stampRecordingWing(openedAtUptimeMs: nil) }
         }
     }
     /// Presentation-only guard for the brief idle frame before playback hands off to capture.
@@ -2372,6 +2406,52 @@ public final class VoiceState {
         ])
     }
 
+    /// Pause or resume the live PTT take. One request is in flight at a time; a refused one rolls back.
+    public func setRecordingPaused(_ paused: Bool) {
+        guard mode == .recording, recordingMode == "ptt" else { return }
+        guard pendingRecordingPause == nil else { return }
+        guard paused != isRecordingPaused else { return }
+
+        let id = UUID().uuidString
+        pendingRecordingPause = (id: id, previous: RecordingPauseClock(
+            isPaused: isRecordingPaused,
+            pausedAtUptimeMs: recordingPausedAtUptimeMs,
+            pausedTotalMs: recordingPausedTotalMs
+        ))
+        applyRecordingPause(paused)
+        var command: [String: Any] = ["cmd": IntentCommand.setRecordingPause.rawValue, "paused": paused, "id": id]
+        if let recordingCaptureID { command["capture_id"] = recordingCaptureID }
+        sendCommand?(command)
+    }
+
+    /// Unpaused time since the take's `recording` event, on `recordingTimingClock`. It follows the optimistic
+    /// Pause/Resume state and excludes the daemon's 200 ms click tail, so it is the time the user spent unpaused,
+    /// not the archived audio duration. The wing's visible time is `recordingElapsedMilliseconds()`, which counts
+    /// from capture-open on the same clock and leaves out the same paused spans.
+    public func recordingActiveElapsedMilliseconds() -> Int {
+        guard mode == .recording, let startedAt = recordingStateUptimeMs else { return 0 }
+        let now = recordingPausedAtUptimeMs ?? currentRecordingUptimeMs()
+        return max(0, now - startedAt - recordingPausedTotalMs)
+    }
+
+    private func applyRecordingPause(_ paused: Bool) {
+        let now = currentRecordingUptimeMs()
+        if paused {
+            recordingPausedAtUptimeMs = recordingPausedAtUptimeMs ?? now
+        } else if let pausedAt = recordingPausedAtUptimeMs {
+            recordingPausedTotalMs += max(0, now - pausedAt)
+            recordingPausedAtUptimeMs = nil
+        }
+        isRecordingPaused = paused
+    }
+
+    private func resetRecordingPause() {
+        pendingRecordingPause = nil
+        isRecordingPaused = false
+        recordingPausedAtUptimeMs = nil
+        recordingPausedTotalMs = 0
+    }
+
     public func replay() {
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
@@ -2885,12 +2965,12 @@ public final class VoiceState {
     }
 
     public var recordingWaveformLevel: Double {
-        guard mode == .recording else { return 0 }
+        guard mode == .recording, !isRecordingPaused else { return 0 }
         return WaveformMetrics.recordingLevel(from: localRecordingLevel ?? socketAudioLevel)
     }
 
     public var recordingWaveformLevels: [Double] {
-        guard mode == .recording else { return Array(repeating: 0, count: 7) }
+        guard mode == .recording, !isRecordingPaused else { return Array(repeating: 0, count: 7) }
         return recordingWaveformHistory.liveWindow(barCount: 7)
     }
 
@@ -3528,6 +3608,7 @@ public final class VoiceState {
             case "recording":
                 if let captureID = (event["capture_id"] as? NSNumber)?.intValue {
                     inputDeviceLossMonitor?.beginCapture(captureID: captureID)
+                    recordingCaptureID = captureID
                 }
                 isRecordingHandoffPending = false
                 pendingMicDisconnectNotice = nil
@@ -5712,6 +5793,7 @@ public final class VoiceState {
         let firstAudioUptimeMs = currentRecordingUptimeMs()
         didLogFirstRecordingAudioLevel = true
         captureLive = true
+        stampRecordingWing(openedAtUptimeMs: firstAudioUptimeMs)
         var details = [
             "firstAudioLevelUptimeMs": String(firstAudioUptimeMs),
             "socketRms": Self.formatAudioLevel(socketRMS),
@@ -5839,6 +5921,21 @@ public final class VoiceState {
                 refreshModelsBusy()
             } else {
                 refreshModelsSettingsStatus()
+            }
+            return
+        }
+
+        if ack.command == .setRecordingPause,
+           let pendingRecordingPause,
+           pendingRecordingPause.id == ack.id {
+            // A noop that says the daemon is already where we asked to be keeps the optimistic state.
+            let alreadyThere = ack.outcome == .noop && (ack.reason == "already paused" || ack.reason == "not paused")
+            self.pendingRecordingPause = nil
+            if ack.outcome != .accept, !alreadyThere, mode == .recording {
+                let previous = pendingRecordingPause.previous
+                isRecordingPaused = previous.isPaused
+                recordingPausedAtUptimeMs = previous.pausedAtUptimeMs
+                recordingPausedTotalMs = previous.pausedTotalMs
             }
             return
         }

@@ -3,11 +3,11 @@
   "kind": "invariant",
   "target": "UnscopedStopNeverEndsCapture",
   "status": "EXPECTED_FAIL",
-  "generated": 13,
-  "distinct": 12,
+  "generated": 17,
+  "distinct": 14,
   "trace": [
-    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"none\",\n  endedBy |-> \"none\" ]",
-    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"unscoped-stop\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"unscoped\",\n  endedBy |-> \"none\" ]",
-    "s = [ phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 0,\n  wall |-> 0,\n  event |-> \"open\",\n  pcm |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>>,\n  buffered |-> \"unscoped\",\n  endedBy |-> \"unscoped\" ]"
+    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"unscoped-stop\",\n  endedBy |-> \"none\",\n  buffered |-> \"unscoped\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
+    "s = [ phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"open\",\n  endedBy |-> \"unscoped\",\n  buffered |-> \"unscoped\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]"
   ]
 }
