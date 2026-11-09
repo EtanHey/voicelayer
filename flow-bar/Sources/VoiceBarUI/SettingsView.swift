@@ -531,6 +531,10 @@ public struct SettingsView: View {
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
+    /// 2.4 (Etan, QA 0510 R2/N1: "settings should be in the notch app, not open the extra settings window"). Non-nil
+    /// renders only this tab's own pane, without the window's sidebar and title, for the notch Settings drawer. The
+    /// window keeps nil. History is not embedded: the drawer reuses the notch's own History rows for that tab.
+    private var notchEmbeddedTab: SettingsTab?
 
     @State private var selectedTab: SettingsTab
     @State private var hotkeyListenerRestartLine: HotkeyListenerRestartLine?
@@ -880,7 +884,60 @@ public struct SettingsView: View {
             ?? STTDictionaryDisplayIndex(entries: [], bundledRowsKnown: false))
     }
 
+    /// The same view, showing only `tab`'s pane for the notch Settings drawer (no sidebar, no title, no minimum size).
+    public func notchDrawerPane(_ tab: SettingsTab) -> SettingsView {
+        var copy = self
+        copy.notchEmbeddedTab = tab
+        return copy
+    }
+
     public var body: some View {
+        if let notchEmbeddedTab {
+            notchPane(notchEmbeddedTab)
+        } else {
+            windowBody
+        }
+    }
+
+    @ViewBuilder
+    private func notchPaneContent(_ tab: SettingsTab) -> some View {
+        switch tab {
+        case .general: generalTab
+        case .transcription: transcriptionTab
+        case .dictionary: dictionaryTab
+        case .speech: speechPane
+        case .history: EmptyView()
+        }
+    }
+
+    /// Each pane scrolls inside itself (a grouped Form, or the dictionary's list), so the drawer only gives it a
+    /// frame. The window's background is hidden: the notch's glass is the background.
+    private func notchPane(_ tab: SettingsTab) -> some View {
+        notchPaneContent(tab)
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .modifier(
+                SettingsVocabularyRevisionObserver(
+                    revision: vocabularyRevision(),
+                    onRefresh: { loadDictionaryPreview() }
+                )
+            )
+            .task(id: tab) {
+                guard tab == .dictionary else { return }
+                onRequestVocabularySnapshot()
+                if !hasInitialDictionaryPreview { loadDictionaryPreview() }
+            }
+    }
+
+    private var speechPane: some View {
+        SpeechSettingsView(controls: speechControls(), connected: speechConnected(),
+                           busy: speechBusyReason() != nil, busyReason: speechBusyReason(), pending: speechPending(), notice: speechNotice(),
+                           onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech,
+                           cloneEngine: cloneEngineControl)
+            .onAppear { onRefreshModelsStatus() }
+    }
+
+    private var windowBody: some View {
         SettingsNavigationShell(
             selection: $selectedTab, footer: footerPresentation(),
             installedVersion: installedVersion, versionStatus: versionStatus
@@ -894,13 +951,7 @@ public struct SettingsView: View {
                     subtitle: "Your recordings and conversations"
                 ) { historyTab }
             case .speech:
-                settingsPage(title: "Speech") {
-                    SpeechSettingsView(controls: speechControls(), connected: speechConnected(),
-                                       busy: speechBusyReason() != nil, busyReason: speechBusyReason(), pending: speechPending(), notice: speechNotice(),
-                                       onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech,
-                                       cloneEngine: cloneEngineControl)
-                        .onAppear { onRefreshModelsStatus() }
-                }
+                settingsPage(title: "Speech") { speechPane }
             case .transcription:
                 settingsPage(title: "Transcription") { transcriptionTab }
             case .general:
@@ -2327,9 +2378,12 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Dictionary").font(.title2.weight(.semibold))
-                        Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
+                    // The notch drawer's tab already says Dictionary, and it carries no explanatory prose (0510 N2).
+                    if notchEmbeddedTab == nil {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Dictionary").font(.title2.weight(.semibold))
+                            Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
+                        }
                     }
                     Spacer(minLength: 12)
                     Button {
@@ -2343,9 +2397,9 @@ public struct SettingsView: View {
                 }
                 searchRow
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 19)
-            .padding(.bottom, 14)
+            .padding(.horizontal, notchEmbeddedTab == nil ? 22 : 12)
+            .padding(.top, notchEmbeddedTab == nil ? 19 : 8)
+            .padding(.bottom, notchEmbeddedTab == nil ? 14 : 8)
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -2460,12 +2514,11 @@ public struct SettingsView: View {
             guard !Task.isCancelled else { return }
             DictionaryDeletion.commitIfExpired(now: Date(), pending: &pendingDeletion, commit: commitDeletion)
         }
-        .sheet(item: $termSheet) { edit in
+        .modifier(DictionaryTermEditorPresentation(edit: $termSheet, inDrawer: notchEmbeddedTab != nil) { edit in
             DictionaryAddSheetView(edit: edit, existingEntries: localEntries, onSave: { saved in
                 saveTermSheet(saved)
             }, onCancel: { termSheet = nil })
-                .frame(width: 420)
-        }
+        })
         .onChange(of: termSheet) { _, sheet in
             // A save could re-add the very term waiting for its Undo window; send that removal first.
             if sheet != nil { DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion) }
@@ -3193,6 +3246,38 @@ public struct SettingsView: View {
         guard loaded else { return title }
         guard let matches else { return "\(title) (\(count))" }
         return "\(title) (\(matches) of \(count))"
+    }
+}
+
+/// The one Add/Edit term editor. In the window it is a sheet (Etan's 2.2.24 review #3). In the notch drawer it covers
+/// the drawer's pane instead: a sheet on the notch panel would count as a modal (NotchModalObserver) and close the very
+/// drawer it belongs to.
+/// The cover owns Esc while it shows (0510 review F2): Esc cancels it and returns to Dictionary, the drawer kept.
+struct DictionaryTermEditorPresentation<Editor: View>: ViewModifier {
+    @Binding var edit: DictionaryTermEdit?
+    let inDrawer: Bool
+    var escapeOwnership: NotchEscapeOwnership = .shared
+    @ViewBuilder let editor: (DictionaryTermEdit) -> Editor
+    @State private var escapeClaim = UUID()
+
+    func body(content: Content) -> some View {
+        if inDrawer {
+            content.overlay {
+                if let edit {
+                    ScrollView {
+                        editor(edit)
+                    }
+                    .background(.regularMaterial)
+                    .accessibilityAddTraits(.isModal)
+                    .onAppear { escapeOwnership.claim(escapeClaim) { self.edit = nil } }
+                    .onDisappear { escapeOwnership.release(escapeClaim) }
+                }
+            }
+        } else {
+            content.sheet(item: $edit) { edit in
+                editor(edit).frame(width: 420)
+            }
+        }
     }
 }
 

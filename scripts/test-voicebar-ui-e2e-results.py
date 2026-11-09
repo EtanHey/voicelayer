@@ -105,7 +105,7 @@ class ReportTests(unittest.TestCase):
             results.report(self.root, [step], [dict(attachments=[attachment])])
 
     def test_etan_qa_row_xfail_needs_matching_marker_and_exact_surface(self):
-        for row in ['N1', 'N4', 'N5', 'N6', 'N7', 'N9', 'N10']:
+        for row in ['Q2']:
             expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] product assertion'],
                             surfaces=['e2e24:' + row])
             step = dict(passed=True, expectedFailure=expected)
@@ -126,25 +126,33 @@ class ReportTests(unittest.TestCase):
 
     def test_etan_qa_row_exports_as_expected_never_verified(self):
         directory, ledger, manifest = self.attachment_run()
-        expected = dict(packet='N6', surface='e2e24:N6', surfaces=['e2e24:N6'],
-                        descriptions=['[N6] hint overlaps last timestamp'])
+        expected = dict(packet='Q2', surface='e2e24:Q2', surfaces=['e2e24:Q2'],
+                        descriptions=['[Q2] recording wing has no microphone control'])
         ledger['steps'][0]['expectedFailure'] = expected
-        ledger['coverage'].update(expectedSurfaces={'e2e24:N6': 'N6'}, missingSurfaces=[], verifiedSurfaces=[])
+        ledger['coverage'].update(expectedSurfaces={'e2e24:Q2': 'Q2'}, missingSurfaces=[], verifiedSurfaces=[])
         (directory / 'step.json').write_text(json.dumps(ledger['steps'][0]))
         (directory / 'ledger.json').write_text(json.dumps(ledger))
         self.assertTrue(self.export_attached_run())
-        self.assertIn('XFAIL [N6]', (directory / 'index.html').read_text())
-        ledger['coverage']['verifiedSurfaces'] = ['e2e24:N6']
+        self.assertIn('XFAIL [Q2]', (directory / 'index.html').read_text())
+        ledger['coverage']['verifiedSurfaces'] = ['e2e24:Q2']
         (directory / 'ledger.json').write_text(json.dumps(ledger))
         with self.assertRaises(ValueError):
             self.export_attached_run()
 
     def test_known_qa_unexpected_pass_cannot_become_verified(self):
         directory, ledger, manifest = self.attachment_run()
-        ledger['coverage'].update(expectedSurfaces={}, missingSurfaces=[], verifiedSurfaces=['e2e24:N5'])
+        ledger['coverage'].update(expectedSurfaces={}, missingSurfaces=[], verifiedSurfaces=['e2e24:Q2'])
         (directory / 'ledger.json').write_text(json.dumps(ledger))
         with self.assertRaises(ValueError):
             self.export_attached_run()
+
+    def test_fixed_0510_rows_verify_normally_and_no_longer_take_an_expected_tag(self):
+        self.assertFalse({'N1', 'N4', 'N5', 'N6', 'N7', 'N9', 'N10'} & results.QA_ROW_PACKETS)
+        for row in ['N1', 'N9']:
+            expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] stale'],
+                            surfaces=['e2e24:' + row])
+            with self.assertRaises(ValueError):
+                results.expected_packet(dict(passed=True, expectedFailure=expected))
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(suffix='.noindex', dir=BUILD_ROOT)

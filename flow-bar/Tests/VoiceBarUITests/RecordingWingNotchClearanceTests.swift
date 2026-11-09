@@ -43,7 +43,7 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         }
         // The meter is centred in the visible wing (from the notch edge to the outer edge), within 2 pt.
         let wing = p.geometry.trailingWingWidth
-        let meterMinX = slot.coreInset + VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.meterGap
+        let meterMinX = slot.coreInset + VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.timeGap
         XCTAssertEqual(meterMinX + WaveformLayout.viewportWidth / 2, (physicalEdge + wing) / 2, accuracy: 2)
         XCTAssertEqual(meterMinX + WaveformLayout.viewportWidth + VoiceBarRecordingWingLabel.meterGap +
                        VoiceBarRecordingWingLabel.outerRegionWidth + slot.outerInset, wing, accuracy: 0.001,

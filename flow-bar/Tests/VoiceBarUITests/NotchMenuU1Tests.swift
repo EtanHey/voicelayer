@@ -99,8 +99,9 @@ final class NotchMenuU1Tests: XCTestCase {
     func testRealBarViewClickSlopAndHistoryEligibility() throws {
         let cases: [(VoiceMode, Bool, Bool, CGFloat, Bool)] = [
             (.idle, true, false, 0, false), (.idle, true, false, 80, false),
-            (.idle, false, true, 80, false), (.recording, true, true, 80, false),
-            (.transcribing, true, true, 80, false), (.idle, true, true, 80, true),
+            // Etan, QA 0510 R3/N7: History pulls down while recording and transcribing too; never over agent speech.
+            (.idle, false, true, 80, false), (.recording, true, true, 80, true),
+            (.transcribing, true, true, 80, true), (.idle, true, true, 80, true), (.speaking, true, true, 80, false),
         ]
         for (mode, hovered, hasEntries, distance, historyAllowed) in cases {
             let state = VoiceState()
@@ -130,7 +131,7 @@ final class NotchMenuU1Tests: XCTestCase {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.02)); mounted = mounted || bridge.isHistoryOpen
             }
             XCTAssertEqual(requested, distance == 0 ? 1 : 0, "\(mode)/\(hovered)/\(hasEntries): a long busy drag cannot become a menu click")
-            XCTAssertEqual(mounted, historyAllowed, "\(mode)/\(hovered)/\(hasEntries): History requires a nonempty launcher")
+            XCTAssertEqual(mounted, historyAllowed, "\(mode)/\(hovered)/\(hasEntries): History requires entries and no agent speech")
             if !historyAllowed {
                 XCTAssertTrue(panel.makeFirstResponder(control))
                 panel.sendEvent(try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],

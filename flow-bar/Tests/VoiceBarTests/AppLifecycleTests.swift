@@ -258,9 +258,17 @@ final class AppLifecycleTests: XCTestCase {
         state.mode = .transcribing
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
-            // 2.3 U2: History and Settings stay live while transcribing.
-            VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
+            // 2.3 U2: History and Settings stay live while transcribing. 0510 N9: the microphone control too.
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 1, trailingControlCountFromCore: 2)
         )
+        // 0510 R3: a drawer open while recording keeps the recording wing's controls live, over a live drawer body.
+        state.mode = .recording
+        state.recordingMode = "ptt"
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .history, bandState: .recording),
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, lowerSurfaceIsInteractive: true)
+        )
+        state.mode = .transcribing
 
         state.mode = .speaking
         state.statusText = "Speaking read"

@@ -89,6 +89,12 @@ public enum NotchHistoryPresentation {
     /// "history-row-1" for the newest row: one-based, by position in the list.
     public static func rowAccessibilityIdentifier(index: Int) -> String { "history-row-\(index + 1)" }
     public static let extendHandleLabel = "Show more rows"
+    /// The Settings drawer's grip (0510 N4): drag it up to close.
+    public static let drawerGripLabel = "Drag up to close"
+    /// 0510 N6: the overpull hint, which sits in the handle's band and never over a row.
+    public static let settingsPullHint = "Release for Settings"
+    public static let settingsPullHintIdentifier = "notch-settings-pull-hint"
+    public static let settingsPullHintHeight: CGFloat = NotchHistoryMorph.handleBandHeight
 
     // V12: what a row's text column can show while its hover actions are out (the 404 pt list, the row's insets,
     // the action column and the gap before it).

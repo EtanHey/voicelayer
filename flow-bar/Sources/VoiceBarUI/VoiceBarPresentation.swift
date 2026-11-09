@@ -156,6 +156,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var transientNote: String?
     /// 2.3 N1: an earlier take is still transcribing while this one records (the spinner beside Stop).
     public var showsEarlierTakeProcessing: Bool
+    /// 0510 N9: an idle notice's left wing holds the mic and its microphone control (two slots).
+    public var showsIdleMicrophoneControl: Bool = false
 
     public init(
         mode: VoiceMode,
@@ -237,6 +239,12 @@ public enum VoiceBarPresentation {
         return notes.contains(text)
     }
 
+    /// 0510 N9: an idle notice (Typed, a paste flow, a queued badge, the F5 preview) shows the launcher's mic and
+    /// its microphone control, unless a parked read's pause or queue controls hold that wing.
+    public static func showsIdleMicrophoneControl(for state: VoiceState) -> Bool {
+        state.mode == .idle && playbackPauseControl(for: state) == nil && readQueueControl(for: state) == nil
+    }
+
     public static func notchPresentation(
         from input: VoiceBarNotchOperationalInput
     ) -> VoiceBarNotchPresentation {
@@ -314,7 +322,9 @@ public enum VoiceBarPresentation {
         case .speaking:
             readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
         case .idle:
-            playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+            input.showsIdleMicrophoneControl
+                ? VoiceBarNotchContract.fixedWingWidth
+                : playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
         case .transcribing:
             // 2.3 U2: the spinner sits where Stop was, in the same fixed wing.
             VoiceBarNotchContract.fixedWingWidth
@@ -412,7 +422,7 @@ public enum VoiceBarPresentation {
             showsProcessingSpinner: showsProcessingSpinner && speech == 0)
     }
 
-    /// Collapsed Stop sits centred in the recording wing's outer region (24 pt), 2 pt in from each side.
+    /// Collapsed Stop sits centred in the recording wing's outer region (26 pt since 0510 N10), 3 pt in from each side.
     public static var readingStopOuterRegionInset: CGFloat {
         (VoiceBarRecordingWingLabel.outerRegionWidth - VoiceBarNotchContract.material.compactControlSize) / 2
     }

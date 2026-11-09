@@ -150,14 +150,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             onCancelNotchMenu: { [weak self] in self?.surfaceHandoff.cancelQueuedMenu() },
             surface: notchSurface,
             settingsDrawer: NotchSettingsDrawerContext(
-                shortcutHint: { "QA · hotkeys disabled" }, defaultMicrophoneName: { "QA microphone A" },
                 updates: nil,
-                openSettingsWindow: { [weak self] tab, focus in
-                    // The drawer's Fix… is the badged gear's old destination: the same setup spot and receipt.
-                    if focus == .permissions { self?.openSetupSettings(); return }
-                    self?.model.tab = tab; self?.model.focus = focus; self?.model.requestID += 1
-                    self?.settings.makeKeyAndOrderFront(nil)
-                    self?.model.receipt("notch-settings-window-\(tab.title.lowercased())")
+                pane: { [weak self] tab, request in
+                    guard let self else { return AnyView(EmptyView()) }
+                    return AnyView(UIE2ESettings(model: model, notchTab: tab, notchRequest: request))
                 }
             )))
         notchSurface.log = { [weak self] line in
@@ -369,11 +365,12 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state))
         input.isHistoryPanelOpen = historyOpen
         input.historyRows = historyRows
+        input.showsIdleMicrophoneControl = VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
         let presentation = VoiceBarPresentation.notchPresentation(from: input)
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(presentation: presentation,
             interactionConfiguration: AppDelegate.notchInteractionConfiguration(
-                for: state, visualState: presentation.visualState),
+                for: state, visualState: presentation.visualState, bandState: presentation.bandState),
             canvasGeometry: canvas.canvasGeometry)
     }
 
@@ -994,9 +991,12 @@ private extension View {
 
 private struct UIE2ESettings: View {
     let model: UIE2EModel
+    /// Non-nil: the notch Settings drawer's pane for this tab (0510 N1), from the same synthetic stores.
+    var notchTab: SettingsTab?
+    var notchRequest: SettingsTabRequest?
     var body: some View {
         let history = model.history, asks = model.askHistory
-        SettingsView(hotkeyEnabled: false, missingPermissions: model.missingPermissions,
+        let settings = SettingsView(hotkeyEnabled: false, missingPermissions: model.missingPermissions,
             availableDevices: { [] }, selectedDeviceID: { nil }, prioritySnapshot: { model.microphone },
             onReorderPriority: {
                 model.microphoneOrder = $0; model.receipt("microphone-order")
@@ -1029,9 +1029,15 @@ private struct UIE2ESettings: View {
             onRevealHistoryFile: { _ in model.receipt("history-finder") },
             footerPresentation: { .resolve(isConnected: model.voice.isConnected, mode: model.voice.mode, captureLive: false,
                                             errorMessage: nil, remoteSTTConfigured: false) },
-            tabRequest: .init(tab: model.tab, focus: model.focus, id: model.requestID), initialDictionaryPreview: model.preview,
-            onSelectedTabChange: { model.tab = $0 },
+            tabRequest: notchTab == nil ? .init(tab: model.tab, focus: model.focus, id: model.requestID) : notchRequest,
+            initialDictionaryPreview: model.preview,
+            onSelectedTabChange: { if notchTab == nil { model.tab = $0 } },
             historyPlayback: .init(start: { _ in fatalError("UIE2E forbids playback") }, stop: {}))
+        if let notchTab {
+            settings.notchDrawerPane(notchTab)
+        } else {
+            settings
+        }
     }
 }
 /// The host's take identity: readable by XCUI, never hit-tested, never seen.

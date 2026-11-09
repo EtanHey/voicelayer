@@ -231,11 +231,7 @@ final class NotchRealGeometryTests: XCTestCase {
             describe: VoiceBarGitDescribe(releaseVersion: "2.3.0", commitsAhead: 14),
             check: check, launcher: VoiceBarUpdateLauncher(fileExists: { _ in false }), isDictating: { false }
         )
-        let context = NotchSettingsDrawerContext(
-            shortcutHint: { "Hold F5 to dictate" },
-            defaultMicrophoneName: { "Synthetic USB Audio Interface Microphone With A Long Name" },
-            updates: updates, openSettingsWindow: { _, _ in }
-        )
+        let context = NotchSettingsDrawerContext(updates: updates)
         for surface in Surface.allCases {
             let state = state(for: surface)
             let model = VoiceBarNotchPresentationModel()

@@ -15,8 +15,8 @@ final class NotchHistoryExtendAccessibilityTests: XCTestCase {
     func testNativeAdapterExportsRowsAndAdjustsWithoutTakingPointerOrKeyFocus() throws {
         var adjustments: [Int] = []
         func handle(rows: Int) -> NotchHistoryExtendHandle {
-            NotchHistoryExtendHandle(palette: .resolve(for: .dark), rows: rows, maximumRows: 8,
-                                     onAdjust: { adjustments.append($0) })
+            NotchHistoryExtendHandle(palette: .resolve(for: .dark),
+                                     rows: (rows, 8, { adjustments.append($0) }))
         }
         let host = NSHostingView(rootView: handle(rows: 6))
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 100, height: 30),

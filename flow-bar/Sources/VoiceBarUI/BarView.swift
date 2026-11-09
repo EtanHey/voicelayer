@@ -168,7 +168,11 @@ extension VoiceBarNotchWingContentEntry {
     }
 }
 
-private extension View {
+extension View {
+    /// The notch's glyph treatment: a 0.75 pt contrast edge drawn as four hard shadows. It also renders the glyph
+    /// through its own shadow layer, the path every band glyph takes; Etan's 0510 S4 shows those painting while the
+    /// drawer's plain glyphs vanished in the same unfocused frame (N3), so every notch glyph takes it. HYPOTHESIS:
+    /// the unfocused vanishing was never reproduced and its root cause is unknown; confirm on the real app.
     func notchAdaptiveGlyphEdge(_ color: Color) -> some View {
         shadow(color: color, radius: 0, x: -0.75, y: 0)
             .shadow(color: color, radius: 0, x: 0.75, y: 0)
@@ -363,6 +367,10 @@ public struct BarView: View {
     /// The Settings drawer's data and actions. Without it the gear keeps opening the Settings window (2.3).
     private let settingsDrawer: NotchSettingsDrawerContext?
     @State private var modalObserver: NotchModalObserver?
+    /// The spot the Settings drawer was last opened at (0510 N9: the microphone control opens General at the
+    /// microphone priority list). Its id changes per request so the pane scrolls there again.
+    @State private var settingsRequest: SettingsTabRequest?
+    @State private var settingsRequestID = 0
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     /// The History panel is on screen (open, opening, closing or being pulled). The window keeps the panel's size
@@ -472,16 +480,18 @@ public struct BarView: View {
         switch surface.drawer {
         case .settings: return NotchSettingsDrawerPresentation.rows
         case let .history(detent): return detent.rows(entryCount: entries)
-        case nil: return surface.historyDetent.rows(entryCount: entries)
+        case nil: return pullOpensSettings ? NotchSettingsDrawerPresentation.rows
+            : surface.historyDetent.rows(entryCount: entries)
         }
     }
 
-    /// What the notch is doing that outranks a drawer, reported to the machine. Recording wings and the
-    /// teleprompter close any drawer and refuse a new one.
+    /// What the notch is doing, reported to the machine. Only agent speech closes a drawer and refuses a new one:
+    /// the teleprompter, or an agent's Ask capturing (0510 R3: "as long as there's no teleprompter of speech or
+    /// asking"). A dictation keeps the drawer under its wings.
     private func synchronizeSurfaceActivity() {
         let visual = notchPresentation.visualState
         surface.send(.recordingChanged(visual == .recording || state.mode == .recording))
-        surface.send(.teleprompterChanged(visual == .teleprompter))
+        surface.send(.teleprompterChanged(visual == .teleprompter || state.isAskCapture))
     }
 
     private func toggleHistoryDrawer() {
@@ -498,6 +508,7 @@ public struct BarView: View {
         if isSettingsDrawerOpen {
             surface.send(.dismiss(.toggle))
         } else {
+            settingsRequest = nil
             surface.send(.openSettings(.general))
         }
     }
@@ -660,6 +671,7 @@ public struct BarView: View {
             showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
         )
         input.isHistoryPanelOpen = isHistoryMounted
+        input.showsIdleMicrophoneControl = VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
         input.historyRows = historyRows
         input.teleprompterLines = state.teleprompterVisibleLines
         input.transientNoteOffersHistory = state.selectionFeedbackNoteOffersHistory
@@ -680,10 +692,14 @@ public struct BarView: View {
         guard presentation.visualState == .history else { return nil }
         return VoiceBarNotchHistoryMorphInput(
             progress: historyFrozenProgress ?? historyProgress,
-            closed: VoiceBarNotchContract.geometry(
-                for: .hoverLauncher,
-                coreWidth: presentation.geometry.coreWidth,
-                visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+            // The band the drawer closes back into: the launcher's, or the activity's own (0510 R3).
+            closed: VoiceBarNotchGeometry(
+                coreWidth: presentation.geometry.coreWidth, topHeight: presentation.geometry.topHeight,
+                leadingWingWidth: presentation.geometry.leadingWingWidth,
+                trailingWingWidth: presentation.geometry.trailingWingWidth,
+                bodyLeadingExtent: presentation.geometry.leadingWingWidth,
+                bodyTrailingExtent: presentation.geometry.trailingWingWidth,
+                lowerSurfaceHeight: 0
             ),
             open: presentation.geometry,
             // The live rows plus any note band, never past History's window.
@@ -744,7 +760,7 @@ public struct BarView: View {
                 if case .idle = historyPull.phase, case .idle = historyRowsPull.phase {
                     historyPressIsBare = abs(value.startLocation.x - historyPanelCentreX) <= notchPresentation.geometry.coreWidth / 2
                         && NotchHistoryPull.accepts(y: value.startLocation.y)
-                    guard canPullHistory || isSettingsDrawerOpen || historyPressIsBare else { return }
+                    guard canPullDrawer || isSettingsDrawerOpen || historyPressIsBare else { return }
                     if NotchHistoryPull.accepts(y: value.startLocation.y) {
                         historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
                     } else if isHistoryPresented, NotchHistoryPull.acceptsHandle(
@@ -763,7 +779,7 @@ public struct BarView: View {
                 if max(abs(value.translation.width), abs(value.translation.height)) > NotchHistoryMorph.dragSlop {
                     historyPressIsBare = false
                 }
-                guard canPullHistory || isSettingsDrawerOpen else { return }
+                guard canPullDrawer || isSettingsDrawerOpen else { return }
                 followHistoryPull(y: value.location.y, time: time, openHeight: openHeight)
             }
             .onEnded { _ in
@@ -829,19 +845,52 @@ public struct BarView: View {
         dragHistoryRows(to: y, time: time)
     }
 
-    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past 7 and the last row.
+    /// V6: the extend handle follows the pointer one row per 46 pt, stretching past the last row. Pushed above the
+    /// collapsed rows it closes the panel with the pointer instead (0510 N4, `NotchHistoryMorph.handleDrag`).
     private func dragHistoryRows(to y: CGFloat, time: TimeInterval) {
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
-        guard let rows = historyRowsPull.move(
+        guard historyRowsPull.move(
             y: y, time: time, range: NotchHistoryMorph.rowHeight,
             band: { NotchHistoryMorph.rowsRubberBand($0, maximum: maximum) },
             seed: renderedHistoryRows(at: time)
-        ) else { return }
+        ) != nil else { return }
+        let follow = NotchHistoryMorph.handleDrag(
+            rawRows: historyRowsPull.rawProgress, maximum: maximum,
+            openTravel: notchPresentationOpenHistoryHeight - VoiceBarNotchContract.topHeight
+        )
         historyRowsFlight = nil
+        historyFlight = nil
         presentationModel?.setHistoryPullActive(true)
-        var follow = Transaction()
-        follow.disablesAnimations = true
-        withTransaction(follow) { historyRowsExtent = rows }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            historyRowsExtent = follow.rows
+            historyProgress = follow.progress
+        }
+    }
+
+    /// A drag on the open drawer (its body, History's handle or Settings' grip) owns the pointer.
+    private var drawerHoldsPointer: Bool {
+        isDrawerBodyDragActive || historyRowsPull.phase != .idle
+    }
+
+    /// 0510 N4: Settings' grip pushes the drawer closed under the pointer, the same open/close pull as History's
+    /// body: it follows, and a release past halfway (or a flick up) closes it.
+    private func dragDrawerGrip(y: CGFloat, time: TimeInterval) {
+        if !isDrawerBodyDragActive {
+            guard case .idle = historyPull.phase, case .idle = historyRowsPull.phase, isHistoryPresented,
+                  (historyFrozenProgress ?? renderedHistoryProgress(at: time)) > 0.98 else { return }
+            isDrawerBodyDragActive = true
+            historyPull.press(y: y, progress: historyProgress, time: time)
+        }
+        followHistoryPull(y: y, time: time, openHeight: notchPresentationOpenHistoryHeight)
+    }
+
+    private func endDrawerGripDrag(cancelled: Bool) {
+        guard isDrawerBodyDragActive else { return }
+        endHistoryPull(cancelled: cancelled)
+        isDrawerBodyDragActive = false
+        drawerBodyDragEndedAt = NotchHistoryClock.now()
     }
 
     /// A released (or cancelled) handle settles on the nearest whole row with the `pull` spring; the hit region and
@@ -852,12 +901,15 @@ public struct BarView: View {
         guard case let .settle(_, velocity) = historyRowsPull.release(progress: historyRowsExtent, cancelled: cancelled)
         else { return }
         // 2.4 Lane A: pushing the bottom edge up past the collapsed rows closes History (the mirror of pulling it
-        // down); the rows spring back to the detent for the next open.
-        if !cancelled, NotchHistoryMorph.handleClosesHistory(rawRows: rawRows) {
+        // down); the rows spring back to the detent for the next open. A cancelled push settles at the nearer end,
+        // so one that already closed the panel more than halfway closes it.
+        if NotchHistoryMorph.handleClosesHistory(rawRows: rawRows), !cancelled || historyProgress < 0.5 {
             surface.send(.dismiss(.dragUp))
             settleHistoryRowsExtent(to: historyRows, velocity: 0)
             return
         }
+        // A push that closed the panel part-way and was let go short of closing springs it open again.
+        if historyProgress < 1 { animateHistory(toOpen: true) }
         let detent = NotchHistoryDetent.nearest(rows: historyRowsExtent)
         let previous = historyRows
         surface.send(.setHistoryDetent(detent))
@@ -924,7 +976,7 @@ public struct BarView: View {
         presentationModel?.setHistoryPullActive(false)
         switch historyPull.release(progress: historyProgress, cancelled: cancelled) {
         case let .settle(open, velocity):
-            if open, opensSettings {
+            if open, opensSettings || pullOpensSettings && !isHistoryPresented {
                 // Pulled past open: Settings, at the same spot and on the same spring.
                 surface.send(.openSettings(.general))
                 animateHistory(toOpen: true, velocity: velocity)
@@ -947,10 +999,25 @@ public struct BarView: View {
         }
     }
 
-    /// History opens only from the launcher or itself, and never while there's nothing to show.
+    /// A drawer pulls down from the launcher, from itself, and (0510 N7) while recording, transcribing or on a
+    /// compact status such as Typed; never over the teleprompter, during agent speech or an Ask. With no History
+    /// rows the pull is Settings' (review F3: the recording wing has no gear, so the pull is its only route), when
+    /// this notch has a Settings drawer at all.
+    private var canPullDrawer: Bool {
+        let visual = notchPresentation.visualState
+        let speaking = state.mode == .speaking || state.isAskCapture
+        return [.hoverLauncher, .history, .recording, .compactStatus].contains(visual) && !speaking
+            && (!state.recentTranscriptionEntries.isEmpty || settingsDrawer != nil)
+    }
+
+    /// History itself never opens empty.
     private var canPullHistory: Bool {
-        let state = notchPresentation.visualState
-        return (state == .hoverLauncher || state == .history) && !self.state.recentTranscriptionEntries.isEmpty
+        canPullDrawer && !state.recentTranscriptionEntries.isEmpty
+    }
+
+    /// With no History rows, a pull from the notch draws and opens Settings instead (review F3).
+    private var pullOpensSettings: Bool {
+        settingsDrawer != nil && state.recentTranscriptionEntries.isEmpty
     }
 
     private var notchPresentationOpenHistoryHeight: CGFloat {
@@ -993,7 +1060,7 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLeadingContent: some View {
-        switch notchPresentation.visualState {
+        switch notchPresentation.bandState {
         case .idle:
             EmptyView()
         case .hoverLauncher, .history:
@@ -1052,17 +1119,29 @@ public struct BarView: View {
             // R0856-05: the recording controls arrive with a wider wing; they show once its glass covers them.
             .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
         case .compactStatus, .teleprompter:
-            if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {
+            if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {
                 // 2.3 U2: the spinner sits where Stop was, in a control slot so it lines up with it. It is not a
                 // control, so it registers no tooltip (R0856-09: tooltips sit on controls); VoiceOver reads it.
-                transcriptionSpinner
+                // 0510 N9: the microphone control keeps its core-side slot, as on the launcher.
+                HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                    transcriptionSpinner
+                    microphonePickerButton
+                }
             } else if let playbackPauseControl {
                 readingTransportControls(playbackPauseControl)
-            } else if notchPresentation.visualState == .compactStatus,
+            } else if notchPresentation.bandState == .compactStatus,
                       state.mode == .idle, VoiceBarPresentation.readQueueControl(for: state) != nil {
                 playbackLeadingControls(nil)
-            } else if notchPresentation.visualState == .compactStatus {
-                statusIcon
+            } else if notchPresentation.bandState == .compactStatus {
+                if VoiceBarPresentation.showsIdleMicrophoneControl(for: state) {
+                    // 0510 N9 (Typed and every other idle notice): the launcher's mic and chevron, unchanged.
+                    HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                        statusIcon
+                        microphonePickerButton
+                    }
+                } else {
+                    statusIcon
+                }
             }
         }
     }
@@ -1200,7 +1279,7 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchTrailingContent: some View {
-        switch notchPresentation.visualState {
+        switch notchPresentation.bandState {
         case .idle:
             EmptyView()
         case .hoverLauncher, .history:
@@ -1213,20 +1292,20 @@ public struct BarView: View {
             // 46 × 24 pt level meter, centred in the visible wing by an equal empty region outside it (review D3). The
             // time shows only once capture has opened (review D1); the capturing microphone is its tooltip and VoiceOver
             // value, never wing text.
-            HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
+            VoiceBarRecordingTrailingRow {
                 VoiceBarRecordingTimeRegion(
                     elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
                     isCaptureOpen: state.isRecordingCaptureOpen,
                     microphoneName: state.recordingMicrophoneName,
                     color: notchPrimaryLabelColor
                 )
+            } meter: {
                 notchWaveform
-                Color.clear.frame(width: VoiceBarRecordingWingLabel.outerRegionWidth, height: 1)
             }
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
                 notchSpeakingTrailingContent
-            } else if notchPresentation.visualState == .compactStatus {
+            } else if notchPresentation.bandState == .compactStatus {
                 notchCompactStatusContent
             } else if state.isTeleprompterReadback {
                 notchWaveform
@@ -1279,34 +1358,45 @@ public struct BarView: View {
     /// when recording. Collapsed (paused or hidden) there is no eye row, so Stop takes that outer region; a hidden
     /// but playing read puts Show teleprompter beside it.
     private var notchSpeakingTrailingContent: some View {
-        let isCompact = notchPresentation.visualState == .compactStatus
+        let isCompact = notchPresentation.bandState == .compactStatus
         let showsReveal = isCompact && state.isTeleprompterDismissed && !state.isPlaybackPaused
-        return HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
+        let material = VoiceBarNotchContract.material
+        // 0510 N10 made the recording row time, 2 pt, meter, 4 pt, a 26 pt outer region. Reading keeps that geometry
+        // (T5), so the meter sits where it does when recording. Stop sits centred in the outer region on its hit slot
+        // (`readingStopOuterRegionInset`), and the eye one control pitch inside Stop, over the hidden meter's edge.
+        let stopOuterInset = VoiceBarPresentation.readingStopOuterRegionInset
+        let revealOverhang = VoiceBarRecordingWingLabel.meterGap + VoiceBarRecordingWingLabel.outerRegionWidth -
+            stopOuterInset - material.compactControlSize - material.compactControlSpacing
+        return HStack(spacing: VoiceBarRecordingWingLabel.timeGap) {
             VoiceBarReadingTimeRegion(
                 elapsedMilliseconds: { state.playbackElapsedMilliseconds() },
                 color: notchPrimaryLabelColor,
                 showsClock: { state.showsPlaybackClock }
             )
-            ZStack(alignment: .trailing) {
-                notchWaveform
-                    .opacity(showsReveal ? 0 : 1)
-                if showsReveal {
-                    notchTeleprompterButton(
-                        icon: "eye",
-                        accessibilityLabel: "Show teleprompter"
-                    ) {
-                        state.showTeleprompter()
+            HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
+                ZStack(alignment: .trailing) {
+                    notchWaveform
+                        .opacity(showsReveal ? 0 : 1)
+                    if showsReveal {
+                        notchTeleprompterButton(
+                            icon: "eye",
+                            accessibilityLabel: "Show teleprompter"
+                        ) {
+                            state.showTeleprompter()
+                        }
+                        .padding(.trailing, -revealOverhang)
                     }
-                    // The meter's trailing edge is exactly one control pitch inside Stop (4 pt gap + 2 pt inset),
-                    // so the wing's hit rects stay slot-aligned from the outer edge.
                 }
+                .frame(width: WaveformLayout.viewportWidth, alignment: .trailing)
+                ZStack(alignment: .trailing) {
+                    if isCompact {
+                        playbackStopButton
+                            .padding(.trailing, stopOuterInset)
+                    }
+                }
+                .frame(width: VoiceBarRecordingWingLabel.outerRegionWidth,
+                       height: material.compactControlSize, alignment: .trailing)
             }
-            .frame(width: WaveformLayout.viewportWidth, alignment: .trailing)
-            ZStack {
-                if isCompact { playbackStopButton }
-            }
-            .frame(width: VoiceBarRecordingWingLabel.outerRegionWidth,
-                   height: VoiceBarNotchContract.material.compactControlSize)
         }
         // As when recording, the time starts 8 pt past the PHYSICAL notch (the glass hides the wing's first points).
         .padding(.leading, max(0, notchPresentation.visibleCoreOcclusionInset))
@@ -1375,49 +1465,49 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLowerPanelContent: some View {
-        if notchPresentation.visualState == .history, case let .settings(tab) = surface.drawer, let settingsDrawer {
-            NotchSettingsDrawer(
-                selectedTab: tab, palette: notchPalette, missingPermissions: state.setupMissingPermissions,
-                facts: { tab in
-                    NotchSettingsDrawerPresentation.facts(
-                        for: tab, recognizer: state.recognizerPickerState,
-                        dictionaryTerms: state.transcriptionVocabularyTerms.count,
-                        recentDictations: state.recentTranscriptionEntries.count
-                    )
-                },
-                context: settingsDrawer,
-                onSelectTab: { surface.send(.selectSettingsTab($0)) },
-                onOpenWindow: { tab, focus in
-                    guard !drawerBodyDragJustHappened else { return }
-                    surface.send(.dismiss(.action))
-                    settingsDrawer.openSettingsWindow(tab, focus)
-                }
-            )
+        if notchPresentation.visualState == .history, let tab = settingsTabShown, let settingsDrawer {
+            VStack(spacing: 0) {
+                NotchSettingsDrawer(
+                    selectedTab: tab, appearance: notchAppearance, context: settingsDrawer, request: settingsRequest,
+                    history: {
+                        AnyView(historyPanelContent(listHeight: NotchSettingsDrawerPresentation.historyListHeight)
+                            .padding(.top, NotchHistoryMorph.listTopInset))
+                    },
+                    onSelectTab: { surface.send(.selectSettingsTab($0)) }
+                )
+                .simultaneousGesture(drawerBodyDragGesture)
+                // 0510 N4: the panes scroll inside themselves, so the drawer gets History's grip to push it closed.
+                NotchHistoryExtendHandle(
+                    palette: notchPalette, onDrag: dragDrawerGrip, onDragEnd: endDrawerGripDrag
+                )
+            }
             .frame(maxHeight: .infinity, alignment: .top)
-            .simultaneousGesture(drawerBodyDragGesture)
-            .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress))
+            .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
+                                            keepsPointer: drawerHoldsPointer))
         } else if notchPresentation.visualState == .history {
             VStack(spacing: 0) {
                 historyPanelContent()
                     .padding(.horizontal, NotchHistoryMorph.listHorizontalInset)
                     .padding(.top, NotchHistoryMorph.listTopInset)
                     .simultaneousGesture(drawerBodyDragGesture)
-                    .overlay(alignment: .bottom) {
-                        if isSettingsPullArmed { settingsPullHint }
-                    }
                 NotchHistoryExtendHandle(
                     palette: notchPalette,
-                    rows: historyRows,
-                    maximumRows: NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
-                    onAdjust: adjustHistoryRows,
+                    rows: (historyRows, NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
+                           adjustHistoryRows),
+                    showsGrip: !isSettingsPullArmed,
                     onDrag: dragHistoryHandle,
                     onDragEnd: { cancelled in
                         if historyRowsPull.phase != .idle { endHistoryRowsPull(cancelled: cancelled) }
                     }
                 )
+                // 0510 N6: the hint takes the handle's band (the overpull stretches the shell under it), never a row.
+                .overlay {
+                    if isSettingsPullArmed { settingsPullHint }
+                }
             }
                 .frame(maxHeight: .infinity, alignment: .top)
-                .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress))
+                .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
+                                                keepsPointer: drawerHoldsPointer))
         } else if isMorphTeleprompterContentPresented {
             // T2/T8 (Etan QA 2026-11-09): text, then the scrubber close to the eye row, then the height handle under
             // the eye row. No footer row; the tight gaps leave the room to the text.
@@ -1462,18 +1552,25 @@ public struct BarView: View {
         }
     }
 
-    /// Shown while a pull past open is armed: releasing opens Settings.
+    /// The Settings tab the lower panel draws: the open Settings drawer's, or General while a pull with no History
+    /// rows previews Settings (review F3).
+    private var settingsTabShown: SettingsTab? {
+        if case let .settings(tab) = surface.drawer { return tab }
+        return surface.drawer == nil && pullOpensSettings ? .general : nil
+    }
+
+    /// Shown while a pull past open is armed: releasing opens Settings. It fits the handle's 18 pt band (0510 N6).
     private var settingsPullHint: some View {
-        Label("Release for Settings", systemImage: "gearshape")
-            .font(.system(size: 11.5, weight: .medium))
+        Label(NotchHistoryPresentation.settingsPullHint, systemImage: "gearshape")
+            .font(.system(size: 11, weight: .medium))
             .foregroundStyle(notchPalette.primary.color)
             .padding(.horizontal, 10)
-            .frame(height: 24)
+            .frame(height: NotchHistoryPresentation.settingsPullHintHeight)
             .background(Capsule(style: .continuous).fill(notchPalette.primary.color.opacity(0.14)))
-            .padding(.bottom, 6)
             .transition(.opacity)
             .allowsHitTesting(false)
-            .accessibilityHidden(true)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(NotchHistoryPresentation.settingsPullHintIdentifier)
     }
 
     @ViewBuilder
@@ -1642,8 +1739,8 @@ public struct BarView: View {
 
     private func handleModeChange(_ newMode: VoiceMode) {
         errorDismissTask?.cancel()
-        if newMode != .idle,
-           !(newMode == .transcribing && state.isHistoryRetranscriptionPending) {
+        // 0510 N8: a drawer stays open through recording and transcribing; agent speech takes the notch.
+        if newMode == .speaking {
             surface.send(.dismiss(.voiceActivity))
         }
     }
@@ -1844,14 +1941,29 @@ public struct BarView: View {
         }
     }
 
+    /// 0510 N9 (Etan, R4: the mic control "should take you to the right settings page in the notch app", the same
+    /// every time): wherever it shows, it opens Settings › General at Microphone priority in the notch, and
+    /// closes it again from there. Without a Settings drawer (2.3 hosts) it keeps opening the microphone list.
     private var microphonePickerButton: some View {
         notchButton(
             icon: "chevron.down",
+            isSelected: isMicrophoneSettingsOpen,
             accessibilityLabel: "Choose microphone",
             tooltip: "Choose microphone"
         ) {
-            onOpenMicrophonePicker()
+            guard settingsDrawer != nil else { return onOpenMicrophonePicker() }
+            if isMicrophoneSettingsOpen {
+                surface.send(.dismiss(.toggle))
+            } else {
+                settingsRequestID &+= 1
+                settingsRequest = SettingsTabRequest(tab: .general, focus: .microphonePriority, id: settingsRequestID)
+                surface.send(.openSettings(.general))
+            }
         }
+    }
+
+    private var isMicrophoneSettingsOpen: Bool {
+        surface.drawer == .settings(.general) && settingsRequest?.focus == .microphonePriority
     }
 
     /// Tests only: mount with the notch History panel already open.
@@ -1929,7 +2041,7 @@ public struct BarView: View {
     }
 
     /// Spec §4: the History panel inside the notch's lower surface.
-    private func historyPanelContent() -> some View {
+    private func historyPanelContent(listHeight fixedListHeight: CGFloat? = nil) -> some View {
         NotchHistoryPanel(
             entries: state.recentTranscriptionEntries,
             activeRetranscriptionPath: state.activeHistoryRetranscriptionPath,
@@ -1950,7 +2062,7 @@ public struct BarView: View {
                     onOpenHistory()
                 }
             },
-            listHeight: min(
+            listHeight: fixedListHeight ?? min(
                 NotchHistoryMorph.listHeight(rows: historyRowsExtent),
                 NotchHistoryMorph.historyCanvasLowerSurfaceHeight - notchPresentation.feedbackHeight
                     - NotchHistoryMorph.listTopInset - NotchHistoryMorph.handleBandHeight

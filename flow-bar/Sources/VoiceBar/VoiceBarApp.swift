@@ -1226,7 +1226,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     geometry: layout.presentation.geometry,
                     configuration: Self.notchInteractionConfiguration(
                         for: voiceState,
-                        visualState: layout.presentation.visualState
+                        visualState: layout.presentation.visualState,
+                        bandState: layout.presentation.bandState
                     )
                 )
                 guard region.rects.indices.contains(expected.rectIndex) else {
@@ -2156,7 +2157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             presentation: presentation,
             interactionConfiguration: Self.notchInteractionConfiguration(
                 for: voiceState,
-                visualState: presentation.visualState
+                visualState: presentation.visualState,
+                bandState: presentation.bandState
             ),
             canvasGeometry: canvas.canvasGeometry
         )
@@ -2174,8 +2176,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     static func notchInteractionConfiguration(
         for state: VoiceState,
-        visualState: VoiceBarNotchVisualState
+        visualState: VoiceBarNotchVisualState,
+        bandState: VoiceBarNotchVisualState? = nil
     ) -> VoiceBarNotchInteractionConfiguration {
+        // 0510 R3: under a drawer the band keeps the activity's own controls; the drawer's body is live too.
+        if visualState == .history, let bandState, bandState != .history, bandState != .hoverLauncher {
+            return notchInteractionConfiguration(for: state, visualState: bandState).withInteractiveLowerSurface
+        }
         switch visualState {
         case .idle:
             return .none
@@ -2192,8 +2199,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .compactStatus:
             switch state.mode {
             case .transcribing:
-                // 2.3 U2: the spinner is not a control; History and Settings stay live on the right.
-                return VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
+                // 2.3 U2: the spinner is not a control; History and Settings stay live on the right. 0510 N9: the
+                // microphone control takes the left wing's core-side slot.
+                return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1, trailingControlCountFromCore: 2)
             case .speaking:
                 // T1/T6: speed, Back, pause/play and Forward on the left.
                 // T5/T7: collapsed, Stop sits in the recording-style wing's outer region (a hidden read's eye beside it).
@@ -2211,9 +2219,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     trailingOuterInset: WaveformLayout.outerInset
                 )
             case .idle:
-                // D2: Next and "+N" wait in the left wing after F5 interrupted a queued read.
-                return VoiceBarNotchInteractionConfiguration(leadingControlCount: playbackLeadingSlotCount(for: state),
-                                                             leadingOutermostControlWidth: playbackLeadingOutermostWidth(for: state))
+                // D2: Next and "+N" wait in the left wing after F5 interrupted a queued read. 0510 N9: otherwise the
+                // launcher's mic and its microphone control. T6: a paused read's outermost control is the speed chip.
+                let showsMicrophoneControl = VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
+                return VoiceBarNotchInteractionConfiguration(
+                    leadingControlCount: showsMicrophoneControl ? 2 : playbackLeadingSlotCount(for: state),
+                    leadingOutermostControlWidth: showsMicrophoneControl ? nil : playbackLeadingOutermostWidth(for: state)
+                )
             case .disconnected, .recording:
                 return .none
             }
@@ -2318,8 +2330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchPresentation {
         let mode = state?.mode ?? .idle
-        return VoiceBarPresentation.notchPresentation(
-            from: VoiceBarNotchOperationalInput(
+        var input = VoiceBarNotchOperationalInput(
                 mode: mode,
                 showsRecordingHold: mode == .recording && state?.recordingMode == "vad",
                 hasTeleprompterText: state?.teleprompterText != nil,
@@ -2342,8 +2353,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 transientNote: state?.selectionFeedbackNote,
                 transientNoteOffersHistory: state?.selectionFeedbackNoteOffersHistory,
                 showsEarlierTakeProcessing: state.map(VoiceBarPresentation.showsEarlierTakeProcessing(for:)) ?? false
-            )
         )
+        input.showsIdleMicrophoneControl = state.map(VoiceBarPresentation.showsIdleMicrophoneControl(for:)) ?? false
+        return VoiceBarPresentation.notchPresentation(from: input)
     }
 
     private static func notchStatusText(for state: VoiceState?) -> String {
@@ -3286,18 +3298,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// "Next dictation". Side-effect free (it never observes devices or triggers an apply).
     /// 2.4 Lane A: what the notch Settings drawer reads and opens.
     private func makeNotchSettingsDrawerContext() -> NotchSettingsDrawerContext {
-        NotchSettingsDrawerContext(
-            shortcutHint: { [weak self] in
-                guard let self else { return "" }
-                return hotkeyEnabled ? "Hold F5 to dictate" : VoiceBarPresentation.hotkeyPermissionHint(
-                    hotkeyEnabled: hotkeyEnabled, missingPermissions: missingHotkeyPermissions
-                )
-            },
-            defaultMicrophoneName: { [weak self] in self?.defaultMicrophoneName() },
+        installRecognizerSettingsVisibility()
+        return NotchSettingsDrawerContext(
             updates: notchUpdates,
-            openSettingsWindow: { [weak self] tab, focus in self?.openSettingsWindow(tab: tab, focus: focus) }
+            pane: { [weak self] tab, request in
+                guard let self else { return AnyView(EmptyView()) }
+                return AnyView(makeSettingsView(notchRequest: request, embedded: true).notchDrawerPane(tab))
+            }
         )
     }
+
+    /// Recognizer status reads only while a Transcription pane is on screen: the Settings window's tab, or (0510 N1,
+    /// review F1) the notch Settings drawer's Transcription tab, which mounts the same pane with the window closed.
+    func installRecognizerSettingsVisibility() {
+        voiceState.recognizerSettingsIsVisible = { [weak self] in
+            guard let self, NSApp?.isHidden != true else { return false }
+            let window = settingsWindow.map {
+                $0.isVisible && !$0.isMiniaturized && self.lastSettingsTab == .transcription
+            } ?? false
+            return window || notchSurface.drawer == .settings(.transcription)
+        }
+    }
+
+    /// Tests: the app's own notch surface and the drawer context it hands BarView.
+    var notchSurfaceForTesting: NotchSurfaceModel { notchSurface }
+    func notchSettingsDrawerContextForTesting() -> NotchSettingsDrawerContext { makeNotchSettingsDrawerContext() }
 
     func defaultMicrophoneName() -> String? {
         microphonePrioritySnapshot(devices: MicrophoneDeviceManager.availableInputDevices()).nextVisibleDeviceName
@@ -3427,12 +3452,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         [audioPath]
     }
 
-    func makeSettingsView() -> SettingsView {
-        voiceState.recognizerSettingsIsVisible = { [weak self] in
-            guard let self, let window = self.settingsWindow else { return false }
-            return window.isVisible && !window.isMiniaturized && !NSApp.isHidden
-                && self.lastSettingsTab == .transcription
-        }
+    /// The Settings window's view, or (`notchRequest` non-nil or `embedded`) the same stores for a notch drawer pane.
+    func makeSettingsView(notchRequest: SettingsTabRequest? = nil, embedded: Bool = false) -> SettingsView {
+        let isNotchPane = embedded || notchRequest != nil
+        installRecognizerSettingsVisibility()
         return SettingsView(
             hotkeyEnabled: hotkeyEnabled,
             missingPermissions: missingHotkeyPermissions,
@@ -3599,8 +3622,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 )
             },
             initialTab: lastSettingsTab,
-            tabRequest: settingsTabRequest,
+            tabRequest: isNotchPane ? notchRequest : settingsTabRequest,
             onSelectedTabChange: { [weak self] tab in
+                guard !isNotchPane else { return }
                 self?.lastSettingsTab = tab
                 if tab == .transcription { self?.voiceState.refreshRecognizerStatus() }
             },

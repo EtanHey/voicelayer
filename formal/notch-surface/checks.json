@@ -27,9 +27,14 @@
       "target": "DrawerAlwaysClosable",
       "kind": "temporal"
     },
-    "MutantRecordingKeepsDrawer": {
+    "MutantRecordingRefusesDrawer": {
       "role": "mutant",
-      "target": "WingsNeverHidden",
+      "target": "DrawerReachableWhileCapturing",
+      "kind": "invariant"
+    },
+    "MutantRecordingClosesDrawer": {
+      "role": "mutant",
+      "target": "CaptureKeepsDrawer",
       "kind": "invariant"
     },
     "MutantNoModalGuard": {
@@ -46,7 +51,8 @@
   "acceptance": [
     "AtMostOneDrawer",
     "DismissalReachable",
-    "WingsNeverHidden",
+    "DrawerReachableWhileCapturing",
+    "CaptureKeepsDrawer",
     "NoDrawerOverModal",
     "NoDrawerOverTeleprompter",
     "DrawerAlwaysClosable"

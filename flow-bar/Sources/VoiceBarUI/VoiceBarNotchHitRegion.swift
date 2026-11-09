@@ -48,6 +48,15 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
 
     public static let none = VoiceBarNotchInteractionConfiguration()
 
+    /// The same band controls over a live drawer body (0510 R3: a drawer under the recording or status wings).
+    public var withInteractiveLowerSurface: Self {
+        VoiceBarNotchInteractionConfiguration(
+            leadingControlCount: leadingControlCount, trailingControlCountFromCore: trailingControlCountFromCore,
+            trailingControlCountFromOuter: trailingControlCountFromOuter, trailingOuterInset: trailingOuterInset,
+            lowerControlCount: lowerControlCount, lowerSurfaceIsInteractive: true
+        )
+    }
+
     /// Compatibility for geometry-only callers. The app installs a complete
     /// operational configuration so optional controls are never inferred from
     /// wing width or stale view state.
@@ -71,7 +80,11 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         case .teleprompter:
             VoiceBarNotchInteractionConfiguration(lowerControlCount: 1)
         case .history:
-            .historyPanel
+            presentation.bandState == .recording
+                ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 2).withInteractiveLowerSurface
+                : presentation.bandState == .compactStatus
+                ? VoiceBarNotchInteractionConfiguration.none.withInteractiveLowerSurface
+                : .historyPanel
         }
     }
 }

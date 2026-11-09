@@ -27,8 +27,10 @@ Project(x) ==
       compact == x.mode \in {"transcribing", "speaking", "error", "disconnected"}
                  \/ (x.mode = "idle" /\ (x.status # "none" \/ x.preview) /\ ~collapsedIdle)
       tele == ~collapsedIdle /\ x.teleprompter /\ ~(x.mode = "idle" /\ compact)
-      baseShell == IF tele THEN "teleprompter" ELSE IF x.mode = "recording" THEN "recording"
-               ELSE IF x.history THEN "history" ELSE IF compact THEN "compactStatus"
+      \* Etan, QA 0510 R3: a drawer (History or Settings) hangs under the recording wings too; only the
+      \* teleprompter outranks it.
+      baseShell == IF tele THEN "teleprompter" ELSE IF x.history THEN "history"
+               ELSE IF x.mode = "recording" THEN "recording" ELSE IF compact THEN "compactStatus"
                ELSE IF x.engaged \/ note \/ (x.mode = "idle" /\ ~x.collapsed) THEN "hoverLauncher" ELSE "idle"
       status == StatusVisible(x) /\ (StatusText(x) # "none")
                 /\ (Variant = "fixed" \/ HasStatusBand(x, baseShell) \/ baseShell = "compactStatus")

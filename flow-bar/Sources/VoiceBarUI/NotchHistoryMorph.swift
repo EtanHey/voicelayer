@@ -92,11 +92,24 @@ public enum NotchHistoryMorph {
         return rows
     }
 
+    /// Etan, QA 0510 N4: "a clean drag-to-close that follows the pointer". Above the collapsed rows the handle
+    /// stretches the rows as before; below them it no longer rubber-bands (the panel used to sit still while the
+    /// pointer climbed, then close on release). The rows stay at six and the panel closes with the pointer: its open
+    /// progress falls by one row's travel for every row the pointer climbs. `openTravel` is the panel's close travel
+    /// (open height minus the 32 pt band).
+    public static func handleDrag(rawRows: CGFloat, maximum: Int, openTravel: CGFloat) -> (rows: CGFloat, progress: CGFloat) {
+        let low = CGFloat(visibleRows)
+        guard rawRows < low else { return (rowsRubberBand(rawRows, maximum: maximum), 1) }
+        return (low, max(0, 1 - (low - rawRows) * rowHeight / max(1, openTravel)))
+    }
+
     /// 2.4 Lane A: a handle released this far above the collapsed rows (1.25 rows, about 58 pt) closes History.
     public static let handleCloseRows: CGFloat = CGFloat(visibleRows) - 1.25
 
+    /// Called only for a finished drag. Etan, QA 0510 N4: a handle pushed all the way to the top of the screen is
+    /// past zero rows; the old `rawRows > 0` guard refused exactly that release, so the panel stayed open.
     public static func handleClosesHistory(rawRows: CGFloat) -> Bool {
-        rawRows > 0 && rawRows <= handleCloseRows
+        rawRows <= handleCloseRows
     }
 
     /// Where a released handle settles: the nearer detent (6 collapsed, or the expanded rows), never between.
@@ -118,6 +131,10 @@ public enum NotchHistoryMorph {
 
     /// A press that moves less than this is a click, never a drag.
     public static let dragSlop: CGFloat = 3
+    /// Etan, QA 0510 N5: the first sample past the slop hands the panel over with no displacement (Codex R2) only
+    /// while it is within this distance of the press. Travel beyond it is pointer motion the panel catches up on, so
+    /// a quick flick whose second sample lands 40 pt away moves the panel like a slow drag over the same distance.
+    public static let handoffAllowance: CGFloat = 2 * dragSlop
     /// 2.4 Lane A: a pull that goes this far past open (in progress units, before the rubber band; about 90 pt on
     /// the collapsed panel) arms Settings, and releasing it there opens the Settings drawer.
     public static let settingsPullThreshold: CGFloat = 1.3
@@ -361,14 +378,23 @@ public struct NotchHistoryPull: Equatable {
         case .idle:
             return nil
         case let .pending(startY, startProgress):
-            guard abs(y - startY) > NotchHistoryMorph.dragSlop else { return nil }
+            let travel = y - startY
+            guard abs(travel) > NotchHistoryMorph.dragSlop else { return nil }
             if let seed {
-                phase = .dragging(startY: y, startProgress: seed)
-                lastY = y
-                lastTime = time
+                // The hand-off point: the press, moved on by whatever the pointer travelled past the allowance.
+                let excess = max(0, abs(travel) - NotchHistoryMorph.handoffAllowance)
+                let anchor = y - (travel < 0 ? -excess : excess)
+                phase = .dragging(startY: anchor, startProgress: seed)
                 seedOffset = seed - band(seed)
-                rawProgress = seed
-                return seed
+                guard excess > 0 else {
+                    lastY = y
+                    lastTime = time
+                    rawProgress = seed
+                    return seed
+                }
+                // The excess is real motion since the press: it moves the panel and counts toward the flick speed.
+                lastY = startY
+                return band(track(y: y, time: time, range: range, startY: anchor, startProgress: seed)) + seedOffset
             }
             phase = .dragging(startY: startY, startProgress: startProgress)
             return band(track(y: y, time: time, range: range, startY: startY, startProgress: startProgress))
@@ -414,6 +440,9 @@ public struct NotchHistoryPull: Equatable {
 /// The rows' half of morph B, driven by the same animated progress as the shell, so the two can never drift.
 struct NotchHistoryRowsMorph: ViewModifier, Animatable {
     var progress: CGFloat
+    /// A drag that started on the drawer (its body, the handle, the grip) keeps its events while it closes the
+    /// panel under the pointer (0510 N4); only a fresh press is refused on a half-open panel.
+    var keepsPointer = false
 
     var animatableData: CGFloat {
         get { progress }
@@ -423,6 +452,6 @@ struct NotchHistoryRowsMorph: ViewModifier, Animatable {
     func body(content: Content) -> some View {
         content
             .opacity(NotchHistoryMorph.rowsOpacity(progress: progress))
-            .allowsHitTesting(progress > 0.98)
+            .allowsHitTesting(progress > 0.98 || keepsPointer)
     }
 }

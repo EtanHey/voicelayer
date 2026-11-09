@@ -215,7 +215,8 @@ final class UIE2EStateGallery {
         update(model, state: state, base: base, geometry: screenGeometry)
         let presentation = model.presentation
         return VoiceBarPanelLayout.make(presentation: presentation,
-            interactionConfiguration: AppDelegate.notchInteractionConfiguration(for: state, visualState: presentation.visualState),
+            interactionConfiguration: AppDelegate.notchInteractionConfiguration(for: state, visualState: presentation.visualState,
+                                                                               bandState: presentation.bandState),
             canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(for: presentation).canvasGeometry)
     }
     private static func update(_ model: VoiceBarNotchPresentationModel, state: VoiceState,

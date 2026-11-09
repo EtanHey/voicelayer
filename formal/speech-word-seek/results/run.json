@@ -10,12 +10,12 @@
     "formal/speech-word-seek/OverlapMutant.cfg": "5adb3622b43117ab0811bcb9d0ac7ad0c8a3514cf84ab7c44fb16d6ee106684a",
     "formal/speech-word-seek/StaleMutant.cfg": "dce40e330519dcdaeb8faeadceb3f0ff4f2df11e66d383a8855d570e9d18e04f",
     "formal/speech-word-seek/Fixed.cfg": "6fb0a1974c339c408f06715758dd45ea13598a3c72d2acf6be38e96b0bdbc921",
-    "src/tts.ts": "4dfd38f6253d7d6babfcec438c56fca4c71cf72b6998abdafaf7166644985a3c",
+    "src/tts.ts": "cc4e551ba64e9a0bf6950981f45e6cebbff0673e512f0df14db6977bd0120ebe",
     "src/tts/speech-words.ts": "e5b1b01485c5b27b8bc7c5ee0bd24c4900e719924d304187fab1eb0151d73c52",
     "src/__tests__/speech-words.test.ts": "ae10c21b242fe47d3930bffa974c00032cbe4e5e373aa314eb52a6ea25cf0d78",
     "src/socket-protocol.ts": "00a5805b984f1c599ea5fd906853fbb3938b08f1ae2029b65649de719fcb491a",
     "src/socket-handlers.ts": "29df4b4578b6ef655380f3f3567762853de18743e0dea7602e438cbe3e6e8b1a",
-    "src/__tests__/tts-long-read-runtime.test.ts": "3d7a4d23409140bc970d9012f94cb2f008c7110fb91cbd671f1628f04b676e72",
+    "src/__tests__/tts-long-read-runtime.test.ts": "5cc72db55a287ed312626bcc17e57b321bdb33c381799890ae7cd558befee368",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

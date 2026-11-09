@@ -194,7 +194,9 @@ final class DictionaryTermSheetTests: XCTestCase {
     func testPencilAndDoubleClickOpenTheSameSheetAsAdd() throws {
         let source = try source("SettingsView.swift")
 
-        XCTAssertTrue(source.contains(".sheet(item: $termSheet)"))
+        // The one editor: a sheet in the window; in the notch drawer it covers the pane (0510 N1).
+        XCTAssertTrue(source.contains(".modifier(DictionaryTermEditorPresentation(edit: $termSheet"))
+        XCTAssertTrue(source.contains("content.sheet(item: $edit)"), "the window keeps the sheet")
         XCTAssertTrue(source.contains("termSheet = DictionaryTermEdit()"), "Add term opens the sheet")
         XCTAssertTrue(source.contains("termSheet = DictionaryTermEdit(original: entry)"), "the pencil opens it")
         XCTAssertTrue(source.contains(".onTapGesture(count: 2)"), "a double-click opens it")

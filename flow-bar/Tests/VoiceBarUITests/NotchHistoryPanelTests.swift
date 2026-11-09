@@ -151,21 +151,30 @@ final class NotchHistoryPanelTests: XCTestCase {
         }
     }
 
-    func testHistoryYieldsToTheTeleprompterAndRecordingButBeatsStatusAndHover() {
+    /// Etan, QA 0510 R3: a drawer hangs under the recording wings too; only the teleprompter outranks it. The band
+    /// above the drawer keeps the activity's own wings.
+    func testHistoryYieldsOnlyToTheTeleprompterAndKeepsTheActivitysBand() {
         XCTAssertEqual(resolve(history: true).visualState, .history)
+        XCTAssertEqual(resolve(history: true).bandState, .history, "idle: the launcher's band")
         XCTAssertEqual(resolve(history: true, compact: true).visualState, .history)
-        XCTAssertEqual(resolve(history: true, recording: true).visualState, .recording)
+        XCTAssertEqual(resolve(history: true, compact: true).bandState, .compactStatus)
+        XCTAssertEqual(resolve(history: true, recording: true).visualState, .history)
+        XCTAssertEqual(resolve(history: true, recording: true).bandState, .recording)
         XCTAssertEqual(resolve(history: true, teleprompter: true).visualState, .teleprompter)
         XCTAssertEqual(resolve(history: false).visualState, .hoverLauncher)
         XCTAssertEqual(resolve(history: true).accessibilityLabel, "VoiceBar history")
     }
 
-    func testOperationalInputOpensHistoryOnlyWhileIdle() {
+    func testOperationalInputKeepsHistoryOpenWhileRecording() {
         var input = VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
         input.isHistoryPanelOpen = true
         XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).visualState, .history)
         input.mode = .recording
-        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).visualState, .recording)
+        let recording = VoiceBarPresentation.notchPresentation(from: input)
+        XCTAssertEqual(recording.visualState, .history, "0510 R3: the drawer stays under the recording wings")
+        XCTAssertEqual(recording.bandState, .recording)
+        XCTAssertEqual(recording.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth,
+                       "the band keeps the recording wing's width above the drawer")
     }
 
     func testPresentationModelOpensAndClosesTheHistoryPanel() {

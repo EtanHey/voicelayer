@@ -1,91 +1,52 @@
 import SwiftUI
 
-/// What the Settings drawer reads and does that the notch view cannot know on its own. The app (and the UIE2E
-/// host) supply it; a BarView without one keeps the 2.3 behaviour (the gear opens the Settings window).
+/// What the Settings drawer shows that the notch view cannot build on its own. The app (and the UIE2E host) supply
+/// it; a BarView without one keeps the 2.3 behaviour (the gear opens the Settings window).
 public struct NotchSettingsDrawerContext {
-    /// "Hold F5 to dictate", or the hint that says why the key is off.
-    public var shortcutHint: () -> String
-    /// The microphone-priority default (read-only here, as in the menus: D2).
-    public var defaultMicrophoneName: () -> String?
     public var updates: NotchUpdateController?
-    /// Opens the full Settings window at a tab (and a spot in it).
-    public var openSettingsWindow: (SettingsTab, SettingsFocus?) -> Void
+    /// The Settings window's own pane for a tab (`SettingsView.notchDrawerPane`), built from the same stores, so
+    /// the drawer edits the real settings (Etan, QA 0510 R2: "we literally already have notch history, this is so
+    /// easy to re-use"). The request carries a spot to scroll to (the microphone priority list, 0510 N9).
+    public var pane: (SettingsTab, SettingsTabRequest?) -> AnyView
 
     public init(
-        shortcutHint: @escaping () -> String,
-        defaultMicrophoneName: @escaping () -> String?,
         updates: NotchUpdateController?,
-        openSettingsWindow: @escaping (SettingsTab, SettingsFocus?) -> Void
+        pane: @escaping (SettingsTab, SettingsTabRequest?) -> AnyView = { _, _ in AnyView(EmptyView()) }
     ) {
-        self.shortcutHint = shortcutHint
-        self.defaultMicrophoneName = defaultMicrophoneName
         self.updates = updates
-        self.openSettingsWindow = openSettingsWindow
+        self.pane = pane
     }
 }
 
 /// Copy and metrics for the drawer (unit-tested; no em dashes or double hyphens in anything user-visible).
 public enum NotchSettingsDrawerPresentation {
     public static let tabBarHeight: CGFloat = 46
-    public static let rowHeight: CGFloat = 44
-    public static let rowSpacing: CGFloat = 2
     public static let horizontalInset: CGFloat = 8
     public static let rowLeadingPadding: CGFloat = 10
     public static let rowTrailingPadding: CGFloat = 8
     public static let titleFontSize: CGFloat = 13
     public static let detailFontSize: CGFloat = 11.5
-    /// The widest the microphone name may draw before it ends in "…" (one line, never wrapped).
-    public static let microphoneNameWidthBudget: CGFloat = 210
+    public static let tabGlyphSize: CGFloat = 13
 
-    /// The drawer's height in History row units: between collapsed (6) and expanded (8) History, so the swap
-    /// between them is a short spring on the same shell and the window (sized for 8) never resizes.
-    public static let rows = 7
+    /// The drawer's height in History row units: expanded History's eight, so the real settings panes get the most
+    /// room the window (sized for eight) already has, and the History/Settings swap never resizes it.
+    public static let rows = NotchHistoryMorph.maximumRows
 
-    /// The drawer's height below the 32 pt band (fits the General tab with no dead space).
+    /// The drawer's height below the 32 pt band.
     public static var lowerSurfaceHeight: CGFloat {
         NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(rows))
     }
 
-    public static func permissionTitle(_ permission: HotkeyPermission) -> String {
-        switch permission {
-        case .microphone: "Microphone access is off"
-        case .accessibility: "Accessibility is off"
-        case .inputMonitoring: "Input Monitoring is off"
-        }
+    public static let topInset: CGFloat = 6
+
+    /// The History tab's list: the drawer below its tab bar, above the grip's band (BarView adds the grip).
+    public static var historyListHeight: CGFloat {
+        lowerSurfaceHeight - topInset - tabBarHeight - NotchHistoryMorph.listTopInset - NotchHistoryMorph.handleBandHeight
     }
 
-    public static func permissionDetail(_ permission: HotkeyPermission) -> String {
-        switch permission {
-        case .microphone: "VoiceBar cannot hear you until it is allowed."
-        case .accessibility: "Needed to paste where you were typing."
-        case .inputMonitoring: "Needed for the F5 key."
-        }
-    }
-
-    /// One row for the broken steps, so three missing permissions never push the version row off the drawer.
-    public static func permissionSummary(_ missing: [HotkeyPermission]) -> (title: String, detail: String) {
-        guard missing.count > 1 else {
-            let permission = missing.first ?? .microphone
-            return (permissionTitle(permission), permissionDetail(permission))
-        }
-        let names = missing.map { permission -> String in
-            switch permission {
-            case .microphone: "Microphone"
-            case .accessibility: "Accessibility"
-            case .inputMonitoring: "Input Monitoring"
-            }
-        }
-        return ("\(missing.count) permissions are off", names.joined(separator: ", "))
-    }
-
-    public static let allSetTitle = "Permissions"
-    public static let allSetDetail = "All set"
-    public static let shortcutTitle = "Dictation key"
-    public static let microphoneTitle = "Microphone"
     public static let versionTitle = "VoiceBar"
     public static let checkForUpdates = "Check for updates"
     public static let releaseNotes = "Release notes"
-    public static let allSettings = "All settings…"
 
     public static func updateButtonTitle(_ version: String) -> String { "Update to \(version)" }
 
@@ -102,100 +63,83 @@ public enum NotchSettingsDrawerPresentation {
         }
     }
 
+    /// A tab's tooltip. Never painted in the drawer (0510 N2: no explanatory prose rows).
     public static func tabDescription(_ tab: SettingsTab) -> String {
         switch tab {
         case .general: "Permissions, the dictation key, your microphone and updates."
         case .transcription: "The local recognizer, its model and the processing options."
         case .dictionary: "Words VoiceBar should spell your way."
         case .speech: "Voices, reading speed and the long-text threshold."
-        case .history: "Every dictation, Ask and read-aloud, with playback."
+        case .history: "Your recent dictations."
         }
-    }
-
-    public static func openTabTitle(_ tab: SettingsTab) -> String { "Open \(tab.title) settings" }
-
-    /// A read-only fact a tab shows above its hand-off button.
-    public struct Fact: Equatable {
-        public let symbol: String
-        public let title: String
-        public let detail: String
-    }
-
-    /// What each non-General tab can say without loading anything: the recognizer VoiceBar will use and whether
-    /// it is loaded, how many dictionary terms there are, how many dictations the notch holds.
-    public static func facts(
-        for tab: SettingsTab, recognizer: RecognizerPickerState, dictionaryTerms: Int, recentDictations: Int
-    ) -> [Fact] {
-        switch tab {
-        case .general, .speech:
-            return []
-        case .transcription:
-            guard let engine = recognizer.effective ?? recognizer.selected else {
-                return [Fact(symbol: "waveform", title: "Recognizer", detail: "Not reported yet")]
-            }
-            let residency = engine == .parakeet ? recognizer.parakeet : recognizer.whisper
-            return [Fact(symbol: "waveform", title: engine.title, detail: residency.title)]
-        case .dictionary:
-            return [Fact(symbol: "text.book.closed", title: "Your dictionary",
-                         detail: dictionaryTerms == 1 ? "1 term" : "\(dictionaryTerms) terms")]
-        case .history:
-            return [Fact(symbol: "clock.arrow.circlepath", title: "Recent dictations",
-                         detail: recentDictations == 0 ? "None yet"
-                             : "\(recentDictations) in the notch, every recording in History")]
-        }
-    }
-
-    /// The mic name on ONE line within `budget`: whole when it fits, else cut at a word or character with "…".
-    public static func microphoneLine(_ name: String?, budget: CGFloat = microphoneNameWidthBudget,
-                                      measure: (String) -> CGFloat = NotchSettingsDrawerPresentation.measure) -> String {
-        let full = MicrophoneDefaultPresentation.title(name.map(flattened))
-        guard measure(full) > budget else { return full }
-        var characters = Array(full)
-        while !characters.isEmpty, measure(String(characters) + "…") > budget {
-            characters.removeLast()
-        }
-        return String(characters).trimmingCharacters(in: .whitespaces) + "…"
-    }
-
-    static func flattened(_ text: String) -> String {
-        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-    }
-
-    public static func measure(_ text: String) -> CGFloat {
-        (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: detailFontSize)]).width
     }
 }
 
-/// 2.4 Lane A: Settings as a notch drawer. Pull History further down, or press the gear, and it hangs from the
-/// notch with its tabs. General is finished here; the other tabs lead to the Settings window at that tab.
+/// One notch glyph: the band's treatment (`notchAdaptiveGlyphEdge`), so the drawer's tab and row icons take the same
+/// rendering path as the band's, which kept painting unfocused in Etan's 0510 S4 while the drawer's vanished (N3).
+/// A hypothesis, not a confirmed fix: the unfocused vanishing was never reproduced and its root cause is unknown.
+struct NotchGlyph: View {
+    let systemName: String
+    var pointSize: CGFloat = NotchSettingsDrawerPresentation.tabGlyphSize
+    let color: Color
+    let appearance: VoiceBarNotchAppearance
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: pointSize, weight: .semibold))
+            .foregroundStyle(color)
+            .notchAdaptiveGlyphEdge(VoiceBarNotchGlyphContrastTreatment.resolve(for: appearance).color)
+    }
+}
+
+/// 2.4 Lane A, Etan's QA 0510 N1: Settings as a notch drawer with the real settings in every tab. Pull History
+/// further down, or press the gear, and it hangs from the notch with its tabs. Each tab is the Settings window's
+/// own pane (it scrolls inside the drawer when it is taller); History is the notch's own History list.
 struct NotchSettingsDrawer: View {
     let selectedTab: SettingsTab
-    let palette: VoiceBarNotchContrastPalette
-    let missingPermissions: [HotkeyPermission]
-    /// Read-only facts per tab (`NotchSettingsDrawerPresentation.facts`).
-    var facts: (SettingsTab) -> [NotchSettingsDrawerPresentation.Fact] = { _ in [] }
+    let appearance: VoiceBarNotchAppearance
     let context: NotchSettingsDrawerContext
+    /// A spot the drawer was opened at (the microphone control opens General at Microphone priority).
+    var request: SettingsTabRequest?
+    /// The notch's History rows, for the History tab.
+    var history: () -> AnyView = { AnyView(EmptyView()) }
     let onSelectTab: (SettingsTab) -> Void
-    /// Opens the Settings window (the drawer closes first; that is the row's job done).
-    let onOpenWindow: (SettingsTab, SettingsFocus?) -> Void
 
-    @State private var hoveredRow: String?
+    private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
 
     var body: some View {
         VStack(spacing: 0) {
             tabBar
-            Group {
-                if selectedTab == .general {
-                    generalTab
-                } else {
-                    tabEntry(selectedTab)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Always fills below the tabs, even for a pane that draws nothing, so the tabs never re-centre (N3).
+            Color.clear
+                .overlay(alignment: .top) { content }
+                .clipped()
         }
         .padding(.horizontal, NotchSettingsDrawerPresentation.horizontalInset)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.top, NotchSettingsDrawerPresentation.topInset)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch selectedTab {
+        case .history:
+            history()
+        case .general:
+            VStack(spacing: 0) {
+                pane(.general)
+                if let updates = context.updates {
+                    NotchSettingsVersionRow(updates: updates, appearance: appearance)
+                }
+            }
+        case .transcription, .dictionary, .speech:
+            pane(selectedTab)
+        }
+    }
+
+    private func pane(_ tab: SettingsTab) -> some View {
+        context.pane(tab, request?.tab == tab ? request : nil)
+            .environment(\.colorScheme, appearance == .dark ? .dark : .light)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: Tabs
@@ -204,16 +148,16 @@ struct NotchSettingsDrawer: View {
         HStack(spacing: 2) {
             ForEach(SettingsTab.allCases) { tab in
                 let isSelected = tab == selectedTab
+                let ink = isSelected ? palette.primary.color : palette.secondary.color
                 Button { onSelectTab(tab) } label: {
                     VStack(spacing: 3) {
-                        Image(systemName: tab.systemImage)
-                            .font(.system(size: 13, weight: .semibold))
+                        NotchGlyph(systemName: tab.systemImage, color: ink, appearance: appearance)
                         Text(tab.title)
                             .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(ink)
                             .lineLimit(1)
                             .fixedSize()
                     }
-                    .foregroundStyle(isSelected ? palette.primary.color : palette.secondary.color)
                     .frame(maxWidth: .infinity)
                     .frame(height: NotchSettingsDrawerPresentation.tabBarHeight - 8)
                     .background(
@@ -231,116 +175,6 @@ struct NotchSettingsDrawer: View {
         .frame(height: NotchSettingsDrawerPresentation.tabBarHeight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Settings tabs")
-    }
-
-    // MARK: General
-
-    private var generalTab: some View {
-        VStack(spacing: NotchSettingsDrawerPresentation.rowSpacing) {
-            if missingPermissions.isEmpty {
-                row(id: "permissions", symbol: "checkmark.seal.fill",
-                    title: NotchSettingsDrawerPresentation.allSetTitle,
-                    detail: NotchSettingsDrawerPresentation.allSetDetail)
-            } else {
-                let summary = NotchSettingsDrawerPresentation.permissionSummary(missingPermissions)
-                row(id: "permissions", symbol: "exclamationmark.triangle.fill", title: summary.title,
-                    detail: summary.detail, tint: .orange) {
-                    actionButton("Fix…") { onOpenWindow(.general, .permissions) }
-                }
-            }
-            row(id: "shortcut", symbol: "keyboard", title: NotchSettingsDrawerPresentation.shortcutTitle,
-                detail: context.shortcutHint())
-            row(id: "microphone", symbol: "mic", title: NotchSettingsDrawerPresentation.microphoneTitle,
-                detail: NotchSettingsDrawerPresentation.microphoneLine(context.defaultMicrophoneName()),
-                tooltip: MicrophoneDefaultPresentation.title(context.defaultMicrophoneName())) {
-                actionButton(MicrophoneDefaultPresentation.changeTitle) { onOpenWindow(.general, .microphonePriority) }
-            }
-            if let updates = context.updates {
-                NotchSettingsVersionRow(updates: updates, palette: palette)
-            }
-            Spacer(minLength: 0)
-            HStack {
-                Spacer()
-                actionButton(NotchSettingsDrawerPresentation.allSettings) { onOpenWindow(.general, nil) }
-            }
-            .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
-        }
-    }
-
-    // MARK: Other tabs
-
-    /// The other tabs, in General's row style: what the tab holds (read-only facts), one line on what else is
-    /// there, and the hand-off to the Settings window at that tab.
-    private func tabEntry(_ tab: SettingsTab) -> some View {
-        VStack(alignment: .leading, spacing: NotchSettingsDrawerPresentation.rowSpacing) {
-            ForEach(facts(tab), id: \.title) { fact in
-                row(id: "fact-\(fact.title)", symbol: fact.symbol, title: fact.title, detail: fact.detail)
-            }
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(palette.secondary.color)
-                    .frame(width: 20)
-                Text(NotchSettingsDrawerPresentation.tabDescription(tab))
-                    .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
-                    .foregroundStyle(palette.secondary.color)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.leading, NotchSettingsDrawerPresentation.rowLeadingPadding)
-            .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
-            .frame(minHeight: NotchSettingsDrawerPresentation.rowHeight)
-            Spacer(minLength: 0)
-            HStack {
-                Spacer()
-                actionButton(NotchSettingsDrawerPresentation.openTabTitle(tab), prominent: true) {
-                    onOpenWindow(tab, nil)
-                }
-            }
-            .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    // MARK: Pieces
-
-    private func row(
-        id: String, symbol: String, title: String, detail: String, tooltip: String? = nil, tint: Color? = nil,
-        @ViewBuilder trailing: () -> some View = { EmptyView() }
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(tint ?? palette.secondary.color)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: NotchSettingsDrawerPresentation.titleFontSize))
-                    .foregroundStyle(palette.primary.color)
-                    .lineLimit(1)
-                Text(detail)
-                    .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
-                    .foregroundStyle(palette.tertiary.color)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PillControlTooltip(text: tooltip))
-            trailing()
-        }
-        .padding(.leading, NotchSettingsDrawerPresentation.rowLeadingPadding)
-        .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
-        .frame(height: NotchSettingsDrawerPresentation.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(palette.primary.color.opacity(hoveredRow == id ? NotchHistoryPresentation.rowHoverOpacity : 0))
-        )
-        .onHover { hoveredRow = $0 ? id : (hoveredRow == id ? nil : hoveredRow) }
-        .accessibilityElement(children: .combine)
-    }
-
-    private func actionButton(_ title: String, prominent: Bool = false, action: @escaping () -> Void) -> some View {
-        NotchDrawerButton(title: title, palette: palette, prominent: prominent, action: action)
     }
 }
 
@@ -374,18 +208,18 @@ struct NotchDrawerButton: View {
     }
 }
 
-/// The version row: the full build line (never truncated, wraps to a second line if it must), Check for
-/// updates, and when a release is newer, its notes and an Update button.
+/// The version row under General: the full build line (never truncated, wraps to a second line if it must), Check
+/// for updates, and when a release is newer, its notes and an Update button.
 struct NotchSettingsVersionRow: View {
     let updates: NotchUpdateController
-    let palette: VoiceBarNotchContrastPalette
+    let appearance: VoiceBarNotchAppearance
+
+    private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(palette.secondary.color)
+                NotchGlyph(systemName: "info.circle", color: palette.secondary.color, appearance: appearance)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(NotchSettingsDrawerPresentation.versionTitle)

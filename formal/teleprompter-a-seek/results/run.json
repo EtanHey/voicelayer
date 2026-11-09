@@ -10,8 +10,8 @@
     "formal/teleprompter-a-seek/StaleTableMutant.cfg": "a1aab71e60c801b951f2fd74a96c5e5c5fb110b8536daef8362d8b9f9b26e983",
     "formal/teleprompter-a-seek/PausedSeekMutant.cfg": "376ddf7a158ddefa2d27d4c0cc4cf308854e5c9e6a5e86d523dc35b5da866457",
     "formal/teleprompter-a-seek/Fixed.cfg": "32257b310bb458b8eab228503d83047703d0862689440649412c17e5d3f482d9",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "99aa83180ffe10a0164d27e80ca10230750aa3518639aa9c12cd831600dbb4e6",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "ad4ff7878e73b91fec74c5f12b84f110fdf0e8de54ed7af3e4a489b720ab8cfb",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "49ee1974b395bd75976260de947b5b7f8effe9e7aeb796e93b75934ae22b7969",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "44019826f6264e045678e5037045b80369cf6e1a4437fc2ebe3dd8605ce5ee06",
     "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift": "75db0df217618e22a506fc2019c368c2eab47affc81848cfdd3c83aae8a0c67b",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },

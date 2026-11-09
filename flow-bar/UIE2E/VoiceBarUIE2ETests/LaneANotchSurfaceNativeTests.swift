@@ -89,17 +89,15 @@ final class LaneANotchSurfaceNativeTests: XCTestCase {
         XCTAssertEqual(handle.value as? String, "6 of 8 rows", "collapsed 6")
     }
 
-    /// Brings up the QA Settings window through the product path: the gear's drawer, then "All settings…".
+    /// Brings up the QA Settings window through a product path: the pill's right-click Settings… (0510 N1: the
+    /// drawer itself never hands off to the window).
     private func showSettingsWindow() throws -> XCUIElement {
         let settings = app.windows["VoiceBar QA Settings"]
-        pill.hover()
-        let gear = pill.buttons["Settings"]
-        XCTAssertTrue(gear.waitForExistence(timeout: 4))
-        gear.click()
-        XCTAssertTrue(settingsTabs.waitForExistence(timeout: 3))
-        pill.buttons["All settings…"].click()
+        try anchored(pill).rightClick()
+        let item = app.menuItems["Settings…"]
+        XCTAssertTrue(item.waitForExistence(timeout: 3))
+        item.click()
         XCTAssertTrue(settings.waitForExistence(timeout: 4), "the QA Settings window is up")
-        XCTAssertTrue(settingsTabs.waitForNonExistence(timeout: 3), "opening the window closed the drawer")
         return settings
     }
 
@@ -164,8 +162,8 @@ final class LaneANotchSurfaceNativeTests: XCTestCase {
         attachEvents("pull-to-settings")
     }
 
-    /// The gear opens Settings as a drawer; a tab row hands off to the Settings window at that tab.
-    func testTheGearOpensTheSettingsDrawerAndATabHandsOffToTheWindow() throws {
+    /// The gear opens Settings as a drawer; its tabs switch in place, each with real settings and no hand-off (0510 N1).
+    func testTheGearOpensTheSettingsDrawerAndItsTabsSwitchInPlace() throws {
         finder.activate()
         try anchored(pill).hover()
         let gear = pill.buttons["Settings"]
@@ -180,12 +178,10 @@ final class LaneANotchSurfaceNativeTests: XCTestCase {
         before = events().count
         try anchored(pill.buttons["Transcription"]).click()
         XCTAssertTrue(waitForReceipt("(tab transcription)", after: before))
-        before = events().count
-        try anchored(pill.buttons["Open Transcription settings"]).click()
-        XCTAssertTrue(waitForReceipt("-> closed (dismiss action)", after: before))
-        XCTAssertTrue(waitForReceipt("notch-settings-window-transcription", after: before))
-        XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 3))
-        attachEvents("gear-tab-handoff")
+        XCTAssertTrue(settingsTabs.exists, "the drawer stays open on its new tab")
+        XCTAssertFalse(pill.buttons["Open Transcription settings"].exists, "0510 N1: no hand-off to the window")
+        XCTAssertFalse(pill.buttons["All settings…"].exists, "0510 N1: no hand-off to the window")
+        attachEvents("gear-tab-in-place")
     }
 
     /// The list holds 20 and scrolls; the handle settles on 6 or 8, never between.

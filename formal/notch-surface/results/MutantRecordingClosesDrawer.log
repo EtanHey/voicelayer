@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "CaptureKeepsDrawer",
+  "status": "EXPECTED_FAIL",
+  "generated": 17,
+  "distinct": 7,
+  "trace": [
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = FALSE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = TRUE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = TRUE\n/\\ history = FALSE\n/\\ captureClosedDrawer = TRUE\n/\\ teleprompter = FALSE"
+  ]
+}

@@ -38,17 +38,22 @@ final class NotchSurfaceMachineTests: XCTestCase {
         XCTAssertEqual(machine.send(.dismiss(.toggle)), .refused(.noDrawer))
     }
 
-    func testRecordingClosesAnyDrawerAndRefusesNewOnes() {
+    /// Etan, QA 0510 R3: "as long as there's no teleprompter of speech or asking, settings and history should be
+    /// pulled down", while recording too. A drawer opens during a capture and stays through it.
+    func testRecordingNeitherClosesNorRefusesADrawer() {
         for drawerOpen in [NotchSurfaceEvent.openHistory, .openSettings(.transcription)] {
             var machine = NotchSurfaceMachine()
             machine.send(drawerOpen)
+            let open = machine.drawer
+            machine.send(.recordingChanged(true))
+            XCTAssertEqual(machine.drawer, open, "the drawer stays under the recording wings")
+            machine.send(.recordingChanged(false))
+            XCTAssertEqual(machine.drawer, open, "and after the capture")
+            machine.send(.dismiss(.escape))
             machine.send(.recordingChanged(true))
             XCTAssertEqual(machine.state, .recording)
-            XCTAssertNil(machine.drawer, "the recording wings are never hidden by a drawer")
-            XCTAssertEqual(machine.send(.openHistory), .refused(.recording))
-            XCTAssertEqual(machine.send(.openSettings(.general)), .refused(.recording))
-            machine.send(.recordingChanged(false))
-            XCTAssertEqual(machine.state, .closed, "a refused open is not replayed later")
+            XCTAssertEqual(machine.send(drawerOpen).isChange, true, "a drawer opens during a capture")
+            XCTAssertNotEqual(machine.state, .recording, "the drawer shows; the band keeps the recording wings")
         }
     }
 
@@ -118,7 +123,7 @@ final class NotchSurfaceMachineTests: XCTestCase {
         var seen: Set<NotchSurfaceMachine> = [NotchSurfaceMachine()]
         var frontier = [NotchSurfaceMachine()]
         while let machine = frontier.popLast() {
-            XCTAssertTrue(machine.wingsNeverHidden, "\(machine)")
+            XCTAssertTrue(machine.drawerReachableWhileCapturing, "\(machine)")
             XCTAssertTrue(machine.noDrawerOverModal, "\(machine)")
             XCTAssertTrue(machine.noDrawerOverTeleprompter, "\(machine)")
             XCTAssertTrue(machine.dismissalReachable, "\(machine)")
@@ -133,18 +138,18 @@ final class NotchSurfaceMachineTests: XCTestCase {
                 if seen.insert(next).inserted { frontier.append(next) }
             }
         }
-        // Per remembered detent (2): with every activity flag clear, no drawer, History at that detent, or one of
-        // the 5 Settings tabs; under each of the 7 other flag combinations, no drawer at all.
-        XCTAssertEqual(seen.count, 2 * (1 + 1 + 5 + 7))
+        // Per remembered detent (2): with no teleprompter and no modal, recording or not (2), no drawer, History at
+        // that detent, or one of the 5 Settings tabs; under each of the 6 other flag combinations, no drawer at all.
+        XCTAssertEqual(seen.count, 2 * (2 * (1 + 1 + 5) + 6))
 
         // Refinement: projected onto the TLA+ variables (detent and tab abstracted), the Swift machine reaches
-        // exactly the 10 distinct states TLC reports for formal/notch-surface Fixed.cfg.
+        // exactly the 12 distinct states TLC reports for formal/notch-surface Fixed.cfg.
         struct Projected: Hashable { let history, settings, recording, teleprompter, modal: Bool }
         let projected = Set(seen.map {
             Projected(history: $0.drawer?.isHistory == true, settings: $0.drawer?.isSettings == true,
                       recording: $0.isRecording, teleprompter: $0.isTeleprompterShown, modal: $0.isModal)
         })
-        XCTAssertEqual(projected.count, 10)
+        XCTAssertEqual(projected.count, 12)
         XCTAssertTrue(projected.allSatisfy { !($0.history && $0.settings) })
     }
 }
