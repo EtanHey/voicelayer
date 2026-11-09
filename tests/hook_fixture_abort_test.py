@@ -335,7 +335,61 @@ _spec.loader.exec_module(supervisor)
 
 
 class SupervisorCompletion(unittest.TestCase):
-    """Event sequences model native observations, never real signal targets."""
+    """Controlled observations plus a native Linux exit/read interleaving."""
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'requires native /proc exit semantics')
+    def test_linux_native_exit_between_cmdline_and_environ(self):
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                                 env={'HOOK_EXIT_CANARY': '1'})
+        read_bytes = Path.read_bytes
+        def exit_after_cmdline(path):
+            data = read_bytes(path)
+            if path == Path('/proc') / str(child.pid) / 'cmdline':
+                child.kill()
+                # Observe exit without reaping: /proc still exists, but its
+                # environ is empty. No sleeps or scheduler luck establish it.
+                os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+            return data
+        try:
+            self.assertIn(b'HOOK_EXIT_CANARY=1', read_bytes(Path('/proc') / str(child.pid) / 'environ'))
+            with patch.object(Path, 'read_bytes', exit_after_cmdline):
+                self.assertIsNone(supervisor.process_identity(child.pid))
+        finally:
+            child.kill()
+            child.wait(timeout=5)
+
+    def test_linux_exit_between_ps_and_environ_is_reobserved_before_signalling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scope = Path(directory)
+            run = scope / 'voicelayer-run-tests.1234567'
+            env = dict(VOICELAYER_HOOK_TEST_SCOPE=str(scope), VOICELAYER_TMP_ROOT=str(run),
+                       VOICELAYER_SOCKET_PATH=str(run / 'voicelayer.sock'),
+                       VOICELAYER_MCP_SOCKET_PATH=str(run / 'voicelayer-mcp.sock'))
+            leader = (1234567, 1, 1234567, ['daemon'], env)
+            clock, reads, sent = [0.0], [0], []
+            def sleep(seconds):
+                clock[0] += seconds
+            def processes():
+                reads[0] += 1
+                if reads[0] == 1:
+                    # ps saw a live descendant; it exits between the two native
+                    # reads. Linux clears environ before ps next reports Z.
+                    with patch.object(supervisor.sys, 'platform', 'linux'), \
+                         patch.object(Path, 'read_bytes', side_effect=[b'worker\0', b'']):
+                        identity = supervisor.process_identity(1234568)
+                    argv, native_env = identity if identity is not None else ([], None)
+                    return [leader, (1234568, 1234567, 1234567, argv, native_env)]
+                return [] if sent else [leader]
+            with patch.dict(os.environ, {'VOICELAYER_HOOK_TEST_SCOPE': str(scope)}), \
+                 patch.object(supervisor, 'processes', processes), \
+                 patch.object(supervisor.time, 'monotonic', lambda: clock[0]), \
+                 patch.object(supervisor.time, 'sleep', sleep), \
+                 patch.object(supervisor.os, 'killpg', side_effect=lambda pgid, sig: sent.append(int(sig))), \
+                 patch.object(supervisor, 'audit'):
+                result = supervisor.reap_group(1234567, run)
+            self.assertEqual(result.state, 'gone')
+            self.assertEqual(sent, [int(signal.SIGTERM)])
+            self.assertGreaterEqual(reads[0], 3, 'unavailable identity was not reobserved')
 
     def scenario(self, observation='owned', transient=False, orphan=False, reuse=False, lookup=False):
         with tempfile.TemporaryDirectory() as directory:
