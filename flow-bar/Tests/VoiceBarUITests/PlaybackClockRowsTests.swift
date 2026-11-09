@@ -61,7 +61,8 @@ final class PlaybackClockRowsTests: XCTestCase {
         now += Double(stale) / 1000
         XCTAssertEqual(state.playbackElapsedMilliseconds(), stale, "\(row): setup", file: file, line: line)
         play(state, from: stale, to: stale + span, chunkStart: stale, chunkMs: total - stale, total: total)
-        XCTAssertEqual(TeleprompterA.footerState(isPaused: state.isPlaybackPaused, isPausedForDictation: false), "Reading",
+        // Still reading (T3 removed the "Reading" prose, so the state is the empty footer string).
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: state.isPlaybackPaused, isPausedForDictation: false), "",
                        file: file, line: line)
         XCTAssertEqual(state.playbackElapsedMilliseconds(), stale + span,
                        "\(row): \"Reading\" froze at \(stale) ms for \(span) ms", file: file, line: line)

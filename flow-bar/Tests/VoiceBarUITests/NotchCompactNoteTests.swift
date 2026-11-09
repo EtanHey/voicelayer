@@ -135,6 +135,7 @@ final class NotchCompactNoteTests: XCTestCase {
                         recordingLeadingWingWidth: p.geometry.leadingWingWidth,
                         recordingTrailingWingWidth: p.geometry.trailingWingWidth,
                         teleprompterLeadingWingWidth: p.visualState == .teleprompter ? g.leadingWingWidth : nil,
+                        teleprompterTrailingWingWidth: p.visualState == .teleprompter ? g.trailingWingWidth : nil,
                         keepsIdleExpanded: p.visualState == .hoverLauncher,
                         coreWidth: core, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback
                     )

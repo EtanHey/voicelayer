@@ -105,7 +105,7 @@ class ReportTests(unittest.TestCase):
             results.report(self.root, [step], [dict(attachments=[attachment])])
 
     def test_etan_qa_row_xfail_needs_matching_marker_and_exact_surface(self):
-        for row in ['N1', 'N4', 'N5', 'N6', 'N7', 'N9', 'N10', 'T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8']:
+        for row in ['N1', 'N4', 'N5', 'N6', 'N7', 'N9', 'N10']:
             expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] product assertion'],
                             surfaces=['e2e24:' + row])
             step = dict(passed=True, expectedFailure=expected)
@@ -114,6 +114,15 @@ class ReportTests(unittest.TestCase):
                 invalid = dict(expected, **{key: value})
                 with self.assertRaises(ValueError):
                     results.expected_packet(dict(step, expectedFailure=invalid))
+
+    def test_fixed_teleprompter_rows_are_no_longer_expected_failures(self):
+        # T1-T8 (feat/2.4-teleprompter-etan): a fixed row verifies; an XFAIL tag on it is refused.
+        for row in ['T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8']:
+            self.assertNotIn(row, results.QA_ROW_PACKETS)
+            expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] product assertion'],
+                            surfaces=['e2e24:' + row])
+            with self.assertRaises(ValueError):
+                results.expected_packet(dict(passed=True, expectedFailure=expected))
 
     def test_etan_qa_row_exports_as_expected_never_verified(self):
         directory, ledger, manifest = self.attachment_run()

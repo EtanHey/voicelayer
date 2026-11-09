@@ -134,6 +134,7 @@ function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording", intent: "c
   // A parked item is not idle; only Stop/replacement settles it first.
   if (playbackQueueManager.isPaused()) return;
   if (activeLongRead && !activeLongRead.controller.signal.aborted && !nextState && intent !== "audio-completion") return;
+  endHeardQueueRun();
   broadcast({
     type: "state",
     state: "idle",
@@ -289,15 +290,48 @@ let ttsCounter = 0;
  * so the Swift assertions that count `afplay` children are unaffected. Muting is
  * an audibility change only; nothing about what is verified changes.
  */
+/**
+ * T9 (Etan QA 2026-11-09: "It also sounds kind of hollow or weird when it speaks fast or slow"). afplay's -r/-q 1 is
+ * Apple's spectral time-pitch, whose phasiness is what sounds hollow on speech. A scaled speed on the resident stack
+ * plays through SoX's WSOLA `tempo -s` (speech, pitch-preserving, streamed, so there is no pre-render delay).
+ *
+ * Codex round 1: with SoX's default speech profile a 20 ms burst ending at EOF vanished at 2× for some file lengths
+ * (4.013 s), and no pad recovered it. Root cause (offline sweeps, file to file): not end truncation (a tone running to
+ * EOF survives within 0.7 ms at every rate) but WSOLA's resolution. At 2× the default profile works in ~44 ms segments
+ * with a ~20 ms search, so it skips input spans longer than a short isolated transient, anywhere in the file: 20 ms
+ * bursts were lost at 20/60 interior positions and 18/60 padded end positions. Explicit 20 ms segments, a 5 ms search
+ * and an 8 ms overlap keep every 20 ms burst at every supported rate (0/1440 across 0.75×-2×, interior and at EOF,
+ * over 240 file lengths around 2 s and 4 s), with onsets within 8 ms of source time / rate and output exactly D/rate
+ * (so no pad is needed and the clock, seek, pause and watchdog arithmetic are unchanged). Receipt:
+ * `src/__tests__/tempo-wsola.test.ts`. `VOICELAYER_TEMPO_PLAYER=afplay` restores afplay; a missing `play` falls back.
+ */
+export const TEMPO_WSOLA_PARAMS = ["20", "5", "8"] as const;
+
+let tempoPlayerCache: string | null | undefined;
+export function pitchPreservingTempoPlayer(): string | null {
+  if (process.env.VOICELAYER_TEMPO_PLAYER === "afplay") return null;
+  if (tempoPlayerCache === undefined) {
+    tempoPlayerCache = resolveBinary("play", ["/opt/homebrew/bin/play", "/usr/local/bin/play"]);
+  }
+  return tempoPlayerCache;
+}
+
 export function buildPlaybackArgv(
   player: string,
   audioFile: string,
   isResidentStack: boolean = isDefaultVoiceBarSocketPath(),
   rate = 1,
+  /** T9: the SoX `play` binary for a scaled resident speed; resolved lazily when omitted, null forces afplay. */
+  tempoPlayer?: string | null,
 ): string[] {
-  // Lane B: 1× is a real speed step. afplay scales the rate with its high-quality time-pitch (-q 1);
-  // the Linux players get their own pitch-preserving tempo so the scaled player clock matches the audio.
+  // Lane B: 1× is a real speed step. The Linux players get their own pitch-preserving tempo so the scaled player
+  // clock matches the audio.
   const scaled = rate !== 1 && Number.isFinite(rate) && rate > 0;
+  // T9: only the resident stack is audible; a muted harness keeps afplay -v 0 (the silence guarantee below).
+  if (scaled && player === "afplay" && isResidentStack) {
+    const sox = tempoPlayer === undefined ? pitchPreservingTempoPlayer() : tempoPlayer;
+    if (sox) return [sox, "-q", audioFile, "tempo", "-s", String(rate), ...TEMPO_WSOLA_PARAMS];
+  }
   const speed = !scaled ? [] : player === "afplay" ? ["-r", String(rate), "-q", "1"]
     : player === "mpv" ? [`--speed=${rate}`] : player === "ffplay" ? ["-af", `atempo=${rate}`] : [];
   if (player !== "afplay") return [player, ...speed, audioFile];
@@ -859,6 +893,8 @@ export function historyReplayMetadata(entry: TTSHistoryEntry): PlaybackMetadata 
   return {
     text,
     voice: entry.voice,
+    // T1: an explicit replay is that exact entry; Back must never resolve it to newer same-text audio.
+    historyRef: { id: entry.id, timestamp: entry.timestamp },
     ...(display ? { display } : {}),
     ...(entry.alignedWords?.length ? { alignedWords: clipAlignedWordsToText(entry.alignedWords, text) } : {}),
     ...(entry.wordBoundaries?.length ? { wordBoundaries: text === entry.text ? entry.wordBoundaries
@@ -950,6 +986,7 @@ async function playClonedAudio(
       speechArchive: options?.speechArchive,
       text: speakingText,
       voice: resolvedVoice,
+      ...(historyRef ? { historyRef } : {}),
       priority: playbackPriorityForMode(options?.mode),
       durationMs,
       cloneProjection: projection,
@@ -1007,6 +1044,10 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   isSeek?: boolean;
   retainedReplay?: boolean;
   readbackID?: string;
+  /** T1: the History entry this playback's audio was saved as (its exact retained audio for Back). */
+  historyRef?: TTSHistoryRef;
+  /** T1: a "previous read" replay of an occurrence already in the heard queue; it adds no occurrence. */
+  heardQueueReplay?: boolean;
   wordBoundaries?: WordBoundary[];
   /** Timings already measured for this file (replay, or a re-played chunk); broadcast at start. */
   preparedAmplitude?: PlaybackAmplitudeExtraction;
@@ -1997,6 +2038,12 @@ class PlaybackQueueManager {
     return (this.current?.job ?? this.preparing?.job ?? this.parked?.job)?.metadata?.text;
   }
 
+  /** T1: the session of the narration on screen (the same job `onScreenText` reads). */
+  onScreenSessionId(): string | undefined {
+    const job = this.current?.job ?? this.preparing?.job ?? this.parked?.job;
+    return job ? sessionIdOf(job) : undefined;
+  }
+
   isHeldForAsk(id?: string): boolean {
     return this.askHeld !== undefined && (id === undefined || sessionIdOf(this.askHeld.parked.job) === id);
   }
@@ -2230,6 +2277,7 @@ class PlaybackQueueManager {
       };
       next.reanchor = undefined;
       next.lastSpeakingEdge = edge;
+      noteHeardNarration(next);
       broadcast(edge as unknown as StateEvent);
       const words = next.wordTimeline.update(next.metadata.wordTimeline ? next.metadata.longRead?.chunk_index ?? 0 : 0, next.metadata.text, durationMs ?? 0,
         displayTokenBoundaries(next.metadata.text, next.metadata.wordBoundaries ?? []), next.metadata.alignedWords);
@@ -2777,7 +2825,9 @@ function holdsLongRead(read: OwnedLongRead | undefined): boolean {
 }
 
 /** Lane B: the read "previous read" set aside while the previous narration replays. */
-interface PreviousHold { longReadId?: string; replayId?: string; restored: boolean; returnPending?: boolean }
+interface PreviousHold { longReadId?: string; replayId?: string; restored: boolean; returnPending?: boolean;
+  /** T1: the heard-queue occurrence held aside; it stays "on screen" for Back while the replay plays. */
+  heldKey?: string }
 let previousHold: PreviousHold | undefined;
 
 function normalizedReadText(text: string): string { return text.replace(/\s+/g, " ").trim(); }
@@ -2788,14 +2838,95 @@ function onScreenText(): string | undefined {
     : playbackQueueManager.onScreenText();
 }
 
-/** The previous finished narration that is not the one on screen. */
+/**
+ * T1 (Etan QA 2026-11-09: "it goes back in history to things I haven't heard yet ... and not just things that were
+ * in the current queue"). Back walks the CURRENT queue only: the narrations whose player started in this queue run,
+ * as OCCURRENCES in the order they were heard (Codex round 1: A, B, A, C goes back from C to the second A). An
+ * occurrence is keyed by its playback session (a short narration's job, or a long read's id), so a read's chunk,
+ * resume, seek and return-from-hold edges are one occurrence while a repeat of the same text is another. Each keeps
+ * the exact History entry it played (`historyRef`; a long read binds its entry when it is saved), so Back never
+ * resolves to a newer, unheard entry that merely has the same text. A run ends at the playback idle edge; the next
+ * narration to start begins a new one. This is the model's PreviousRead guard (`st[1] = "ended"`: the read before
+ * the one on screen, in the same queue); the run epoch is daemon bookkeeping the two-read model does not need.
+ */
+interface HeardOccurrence { key: string; text: string; ref?: TTSHistoryRef }
+const heardQueue: { items: HeardOccurrence[]; ended: boolean } = { items: [], ended: false };
+
+function noteHeardNarration(job: PlaybackJob): void {
+  if (job.metadata?.heardQueueReplay) return;
+  const raw = heardTextOf(job);
+  const text = raw === undefined ? "" : normalizedReadText(raw);
+  if (!text) return;
+  if (heardQueue.ended) { heardQueue.items = []; heardQueue.ended = false; }
+  const key = sessionIdOf(job);
+  if (heardQueue.items.some(item => item.key === key)) return;
+  // A path that passed no reference saved its entry before playing: bind the newest same-text entry NOW, so a later
+  // entry with the same text can never stand in for it. A long read binds its own entry when it is saved.
+  const ref = job.metadata?.historyRef ?? (job.metadata?.longRead ? undefined : newestHistoryRef(text));
+  heardQueue.items.push({ key, text, ...(ref ? { ref } : {}) });
+  if (heardQueue.items.length > RING_BUFFER_SIZE) heardQueue.items.shift();
+}
+
+function newestHistoryRef(text: string): TTSHistoryRef | undefined {
+  const newest = loadHistory().map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => normalizedReadText(entry.text) === text)
+    .sort((a, b) => b.entry.timestamp - a.entry.timestamp || b.index - a.index)[0]?.entry;
+  return newest ? { id: newest.id, timestamp: newest.timestamp } : undefined;
+}
+
+/** A long read's retained audio exists only once it is saved; bind it to that read's occurrence. */
+function bindHeardAudio(key: string, ref: TTSHistoryRef): void {
+  const item = heardQueue.items.find(candidate => candidate.key === key);
+  if (item && !item.ref) item.ref = ref;
+}
+
+/** The playback idle edge: the queue is over. Its list stays readable until the next narration starts. */
+function endHeardQueueRun(): void {
+  if (previousHold && !previousHold.restored) return;
+  heardQueue.ended = true;
+}
+
+/** What a starting player puts on screen: the whole read for a chunk of the live read, else the job's text. */
+function heardTextOf(job: PlaybackJob): string | undefined {
+  const longRead = job.metadata?.longRead;
+  if (longRead && activeLongRead?.id === longRead.id && activeLongRead.displayText) return activeLongRead.displayText;
+  return job.metadata?.text;
+}
+
+/** The occurrence on screen: the read a replay holds aside, else the live read, else the queue's job. */
+function currentHeardKey(): string | undefined {
+  if (previousHold && !previousHold.restored) return previousHold.heldKey;
+  if (activeLongRead && !activeLongRead.controller.signal.aborted) return activeLongRead.id;
+  return playbackQueueManager.onScreenSessionId();
+}
+
+export function resetHeardQueueForTests(): void { heardQueue.items = []; heardQueue.ended = false; }
+
+/** An occurrence's retained audio: exactly its own History entry (slot and timestamp), never another same-text one.
+ * An occurrence with no entry (a read stopped before it was saved, or a slot since overwritten) has nothing to replay. */
+function heardHistoryEntry(item: HeardOccurrence, entries: TTSHistoryEntry[]): TTSHistoryEntry | undefined {
+  if (!item.ref) return undefined;
+  const entry = entries.find(candidate => candidate.id === item.ref!.id && candidate.timestamp === item.ref!.timestamp);
+  // The reference is the identity (a cloned voice saves its display text, which can differ from the spoken text).
+  return entry && existsSync(entry.file) ? entry : undefined;
+}
+
+/** The occurrence heard in this queue just before the one on screen, with its retained audio. */
 function previousHistoryEntry(): TTSHistoryEntry | undefined {
-  const live = onScreenText();
-  const current = live === undefined ? undefined : normalizedReadText(live);
+  const items = heardQueue.items;
+  const current = currentHeardKey();
+  const at = current === undefined ? -1 : items.findIndex(item => item.key === current);
+  // Nothing on screen (or not yet heard): every heard occurrence is before it.
+  const candidates = (at >= 0 ? items.slice(0, at) : items.filter(item => item.key !== current)).reverse();
+  if (!candidates.length) return undefined;
   // Most recent first, like getHistoryEntry; equal timestamps keep the later write first.
   const entries = loadHistory().map((entry, index) => ({ entry, index }))
     .sort((a, b) => b.entry.timestamp - a.entry.timestamp || b.index - a.index).map(({ entry }) => entry);
-  return entries.find(entry => existsSync(entry.file) && (current === undefined || normalizedReadText(entry.text) !== current));
+  for (const item of candidates) {
+    const entry = heardHistoryEntry(item, entries);
+    if (entry) return entry;
+  }
+  return undefined;
 }
 
 export function hasPreviousRead(): boolean { return previousHistoryEntry() !== undefined; }
@@ -2804,7 +2935,8 @@ export function hasPreviousRead(): boolean { return previousHistoryEntry() !== u
  * Lane B (2.4): "previous read". Replays the previous finished narration from its first word,
  * with its retained audio and word timings (no re-synthesis). The read on screen is held aside
  * at its exact word and comes back PAUSED there when the replay ends or is stopped (model
- * PreviousRead / PrevReturn). With nothing on screen it simply replays the last narration.
+ * PreviousRead / PrevReturn). With nothing on screen it replays the last narration heard in the last queue.
+ * T1: only narrations heard in the current queue qualify (see `heardQueue`), never an archive-only entry.
  */
 export function playPreviousRead(): SeekResult {
   if (f5CaptureActive || getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
@@ -2814,7 +2946,7 @@ export function playPreviousRead(): SeekResult {
   if (!entry) return { outcome: "noop", reason: "no previous read" };
   const live = onScreenText() !== undefined;
   const read = activeLongRead && !activeLongRead.controller.signal.aborted ? activeLongRead : undefined;
-  const hold: PreviousHold = { ...(read ? { longReadId: read.id } : {}), restored: false };
+  const hold: PreviousHold = { ...(read ? { longReadId: read.id } : {}), restored: false, heldKey: currentHeardKey() };
   if (live) {
     previousHold = hold;
     const held = playbackQueueManager.holdForPrevious();
@@ -2825,7 +2957,7 @@ export function playPreviousRead(): SeekResult {
     }
     ledgerPreviousHold(held.word);
   }
-  const metadata = historyReplayMetadata(entry);
+  const metadata: PlaybackMetadata = { ...historyReplayMetadata(entry), heardQueueReplay: true };
   try {
     const handle = playAudioNonBlocking(entry.file, { ...metadata, onCompleted: (outcome) => {
       try { metadata.onCompleted?.(outcome); } finally { if (live) restorePreviousHold(hold); }
@@ -3675,8 +3807,10 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
           await assembleLongReadHistory(audio, combined);
           const alignedWords = combineHistoryTimings(audio.map(({ chunk, text }) => ({ text, durationMs: chunk.durationMs,
             aligned: chunkAlignedWords.get(chunk.audioFile), words: displayTokenBoundaries(text, chunk.wordBoundaries) })));
-          addToHistory(display?.text ?? text, combined,
+          const historyRef = addToHistory(display?.text ?? text, combined,
             chunkVoices.get(audio[0]?.chunk.audioFile) ?? profile.voice, missingChunks, { alignedWords, display, prosodyIdentity: prosodyPlan?.renderIdentity });
+          // T1: the read's occurrence in the heard queue now has its exact retained audio.
+          if (historyRef) bindHeardAudio(id, historyRef);
         } catch (error) {
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
         } finally { try { unlinkSync(combined); } catch {} }
@@ -4214,11 +4348,12 @@ async function speakWithEdgeTTS(
     const durationMs = Math.max(probeAudioDurationMs(ttsFile) ?? 0, inferBoundaryEndMs(wordBoundaries)) || undefined;
     if (textChunks.length === 1) options?.speechArchive?.generated(ttsFile, textChunks[0], voice, options?.profile ?? "short", "edge-tts", 0, durationMs ?? null);
     else options?.speechArchive?.keepAudio(ttsFile, durationMs ?? null);
-    addToHistory(displayText, ttsFile, voice, [], { wordBoundaries });
+    const historyRef = addToHistory(displayText, ttsFile, voice, [], { wordBoundaries });
     proc = playAudioNonBlocking(ttsFile, {
       speechArchive: options?.speechArchive,
       text: displayText,
       voice,
+      ...(historyRef ? { historyRef } : {}),
       wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
       priority: playbackPriorityForMode(options?.mode),
       durationMs,

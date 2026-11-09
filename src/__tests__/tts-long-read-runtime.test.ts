@@ -25,7 +25,7 @@ import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleReplay, handleVoiceAsk } from "../handlers";
 import { pausePlayback, isPlaybackPaused } from "../tts";
-import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, pausePlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { addToHistory, awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, hasPreviousRead, loadHistory, playPreviousRead, resetHeardQueueForTests, speak, speakLongRead, stopPlayback, seekPlayback, pausePlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
 import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
@@ -1032,6 +1032,22 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     fixture.pending[1].resolve(fixture.result(second));
     expect((await published.at(0)).aligned_words[0].offset_ms).toBe(0);
     expect(second.chunkId).toBe("1");
+  });
+
+  it("T1 r2: a finished long read binds its own saved entry; Back never resolves it to a newer same-text entry", async () => {
+    resetHeardQueueForTests();
+    const display = "A long read Back must replay with its own audio.";
+    autoPlay = true; await start("edge", display).done;
+    const saved = loadHistory().find(entry => entry.text === display)!;
+    expect(saved).toBeDefined();
+    writeFileSync(TTS_HISTORY_FILE + ".unheard.mp3", "unheard");
+    addToHistory(display, TTS_HISTORY_FILE + ".unheard.mp3", "UNHEARD-voice");
+    expect(hasPreviousRead()).toBe(true);
+    expect(playPreviousRead()).toMatchObject({ outcome: "accept" });
+    await fixtureCheckpoint();
+    const replay = events.filter(e => e.type === "state" && e.state === "speaking").at(-1);
+    expect(replay.voice).toBe(saved.voice);
+    expect(replay.voice).not.toBe("UNHEARD-voice");
   });
 
   for (const engine of ["edge", "clone", "fallback"] as const) it(`SPK1 normalizes ${engine} long reads while display/history stay original`, async () => {

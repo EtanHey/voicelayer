@@ -67,8 +67,9 @@ final class TeleprompterAShotsTests: XCTestCase {
         for (appearanceName, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             for (name, lines, paused, queued, clock) in frames {
                 let view = TeleprompterAView(
-                    text: Self.text, speechWords: table, isPaused: paused, queuedCount: queued, visibleLines: lines,
-                    onVisibleLinesChange: { _ in }, playbackElapsedMilliseconds: { clock })
+                    text: Self.text, speechWords: table, isPaused: paused, visibleLines: lines,
+                    playbackElapsedMilliseconds: { clock })
+                _ = queued // T1: the queued count is Forward's badge in the leading wing now.
                 let filename = "teleprompter-a-\(name)-\(appearanceName).png"
                 try render(view, appearance: appearance, to: directory.appendingPathComponent(filename))
                 index.append("- [\(filename)](\(filename))")

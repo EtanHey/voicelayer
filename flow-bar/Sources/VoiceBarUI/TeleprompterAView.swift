@@ -9,36 +9,25 @@ public struct TeleprompterAView: View {
     public var hasCompleteDisplay = false
     public var speechWords: SpeechWordTable?
     public var isPaused = false
+    /// T3 (Etan QA 2026-11-09): no "Reading" prose is drawn. A dictation pause keeps its words for VoiceOver only.
     public var footerState = TeleprompterA.footerState(isPaused: false, isPausedForDictation: false)
-    public var queuedCount = 0
     public var visibleLines = 3
-    /// Nil hides the handle (the shell cannot grow yet).
-    public var onVisibleLinesChange: ((Int) -> Void)?
-    /// True while the handle owns the pointer (the panel must keep its mouse events), false on release.
-    public var onHandleDrag: ((Bool) -> Void)?
     public var columnWidth = TeleprompterA.columnWidth
     public let playbackElapsedMilliseconds: () -> Int
     public var onSpeechSeek: ((String, Int) -> Void)?
     public var onSeek: ((Int) -> Void)?
-    /// Lane B: the listening speed; the footer chip cycles it (nil hides the chip).
-    public var speed: Double = 1
-    public var onCycleSpeed: (() -> Void)?
-    /// Lane B: "previous read" (nil hides the button; disabled while no previous narration exists).
-    public var previousAvailable = false
-    public var onPrevious: (() -> Void)?
     /// Lane B: told how many lines the text wraps to at this column (for the shell's fitted height).
     public var onTextLinesChange: ((Int) -> Void)?
     /// Lane B: who produced this narration (exposed to accessibility as `narration-origin`).
     public var narrationOrigin: String?
 
+    /// T1/T2/T3/T6 (Etan QA 2026-11-09): the footer row is gone. Back/Forward and the speed sit beside Pause in the
+    /// leading wing, the height handle sits under the eye row (`TeleprompterAHeightHandle`), and "Reading" is removed.
     public init(text: String, wordBoundaries: [TeleprompterBoundary] = [], displayBlocks: [TeleprompterDisplayBlock] = [],
                 hasCompleteDisplay: Bool = false, speechWords: SpeechWordTable? = nil, isPaused: Bool = false,
-                footerState: String? = nil, queuedCount: Int = 0, visibleLines: Int = 3,
-                onVisibleLinesChange: ((Int) -> Void)? = nil, onHandleDrag: ((Bool) -> Void)? = nil, columnWidth: CGFloat = TeleprompterA.columnWidth,
+                footerState: String? = nil, visibleLines: Int = 3, columnWidth: CGFloat = TeleprompterA.columnWidth,
                 playbackElapsedMilliseconds: @escaping () -> Int,
                 onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil,
-                speed: Double = 1, onCycleSpeed: (() -> Void)? = nil,
-                previousAvailable: Bool = false, onPrevious: (() -> Void)? = nil,
                 onTextLinesChange: ((Int) -> Void)? = nil, narrationOrigin: String? = nil) {
         self.text = text
         self.wordBoundaries = wordBoundaries
@@ -47,29 +36,16 @@ public struct TeleprompterAView: View {
         self.speechWords = speechWords
         self.isPaused = isPaused
         self.footerState = footerState ?? TeleprompterA.footerState(isPaused: isPaused, isPausedForDictation: false)
-        self.queuedCount = queuedCount
         self.visibleLines = TeleprompterA.clamp(visibleLines)
-        self.onVisibleLinesChange = onVisibleLinesChange
-        self.onHandleDrag = onHandleDrag
         self.columnWidth = columnWidth
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.onSpeechSeek = onSpeechSeek
         self.onSeek = onSeek
-        self.speed = speed
-        self.onCycleSpeed = onCycleSpeed
-        self.previousAvailable = previousAvailable
-        self.onPrevious = onPrevious
         self.onTextLinesChange = onTextLinesChange
         self.narrationOrigin = narrationOrigin
     }
 
     @State private var cache = TeleprompterAModelCache()
-    @State private var dragStartLines: Int?
-    @State private var handleOvershoot: CGFloat = 0
-    /// True only between this handle's own `onHandleDrag(true)` and its one matching `false`.
-    @State private var ownsPointer = false
-    /// Resets to false however the gesture ends: release, cancellation, or the handle going away.
-    @GestureState private var isHandleGestureActive = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
@@ -84,8 +60,7 @@ public struct TeleprompterAView: View {
             }
             .frame(width: columnWidth, height: CGFloat(visibleLines) * TeleprompterA.lineHeight, alignment: .topLeading)
             .clipped()
-            footer.frame(width: columnWidth, height: TeleprompterA.footerHeight)
-            if onVisibleLinesChange != nil { handle }
+            .overlay(alignment: .bottomLeading) { narrationOriginProbe }
         }
         .onAppear { onTextLinesChange?(model.lines.count) }
         .onChange(of: model.lines.count) { _, count in onTextLinesChange?(count) }
@@ -113,7 +88,8 @@ public struct TeleprompterAView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Teleprompter")
-        .accessibilityValue(TeleprompterA.sentence(model.layouts.map(\.displayText), around: focus))
+        .accessibilityValue([TeleprompterA.sentence(model.layouts.map(\.displayText), around: focus), footerState]
+            .filter { !$0.isEmpty }.joined(separator: ". "))
     }
 
     private func lineView(_ model: TeleprompterAModel, line: Int, focusGroup: Int?) -> some View {
@@ -161,64 +137,48 @@ public struct TeleprompterAView: View {
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 8) {
-            if let onPrevious {
-                // Lane B: replay the previous narration; the read on screen waits, paused at its word.
-                Button(action: onPrevious) {
-                    Image(systemName: "backward.end.fill").font(.system(size: 10, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                // Dimmed, never dead: with nothing to go back to the click says so (VoiceState.playPreviousRead).
-                .foregroundStyle(palette.secondary.color.opacity(previousAvailable ? 1 : 0.4))
-                .background(PillControlTooltip(text: "Previous read"))
-                .accessibilityLabel("Previous read")
-            }
-            if let onCycleSpeed {
-                // Lane B: 1× is a real control. Each click steps 0.75× · 1× · 1.25× · 1.5× · 2×. Leading side, so the
-                // trailing quarter stays the scrub labels' (TeleprompterScrubLiveCaseTests).
-                Button(action: onCycleSpeed) {
-                    Text(VoiceState.speedLabel(speed))
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(palette.subtleTrack.color))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(palette.secondary.color)
-                .background(PillControlTooltip(text: "Playback speed"))
-                .accessibilityLabel("Playback speed")
-                .accessibilityValue(VoiceState.speedLabel(speed))
-            }
-            Text(footerState)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(palette.secondary.color)
-            if let narrationOrigin {
-                // Accessibility only: which NarrationSource produced this read (not drawn; clear ink keeps it in the tree).
-                Text(narrationOrigin)
-                    .font(.system(size: 1))
-                    .foregroundStyle(.clear)
-                    .frame(width: 1, height: 1)
-                    .accessibilityIdentifier("narration-origin")
-                    .accessibilityLabel(narrationOrigin)
-            }
-            Spacer(minLength: 0)
-
-            if let chip = TeleprompterA.queuedChip(queuedCount) {
-                Text(chip)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(palette.secondary.color)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(palette.subtleTrack.color))
-                    .accessibilityLabel("\(queuedCount) queued")
-            }
+    /// Accessibility only: which NarrationSource produced this read (not drawn; clear ink keeps it in the tree).
+    @ViewBuilder
+    private var narrationOriginProbe: some View {
+        if let narrationOrigin {
+            Text(narrationOrigin)
+                .font(.system(size: 1))
+                .foregroundStyle(.clear)
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("narration-origin")
+                .accessibilityLabel(narrationOrigin)
         }
-        .lineLimit(1)
+    }
+}
+
+/// T2 (Etan QA 2026-11-09: "The drag bar ... can go underneath the eye and the replay row"): Teleprompter A's
+/// height handle, its own leaf so the notch can place it under the eye row. Whole lines follow the pointer; it owns
+/// the panel's pointer hold only between its own press and release (formal/teleprompter-a-handle).
+public struct TeleprompterAHeightHandle: View {
+    public var visibleLines: Int
+    public var onVisibleLinesChange: (Int) -> Void
+    /// True while the handle owns the pointer (the panel must keep its mouse events), false on release.
+    public var onHandleDrag: ((Bool) -> Void)?
+
+    public init(visibleLines: Int, onVisibleLinesChange: @escaping (Int) -> Void, onHandleDrag: ((Bool) -> Void)? = nil) {
+        self.visibleLines = TeleprompterA.clamp(visibleLines)
+        self.onVisibleLinesChange = onVisibleLinesChange
+        self.onHandleDrag = onHandleDrag
     }
 
-    private var handle: some View {
+    @State private var dragStartLines: Int?
+    @State private var handleOvershoot: CGFloat = 0
+    /// True only between this handle's own `onHandleDrag(true)` and its one matching `false`.
+    @State private var ownsPointer = false
+    /// Resets to false however the gesture ends: release, cancellation, or the handle going away.
+    @GestureState private var isHandleGestureActive = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
+
+    private var palette: VoiceBarNotchContrastPalette { .resolve(for: notchAppearance) }
+
+    public var body: some View {
         Capsule()
             .fill(palette.tertiary.color)
             .frame(width: TeleprompterA.handleSize.width, height: TeleprompterA.handleSize.height)
@@ -245,7 +205,7 @@ public struct TeleprompterAView: View {
                     }
                     let lines = TeleprompterA.snappedLines(startLines: start, translation: value.translation.height)
                     if lines != visibleLines {
-                        withAnimation(reduceMotion ? nil : TeleprompterA.pull) { onVisibleLinesChange?(lines) }
+                        withAnimation(reduceMotion ? nil : TeleprompterA.pull) { onVisibleLinesChange(lines) }
                     }
                 }
                 .onEnded { value in
@@ -253,7 +213,7 @@ public struct TeleprompterAView: View {
                                                            translation: value.translation.height)
                     withAnimation(reduceMotion ? nil : TeleprompterA.pull) {
                         handleOvershoot = 0
-                        onVisibleLinesChange?(lines)
+                        onVisibleLinesChange(lines)
                     }
                     releasePointer()
                 })
@@ -285,7 +245,7 @@ public struct TeleprompterAView: View {
     private func step(_ delta: Int) -> KeyPress.Result {
         let lines = TeleprompterA.clamp(visibleLines + delta)
         guard lines != visibleLines else { return .handled }
-        onVisibleLinesChange?(lines)
+        onVisibleLinesChange(lines)
         return .handled
     }
 }

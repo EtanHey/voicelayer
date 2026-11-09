@@ -73,7 +73,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
     /// Every icon control has a native tooltip over it; `textButtons` controls are labelled by their own visible
     /// text and need none.
     private func assertEveryControlHasATooltip(_ name: String, _ mounted: Mounted, expecting expected: [String],
-                                               textButtons: Int = 0, file: StaticString = #filePath,
+                                               textButtons: Int = 0, disabled: Set<String> = [],
+                                               file: StaticString = #filePath,
                                                line: UInt = #line) {
         let texts = mounted.tooltips.map(\.text)
         for label in expected {
@@ -85,7 +86,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         XCTAssertEqual(bare.count, textButtons,
                        "\(name): tooltips at \(mounted.tooltips.map { "\($0.text)@\($0.frame)" }); controls without a tooltip at \(bare.map { frame in "\(frame) \(mounted.controls.firstIndex(of: frame).map { mounted.paths[$0] } ?? "")" }); tooltips \(texts)", file: file, line: line)
         XCTAssertGreaterThanOrEqual(mounted.controls.count, expected.count, name, file: file, line: line)
-        for tip in mounted.tooltips {
+        // A disabled control leaves the key loop but keeps its tooltip (it says what the control would do).
+        for tip in mounted.tooltips where !disabled.contains(tip.text) {
             XCTAssertTrue(mounted.controls.contains { $0.insetBy(dx: -1, dy: -1).contains(CGPoint(x: tip.frame.midX, y: tip.frame.midY)) },
                           "\(name): tooltip \(tip.text) is not over a control", file: file, line: line)
         }
@@ -152,6 +154,11 @@ final class NotchIconButtonTooltipTests: XCTestCase {
                             "playback_id": "tooltips", "generation": 1])
         }
         // U5: each Teleprompter A word is a text-labelled "Jump to:" button, not an icon-only control.
-        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking", "Drag to show more or fewer lines"], textButtons: 3)
+        // T1/T6 (Etan QA 2026-11-09): speed, Back, Pause, Forward beside each other; nothing is queued, so Back and
+        // Forward are disabled.
+        assertEveryControlHasATooltip("speaking", try mount(bar(s)),
+                                     expecting: ["Stop speaking", "Drag to show more or fewer lines", "Playback speed",
+                                                 "Previous read", "Pause speech", "Next read"],
+                                     textButtons: 3, disabled: ["Previous read", "Next read"])
     }
 }
