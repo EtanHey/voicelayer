@@ -1185,6 +1185,10 @@ public struct BarView: View {
                     commandRouter.handleStop()
                 }
                 // Recording pause sits beside Stop, in its own control slot.
+                // X16 (Etan J4; M4 live bisection): no per-item insertion transition here. The daemon's `ptt` event
+                // inserts this control after the wing exists, and with `VoiceBarNotchWingContentEntry.transition` on it
+                // AppKit never showed its tooltip while Stop and Cancel beside it did. It enters the slot Stop leaves,
+                // which the glass already covers; Stop is what moves out with the growing wing.
                 if let recordingPauseControl {
                     notchButton(
                         icon: recordingPauseControl.iconName,
@@ -1197,7 +1201,6 @@ public struct BarView: View {
                         state.setRecordingPaused(!state.isRecordingPaused)
                     }
                     .contentTransition(.symbolEffect(.replace))
-                    .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
                 }
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel recording") {
                     commandRouter.handleCancel()
