@@ -16,7 +16,7 @@
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e23414d8b9dce29b38292f2ab265a52d2a38fc1839e0fdc916c813455a453b3e",
     "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift": "75db0df217618e22a506fc2019c368c2eab47affc81848cfdd3c83aae8a0c67b",
     "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift": "7eb77c9b0a09074b2ccf7b3218cc7e3eda3d9f274abb7be08a089dbe8ec728e0",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "386bbe4c54e2d0bd45c86225d9b96bf3e2be76d5a72b3b42dfac47a93c60a8ff",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "dbaafa14dece2c2512af7fa9a4e1b2b4045d594ef2d5a2181cabfd2898112a79",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
