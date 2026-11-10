@@ -4,7 +4,7 @@
   "hashes": {
     "formal/update-gate/FirstInstall.tla": "bdaf715b331c70ddc17ab1bf5f29a55996da2b1625eb03266c3f23756b7324f2",
     "formal/update-gate/checks.json": "3c7b82455dd81aa5d12a2b1bdba135eec3ff9ec56f9b9bd8fcb49efa2a20a124",
-    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/update-gate/QuitMutantReuse.cfg": "c588f7108cc70e0fc570aa6f3aab8fb19f20102851e578f30d5af0eeae34d4e1",
     "formal/update-gate/UpgradeOld.cfg": "11ad0ece993cf96794beb5b990144a152b9e4f9b79ac219c7d4ba063a8c96abe",
@@ -35,7 +35,7 @@
     "formal/update-gate/Fixed.cfg": "fa31127d1d9fd50b63cdb75a8a56ad38e0160082856aedff1df2f1e2f50d0704",
     "formal/update-gate/RecoveryMutantLive.cfg": "aae8a1603365d43f954e3fb326fad28f3f67ceb67a61dffdd8bd513a120c664a",
     "src/cli/setup.ts": "2e238e79736b89eb514a44ffc8fd70dad645876f3eee6a1a85909ec78f3ce7ba",
-    "src/update-gate-admission.ts": "54ef26d430c9e02178111faab2c6cf18675827a0a72f6cdddd26f2030cce1fb4",
+    "src/update-gate-admission.ts": "5cd6a3a13da5aa3b822da6b4623ba3a127001697660c07cb13507a24885b3d34",
     "src/update-gate-storage.ts": "c33977d31799636a3a9292f4977827c52b6ab784f249512437f67b2553210476",
     "scripts/lib/update-gate.sh": "29acc6bd7390826ce8f92cd7189971a0baa5e3b5bf58f28e6bd83948f1c49c05",
     "scripts/voicelayer-dedupe-voicebar.sh": "d7bb0b6d00c1e41203a0fe91603359b71ed457af039100c7ac8107976a07d4d4",
@@ -45,17 +45,18 @@
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
     "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
     "src/mcp-server-daemon.ts": "6a7dde04f7945902d57d621ea6c4a08ca76c7240d2d6159ff57f4f00f6819129",
-    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "2d9120f7a6343711697307d304c7b9db22f4e8303aedb0809ce3d3c77114972b",
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "dc4d888ca56de9b6c34f846154ba8fc7dc221280c51cea54f2c9cafb01f809bb",
     "scripts/lib/voicebar-launchagent.sh": "23c0322a25d69b5d08fcd33d5ff2aeab01c61995dad396160c145d83c802f07c",
     "scripts/start-voicebar.sh": "269d6aa117abe3ec3e738db1e0401c2e839a65f66ba46de6f758a67157a72f24",
     "src/update-gate-bootstrap.ts": "8c618f8ad96535597c6c9085b66f56fb0988b6a47b1d2680d2fccb2db1747457",
     "src/voice-bar-launcher.ts": "4d4ddf3cae1860f1cc747633ad70474931b09a4afef2477803159476b2917796",
-    "src/cli/voicelayer.sh": "2801421009c55a2254fa33d2dac7c4bbe93ad615927167e9cd4a467cbbc04f57",
-    "flow-bar/build-app.sh": "7e633075bb4afdf5f0e934dcb763816ea9889fd6bbde02cf8f736c0c0200260c",
+    "src/cli/voicelayer.sh": "7d01d8562ebe628071a293147e0be9815a334b6f323913de82586890b0b91b03",
+    "flow-bar/build-app.sh": "c6e9bc6a7f0d656d7db57df92605fc16a450d1aa51e176517e69eb70efe07f21",
     "scripts/lib/qa-candidate-lifecycle.py": "2e4c8a850094e6fa397c13e42f5dff09a4646627b1d7481fe21cc862008d41eb",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "1b97d950468f549997018e79c8eb54a9ed75c0bc599792a4b1112267e9d0a2e7",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "941c3f976c22b29b697a7b80ea49e5aa0e7e51aaca7d09396c2513c4b104a5a5",
     "src/update-gate-owner.ts": "94a6efef3240dc751a8600e15630127fcbd67009cca314ca65eb8d60f29ee8ea",
-    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "467763de15b00bc45940b695ad792914fdcc7e42dd414e6831e3b9604a47f11f"
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "467763de15b00bc45940b695ad792914fdcc7e42dd414e6831e3b9604a47f11f",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "BootstrapOnlyQuiescent": [

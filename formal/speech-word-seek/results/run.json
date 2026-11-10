@@ -13,8 +13,8 @@
     "src/tts.ts": "cc4e551ba64e9a0bf6950981f45e6cebbff0673e512f0df14db6977bd0120ebe",
     "src/tts/speech-words.ts": "e5b1b01485c5b27b8bc7c5ee0bd24c4900e719924d304187fab1eb0151d73c52",
     "src/__tests__/speech-words.test.ts": "ae10c21b242fe47d3930bffa974c00032cbe4e5e373aa314eb52a6ea25cf0d78",
-    "src/socket-protocol.ts": "00a5805b984f1c599ea5fd906853fbb3938b08f1ae2029b65649de719fcb491a",
-    "src/socket-handlers.ts": "29df4b4578b6ef655380f3f3567762853de18743e0dea7602e438cbe3e6e8b1a",
+    "src/socket-protocol.ts": "eba5249615ddce68b85657489caf6f7d3ec05b2aeab5342f8fac299a68b290ec",
+    "src/socket-handlers.ts": "6c443098c3ff03a5150ab4c002e7d765e82f2174d69a3e3755c8d3cbb5a3a077",
     "src/__tests__/tts-long-read-runtime.test.ts": "5cc72db55a287ed312626bcc17e57b321bdb33c381799890ae7cd558befee368",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },

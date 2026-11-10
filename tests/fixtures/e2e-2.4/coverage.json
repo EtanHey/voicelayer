@@ -19,6 +19,7 @@
     "flow": "F5 tap, hold, double tap lock, tap again lock, hint timing",
     "source": "flow-bar/Tests/VoiceBarTests/HotkeyManagerTests.swift",
     "cases": [
+      "HotkeyManagerTests/testBackToBackMouseTakesAndTapAgainLockKeepSecondTakeAlive",
       "HotkeyManagerTests/testConsumesMatchedKeyDownEvents",
       "HotkeyManagerTests/testDoesNotConsumeNonMatchingEvents",
       "HotkeyManagerTests/testDefaultHotkeyConfigurationIncludesInternalF18Relay",
@@ -183,7 +184,12 @@
       "ReadyTimePasteTests/testVoiceBarOwnDictionaryFieldIsValid",
       "ReadyTimePasteTests/testRichHostUsesReadyTargetTypingExactlyOnce",
       "ReadyTimePasteTests/testTerminalReadOnlyTextAreaFocusIsTypedExactlyOnce",
-      "ReadyTimePasteTests/testTerminalNonTextFocusIsNotTyped",
+      "ReadyTimePasteTests/testTerminalNonTextFocusIsTypedExactlyOnce",
+      "ReadyTimePasteTests/testTerminalControlsKeepTakeInHistory",
+      "ReadyTimePasteTests/testTerminalMultilineTakeNeverPlansReturnExceptUnchangedCmux",
+      "ReadyTimePasteTests/testNonTerminalNonTextFocusKeepsHistory",
+      "ReadyTimePasteTests/testTerminalPostingBoundaryCannotRetargetOriginatingInput",
+      "ReadyTimePasteTests/testTerminalNonTextFocusStillRequiresIdentityAndSecurity",
       "ReadyTimePasteTests/testFocusMoveAfterWriteNeverRetargetsOrRetries",
       "ReadyTimePasteTests/testSecureEventInputBlocksRichHostBeforeTyping",
       "ReadyTimePasteTests/testLocalFieldEditorInsertsAtSelectionWithoutAXOrClipboard",
@@ -359,6 +365,7 @@
     "flow": "Cancel and hide",
     "source": "flow-bar/Tests/VoiceBarTests/HiddenVoiceBarTests.swift",
     "cases": [
+      "HiddenVoiceBarTests/testHideOverSpeechSendsASpeechScopedStop",
       "HiddenVoiceBarTests/testHiddenAndConnectedReadsHiddenUntilNeverDisconnected",
       "HiddenVoiceBarTests/testARealDisconnectWhileHiddenStillReadsDisconnectedAfterShowing",
       "HiddenVoiceBarTests/testShowingAgainRestoresIdleAndDropsTheHiddenCopy",
@@ -510,7 +517,7 @@
     "cases": [
       "WingsU2HostTests/testIdleLauncherIsMicAndChevronLeftHistoryAndSettingsRight",
       "WingsU2HostTests/testSetupErrorBadgesTheGearAndItOpensTheSetupSpot",
-      "WingsU2HostTests/testRecordingIsStopAndCancelLeftLevelBarsRight",
+      "WingsU2HostTests/testRecordingIsStopPauseAndCancelLeftLevelBarsRight",
       "WingsU2HostTests/testTranscribingKeepsHistoryAndSettingsLiveWithoutAThirdControl",
       "WingsU2HostTests/testReadingAloudCollapsedIsPauseLeftShowAndStopRight",
       "WingsU2HostTests/testReadingAloudPausedIsPlayLeftTimeAndStopRight",
@@ -527,6 +534,7 @@
       "NotchIconButtonTooltipTests/testIdleLauncherButtons",
       "NotchIconButtonTooltipTests/testHistoryDropdownButtons",
       "NotchIconButtonTooltipTests/testRecordingButtons",
+      "NotchIconButtonTooltipTests/testPTTRecordingPauseButtonHasItsOwnHitArea",
       "NotchIconButtonTooltipTests/testTranscribingAndErrorButtons",
       "NotchIconButtonTooltipTests/testSpeakingButtons"
     ],

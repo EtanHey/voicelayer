@@ -4,7 +4,7 @@
   "hashes": {
     "formal/update-gate-cancel/CancelRetry.tla": "9dada9059505ca1eda0ec261da4b612863cc972e0002e7b100538c5325d746b6",
     "formal/update-gate-cancel/checks.json": "5030864e1c8c35182758d1b821cdd9c50c5df9fe63441e0f230976f78744b53a",
-    "formal/check-model.py": "d5a36cb404913be806685c72c5b2eb0adb0086151748c92243416d6dfc146fc2",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/update-gate-cancel/OldAdmission.cfg": "cffd05ea652a26a616cd357a97decaeb14013bd5d98fd4ae05c0a4b681bedef8",
     "formal/update-gate-cancel/UserBlockFixed.cfg": "cff06cf8e318b3e54445c5d3a6d9a8c0049ed7c6f877bddf41060eab6b8049d3",
@@ -14,12 +14,13 @@
     "formal/update-gate-cancel/Fixed.cfg": "35994917140bc8206c60115bac13ecb1d96c5e4e47c9aaf27b956b4fd7964212",
     "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
     "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
-    "src/update-gate-admission.ts": "54ef26d430c9e02178111faab2c6cf18675827a0a72f6cdddd26f2030cce1fb4",
-    "src/__tests__/update-gate-drain-readback.test.ts": "cfeebb18af5cc3fb5d856ddefaa17d6b82b73115986689cd415fd68f1b377051",
+    "src/update-gate-admission.ts": "5cd6a3a13da5aa3b822da6b4623ba3a127001697660c07cb13507a24885b3d34",
+    "src/__tests__/update-gate-drain-readback.test.ts": "e1204f9a3d50a5ae52444e5310f06693a737bfba6c1be5aaa613cf0fad02ad6c",
     "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "467763de15b00bc45940b695ad792914fdcc7e42dd414e6831e3b9604a47f11f",
     "src/update-gate-drain-status.ts": "05b34ac493ce81f2629240f21527283891dd061dfbdd73660050b0d6bc41118a",
     "src/__tests__/update-gate-user-block.test.ts": "eeb2587ffdcbdff90067fcad7a888f8260149d9d953711ac2ee50ac6921bb035",
-    "src/update-gate-native-participant.ts": "ff8b16b965e44271ab62aafc85a83d200780f15a9ccd988579704ba5bdd1caa0"
+    "src/update-gate-native-participant.ts": "ff8b16b965e44271ab62aafc85a83d200780f15a9ccd988579704ba5bdd1caa0",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "RecoverableCancelReopens": [
