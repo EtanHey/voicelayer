@@ -211,13 +211,16 @@ final class RecognizerKUICopyTests: XCTestCase {
     func testRowMeasuresParakeetsReportedSizeWhicheverEngineIsSelected() throws {
         let s = try Self.state(Self.payload(unloadWhenIdle: false))
         let row = try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: s))
-        XCTAssertEqual(row.title, "Unload when idle (saves ~2.5 GB)", "from the reported 2.51 GB")
-        XCTAssertEqual(row.captionLines, ["Off keeps Parakeet loaded so dictation starts right away. On frees its memory after 10 min idle."])
+        // U3a (SPEC 2.3): the title is plain; the saving moves into the description.
+        XCTAssertEqual(row.title, "Unload when idle")
+        XCTAssertEqual(row.captionLines, ["Frees about 2.5 GB of memory after 10 min without dictation. "
+            + "The next dictation loads Parakeet again, which adds a few seconds."], "from the reported 2.51 GB")
         let bigger = try Self.state(Self.payload(unloadWhenIdle: false, parakeetBytes: 3_100_000_000))
-        XCTAssertEqual(ModelsSettingsView.unloadWhenIdleRow(for: bigger)?.title, "Unload when idle (saves ~3 GB)", "the size follows the model")
+        XCTAssertTrue(try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: bigger)).line.hasPrefix("Frees about 3 GB "),
+                      "the size follows the model")
         let whisperSelected = try Self.state(Self.payload(desired: "whisper", effective: "whisper", parakeet: "sleeping",
                                                           whisper: "ready", unloadWhenIdle: false))
-        XCTAssertEqual(ModelsSettingsView.unloadWhenIdleRow(for: whisperSelected)?.title, "Unload when idle (saves ~2.5 GB)")
+        XCTAssertTrue(try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: whisperSelected)).line.hasPrefix("Frees about 2.5 GB "))
         XCTAssertEqual(ModelsSettingsView.approximateSize(640_000_000), "640 MB")
         XCTAssertNil(ModelsSettingsView.approximateSize(0))
         XCTAssertEqual(ModelsSettingsView.unloadWhenIdleRow(for: try Self.state(Self.payload(unloadWhenIdle: false, parakeetBytes: 0)))?.title,
@@ -290,15 +293,15 @@ final class RecognizerKUICopyTests: XCTestCase {
         let sleeping = try Self.state(Self.payload(parakeet: "sleeping", unloadWhenIdle: false))
         XCTAssertTrue(sleeping.showsSleepingHint(for: .parakeet))
         XCTAssertEqual(sleeping.statusText(for: .parakeet), "Sleeping (loads when you dictate)")
-        XCTAssertTrue(RecognizerPickerView.subtitle(sleeping, .parakeet).hasPrefix("Sleeping (loads when you dictate) · "))
+        XCTAssertTrue(RecognizerPickerView.subtitle(sleeping, .parakeet).hasPrefix("On disk (loads when you dictate) · "))
         // The other engine is also Sleeping, but dictating would not load it.
         XCTAssertFalse(sleeping.showsSleepingHint(for: .whisper))
-        XCTAssertEqual(RecognizerPickerView.subtitle(sleeping, .whisper), "Sleeping", "no size reported for Whisper in this fixture")
+        XCTAssertEqual(RecognizerPickerView.subtitle(sleeping, .whisper), "On disk", "no size reported for Whisper in this fixture")
         XCTAssertEqual(sleeping.statusText(for: .whisper), "Sleeping")
         // After a dictation it reads Ready, with no leftover hint.
         let ready = try Self.state(Self.payload(2, parakeet: "ready", unloadWhenIdle: false))
         XCTAssertFalse(ready.showsSleepingHint(for: .parakeet))
-        XCTAssertTrue(RecognizerPickerView.subtitle(ready, .parakeet).hasPrefix("Ready · "))
+        XCTAssertTrue(RecognizerPickerView.subtitle(ready, .parakeet).hasPrefix("Loaded · "))
     }
 
     func testNoHintWhenTheSelectedEngineCannotLoad() {

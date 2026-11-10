@@ -35,6 +35,27 @@ final class MenuBarStatusItemController: NSObject {
     private let clock: () -> TimeInterval
     private let isMouseEvent: @MainActor () -> Bool
     private var lastClosedAt: TimeInterval?
+    private var alert = false
+    private var isOpening = false
+
+    /// U1 (PLAN-PERFECT R2): once the Dock icon and the notch menu carry VoiceBar, the status item stays only as the
+    /// polish-degradation alert. Opening its popover acknowledges the alert, so the item must outlive the alert
+    /// until that popover closes, or the popover would lose its anchor mid-read.
+    static func isItemVisible(alertOnly: Bool, alert: Bool, popoverShown: Bool) -> Bool {
+        !alertOnly || alert || popoverShown
+    }
+
+    /// When true (the regular, Dock-icon app) the item shows only while `isItemVisible` says so.
+    var alertOnly = false {
+        didSet { publishVisibility() }
+    }
+
+    /// Receives every visibility decision; the app applies it to `NSStatusItem.isVisible`.
+    var onVisibilityChange: ((Bool) -> Void)? {
+        didSet { publishVisibility() }
+    }
+
+    private(set) var isItemVisible = true
 
     init(
         button: NSButton,
@@ -61,6 +82,7 @@ final class MenuBarStatusItemController: NSObject {
             // popover's own buttons and a close the item asked for never block the next click.
             lastClosedAt = cause == .outsideClick ? self.clock() : nil
             self.button.highlight(false)
+            self.publishVisibility()
         }
     }
 
@@ -68,7 +90,7 @@ final class MenuBarStatusItemController: NSObject {
         presenter.isShown
     }
 
-    /// The popover's window while it is open, for "Open Settings…" / "Run setup…" to close.
+    /// The popover's window while it is open, for "Open Settings…" / "Fix <step>…" to close.
     var popoverWindow: NSWindow? {
         presenter.isShown ? presenter.window : nil
     }
@@ -81,14 +103,25 @@ final class MenuBarStatusItemController: NSObject {
         if isMouseEvent(), let lastClosedAt, clock() - lastClosedAt < Self.reopenGuard {
             return
         }
+        isOpening = true
+        publishVisibility()
         presenter.show(relativeTo: button)
+        isOpening = false
+        publishVisibility()
         button.highlight(true)
     }
 
     /// The polish-degradation warning replaces the waveform, as the MenuBarExtra label did.
     func setAlert(_ alert: Bool) {
+        self.alert = alert
+        publishVisibility()
         iconSymbolName = alert ? "exclamationmark.triangle.fill" : "waveform.circle.fill"
         button.image = NSImage(systemSymbolName: iconSymbolName, accessibilityDescription: "VoiceBar")
+    }
+
+    private func publishVisibility() {
+        isItemVisible = Self.isItemVisible(alertOnly: alertOnly, alert: alert, popoverShown: presenter.isShown || isOpening)
+        onVisibilityChange?(isItemVisible)
     }
 
     /// The SF Symbol on the button now (a symbol image has no `name()` to read back).

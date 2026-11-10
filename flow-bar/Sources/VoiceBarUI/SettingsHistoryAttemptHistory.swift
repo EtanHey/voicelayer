@@ -106,12 +106,15 @@ struct SettingsHistoryLogLine: Identifiable, Equatable {
     let isProblem: Bool
     /// VoiceOver/copy only: engine, model and effort the reader reported for this attempt.
     var execution: String? = nil
+    /// Identical consecutive re-transcriptions folded into this one row ("Re-transcribed ×N"), oldest first.
+    /// Empty for an ordinary row. The row expands to show them; Copy always carries every one.
+    var repeats: [SettingsHistoryLogLine] = []
 
     var id: String {
         switch source {
         case .attempt(let id): "attempt-\(id)"
         case .archivedTake: "archived-take"
-        case .sessionRequest(let id): "request-\(id)"
+        case .sessionRequest(let id): repeats.isEmpty ? "request-\(id)" : "requests-\(id)"
         }
     }
     var attemptID: String? { if case .attempt(let id) = source { id } else { nil } }
@@ -195,13 +198,21 @@ struct SettingsHistoryDiagnosticsCopy {
                 lines.append(take)
             }
             // Oldest first, like the attempt log. Unnumbered: earlier sessions' retries are not known.
-            for run in runs.reversed() { lines.append(Self.requestLine(run, locale: locale, timeZone: timeZone)) }
+            // A request's text is compared with the text before it: its own record, else the previous request's.
+            var baseline: Int?
+            var requests: [SettingsHistoryLogLine] = []
+            for run in runs.reversed() {
+                requests.append(Self.requestLine(run, baseline: run.priorTextDigest ?? baseline,
+                                                 locale: locale, timeZone: timeZone))
+                if let result = run.resultTextDigest { baseline = result }
+            }
+            lines += Self.foldingRepeats(requests)
         }
         logLines = lines
 
         var copyText: [String] = []
         if let recordingID { copyText.append("Recording ID: \(recordingID)") }
-        copyText += lines.map(\.text)
+        copyText += lines.flatMap { line in [line.text] + line.repeats.map { "  " + $0.text } }
         var provenance: [String] = []
         if let snapshot {
             provenance += ["Recording: \(snapshot.selection)", snapshot.summary, snapshot.savedResult]
@@ -253,8 +264,53 @@ struct SettingsHistoryDiagnosticsCopy {
             symbol: symbol, isProblem: problem)
     }
 
-    /// A retry this process asked for. Outcomes are plain words; ambiguous evidence stays ambiguous.
-    static func requestLine(_ run: SettingsHistoryRunLog.Run, locale: Locale, timeZone: TimeZone) -> SettingsHistoryLogLine {
+    static let closeDetailsLabel = "Close recording details"
+    static let closeDetailsHelp = "Close recording details (Esc)"
+    static let requestTitle = "Re-transcribed"
+    static let unchangedOutcome = "No change: same text"
+
+    /// The detail pane's note under Re-transcribe: "No change: same text" when this recording's newest request
+    /// produced exactly the text it had before; nil otherwise (new text, still running, failed or unknown).
+    static func latestRequestNote(runs: [SettingsHistoryRunLog.Run]) -> String? {
+        guard let newest = runs.first else { return nil }
+        let previous = runs.dropFirst().first { $0.resultTextDigest != nil }?.resultTextDigest
+        let line = requestLine(newest, baseline: newest.priorTextDigest ?? previous, locale: .current, timeZone: .current)
+        return line.outcome == unchangedOutcome ? unchangedOutcome : nil
+    }
+
+    /// Etan, 2026-11-05: one take listed ~20 identical "Retry · New text received" rows after repeated
+    /// Re-transcribe clicks. Consecutive requests with the same outcome fold into one "Re-transcribed ×N" row
+    /// spanning their first and last times; the row expands to the individual requests. Different outcomes
+    /// never fold, so a failure between two successes stays visible where it happened.
+    static func foldingRepeats(_ lines: [SettingsHistoryLogLine]) -> [SettingsHistoryLogLine] {
+        var folded: [SettingsHistoryLogLine] = []
+        var run: [SettingsHistoryLogLine] = []
+        func flush() {
+            guard let first = run.first, let last = run.last else { return }
+            if run.count == 1 {
+                folded.append(first)
+            } else {
+                var row = SettingsHistoryLogLine(
+                    source: first.source, title: "\(requestTitle) ×\(run.count)",
+                    time: [first.time, last.time].compactMap { $0 }.joined(separator: "–"),
+                    outcome: first.outcome, processing: nil, symbol: first.symbol, isProblem: first.isProblem)
+                row.repeats = run
+                folded.append(row)
+            }
+            run = []
+        }
+        for line in lines {
+            if let previous = run.last, previous.outcome != line.outcome || previous.symbol != line.symbol { flush() }
+            run.append(line)
+        }
+        flush()
+        return folded
+    }
+
+    /// A retry this process asked for. Outcomes are plain words; ambiguous evidence stays ambiguous. A result whose
+    /// text equals `baseline` (the text before the request) says so instead of "New text received".
+    static func requestLine(_ run: SettingsHistoryRunLog.Run, baseline: Int? = nil, locale: Locale,
+                            timeZone: TimeZone) -> SettingsHistoryLogLine {
         let last = run.recordingObservation ?? ""
         let linkedError = run.recordingObservations.contains { $0.hasPrefix("Recording-linked error;") }
         let (outcome, symbol, problem): (String, String, Bool) = switch run.outcome {
@@ -265,12 +321,14 @@ struct SettingsHistoryDiagnosticsCopy {
         case .requested: ("Requested", "clock", false)
         case .unknown:
             if linkedError { ("Problem reported", "exclamationmark.circle", true) }
-            else if last.hasPrefix("Final result observed") { ("New text received", "checkmark", false) }
+            else if last.hasPrefix("Final result observed"), let result = run.resultTextDigest, result == baseline {
+                (unchangedOutcome, "equal.circle", false)
+            } else if last.hasPrefix("Final result observed") { ("New text received", "checkmark", false) }
             else if last.hasPrefix("Empty final result") { ("Empty result", "minus.circle", false) }
             else if last.hasPrefix("Recording became idle") { ("No result", "minus.circle", false) }
             else { ("Outcome unclear", "questionmark.circle", false) }
         }
-        return SettingsHistoryLogLine(source: .sessionRequest(run.id), title: "Retry",
+        return SettingsHistoryLogLine(source: .sessionRequest(run.id), title: requestTitle,
             time: clockTime(run.startedAt, locale: locale, timeZone: timeZone), outcome: outcome,
             processing: nil, symbol: symbol, isProblem: problem)
     }
@@ -284,6 +342,10 @@ struct SettingsHistoryDiagnosticsCopy {
         if let created = snapshot?.capturedAt ?? entry?.createdAt {
             facts.append(.init(title: "Created", value: dateTime(created, locale: locale, timeZone: timeZone)))
         }
+        facts += buildFacts(snapshot?.appBuild ?? entry?.appBuild, title: "Built from", prefix: "Build")
+        let retry = snapshot?.retranscribedBy ?? entry?.retranscribedBy
+        facts += buildFacts(retry ?? snapshot?.transcribedBy ?? entry?.transcribedBy,
+            title: retry == nil ? "Transcribed by" : "Re-transcribed by", prefix: "Transcription")
         // Stored input_device_name values, never the currently selected microphone.
         if let mic = snapshot?.inputDeviceName ?? entry?.inputDeviceLabel { facts.append(.init(title: "Microphone", value: mic)) }
         if let language = snapshot?.languageSetting { facts.append(.init(title: "Language setting", value: language)) }
@@ -315,6 +377,15 @@ struct SettingsHistoryDiagnosticsCopy {
             }
         }
         return facts
+    }
+
+    private static func buildFacts(_ build: RecordingAppBuild?, title: String, prefix: String) -> [SettingsHistoryFact] {
+        guard let build, let label = build.label else { return [] }
+        let fields = [("commit", build.gitCommit), ("description", build.gitDescribe), ("time (UTC)", build.buildTimeUTC),
+                      ("source", build.source), ("daemon source", build.daemonSource)]
+        return [SettingsHistoryFact(title: title, value: label)] + fields.compactMap { key, value in
+            value.map { SettingsHistoryFact(title: "\(prefix) \(key)", value: SettingsHistoryDiagnosticPrivacy.text(String($0.prefix(160)))) }
+        }
     }
 
     /// Display name for the engine that WROTE the text of a recorded backend chain (`parakeet-resident`,

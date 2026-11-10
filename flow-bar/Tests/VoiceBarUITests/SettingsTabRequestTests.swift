@@ -44,7 +44,8 @@ final class SettingsTabRequestTests: XCTestCase {
     /// D2 "Change…": the request lands on General with Microphone priority scrolled into view.
     func testAMicrophonePriorityFocusScrollsGeneralToThePriorityList() throws {
         func scrolledOffset(_ request: SettingsTabRequest?) throws -> CGFloat {
-            let host = NSHostingView(rootView: settingsView(tabRequest: request))
+            // Permission health shows no Setup when all is well; one broken row keeps General taller than the window.
+            let host = NSHostingView(rootView: settingsView(tabRequest: request, missingPermissions: [.accessibility]))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 420),
                                   styleMask: [.titled], backing: .buffered, defer: false)
             window.contentView = host
@@ -68,7 +69,8 @@ final class SettingsTabRequestTests: XCTestCase {
         let focused = try scrolledOffset(SettingsTabRequest(tab: .general, focus: .microphonePriority, id: 1))
 
         XCTAssertLessThanOrEqual(unfocused, 1, "a plain General request opens at the top")
-        XCTAssertGreaterThan(focused, 100, "Change… scrolls down to Microphone priority")
+        // One broken Setup row sits above Microphone priority (healthy General has no Setup at all).
+        XCTAssertGreaterThan(focused, 20, "Change… scrolls down to Microphone priority")
     }
 
     private func tallestScrollView(in view: NSView) -> NSScrollView? {
@@ -86,10 +88,11 @@ final class SettingsTabRequestTests: XCTestCase {
         return best
     }
 
-    private func settingsView(tabRequest: SettingsTabRequest?) -> SettingsView {
+    private func settingsView(tabRequest: SettingsTabRequest?,
+                              missingPermissions: [HotkeyPermission] = []) -> SettingsView {
         SettingsView(
             hotkeyEnabled: true,
-            missingPermissions: [],
+            missingPermissions: missingPermissions,
             availableDevices: { [] },
             selectedDeviceID: { nil },
             modelsStatus: { .loading },

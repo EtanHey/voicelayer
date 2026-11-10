@@ -121,6 +121,10 @@ def check_f5_runtime(run, runner):
     print(output, end="", flush=True)
     assert status == 0 and f"Projected {len(json.loads(cases.read_text()))} real daemon F5 scenarios" in output, "Native daemon projection skipped or diverged"
 
+    wire_rows = json.loads(daemon_wire.read_text())
+    non_resumes = sum(not row["resumes"] for row in wire_rows)
+    assert non_resumes > 0 and f"{non_resumes} non-resumes checked" in output, "Native negative projection skipped"
+
     # Restore the exact old identity-retirement guard in a private package, never the checked sources.
     import shutil
     import tempfile

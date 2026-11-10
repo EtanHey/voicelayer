@@ -1,3 +1,4 @@
+import { measureTakeStageAsync } from "./take-stage-timings";
 /**
  * STT backend abstraction — whisper.cpp (local) or Wispr Flow (cloud fallback).
  *
@@ -821,6 +822,7 @@ const WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS = 20;
 export const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
 export const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
+const MAX_OVERLAP_WORDS_PER_SECOND = 4.5;
 
 /**
  * Overlap kept at a SILENCE SEAM.
@@ -1488,6 +1490,7 @@ export function mergeChunkTranscripts(
   chunks: string[],
   /** `seams[i]` describes the seam BEFORE `chunks[i]`; `seams[0]` is unused. */
   seams: ChunkSeamKind[] = [],
+  maxOverlapWords = Number.POSITIVE_INFINITY,
 ): string {
   const merged: string[] = [];
 
@@ -1505,7 +1508,10 @@ export function mergeChunkTranscripts(
       continue;
     }
 
-    const seam = findChunkSeam(merged, nextWords);
+    const previousWords = Number.isFinite(maxOverlapWords)
+      ? normalizeChunkWords(chunks[chunkIndex - 1] ?? "").length : merged.length;
+    const tailWords = Math.min(maxOverlapWords, previousWords);
+    const seam = findChunkSeam(tailWords > 0 ? merged.slice(-tailWords) : [], nextWords.slice(0, maxOverlapWords));
     if (seam.kind === "compact") {
       const anchorIndex = merged.length - seam.dropMerged - 1;
       if (!seam.preserveRagged) merged.splice(merged.length - seam.dropMerged);
@@ -1604,7 +1610,9 @@ function timedWordsForChunk(
       ? SILENCE_SEAM_OVERLAP_SECONDS
       : WAV_CHUNK_OVERLAP_SECONDS);
 
-  for (const [segmentIndex, segment] of coalesceInstantaneousSegments(chunk.segments).entries()) {
+  const coalesced = coalesceInstantaneousSegments(chunk.segments);
+  if (coalesced.some((segment, i) => i > 0 && segment.startS < coalesced[i - 1]!.endS)) return null;
+  for (const [segmentIndex, segment] of coalesced.entries()) {
     if (
       !Number.isFinite(segment.startS) ||
       !Number.isFinite(segment.endS) ||
@@ -1718,6 +1726,36 @@ function findTimedNearSeam(merged: TimedChunkWord[], next: TimedChunkWord[]): nu
   return 0;
 }
 
+/** Bounded fallback authorized by the dictation lead: textual anchors may
+ * only consume the overlap's word capacity, at the two chunk edges. Reliable
+ * timing that positively places the runs in different audio still vetoes it.
+ */
+function findAcousticChunkSeam(merged: TimedChunkWord[], next: TimedChunkWord[], previousWordCount: number): ChunkSeam {
+  const head = next[0]!;
+  const midpointInOverlap = (word: TimedChunkWord) => {
+    const midpoint = (word.startS + word.endS) / 2;
+    return midpoint >= head.seamStartS && midpoint <= head.seamEndS;
+  };
+  const cap = Math.max(
+    Math.ceil((head.seamEndS - head.seamStartS) * MAX_OVERLAP_WORDS_PER_SECOND),
+    merged.filter(w => w.chunkIndex === head.chunkIndex - 1 && midpointInOverlap(w)).length,
+    next.filter(midpointInOverlap).length,
+  );
+  const tailWords = Math.min(cap, previousWordCount);
+  const left = tailWords > 0 ? merged.slice(-tailWords) : [], right = next.slice(0, cap);
+  const seam = findChunkSeam(left.map(w => w.text), right.map(w => w.text));
+  const removed = seam.kind === "exact" ? seam.skipPrefix + seam.overlap : seam.skipNext;
+  if (!removed) return seam;
+  const earlier = seam.kind === "exact" ? left.slice(-seam.overlap) : left;
+  const later = right.slice(0, removed);
+  const start = (words: TimedChunkWord[]) => Math.min(...words.map(w => w.startS));
+  const end = (words: TimedChunkWord[]) => Math.max(...words.map(w => w.endS));
+  const inWindow = (words: TimedChunkWord[]) => start(words) >= head.seamStartS && end(words) <= head.seamEndS;
+  const distinct = end(earlier) < head.seamStartS && start(later) > head.seamEndS ||
+    inWindow(earlier) && inWindow(later) && (end(earlier) < start(later) || end(later) < start(earlier));
+  return distinct ? { kind: "exact", overlap: 0, skipPrefix: 0 } : seam;
+}
+
 /**
  * Merge chunk text with conservative timestamp-supported near-seam matching, carrying
  * conservative acoustic coverage onto the full recording timeline.
@@ -1732,10 +1770,13 @@ export function mergeChunkTranscriptsWithSegments(
   chunks: TimedChunkTranscript[],
   /** `seams[i]` describes the seam BEFORE `chunks[i]`; `seams[0]` is unused. */
   seams: ChunkSeamKind[] = [],
+  options: { requireAcousticOverlap?: boolean } = {},
 ): { text: string; segments: TranscriptSegment[] } {
+  const requireAcousticOverlap = options.requireAcousticOverlap === true;
   let text = mergeChunkTranscripts(
     chunks.map((chunk) => chunk.text),
     seams,
+    requireAcousticOverlap ? Math.ceil(WAV_CHUNK_OVERLAP_SECONDS * MAX_OVERLAP_WORDS_PER_SECOND) : Number.POSITIVE_INFINITY,
   );
   const untimedText = text;
   if (!text || chunks.some((chunk) => chunk.segments.length === 0)) {
@@ -1743,7 +1784,7 @@ export function mergeChunkTranscriptsWithSegments(
   }
 
   const merged: TimedChunkWord[] = [];
-  let timedSeamChanged = false;
+  let timedSeamChanged = requireAcousticOverlap;
   const auditRecords: string[] = [];
   for (const [chunkIndex, chunk] of chunks.entries()) {
     const nextWords = timedWordsForChunk(
@@ -1759,11 +1800,13 @@ export function mergeChunkTranscriptsWithSegments(
       continue;
     }
 
-    const seam = findChunkSeam(
+    const seam = requireAcousticOverlap ? findAcousticChunkSeam(
+      merged, nextWords, normalizeChunkWords(chunks[chunkIndex - 1]?.text ?? "").length,
+    ) : findChunkSeam(
       merged.map((word) => word.text),
       nextWords.map((word) => word.text),
     );
-    const timedOverlap = seam.kind === "exact" && seam.overlap === 0
+    const timedOverlap = !requireAcousticOverlap && seam.kind === "exact" && seam.overlap === 0
       ? findTimedNearSeam(merged, nextWords)
       : 0;
     if (timedOverlap > 0) {
@@ -1865,7 +1908,7 @@ export function mergeChunkTranscriptsWithSegments(
     if (
       !Number.isFinite(word.startS) || word.endS <= word.startS
     ) {
-      return { text: untimedText, segments: [] };
+      return { text: requireAcousticOverlap ? reconstructed : untimedText, segments: [] };
     }
     if (previous && word.startS < previous.endS) {
       // Whisper segments tile each sliced chunk, while the text merge cuts the
@@ -1879,7 +1922,7 @@ export function mergeChunkTranscriptsWithSegments(
           (previous.seamChunkIndex === word.chunkIndex && word.startS >= previous.sourceEndS)) &&
         word.startS >= word.seamStartS &&
         previous.endS <= word.seamEndS;
-      if (!isBoundedSeamOverlap) return { text: untimedText, segments: [] };
+      if (!isBoundedSeamOverlap) return { text: requireAcousticOverlap ? reconstructed : untimedText, segments: [] };
       previous.text += ` ${word.text}`;
       previous.endS = Math.max(previous.endS, word.endS);
       previous.source = word.source;
@@ -2326,7 +2369,7 @@ export class WhisperCppBackend implements STTBackend {
             const probePath = join(outputDir, "outro-probe.wav");
             writeFileSync(probePath, region, { mode: 0o600 });
             try {
-              const evidence = await (this.lifecycle.speechProbe ?? probeParakeetSpeech)(probePath);
+              const evidence = await measureTakeStageAsync("gates", () => (this.lifecycle.speechProbe ?? probeParakeetSpeech)(probePath));
               const probeInfo = parseWavPcmInfo(region);
               const frames = probeInfo ? probeInfo.dataSize / probeInfo.blockAlign : -1;
               noSpeech = evidence.status === "COMPLETE" && evidence.threshold === PARAKEET_EMPTY_SPEECH_THRESHOLD &&
@@ -2796,7 +2839,8 @@ export class WhisperServerBackend implements STTBackend {
 
     const transcripts: string[] = [];
     const timedTranscripts: TimedChunkTranscript[] = [];
-    const requestSegments = outroGateEnabled(processingEnv());
+    // Timing is mandatory for seam ownership even when deletion gates are off.
+    const requestSegments = true;
     const transcribeTimed = async (
       audio: Uint8Array,
       requestOptions: WhisperServerTranscribeOptions | undefined,
@@ -2963,7 +3007,7 @@ export class WhisperServerBackend implements STTBackend {
         continue;
       }
 
-      const mergedSoFar = mergeChunkTranscripts(transcripts, seamKinds);
+      const mergedSoFar = mergeChunkTranscriptsWithSegments(timedTranscripts, seamKinds, { requireAcousticOverlap: true }).text;
       // AIDEV-NOTE: chunk decodes are NOT prompted with the transcript so far.
       // With the previous words as a prompt, beam search (Balanced/Accurate)
       // runs away at a chunk that ends mid-phrase: it re-transcribes the whole
@@ -3329,6 +3373,7 @@ export class WhisperServerBackend implements STTBackend {
     const merged = mergeChunkTranscriptsWithSegments(
       timedTranscripts,
       seamKinds,
+      { requireAcousticOverlap: true },
     );
     const mergedText = merged.text;
     if (!mergedText) return null;

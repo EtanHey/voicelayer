@@ -611,7 +611,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         }
     }
 
-    func testMouseLockedStopThenPlainF5TapSettlesOnePreviewSequence() {
+    func testMouseLockedStopThenPlainF5TapSettlesOneLogicalSequence() {
         let gesture = GestureStateMachine()
         gesture.handleMouseButtonDown()
         gesture.handleMouseButtonUp()
@@ -630,7 +630,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         var phases: [HotkeyPhase] = []
         var singleTapCount = 0
         var holdStartCount = 0
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
         gesture.onSingleTap = { singleTapCount += 1 }
         gesture.onHoldStart = { holdStartCount += 1 }
 

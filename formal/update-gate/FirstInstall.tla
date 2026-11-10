@@ -224,4 +224,78 @@ SlowCompletionSpecFor(oneShot) == SlowCompletionInit /\ [][SlowCompletionNext(on
   /\ WF_vars(CompletionAcquire) /\ WF_vars(CompletionPublish) /\ WF_vars(CompletionAdmit)
 SlowCompletionSpec == SlowCompletionSpecFor(FALSE)
 OneShotCompletionSpec == SlowCompletionSpecFor(TRUE)
+
+(* R6 successor backstop. participants is controller liveness; created counts
+   bounded observations after death. mutex is a transient live G1 holder, not
+   lease ownership. The crash case begins alive; its controller dies later.
+   No fairness can revive a dead controller. The model requires matching
+   running/installed target, empty ledger and fresh successor proof. *)
+RecoveryInit ==
+  /\ scenario \in {"dead", "crash", "live", "wrongTarget", "busy"}
+  /\ gate = "COMMITTED" /\ participants = (scenario \in {"crash", "live"})
+  /\ evidence = [sha |-> scenario # "wrongTarget", ready |-> scenario # "busy"]
+  /\ created = 0 /\ creation = [recovered |-> FALSE, live |-> FALSE, verified |-> FALSE]
+  /\ phase = "watch" /\ mutex = TRUE /\ available = FALSE
+RecoveryControllerExit ==
+  /\ scenario = "crash" /\ participants /\ participants' = FALSE
+  /\ UNCHANGED <<gate, evidence, mutex, phase, created, creation, scenario, available>>
+RecoveryTick ==
+  /\ phase = "watch" /\ created < 5
+  /\ created' = IF participants /\ ~IgnoreCompleteOwner THEN 0 ELSE created + 1
+  /\ UNCHANGED <<gate, participants, evidence, mutex, phase, creation, scenario, available>>
+RecoveryHolderExit ==
+  /\ mutex /\ created >= 2 /\ mutex' = FALSE
+  /\ UNCHANGED <<gate, participants, evidence, phase, created, creation, scenario, available>>
+RecoveryPublish ==
+  /\ phase = "watch" /\ ~SkipComplete /\ ~mutex /\ created = 5
+  /\ (~participants \/ IgnoreCompleteOwner) /\ (evidence.sha \/ IgnoreCompleteSha) /\ evidence.ready
+  /\ gate' = "OPEN" /\ available' = TRUE /\ phase' = "done"
+  /\ creation' = [recovered |-> TRUE, live |-> participants,
+                  verified |-> evidence.sha /\ evidence.ready /\ ~mutex]
+  /\ UNCHANGED <<participants, evidence, mutex, created, scenario>>
+RecoveryNext == RecoveryControllerExit \/ RecoveryTick \/ RecoveryHolderExit \/ RecoveryPublish
+RecoverySpec == RecoveryInit /\ [][RecoveryNext]_vars
+  /\ WF_vars(RecoveryControllerExit) /\ WF_vars(RecoveryTick)
+  /\ WF_vars(RecoveryHolderExit) /\ WF_vars(RecoveryPublish)
+EventuallyOpenAfterAbandonedLease ==
+  (scenario \in {"dead", "crash"}) ~> (gate = "OPEN" /\ available)
+NeverRecoverLiveController == creation.recovered => ~creation.live
+RecoveryOnlyVerified == creation.recovered => creation.verified
+
+(* Admission participants are process incarnations, not bare PIDs. Reused means the
+   recorded incarnation is gone even though that PID has a new owner. Unknown
+   cannot justify retirement. Reap/Prepare abstract the same held G1 mutex. *)
+reapVars == vars
+OwnerIds == {"a", "b"}
+DeadOwnerEvidence == {"dead", "reused", "reusedOtherUid", "reusedLegacy", "zombie"}
+ReapInit ==
+  /\ participants \in [OwnerIds -> {"live", "dead", "reused", "unknown", "reusedOtherUid", "reusedLegacy", "zombie", "legacyUnverifiable"}]
+  /\ evidence = OwnerIds /\ creation = {} /\ scenario \in SUBSET OwnerIds
+  /\ phase = "OPEN" /\ created = FALSE
+  /\ gate = "OPEN" /\ mutex = FALSE /\ available = FALSE
+OwnerDeath(i) ==
+  /\ participants[i] = "live" /\ participants' = [participants EXCEPT ![i] = "dead"]
+  /\ UNCHANGED <<evidence, creation, scenario, phase, created, gate, mutex, available>>
+OwnerReap(i, ageMutant, disabled) ==
+  /\ ~disabled /\ i \in evidence
+  /\ (participants[i] \in DeadOwnerEvidence \/ (IgnoreEvidence /\ participants[i] \in {"unknown", "legacyUnverifiable"}) \/ (ageMutant /\ i \in scenario))
+  /\ evidence' = evidence \ {i} /\ creation' = creation \cup {i}
+  /\ created' = (created \/ participants[i] \notin DeadOwnerEvidence)
+  /\ UNCHANGED <<participants, scenario, phase, gate, mutex, available>>
+ReapRequest == /\ phase = "OPEN" /\ phase' = "DRAINING"
+               /\ UNCHANGED <<participants, evidence, creation, scenario, created, gate, mutex, available>>
+ReapPrepare == /\ phase = "DRAINING" /\ evidence = {} /\ phase' = "PREPARED"
+               /\ UNCHANGED <<participants, evidence, creation, scenario, created, gate, mutex, available>>
+ReapNext(ageMutant, disabled) == ReapRequest \/ ReapPrepare \/
+  (\E i \in OwnerIds: OwnerDeath(i) \/ OwnerReap(i, ageMutant, disabled))
+ReapSpec(ageMutant, disabled) == ReapInit /\ [][ReapNext(ageMutant, disabled)]_reapVars
+  /\ WF_reapVars(ReapRequest) /\ WF_reapVars(ReapPrepare)
+  /\ (\A i \in OwnerIds: WF_reapVars(OwnerReap(i, ageMutant, disabled)))
+ReapFixedSpec == ReapSpec(FALSE, FALSE)
+ReapAgeMutantSpec == ReapSpec(TRUE, FALSE)
+ReapOldSpec == ReapSpec(FALSE, TRUE)
+NeverReapLiveOwner == ~created
+DeadRegistrationsCanPrepare ==
+  (\A i \in evidence: participants[i] \in DeadOwnerEvidence) ~> (phase = "PREPARED")
+
 =============================================================================

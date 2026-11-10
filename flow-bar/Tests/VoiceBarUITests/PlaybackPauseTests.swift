@@ -10,7 +10,9 @@ final class PlaybackPauseTests: XCTestCase {
         text: String = "One two three four five six",
         playbackID: String = "playback-7"
     ) -> (VoiceState, () -> [[String: Any]]) {
-        let state = VoiceState(playbackAmplitudeClock: { [unowned self] in now })
+        let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                               recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
+                               playbackAmplitudeClock: { [unowned self] in now })
         state.isConnected = true
         state.isCollapsed = false
         var sent: [[String: Any]] = []
@@ -51,6 +53,173 @@ final class PlaybackPauseTests: XCTestCase {
             "type": "playback_state", "state": "resumed", "playback_id": playbackID, "generation": generation,
             "offset_ms": offset, "chunk_offset_ms": offset,
         ]
+    }
+
+    func testW1AskOwnsItsClockAndReturnsTheOriginalPausedRead() {
+        let (state, sent) = speakingState()
+        state.handleEvent(pausedEvent())
+        let readEpoch = state.playbackEpoch
+        now += 10
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2500)
+        var prompt = speakingEvent(text: "Question?", playbackID: "ask-1", generation: 1)
+        prompt["preserves_paused_read"] = true
+        prompt["initial_timing"] = ["type": "subtitle", "estimated_duration_ms": 1000]
+        state.handleEvent(prompt)
+        XCTAssertEqual(state.statusText, "Question?")
+        XCTAssertFalse(state.isPlaybackPaused)
+        XCTAssertEqual(state.wordBoundaries.count, 1)
+        now += 0.25
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 250)
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback", "next_state": "recording"])
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback",
+                           "restores_paused_read": true, "playback_id": "playback-7", "generation": 3])
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        XCTAssertEqual(state.statusText, "One two three four five six")
+        XCTAssertTrue(state.isPlaybackPaused)
+        now += 10
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2500)
+        XCTAssertEqual(state.playbackEpoch, readEpoch)
+        state.togglePlaybackPause()
+        XCTAssertEqual(sent().last?["cmd"] as? String, "resume")
+        XCTAssertEqual(sent().last?["playback_id"] as? String, "playback-7")
+        XCTAssertEqual(sent().last?["generation"] as? Int, 3)
+    }
+
+    func testW1TextOnlyAskReturnsThePausedReadAndRejectsStaleRestore() {
+        let (state, _) = speakingState()
+        state.handleEvent(pausedEvent())
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback",
+                           "next_state": "recording", "preserves_paused_read": true])
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        var restore: [String: Any] = ["type": "state", "state": "idle", "source": "playback",
+                                     "restores_paused_read": true, "playback_id": "playback-7", "generation": 2]
+        state.handleEvent(restore)
+        XCTAssertFalse(state.isPlaybackPaused)
+        restore["generation"] = 3
+        state.handleEvent(restore)
+        XCTAssertTrue(state.isPlaybackPaused)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2500)
+    }
+
+    func testW1RetiringAPausedPlayerCannotRestartItsHighlightClock() {
+        let (state, _) = speakingState()
+        state.handleEvent(pausedEvent())
+        now += 10
+        state.handleEvent(["type": "playback_outcome", "playback_id": "playback-7",
+                           "status": "interrupted", "reason": "replaced"])
+        now += 10
+        XCTAssertNotEqual(state.mode, .speaking, "a terminal parked player has no audio to drive highlighting")
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 0)
+    }
+
+    func testW1RestoreWaitsForAnotherCaptureToSettle() {
+        for captureMode in [VoiceMode.recording, .transcribing] {
+            let (state, _) = speakingState()
+            state.handleEvent(pausedEvent())
+            var prompt = speakingEvent(text: "Question?", playbackID: "ask-1", generation: 1)
+            prompt["preserves_paused_read"] = true
+            state.handleEvent(prompt)
+            state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+            state.mode = captureMode
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback",
+                               "restores_paused_read": true, "playback_id": "playback-7", "generation": 3])
+            XCTAssertEqual(state.mode, captureMode)
+            state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+            drainMainQueue()
+            XCTAssertTrue(state.isPlaybackPaused)
+            XCTAssertEqual(state.playbackElapsedMilliseconds(), 2500)
+        }
+    }
+
+    func testCaptureEndKeepsReadingThroughProcessingAndItsFailure() {
+        let (state, _) = speakingState()
+        state.handleEvent(pausedEvent())
+        var prompt = speakingEvent(text: "Question?", playbackID: "ask-1", generation: 1)
+        prompt["preserves_paused_read"] = true
+        state.handleEvent(prompt)
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        // The daemon emits transcribing before read_processing; this briefly enters transcribing.
+        XCTAssertEqual(state.mode, .transcribing)
+        state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": true])
+        var resumed = speakingEvent(generation: 4, offset: 2500)
+        resumed["utteranceId"] = "read-1"
+        state.handleEvent(resumed)
+        let position = state.playbackElapsedMilliseconds()
+        XCTAssertTrue(state.showsReadingProcessingSpinner)
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 2)
+        // TP-3 + N1: the reading wing draws the spinner in its fourth slot (Replay, Stop, Pause, spinner).
+        XCTAssertTrue(VoiceBarPresentation.showsReadingWingSpinner(for: state))
+        XCTAssertEqual(VoiceBarPresentation.readingLeadingWingWidth(slotCount: 2),
+                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 4))
+        XCTAssertLessThanOrEqual(VoiceBarNotchContract.readingLeadingWingWidth(slots: 4),
+                                 VoiceBarNotchContract.morphCanvasWingCapacity)
+        XCTAssertEqual(state.mode, .speaking)
+        state.handleEvent(["type": "transcription", "text": ""])
+        state.handleEvent(["type": "error", "message": "Transcription failed", "recoverable": true])
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), position)
+        state.handleEvent(["type": "error", "source": "playback", "message": "Read failed", "recoverable": true])
+        XCTAssertEqual(state.mode, .error)
+        state.handleEvent(resumed)
+        state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": false])
+        XCTAssertFalse(state.showsReadingProcessingSpinner)
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 1)
+        XCTAssertFalse(VoiceBarPresentation.showsReadingWingSpinner(for: state))
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
+    func testR2AnswerBookkeeping() {
+        let (state, _) = speakingState()
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": true])
+        var resumed = speakingEvent()
+        resumed["utteranceId"] = "read-1"
+        state.handleEvent(resumed)
+        var refreshed = false
+        state.onHistoryArchiveChange = { _ in refreshed = true }
+        state.handleEvent(["type": "transcription", "text": "Synthetic answer", "recording_path": "/synthetic/answer"])
+        XCTAssertEqual(state.recentTranscriptions.first, "Synthetic answer")
+        XCTAssertTrue(refreshed)
+        XCTAssertFalse(state.remoteOwnedRecordingForTesting)
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
+    func testR2IdleBookkeeping() {
+        let (state, _) = speakingState()
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(speakingEvent())
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        XCTAssertFalse(state.remoteOwnedRecordingForTesting)
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
+    func testR2EscapeStopsRead() {
+        let (state, sent) = speakingState()
+        state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": true])
+        var resumed = speakingEvent()
+        resumed["utteranceId"] = "read-1"
+        state.handleEvent(resumed)
+        state.cancel()
+        XCTAssertEqual(sent().last?["cmd"] as? String, "stop")
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
+    func testW1StoppedBorrowedReadCannotBeRestored() {
+        let (state, _) = speakingState()
+        state.handleEvent(pausedEvent())
+        var prompt = speakingEvent(text: "Question?", playbackID: "ask-1", generation: 1)
+        prompt["preserves_paused_read"] = true
+        state.handleEvent(prompt)
+        state.handleEvent(["type": "playback_outcome", "playback_id": "playback-7", "reason": "stopped"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback",
+                           "restores_paused_read": true, "playback_id": "playback-7", "generation": 3])
+        XCTAssertEqual(state.statusText, "Question?")
+        XCTAssertFalse(state.isPlaybackPaused)
     }
 
     // MARK: - Visibility per mode
@@ -146,11 +315,9 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(pausedEvent())
         let paused = presentation(for: state)
         XCTAssertEqual(paused.visualState, .compactStatus)
-        // Paused shows play + stop only; the eye button belongs to a hidden-but-playing read.
-        XCTAssertEqual(
-            paused.geometry.trailingWingWidth,
-            VoiceBarNotchContract.compactStatusDefaultTrailingWingWidth
-        )
+        // T3: paused keeps the reading wings (left Replay/Stop/Play, right time/eye/1×), so pausing never reflows them.
+        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarNotchContract.readingTrailingWingWidth)
+        XCTAssertEqual(paused.geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: 3))
 
         resume(state, offset: 2500)
         XCTAssertFalse(state.isPlaybackPaused)
@@ -437,21 +604,19 @@ final class PlaybackPauseTests: XCTestCase {
         let teleprompter = presentation(for: state)
         state.dismissTeleprompter()
         let compact = presentation(for: state)
+        // T3 (Etan, QA 2026-11-08 7:52): Replay, Stop, Pause in the left wing. Pause keeps the core-side slot in the
+        // mic lane's insets, so it stays the same distance from the notch; the wing fits its three slots exactly.
         for speaking in [teleprompter, compact] {
-            XCTAssertEqual(speaking.geometry.leadingWingWidth, mic.geometry.leadingWingWidth, "\(speaking.visualState)")
+            XCTAssertEqual(speaking.geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: 3),
+                           "\(speaking.visualState)")
             XCTAssertEqual(material.wingContentLayout(for: .leading, state: speaking.visualState), micSlot)
-            let micLayout = VoiceBarNotchShapeLayout(geometry: mic.geometry)
-            let layout = VoiceBarNotchShapeLayout(geometry: speaking.geometry)
-            XCTAssertEqual(
-                layout.coreRect.minX - layout.leadingWingRect.minX,
-                micLayout.coreRect.minX - micLayout.leadingWingRect.minX
-            )
         }
         state.showTeleprompter()
 
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         XCTAssertTrue(state.isTeleprompterReadback)
-        XCTAssertEqual(presentation(for: state).geometry.leadingWingWidth, 0, "a readback has nothing to pause")
+        XCTAssertEqual(presentation(for: state).geometry.leadingWingWidth,
+                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 1), "a stopped read keeps Replay, no Pause")
     }
 
     func testManualSpeechPauseDuringCaptureUsesScopedExistingPauseCommand() {

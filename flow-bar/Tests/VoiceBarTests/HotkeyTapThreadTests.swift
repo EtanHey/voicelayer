@@ -150,6 +150,36 @@ final class HotkeyTapThreadTests: XCTestCase {
 }
 
 extension HotkeyTapThreadTests {
+    func testLostReleasesCannotKeepEscapeCapturedAfterTapRecovery() throws {
+        let runner = HotkeyTapRunLoop(), ctx = context()
+        _ = runner.start(install: { _ in }, cleanup: { _ in })
+        defer { runner.stop() }
+        let key = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 96, keyDown: true))
+        key.flags = []
+        let mouse = try XCTUnwrap(CGEvent(source: nil))
+        mouse.type = .otherMouseDown
+        mouse.setIntegerValueField(.mouseEventButtonNumber, value: 4)
+        let escape = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: true))
+        let finished = DispatchSemaphore(value: 0)
+        runner.perform {
+            XCTAssertFalse(Thread.isMainThread)
+            var reenables = 0
+            ctx.reenableTap = { reenables += 1 }
+            ctx.scheduleRecovery = { _, recover in recover() }
+            for reason: CGEventType in [.tapDisabledByTimeout, .tapDisabledByUserInput] {
+                XCTAssertTrue(self.invoke(ctx, type: .keyDown, event: key))
+                XCTAssertTrue(self.invoke(ctx, type: .otherMouseDown, event: mouse))
+                XCTAssertTrue(ctx.hasPendingPress)
+                _ = self.invoke(ctx, type: reason, event: key)
+                XCTAssertFalse(ctx.hasPendingPress)
+                XCTAssertFalse(self.invoke(ctx, type: .keyDown, event: escape))
+            }
+            XCTAssertEqual(reenables, 2)
+            finished.signal()
+        }
+        XCTAssertEqual(finished.wait(timeout: .now() + 2), .success)
+    }
+
     func testPendingPressMatchesThePriorClassifierWhileMainIsBlocked() throws {
         let runner = HotkeyTapRunLoop()
         _ = runner.start(install: { _ in }, cleanup: { _ in })

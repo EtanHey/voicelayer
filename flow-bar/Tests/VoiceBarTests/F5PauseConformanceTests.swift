@@ -250,6 +250,7 @@ final class F5PauseConformanceTests: XCTestCase {
     private func projectDaemonFrames(path: String) async throws {
         let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [[String: Any]])
         var resumedCount = 0
+        var nonResumedCount = 0
         for (index, row) in rows.enumerated() {
             let state = VoiceState(playbackAmplitudeClock: { 100 })
             state.isConnected = true
@@ -262,6 +263,7 @@ final class F5PauseConformanceTests: XCTestCase {
             state.handleEvent(["type": "ack", "command": "speak_text", "id": requestID, "outcome": "accept"])
             let frames = try XCTUnwrap(row["events"] as? [[String: Any]])
             var beganPause = false
+            var lastSpeakingRequestID: String?
             for var event in frames {
                 if !beganPause,
                    (event["type"] as? String == "playback_state" && event["state"] as? String == "paused") ||
@@ -275,6 +277,9 @@ final class F5PauseConformanceTests: XCTestCase {
                 // Bind the daemon's symbolic selection to this native submission, as in the command leg.
                 if event["request_id"] as? String == row["requestID"] as? String { event["request_id"] = requestID }
                 if event["current_request_id"] as? String == row["requestID"] as? String { event["current_request_id"] = requestID }
+                if event["type"] as? String == "state", event["state"] as? String == "speaking" {
+                    lastSpeakingRequestID = event["request_id"] as? String
+                }
                 if ["state", "read_queue", "playback_state", "playback_outcome", "subtitle", "error"].contains(event["type"] as? String ?? "") {
                     state.handleEvent(event)
                 }
@@ -296,17 +301,26 @@ final class F5PauseConformanceTests: XCTestCase {
                 XCTAssertEqual(commands.last?["playback_id"] as? String, resumed["playback_id"] as? String)
                 XCTAssertEqual(commands.last?["generation"] as? Int, resumed["generation"] as? Int)
                 resumedCount += 1
-            } else if let ending = row["ending"] as? String {
-                if ending == "manual" {
+            } else {
+                nonResumedCount += 1
+                XCTAssertFalse(frames.contains { $0["state"] as? String == "resumed" },
+                               "non-resume row cannot carry a resumed frame: \(index)")
+                // A queued successor may start after the original read stops. Only the owned
+                // read must remain silent; a manual pause may restore its paused surface.
+                let manualPause = frames.last { $0["state"] as? String == "paused" }?["pause_owner"] as? String == "user"
+                XCTAssertTrue(state.mode != .speaking || lastSpeakingRequestID != requestID ||
+                              (state.isPlaybackPaused && manualPause),
+                              "native daemon non-resumed projection row \(index)")
+                if row["ending"] as? String == "manual" {
                     XCTAssertEqual(state.mode, .speaking, "clone user pause returns its surface")
                     XCTAssertTrue(state.isPlaybackPaused, "clone user pause must persist")
-                } else {
+                } else if row["ending"] != nil {
                     XCTAssertNotEqual(state.mode, .speaking, "clone Stop/refusal cannot resurrect a read")
                 }
             }
         }
         XCTAssertGreaterThan(resumedCount, 0)
-        print("Projected \(rows.count) real daemon F5 scenarios into native state; \(resumedCount) expected resumes checked")
+        print("Projected \(rows.count) real daemon F5 scenarios into native state; \(resumedCount) expected resumes checked; \(nonResumedCount) non-resumes checked")
     }
 
     /// Wait for the already-enqueued restore, independent of timer resolution or host load.

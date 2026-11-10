@@ -61,7 +61,8 @@ for (const kind of ["DRAINING", "PREPARED", "COMMITTED"]) for (const ledger of [
     if (ledger === "file") fs.writeFileSync(path + ".admissions", "unsafe");
     if (ledger === "symlink") fs.symlinkSync(join(path, "absent"), path + ".admissions");
     if (ledger === "directory") {
-      expect(() => gate.withVoiceAdmission(() => {})).toThrow("UPDATE_BUSY");
+      if (kind === "DRAINING") expect(gate.withVoiceAdmission(() => "voice")).toBe("voice");
+      else expect(() => gate.withVoiceAdmission(() => {})).toThrow("UPDATE_BUSY");
       expect(fs.existsSync(path + ".voice-diag.json")).toBe(false);
     } else {
       expect(gate.withVoiceAdmission(() => "voice")).toBe("voice");
@@ -93,14 +94,21 @@ for (const drop of [false, true]) test(`G2f durability re-drives repeated failur
 });
 test("G2f replay launches VoiceBar only after admission", async () => {
   const launch = spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(() => {}); mocks.push(launch);
+  // Invalid indices fall back to index 0; full-suite history may contain audio.
+  // Keep this launch-order fixture explicitly empty so replay cannot retain work.
+  const history = spyOn(tts, "getHistoryEntry").mockReturnValue(null); mocks.push(history);
   fs.mkdirSync(path + ".lock");
-  const replay = handleVoiceSpeak({ replay_index: 999999 });
+  const replay = handleVoiceSpeak({ replay_index: 0 });
   expect(launch).not.toHaveBeenCalled();
   fs.rmdirSync(path + ".lock"); await replay;
   expect(launch).toHaveBeenCalledTimes(1);
+  expect(history).toHaveBeenCalledWith(0);
+  expect(fs.readdirSync(path + ".admissions")).toEqual([]);
   gate.updateVoiceGate({ kind: "REQUEST", lease });
-  await handleVoiceSpeak({ replay_index: 999999 });
+  expect(gate.updateVoiceGate({ kind: "PREPARE", lease, native: ack, daemon: ack }, () => true).kind).toBe("APPLIED");
+  await handleVoiceSpeak({ replay_index: 0 });
   expect(launch).toHaveBeenCalledTimes(1);
+  expect(history).toHaveBeenCalledTimes(1);
 });
 test("G2f selection Next on last leaves pending capture alive", async () => {
   fakeReads(); await selection("owner", "last selection");
@@ -172,7 +180,7 @@ test("G2g OPEN admission never reads the ledger", () => {
   expect(gate.withVoiceAdmission(() => "voice")).toBe("voice");
   expect(read).not.toHaveBeenCalled();
   // Positive control: this same spy must see the named import on the closed path.
-  fs.writeFileSync(path, JSON.stringify({ version: 1, kind: "DRAINING", lease }));
+  fs.writeFileSync(path, JSON.stringify({ version: 1, kind: "PREPARED", lease, native: ack, daemon: ack }));
   expect(() => gate.withVoiceAdmission(() => "voice")).toThrow("UPDATE_BUSY");
   expect(read).toHaveBeenCalledWith(path + ".admissions");
 });

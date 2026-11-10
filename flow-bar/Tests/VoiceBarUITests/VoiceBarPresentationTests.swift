@@ -378,8 +378,9 @@ final class VoiceBarPresentationTests: XCTestCase {
                 statusText: "Loading speech model"
             )
         )
-        XCTAssertEqual(baseline.geometry.leadingWingWidth, 47.5)
-        XCTAssertEqual(baseline.geometry.trailingWingWidth, 104)
+        // 2.3 U2: the spinner in the fixed left wing, History + Settings in the fixed right wing.
+        XCTAssertEqual(baseline.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(baseline.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(baseline.geometry.topHeight, 32)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
@@ -403,13 +404,14 @@ final class VoiceBarPresentationTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(mode: .transcribing)
         )
 
-        for presentation in [launcher, quickTap, processing] {
-            XCTAssertEqual(presentation.geometry.leadingWingWidth, 47.5)
+        // 2.3 U2: the launcher, recording and transcribing (states the 3-wings mock draws) share the fixed 73.5 pt
+        // wings; an F5 hint (not a mock state) keeps its fitted status lane. 2.3 N1: recording's right wing hugs
+        // the time and the level meter, centred by an empty outer region (120 pt on a flat display).
+        for presentation in [launcher, recording, processing] {
+            XCTAssertEqual(presentation.geometry.leadingWingWidth, 73.5)
+            XCTAssertEqual(presentation.geometry.trailingWingWidth, presentation.visualState == .recording ? 120 : 73.5)
         }
-        XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
-        XCTAssertEqual(recording.geometry.leadingWingWidth, 73.5)
-        XCTAssertEqual(recording.geometry.trailingWingWidth, 78)
-        XCTAssertEqual(processing.geometry.trailingWingWidth, 104)
+        XCTAssertEqual(quickTap.geometry.leadingWingWidth, 47.5)
         XCTAssertEqual(
             quickTap.geometry.trailingWingWidth,
             min(
@@ -419,7 +421,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 VoiceBarNotchContract.morphCanvasWingCapacity
             )
         )
-        XCTAssertGreaterThan(processing.geometry.trailingWingWidth, recording.geometry.trailingWingWidth)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
     }
 
     func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {
@@ -437,9 +439,9 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 73.5)
-        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 78)
+        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 120)
         XCTAssertEqual(vad.geometry.leadingWingWidth, 99.5)
-        XCTAssertEqual(vad.geometry.trailingWingWidth, 78)
+        XCTAssertEqual(vad.geometry.trailingWingWidth, 120, "the hold control never widens the right wing")
         XCTAssertEqual(vad.geometry.leadingWingWidth - pushToTalk.geometry.leadingWingWidth, 26)
     }
 

@@ -236,14 +236,21 @@ final class AppLifecycleTests: XCTestCase {
 
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .hoverLauncher),
+            // 2.3 U2: the mic and its chevron.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: 2,
                 trailingControlCountFromCore: 2
             )
         )
 
         state.mode = .recording
         state.recordingMode = "ptt"
+        // Recording pause: Stop · Pause · ✕, so Stop stays inside the hit region on a PTT take.
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+        )
+        state.recordingMode = nil
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
             VoiceBarNotchInteractionConfiguration(leadingControlCount: 2)
@@ -257,10 +264,8 @@ final class AppLifecycleTests: XCTestCase {
         state.mode = .transcribing
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
-            VoiceBarNotchInteractionConfiguration(
-                trailingControlCountFromOuter: 1,
-                trailingOuterInset: WaveformLayout.outerInset
-            )
+            // 2.3 U2: History and Settings stay live while transcribing.
+            VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
         )
 
         state.mode = .speaking
@@ -268,21 +273,26 @@ final class AppLifecycleTests: XCTestCase {
         state.canReplay = true
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
+            // T3: Replay, Pause and Stop in the left wing; 1× and the eye on the right; no lower control row.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                lowerControlCount: 3,
-                lowerSurfaceIsInteractive: true
+                leadingControlCount: 3,
+                trailingControlCountFromOuter: 2,
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                lowerSurfaceIsInteractive: true,
+                controlSpacing: VoiceBarNotchContract.readingControlSpacing
             )
         )
 
-        // P16: the pause control sits left of the core while speaking; the hidden read's eye joins Stop.
+        // T3: a hidden-but-playing read keeps the same wings, collapsed.
         state.dismissTeleprompter()
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
+                leadingControlCount: 3,
                 trailingControlCountFromOuter: 2,
-                trailingOuterInset: WaveformLayout.outerInset
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                lowerSurfaceIsInteractive: false,
+                controlSpacing: VoiceBarNotchContract.readingControlSpacing
             )
         )
     }
@@ -292,18 +302,19 @@ final class AppLifecycleTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "speaking", "text": "Queued read", "request_id": "r-A"])
         state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 3)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 4,
+            "T3: Replay, Next (with its badge), Pause, Stop")
         // PILL1: the last item has nothing waiting, so Next and its slot go.
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 1)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 3)
         state.dismissTeleprompter()
         state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 3)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 4)
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": NSNull()])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 1)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 3)
     }
 
     func testPausedSpeechKeepsPlayAndStopReachable() {
@@ -316,10 +327,13 @@ final class AppLifecycleTests: XCTestCase {
         ])
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
+            // T3: paused keeps Replay, Play and Stop on the left; the eye's slot stays in the region but is hidden.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
-                trailingControlCountFromOuter: 1,
-                trailingOuterInset: WaveformLayout.outerInset
+                leadingControlCount: 3,
+                trailingControlCountFromOuter: 2,
+                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                lowerSurfaceIsInteractive: false,
+                controlSpacing: VoiceBarNotchContract.readingControlSpacing
             )
         )
     }
@@ -483,14 +497,33 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(continuation.contains("requestTermination(.controlledUpdate, lease: request[\"lease\"] as? [String: Any])"))
     }
 
-    func testQuitNeverOverridesCaptureOrClosedGate() {
+    func testUserQuitDefersForSaveAndIgnoresClosedGate() {
         var policy = VoiceBarTerminationPolicy()
         for singleton in [true, false] {
             policy.authorize(.menuBar)
-            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, voiceBusy: true), .terminateCancel)
-            policy.authorize(.internalFailure)
-            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, gatePermitsQuit: false), .terminateCancel)
+            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, voiceBusy: true), .terminateLater)
+            policy.authorize(.menuBar)
+            XCTAssertEqual(policy.reply(enforcesSingleton: singleton, gatePermitsQuit: false), .terminateNow)
         }
+    }
+
+    @MainActor func testQuitSaveDeferralIsBoundedAndEndsWhenSaveEnds() async {
+        var ticks = 0
+        var instant = ContinuousClock().now
+        await VoiceBarQuitDeferral.waitWhileSaving({ true }, now: { instant }, sleep: { duration in
+            ticks += 1; instant = instant.advanced(by: duration)
+        })
+        XCTAssertEqual(ticks, 60, "Quit proceeds after six seconds even if save evidence never settles")
+        ticks = 0
+        await VoiceBarQuitDeferral.waitWhileSaving({ ticks < 3 }, now: { instant }, sleep: { duration in
+            ticks += 1; instant = instant.advanced(by: duration)
+        })
+        XCTAssertEqual(ticks, 3, "Quit proceeds as soon as save work settles")
+        let state = VoiceState()
+        state.mode = .speaking
+        XCTAssertFalse(state.isSavingDictationForQuit, "Playback never strands user Quit")
+        state.mode = .recording
+        XCTAssertTrue(state.isSavingDictationForQuit)
     }
 
     func testCanonicalResidentStillAcceptsExternalSingletonTermination() {
@@ -1081,6 +1114,30 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
+    /// 2.3 U2: the microphone list hangs 6 pt under the 32 pt top row and ends 4 pt past the left wing's
+    /// notch-side edge (the 3-wings mock's placement).
+    func testTheMicrophoneListOpensWhereTheMockPutsIt() {
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false, isRecording: false, hasCompactStatus: false,
+            isHovered: true, isKeyboardFocused: false
+        )
+        let layout = VoiceBarPanelLayout.make(presentation: presentation)
+        let microphone = AppDelegate.notchMenuOrigin(kind: .microphone, menuWidth: 236, layout: layout)
+        XCTAssertEqual(microphone.x + 236, layout.leadingWingWindowRect.maxX + 4, accuracy: 0.001)
+        XCTAssertEqual(layout.panelSize.height - microphone.y, 38, accuracy: 0.001)
+    }
+
+    /// 2.3 U2: the badged gear opens Settings › General › Permissions when the F5 listener lacks permissions.
+    @MainActor
+    func testTheBadgedGearOpensPermissions() {
+        let app = AppDelegate()
+        app.voiceState.setSetupMissingPermissions([.accessibility])
+        app.openSetupAttentionSettings()
+        defer { app.settingsWindowForTesting?.close() }
+        XCTAssertEqual(app.settingsTabRequestForTesting?.tab, .general)
+        XCTAssertEqual(app.settingsTabRequestForTesting?.focus, .permissions)
+    }
+
     /// R4 UI pass #12: "Open Settings…" left the menu-bar popover open over Settings.
     @MainActor
     func testOpenSettingsFromTheMenuBarClosesThePopoverAndKeysSettings() throws {
@@ -1498,8 +1555,8 @@ final class AppLifecycleTests: XCTestCase {
         )
         let method = source[methodStart.lowerBound ..< methodEnd.lowerBound]
 
-        XCTAssertTrue(method.contains("panel.isPillDragEnabled = false"))
-        XCTAssertTrue(method.contains("panel.isMovableByWindowBackground = false"))
+        XCTAssertTrue(method.contains("panel.configureNotchDragging(screenKind: screenGeometry.kind"))
+        XCTAssertTrue(method.contains("allowsFreeDrag: anchorMode.allowsFreeDrag, mode: voiceState.mode"))
     }
 
     func testPointerAwareCoordinatorIsTheOnlyRetainedReadbackDismissalOwner() throws {

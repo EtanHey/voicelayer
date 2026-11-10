@@ -389,7 +389,12 @@ final class ReadQueueTests: XCTestCase {
                        VoiceBarNotchContract.compactIndicatorLaneWidth, "P16's single pause lane is unchanged")
         let input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true,
                                                   readQueueLeadingSlotCount: control.leadingSlotCount)
-        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth, wing)
+        // T3: reading adds Replay and Stop to the left wing; Next takes the fourth slot and carries its "+N" as a
+        // badge (five slots do not fit the 130 pt morph canvas).
+        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth,
+                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 4))
+        XCTAssertLessThanOrEqual(VoiceBarNotchContract.readingLeadingWingWidth(slots: 4),
+                                 VoiceBarNotchContract.morphCanvasWingCapacity)
         state.handleEvent(queueEvent(0, a))
         XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state), "count 0 removes Next and its slot")
     }
@@ -409,8 +414,10 @@ final class ReadQueueTests: XCTestCase {
         let slots = VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1
         let input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true,
                                                   readQueueLeadingSlotCount: slots)
+        // T3: with the queue empty the reading wing holds Replay, Stop and Pause, and no empty Next slot.
+        XCTAssertEqual(slots, 1, "no empty Next slot remains")
         XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth,
-                       VoiceBarNotchContract.compactIndicatorLaneWidth, "no empty Next slot remains")
+                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 3))
         XCTAssertNil(VoiceBarPresentation.readQueueControl(
             mode: .speaking, isReadback: false, currentRequestID: a, count: -1), "negative counts are zero")
 

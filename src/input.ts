@@ -1,3 +1,6 @@
+import { captureLifecycle } from "./capture-lifecycle";
+import { recordingAppBuild, tagTranscription, type RecordingAppBuild } from "./recording-build";
+import { TakeStageTimings, withTakeStageTimings, measureTakeStage, measureTakeStageAsync } from "./take-stage-timings";
 import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
@@ -67,7 +70,9 @@ import {
   retainedRecordingFilePath,
   retainedRecordingMetadataFilePath,
   MIC_DISABLED_FILE,
+  VOICE_DISABLED_FILE,
   STOP_FILE,
+  CANCEL_FILE,
 } from "./paths";
 import {
   processVADChunk,
@@ -81,7 +86,7 @@ import {
 } from "./vad";
 import { broadcastInputEvent as broadcast, setInputRecordingState as setRecordingState,
   finishBarCapture, ownsRecordingJob, ownsHistoryJob, ownsBarCapture, mayUpdateRetainedCapture,
-  recordingJobCancelled, deliverInputTranscription, registerBarRecorderExit } from "./recording-jobs";
+  recordingJobCancelled, deliverInputTranscription, registerBarRecorderExit, recordingJobsSnapshot, ownsClientNamedCapture } from "./recording-jobs";
 import {
   calculateRMS,
   detectNativeInputFormat,
@@ -117,6 +122,7 @@ import {
   type RecordingProvenanceProbe,
 } from "./recording-provenance";
 import { resolveRecorderBinary } from "./recorder-binary";
+import { startRecordingInputDeviceSnapshots, type RecordingInputDevice } from "./recording-input-device";
 import {
   buildChunkPrompt,
   mergeChunkTranscripts,
@@ -129,6 +135,7 @@ import {
   isRecordingConflictError,
 } from "./recording-state";
 import { appendControlLayerEvent } from "./control-layer-journal";
+import { RecordingPauseGate, type RecordingPauseSpan } from "./recording-pause";
 import {
   RecordingSilenceAutoClosePolicy,
   clearRecordingHold,
@@ -558,10 +565,10 @@ export async function finalizeTranscriptionResultForSurface(
   env: STTFinalizeEnv = processingEnv(),
   boundaryContext?: BoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
-  const cleanedText = finalizeTranscriptionText(rawText, env);
+  const cleanedText = measureTakeStage("dictionary_rules", () => finalizeTranscriptionText(rawText, env));
   // A long unformatted final needs paragraphs regardless of polish state.
   // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
-  const paragraphText = (text: string): string => {
+  const paragraphText = (text: string): string => measureTakeStage("dictionary_rules", () => {
     // Code whitespace is content: abstain before either paragraph stage.
     if (hasParagraphCodeBlock(text)) return text;
     const candidate = !coherentParagraphsEnabled(env) && pauseParagraphsEnabled(env) && boundaryContext
@@ -571,14 +578,14 @@ export async function finalizeTranscriptionResultForSurface(
     const formatted = applyCoherentParagraphFallback(paused);
     const strip = (value: string) => value.replace(/\s/gu, "");
     return strip(formatted) === strip(text) ? formatted : text;
-  };
+  });
   if (!surface) return { text: paragraphText(cleanedText) };
-  const polished = await polishTranscriptionText({
+  const polished = await measureTakeStageAsync("polish", () => polishTranscriptionText({
     rawText,
     cleanedText,
     surface,
     env,
-  });
+  }));
   appendControlLayerEvent(
     "transcription.polish",
     {
@@ -599,6 +606,9 @@ export async function finalizeTranscriptionResultForSurface(
     },
     { topic: "voice.transcription" },
   );
+  if (polished.status === "rejected") console.error(`[voicelayer] ${JSON.stringify({
+    event: "polish_rejected", reason: polished.reason ?? "unspecified", latency_ms: Math.round(polished.latencyMs),
+  })}`);
   if (polished.status === "failed" && polished.failureKind &&
       polished.failureKind !== "timeout" && polished.failureKind !== "endpoint-error") {
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
@@ -679,6 +689,8 @@ export interface NoSpeechGateResult {
 }
 
 export interface RecordingCaptureState {
+  inputDevice?: RecordingInputDevice | null;
+  inputDeviceSnapshot?: Promise<RecordingInputDevice | null>;
   recorderExited?: Promise<void>;
   physicalPressStop?: boolean;
   /** Locked PTT silence expiry keeps the complete archive and bounds only STT input. */
@@ -695,6 +707,13 @@ export interface RecordingCaptureState {
   micDisconnect?: MicDisconnect;
   /** MICDROP3: a CoreAudio report the audio after it did not confirm. Journal-only, never shown. */
   unconfirmedDeviceLoss?: { reason: DeviceLossReason; eventOffsetMs: number };
+  /** Recording pause: the take's paused spans, written to the archive as `paused_spans`. */
+  pausedSpans?: RecordingPauseSpan[];
+  /**
+   * The take ended while paused. Its end is the Pause click, not the user's own end of speech, so STT, the
+   * archive and recovery all keep the complete gated PCM: no trailing-silence trim and no physical-stop cut.
+   */
+  endedWhilePaused?: true;
   /**
    * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
    * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
@@ -708,6 +727,26 @@ export interface RecordingCaptureState {
 let captureGeneration = 0;
 // The live capture's sink for VoiceBar's CoreAudio device-loss evidence.
 let activeDeviceLoss: { captureId: number; sink: (reason: DeviceLossReason) => void } | null = null;
+// The live capture's pause control. Only push-to-talk takes can pause: a VAD take ends on its own silence.
+type RecordingPauseOutcome = { outcome: "accept" | "noop" | "reject"; reason?: string };
+let activeRecordingPause: { captureId: number; set: (paused: boolean) => RecordingPauseOutcome } | null = null;
+let activeCaptureId: number | null = null;
+
+/**
+ * Pauses or resumes the live take. While paused no audio joins it (after a ~200 ms click tail) and the
+ * silence deadline stands still; resume continues the same take. `captureId` guards a stale click.
+ */
+export function setRecordingPaused(paused: boolean, captureId?: number): RecordingPauseOutcome {
+  if (captureId !== undefined && activeCaptureId !== null && captureId !== activeCaptureId) {
+    return { outcome: "noop", reason: "stale capture" };
+  }
+  if (!activeRecordingPause) {
+    return activeCaptureId === null
+      ? { outcome: "noop", reason: "not recording" }
+      : { outcome: "reject", reason: "pause needs push-to-talk" };
+  }
+  return activeRecordingPause.set(paused);
+}
 
 /**
  * Records that capture `captureId`'s input device went away. Evidence only: the capture keeps
@@ -728,6 +767,7 @@ export function consumeCancelSignalForRecording(): boolean {
 }
 
 export interface VoiceBarRecordingArchiveInput {
+  inputDevice?: RecordingInputDevice | null;
   audioBytes: Uint8Array;
   transcript: string | null;
   createdAt?: Date;
@@ -753,6 +793,11 @@ export interface VoiceBarUntranscribedRecordingArchiveInput extends Omit<
 export interface WaitForInputOptions {
   archiveSource?: "voicebar" | "voice_ask";
   voiceAskArtifacts?: {
+    promptDelivery: "text-only";
+    agentTranscript: string;
+    createdAt?: Date;
+  } | {
+    promptDelivery?: "audio";
     agentAudioBytes: Uint8Array;
     agentAudioFormat: "mp3";
     agentTranscript: string;
@@ -847,6 +892,7 @@ class RecordingFailureWithCapturedPcm extends Error {
 type STTFinalizeEnv = STTCorrectorEnv & STTPolishEnv;
 
 interface WaitForInputArchiveInput {
+  inputDevice?: RecordingInputDevice | null;
   options: WaitForInputOptions;
   audioBytes: Uint8Array;
   transcript: string | null;
@@ -859,6 +905,7 @@ interface WaitForInputArchiveInput {
 }
 
 export interface VoiceAskCaptureArchiveInput {
+  inputDevice?: RecordingInputDevice | null;
   options: WaitForInputOptions;
   audioBytes: Uint8Array;
   silenceMode: SilenceMode;
@@ -877,6 +924,8 @@ export interface VoiceAskArchiveFinalizationInput {
 }
 
 interface VoiceBarRecordingMetadata {
+  input_device_name?: string;
+  input_device_uid?: string | null;
   id: string;
   created_at: string;
   source: "voicebar";
@@ -893,6 +942,8 @@ interface VoiceBarRecordingMetadata {
   transcription_status: "transcribed" | "cancelled" | "captured" | "recording-failed";
   audio_sha256: string;
   app_version: string | null;
+  app_build: RecordingAppBuild;
+  transcribed_by?: RecordingAppBuild;
   provenance: RecordingProvenance;
   schema_version: number;
 }
@@ -905,6 +956,8 @@ const VOICE_ASK_ARTIFACT_NAMES = {
 } as const;
 
 interface VoiceAskRecordingMetadata {
+  input_device_name?: string;
+  input_device_uid?: string | null;
   id: string;
   created_at: string;
   source: "voice_ask";
@@ -916,8 +969,8 @@ interface VoiceAskRecordingMetadata {
   sample_rate: number;
   channels: number;
   backend: string | null;
-  agent_tts_engine: TextToSpeechEngine;
-  agent_tts_voice: string;
+  agent_tts_engine: TextToSpeechEngine | null;
+  agent_tts_voice: string | null;
   language_mode: string;
   transcription_status: "captured" | "transcribed";
   retention_policy: "indefinite";
@@ -925,12 +978,15 @@ interface VoiceAskRecordingMetadata {
   agent_transcript_chars: number;
   user_transcript_chars: number;
   audio_sha256: string;
-  agent_audio_sha256: string;
+  agent_audio_sha256: string | null;
   user_audio_sha256: string;
-  artifacts: typeof VOICE_ASK_ARTIFACT_NAMES;
+  artifacts: Omit<typeof VOICE_ASK_ARTIFACT_NAMES, "agent_audio"> & { agent_audio: "agent-audio.mp3" | null };
+  prompt_delivery?: "text-only";
   app_version: string | null;
+  app_build: RecordingAppBuild;
+  transcribed_by?: RecordingAppBuild;
   provenance: RecordingProvenance;
-  schema_version: 4;
+  schema_version: 4 | 5;
 }
 
 function resolvedRecordingsArchiveRoot(): string {
@@ -1181,6 +1237,7 @@ function writeVoiceBarRecordingArchive(
     probe: input.provenanceProbe,
   });
   const metadata: VoiceBarRecordingMetadata = {
+    ...(input.inputDevice ? { input_device_name: input.inputDevice.name, input_device_uid: input.inputDevice.uid } : {}),
     id,
     created_at: createdAtIso,
     source: input.source,
@@ -1197,6 +1254,8 @@ function writeVoiceBarRecordingArchive(
     transcription_status: input.transcriptionStatus,
     audio_sha256: createHash("sha256").update(input.audioBytes).digest("hex"),
     app_version: provenance.app_version,
+    app_build: recordingAppBuild(),
+    ...(input.transcript ? { transcribed_by: recordingAppBuild() } : {}),
     provenance,
     schema_version: 2,
   };
@@ -1233,15 +1292,15 @@ function requireVoiceAskArtifacts(options: WaitForInputOptions) {
   if (
     options.archiveSource !== "voice_ask" ||
     !artifacts ||
-    artifacts.agentAudioFormat !== "mp3" ||
-    artifacts.agentAudioBytes.byteLength === 0 ||
+    (artifacts.promptDelivery !== "text-only" && (artifacts.agentAudioFormat !== "mp3" ||
+      artifacts.agentAudioBytes.byteLength === 0)) ||
     !artifacts.agentTranscript.trim()
   ) {
     throw new Error(
       "voice_ask archive requires immutable agent audio and transcript artifacts",
     );
   }
-  if (!artifacts.agentTtsEngine || !artifacts.agentTtsVoice.trim()) {
+  if (artifacts.promptDelivery !== "text-only" && (!artifacts.agentTtsEngine || !artifacts.agentTtsVoice.trim())) {
     throw new Error(
       "voice_ask archive requires actual-used TTS engine and voice",
     );
@@ -1261,7 +1320,7 @@ export function archiveVoiceAskCapture(
   const dayDir = join(archiveRoot, createdAtIso.slice(0, 10));
   const stagingDir = join(dayDir, `.tmp-${id}`);
   const finalDir = join(dayDir, id);
-  const agentAudioBytes = artifacts.agentAudioBytes;
+  const agentAudioBytes = artifacts.promptDelivery === "text-only" ? null : artifacts.agentAudioBytes;
   const userAudioSha256 = createHash("sha256")
     .update(input.audioBytes)
     .digest("hex");
@@ -1274,6 +1333,7 @@ export function archiveVoiceAskCapture(
     probe: input.provenanceProbe,
   });
   const metadata: VoiceAskRecordingMetadata = {
+    ...(input.inputDevice ? { input_device_name: input.inputDevice.name, input_device_uid: input.inputDevice.uid } : {}),
     id,
     created_at: createdAtIso,
     source: "voice_ask",
@@ -1285,8 +1345,8 @@ export function archiveVoiceAskCapture(
     sample_rate: SAMPLE_RATE,
     channels: CHANNELS,
     backend: null,
-    agent_tts_engine: artifacts.agentTtsEngine,
-    agent_tts_voice: artifacts.agentTtsVoice,
+    agent_tts_engine: artifacts.promptDelivery === "text-only" ? null : artifacts.agentTtsEngine,
+    agent_tts_voice: artifacts.promptDelivery === "text-only" ? null : artifacts.agentTtsVoice,
     language_mode: languageMode,
     transcription_status: "captured",
     retention_policy: "indefinite",
@@ -1294,14 +1354,14 @@ export function archiveVoiceAskCapture(
     agent_transcript_chars: artifacts.agentTranscript.length,
     user_transcript_chars: 0,
     audio_sha256: userAudioSha256,
-    agent_audio_sha256: createHash("sha256")
-      .update(agentAudioBytes)
-      .digest("hex"),
+    agent_audio_sha256: agentAudioBytes ? createHash("sha256").update(agentAudioBytes).digest("hex") : null,
     user_audio_sha256: userAudioSha256,
-    artifacts: VOICE_ASK_ARTIFACT_NAMES,
+    artifacts: { ...VOICE_ASK_ARTIFACT_NAMES, agent_audio: agentAudioBytes ? VOICE_ASK_ARTIFACT_NAMES.agent_audio : null },
+    ...(agentAudioBytes ? {} : { prompt_delivery: "text-only" as const }),
     app_version: provenance.app_version,
+    app_build: recordingAppBuild(),
     provenance,
-    schema_version: 4,
+    schema_version: artifacts.promptDelivery === "text-only" ? 5 : 4,
   };
 
   let stagingCreated = false;
@@ -1310,9 +1370,8 @@ export function archiveVoiceAskCapture(
     fsyncPath(archiveRoot);
     mkdirSync(stagingDir, { mode: 0o700 });
     stagingCreated = true;
-    atomicWriteFile(
-      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.agent_audio),
-      agentAudioBytes,
+    if (agentAudioBytes) atomicWriteFile(
+      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.agent_audio), agentAudioBytes,
     );
     atomicWriteFile(
       join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.agent_transcript),
@@ -1370,15 +1429,14 @@ function requireVoiceAskArchiveDirectory(archivePath: string): {
   }
 
   // Read as a widened schema_version: a v3 capture on disk must still finalize
-  // (every recording is kept), even though this build only writes v4.
+  // (every recording is kept); v5 represents a text-only question.
   const metadata = JSON.parse(
     readFileSync(join(resolvedPath, "metadata.json"), "utf8"),
   ) as StoredVoiceAskRecordingMetadata;
   if (
     metadata.source !== "voice_ask" ||
-    // Accept 3 and 4: v4 only adds the provenance block, and every recording
-    // is kept — a v3 capture must still finalize.
-    (metadata.schema_version !== 3 && metadata.schema_version !== 4) ||
+    // v4 adds provenance; v5 explicitly has no synthesized question audio.
+    (metadata.schema_version !== 3 && metadata.schema_version !== 4 && metadata.schema_version !== 5) ||
     metadata.id !== basename(resolvedPath)
   ) {
     throw new Error(`Invalid voice_ask archive metadata: ${archivePath}`);
@@ -1407,6 +1465,8 @@ export function finalizeVoiceAskArchive(
   );
   const metadata: VoiceAskRecordingMetadata = {
     ...archive.metadata,
+    app_build: archive.metadata.app_build ?? recordingAppBuild({}),
+    transcribed_by: recordingAppBuild(),
     ...(input.transcribedDurationMs === undefined
       ? {}
       : { transcribed_duration_ms: input.transcribedDurationMs }),
@@ -1422,7 +1482,7 @@ export function finalizeVoiceAskArchive(
       polishStatus: input.polishStatus,
       probe: input.provenanceProbe,
     }),
-    schema_version: 4,
+    schema_version: archive.metadata.prompt_delivery === "text-only" ? 5 : 4,
   };
   atomicWriteFile(
     join(archive.path, "metadata.json"),
@@ -1438,6 +1498,7 @@ export function archiveWaitForInputRecording(
   if (input.options.archiveSource === "voicebar") {
     throwIfWaitForInputAborted(input.options.signal);
     return archiveVoiceBarRecording({
+      inputDevice: input.inputDevice,
       audioBytes: input.audioBytes,
       transcript: input.transcript,
       source: input.options.archiveSource,
@@ -1453,6 +1514,7 @@ export function archiveWaitForInputRecording(
   if (input.options.archiveSource !== "voice_ask") return null;
   if (!input.transcript?.trim()) return null;
   const archivePath = archiveVoiceAskCapture({
+    inputDevice: input.inputDevice,
     options: input.options,
     audioBytes: input.audioBytes,
     silenceMode: input.silenceMode,
@@ -2002,14 +2064,15 @@ function writeString(view: DataView, offset: number, str: string): void {
   }
 }
 
-/** Check if mic recording is disabled via flag file. */
-function isMicDisabled(): boolean {
-  return existsSync(MIC_DISABLED_FILE);
+/** Shared microphone admission policy for direct capture and socket commands. */
+export function micAllowed(): boolean {
+  return !existsSync(MIC_DISABLED_FILE) && !existsSync(VOICE_DISABLED_FILE);
 }
 
 type RecorderKillSignal = Parameters<ReturnType<typeof Bun.spawn>["kill"]>[0];
 
 interface RecorderProcess {
+  readonly pid?: number;
   stdout?: ReadableStream<Uint8Array> | null;
   stderr?: ReadableStream<Uint8Array> | null;
   kill(signal?: RecorderKillSignal): void;
@@ -2281,6 +2344,11 @@ export function isPushToEndStopDrainComplete(
   return nowMs - stopRequestedAtMs >= drainMs;
 }
 
+/** BARE-STOP: the mic admission of a client-named VoiceBar take is scoped (an id-less stop spares it while it waits on
+ *  the update-gate lock). Anonymous records and voice_ask stay unscoped, so an id-less stop still cancels them (SF1). */
+function withScopedCaptureAdmission<T>(work: () => T): Promise<Awaited<T>> {
+  return withCaptureVoiceAdmission(work, { scoped: ownsClientNamedCapture() });
+}
 /**
  * Record audio from mic to a PCM buffer.
  * Returns the raw PCM data as a Uint8Array.
@@ -2302,10 +2370,10 @@ export async function recordToBuffer(
   preserveNoSpeechCapture = false,
   captureState?: RecordingCaptureState,
 ): Promise<Uint8Array | null> {
-  return withCaptureVoiceAdmission(async () => {
+  return withScopedCaptureAdmission(async () => {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
-  if (isMicDisabled()) {
+  if (!micAllowed()) {
     console.error(
       "[voicelayer] Mic disabled via flag file — skipping recording",
     );
@@ -2397,6 +2465,7 @@ export async function recordToBuffer(
     const pcmChunks: Uint8Array[] = [];
     const chunkQueue: Uint8Array[] = [];
     let resolved = false;
+    let deviceSnapshots: ReturnType<typeof startRecordingInputDeviceSnapshots> | undefined;
     let recorder: RecorderProcess | null = null;
     let processingSettled: Promise<void> = Promise.resolve();
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
@@ -2413,7 +2482,12 @@ export async function recordToBuffer(
     let deviceReport: { reason: DeviceLossReason; offsetBytes: number } | null = null;
     let capturedPcmBytesSoFar = 0;
     const captureId = ++captureGeneration;
+    const takeID = ownsBarCapture() ? recordingJobsSnapshot().mic_take_id : null;
     const recoveryWriter = new IncrementalRecoveryWavWriter(null);
+    // Recording pause gates PCM where it enters the take; the recorder itself keeps running.
+    const pauseGate = pushToEnd ? new RecordingPauseGate(Date.now()) : null;
+    // Silence deadlines run on this clock, which stands still while the take is paused.
+    const activeNow = () => pauseGate ? pauseGate.activeNow(Date.now()) : Date.now();
     const silencePolicy = new RecordingSilenceAutoClosePolicy({
       preSpeechChunks,
       postSpeechSilenceChunks: silenceChunksNeeded,
@@ -2439,17 +2513,33 @@ export async function recordToBuffer(
       const normalizedTail = needsResample
         ? resamplePCM16(monoTail, nativeRate, SAMPLE_RATE)
         : monoTail;
-      if (normalizedTail.byteLength > 0) pendingChunks.push(normalizedTail);
+      if (normalizedTail.byteLength > 0 && (!pauseGate || pauseGate.admit(normalizedTail.byteLength))) {
+        pendingChunks.push(normalizedTail);
+      }
       return pendingChunks;
     };
 
+    let consumedStopTakeID: string | null = null;
+    let controlCancelled = false, controlPhysicalPress = false;
+    let spawnedAt: number | null = null, firstPCMAt: number | null = null;
+    const traceConsumedStop = (applyPhysicalStop = false) => {
+      try {
+        const control = JSON.parse(readFileSync(STOP_FILE, "utf8"));
+        consumedStopTakeID = typeof control.take_id === "string" ? control.take_id : null;
+        controlCancelled = control.cancelled === true;
+        controlPhysicalPress = control.physical_press === true;
+        if (applyPhysicalStop && captureState?.archiveSource === "voicebar") captureState.physicalPressStop = controlPhysicalPress;
+      } catch { /* Legacy text controls have no structured flags. */ }
+      captureLifecycle("consume-stop", { capture_id: captureId, recorder_pid: recorder?.pid ?? null,
+        take_id: takeID, stop_take_id: consumedStopTakeID, signal_file: STOP_FILE,
+        control_cancelled: controlCancelled, physical_press: controlPhysicalPress,
+        job_cancelled: recordingJobCancelled() ?? false,
+        frames_at_stop: capturedPcmBytesSoFar / BYTES_PER_SAMPLE });
+    };
     const beginPushToEndStopDrain = () => {
       if (pushToEndStopRequestedAtMs !== null) return;
-      if (captureState?.archiveSource === "voicebar") {
-        try {
-          captureState.physicalPressStop = JSON.parse(readFileSync(STOP_FILE, "utf8")).physical_press === true;
-        } catch { /* Legacy stop files have no physical-press opt-in. */ }
-      }
+      // A press while paused is not in the take's audio, so it can never mark where the take ends.
+      traceConsumedStop(!pauseGate?.isPaused());
       pushToEndStopRequestedAtMs = Date.now();
       console.error(
         `[voicelayer] Stop signal received — capturing ${PUSH_TO_END_STOP_CAPTURE_DRAIN_MS}ms push-to-end tail before ending recording`,
@@ -2470,10 +2560,13 @@ export async function recordToBuffer(
       return false;
     };
 
-    const finish = (error?: Error) => {
+    const finish = (error?: Error, stopReason = "capture-policy") => {
       if (resolved) return;
       resolved = true;
+      const recorderPid = recorder?.pid ?? null;
+      deviceSnapshots?.finish();
       if (activeDeviceLoss?.captureId === captureId) activeDeviceLoss = null;
+      if (activeCaptureId === captureId) { activeCaptureId = null; activeRecordingPause = null; }
       setRecordingState("idle");
       try {
         clearRecordingHold();
@@ -2506,10 +2599,26 @@ export async function recordToBuffer(
 
       let finishError = error;
       const capturedChunks = [...pcmChunks, ...drainPendingCapturedPcm()];
+      if (captureState && pauseGate) {
+        if (pauseGate.isPaused()) captureState.endedWhilePaused = true;
+        // A take that ends while paused closes its open span here.
+        const spans = pauseGate.spans(Date.now());
+        if (spans.length > 0) captureState.pausedSpans = spans;
+      }
       const capturedPcmBytes = capturedChunks.reduce(
         (sum, chunk) => sum + chunk.byteLength,
         0,
       );
+      captureLifecycle("finish", { capture_id: captureId, recorder_pid: recorderPid,
+        stop_reason: error ? stopReason === "abort" ? "abort" : "error" : pushToEndStopRequestedAtMs !== null ? "stop-signal" : stopReason,
+        error: error?.message ?? null, take_id: takeID, stop_take_id: consumedStopTakeID,
+        no_answer_expired: captureState?.noAnswerExpired ?? null, silence_timeout: captureState?.pttSilenceTimeout ?? false,
+        frames_written: capturedPcmBytes / BYTES_PER_SAMPLE,
+        first_pcm_ms: firstPCMAt === null || spawnedAt === null ? null : firstPCMAt - spawnedAt,
+        control_cancelled: controlCancelled, physical_press: controlPhysicalPress,
+        job_cancelled: recordingJobCancelled() ?? false,
+        stop_file: STOP_FILE, cancel_present: hasCancelSignal(),
+      });
       if (capturedPcmBytes > 0) {
         try {
           recoveryWriter.flushSnapshot(capturedChunks);
@@ -2581,7 +2690,7 @@ export async function recordToBuffer(
     // HOLD already suppresses VAD silence close. The wall-clock deadline must
     // obey the same lock, including when the recorder produces no PCM chunks.
     // PTT has a silence deadline, renewed by detected speech; Stop still keeps its full tail.
-    let pttLastSpeechAtMs = Date.now();
+    let pttLastSpeechAtMs = activeNow();
     let pttVadPending = false;
     let recordingHeld = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -2619,20 +2728,22 @@ export async function recordToBuffer(
     const onTimeout = () => {
       const previouslyHeld = recordingHeld;
       if (resolved) return;
+      // Time out on silence, not on a pause: resume re-arms the deadline with the paused time left out.
+      if (pauseGate?.isPaused()) return;
       const held = synchronizeRecordingHold();
       if (!voiceAsk && (held || previouslyHeld)) return;
       if (voiceAskVad && hasSpeech && !held) return;
       if (voiceAsk && !hasSpeech && !held) {
         if (!pttSpeechDetectionAvailable) return; // Missing VAD evidence cannot prove absence.
-        if (Date.now() < noAnswerDeadlineAtMs) {
-          timer = setTimeout(onTimeout, noAnswerDeadlineAtMs - Date.now());
+        if (activeNow() < noAnswerDeadlineAtMs) {
+          timer = setTimeout(onTimeout, noAnswerDeadlineAtMs - activeNow());
           return;
         }
         // Classify queued/in-flight PCM before concluding that no speech occurred.
         const unclassified = pttVadPending || chunkQueue.length > 0;
         if (unclassified) {
           classificationGraceEndsAtMs ??= noAnswerDeadlineAtMs + NO_ANSWER_CLASSIFY_GRACE_MS;
-          if (Date.now() < classificationGraceEndsAtMs) {
+          if (activeNow() < classificationGraceEndsAtMs) {
             timer = setTimeout(onTimeout, STOP_POLL_MS);
             return;
           }
@@ -2644,7 +2755,7 @@ export async function recordToBuffer(
       if (pushToEnd || (voiceAskVad && held)) {
         if (!pttSpeechDetectionAvailable) return;
         // A slow inference or queued PCM may contain speech. Classify it before deciding it was silence.
-        const remaining = pttSilenceTimeoutMs - (Date.now() - pttLastSpeechAtMs);
+        const remaining = pttSilenceTimeoutMs - (activeNow() - pttLastSpeechAtMs);
         if (pttVadPending || chunkQueue.length > 0 || remaining > 0) {
           timer = setTimeout(onTimeout, pttVadPending || chunkQueue.length > 0 ? STOP_POLL_MS : remaining);
           return;
@@ -2656,7 +2767,7 @@ export async function recordToBuffer(
     // PTT and MCP VAD start their silence budget only once the microphone opens.
     if (!voiceAskVad && !pushToEnd) timer = setTimeout(onTimeout, timeoutMs);
     if (signal) {
-      abortHandler = () => finish(waitForInputAbortError(signal));
+      abortHandler = () => finish(waitForInputAbortError(signal), "abort");
       if (signal.aborted) {
         abortHandler();
         return;
@@ -2672,9 +2783,10 @@ export async function recordToBuffer(
         clearStopSignal();
         return;
       }
+      traceConsumedStop();
       clearStopSignal();
       console.error("[voicelayer] Stop signal received — ending recording");
-      finish();
+      finish(undefined, "stop-signal");
     }, STOP_POLL_MS);
     stopSignalPoll.unref?.();
     // MICDROP3: CoreAudio can name the wrong device (Sol R2 #1), so its report only notes evidence.
@@ -2686,6 +2798,10 @@ export async function recordToBuffer(
 
     try {
       // Start mic recording via sox — raw PCM to stdout at device's native rate
+      if (captureState) {
+        deviceSnapshots = startRecordingInputDeviceSnapshots();
+        captureState.inputDeviceSnapshot = deviceSnapshots.settled;
+      }
       // AIDEV-NOTE: We record at native rate (not 16kHz) to avoid sox buffer overruns
       // when the device rate differs (e.g., AirPods at 24kHz). Resampling happens in JS.
       const spawnedRecorder = Bun.spawn(
@@ -2710,6 +2826,14 @@ export async function recordToBuffer(
         { stdout: "pipe", stderr: "pipe" },
       );
       recorder = spawnedRecorder;
+      const recorderSpawnedAt = performance.now();
+      spawnedAt = recorderSpawnedAt;
+      captureLifecycle("spawn", { capture_id: captureId, take_id: takeID, recorder_pid: spawnedRecorder.pid, stop_file: STOP_FILE, cancel_file: CANCEL_FILE,
+      });
+      void spawnedRecorder.exited.then(code => {
+        captureLifecycle("exit", { capture_id: captureId, take_id: takeID, recorder_pid: spawnedRecorder.pid, exit_code: code, signal_code: spawnedRecorder.signalCode,
+        });
+      }, () => {});
       if (captureState) {
         captureState.recorderExited = spawnedRecorder.exited.then(() => {});
         void captureState.recorderExited.catch(() => {});
@@ -2725,13 +2849,37 @@ export async function recordToBuffer(
       }
 
       if (voiceAsk || (pushToEnd && pttSpeechDetectionAvailable)) {
-        pttLastSpeechAtMs = Date.now();
+        pttLastSpeechAtMs = activeNow();
         const remaining = voiceAsk
           ? Math.max(Math.min(timeoutMs, MIN_ASK_LISTEN_MS), timeoutMs - (Date.now() - (captureState?.noAnswerStartedAtMs ?? Date.now())))
           : pttSilenceTimeoutMs;
-        noAnswerDeadlineAtMs = Date.now() + remaining;
+        noAnswerDeadlineAtMs = activeNow() + remaining;
         timer = setTimeout(onTimeout, remaining);
       }
+      if (!resolved) activeCaptureId = captureId;
+      if (pauseGate && !resolved) activeRecordingPause = { captureId, set: (paused) => {
+        if (resolved) return { outcome: "noop", reason: "not recording" };
+        // Stop already asked for the push-to-end tail; a late Pause must not drop it.
+        if (pushToEndStopRequestedAtMs !== null) return { outcome: "noop", reason: "stopping" };
+        const now = Date.now();
+        if (paused) {
+          if (!pauseGate.pause(now)) return { outcome: "noop", reason: "already paused" };
+          clearTimeout(timer);
+          timer = undefined;
+          console.error("[voicelayer] Recording paused — keeping a 200 ms tail, then no audio joins the take");
+        } else {
+          if (!pauseGate.resume(now)) return { outcome: "noop", reason: "not paused" };
+          if (voiceAsk || pttSpeechDetectionAvailable) {
+            const remaining = voiceAsk && !hasSpeech
+              ? noAnswerDeadlineAtMs - activeNow()
+              : pttSilenceTimeoutMs - (activeNow() - pttLastSpeechAtMs);
+            timer = setTimeout(onTimeout, Math.max(0, remaining));
+          }
+          console.error("[voicelayer] Recording resumed — same take");
+        }
+        appendControlLayerEvent(paused ? "capture.paused" : "capture.resumed", { capture_id: captureId });
+        return { outcome: "accept" };
+      } };
       if (captureState?.archiveSource === "voicebar") userVoicePresent();
       invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
       if (resolved) return;
@@ -2788,6 +2936,7 @@ export async function recordToBuffer(
       // causing Bun to recycle pipe buffers before JS consumes them → rms=0.
       // Split into: pipeReader (tight loop, no ONNX awaits) + chunkProcessor (VAD).
       let readerDone = false;
+      let inputDeviceChecked = false;
 
       // pipeReader: reads sox stdout as fast as possible, extracts 16kHz chunks
       const pipeReader = async () => {
@@ -2797,6 +2946,16 @@ export async function recordToBuffer(
           if (done && !resolved) noteMicLoss("recorder-ended");
           if (done || resolved) break;
           if (!value || value.length === 0) continue;
+          if (firstPCMAt === null) {
+            firstPCMAt = performance.now();
+            captureLifecycle("first-pcm", { capture_id: captureId, take_id: takeID,
+              recorder_pid: spawnedRecorder.pid, first_pcm_ms: firstPCMAt - recorderSpawnedAt });
+          }
+          // Signal only: the observer schedules its child outside this hot loop.
+          if (!inputDeviceChecked && captureState) {
+            inputDeviceChecked = true;
+            deviceSnapshots?.firstPCM();
+          }
 
           // Defensive copy: Bun may recycle the underlying ArrayBuffer (R65)
           const safeCopy = new Uint8Array(value);
@@ -2822,6 +2981,8 @@ export async function recordToBuffer(
             const chunk = needsResample
               ? resamplePCM16(monoChunk, nativeRate, SAMPLE_RATE)
               : monoChunk;
+            // Paused: the mic still runs, but this audio never joins the take (STT, archive or recovery WAV).
+            if (pauseGate && !pauseGate.admit(chunk.byteLength)) continue;
             chunkQueue.push(chunk);
             capturedPcmBytesSoFar += chunk.byteLength;
           }
@@ -2835,7 +2996,7 @@ export async function recordToBuffer(
           if (chunkQueue.length === 0) {
             if (readerDone) {
               // Recorder EOF: every byte is queued and processed; end rather than wait for a stop.
-              if (micLossReason) finish();
+              if (micLossReason) finish(undefined, "recorder-eof");
               break;
             }
             await Bun.sleep(1);
@@ -2865,7 +3026,7 @@ export async function recordToBuffer(
                 const detected = isSpeech(await processVADChunk(chunk));
                 if (resolved) continue;
                 if (detected) {
-                  pttLastSpeechAtMs = Date.now();
+                  pttLastSpeechAtMs = activeNow();
                   if (!resolved) userVoicePresent();
                   if (voiceAsk && !hasSpeech && !resolved) {
                     hasSpeech = true;
@@ -2918,7 +3079,7 @@ export async function recordToBuffer(
             hasSpeech = silenceObservation.hasSpeech;
 
             if (speechDetected) {
-              pttLastSpeechAtMs = Date.now();
+              pttLastSpeechAtMs = activeNow();
               classificationGraceEndsAtMs = undefined;
               if (captureState) captureState.pttLastSpeechEndSample = processedPcmBytes / BYTES_PER_SAMPLE;
               userVoicePresent();
@@ -2934,11 +3095,12 @@ export async function recordToBuffer(
             }
 
             if (hasStopSignal()) {
+              traceConsumedStop();
               clearStopSignal();
               console.error(
                 "[voicelayer] Stop signal received — ending recording",
               );
-              finish();
+              finish(undefined, "stop-signal");
               return;
             }
 
@@ -3000,7 +3162,18 @@ export async function waitForInput(
   pushToEnd: boolean = false,
   options: WaitForInputOptions = {},
 ): Promise<string | null> {
-  return withCaptureVoiceAdmission(async () => {
+  const timings = new TakeStageTimings();
+  const archives = new Set<string>();
+  const onArchiveCreated = options.onArchiveCreated;
+  let pausedSpans: RecordingPauseSpan[] | undefined;
+  options = { ...options, onArchiveCreated: path => {
+    archives.add(path);
+    stampPausedSpans(path, pausedSpans);
+    onArchiveCreated?.(path);
+  } };
+  return withTakeStageTimings(timings, async () => {
+  try {
+  return await withScopedCaptureAdmission(async () => {
   throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
   if (currentRecordingState !== "idle" && !ownsBarCapture()) {
@@ -3031,16 +3204,22 @@ export async function waitForInput(
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
     : undefined;
   try {
-    pcmData = await recordToBuffer(
-      timeoutMs,
-      silenceMode,
-      pushToEnd,
-      chunkedSession,
-      options.signal,
-      options.archiveSource !== undefined,
-      captureState,
-    );
+    try {
+      pcmData = await recordToBuffer(
+        timeoutMs,
+        silenceMode,
+        pushToEnd,
+        chunkedSession,
+        options.signal,
+        options.archiveSource !== undefined,
+        captureState,
+      );
+    } finally { pausedSpans = captureState.pausedSpans; }
+    timings.captureEnded();
+    captureState.inputDevice = await captureState.inputDeviceSnapshot;
   } catch (err) {
+    timings.captureEnded();
+    captureState.inputDevice = await captureState.inputDeviceSnapshot;
     if (
       err instanceof RecordingFailureWithCapturedPcm &&
       options.archiveSource !== undefined
@@ -3049,6 +3228,7 @@ export async function waitForInput(
       const durationMs = pcmDurationMs(err.pcmData);
       try {
         const capture = {
+          inputDevice: captureState.inputDevice,
           options,
           audioBytes: retainedWavData,
           silenceMode,
@@ -3100,6 +3280,7 @@ export async function waitForInput(
     });
     if (ownsBarCapture() && !(err instanceof RecordingFailureWithCapturedPcm)) {
       const failedArchive = archiveVoiceBarUntranscribedRecording({
+        inputDevice: captureState.inputDevice,
         audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
         durationMs: 0, backend: "not-transcribed", reason: "recording-failed",
       });
@@ -3161,6 +3342,7 @@ export async function waitForInput(
     clearCancelSignal();
     broadcast({ type: "state", state: "idle", source: "recording" });
     const emptyArchive = ownsBarCapture() ? archiveVoiceBarUntranscribedRecording({
+      inputDevice: captureState.inputDevice,
       audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
       durationMs: 0, backend: "not-transcribed", reason: recordingJobCancelled() ? "cancelled" : "captured",
     }) : null;
@@ -3199,7 +3381,9 @@ export async function waitForInput(
     pcmData: pttDecodePcm, trimmed: pttDecodePcm.byteLength < pcmData.byteLength,
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pttDecodePcm),
-  } : hasMicLossEvidence ? {
+  } : hasMicLossEvidence || captureState.endedWhilePaused ? {
+    // Recording pause: a take stopped while paused ends at the click, so a quiet tail before it may be
+    // quiet speech; STT gets every gated byte, exactly as archived (Etan's law: never trim his words).
     pcmData, trimmed: false,
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pcmData),
@@ -3216,6 +3400,7 @@ export async function waitForInput(
   if (options.archiveSource === "voicebar") {
     try {
       voiceBarArchivePath = archiveVoiceBarUntranscribedRecording({
+        inputDevice: captureState.inputDevice,
         audioBytes: retainedWavData,
         source: "voicebar",
         silenceMode,
@@ -3247,6 +3432,7 @@ export async function waitForInput(
   if (options.archiveSource === "voice_ask") {
     try {
       voiceAskArchivePath = archiveVoiceAskCapture({
+        inputDevice: captureState.inputDevice,
         options,
         audioBytes: retainedWavData,
         silenceMode,
@@ -3348,7 +3534,7 @@ export async function waitForInput(
     });
   }
 
-  const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
+  const noSpeechGate = measureTakeStage("gates", () => evaluateNoSpeechGate(sttTrim.pcmData));
   const vadNoSpeech = !pushToEnd && captureState.vadSpeechDetected === false;
   const transcriptionAllowed = captureState.pttSilenceTimeout ? !pttNoSpeech : noSpeechGate.allowed && !vadNoSpeech;
   console.error(
@@ -3417,13 +3603,14 @@ export async function waitForInput(
 
   if (pushToEnd && !captureState.pttSilenceTimeout) {
     try {
-      const pushToEndSpeechGate = await evaluatePushToEndSpeechGate(
+      const pushToEndSpeechGate = await measureTakeStageAsync("gates", () => evaluatePushToEndSpeechGate(
         sttTrim.pcmData,
-      );
+      ));
       throwIfWaitForInputAborted(options.signal);
       console.error(
         `[voicelayer] push-to-end speech gate: detected=${pushToEndSpeechGate.detected} ` +
-          `(speech-chunks=${pushToEndSpeechGate.speechChunks}/${pushToEndSpeechGate.totalChunks})`,
+          `(speech-chunks=${pushToEndSpeechGate.speechChunks}, scanned-chunks=${pushToEndSpeechGate.totalChunks}, ` +
+          `take-chunks=${Math.ceil(sttTrim.pcmData.byteLength / VAD_CHUNK_BYTES)}; scan stops at first speech confirmation)`,
       );
       if (!pushToEndSpeechGate.detected) {
         clearCancelSignal();
@@ -3486,7 +3673,7 @@ export async function waitForInput(
     writeFileSync(wavPath, sttWavData);
 
     // Transcribe with selected backend
-    const backend = await getBackend();
+    const backend = await measureTakeStageAsync("decode", () => getBackend());
     throwIfWaitForInputAborted(options.signal);
     broadcast({
       type: "transcription_status",
@@ -3519,9 +3706,9 @@ export async function waitForInput(
           try {
             throwIfWaitForInputAborted(options.signal);
             writeFileSync(chunkPath, createWavBuffer(chunk));
-            const result = await backend.transcribe(chunkPath, {
+            const result = await measureTakeStageAsync("decode", () => backend.transcribe(chunkPath, {
               promptOverride: prompt,
-            });
+            }));
             chunkBackendLabels.add(result.backend);
             noteGateRemoval(result.attemptEvidence);
             throwIfWaitForInputAborted(options.signal);
@@ -3544,7 +3731,7 @@ export async function waitForInput(
         sttBackendLabel = `mixed(${[...chunkBackendLabels].join("|")})`;
       }
     } else {
-      const result = await backend.transcribe(wavPath);
+      const result = await measureTakeStageAsync("decode", () => backend.transcribe(wavPath));
       sttBackendLabel = result.backend;
       noteGateRemoval(result.attemptEvidence);
       throwIfWaitForInputAborted(options.signal);
@@ -3553,13 +3740,13 @@ export async function waitForInput(
       // than after it (Macroscope round 1, HIGH).
       const finalizeEnv = processingEnv();
       const boundaryContext = shouldBuildBoundaryContext(result.text, finalizeEnv)
-        ? await buildBoundaryContext(
+        ? await measureTakeStageAsync("dictionary_rules", () => buildBoundaryContext(
             wavPath,
             result.segments,
             result.segmentsAudioSha256,
             finalizeEnv,
             options.signal,
-          )
+          ))
         : undefined;
       throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
@@ -3665,6 +3852,7 @@ export async function waitForInput(
         }
       }
       if (archivedRecordingPath) {
+        stampPausedSpans(archivedRecordingPath, pausedSpans);
         linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
         recordArchivedGateRemoval(join(archivedRecordingPath, "audio.wav"), gateRemoval);
       }
@@ -3679,7 +3867,7 @@ export async function waitForInput(
     throwIfWaitForInputAborted(options.signal);
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {
-      await deliverInputTranscription({
+      await measureTakeStageAsync("delivery", () => deliverInputTranscription({
         type: "transcription",
         text,
         ...transcriptionPolishMetadata(finalized),
@@ -3703,7 +3891,7 @@ export async function waitForInput(
           });
           broadcast({ type: "archive_metadata_updated", recording_path: join(archivedRecordingPath, "audio.wav") });
         }
-      });
+      }));
     }
     setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
@@ -3753,6 +3941,18 @@ export async function waitForInput(
     } catch {}
   }
   });
+  });
+  } finally {
+    const stageTimings = timings.snapshot();
+    for (const path of archives) {
+      updateArchivedRecordingMetadata(join(path, "audio.wav"), metadata => {
+        metadata.stage_timings_ms = stageTimings;
+      });
+    }
+    console.error(`[voicelayer] archive_ids=${JSON.stringify([...archives].map(path => basename(path)))} stage_timings_ms=${JSON.stringify(stageTimings)}`);
+    appendControlLayerEvent("transcription.stage_timings", { archive_source: options.archiveSource ?? null,
+      stage_timings_ms: stageTimings }, { topic: "voice.transcription" });
+  }
   });
 }
 
@@ -3840,6 +4040,7 @@ export function updateArchivedTranscript(
   atomicWriteFile(transcriptPath, text);
 
   updateArchivedRecordingMetadata(audioPath, (metadata) => {
+    tagTranscription(metadata);
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
@@ -3920,6 +4121,14 @@ function archivedRecordingIsLatest(audioPath: string): boolean {
     // Incomplete/unreadable archives leave legacy age unknown.
   }
   return false;
+}
+
+/** Recording pause: the take's paused spans, so an eval can tell a pause from lost words. */
+function stampPausedSpans(archivePath: string, spans: RecordingPauseSpan[] | undefined): void {
+  if (!spans?.length) return;
+  updateArchivedRecordingMetadata(join(archivePath, "audio.wav"), (metadata) => {
+    metadata.paused_spans = spans;
+  });
 }
 
 function updateArchivedRecordingMetadata(
@@ -4112,7 +4321,6 @@ function loadVoiceAskArchiveSnapshot(
   );
   const metadataPath = join(archivePath, "metadata.json");
   requireRegularFileWithoutSymlink(audioPath, "audio");
-  requireRegularFileWithoutSymlink(agentAudioPath, "agent audio");
   requireRegularFileWithoutSymlink(agentTranscriptPath, "agent transcript");
   requireRegularFileWithoutSymlink(metadataPath, "metadata");
 
@@ -4150,19 +4358,22 @@ function loadVoiceAskArchiveSnapshot(
     metadata.id !== archiveId ||
     (metadata.schema_version !== 2 &&
       metadata.schema_version !== 3 &&
-      metadata.schema_version !== 4) ||
+      metadata.schema_version !== 4 && metadata.schema_version !== 5) ||
     (metadata.transcription_status !== "captured" &&
       metadata.transcription_status !== "transcribed")
   ) {
     throw new Error(`Invalid voice_ask archive metadata for ${archiveId}`);
   }
+  const textOnly = metadata.schema_version === 5 && metadata.prompt_delivery === "text-only" &&
+    metadata.agent_tts_engine === null && metadata.agent_tts_voice === null && metadata.agent_audio_sha256 === null;
+  if (!textOnly) requireRegularFileWithoutSymlink(agentAudioPath, "agent audio");
   const artifacts = metadata.artifacts;
   if (
     !artifacts ||
     typeof artifacts !== "object" ||
     Array.isArray(artifacts) ||
     (artifacts as Record<string, unknown>).agent_audio !==
-      VOICE_ASK_ARTIFACT_NAMES.agent_audio ||
+      (textOnly ? null : VOICE_ASK_ARTIFACT_NAMES.agent_audio) ||
     (artifacts as Record<string, unknown>).agent_transcript !==
       VOICE_ASK_ARTIFACT_NAMES.agent_transcript ||
     (artifacts as Record<string, unknown>).user_audio !==
@@ -4181,9 +4392,8 @@ function loadVoiceAskArchiveSnapshot(
   );
   if (wavError) throw new Error(wavError);
   const audioHash = createHash("sha256").update(audioBytes).digest("hex");
-  const agentAudioHash = createHash("sha256")
-    .update(readFileSync(agentAudioPath))
-    .digest("hex");
+  const agentAudioHash = textOnly ? null : createHash("sha256")
+    .update(readFileSync(agentAudioPath)).digest("hex");
   if (
     metadata.audio_sha256 !== audioHash ||
     metadata.user_audio_sha256 !== audioHash ||
@@ -4446,6 +4656,7 @@ async function retranscribeVoiceAskArchiveAdmitted(
         },
       );
     }
+    tagTranscription(metadata, snapshot.metadata);
     delete metadata.last_stt_gate_removal;
     delete metadata.not_transcribed_reason;
     delete metadata.not_transcribed_detail;

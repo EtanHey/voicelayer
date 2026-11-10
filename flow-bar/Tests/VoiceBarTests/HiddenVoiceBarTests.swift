@@ -26,6 +26,21 @@ final class HiddenVoiceBarTests: XCTestCase {
 
     // MARK: - Copy
 
+    /// BARE-STOP: Hide over speech sends a speech-scoped stop. An id-less stop must never be able to land
+    /// on a dictation take that opened a moment earlier; a capture Hide means to end goes through cancel.
+    func testHideOverSpeechSendsASpeechScopedStop() {
+        let state = connectedState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.handleEvent(["type": "state", "state": "speaking", "text": "agent update"])
+        XCTAssertEqual(state.mode, .speaking)
+        state.snooze(until: until)
+        let stops = commands.filter { $0["cmd"] as? String == "stop" }
+        XCTAssertEqual(stops.count, 1)
+        XCTAssertEqual(stops.first?["scope"] as? String, "speech")
+        XCTAssertNil(stops.first?["take_id"])
+    }
+
     func testHiddenAndConnectedReadsHiddenUntilNeverDisconnected() {
         let state = connectedState()
 
@@ -79,6 +94,39 @@ final class HiddenVoiceBarTests: XCTestCase {
     }
 
     // MARK: - F5 stays off while hidden
+
+    func testHideDropsQueuedAndOpeningTakesBeforeCaptureCanStart() throws {
+        for opensBeforeHide in [false, true] {
+            let state = connectedState()
+            state.frontmostAppProvider = { nil }
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.record(pressToTalk: true)
+            let a = try XCTUnwrap(commands.last?["take_id"] as? String)
+            func snapshot(_ phase: String, mic: String? = nil) {
+                state.handleEvent(["type": "state", "state": mic == nil ? "transcribing" : "recording",
+                    "mode": "ptt", "bar_owned": true, "take_id": a, "mic_take_id": mic as Any,
+                    "recording_jobs": [["take_id": a, "kind": "live", "phase": phase]]])
+            }
+            snapshot("capturing", mic: a)
+            state.stop()
+            state.record(pressToTalk: true)
+            let b = try XCTUnwrap(state.queuedRecordingTakeID)
+            if opensBeforeHide { snapshot("processing") }
+            state.snooze(until: until)
+            XCTAssertNil(state.queuedRecordingTakeID)
+            let startsBeforeRelease = recordCommands(commands)
+            snapshot("processing")
+            XCTAssertEqual(recordCommands(commands), startsBeforeRelease)
+            XCTAssertNotEqual(state.mode, .recording)
+            if opensBeforeHide {
+                XCTAssertTrue(commands.contains { $0["cmd"] as? String == "cancel" && $0["take_id"] as? String == b })
+            }
+            state.unsnooze()
+            snapshot("processing")
+            XCTAssertEqual(recordCommands(commands), startsBeforeRelease)
+        }
+    }
 
     func testF5WhileHiddenStartsNoRecording() {
         let state = connectedState()

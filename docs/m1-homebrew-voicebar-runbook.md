@@ -126,13 +126,22 @@ printing a green summary (or failing loudly).
 
 If `voicelayer` is not installed yet, bootstrap it once:
 
+If `/opt/homebrew/bin/brew help trust` reports an unknown command, update Homebrew first.
+
 ```bash
 # Over ssh use the absolute path; bare `brew` is not on the non-interactive PATH.
 BREW=/opt/homebrew/bin/brew
 $BREW tap etanhey/layers
+$BREW trust etanhey/layers
 $BREW install --cask etanhey/layers/voicebar
 voicelayer update
 ```
+
+`brew tap` only adds the repository. The trust step authorizes Homebrew to load
+all current and future formulae, casks and commands in `etanhey/layers`; fully
+qualified installs trust only the named item. See [Homebrew tap
+trust](https://docs.brew.sh/Tap-Trust) for item-specific alternatives. Run this
+once for each fresh account; do not disable Homebrew's tap-trust checks.
 
 ### What `voicelayer update` does about drift
 
@@ -157,8 +166,9 @@ Recover by hand only if the script itself is unavailable — this is the same se
 actually worked on 2026-08-19:
 
 ```bash
-mv /opt/homebrew/Caskroom/voicebar ~/voicebar-caskroom-backup
-/opt/homebrew/bin/brew install --cask --force etanhey/layers/voicebar
+/opt/homebrew/bin/brew trust etanhey/layers &&
+  mv /opt/homebrew/Caskroom/voicebar ~/voicebar-caskroom-backup &&
+  /opt/homebrew/bin/brew install --cask --force etanhey/layers/voicebar
 ```
 
 `--force` is what lets brew adopt an app that is already on disk; without it you get

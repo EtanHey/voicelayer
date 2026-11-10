@@ -204,6 +204,18 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(results.guard_receipt_steps('full', 0), set())
         self.assertEqual(results.guard_receipt_steps('focused-338', 0), set())
 
+    def test_gate_build_fixture_guards_only_apply_to_full(self):
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        contents = sandbox / 'VoiceBarQA.app/Contents'; contents.mkdir(parents=True)
+        (contents / 'Info.plist').write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+        self.guard_logs(sandbox, self.INSTALLED)
+        names = ['launch isolated QA app', 'GUARD launch 1 installed',
+                 'GUARD launch 1 no tripwire']
+        self.assertEqual(results.guard_export_issues('focused-338', sandbox, names), [])
+        issues = results.guard_export_issues('full', sandbox, names)
+        self.assertTrue(any('GATE2245 no-device guard installed before fixtures' in i for i in issues))
+        self.assertTrue(any('GATE2245 no device-start or process tripwire invoked' in i for i in issues))
+
     def test_one_install_marker_per_launch_passes_and_any_other_line_is_a_trip(self):
         sandbox = self.root / 'sandbox'; sandbox.mkdir()
         self.assertEqual(results.guard_launch_issues(sandbox, 1), ['FAIL no-device guard receipt missing for launch 1'])
@@ -428,6 +440,22 @@ class ReportTests(unittest.TestCase):
         (directory / 'manifest.json').write_text(json.dumps([dict(attachments=manifest[1:])]))
         with patch.object(results.subprocess, 'run'), self.assertRaises(ValueError):
             results.export(self.root, sandbox)
+
+    def test_wings_u2_export_requires_every_wing_state_and_copies_wings_receipt(self):
+        directory, ledger, _ = self.attachment_run()
+        ledger.update(scenario='wings-u2', scope='wings-u2')
+        ledger['coverage']['scenario'] = 'wings-u2'
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        (sandbox / 'wings.json').write_text(json.dumps({'fixture': 'launcher', 'fixedWingWidth': 73.5}))
+        (self.root / 'scenario.json').write_text(json.dumps({'scenario': 'wings-u2'}))
+        # The attachment run carries none of the WINGS-U2 steps: the scenario must refuse to pass.
+        with patch.object(results.subprocess, 'run'):
+            self.assertFalse(results.export(self.root, sandbox))
+        qa = json.loads((self.root / 'qa-report.json').read_text())
+        self.assertIn('FAIL wings-u2 missing required wing-state evidence', qa['issues'])
+        self.assertEqual((self.root / 'wings.json').read_bytes(), (sandbox / 'wings.json').read_bytes())
+        self.assertEqual(results.SCENARIOS['wings-u2'], 'testWingsU2Flow')
 
     def test_focused_p1e_expected_waiver_cannot_pass(self):
         directory, ledger, _, sandbox = self.focused_run()

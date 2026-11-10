@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
   pull_request:
-    branches: [main, integration/2.2.61]
+    branches: [main, integration/2.2.61, integration/2.3]
     paths: ['formal/**', 'flow-bar/**', 'src/**', 'bun.lock', '.github/workflows/formal.yml']
 
 concurrency: { group: 'formal-${{ github.ref }}', cancel-in-progress: true }
@@ -28,21 +28,26 @@ jobs:
           from pathlib import Path
           # Fresh-HOME M4 wall seconds, including each job's explicit replay steps.
           seconds = {
-              "history-row-refresh": 1.349,
-              "idle-wings": 0.770,
-              "native-autopaste": 3.248,
-              "notch-presentation": 67.308,
-              "notch-tab-morph": 0.949,
-              "parakeet-residency": 8.722,
-              "ptt-silence-timeout": 3.258,
-              "record-while-processing": 211.178,
-              "record-while-processing-runtime": 77.673,
-              "selection-snapshot-startup": 1.607,
-              "speech-queue": 715.929,
-              "teleprompter-handoff": 16.460,
-              "update-gate": 4.825,
-              "voice-ask-no-answer": 2.115,
-              "wing-entry": 0.662,
+              "f5-gesture-preview": 3.9,
+              "history-pull": 2.724,
+              "history-row-refresh": 0.808,
+              "idle-wings": 0.872,
+              "native-autopaste": 3.143,
+              "notch-presentation": 69.442,
+              "notch-surfaces": 1.713,
+              "notch-tab-morph": 0.934,
+              "parakeet-residency": 8.592,
+              "ptt-silence-timeout": 51.319,
+              "ready-time-paste": 1.075,
+              "record-while-processing": 261.621,
+              "record-while-processing-runtime": 76.201,
+              "selection-snapshot-startup": 1.549,
+              "speech-queue": 732.794,
+              "teleprompter-handoff": 19.257,
+              "update-gate": 10.201,
+              "update-gate-cancel": 0.566,
+              "voice-ask-no-answer": 2.077,
+              "wing-entry": 0.648,
           }
           found = {Path(path).parent.name for path in glob.glob("formal/*/check.sh")}
           assert found == seconds.keys(), "Every formal runner needs a measured budget"

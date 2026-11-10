@@ -29,14 +29,22 @@ Secure fields are never read. If a safe clipboard backup is unavailable, the sho
 
 **macOS (recommended)** — the tap ships the CLI/MCP package and the notarized notch app:
 
+If `brew help trust` reports an unknown command, update Homebrew first.
+
 ```bash
 brew tap etanhey/layers
+brew trust etanhey/layers                     # allow Homebrew to load this tap
 brew install etanhey/layers/voicelayer         # CLI + MCP server
 brew install --cask etanhey/layers/voicebar    # VoiceBar notch app (owns the mic)
 voicelayer setup                               # one-time runtime setup
 ```
 
 Install the cask too — the formula alone gives you the CLI/MCP but no notch UI.
+
+`brew tap` adds the repository; `brew trust etanhey/layers` explicitly trusts its
+current and future formulae, casks and commands. Fully qualified installs trust
+only the named item. See [Homebrew tap trust](https://docs.brew.sh/Tap-Trust) for
+item-specific alternatives.
 
 **npm** — if you only want the MCP server:
 
@@ -121,6 +129,16 @@ Daemon speech profiles, env overrides, and socket controls: [docs/tts-settings.m
 **How `voice_ask` works:** waits for any playing audio to finish → speaks the question via
 edge-tts → records the mic and resamples to 16kHz → Silero VAD detects when you stop talking →
 whisper.cpp transcribes locally (~200-400ms on Apple Silicon) → returns the text to your agent.
+Ask parks a live read and resumes it at the parked word as soon as answer capture ends,
+with the transcription spinner in the left wing.
+A manually paused read stays parked while Ask speaks and records; afterwards it returns
+still paused, ready to resume at the same word.
+
+Predominantly Hebrew questions use `he-IL-HilaNeural` when an English Edge voice
+is selected. Clone selections stay as configured. If Edge synthesis exhausts its
+retries, Ask shows the question in an MCP warning notification and still records
+the answer. The saved exchange marks `prompt_delivery: "text-only"` (schema 5)
+and retains the question text and answer WAV without inventing prompt audio.
 
 Full tool parameters: **[docs/tools-reference.md](docs/tools-reference.md)**.
 

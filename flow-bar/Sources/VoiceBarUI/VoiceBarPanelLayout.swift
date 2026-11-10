@@ -153,6 +153,17 @@ public struct VoiceBarPanelLayout: Equatable {
         hoverRetentionRect.contains(point)
     }
 
+    /// 2.3 U2: the left wing in window space; the microphone list hangs from it.
+    public var leadingWingWindowRect: CGRect {
+        let geometry = presentation.geometry
+        return CGRect(
+            x: geometry.coreOriginX - geometry.leadingWingWidth,
+            y: geometry.lowerSurfaceHeight,
+            width: geometry.leadingWingWidth,
+            height: geometry.topHeight
+        ).offsetBy(dx: visibleContentRect.minX, dy: visibleContentRect.minY)
+    }
+
     public func windowFrame(
         anchoredTo screenGeometry: VoiceBarNotchScreenGeometry
     ) -> CGRect {

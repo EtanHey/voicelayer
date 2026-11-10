@@ -94,7 +94,7 @@ not liveness promises. The model abstracts fresh round trips/unchanged bytes as
 verified predicates, not proof of real macOS permissions or IPC availability.
 The same native admission object rereads OPEN on its next acquire without a
 restart (NativeUpdateGateTests.testCommittedSuccessorAdmitsAfterCompleteWithoutRestart).
-No successor startup finalizer, automatic relaunch, or recovery tool is added.
+R6 below adds the separate successor startup backstop.
 
 ## Slow successor readiness (G5 round 2)
 
@@ -115,5 +115,59 @@ original premises and expected outcomes.
 
 The bounded schedule assumes readiness within the retry budget. The model does
 not predict startup time or prove real IPC; source guards separately use a
-virtual 15-second clock, 100 ms exponential backoff capped at one second, and
+virtual 60-second clock, 100 ms exponential backoff capped at one second, and
 the production participant verifier with synthetic authenticated-RPC responses.
+
+## Abandoned COMMITTED recovery (R6)
+
+`RecoverySpec` adds a successor observing controller death after launch. The crash
+scenario starts with a live controller; its exit is weakly fair. Five bounded
+observations represent the five-second grace. A transient G1 holder eventually
+releases independently; no orphaned lock is reaped. Publication requires the
+matching running/installed target and fresh, idle participant evidence, then the
+G1 custody recheck. OPEN restores admission; it grants no installer authorization.
+
+| Config | Expected | Exact property |
+| --- | --- | --- |
+| RecoveryOld | FAIL: no startup completion | EventuallyOpenAfterAbandonedLease |
+| RecoveryFixed | PASS | Liveness and both safety properties |
+| RecoveryMutantLive | FAIL: recover with live controller | NeverRecoverLiveController |
+| RecoveryMutantTarget | FAIL: recover wrong target | RecoveryOnlyVerified |
+
+Death is irreversible for the recorded process incarnation. Unknown identity,
+reused PID, missing custody, persistent G1, and mismatched/busy successors are not
+liveness promises. The source watches a live controller for up to 60 seconds;
+readiness has its own 60-second deadline, renewing one-second receipts as needed.
+Liveness assumes controller absence, G1 release and readiness within the source
+budgets; weak fairness orders the abstract actions and does not prove a real-time
+deadline. The model abstracts fresh round trips and the empty ledger as predicates,
+and G1 publication as atomic. It does not prove partial-write recovery, detached
+installer quiescence, actual launch latency, IPC availability or installed macOS
+behavior. R5 half-state repair and rollback to a different build remain deferred.
+
+## Dead admission owners
+
+ReapFixed checks NeverReapLiveOwner and DeadRegistrationsCanPrepare. Owner death
+is irreversible for the recorded incarnation; PID reuse proves that incarnation
+dead. Unknown/live owners remain. Reap and PREPARE share G1; weak fairness lets
+a drain containing only dead registrations reach PREPARED. ReapOld reproduces
+the stuck ledger; ReapMutantAge violates safety by retiring a live old owner.
+ReapMutantUnknown violates the same safety property by treating unknown or
+legacy-unverifiable evidence as death.
+OS identity correctness, crash durability of reason files and native execution
+are outside the model. No age-based lease, lock or registration expiry is modeled.
+
+Round 2 expands the same evidence partition with `reusedOtherUid`, `reusedLegacy`,
+`zombie`, and `legacyUnverifiable`. The first three prove the recorded incarnation
+dead; unverifiable legacy evidence still blocks. No new property is claimed.
+The sysctl layout and the strict birth-after-mtime comparison are checked in source
+tests, not derived from TLC. Retention affects retired proof artifacts only and
+does not change admission state.
+
+## Precommit user-block correction
+
+The admission/deadline extension is checked alongside CANCEL retry in
+[`../update-gate-cancel/`](../update-gate-cancel/README.md): `UserBlockFixed`,
+`OldAdmission`, `UnboundedDrain`, and `NoLedger`. These prove separate availability,
+locked-ledger and bounded-resolution properties; installed acceptance remains a
+separate gate. The bootstrap/completion models here keep their existing scope.

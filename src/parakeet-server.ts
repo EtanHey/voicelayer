@@ -1,6 +1,7 @@
 /** Lazy private-pipe sidecar. VoiceBar -> MCP daemon -> this exact child.
  * No launchd owner, shared port or process adoption. The daemon warms at boot.
  */
+import { parakeetChildEnvironment } from "./parakeet-python-env";
 import { existsSync } from "fs";
 import { defaultParakeetModelPath, parakeetPython } from "./recognizer-assets";
 import { migrateLegacyParakeetRuntime } from "./parakeet-runtime";
@@ -24,6 +25,7 @@ export interface ParakeetResponse {
   language: string | null;
   attemptEvidence?: STTAttemptEvidence;
   raw_token_times?: unknown[];
+  raw_last_token_end_s?: unknown;
 }
 
 /** Preserve returned/partial provider bytes separately from the control error. */
@@ -224,7 +226,7 @@ export class ParakeetServer {
     if (process.env.VOICELAYER_TEST_ISOLATED === "1" && !this.options.command) {
       throw new Error("Real Parakeet loading is disabled under the unit-test preload");
     }
-    const proc = Bun.spawn(command, { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: process.env });
+    const proc = Bun.spawn(command, { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: parakeetChildEnvironment() });
     this.notify("loading");
     const child: Child = { proc, pending: new Map(), stdout: Promise.resolve(), stderr: Promise.resolve(), partial: "", raw: Buffer.alloc(0), fault: null, stopping: false, unexpectedNotified: false };
     this.child = child;
@@ -273,10 +275,14 @@ export class ParakeetServer {
             !Number.isSafeInteger(result.input_frames) || (result.input_frames as number) <= 0 ||
             result.covered_frames !== result.input_frames || typeof result.inference_s !== "number" ||
             !Number.isFinite(result.inference_s) || result.inference_s < 0 ||
-            (result.language !== null && typeof result.language !== "string") ||
-            (result.last_token_end_s !== null && (typeof result.last_token_end_s !== "number" || !Number.isFinite(result.last_token_end_s) ||
-              result.last_token_end_s < 0 || result.last_token_end_s > (result.input_frames as number) / 16000))) {
+            (result.language !== null && typeof result.language !== "string")) {
           throw new ParakeetServiceError(result.complete === false ? "PARTIAL" : "INVALID", result, "Parakeet incomplete response");
+        }
+        const end = result.last_token_end_s;
+        if (end !== null && (typeof end !== "number" || !Number.isFinite(end) || end < 0 || end > (result.input_frames as number) / 16000)) {
+          result.raw_last_token_end_s = end;
+          result.last_token_end_s = typeof end === "number" ? end : null;
+          result.attemptEvidence = { ...(typeof result.attemptEvidence === "object" && result.attemptEvidence !== null ? result.attemptEvidence : {}), timesValid: false };
         }
         if (child.proc.exitCode !== null && child.proc.exitCode !== 0) throw new ParakeetServiceError("ERROR", result, "Parakeet child failed after response");
         return result as unknown as ParakeetResponse;

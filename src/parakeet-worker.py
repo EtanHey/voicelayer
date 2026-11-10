@@ -74,7 +74,10 @@ def decode(model, mx, np, path):
                 if isinstance(value, (float, int)):
                     return value if math.isfinite(value) else repr(value)
                 return {"unrepresentable_type": type(value).__name__}
-            raw_times.append({"start": raw_time(start_time), "end": raw_time(end)})
+            timing = {"start": raw_time(start_time), "end": raw_time(end)}
+            if isinstance(getattr(token, "text", None), str):
+                timing["text"] = token.text
+            raw_times.append(timing)
             if isinstance(end, (float, int)) and math.isfinite(end):
                 ends.append(float(end))
     text = getattr(result, "text", None)
@@ -146,6 +149,8 @@ def main():
     with contextlib.redirect_stdout(sys.stderr):
         import mlx.core as mx
         import numpy as np
+        from parakeet_merge_bridge import apply_parakeet_bridge
+        apply_parakeet_bridge()
         from mlx_audio.stt.utils import load_model
         model = load_model(str(model_path))
         if getattr(getattr(model, "preprocessor_config", None), "sample_rate", None) != 16000:

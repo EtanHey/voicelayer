@@ -10,9 +10,11 @@ enum VoiceBarDaemonActivationResult: Equatable {
 }
 
 struct VoiceBarDaemonLaunchConfiguration: Equatable {
+    enum Source: String { case bundled, checkout, homebrew, unknown }
     let launchPath: String
     let arguments: [String]
     let workingDirectory: String
+    var daemonSource: Source = .unknown
 
     /// Resolve the full path to the `bun` binary.
     /// CRITICAL: Must NOT use /usr/bin/env as launchPath — env creates an intermediate
@@ -40,11 +42,12 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             return nil
         }
 
-        if let repoRoot = repositoryRoot(for: executableURL, fileExists: fileExists) {
+        let bundledCandidate = environment["VOICEBAR_QA23_BUNDLED_DAEMON"] == "1"
+        if !bundledCandidate, let repoRoot = repositoryRoot(for: executableURL, fileExists: fileExists) {
             return VoiceBarDaemonLaunchConfiguration(
                 launchPath: bunPath,
                 arguments: ["run", "\(repoRoot)/src/mcp-server-daemon.ts"],
-                workingDirectory: repoRoot
+                workingDirectory: repoRoot, daemonSource: .checkout
             )
         }
 
@@ -57,7 +60,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             .appendingPathComponent("mcp-server-daemon.ts")
             .path
 
-        let isolatedQAMode = environment["VOICEBAR_QA_PRESERVE_OVERRIDES"]?
+        let isolatedQAMode = bundledCandidate || environment["VOICEBAR_QA_PRESERVE_OVERRIDES"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) == "1" ||
             environment["QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
@@ -69,7 +72,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             return VoiceBarDaemonLaunchConfiguration(
                 launchPath: bunPath,
                 arguments: ["run", bundledDaemon],
-                workingDirectory: resourcesDirectory.path
+                workingDirectory: resourcesDirectory.path, daemonSource: .bundled
             )
         }
 
@@ -81,7 +84,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             return VoiceBarDaemonLaunchConfiguration(
                 launchPath: bunPath,
                 arguments: ["run", "\(homebrewPackageRoot)/src/mcp-server-daemon.ts"],
-                workingDirectory: homebrewPackageRoot
+                workingDirectory: homebrewPackageRoot, daemonSource: .homebrew
             )
         }
 
@@ -172,6 +175,8 @@ enum VoiceBarDaemonEnvironment {
     private static let legacyPreserveQAOverridesEnvironmentVariable = "QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"
 
     private static let preservedQAOverrideAllowlist: Set<String> = [
+        "VOICELAYER_QA_HEALTH",
+        "QA_VOICE_RECORDINGS_DIR",
         "QA_VOICE_DISABLE_FLAG_PATH",
         "QA_VOICE_MCP_PID_PATH",
         "QA_VOICE_MCP_HEARTBEAT_PATH",
@@ -183,6 +188,7 @@ enum VoiceBarDaemonEnvironment {
     ]
 
     private static let inheritedEnvironmentDenylist: Set<String> = [
+        "VOICELAYER_QA_HEALTH",
         "CODEX_CI",
         "DISABLE_VOICELAYER",
         "QA_VOICE_ALLOW_SOCKET_RECLAIM",
@@ -201,7 +207,9 @@ enum VoiceBarDaemonEnvironment {
 
     static func sanitizedDaemonEnvironment(
         from inherited: [String: String] = ProcessInfo.processInfo.environment,
-        path: String
+        path: String,
+        bundleInfo: [String: Any] = Bundle.main.infoDictionary ?? [:],
+        daemonSource: VoiceBarDaemonLaunchConfiguration.Source = .unknown
     ) -> [String: String] {
         var env = inherited
         let preservesQAOverrides = shouldPreserveQAOverrides(inherited)
@@ -213,6 +221,17 @@ enum VoiceBarDaemonEnvironment {
         }
         env.removeValue(forKey: preserveQAOverridesEnvironmentVariable)
         env.removeValue(forKey: legacyPreserveQAOverridesEnvironmentVariable)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        // A foreign/unstamped plist cannot establish a VoiceBar build identity.
+        let stamped = (bundleInfo["GitCommit"] as? String)?.range(of: "^[a-fA-F0-9]{40}$", options: .regularExpression) != nil
+        // Overwrite inherited identities: only this running bundle can name its build.
+        for (key, plistKey) in [("VOICEBAR_VERSION", "CFBundleShortVersionString"),
+                                ("VOICEBAR_GIT_COMMIT", "GitCommit"), ("VOICEBAR_BUILD_TIME_UTC", "BuildTimeUTC"),
+                                ("VOICEBAR_GIT_DESCRIBE", "GitDescribe")] {
+            env[key] = stamped ? bundleInfo[plistKey] as? String : nil
+        }
+        env["VOICEBAR_BUILD_SOURCE"] = stamped ? "VoiceBar.Info.plist" : nil
+        env["VOICEBAR_DAEMON_SOURCE"] = daemonSource.rawValue
         env["PATH"] = path
         env.removeValue(forKey: "VOICELAYER_ALLOW_SOCKET_RECLAIM")
         env.removeValue(forKey: "QA_VOICE_ALLOW_SOCKET_RECLAIM")
@@ -536,7 +555,7 @@ final class VoiceBarDaemonController {
         proc.currentDirectoryURL = URL(fileURLWithPath: configuration.workingDirectory)
 
         // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
-        var daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
+        var daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH, daemonSource: configuration.daemonSource)
         daemonEnvironment["VOICEBAR_UPDATE_SECRET"] = NativeDrainParticipant.secret
         daemonEnvironment["VOICEBAR_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         guard socketBindingAllowed(daemonEnvironment) else {

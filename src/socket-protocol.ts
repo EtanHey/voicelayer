@@ -44,6 +44,8 @@ export interface RecordingJobsSnapshot {
 
 export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot {
   type: "state";
+  /** Word-seek identity; stable across this utterance's chunks and seeks. */
+  utteranceId?: string;
   state: VoiceLayerState;
   /** Present when state is "speaking" — the text being spoken. */
   text?: string;
@@ -60,8 +62,14 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   /** The playing job and its control generation, so pause/resume and their events bind to this exact player (P16). */
   playback_id?: string;
   generation?: number;
+  /** Ask's real player temporarily owns the surface; the paused read stays parked. */
+  preserves_paused_read?: boolean;
+  /** Capture admission released: restore only the named paused presentation, without audio. */
+  restores_paused_read?: boolean;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
+  /** This player's whole audio (chunk or utterance), measured from long_read.chunk_start_ms (0 without one). */
+  chunk_duration_ms?: number;
   /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
   stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
@@ -174,8 +182,8 @@ export interface AudioLevelEvent {
 
 export interface ErrorEvent {
   type: "error";
-  /** A failed seek preserves ongoing playback and its client clock. */
-  source?: "seek";
+  /** Playback failures remain actionable while a returned read shares the UI with Ask processing. */
+  source?: "seek" | "playback";
   message: string;
   /** true = transient error (will recover), false = needs user action. */
   recoverable: boolean;
@@ -202,6 +210,16 @@ export interface WordBoundary {
   duration_ms: number;
   /** The word text. */
   text: string;
+}
+
+/** Upsert words at wordOffset; times are absolute milliseconds in this utterance.
+ * Only synthesized chunks are published. Later alignment replaces the same indices. */
+export interface SpeechWordsEvent {
+  type: "speech_words";
+  utteranceId: string;
+  wordOffset: number;
+  words: { text: string; startMs: number; endMs: number }[];
+  approximate: boolean;
 }
 
 /** Display-token identity is assigned before visual wrapping. Unknown timing
@@ -300,6 +318,8 @@ export interface PlaybackStateEvent {
   chunk_offset_ms: number;
   pause_owner?: "user" | "f5";
   duration_ms?: number;
+  /** This player's whole audio, from long_read.chunk_start_ms (0 without one). */
+  chunk_duration_ms?: number;
   word_index?: number;
   word_count?: number;
   long_read?: StateEvent["long_read"];
@@ -332,6 +352,8 @@ export interface ClipMarkerEvent {
 export type IntentOutcome = "accept" | "noop" | "reject" | "loading";
 
 export type AckCommand =
+  | "speech_seek"
+  | "clone_engine"
   | "seek"
   | "pause"
   | "resume"
@@ -351,6 +373,7 @@ export type AckCommand =
   | "vocab_add_term"
   | "vocab_remove_term"
   | "set_recording_hold"
+  | "set_recording_pause"
   | "set_whisper_effort"
   | "set_whisper_residency"
   | "set_processing_setting"
@@ -372,6 +395,14 @@ export interface AckEvent {
   reason?: string;
   offset_ms?: number;
   clamped?: boolean;
+  /** A stale Pause/Resume reject: the player that is actually current (T1, S2-F9) — identity is the
+   * (playback_id, generation) pair — its logical read (utterance_id) and where its audio sits in that read. */
+  playback_id?: string;
+  generation?: number;
+  utterance_id?: string;
+  chunk_start_ms?: number;
+  chunk_duration_ms?: number;
+  duration_ms?: number;
   model_status?: WhisperModelStatus;
   residency?: WhisperModelResidency;
   tts_controls?: import("./tts-controls-status").TTSControlsStatus;
@@ -400,13 +431,30 @@ export interface ReadQueueEvent {
   current_request_id: string | null;
 }
 
+/** App-owned engine status; readiness is authenticated HTTP, not warm model/audio proof. */
+export interface CloneEngineEvent {
+  type: "clone_engine";
+  state: "running" | "starting" | "restarting" | "stopped" | "failed";
+  since: string;
+  reason: string | null;
+  pid: number | null;
+  start_with_voicebar: boolean;
+}
+export type CloneEngineCommand = SocketCommandBase & {cmd: "clone_engine"} & (
+  | {action: "start" | "restart" | "stop"; value?: never}
+  | {action: "set_autostart"; value: boolean}
+);
+
 export type SocketEvent = RecordingJobIdentity & (
+  | CloneEngineEvent
   | { type: "dictation_delivery_status"; delivery_id: string; outcome: "unverified"; recording_path?: string }
   | UpdateGateDrainEvent
   | HistoryPlaybackGateEvent
   | ReadQueueEvent
+  | { type: "read_processing"; utterance_id: string; active: boolean }
   | StateEvent
   | SpeechEvent
+  | SpeechWordsEvent
   | TranscriptionEvent
   | ArchiveMetadataUpdatedEvent
   | TranscriptionStatusEvent
@@ -599,11 +647,24 @@ export interface SetRecordingHoldCommand extends SocketCommandBase {
   engaged: boolean;
 }
 
+/** Pause/resume the live push-to-talk take; `capture_id` (from the `recording` state event) guards a stale click. */
+export interface SetRecordingPauseCommand extends SocketCommandBase {
+  cmd: "set_recording_pause";
+  paused: boolean;
+  capture_id?: number;
+}
+
 export interface SeekCommand extends SocketCommandBase {
   cmd: "seek";
   offset_ms: number;
   scope?: "current" | "readback";
   readback_id?: string;
+}
+
+export interface SpeechSeekCommand extends SocketCommandBase {
+  cmd: "speech_seek";
+  utteranceId: string;
+  wordIndex: number;
 }
 
 /** Pause/Resume are idempotent; an identity, when sent, must match the parked item. */
@@ -616,6 +677,8 @@ export interface PlaybackControlCommand extends SocketCommandBase {
 }
 
 export type SocketCommand =
+  | SpeechSeekCommand
+  | CloneEngineCommand
   | SeekCommand
   | PlaybackControlCommand
   | SpeakTextCommand
@@ -638,6 +701,7 @@ export type SocketCommand =
   | VocabAddTermCommand
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
+  | SetRecordingPauseCommand
   | InputDeviceLostCommand
   | SetWhisperEffortCommand
   | PreviewTTSProfileCommand
@@ -839,6 +903,18 @@ export function parseCommand(line: string): SocketCommand | null {
         ? Math.round(parsed.playback_elapsed_ms)
         : undefined;
     switch (parsed.cmd) {
+      case "clone_engine":
+        if (parsed.action === "set_autostart" && typeof parsed.value === "boolean") {
+          return withCommandId<CloneEngineCommand>({cmd: "clone_engine", action: "set_autostart", value: parsed.value}, id);
+        }
+        if (["start", "restart", "stop"].includes(parsed.action) && parsed.value === undefined) {
+          return withCommandId<CloneEngineCommand>({cmd: "clone_engine", action: parsed.action}, id);
+        }
+        return null;
+      case "speech_seek":
+        if (typeof parsed.utteranceId !== "string" || !parsed.utteranceId.trim() || parsed.utteranceId.length > 256 ||
+            !Number.isSafeInteger(parsed.wordIndex) || parsed.wordIndex < 0) return null;
+        return withCommandId<SpeechSeekCommand>({ cmd: "speech_seek", utteranceId: parsed.utteranceId, wordIndex: parsed.wordIndex }, id);
       case "seek":
         if (typeof parsed.offset_ms !== "number" || !Number.isFinite(parsed.offset_ms) || parsed.offset_ms < 0 ||
             (parsed.scope !== undefined && parsed.scope !== "current" && parsed.scope !== "readback")) return null;
@@ -1124,6 +1200,11 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
       }
+      case "set_recording_pause":
+        if (typeof parsed.paused !== "boolean" ||
+            (parsed.capture_id !== undefined && (!Number.isSafeInteger(parsed.capture_id) || parsed.capture_id < 1))) return null;
+        return withCommandId<SetRecordingPauseCommand>({ cmd: "set_recording_pause", paused: parsed.paused,
+          ...(parsed.capture_id !== undefined ? { capture_id: parsed.capture_id } : {}) }, id);
       case "input_device_lost":
         if (!(DEVICE_LOSS_REASONS as readonly unknown[]).includes(parsed.reason) ||
             !Number.isSafeInteger(parsed.capture_id) || parsed.capture_id < 1 ||

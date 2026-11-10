@@ -25,6 +25,11 @@ const rejects = [
   ['fragment expansion',`${prefix} Keep the fu… fragment before release.`,`${prefix} Keep the full fragment before release.`],
   ['word boundaries','Please tell us why the rapist escaped before the hearing.','Please tell us why therapist escaped before the hearing.'],
   ['arbitrary identifier split','Please hand le socket command to the operator.','Please handleSocketCommand to the operator.'],
+  // Regression guard: Etan 11-06 shapes; rules+polish already preserve these on 2.3.
+  ['cutoff merged into a nonword','It reads pub… published in this booklet.','It reads pubpublished in this booklet.'],
+  ['retraction chain shortened','It reads pub… publishing… published in this booklet.','It reads published in this booklet.'],
+  ['article hesitation marker removed','The… the response is ready.','The the response is ready.'],
+  ['contraction hesitation marker removed',"We'll… we'll find it.","We'll we'll find it."],
 ] as const;
 const safe = [
   ['punctuation and casing','please keep every word here and save the final answer','Please keep every word here, and save the final answer.'],
@@ -35,6 +40,10 @@ const safe = [
   ['literal path','Read .env and src/input.ts before release.','Read .env and src/input.ts before release.'],
   ['fragment and multiplicity','Keep the fu… fragment and both repeated repeated words.','Keep the fu… fragment, and both repeated repeated words.'],
   ['pure prose dash','Keep all words here - this clause must survive.','Keep all words here — this clause must survive.'],
+  // Regression guard: Etan 11-06 shapes; rules+polish already preserve these on 2.3.
+  ['cutoff and retraction chain','it reads pub… publishing… published in this booklet','It reads pub… publishing… published in this booklet.'],
+  ['article hesitation','the… the response is ready','The… the response is ready.'],
+  ['contraction hesitation',"we'll… we'll find it","We'll… we'll find it."],
 ] as const;
 for(const surface of ['dictation','voice_ask'] as const) {
   for(const [label,raw,candidate] of rejects) test(`${surface} full caller conserves ${label}`,async()=>{

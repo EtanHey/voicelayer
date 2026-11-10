@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { DISABLE_POLL_INTERVAL_MS } from "./daemon-disable-poll";
+import { recoverAbandonedUpdate } from "./update-gate-installer";
 import { initializeVoiceGate, withFreshAsyncVoiceAdmission } from "./update-gate-admission";
 import { createNativeDrainParticipant, createVoiceDrainControl } from "./update-gate-native-participant";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
@@ -84,7 +86,6 @@ import {
 } from "./daemon-heartbeat";
 
 // --- Tool dispatch table ---
-const DISABLE_POLL_INTERVAL_MS = 5000;
 
 const toolDispatch: Record<
   string,
@@ -255,7 +256,10 @@ async function main() {
   void withFreshAsyncVoiceAdmission(() => warmSelectedRecognizer()).catch(() => {
     console.error("[voicelayer-daemon] Boot recognizer warm-up failed; dictation can retry");
   });
-  void Promise.resolve().then(() => initializeVoiceGate()).catch(() => {
+  void Promise.resolve().then(async () => {
+    await initializeVoiceGate();
+    await recoverAbandonedUpdate();
+  }).catch(() => {
     console.error("[update-gate] startup gate fault; continuing voice service; updates REFUSED");
   });
 

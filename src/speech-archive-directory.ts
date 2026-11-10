@@ -27,7 +27,13 @@ export function preparePrivateSpeechDirectory(root: string): void {
       if (!stat.isDirectory() || stat.isSymbolicLink()) throw new UnsafeSpeechDirectory();
     } catch (error) {
       if (!hasCode(error, "ENOENT")) throw error;
-      fs.mkdirSync(current, { mode: 0o700 });
+      try { fs.mkdirSync(current, { mode: 0o700 }); }
+      catch (mkdirError) {
+        if (!hasCode(mkdirError, "EEXIST")) throw mkdirError;
+        // The archive worker may create this component after our lstat.
+        const winner = fs.lstatSync(current);
+        if (!winner.isDirectory() || winner.isSymbolicLink()) throw new UnsafeSpeechDirectory();
+      }
       syncSpeechDirectory(current);
       syncSpeechDirectory(dirname(current));
     }

@@ -1,0 +1,15 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "StopWins",
+  "status": "EXPECTED_FAIL",
+  "generated": 46,
+  "distinct": 39,
+  "trace": [
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ owner = 0\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 0, n |-> 0]\n/\\ players = {}\n/\\ serial = 0\n/\\ latest = 0",
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ owner = 1\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 1, n |-> 1]\n/\\ players = {}\n/\\ serial = 1\n/\\ latest = 1",
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 1, n |-> 2]\n/\\ owner = 1\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 1, n |-> 1]\n/\\ players = {}\n/\\ serial = 2\n/\\ latest = 1",
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 1, n |-> 2]\n/\\ owner = 0\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 0, n |-> 0]\n/\\ players = {}\n/\\ serial = 2\n/\\ latest = 1",
+    "/\\ stoppedSeek = TRUE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ owner = 0\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 1, n |-> 2]\n/\\ players = {}\n/\\ serial = 2\n/\\ latest = 1"
+  ]
+}

@@ -41,7 +41,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
     private let names = ["idle", "recording-ptt", "recording-vad", "transcribing",
                          "speaking", "paused", "teleprompter-expanded", "teleprompter-collapsed",
                          "queue-1", "queue-10", "last-item", "paused-controls", "hidden", "snoozed",
-                         "busy-note", "typed"]
+                         "busy-note", "typed", "setup-error"]
     private let aliases = ["last-item": "speaking", "teleprompter-collapsed": "speaking", "snoozed": "hidden",
                            "paused-controls": "paused"]
     private var referenceEnvironment: [String: String]?
@@ -158,6 +158,8 @@ final class VoiceBarSnapshotTests: XCTestCase {
         case "hidden", "snoozed": state.snooze(until: name == "snoozed" ? Date(timeIntervalSince1970: 2_000_000_000) : nil)
         case "typed": state.confirmationText = "Typed"
         case "idle": break
+        // 2.3 U2: the launcher with the F5 listener blocked by a missing permission badges the gear.
+        case "setup-error": state.setSetupMissingPermissions([.accessibility])
         case "speaking", "paused", "teleprompter-expanded", "teleprompter-collapsed",
              "queue-1", "queue-10", "last-item", "paused-controls":
             state.handleEvent(["type": "state", "state": "speaking", "text": "A synthetic sentence for the VoiceBar visual catalog. Every word stays visible.",

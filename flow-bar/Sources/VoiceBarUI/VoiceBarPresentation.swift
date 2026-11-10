@@ -72,6 +72,14 @@ public struct VoiceBarRecordingContent: Equatable {
     public var usesPulsingLabelOpacity: Bool
 }
 
+/// Recording pause: Pause beside Stop on a PTT take; paused, it becomes Resume (selected, like Lock).
+public struct VoiceBarRecordingPauseControl: Equatable {
+    public var iconName: String
+    public var accessibilityLabel: String
+    public var accessibilityHint: String
+    public var isSelected: Bool
+}
+
 public struct VoiceBarRecordingHoldControl: Equatable {
     public var iconName: String
     public var accessibilityLabel: String
@@ -112,6 +120,8 @@ public struct VoiceBarReadQueueControl: Equatable {
 public struct VoiceBarNotchOperationalInput: Equatable {
     public var mode: VoiceMode
     public var showsRecordingHold: Bool
+    /// Recording pause takes the third recording slot on a PTT take, where Lock sits on a VAD take.
+    public var showsRecordingPause: Bool
     public var hasTeleprompterText: Bool
     public var isTeleprompterDismissed: Bool
     public var isTeleprompterReadback: Bool
@@ -130,6 +140,9 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var isKeyboardFocused: Bool
     /// The notch History panel is open (spec §4). Recording and the teleprompter still take precedence.
     public var isHistoryPanelOpen: Bool = false
+    /// V6: the rows the History panel's extend handle settled on (7…12).
+    public var historyRows: Int = NotchHistoryMorph.visibleRows
+    public var teleprompterLines: Int = TeleprompterA.lineRange.lowerBound
     /// N5: whether `transientNote` is the busy-selection note (Open History inline). Callers that know set it from
     /// `VoiceState.selectionFeedbackNoteOffersHistory`; nil falls back to recognising the app's own busy copy.
     public var transientNoteOffersHistory: Bool?
@@ -138,10 +151,13 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var visibleCoreOcclusionInset: CGFloat
     /// NOTCH1: a transient note shown inside the notch, in a band under the top row.
     public var transientNote: String?
+    /// 2.3 N1: an earlier take is still transcribing while this one records (the spinner beside Stop).
+    public var showsEarlierTakeProcessing: Bool
 
     public init(
         mode: VoiceMode,
         showsRecordingHold: Bool = false,
+        showsRecordingPause: Bool = false,
         hasTeleprompterText: Bool = false,
         isTeleprompterDismissed: Bool = false,
         isTeleprompterReadback: Bool = false,
@@ -160,10 +176,13 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
         visibleCoreOcclusionInset: CGFloat = 0,
         transientNote: String? = nil,
-        transientNoteOffersHistory: Bool? = nil
+        transientNoteOffersHistory: Bool? = nil,
+        showsEarlierTakeProcessing: Bool = false
     ) {
+        self.showsEarlierTakeProcessing = showsEarlierTakeProcessing
         self.mode = mode
         self.showsRecordingHold = showsRecordingHold
+        self.showsRecordingPause = showsRecordingPause
         self.hasTeleprompterText = hasTeleprompterText
         self.isTeleprompterDismissed = isTeleprompterDismissed
         self.isTeleprompterReadback = isTeleprompterReadback
@@ -258,17 +277,22 @@ public enum VoiceBarPresentation {
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
             hasHistoryPanel: input.isHistoryPanelOpen,
+            historyRows: input.historyRows,
+            teleprompterLines: input.teleprompterLines,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(input: input),
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
             recordingLeadingWingWidth: recordingLeadingWingWidth(
                 mode: input.mode,
-                showsRecordingHold: input.showsRecordingHold
+                showsRecordingHold: input.showsRecordingHold || input.showsRecordingPause,
+                showsEarlierTakeProcessing: input.showsEarlierTakeProcessing
             ),
             recordingTrailingWingWidth: input.mode == .recording
-                ? VoiceBarNotchContract.waveformWingWidth
+                ? VoiceBarNotchContract.recordingTrailingWingWidth(
+                    visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
                 : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
-                ? playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+                ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+                : input.isTeleprompterReadback ? stoppedReadingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
                 : nil,
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
@@ -283,9 +307,28 @@ public enum VoiceBarPresentation {
     private static func compactStatusLeadingWingWidth(
         input: VoiceBarNotchOperationalInput
     ) -> CGFloat? {
-        input.mode == .speaking || input.mode == .idle
-            ? playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
-            : VoiceBarNotchContract.compactIndicatorLaneWidth
+        switch input.mode {
+        case .speaking:
+            readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+        case .idle:
+            playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+        case .transcribing:
+            // 2.3 U2: the spinner sits where Stop was, in the same fixed wing.
+            VoiceBarNotchContract.fixedWingWidth
+        case .recording, .error, .disconnected:
+            VoiceBarNotchContract.compactIndicatorLaneWidth
+        }
+    }
+
+    /// T3 (Etan, QA 2026-11-08 7:52: "the replay the stop and the pause could all go on the left"): Replay, Stop
+    /// and Pause, plus Next (with its "+N" badge) when reads are queued (`slotCount` > 1).
+    public static func readingLeadingWingWidth(slotCount: Int) -> CGFloat {
+        VoiceBarNotchContract.readingLeadingWingWidth(slots: slotCount > 1 ? 4 : 3)
+    }
+
+    /// T3: a stopped read keeps Replay, plus Next (with its "+N" badge) while reads are queued.
+    public static func stoppedReadingLeadingWingWidth(slotCount: Int) -> CGFloat {
+        VoiceBarNotchContract.readingLeadingWingWidth(slots: slotCount > 1 ? 2 : 1)
     }
 
     /// QUEUE1: the leading wing fits its control slots exactly, so the hit rects (from the core outward) match.
@@ -322,6 +365,16 @@ public enum VoiceBarPresentation {
         )
     }
 
+    public static func playbackLeadingSlotCount(for state: VoiceState) -> Int {
+        (readQueueControl(for: state)?.leadingSlotCount ?? 1) + (state.showsReadingProcessingSpinner ? 1 : 0)
+    }
+
+    /// The reading wing's fourth slot holds either the Ask-answer spinner or a queued read's Next; five slots do not
+    /// fit the 130 pt morph canvas, so Next (a control) keeps the slot when both apply.
+    public static func showsReadingWingSpinner(for state: VoiceState) -> Bool {
+        state.showsReadingProcessingSpinner && readQueueControl(for: state) == nil
+    }
+
     public static func readQueueControl(for state: VoiceState) -> VoiceBarReadQueueControl? {
         readQueueControl(
             mode: state.mode,
@@ -338,15 +391,11 @@ public enum VoiceBarPresentation {
         let insets = WaveformLayout.coreGap + WaveformLayout.outerInset
         switch input.mode {
         case .transcribing:
-            return insets + material.waveformSlotWidth +
-                material.compactControlSpacing + material.compactControlSize
+            // 2.3 U2: History + Settings while transcribing.
+            return VoiceBarNotchContract.fixedWingWidth
         case .speaking:
-            let visibilityControl = input.isTeleprompterDismissed && !input.isPlaybackPaused
-                ? material.compactControlSpacing + material.compactControlSize
-                : 0
-            return insets + material.waveformSlotWidth +
-                material.compactControlSpacing + material.compactControlSize +
-                visibilityControl
+            // T3: the time, Show/Hide teleprompter and 1×.
+            return VoiceBarNotchContract.readingTrailingWingWidth
         case .error:
             return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
                 3 + material.compactControlSize +
@@ -367,12 +416,22 @@ public enum VoiceBarPresentation {
 
     private static func recordingLeadingWingWidth(
         mode: VoiceMode,
-        showsRecordingHold: Bool
+        showsRecordingHold: Bool,
+        showsEarlierTakeProcessing: Bool
     ) -> CGFloat? {
         guard mode == .recording else { return nil }
-        return showsRecordingHold
+        let material = VoiceBarNotchContract.material
+        // 2.3 N1: the earlier take's spinner is one more slot at the wing's outer edge.
+        return (showsRecordingHold
             ? VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl
-            : VoiceBarNotchContract.recordingLeadingWingWidth
+            : VoiceBarNotchContract.recordingLeadingWingWidth) +
+            (showsEarlierTakeProcessing ? material.compactControlSpacing + material.compactControlSize : 0)
+    }
+
+    /// 2.3 N1 (Etan, queued-recording clip F1): while this take records, an earlier take is still queued,
+    /// transcribing or delivering, per the daemon's job snapshot. The live take itself is never counted.
+    public static func showsEarlierTakeProcessing(for state: VoiceState) -> Bool {
+        state.mode == .recording && state.processingTakeCount > 0
     }
 
     public static func hotkeyPermissionHint(
@@ -409,6 +468,20 @@ public enum VoiceBarPresentation {
             showsWaveform: true,
             usesPulsingLabelOpacity: false
         )
+    }
+
+    public static func recordingPauseControl(
+        mode: VoiceMode,
+        recordingMode: String?,
+        isPaused: Bool
+    ) -> VoiceBarRecordingPauseControl? {
+        guard mode == .recording, recordingMode == "ptt" else { return nil }
+        return isPaused
+            ? VoiceBarRecordingPauseControl(iconName: "play.fill", accessibilityLabel: "Resume recording",
+                                            accessibilityHint: "Continue the same take", isSelected: true)
+            : VoiceBarRecordingPauseControl(iconName: "pause.fill", accessibilityLabel: "Pause recording",
+                                            accessibilityHint: "Stop adding audio to this take until you resume",
+                                            isSelected: false)
     }
 
     public static func recordingHoldControl(

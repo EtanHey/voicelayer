@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""Explicit QA owner handover; no installs, unlinking or force kills."""
+import json
+from datetime import datetime, timezone
+import os
+from pathlib import Path
+import plistlib
+import pwd
+import re
+import runpy
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+B = runpy.run_path(str(Path(__file__).with_name('qa-candidate-2.3.py')))
+APP, RESIDENT, BASE = B['APP'], B['RESIDENT'], B['BASE']
+read_plist = B['read_plist']
+HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+LABEL = f'gui/{os.getuid()}/com.voicelayer.voicebar'
+LIVE = {'VOICELAYER_SOCKET_PATH': '/tmp/voicelayer.sock', 'VOICELAYER_MCP_SOCKET_PATH': '/tmp/voicelayer-mcp.sock'}
+DOWN_SECONDS = 5
+
+def processes():
+    return B['processes']()
+
+def pids(app):
+    return [pid for pid, _, name in processes() if name == str(app / 'Contents/MacOS/VoiceBar')]
+
+def descendants(rows, owners):
+    owned = set(owners)
+    for _ in rows:
+        owned.update(pid for pid, parent, _ in rows if parent in owned)
+    return owned
+
+def command_line(pid):
+    return subprocess.check_output(['/bin/ps', '-p', str(pid), '-o', 'args='], text=True, timeout=2).strip()
+
+def qwen_connections(owned):
+    result = subprocess.run(['/usr/sbin/lsof', '-nP', '-a', '-p', ','.join(map(str, sorted(owned))),
+                             '-iTCP:8880', '-sTCP:ESTABLISHED'], text=True, capture_output=True, timeout=2)
+    if result.returncode not in [0, 1] or result.stderr or (result.returncode == 1 and result.stdout):
+        raise RuntimeError('REFUSED: Qwen connection activity is unknown')
+    return bool(result.stdout)
+
+def refuse_activity(rows, owners, args, tcp):
+    owned = descendants(rows, owners)
+    for pid, _, executable in rows:
+        if pid not in owned or pid in owners:
+            continue
+        name, command = Path(executable).name, args(pid)
+        # Only known idle daemons are safe. Every player, recorder, generator,
+        # helper and unknown child refuses, including afplay/say/edge-tts/rec/sox.
+        safe = (name == 'bun' and 'mcp-server-daemon.ts' in command) or name == 'whisper-server'
+        safe |= name.lower().startswith('python') and any(script in command for script in ['/src/parakeet-worker.py', '/src/tts_daemon.py'])
+        if not command or not safe:
+            raise RuntimeError('REFUSED: playback/capture or unknown child: ' + name)
+    if tcp(owned):
+        raise RuntimeError('REFUSED: Qwen request/connection is active')
+    return owned
+
+def lifetime_booking(lock, app):
+    if lock.is_symlink():
+        return False
+    try: data = json.loads(lock.read_text())
+    except (OSError, ValueError) as error: raise RuntimeError('REFUSED: unknown session lock') from error
+    pid = data.get('pid') if isinstance(data, dict) else None
+    if type(pid) is not int or pid <= 0 or data.get('sessionId') != f'mcp-{pid}':
+        return False
+    rows = processes(); owners = [p for p, _, name in rows if name == str(app / 'Contents/MacOS/VoiceBar')]
+    if len(owners) != 1 or not any(p == pid and parent == owners[0] and Path(name).name == 'bun' for p, parent, name in rows):
+        return False
+    try: os.kill(pid, 0); os.kill(owners[0], 0)
+    except ProcessLookupError as error: raise RuntimeError('REFUSED: lifetime booking owner exited') from error
+    return daemon_in_bundle(pid, app)
+
+def daemon_in_bundle(pid, app):
+    args = command_line(pid).split()
+    if len(args) != 3 or not Path(args[0]).is_absolute() or Path(args[0]).name != 'bun' or args[1] != 'run': return False
+    return Path(args[2]).is_absolute() and Path(args[2]).resolve() == app.resolve() / 'Contents/Resources/src/mcp-server-daemon.ts'
+
+def require_bundled_daemon(app):
+    rows = processes(); owners = [p for p, _, name in rows if name == str(app / 'Contents/MacOS/VoiceBar')]
+    children = [p for p, parent, name in rows if parent in owners and Path(name).name == 'bun']
+    if len(owners) != 1 or len(children) != 1 or not daemon_in_bundle(children[0], app):
+        raise RuntimeError('REFUSED: app daemon must be its sole bundled bun child')
+    os.kill(owners[0], 0); os.kill(children[0], 0)
+    return children[0]
+
+def process_start_ns(pid):
+    try:
+        raw = subprocess.check_output(['/bin/ps', '-o', 'lstart=', '-p', str(pid)], text=True, timeout=2,
+                                      env={**os.environ, 'LC_ALL': 'C', 'TZ': 'UTC'}).strip()
+        if not re.fullmatch(r'(Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} \d{2}:\d{2}:\d{2} \d{4}', raw):
+            raise ValueError('unknown ps start format')
+        started = datetime.strptime(raw, '%a %b %d %H:%M:%S %Y').replace(tzinfo=timezone.utc)
+        stamp = int(started.timestamp()) * 10**9
+        if started.strftime('%a') != raw[:3] or stamp <= 0 or stamp > time.time_ns():
+            raise ValueError('invalid ps start time')
+        return stamp
+    except (OSError, ValueError, subprocess.SubprocessError):
+        raise RuntimeError('REFUSED: resident daemon start time is unavailable') from None
+
+def stale_idle_state(path):
+    try:
+        before = path.stat()
+        daemon = require_bundled_daemon(RESIDENT)
+        started = process_start_ns(daemon)
+        unchanged = require_bundled_daemon(RESIDENT) == daemon and path.stat() == before
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        raise RuntimeError('REFUSED: stale idle state lacks a verified live resident daemon/start time') from None
+    if not unchanged:
+        raise RuntimeError('REFUSED: resident daemon or recording state changed during idle check')
+    if before.st_mtime_ns >= started:
+        raise RuntimeError('REFUSED: dead recording owner state must predate the live resident daemon')
+
+def idle(tmp, state, health=None):
+    for directory in [tmp, state]:
+        for lock in directory.iterdir():
+            if lock.name.startswith('voicelayer-session-') and lock.name.endswith('.lock') and not lifetime_booking(lock, APP if health else RESIDENT):
+                raise RuntimeError('REFUSED: voice session/ask lock exists')
+    for suffix in ['speech-open', 'speech-pending']:
+        index = (BASE / 'home' if health else HOME) / ('.local/share/voicelayer/recordings.' + suffix)
+        if index.is_symlink():
+            raise RuntimeError('REFUSED: unknown speech index')
+        try:
+            if any(index.iterdir()): raise RuntimeError('REFUSED: open/pending speech or ask')
+        except FileNotFoundError: pass
+    data = health() if health else json.loads((state / 'recording-state.json').read_text())
+    if (data.get('recording_state') if health else data.get('state')) != 'idle' or (health and (data.get('queue_depth') != 0 or data.get('processing_count') != 0 or data.get('recording_jobs') != [] or data.get('capture_error'))):
+        raise RuntimeError('REFUSED: recording/ask/speech/processing in progress')
+    if not health:
+        pid = data.get('pid')
+        if type(pid) is not int or pid <= 0:
+            raise RuntimeError('REFUSED: unknown recording owner')
+        try: os.kill(pid, 0)
+        except ProcessLookupError: pass
+        except OSError:
+            raise RuntimeError('REFUSED: recording owner liveness is unknown') from None
+        else: return
+        stale_idle_state(state / 'recording-state.json')
+
+def qa_health(env):
+    token = (Path(env['VOICELAYER_STATE_DIR']) / 'daemon.secret').read_text().strip()
+    request = {'jsonrpc': '2.0', 'id': 1, 'method': 'voicelayer/speech', 'params': {'cmd': 'health', 'token': token}}
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(2); client.connect(env['VOICELAYER_MCP_SOCKET_PATH'])
+        client.sendall((json.dumps(request) + '\n').encode())
+        with client.makefile('rb') as stream:
+            response = json.loads(stream.readline(65536))
+    if response.get('id') != 1 or response.get('result', {}).get('type') != 'health':
+        raise RuntimeError('REFUSED: QA health unavailable; explicit restore --force-resident is available')
+    return response['result']
+
+def quit_app(app, env=None, force=False):
+    owners = pids(app)
+    if not owners:
+        return
+    if len(owners) != 1:
+        raise RuntimeError('REFUSED: ambiguous app owners')
+    tmp, state = (Path(env['VOICELAYER_TMP_ROOT']), Path(env['VOICELAYER_STATE_DIR'])) if env else (Path('/tmp'), HOME / '.local/state/voicelayer')
+    check = lambda: idle(tmp, state, (lambda: qa_health(env)) if env else None)
+    if not force:
+        check()
+    rows = processes(); owned = descendants(rows, owners)
+    if not force:
+        refuse_activity(rows, owners, command_line, qwen_connections)
+        check()
+        owned = refuse_activity(processes(), owners, command_line, qwen_connections)
+    for pid in owners:
+        if pid in pids(app):
+            os.kill(pid, signal.SIGTERM)  # Native handler routes to graceful menu Quit.
+    for _ in range(100):
+        if not owned.intersection(pid for pid, _, _ in processes()):
+            return
+        time.sleep(.1)
+    raise RuntimeError('REFUSED: QA/app descendants did not exit; never escalating past SIGTERM')
+
+def job_info(stopped=False, allow_unloaded=False):
+    path = HOME / 'Library/LaunchAgents/com.voicelayer.voicebar.plist'
+    config = read_plist(path)
+    expected = {'Label': 'com.voicelayer.voicebar', 'ProgramArguments': [str(RESIDENT / 'Contents/MacOS/VoiceBar')],
+                'KeepAlive': {'SuccessfulExit': False}, 'RunAtLoad': True,
+                'StandardOutPath': str(HOME / 'Library/Logs/voicelayer/voicebar.log'),
+                'StandardErrorPath': str(HOME / 'Library/Logs/voicelayer/voicebar-err.log')}
+    if any(config.get(key) != value for key, value in expected.items()):
+        raise RuntimeError('REFUSED: resident supervision/KeepAlive/log configuration is unknown')
+    result = subprocess.run(['/bin/launchctl', 'print', LABEL], text=True, capture_output=True, timeout=2)
+    if allow_unloaded and result.returncode == 113:
+        return None
+    loaded = {'path': str(path), 'program': expected['ProgramArguments'][0], 'stdout path': expected['StandardOutPath'], 'stderr path': expected['StandardErrorPath']}
+    if result.returncode or any(not re.search(r'^\s*' + re.escape(key) + ' = ' + re.escape(value) + r'\s*$', result.stdout, re.M) for key, value in loaded.items()):
+        raise RuntimeError('REFUSED: canonical resident LaunchAgent is not loaded as expected')
+    match = re.search(r'^\s*pid = (\d+)\s*$', result.stdout, re.M)
+    if stopped and (match or not re.search(r'^\s*last exit code = 0\s*$', result.stdout, re.M)):
+        raise RuntimeError('REFUSED: resident LaunchAgent has not observed a clean stopped exit')
+    return int(match[1]) if match else None
+
+def connected(path, ping=False):
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(1); client.connect(str(path))
+        if ping:
+            client.sendall(b'{"type":"ping"}\n')
+            return json.loads(client.recv(4096).split(b'\n')[0]).get('type') == 'pong'
+        return True
+
+def wait_ready(app, env, exclusive=False):
+    deadline = time.monotonic() + 10
+    for _ in range(100):
+        if time.monotonic() >= deadline:
+            break
+        if exclusive and pids(RESIDENT):
+            raise RuntimeError('REFUSED: resident respawned during QA startup')
+        try:
+            if len(pids(app)) == 1 and connected(env['VOICELAYER_SOCKET_PATH']) and connected(env['VOICELAYER_MCP_SOCKET_PATH'], True):
+                return
+        except (OSError, ValueError):
+            pass
+        time.sleep(.1)
+    raise RuntimeError('App/daemon not ready; restore explicitly (use --force-resident only if required)')
+
+def restore_resident(force=False):
+    job_info(allow_unloaded=True)  # Validate the plist before retiring QA; helper can bootstrap it.
+    env = read_plist(APP / 'Contents/Info.plist')['LSEnvironment'] if APP.exists() else B['environment']()
+    quit_app(APP, env, force=force)
+    # Refuse a respawn before -k: never interrupt an active resident during restore.
+    if pids(RESIDENT):
+        raise RuntimeError('REFUSED: resident already running; verify its activity before restoring')
+    subprocess.run(['bash', str(B['ROOT'] / 'scripts/start-voicebar.sh')], check=True)
+    wait_ready(RESIDENT, LIVE)
+    if pids(RESIDENT) != [job_info()]:
+        raise RuntimeError('REFUSED: restored resident PID does not match its LaunchAgent')
+    print('Resident restored under its real LaunchAgent; PID, both sockets and daemon pong verified.')
+
+def stay_down():
+    deadline = time.monotonic() + DOWN_SECONDS
+    while True:
+        if pids(RESIDENT):
+            raise RuntimeError('REFUSED: resident respawned; aborting QA switch')
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(.1)
+
+def switch(fixture=None):
+    job_info()
+    if pids(RESIDENT):
+        idle(Path('/tmp'), HOME / '.local/state/voicelayer')
+        refuse_activity(processes(), pids(RESIDENT), command_line, qwen_connections)
+    info = read_plist(APP / 'Contents/Info.plist')
+    if info['CFBundleIdentifier'] != B['IDENTITY'] or info['CFBundleShortVersionString'] != '2.3.0' or pids(APP):
+        raise RuntimeError('REFUSED: wrong candidate identity/version or QA already running')
+    env = info['LSEnvironment']; B['prepare'](env)
+    if fixture:
+        env = {**env, **B['fixture_recorder'](fixture)}
+    quit_app(RESIDENT)
+    try:
+        stay_down()  # Observe five seconds before allowing another hotkey owner.
+        job_info(stopped=True)  # Crash-only KeepAlive cannot restart a proven clean exit.
+        print('VoiceBar 2.3 QA uses a NEW bundle id; ' + ('fixture mode skips device input, permission requests and hotkeys.' if fixture else 'first dictation asks for microphone/accessibility permissions.'), flush=True)
+        args = [item for key, value in env.items() for item in ['--env', f'{key}={value}']]
+        subprocess.run(['/usr/bin/open', '-n', *args, str(APP)], check=True)
+        wait_ready(APP, env, exclusive=True)
+        require_bundled_daemon(APP)
+        stay_down()  # Observe another five seconds after QA is ready.
+        require_bundled_daemon(APP)
+    except Exception as error:
+        try:
+            restore_resident()  # Never invoke the explicit force escape automatically.
+        except Exception as recovery:
+            raise RuntimeError(f'RECOVERY_REQUIRED: {error}; {recovery}; run restore --force-resident explicitly') from error
+        raise RuntimeError(f'Switch aborted; resident supervision restored: {error}') from error
+    print('QA ready, resident stayed down for two five-second windows. Use restore when finished.')
+
+def main():
+    args = sys.argv[1:] or ['status']
+    if args == ['status']:
+        print(json.dumps({'resident': pids(RESIDENT), 'qa': pids(APP), 'bundle': str(APP)}, indent=2))
+    elif args in [['restore'], ['restore', '--force-resident']]:
+        restore_resident(force=len(args) == 2)
+    elif args == ['switch']:
+        switch()
+    elif len(args) == 3 and args[:2] == ['switch', '--fixture-recorder']:
+        switch(Path(args[2]).resolve())
+    else:
+        raise RuntimeError('Usage: build|status|switch [--fixture-recorder WAV]|restore [--force-resident]')
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
+        sys.exit(str(error))

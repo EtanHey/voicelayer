@@ -136,13 +136,25 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(args[args.index('-resultBundlePath') + 1], str(self.output / 'VoiceBar.xcresult'))
 
     def test_each_scenario_selects_exactly_one_method_never_both(self):
-        for scenario, method in [('full', 'testFullUIOnlyFlow'), ('focused-338', 'testFocused338StateGallery')]:
+        for scenario, method in [('full', 'testFullUIOnlyFlow'), ('focused-338', 'testFocused338StateGallery'),
+                                 ('hide1', 'testHide1VisualFlow'), ('gate2246', 'testGate2246Flow'),
+                                 ('wings-u2', 'testWingsU2Flow')]:
             with self.subTest(scenario=scenario):
                 args = runner.test_arguments(self.output, scenario)
-                self.assertEqual([a for a in args if a.startswith('-only-testing:')],
-                                 ['-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/' + method])
+                self.assertEqual(args, ['xcodebuild', 'test-without-building', '-xctestrun',
+                                        str(self.output / 'UIE2E.xctestrun'), '-destination', 'platform=macOS',
+                                        '-parallel-testing-enabled', 'NO',
+                                        '-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/' + method,
+                                        '-resultBundlePath', str(self.output / 'VoiceBar.xcresult')])
         with self.assertRaises(ValueError):
             runner.test_arguments(self.output, 'focused-338,full')
+
+    def test_scenario_sets_match_results_and_supervisor(self):
+        spec = importlib.util.spec_from_file_location('results', MODULE.with_name('voicebar-ui-e2e-results.py'))
+        results = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(results)
+        self.assertEqual(set(runner.SCENARIOS), set(results.SCENARIOS))
+        self.assertEqual(set(runner.SCENARIOS), set(runner.safety.SCENARIO_BUDGET_SECONDS))
 
     def test_metadata_preserves_focused_selection_without_explicit_argument(self):
         (self.output / 'scenario.json').write_text(json.dumps({'scenario': 'focused-338'}))

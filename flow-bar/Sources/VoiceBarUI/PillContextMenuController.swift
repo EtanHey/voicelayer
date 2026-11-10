@@ -62,7 +62,8 @@ public final class PillContextMenuController: NSObject {
     public var canRetranscribeLatestProvider: () -> Bool = { false }
     public var onRetranscribeLatest: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
-
+    /// 2.3 U2: the microphones the notch picker lists, in priority order (connected and visible only).
+    public var microphonePickerRowsProvider: () -> [MicrophonePickerRow] = { [] }
     /// Etan's approved spec §3 (p03-design-spec-approval/spec.md), item for item: Settings… · Hide for 1 hour ·
     /// — · Recent Transcriptions › · Paste/Copy Last Transcript · Re-transcribe latest · — · Microphone › · — · Quit
     /// VoiceBar.
@@ -136,8 +137,14 @@ public final class PillContextMenuController: NSObject {
 
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
-        if #available(macOS 14.4, *) {
-            microphoneItem.subtitle = defaultMicrophoneNameProvider()
+        if let name = defaultMicrophoneNameProvider() {
+            let subtitle = Self.fittedMenuText(name, middle: true)
+            microphoneItem.toolTip = name
+            // AppKit otherwise sizes this row for "Microphone", clipping its subtitle.
+            menu.minimumWidth = Self.textWidth(subtitle) + 64
+            if #available(macOS 14.4, *) {
+                microphoneItem.subtitle = subtitle
+            }
         }
         menu.addItem(microphoneItem)
 
@@ -149,6 +156,70 @@ public final class PillContextMenuController: NSObject {
 
         return menu
     }
+
+    public var updateStatusProvider: () -> String? = { nil }
+    public static func versionLine(version: String, updateStatus: String?) -> String {
+        let title = version.isEmpty ? "VoiceBar" : "VoiceBar \(version)"
+        return updateStatus.map { "\(title) · \($0)" } ?? title
+    }
+
+    static var versionTextColor: NSColor { .labelColor.withAlphaComponent(0.65) }
+
+    /// Static metadata needs readable text even though it is not an enabled command.
+    public static func versionItem(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let label = NSTextField(labelWithString: title)
+        label.font = .menuFont(ofSize: 13)
+        label.textColor = versionTextColor
+        label.frame = NSRect(x: 12, y: 4, width: label.fittingSize.width, height: 18)
+        let row = NSView(frame: NSRect(x: 0, y: 0, width: label.frame.maxX + 12, height: 26))
+        row.addSubview(label)
+        item.view = row
+        item.isEnabled = false
+        return item
+    }
+
+    public func makeDockMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (title, action, enabled) in [
+            ("Copy last transcript", #selector(handleCopyLastTranscript), Self.isPasteEnabled(transcript: transcriptProvider())),
+            ("Paste last transcript", #selector(handlePasteLastTranscript), Self.isPasteEnabled(transcript: transcriptProvider())),
+            ("Settings…", #selector(handleOpenSettings), true),
+            (isSnoozedProvider() ? "Show VoiceBar" : "Hide notch for 1 hour",
+             isSnoozedProvider() ? #selector(handleUnsnooze) : #selector(handleSnooze), true),
+        ] {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled
+        }
+        // macOS appends its own Quit; adding another would duplicate the Dock command.
+        menu.insertItem(.separator(), at: 2)
+        return menu
+    }
+
+    public var versionProvider: () -> String = {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    public func makeNotchMenu() -> NSMenu {
+        let menu = makeDockMenu()
+        let again = NSMenuItem(title: "Transcribe latest again", action: #selector(handleRetranscribeLatest), keyEquivalent: "")
+        again.target = self
+        again.isEnabled = canRetranscribeLatestProvider()
+        menu.insertItem(again, at: 2)
+        menu.item(withTitle: "Settings…")?.keyEquivalent = ","
+        menu.item(withTitle: "Hide notch for 1 hour")?.title = "Hide for 1 hour"
+        menu.insertItem(.separator(), at: 6)
+        let version = Self.versionItem(Self.versionLine(version: versionProvider(), updateStatus: updateStatusProvider()))
+        menu.insertItem(version, at: 7)
+        let quit = NSMenuItem(title: "Quit VoiceBar", action: #selector(handleQuit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+        return menu
+    }
+
+    public static let recentTranscriptsMenuLimit = 8
 
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
@@ -162,7 +233,8 @@ public final class PillContextMenuController: NSObject {
         }
 
         let now = now()
-        for entry in entries {
+        // History keeps 20 rows (Etan, 2026-11-08); the submenu keeps its eight (Etan: the right-click menu is fine).
+        for entry in entries.prefix(Self.recentTranscriptsMenuLimit) {
             let item = NSMenuItem(
                 title: Self.recentTranscriptMenuTitle(
                     for: entry.text,
@@ -173,6 +245,15 @@ public final class PillContextMenuController: NSObject {
             )
             item.target = self
             item.representedObject = entry.text
+            item.toolTip = entry.text
+            let title = NSMutableAttributedString(string: item.title, attributes: [
+                .font: NSFont.menuFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
+            ])
+            if let time = VoiceBarRelativeTime.label(entry.createdAt, now: now) {
+                title.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor,
+                                   range: NSRange(location: 0, length: (time as NSString).length))
+            }
+            item.attributedTitle = title
             menu.addItem(item)
         }
 
@@ -184,11 +265,12 @@ public final class PillContextMenuController: NSObject {
     public func makeMicrophoneSubmenu() -> NSMenu {
         let menu = NSMenu()
         let current = NSMenuItem(
-            title: MicrophoneDefaultPresentation.title(defaultMicrophoneNameProvider()),
+            title: Self.fittedMenuText(MicrophoneDefaultPresentation.title(defaultMicrophoneNameProvider()), middle: true),
             action: nil,
             keyEquivalent: ""
         )
         current.isEnabled = false
+        current.toolTip = defaultMicrophoneNameProvider()
         menu.addItem(current)
         menu.addItem(.separator())
         let change = NSMenuItem(
@@ -203,23 +285,88 @@ public final class PillContextMenuController: NSObject {
         return menu
     }
 
+    /// 2.3 U2 (3-wings mock): the chevron's microphone list, opening on the left beside the mic. It is a display
+    /// of the priority list (D2, PLAN-2.3 U2 "a display-only change of the mic list"): the check marks the
+    /// microphone the next dictation uses, and choosing any row or "Microphone priority…" opens Settings ›
+    /// General › Microphone priority, where `MicrophonePriorityApplyCoordinator` stays the only writer.
+    public func makeMicrophonePickerMenu() -> NSMenu {
+        let menu = NSMenu(title: "Microphone")
+        menu.autoenablesItems = false
+        let header: NSMenuItem
+        if #available(macOS 14.0, *) {
+            header = NSMenuItem.sectionHeader(title: "Microphone")
+        } else {
+            header = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+        }
+        menu.addItem(header)
+        let rows = microphonePickerRowsProvider()
+        if rows.isEmpty {
+            let none = NSMenuItem(title: "No microphones", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        for row in rows {
+            let rowItem = item(row.label, #selector(handleChangeMicrophone))
+            rowItem.state = row.isNextDictation ? .on : .off
+            rowItem.toolTip = MicrophoneDefaultPresentation.changeAccessibilityLabel
+            menu.addItem(rowItem)
+        }
+        menu.addItem(.separator())
+        let priority = item("Microphone priority…", #selector(handleChangeMicrophone))
+        priority.setAccessibilityLabel(MicrophoneDefaultPresentation.changeAccessibilityLabel)
+        menu.addItem(priority)
+        return menu
+    }
+
+    private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
+        let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        if !key.isEmpty { menuItem.keyEquivalentModifierMask = .command }
+        menuItem.target = self
+        return menuItem
+    }
+
     public static func isPasteEnabled(transcript: String) -> Bool {
         !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Spec §3: time + the first words; no "Latest —".
     public static func recentTranscriptMenuTitle(for transcript: String, time: String?) -> String {
-        let flattened = transcript
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .joined(separator: " ")
-        let trimmed = flattened.trimmingCharacters(in: .whitespacesAndNewlines)
-        let previewLimit = 54
-        let preview = trimmed.count > previewLimit
-            ? String(trimmed.prefix(previewLimit - 1)) + "…"
-            : trimmed
-        return time.map { "\($0) · \(preview)" } ?? preview
+        let text = transcript.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let prefix = time.map { "\($0) · " } ?? ""
+        return prefix + fittedMenuText(text, maximumWidth: max(0, 420 - textWidth(prefix)))
+    }
+
+    private static func textWidth(_ text: String, fontSize: CGFloat = 13) -> CGFloat {
+        (text as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: fontSize)]).width
+    }
+
+    /// Measure in the native menu font, preserving graphemes and an explicit ellipsis at every cut.
+    private static func fittedMenuText(
+        _ text: String, fontSize: CGFloat = 13, maximumWidth: CGFloat = 420, middle: Bool = false
+    ) -> String {
+        guard textWidth(text, fontSize: fontSize) > maximumWidth else { return text }
+        let characters = Array(text)
+        func candidate(_ count: Int) -> String {
+            if middle {
+                return String(characters.prefix((count + 1) / 2)) + "…" + String(characters.suffix(count / 2))
+            }
+            return String(characters.prefix(count)) + "…"
+        }
+        var low = 0
+        var high = characters.count
+        while low < high {
+            let count = (low + high + 1) / 2
+            if textWidth(candidate(count), fontSize: fontSize) <= maximumWidth { low = count }
+            else { high = count - 1 }
+        }
+        if !middle {
+            let prefix = String(characters.prefix(low))
+            if let space = prefix.lastIndex(of: " ") {
+                return String(prefix[..<space]) + "…"
+            }
+        }
+        return candidate(low)
     }
 
     @objc private func handleOpenSettings() {
@@ -316,6 +463,11 @@ public enum MicrophoneDeviceManager {
             transportType == kAudioDeviceTransportTypeVirtual
     }
 
+    /// 2.3 N1: the default input's name, the device a recording captures from. A property read only.
+    public static func selectedInputDeviceName() -> String? {
+        selectedInputDeviceID().flatMap(AudioDeviceID.init).flatMap(deviceName(for:))
+    }
+
     public static func selectedInputDeviceID() -> String? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
@@ -390,6 +542,31 @@ public enum MicrophoneDeviceManager {
         let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &name)
         guard status == noErr, let name else { return nil }
         return name.takeUnretainedValue() as String
+    }
+}
+
+/// 2.3 U2: one row of the notch microphone list.
+public struct MicrophonePickerRow: Equatable {
+    public let label: String
+    public let isNextDictation: Bool
+
+    public init(label: String, isNextDictation: Bool) {
+        self.label = label
+        self.isNextDictation = isNextDictation
+    }
+
+    /// Connected, visible priority rows in priority order; the check follows the snapshot's next device.
+    public static func rows(from snapshot: MicrophonePrioritySnapshot) -> [MicrophonePickerRow] {
+        snapshot.visibleRows.filter(\.isConnected).map { row in
+            let isNext: Bool = if let uid = row.uid, let nextUID = snapshot.nextDeviceUID {
+                uid == nextUID
+            } else if let id = row.deviceID, let nextID = snapshot.nextDeviceID {
+                id == nextID
+            } else {
+                false
+            }
+            return MicrophonePickerRow(label: row.label, isNextDictation: isNext)
+        }
     }
 }
 

@@ -51,6 +51,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           "printf 'tester=%s\\n' \"${VOICELAYER_VERIFY_TESTER:-}\"",
+          "printf 'ready\\n' >&4",
           "IFS= read -r answer || true",
           "printf 'answer=%s\\n' \"$answer\"",
           "",
@@ -60,7 +61,10 @@ describe("auto-f5-verify.sh pure helpers", () => {
 
       const result = runFunction(
         [
+          'mkfifo "$WORK_DIR/ready"',
+          'exec 4<>"$WORK_DIR/ready"',
           "start_verify_process",
+          "IFS= read -r -t 5 ready <&4",
           "printf 'Y\\n' >&3",
           "close_verify_stdin",
           'wait "$VERIFY_PID"',
@@ -77,6 +81,28 @@ describe("auto-f5-verify.sh pure helpers", () => {
       const output = text(result.stdout);
       expect(output).toContain("tester=auto-F5-etan-consented-live");
       expect(output).toContain("answer=Y");
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("reports logger failure instead of consuming an incomplete verification log", () => {
+    const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
+    try {
+      const fakeVerifyScript = join(workDir, "verify.sh");
+      writeFileSync(fakeVerifyScript, "#!/bin/bash\nprintf 'verification artifact\\n'\n", { mode: 0o755 });
+      const result = runFunction([
+        // Drain verifier output first, then fail the logger. Waiting only
+        // for the verifier incorrectly reports success for this ordering.
+        'tee() { command cat > /dev/null; return 73; }',
+        "start_verify_process",
+        "close_verify_stdin",
+        'wait "$VERIFY_PID"',
+      ].join("; "), {
+        VOICELAYER_AUTO_F5_WORK_DIR: workDir,
+        VOICELAYER_AUTO_F5_VERIFY_SCRIPT: fakeVerifyScript,
+      });
+      expect(result.exitCode).toBe(73);
     } finally {
       rmSync(workDir, { recursive: true, force: true });
     }
@@ -188,14 +214,15 @@ describe("auto-f5-verify.sh pure helpers", () => {
     }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("failed branch cycles restore main build and kickstart VoiceBar services", async () => {
+  test("failed branch cycles restore main build through shared VoiceBar starter", async () => {
     const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
     try {
       const binDir = join(workDir, "bin");
       const mainRoot = join(workDir, "main");
       const buildLog = join(workDir, "build.log");
       const launchctlLog = join(workDir, "launchctl.log");
-      await Bun.$`mkdir -p ${binDir} ${mainRoot}/flow-bar`.env(process.env);
+      await Bun.$`mkdir -p ${binDir} ${mainRoot}/flow-bar ${mainRoot}/scripts`.env(process.env);
+      writeFileSync(join(mainRoot, "scripts/start-voicebar.sh"), '#!/bin/bash\nprintf "shared-voicebar-start\\n" >> "$LAUNCHCTL_LOG"\n', { mode: 0o755 });
       writeFileSync(
         join(mainRoot, "flow-bar", "build-app.sh"),
         [
@@ -243,7 +270,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
       const launchctlOutput = await Bun.file(launchctlLog).text();
       const launchdDomain = `gui/${process.getuid?.() ?? 501}`;
       expect(launchctlOutput).toContain(
-        `kickstart -k ${launchdDomain}/com.voicelayer.voicebar`,
+        "shared-voicebar-start",
       );
       expect(launchctlOutput).toContain(
         `kickstart -k ${launchdDomain}/com.voicelayer.mcp-daemon`,

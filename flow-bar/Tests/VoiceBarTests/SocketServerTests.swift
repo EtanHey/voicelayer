@@ -9,6 +9,36 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testCloneEngineBroadcastConnectReplayAndCorrelatedLocalAck() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        let event = CloneEngineSnapshot(state: .running, since: "2026-11-05T00:00:00Z",
+            reason: "adopted_existing", pid: 123, startWithVoiceBar: true).payload
+        fixture.server.publishCloneEngine(event)
+        for fd in [fixture.legacyClient, fixture.commandClient] {
+            let line = try XCTUnwrap(readLine(from: fd, timeout: 2))
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+            XCTAssertEqual(CloneEngineSnapshot(payload: payload)?.pid, 123)
+        }
+        let reconnect = try connectUnixSocket(path: fixture.directory.appendingPathComponent("voicelayer.sock").path)
+        defer { close(reconnect) }
+        XCTAssertTrue(try XCTUnwrap(readLine(from: reconnect, timeout: 2)).contains("clone_engine"))
+        var commands: [[String: Any]] = []
+        fixture.server.onCloneEngineCommand = { command in
+            commands.append(command)
+            return CloneEngineController.acknowledgement(command, reason: nil)
+        }
+        try writeLine(#"{"cmd":"clone_engine","action":"start","id":"engine-ack"}"#, to: reconnect)
+        XCTAssertTrue(waitUntil(timeout: 2) { commands.count == 1 })
+        let ack = try XCTUnwrap(readLine(from: reconnect, timeout: 2))
+        XCTAssertTrue(ack.contains("engine-ack"))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.025), "App commands must never reach the MCP child")
+        // A peer cannot spoof the app's authoritative lifecycle snapshot.
+        try writeLine(#"{"type":"clone_engine","state":"failed"}"#, to: reconnect)
+        _ = fixture.server.bytesReadForTesting()
+        XCTAssertNil(fixture.state.cloneEngine)
+    }
+
     func testOwnedDictationReceiptsAndCancelRouteOnlyToTheirProducingClient() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
@@ -661,11 +691,11 @@ final class SocketServerTests: XCTestCase {
         windows.append(window)
         host.layoutSubtreeIfNeeded()
 
-        try click(
-            host,
-            at: NSPoint(x: host.bounds.midX - 28, y: 23),
-            in: window
-        )
+        // 2.3 U5: Stop left the lower row, which re-centred Replay; find it by its native tooltip view and click its
+        // centre in window coordinates (`click` takes window points; the hosting view is flipped).
+        func subviews(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(subviews) }
+        let replay = try XCTUnwrap(subviews(host).first { $0.toolTip == "Replay" && !$0.visibleRect.isEmpty })
+        try click(host, at: replay.convert(NSPoint(x: replay.bounds.midX, y: replay.bounds.midY), to: nil), in: window)
 
         let replayCommand = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
         XCTAssertTrue(replayCommand.contains(#""cmd":"replay""#))
@@ -1087,6 +1117,15 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         var pasteShortcutPosted = false
         var axInsertionFired = false
         state.frontmostAppProvider = { cmux }
+        // Since 2.3 (P1, #683) delivery selects the focused field when the final
+        // arrives and refuses when no eligible focus exists. The app supplies
+        // this from AX; cmux's Ghostty surface reports AXTextArea whose value is
+        // not writable, which the terminal typed route accepts.
+        state.focusedTargetEligibilityProvider = {
+            DictationFocusedTargetEligibility(
+                processIdentifier: cmux.processIdentifier, role: "AXTextArea",
+                isEditable: false, isSecure: false, matchesCurrentFocus: { true })
+        }
         state.targetAppActivator = { _ in }
         state.pasteScheduler = { _, block in block() }
         state.pasteConfirmationDelay = 0
@@ -1286,11 +1325,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         let finishedReplayStartEpoch = state.playbackEpoch
         let finishedReplayIntentCount = replayIntentCount
-        try click(
-            host,
-            at: NSPoint(x: host.bounds.midX - 28, y: 23),
-            in: window
-        )
+        try clickReplay(host, in: window)
         XCTAssertTrue(waitForCondition(timeout: 1) {
             replayIntentCount == finishedReplayIntentCount + 1
         })
@@ -1302,7 +1337,9 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             directChildProcessCount(named: "afplay", parentPID: daemonPID) == 1
         })
         XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 60))
-        print("[replay-runtime] finished replay click fired a fresh afplay process")
+        if replayIntentCount == finishedReplayIntentCount + 1 {
+            print("[replay-runtime] finished replay intent observed")
+        }
 
         let askReplayPhrase = "Replay this blocking voice ask prompt without entering recording early."
         let askStartEpoch = state.playbackEpoch
@@ -1351,8 +1388,8 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         }
         askHost.layoutSubtreeIfNeeded()
         let askReplayIntentCount = replayIntentCount
-        try click(askHost, at: NSPoint(x: askHost.bounds.midX - 28, y: 23), in: askWindow)
-        try click(askHost, at: NSPoint(x: askHost.bounds.midX - 28, y: 23), in: askWindow)
+        try clickReplay(askHost, in: askWindow)
+        try clickReplay(askHost, in: askWindow)
         XCTAssertTrue(waitForCondition(timeout: 1) {
             replayIntentCount == askReplayIntentCount + 2
         })
@@ -1568,22 +1605,36 @@ private func click(_ host: NSView, at point: NSPoint, in window: NSWindow) throw
 }
 
 @MainActor
+private func clickReplay(_ host: NSView, in window: NSWindow) throws {
+    host.layoutSubtreeIfNeeded()
+    func descendants(_ view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap(descendants)
+    }
+    let replay = try XCTUnwrap(descendants(host).first {
+        $0.toolTip == "Replay" && !$0.visibleRect.isEmpty
+    }, "Replay must expose a visible native tooltip control")
+    let centre = NSPoint(x: replay.bounds.midX, y: replay.bounds.midY)
+    try click(host, at: replay.convert(centre, to: nil), in: window)
+}
+
+@MainActor
 private func clickSpeakingStop(
     _ host: NSView,
     in window: NSWindow,
     playbackClient: Int32
 ) throws -> String {
-    var x = host.bounds.maxX - 10
+    var x = host.bounds.minX + 10
+    // T3: Stop is the left wing's outermost control (the top row), with the teleprompter open too.
     let y = host.bounds.height > VoiceBarNotchContract.topHeight
-        ? CGFloat(23)
+        ? host.bounds.maxY - VoiceBarNotchContract.topHeight / 2
         : host.bounds.midY
-    while x >= host.bounds.midX {
+    while x <= host.bounds.midX {
         try click(host, at: NSPoint(x: x, y: y), in: window)
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         if let line = try readLine(from: playbackClient, timeout: 0.02) {
             return line
         }
-        x -= 3
+        x += 3
     }
     throw NSError(domain: "SocketServerTests", code: 3)
 }

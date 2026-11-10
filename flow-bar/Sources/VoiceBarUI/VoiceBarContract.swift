@@ -10,8 +10,10 @@ public enum IntentCommand: String {
     case toggle
     case record
     case setRecordingHold = "set_recording_hold"
+    case setRecordingPause = "set_recording_pause"
     case setWhisperEffort = "set_whisper_effort"
     case setWhisperResidency = "set_whisper_residency"
+    case cloneEngine = "clone_engine"
     case setTTSSetting = "set_tts_setting"
     case previewTTSProfile = "preview_tts_profile"
     case setProcessingSetting = "set_processing_setting"

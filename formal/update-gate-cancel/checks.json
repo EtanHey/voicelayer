@@ -1,0 +1,52 @@
+{
+  "module": "CancelRetry",
+  "sourceBaseline": "870b16170907bf49862027e240771059d9bd8afe",
+  "sources": [
+    "src/update-gate-installer.ts",
+    "src/update-gate-installer-participant.ts",
+    "src/update-gate-admission.ts",
+    "src/__tests__/update-gate-drain-readback.test.ts",
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift",
+    "src/update-gate-drain-status.ts",
+    "src/__tests__/update-gate-user-block.test.ts",
+    "src/update-gate-native-participant.ts"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OldSplitProbe": {
+      "role": "mutant",
+      "target": "RecoverableCancelReopens",
+      "kind": "temporal"
+    },
+    "UserBlockFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "OldAdmission": {
+      "role": "mutant",
+      "target": "NoEarlyVoiceRefusal",
+      "kind": "invariant"
+    },
+    "UnboundedDrain": {
+      "role": "mutant",
+      "target": "BoundedDrainResolves",
+      "kind": "temporal"
+    },
+    "NoLedger": {
+      "role": "mutant",
+      "target": "NoSwapWithLedger",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "RecoverableCancelReopens",
+    "NoEarlyVoiceRefusal",
+    "NoSwapWithLedger",
+    "BoundedDrainResolves"
+  ]
+}

@@ -5,10 +5,11 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
     func testPrimaryStatesUseApprovedVisibleGeometryInsideShadowSafeWindows() {
         let cases: [(VoiceBarNotchVisualState, CGSize)] = [
             (.idle, CGSize(width: 185, height: 32)),
-            (.hoverLauncher, CGSize(width: 306, height: 32)), // a 47.5 pt mic wing + a 73.5 pt History/Settings wing
-            (.recording, CGSize(width: 336.5, height: 32)),
+            // 2.3 U2: fixed 73.5 pt wings (mic + chevron | History + Settings; Stop + Cancel | level bars).
+            (.hoverLauncher, CGSize(width: 332, height: 32)),
+            (.recording, CGSize(width: 332, height: 32)),
             (.compactStatus, CGSize(width: 336.5, height: 32)),
-            (.teleprompter, CGSize(width: 465, height: 228)),
+            (.teleprompter, CGSize(width: 465, height: 195)),
         ]
 
         for (state, expectedVisibleSize) in cases {
@@ -64,8 +65,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             height: layout.visibleContentRect.height
         )
 
-        XCTAssertEqual(windowFrame, CGRect(x: 627.5, y: 872, width: 472, height: 245))
-        XCTAssertEqual(visibleFrame, CGRect(x: 639.5, y: 889, width: 448, height: 228))
+        XCTAssertEqual(windowFrame, CGRect(x: 627.5, y: 905, width: 472, height: 212))
+        XCTAssertEqual(visibleFrame, CGRect(x: 639.5, y: 922, width: 448, height: 195))
         XCTAssertEqual(visibleFrame.midX, screen.housingFrame.midX)
         XCTAssertEqual(visibleFrame.maxY, screen.screenFrame.maxY)
     }
@@ -282,7 +283,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertTrue(visibleFrame.contains(recordingFrame))
         XCTAssertTrue(visibleFrame.contains(teleprompterFrame))
         XCTAssertEqual(recordingFrame.height, 49 + VoiceBarNotchContract.transientNoteCanvasReserve)
-        XCTAssertEqual(teleprompterFrame.height, 245 + VoiceBarNotchContract.transientNoteCanvasReserve)
+        // 2.3 U5: the teleprompter window holds eight Teleprompter A lines (+5 × 24 pt) so its handle never resizes it.
+        XCTAssertEqual(teleprompterFrame.height, 212 + 5 * TeleprompterA.lineHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertFalse(
             recordingFrame.contains(
                 CGPoint(x: recordingCoreMidX, y: teleprompterFrame.minY + 24)

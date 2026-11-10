@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { recordingStateFilePath } from "../paths";
 import {
   createConversationCapturePolicy as create, requestConversationCaptureStop as stop,
@@ -17,7 +17,8 @@ const originalPath = process.env.QA_VOICE_RECORDING_STATE_PATH;
 beforeEach(() => {
   expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");
   const root = process.env.VOICELAYER_TEST_RUN_ROOT!;
-  expect(root.startsWith(join(process.cwd(), ".test-tmp/"))).toBe(true);
+  // src/ and tests/ cwds sandbox at the repo root (preload `sourceCwd`); other cwds at their own.
+  expect([resolve(import.meta.dir, "../.."), process.cwd()].map(base => join(base, ".test-tmp"))).toContain(dirname(root));
   process.env.QA_VOICE_RECORDING_STATE_PATH = join(root, "capture-state.json");
 });
 afterEach(() => {
@@ -217,8 +218,8 @@ test("absence-policy legacy transitions persist and notify unchanged", async () 
 
 test("actual compiler accepts issued handles and rejects the R2 release counterexample", () => {
   const root = process.env.VOICELAYER_TEST_RUN_ROOT!;
-  const imports = `import { createConversationCapturePolicy as create, runRegisteredConversationCapture as run, waitForConversationCaptureSafety as wait, type ConversationCapturePolicy } from ${JSON.stringify(resolve("src/conversation-capture-lifecycle"))};
-import { holdConversationCaptureUntil as hold } from ${JSON.stringify(resolve("src/recording-state"))};\n`;
+  const imports = `import { createConversationCapturePolicy as create, runRegisteredConversationCapture as run, waitForConversationCaptureSafety as wait, type ConversationCapturePolicy } from ${JSON.stringify(resolve(import.meta.dir, "../..", "src/conversation-capture-lifecycle"))};
+import { holdConversationCaptureUntil as hold } from ${JSON.stringify(resolve(import.meta.dir, "../..", "src/recording-state"))};\n`;
   const sources = [
     imports + `const policy = create(); hold(policy); void wait(policy);
 void run(policy, async owner => { owner.ownSetupCleanup(async () => {}); });`,
@@ -230,7 +231,7 @@ void wait(create()).then(report => { report.generation = 7; });`,
   for (const [index, source] of sources.entries()) {
     const fixture = join(root, `capture-types-${index}.ts`);
     writeFileSync(fixture, source);
-    const argv = [process.execPath, resolve("node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--target", "esnext", "--module", "esnext", "--moduleResolution", "bundler", "--types", "bun-types", "--esModuleInterop", fixture];
+    const argv = [process.execPath, resolve(import.meta.dir, "../..", "node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--target", "esnext", "--module", "esnext", "--moduleResolution", "bundler", "--types", "bun-types", "--esModuleInterop", fixture];
     const result = Bun.spawnSync(argv, { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 45_000 });
     const output = result.stdout.toString() + result.stderr.toString();
     console.log("COMPILER_FIXTURE", JSON.stringify({ argv, exit: result.exitCode, output, source }));

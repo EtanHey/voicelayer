@@ -1,10 +1,21 @@
 # VoiceBar — install & update
 
 ## Install
+
+If `brew help trust` reports an unknown command, update Homebrew first.
+
 ```bash
+brew tap etanhey/layers
+brew trust etanhey/layers                   # explicitly trust this tap
 brew install --cask etanhey/layers/voicebar   # the supported install
 voicelayer update                              # brings the Mac to canonical from any state
 ```
+
+Tapping alone does not grant trust. `brew trust etanhey/layers` permits Homebrew
+to load all current and future formulae, casks and commands in the tap. A fully
+qualified install grants trust only to that item; see [Homebrew tap
+trust](https://docs.brew.sh/Tap-Trust) for narrower alternatives. These steps make
+the whole-tap trust decision explicit; setup and update do not grant it for you.
 
 Building from source installs to `/Applications/VoiceBar.app`:
 ```bash

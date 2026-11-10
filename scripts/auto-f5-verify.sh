@@ -177,7 +177,7 @@ restore_last_known_good_main_build() {
 
   local restored=0
   kickstart_launchd_service "$MCP_DAEMON_LAUNCHD_LABEL" || restored=1
-  kickstart_launchd_service "$VOICEBAR_LAUNCHD_LABEL" || restored=1
+  bash "$main_root/scripts/start-voicebar.sh" || restored=1
   return "$restored"
 }
 
@@ -670,10 +670,12 @@ start_verify_process() {
   VERIFY_STDIN_OPEN=1
 
   (
+    # Own the whole pipeline: wait "$VERIFY_PID" must also wait for the log
+    # to drain before callers read it, and report a failed logger.
     VOICELAYER_VERIFY_TESTER="$VERIFY_TESTER" \
       VOICELAYER_VERIFY_REPO_ROOT="$REPO_ROOT" \
-      bash "$VERIFY_SCRIPT" --force <"$VERIFY_FIFO"
-  ) > >(tee -a "$LOG_FILE") 2>&1 &
+      bash "$VERIFY_SCRIPT" --force <"$VERIFY_FIFO" 2>&1 | tee -a "$LOG_FILE"
+  ) &
   VERIFY_PID="$!"
   log "started voicelayer-verify wrapper process pid=$VERIFY_PID"
 }

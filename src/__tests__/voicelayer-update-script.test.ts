@@ -706,7 +706,7 @@ describe("voicelayer-update.sh", () => {
 
     expect(body).toContain("build-app)");
     expect(body).toContain('bash "$PACKAGE_ROOT/flow-bar/build-app.sh"');
-    expect(body).toContain('open "/Applications/VoiceBar.app"');
+    expect(body).toContain('bash "$PACKAGE_ROOT/scripts/start-voicebar.sh"');
     expect(body).not.toContain('exec ".build/release/VoiceBar"');
   });
 

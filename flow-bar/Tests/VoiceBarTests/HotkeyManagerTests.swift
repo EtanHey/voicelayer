@@ -1,9 +1,34 @@
+import Foundation
 import CoreGraphics
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
 
 final class HotkeyManagerTests: XCTestCase {
+    func testBackToBackMouseTakesAndTapAgainLockKeepSecondTakeAlive() {
+        let gesture = GestureStateMachine()
+        var scheduled: [DispatchWorkItem] = []
+        gesture.schedule = { _, work in scheduled.append(work) }
+        var starts = 0, stops = 0
+        gesture.onHoldStart = { starts += 1 }
+        gesture.onHoldEnd = { stops += 1 }
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        XCTAssertEqual(starts, 1)
+        XCTAssertEqual(gesture.state, .locked)
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        XCTAssertEqual(stops, 1)
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        for work in scheduled { work.perform() }
+        XCTAssertEqual(starts, 2)
+        XCTAssertEqual(stops, 1)
+        XCTAssertEqual(gesture.state, .locked)
+        gesture.handleMouseButtonDown()
+        XCTAssertEqual(stops, 2)
+    }
+
     func testConsumesMatchedKeyDownEvents() {
         XCTAssertTrue(
             shouldConsumeHotkeyEvent(
@@ -1074,12 +1099,12 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.reset()
     }
 
-    func testGestureShowsPressingPreviewBeforeHoldStartsRecording() {
+    func testGesturePublishesLogicalPressingBeforeHoldStartsRecording() {
         let gesture = GestureStateMachine()
         var holdStartCount = 0
         var phases: [HotkeyPhase] = []
         gesture.onHoldStart = { holdStartCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
 
@@ -1096,7 +1121,7 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.onHoldEnd = { holdEndCount += 1 }
         gesture.onSingleTap = { singleTapCount += 1 }
         gesture.onDoubleTap = { doubleTapCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
         gesture.handleKeyUp()
@@ -1114,7 +1139,7 @@ final class HotkeyManagerTests: XCTestCase {
         var phases: [HotkeyPhase] = []
         gesture.onHoldStart = { holdStartCount += 1 }
         gesture.onHoldEnd = { holdEndCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleMouseButtonDown()
         gesture.handleMouseButtonUp()
@@ -1133,7 +1158,7 @@ final class HotkeyManagerTests: XCTestCase {
         var phases: [HotkeyPhase] = []
         gesture.onHoldStart = { holdStartCount += 1 }
         gesture.onHoldEnd = { holdEndCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleMouseButtonDown()
         // The hold timer is `GestureStateMachine.holdThresholdMs` ms; wait for it to fire rather than a
@@ -1160,7 +1185,7 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.onHoldStart = { holdStartCount += 1 }
         gesture.onHoldEnd = { holdEndCount += 1 }
         gesture.onDoubleTap = { doubleTapCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
         gesture.handleKeyUp()
@@ -1180,7 +1205,7 @@ final class HotkeyManagerTests: XCTestCase {
         var phases: [HotkeyPhase] = []
         gesture.onHoldStart = { holdStartCount += 1 }
         gesture.onHoldEnd = { holdEndCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
         // The hold timer is `GestureStateMachine.holdThresholdMs` ms; wait for it to fire rather than a
@@ -1205,7 +1230,7 @@ final class HotkeyManagerTests: XCTestCase {
         var phases: [HotkeyPhase] = []
         gesture.onHoldStart = { holdStartCount += 1 }
         gesture.onDoubleTap = { doubleTapCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
         gesture.handleKeyUp()
@@ -1226,7 +1251,7 @@ final class HotkeyManagerTests: XCTestCase {
         var phases: [HotkeyPhase] = []
         gesture.onHoldStart = { holdStartCount += 1 }
         gesture.onDoubleTap = { doubleTapCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
         gesture.handleKeyUp()
@@ -1249,7 +1274,7 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.onHoldStart = { holdStartCount += 1 }
         gesture.onHoldEnd = { holdEndCount += 1 }
         gesture.onCancel = { cancelCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
         gesture.handleKeyUp()
@@ -1271,7 +1296,7 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.onHoldStart = { holdStartCount += 1 }
         gesture.onHoldEnd = { holdEndCount += 1 }
         gesture.onCancel = { cancelCount += 1 }
-        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onLogicalPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
         gesture.handleKeyUp()

@@ -11,7 +11,19 @@
     "scripts/promote-voicebar-release.sh",
     "src/update-gate-installer-participant.ts",
     "src/update-gate.ts",
-    "src/update-gate-installer.ts"
+    "src/update-gate-installer.ts",
+    "src/mcp-server-daemon.ts",
+    "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift",
+    "scripts/lib/voicebar-launchagent.sh",
+    "scripts/start-voicebar.sh",
+    "src/update-gate-bootstrap.ts",
+    "src/voice-bar-launcher.ts",
+    "src/cli/voicelayer.sh",
+    "flow-bar/build-app.sh",
+    "scripts/lib/qa-candidate-lifecycle.py",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift",
+    "src/update-gate-owner.ts",
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift"
   ],
   "checks": {
     "Fixed": {
@@ -113,6 +125,46 @@
       "role": "mutant",
       "target": "LeasedUpdateReopensAdmission",
       "kind": "temporal"
+    },
+    "RecoveryFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "RecoveryOld": {
+      "role": "mutant",
+      "target": "EventuallyOpenAfterAbandonedLease",
+      "kind": "temporal"
+    },
+    "RecoveryMutantLive": {
+      "role": "mutant",
+      "target": "NeverRecoverLiveController",
+      "kind": "invariant"
+    },
+    "RecoveryMutantTarget": {
+      "role": "mutant",
+      "target": "RecoveryOnlyVerified",
+      "kind": "invariant"
+    },
+    "ReapFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "ReapMutantAge": {
+      "role": "mutant",
+      "target": "NeverReapLiveOwner",
+      "kind": "invariant"
+    },
+    "ReapOld": {
+      "role": "mutant",
+      "target": "DeadRegistrationsCanPrepare",
+      "kind": "temporal"
+    },
+    "ReapMutantUnknown": {
+      "role": "mutant",
+      "target": "NeverReapLiveOwner",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -127,6 +179,11 @@
     "NeverProceedOnReusedOrCompetitor",
     "NeverProceedWithoutHeldLease",
     "NeverReopenUnverified",
-    "LeasedUpdateReopensAdmission"
+    "LeasedUpdateReopensAdmission",
+    "EventuallyOpenAfterAbandonedLease",
+    "NeverRecoverLiveController",
+    "RecoveryOnlyVerified",
+    "NeverReapLiveOwner",
+    "DeadRegistrationsCanPrepare"
   ]
 }

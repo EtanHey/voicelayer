@@ -63,15 +63,17 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
     }
 
-    /// Approved spec §6: the sticky header shows the search field first, then "Add term".
-    func testDictionaryAddAndSearchAppearBeforeCanonicalCards() throws {
+    /// U3 spec (Dictionary): the header carries "Add term"; the search sits under it, both above the term rows.
+    func testDictionaryHeaderAddThenSearchAppearBeforeCanonicalCards() throws {
         let source = try settingsViewSource()
-        let searchRange = try XCTUnwrap(source.range(of: "searchRow"))
-        let addRange = try XCTUnwrap(source.range(of: "Label(\"Add term\""))
-        let cardRange = try XCTUnwrap(source.range(of: "dictionaryEntryCard"))
+        let tab = try XCTUnwrap(source.components(separatedBy: "private var dictionaryTab: some View {")
+            .dropFirst().first?.components(separatedBy: "private func includedTermsHeaderLabel(").first)
+        let addRange = try XCTUnwrap(tab.range(of: "Label(\"Add term\""))
+        let searchRange = try XCTUnwrap(tab.range(of: "searchRow"))
+        let cardRange = try XCTUnwrap(tab.range(of: "dictionaryEntryCard"))
 
-        XCTAssertLessThan(searchRange.lowerBound, addRange.lowerBound)
-        XCTAssertLessThan(addRange.lowerBound, cardRange.lowerBound)
+        XCTAssertLessThan(addRange.lowerBound, searchRange.lowerBound)
+        XCTAssertLessThan(searchRange.lowerBound, cardRange.lowerBound)
     }
 
     func testSettingsDoesNotExposePositionControls() throws {
@@ -520,7 +522,7 @@ final class SettingsViewContractTests: XCTestCase {
     func testGeneralTabProvidesVoiceBarHideAndUnhideAffordance() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("Section(\"Visibility\")"))
+        XCTAssertTrue(source.contains("Section(\"VoiceBar\")"))
         XCTAssertTrue(source.contains("isVoiceBarHidden"))
         XCTAssertTrue(source.contains("onHideVoiceBar"))
         XCTAssertTrue(source.contains("onShowVoiceBar"))
@@ -531,14 +533,20 @@ final class SettingsViewContractTests: XCTestCase {
     func testGeneralTabShowsPermissionsAndAdvancedF5Helper() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("permissionRow"))
+        // U3a (R2): permissions and the F5 key are General › Setup steps.
+        XCTAssertTrue(source.contains("permissionRowModels"))
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
-        XCTAssertTrue(source.contains("Section(\"Shortcut\")"))
-        XCTAssertTrue(source.contains("Section(\"Permissions\")"))
+        XCTAssertTrue(source.contains("private var setupSection: some View"))
+        // 2.3 U2's gear badge target now carries Setup (its first broken step); permission health shows the section
+        // only when something is broken.
+        XCTAssertTrue(source.contains("Text(setup.header ?? \"Setup\")\n                    .id(SettingsFocus.permissions)"))
+        XCTAssertTrue(source.contains("if setup.showsSection {"))
+        XCTAssertTrue(source.contains("setup.visibleRestartLine(hotkeyListenerRestartLine)"))
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))
-        XCTAssertTrue(source.contains("F5 key helper"))
+        XCTAssertEqual(SettingsGeneralCopy.relayTitle, "F5 key helper")
+        XCTAssertTrue(source.contains("SettingsRow(title: SettingsGeneralCopy.relayTitle"))
         XCTAssertFalse(source.contains("Relay (hidutil LaunchAgent)"))
         XCTAssertTrue(source.contains("runRelaySetup"))
         XCTAssertTrue(source.contains(".disabled(relaySetupRunning)"))

@@ -1,3 +1,4 @@
+import { describeResidentParticipants, formatDrainStatus, type PendingParticipant } from "./update-gate-drain-status";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -9,7 +10,10 @@ import { readSpeechSecret } from "./speech-control";
 import { acknowledgeVoiceDrain, type ParticipantProof } from "./update-gate-admission";
 import { sameLease, updateGateAckSchema, type UpdateGateLease } from "./update-gate";
 
-const unknownSchema = z.strictObject({ kind: z.literal("UNKNOWN") });
+const pendingSchema = z.object({ participant: z.enum(["native", "daemon"]), pid: z.number().int().positive().safe().optional(),
+  incarnation: z.uuid().optional(), version: z.string().max(60).optional(), reply: z.string().max(200) });
+const unknownSchema = z.object({ kind: z.literal("UNKNOWN"), reason: z.string().max(200).optional(),
+  version: z.string().max(60).optional(), pending: z.array(pendingSchema).max(2).optional() });
 const identitySchema = z.strictObject({ pid: z.number().int().positive().safe(), incarnation: z.uuid() });
 const receiptSchema = z.strictObject({ kind: z.literal("ACKNOWLEDGED"), native: updateGateAckSchema,
   daemon: updateGateAckSchema, identities: z.strictObject({ native: identitySchema, daemon: identitySchema }) });
@@ -18,7 +22,7 @@ type Identities = Receipt["identities"];
 type ProcessProof = { identities: Identities; native: string; daemon: string };
 export class UnsafeSuccessorError extends Error {}
 export type InstallerExitObservation = boolean | "UNKNOWN" | "UNSAFE";
-export type InstallerEvidence = { phase: string; ready: boolean; native?: Receipt["native"]; daemon?: Receipt["daemon"] };
+export type InstallerEvidence = { phase: string; ready: boolean; pending?: PendingParticipant[]; participants?: PendingParticipant[]; native?: Receipt["native"]; daemon?: Receipt["daemon"] };
 export interface InstallerParticipant {
   refresh(lease: UpdateGateLease): Promise<InstallerEvidence>;
   verify: ParticipantProof;
@@ -36,6 +40,7 @@ export interface InstallerParticipantDependencies {
   processIdentity(pid: number): string | null;
   processParent(pid: number): number | null;
   participantsExited(proof: ProcessProof): InstallerExitObservation;
+  describe?(): PendingParticipant[];
   now(): number;
   sleep(ms?: number): Promise<void>;
 }
@@ -64,15 +69,16 @@ export async function retryInstallerContention<T>(read: () => T, retry: (result:
 }
 
 /** Retry mkdir's acquisition result before resampling identities. Never retry a gate fault.
- * At most 99 sleeps (198 ms), bounded also by elapsed time and receipt expiry. */
+ * Default: at most 99 sleeps (198 ms). COMPLETE opts into the remaining receipt
+ * lifetime and obtains a new receipt after a timeout. */
 export async function retryInstallerAcquisition<T>(read: () => T, deadline = performance.now() + 250,
-  clock = { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) }): Promise<T> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  clock = { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) }, maxAttempts = 100): Promise<T> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (clock.now() >= deadline) throw Error("UNKNOWN: update-gate lock acquisition timed out");
     try { return read(); }
     catch (error) {
       if (!(error instanceof Error) || error.message !== "UPDATE_GATE_LOCKED") throw error;
-      if (attempt === 99 || clock.now() + 2 >= deadline)
+      if (attempt === maxAttempts - 1 || clock.now() + 2 >= deadline)
         throw Error("UNKNOWN: update-gate lock acquisition timed out");
     }
     await clock.sleep(2); // Failed acquisition owns no lock.
@@ -114,7 +120,11 @@ export function requestInstallerControl(action: "drain" | "quit", lease: UpdateG
         try {
           const reply = JSON.parse(line);
           if (reply.id !== id) continue;
-          if (reply.jsonrpc !== "2.0" || reply.error || !("result" in reply)) finish("invalid participant RPC reply");
+          if (reply.jsonrpc !== "2.0") finish("invalid participant RPC reply");
+          else if (action === "drain" && Number.isSafeInteger(reply.error?.code)) {
+            finish(undefined, { kind: "UNKNOWN", reason: reply.error.code === -32601
+              ? "version mismatch: drain protocol unsupported" : `drain RPC refused (code ${reply.error.code})` });
+          } else if (reply.error || !("result" in reply)) finish("invalid participant RPC reply");
           else finish(undefined, reply.result);
         } catch { finish("malformed participant RPC reply"); }
       }
@@ -191,7 +201,7 @@ export function observeInstallerExit(proof: ProcessProof, probes = { identity: i
 /** Each refresh obtains a fresh authenticated G3 round trip, never persisted ACKs. */
 export function createInstallerParticipant(deps: InstallerParticipantDependencies = {
   request: requestInstallerControl, processIdentity: installerProcessIdentity, processParent, participantsExited: observeInstallerExit,
-  now: () => performance.now(), sleep: (ms = 100) => Bun.sleep(ms),
+  describe: describeResidentParticipants, now: () => performance.now(), sleep: (ms = 100) => Bun.sleep(ms),
 }, retired?: ProcessProof | null): InstallerParticipant {
   let evidence: Receipt | undefined, observedAt = 0, pinned: ProcessProof | undefined;
   const fresh = () => deps.now() - observedAt >= 0 && deps.now() - observedAt <= 1000;
@@ -251,7 +261,7 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
     async withCompletionProof(read) {
       try {
         sampleProcessProof();
-        return await retryAcquire(read, Math.min(deps.now() + 250, observedAt + 1000 - POST_SAMPLE_RESERVE_MS));
+        return await retryInstallerAcquisition(read, observedAt + 1000 - POST_SAMPLE_RESERVE_MS, deps, 500);
       } catch (error) { evidence = undefined; throw error; }
     },
     successor() {
@@ -261,9 +271,24 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
     async refresh(lease) {
       evidence = undefined; // A failed/new request invalidates the preceding receipt.
       const requestedAt = deps.now();
-      const reply = await deps.request("drain", lease);
-      if (unknownSchema.safeParse(reply).success)
-        return { phase: "waiting for live participants", ready: false };
+      const waiting = (reply: string, version?: string, reported?: PendingParticipant[]): InstallerEvidence => {
+        const descriptions: PendingParticipant[] = reported?.length ? reported : deps.describe?.() ?? (["native", "daemon"] as const).map(participant => ({ participant, reply: "UNKNOWN" }));
+        const pending = descriptions.map(p => {
+          const previous = pinned?.identities[p.participant], pid = p.pid ?? previous?.pid;
+          return { ...p, pid, incarnation: previous?.pid === pid ? previous?.incarnation : p.incarnation,
+            version: version ?? p.version, reply: reported?.length ? p.reply : reply };
+        });
+        return { phase: formatDrainStatus(pending, []), ready: false, pending };
+      };
+      let reply: unknown;
+      try { reply = await deps.request("drain", lease); }
+      catch (error) {
+        if (!(error && typeof error === "object" && "replyLost" in error && error.replyLost === true)) throw error;
+        return waiting("no reply: " + String(error instanceof Error ? error.message : "transport unavailable").replace(/[\r\n]/g, " "));
+      }
+      const unknown = unknownSchema.safeParse(reply);
+      if (unknown.success) return waiting("UNKNOWN" + (unknown.data.reason
+        ? `: ${unknown.data.reason.replace(/[\r\n]/g, " ")}` : " (no participant detail)"), unknown.data.version, unknown.data.pending);
       const parsed = receiptSchema.safeParse(reply);
       if (!parsed.success || !sameLease(parsed.data.native.lease, lease) || !sameLease(parsed.data.daemon.lease, lease) ||
         parsed.data.identities.native.pid === parsed.data.identities.daemon.pid)
@@ -275,7 +300,10 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
       if (pinned && JSON.stringify(proof) !== JSON.stringify(pinned)) throw Error("UNKNOWN: participant identity changed during drain");
       pinned = proof; // Only a fresh, role-checked round trip may pin identities.
       evidence = parsed.data; observedAt = requestedAt;
-      return { phase: "idle", ready: true, native: evidence.native, daemon: evidence.daemon };
+      return { phase: "idle", ready: true, native: evidence.native, daemon: evidence.daemon,
+        participants: (["native", "daemon"] as const).map(participant => ({
+          participant, ...parsed.data.identities[participant], reply: "ACKNOWLEDGED",
+        })) };
     },
     async quit(lease) {
       // Under G1's lock, recheck lease, diagnostics, ledger and last live identities.
@@ -290,8 +318,8 @@ export function createInstallerParticipant(deps: InstallerParticipantDependencie
       if (!authorized || !pinned) throw Error("UNKNOWN: controlled quit not authorized");
       evidence = undefined;
       const refusal = (reason: string) => Error(`UNKNOWN: ${reason}; gate retained closed for recovery. VoiceBar may be stopped.\n` +
-        "After this updater exits, restore availability with: voicelayer setup --cask-postflight\n" +
-        "This restarts the canonical bundle but does not reopen the COMMITTED gate; retain all gate/controller/recovery evidence.");
+        "On the next VoiceBar launch, a matching successor verifies abandoned COMMITTED recovery automatically.\n" +
+        "Retain all gate/controller/recovery evidence if automatic recovery cannot verify the target.");
       let reply: unknown;
       try { reply = await deps.request("quit", lease); }
       catch (error) {

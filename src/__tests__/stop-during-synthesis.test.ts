@@ -46,7 +46,7 @@ describe("STOP1 Stop during speech preparation", () => {
     // Fail closed if somebody bypasses the standard preload.
     expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");
     expect(process.env.VOICELAYER_TEST_FAKE_REC).toBe("1");
-    expect(STOP_FILE).toStartWith(`${process.cwd()}/.test-tmp/`);
+    expect(STOP_FILE).toStartWith(`${process.env.VOICELAYER_TEST_RUN_ROOT}/`);
     spies = []; players = []; events = [];
     releaseSynthesis = undefined; speech = undefined;
     recording.setRecordingState("idle");

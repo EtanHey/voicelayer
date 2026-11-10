@@ -111,7 +111,7 @@ final class VoiceBarFlowTests: XCTestCase {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
         scenario = env["VOICEBAR_UIE2E_SCENARIO"] ?? "full"
-        guard ["full", "focused-338", "hide1", "gate2246"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
+        guard ["full", "focused-338", "hide1", "gate2246", "wings-u2"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
         if scenario == "focused-338" {
             limitations = ["Gallery variants use real production BarView/DictationCard in arbitrary page positions; they do not prove notch placement. One actual production-geometry notch render per family is checked separately.",
                 "Static confirmation holds are synthetic presentations of actual production outcomes; synchronized lifetime uses fresh production timers. No real microphone, audio, global hotkey, external insertion or installed-app acceptance is claimed.",
@@ -723,9 +723,8 @@ extension VoiceBarFlowTests {
         click(app.buttons["Open Microphone"])
         click(app.buttons["Open Accessibility"])
         click(app.buttons["Open Input Monitoring"])
-        click(app.buttons["Run setup again"])
-        receipt("run-setup")
-        wizardFlow()
+        // "Run setup again" is gone (Etan, 2026-11-07, permission health). No user entry reaches the wizard any more;
+        // GATE2245's `wizard` event covers it.
         step("assert QA floating panel exists before Hide") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].waitForExistence(timeout: 3)) }
         click(app.buttons["Hide VoiceBar for 1 hour"])
         receipt("hide")
@@ -1092,6 +1091,25 @@ extension VoiceBarFlowTests {
     func historyFlow() {
         walk("History")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch, "select fixture history row")
+        // V27: the selected row is the last of its day, directly above the next day's header. Each day header's
+        // accessibility element is its opaque cover (`history.dayHeader.cover`), so its frame includes the cover's
+        // `coversAbove` reach: restoring the old 18 pt cover puts its top above this row's bottom and fails here.
+        // No pixels (the gatecap1 privacy guard); the step's own PROVEN window still is the visual record. JSON
+        // carries frames and the identifier only, never a label.
+        step("assert the next day's header cover starts below the last row of the day (V27)") {
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch
+            XCTAssertTrue(row.isSelected, "the newest row, last of its day, is selected")
+            let covers = app.descendants(matching: .any).matching(identifier: "history.dayHeader.cover").allElementsBoundByIndex
+            let below = covers.filter { $0.frame.midY > row.frame.maxY }.min { $0.frame.minY < $1.frame.minY }
+            let cover = try XCTUnwrap(below, "a day header cover follows the row (\(covers.count) covers found)")
+            XCTAssertGreaterThanOrEqual(cover.frame.minY, row.frame.maxY - 0.5,
+                                        "the header cover reaches \(row.frame.maxY - cover.frame.minY) pt over the row")
+            attachJSON("UIE2E-V27-DAY-BOUNDARY", [
+                "identifier": "history.dayHeader.cover",
+                "row": ["minY": row.frame.minY, "maxY": row.frame.maxY],
+                "cover": ["minY": cover.frame.minY, "maxY": cover.frame.maxY],
+            ])
+        }
         assertHistoryCopy(equals: "QA fixture transcript שלום 👋")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch, "select specific older row")
         assertHistoryCopy(equals: "QA older transcript")
@@ -1103,6 +1121,17 @@ extension VoiceBarFlowTests {
         click(historyControl("Open stored audio in Finder"))
         receipt("history-finder")
         assertHistoryCopy("Copy recording details", contains: "Model: QA recognizer\nEffort: accurate")
+        // Etan, 2026-11-05: "can't close" the open Recording details. A visible close button, and Esc.
+        let closeDetails = app.buttons["Close recording details"]
+        if !closeDetails.exists { click(app.buttons["Recording details"], "open Recording details") }
+        step("assert open Recording details show a close button") { XCTAssertTrue(closeDetails.waitForExistence(timeout: 3)) }
+        step("close Recording details with Escape") { try mutate { app.typeKey(.escape, modifierFlags: []) } }
+        step("assert Escape closed Recording details") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: closeDetails)], timeout: 3), .completed) }
+        click(app.buttons["Recording details"], "reopen Recording details")
+        click(closeDetails, "close Recording details with its close button")
+        step("assert the close button closed Recording details") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: closeDetails)], timeout: 3), .completed) }
         click(app.buttons["Load more"])
         step("assert Dictations pagination visibly adds its next row") {
             let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA loaded transcript'")).firstMatch
@@ -1542,10 +1571,10 @@ extension VoiceBarFlowTests {
         guard click(app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@",
             "popover-microphone", "Change default microphone in Settings")).firstMatch) else { return }
         receipt("popover-microphone")
+        // Permission health (2026-11-07): "Run setup…" became "Fix <step>…", which opens General at Setup.
         guard openQAPopover(), click(app.descendants(matching: .any).matching(identifier: "popover-setup").firstMatch,
-            "popover Run setup") else { return }
+            "popover Fix Accessibility") else { return }
         receipt("popover-setup")
-        wizardFlow()
         guard openQAPopover(), click(app.buttons["popover-quit"], evidenceContract: "terminated") else { return }
         step("assert QA popover Quit", evidenceContract: "terminated") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
         receipt("popover-quit", evidenceContract: "terminated")

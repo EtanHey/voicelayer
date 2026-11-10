@@ -180,6 +180,7 @@ describe("archived recording metadata carries provenance", () => {
 
   it("writes schema 2 with a provenance block for a VoiceBar dictation", () => {
     const archivedPath = archiveVoiceBarRecording({
+      inputDevice: { name: "Fixture capture microphone", uid: "fixture-mic-uid" },
       audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
       transcript: "hello there",
       createdAt: new Date("2026-09-05T07:08:09.123Z"),
@@ -195,6 +196,8 @@ describe("archived recording metadata carries provenance", () => {
     expect(archivedPath).toBeTruthy();
     const metadata = readMetadata(archivedPath!);
     expect(metadata.schema_version).toBe(2);
+    expect(metadata.input_device_name).toBe("Fixture capture microphone");
+    expect(metadata.input_device_uid).toBe("fixture-mic-uid");
     expect(metadata.app_version).toBe("9.9.9");
     expect(metadata.provenance).toMatchObject({
       host: "test-mac",
@@ -281,6 +284,7 @@ describe("archived recording metadata carries provenance", () => {
   it("writes schema 4 with provenance for a voice_ask capture and keeps it through finalization", () => {
     const userAudio = createWavBuffer(new Uint8Array([9, 10, 11, 12]));
     const archivePath = archiveVoiceAskCapture({
+      inputDevice: { name: "Fixture capture microphone", uid: null },
       options: {
         archiveSource: "voice_ask" as const,
         voiceAskArtifacts: {
@@ -313,6 +317,8 @@ describe("archived recording metadata carries provenance", () => {
     });
 
     const finalized = readMetadata(archivePath);
+    expect(finalized.input_device_name).toBe("Fixture capture microphone");
+    expect(finalized.input_device_uid).toBeNull();
     expect(finalized.schema_version).toBe(4);
     expect(finalized.provenance).toMatchObject({
       whisper_backend: "whisper-server",

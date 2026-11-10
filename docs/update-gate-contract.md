@@ -17,7 +17,9 @@ incarnation and lowercase full target merge SHA. The owner ID is retained across
 job reconnect, but a new owner incarnation cannot assume the previous owner's lease.
 An ID is a fencing identity, not authentication, proof of process liveness or a PID.
 
-OPEN alone permits admission. DRAINING, PREPARED and COMMITTED all close admission.
+OPEN and DRAINING admit registered voice work. Only PREPARED and COMMITTED
+refuse with UPDATE_BUSY. DRAINING registrations use the current lease generation;
+PREPARE and COMMIT recheck the empty ledger under the admission lock.
 REQUEST advances exactly one generation from OPEN. An identical duplicate request
 returns UNCHANGED even after preparation or commit. PREPARE needs native and daemon
 acknowledgements for that exact lease, with zero active operations and archive writes.
@@ -28,7 +30,7 @@ the released request cannot acquire that generation again. COMPLETE reopens only
 installedSha equal to lease.targetSha and participantsVerified true. Its matching
 duplicate is idempotent. These fields are not client authorization: the trusted
 controller must also supply fresh evidence inside the admission-aware G1 write.
-Recovery of a stuck COMMITTED gate remains a separate operation.
+A verified successor may supply the recovery proof described below.
 
 Adapters must read the authoritative state, obtain current participant evidence,
 transition, and durably persist the result within the same cross-process critical
@@ -36,7 +38,7 @@ section used by admissions. The pure function does not serialize two snapshots.
 Only a trusted owner may submit commands; adapters validate participant process
 identities, current readiness and staged target verification. Persisted preparation
 does not prove readiness after an app or daemon restart: reconcile participants
-before commit. An absent owner or expired heartbeat never opens the gate.
+before commit. An absent owner or expired heartbeat alone never opens the gate.
 
 ## On-disk serialization and Swift contract
 
@@ -89,32 +91,38 @@ same sequence. No best-effort durability fallback is allowed. Apple's
 defines the replacement semantics. A failed transaction may have reached disk:
 the retained lock makes its outcome UNKNOWN until verified recovery.
 
-There is no automatic committed-state recovery. Initial OPEN needs a separately
-qualified, quiescent bootstrap. Successful leased completion runs only in the
-existing controller after it reaps the installer child. It parses the canonical
-installed Info.plist outside G1, requires GitCommit == lease.targetSha, then
-obtains a fresh authenticated G3 drain round trip from the NEW native/daemon pair.
-A new receipt cache rejects the retired incarnations and unchanged PID/birth
-identities, verifies the native executable is the canonical installed VoiceBar,
-and verifies the daemon's parent. Old drain receipts cannot complete an update.
-Successor readiness retries fresh authenticated round trips for up to 15 seconds,
-backing off from 100 ms to a one-second cap. Every failed attempt logs its reason.
-Not-ready, disconnected or stale evidence retries; positively observed retired
-identities/incarnations or a non-installed native executable refuse immediately.
-Deadline refusal preserves COMMITTED and writes the same recovery receipt.
-Before acquiring G1 it samples process identity; the callback rechecks the
-receipt's one-second freshness, unchanged installed plist bytes, the exact
-COMMITTED lease, empty readable admissions, clean diagnostics, and this process's
-matching durable controller PID/identity. It durably publishes OPEN with the
-lease generation and released lease, then removes only the matching controller.
-The new app/daemon reread the gate on their next admission; no restart is needed.
-The durable APPLIED result is the receipt: no post-COMPLETE identity sample or
-gate readback may confuse a subsequent owner's REQUEST with failed completion.
-No successor startup writer is added, avoiding two competing completion owners.
-Verification failure retains COMMITTED and the controller, writes a recovery
-receipt, prints the availability repair command below, and returns nonzero even
-if the child exited 0. Uncertain persistence retains G1/fault evidence; never
-assume a failed filesystem transaction left the previous bytes untouched.
+A successful controller reaps its installer child, checks installed GitCommit against
+lease.targetSha, and authenticates a fresh successor native/daemon drain. Readiness
+and acquisition retry for up to 60 seconds with 100 ms exponential backoff capped
+at one second. Each G1 acquisition stays within the one-second participant receipt
+(minus 50 ms reserve); acquisition timeout obtains a new round trip before retrying.
+Positively unsafe identity evidence, gate faults and refused COMPLETE do not retry.
+The locked callback checks exact lease/custody, unchanged installed bytes, fresh
+participant proof, empty admissions and clean diagnostics. Durable OPEN releases
+that generation and removes only its matching controller receipt.
+
+R6 adds a successor startup backstop after the daemon socket is serving. VoiceBar
+passes its own stamped GitCommit to its child. Recovery requires that SHA and the
+canonical installed GitCommit both match the COMMITTED target. The matching
+controller must be verifiably absent for five seconds; a live controller resets
+the grace period and the observation ends after 60 seconds. Unknown process
+identity and PID reuse retain custody. Fresh authenticated successor evidence and
+the same G1 COMPLETE guards remain mandatory. This availability-only proof uses
+the verified running target in place of the dead controller's child-exit receipt;
+it never authorizes another installer mutation. Repeated startup sees OPEN and
+has nothing to recover. Orphaned G1, diagnostics, active admissions, foreign or
+missing custody, and mismatched prior bundles stay retained for qualified recovery.
+R5 (missing gate with retained admissions) is outside this backstop.
+
+User Quit (menu, canonical external Quit, SIGTERM) never depends on gate evidence
+and preserves it. Only dictation capture/save work may delay Quit: show the saving
+notice, issue the existing Stop, and wait up to six seconds before shutdown.
+A legacy/MCP Stop retains a Quit-only save wait through its optimistic UI change.
+Archive settlement, idle/cancel, errors, connection changes and a new capture retire
+that wait. The incremental recovery WAV is preserved if no History row published;
+use Retranscribe Last in that case. Authenticated controlled-update Quit retains
+its separate lease checks.
+
 The preload forcibly redirects the gate and children into the run's `.test-tmp/`
 tree. The resolver requires the redirect; storage rejects escapes and symlinks.
 
@@ -136,23 +144,7 @@ unknown process-table evidence waits until the deadline and cannot authorize a s
 Only confirmed absence can finish the final poll just past the deadline; uncertainty
 at that point refuses. No process is killed.
 
-The updater prints `RECOVERY_REQUIRED`, the gate and receipt paths, and a refusal
-saying VoiceBar may be stopped. It gives this exact availability repair command,
-to run only after the owning updater exits:
-
-```bash
-voicelayer setup --cask-postflight
-```
-
-That command restores the canonical bundle's UI/agents when no live controller
-owns startup. It preserves the COMMITTED gate and evidence; it does **not** restore
-voice admission or complete committed-gate recovery. Do not delete the gate to retry.
-
-Proposal: the outer controller should restore the previous, verified bundle after
-a pre-mutation quit refusal only once all original owners are positively absent,
-no competitor exists, and its recorded bundle identity still matches. This follows
-G0/G1's availability restoration while retaining closed admission. Do not relaunch
-from this observer: its refusal can mean PID reuse, a competing app, or an unknown
-owner, and it has no verified bundle custody. Post-mutation failures need the
-installer's final canonical bundle instead. Automatic restore is a separate change;
-this lane makes refusal and manual availability repair explicit.
+The updater retains a recovery receipt on failure. An installer child that ran
+its outer script restores the observed bundle on exit. A matching successor verifies abandoned
+COMMITTED completion; otherwise custody stays closed. Never delete a gate or reap
+G1 to retry. Source/model checks do not qualify an installed swap.

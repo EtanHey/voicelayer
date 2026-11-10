@@ -17,21 +17,21 @@ final class VoiceBarNotchShapeTests: XCTestCase {
 
         XCTAssertEqual(layout.coreRect, CGRect(x: 73.5, y: 0, width: 185, height: 32))
         XCTAssertTrue(path.contains(CGPoint(x: 20, y: 16)))
-        XCTAssertTrue(path.contains(CGPoint(x: 320, y: 16)))
+        XCTAssertTrue(path.contains(CGPoint(x: 316, y: 16)))
         XCTAssertFalse(path.contains(CGPoint(x: layout.coreRect.midX, y: 16)))
         XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 15, y: 32)))
-        XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 321.5, y: 32)))
+        XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 317, y: 32)))
     }
 
     func testTeleprompterKeepsTheHousingCenteredWithNoLeadingTopWing() {
         let geometry = VoiceBarNotchContract.geometry(for: .teleprompter)
         let layout = VoiceBarNotchShapeLayout(geometry: geometry)
 
-        XCTAssertEqual(layout.totalSize, CGSize(width: 465, height: 228))
+        XCTAssertEqual(layout.totalSize, CGSize(width: 465, height: 195))
         XCTAssertEqual(layout.coreRect, CGRect(x: 140, y: 0, width: 185, height: 32))
         XCTAssertEqual(layout.leadingWingRect, CGRect(x: 140, y: 0, width: 0, height: 32))
-        XCTAssertEqual(layout.trailingWingRect, CGRect(x: 325, y: 0, width: 78, height: 32))
-        XCTAssertEqual(layout.bodyRect, CGRect(x: 0, y: 32, width: 465, height: 196))
+        XCTAssertEqual(layout.trailingWingRect, CGRect(x: 325, y: 0, width: 109.5, height: 32))
+        XCTAssertEqual(layout.bodyRect, CGRect(x: 0, y: 32, width: 465, height: 163))
         XCTAssertEqual(layout.inverseJoinRadius, 5)
         XCTAssertEqual(VoiceBarNotchContract.material.compactOuterCornerRadius(for: .teleprompter), 18)
         XCTAssertEqual(layout.coreRect.midX, layout.bodyRect.midX)

@@ -59,7 +59,14 @@ def process_identity(pid):
             entries = raw[offset:].split(b"\0")
         elif sys.platform.startswith("linux"):
             argv = (Path("/proc") / str(pid) / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
-            entries = (Path("/proc") / str(pid) / "environ").read_bytes().split(b"\0")
+            environ = (Path("/proc") / str(pid) / "environ").read_bytes()
+            # exit_mm clears environ after ps may have listed this PID as live.
+            # Empty bytes prove neither a foreign scope nor ownership. Reobserve
+            # through the bounded unverifiable path; never signal on this read.
+            # A genuinely empty live environment remains unverifiable too.
+            if not environ:
+                return None
+            entries = environ.split(b"\0")
         else:
             return None
         env = {}

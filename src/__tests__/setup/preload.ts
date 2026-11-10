@@ -14,13 +14,20 @@
 
 import { spawnSync } from "child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
-import { join } from "path";
+import { join, relative, resolve, sep } from "path";
 import { randomBytes } from "crypto";
 import { installSttSpawnGuard } from "./stt-spawn-guard";
 
 const parentRunRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
 
-const TEST_ROOT = join(process.cwd(), ".test-tmp");
+const repoRoot = resolve(import.meta.dir, "../../..");
+const cwdWithinRepo = relative(repoRoot, process.cwd());
+// Source/test-directory invocations share the short repo-root sandbox. Keep
+// standalone fixture cwds independent for the preload cleanup regression tests.
+const sourceCwd = ["src", "tests"].some(dir =>
+  cwdWithinRepo === dir || cwdWithinRepo.startsWith(`${dir}${sep}`));
+const testWorkspace = sourceCwd ? repoRoot : process.cwd();
+const TEST_ROOT = join(testWorkspace, ".test-tmp");
 // Four hex characters leave room for TEST1 sockets on deep worktree paths.
 // Exclusive mkdir below makes nonce collisions fail safely: never adopt a run.
 const RUN_ROOT = join(TEST_ROOT, `${process.pid}-${randomBytes(2).toString("hex")}`);
@@ -91,9 +98,9 @@ function fixturesSettled(path: string): boolean {
   const index = join(path, "hook-fixtures");
   const pending = () => existsSync(index) && readdirSync(index).some((name) => name.endsWith(".json"));
   if (!pending()) return true;
-  const sweeper = join(process.cwd(), "tests", "hook_fixture_registry.py");
+  const sweeper = join(testWorkspace, "tests", "hook_fixture_registry.py");
   if (!existsSync(sweeper)) return false;
-  const result = spawnSync("python3", [sweeper, "--sweep-index", index, process.cwd()], {
+  const result = spawnSync("python3", [sweeper, "--sweep-index", index, testWorkspace], {
     env: process.env, stdio: "ignore", timeout: 30_000,
   });
   return result.status === 0 && !pending();
@@ -239,7 +246,7 @@ if (process.env.VOICELAYER_TEST_REAL_MIC?.trim() !== "1") {
 }
 setIfUnset(
   "VOICELAYER_TEST_FAKE_REC_BIN",
-  join(process.cwd(), "src", "__tests__", "setup", "fake-rec.sh"),
+  join(import.meta.dir, "fake-rec.sh"),
 );
 
 for (const dir of [

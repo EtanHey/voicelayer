@@ -36,6 +36,8 @@ import * as sttPolish from "../stt-polish";
 import * as tts from "../tts";
 import * as vad from "../vad";
 import * as voiceBarLauncher from "../voice-bar-launcher";
+import * as inputDevice from "../recording-input-device";
+import { recordingAppBuild } from "../recording-build";
 
 // Real subprocesses: standalone p95 <= 353 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
@@ -237,7 +239,10 @@ function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, befo
     return originalSpawnSync(cmd, { env: process.env });
   }) as typeof Bun.spawnSync;
 
-  Bun.spawn = (() => {
+  Bun.spawn = ((cmd: string[], options: Parameters<typeof Bun.spawn>[1]) => {
+    if (cmd[0] === process.execPath && cmd[1]?.endsWith("input-device-helper-fixture.ts")) {
+      return originalSpawn(cmd, { ...options, env: process.env });
+    }
     beforeMicOpen?.();
     spawned = true;
     return {
@@ -354,6 +359,7 @@ describe("input recording durability", () => {
       if (label !== "physical no click") for (let i = 0; i < 320; i++) view.setInt16((2150 * 16 + i) * 2, (i % 2 ? -1 : 1) * 9000 * Math.exp(-i / 55), true);
       const expectedArchive = makeWav(pcm);
       const recorder = installFakeRecorder([pcm], true);
+      const deviceSpy = spyOn(inputDevice, "snapshotRecordingInputDevice").mockResolvedValue({ name: "Fixture capture microphone", uid: "fixture-mic-uid" });
       const stopSpy = spyOn(tts, "stopPlayback").mockImplementation(() => {});
       const playbackSpy = spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined);
       const savedChunked = process.env.QA_VOICE_CHUNKED_STT;
@@ -372,6 +378,8 @@ describe("input recording durability", () => {
       });
       try {
         await recorder.waitForSpawn();
+        await waitUntil(() => deviceSpy.mock.calls.length >= 2, "capture device binding");
+        deviceSpy.mockResolvedValue({ name: "Later default microphone", uid: "later-mic-uid" });
         await Bun.sleep(20);
         if (timeoutClock) {
           await waitUntil(() => vadCallCount >= Math.floor(pcm.byteLength / VAD_CHUNK_BYTES), "timeout fixture PCM classified");
@@ -381,6 +389,9 @@ describe("input recording durability", () => {
         if (label !== "timeout") await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop", ...(physicalPress ? { physical_press: true } : {}) }))!);
         await recording;
         expect(readFileSync(join(archivePath, "audio.wav"))).toEqual(Buffer.from(expectedArchive));
+        expect(JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"))).toMatchObject({
+          input_device_name: "Fixture capture microphone", input_device_uid: "fixture-mic-uid",
+        });
         expect(backendTranscribedDataSize).toBe(label === "cancel" ? undefined :
           (label === "physical no click" ? durationMs : label.startsWith("physical") ? 2145 : 2400) * 32);
       } finally {
@@ -388,11 +399,331 @@ describe("input recording durability", () => {
         await recording.catch(() => null);
         timeoutClock?.restore();
         stopSpy.mockRestore(); playbackSpy.mockRestore();
+        deviceSpy.mockRestore();
         if (savedChunked === undefined) delete process.env.QA_VOICE_CHUNKED_STT;
         else process.env.QA_VOICE_CHUNKED_STT = savedChunked;
       }
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
+
+  // Recording pause (Etan 2026-11-08): read aloud mid-dictation without it being captured, then continue the
+  // same take. Fixture recorder only; frames are pushed by hand so each lands before or after a socket command.
+  const pauseCommand = async (paused: boolean, extra: Record<string, unknown> = {}) => {
+    const { handleSocketCommand } = await import("../socket-handlers");
+    const { parseCommand } = await import("../socket-protocol");
+    const parsed = parseCommand(JSON.stringify({ cmd: "set_recording_pause", paused, id: `pause-${paused}`, ...extra }));
+    expect(parsed).not.toBeNull();
+    return handleSocketCommand(parsed!) as any;
+  };
+  const chunksOf = (sample: number, count: number) => Array.from({ length: count }, () => makePcmChunk(sample));
+  const concatPcm = (chunks: Uint8Array[]) => {
+    const out = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0));
+    let offset = 0;
+    for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
+    return out;
+  };
+  const containsSample = (wav: Uint8Array, sample: number) => {
+    const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
+    for (let offset = 44; offset + 1 < wav.byteLength; offset += 2) if (view.getInt16(offset, true) === sample) return true;
+    return false;
+  };
+  // 200 ms of tail after the click, rounded up to whole 32 ms chunks.
+  const TAIL_CHUNKS = Math.ceil((0.2 * 16000 * 2) / VAD_CHUNK_BYTES);
+
+  it("PAUSE1: paused PTT frames never reach the archive or STT; resume continues the same take", async () => {
+    const { waitForInput } = await import("../input");
+    const { handleSocketCommand } = await import("../socket-handlers");
+    const { parseCommand } = await import("../socket-protocol");
+    const recorder = installFakeRecorder([], true);
+    vadProbabilityForCall = () => 0.95;
+    let archivePath = "";
+    const recording = waitForInput(4000, "thoughtful", true, {
+      archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+    });
+    const before = chunksOf(1500, 10), tail = chunksOf(1501, TAIL_CHUNKS), aside = chunksOf(3333, 20), after = chunksOf(1502, 5);
+    try {
+      await recorder.waitForSpawn();
+      await waitUntil(() => broadcasts.some(event => event.type === "state" && event.state === "recording"), "recording state");
+      const captureId = broadcasts.find(event => event.type === "state" && event.state === "recording").capture_id;
+      for (const chunk of before) recorder.push(chunk);
+      await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 10, "pre-pause PCM");
+      // A Pause aimed at another capture is stale and changes nothing.
+      expect(await pauseCommand(true, { capture_id: captureId + 1 })).toMatchObject({ outcome: "noop", reason: "stale capture" });
+      expect(await pauseCommand(true, { capture_id: captureId })).toMatchObject({ outcome: "accept" });
+      expect(await pauseCommand(true)).toMatchObject({ outcome: "noop", reason: "already paused" });
+      for (const chunk of [...tail, ...aside]) recorder.push(chunk);
+      await Bun.sleep(60);
+      await waitUntil(() => readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * (10 + TAIL_CHUNKS), "click tail kept");
+      await Bun.sleep(60);
+      expect(readWavDataSize(retainedPath)).toBe(VAD_CHUNK_BYTES * (10 + TAIL_CHUNKS));
+      expect(await pauseCommand(false)).toMatchObject({ outcome: "accept" });
+      for (const chunk of after) recorder.push(chunk);
+      await waitUntil(() => readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * (15 + TAIL_CHUNKS), "resumed PCM in the same take");
+      await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop" }))!);
+      await recording;
+      const expected = makeWav(concatPcm([...before, ...tail, ...after]));
+      const archived = readFileSync(join(archivePath, "audio.wav"));
+      expect(archived).toEqual(Buffer.from(expected));
+      expect(containsSample(archived, 3333)).toBe(false);
+      expect(backendTranscribedWav && containsSample(backendTranscribedWav, 3333)).toBe(false);
+      expect(backendTranscribedDataSize).toBe(VAD_CHUNK_BYTES * (15 + TAIL_CHUNKS));
+      const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+      expect(metadata.paused_spans).toHaveLength(1);
+      const [span] = metadata.paused_spans;
+      expect(span.audio_offset_ms).toBe(((10 + TAIL_CHUNKS) * VAD_CHUNK_BYTES) / 32);
+      expect(span.dropped_ms).toBe((20 * VAD_CHUNK_BYTES) / 32);
+      expect(span.end_ms).toBeGreaterThanOrEqual(span.start_ms);
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  for (const ending of ["stop", "cancel"] as const) {
+    it(`PAUSE2: ${ending} while paused ends the take as usual and closes the paused span`, async () => {
+      const { waitForInput } = await import("../input");
+      const { handleSocketCommand } = await import("../socket-handlers");
+      const { parseCommand } = await import("../socket-protocol");
+      const stopSpy = spyOn(tts, "stopPlayback").mockImplementation(() => {});
+      const playbackSpy = spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined);
+      const recorder = installFakeRecorder([], true);
+      vadProbabilityForCall = () => 0.95;
+      let archivePath = "";
+      const recording = waitForInput(4000, "thoughtful", true, {
+        archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+      });
+      const before = chunksOf(1500, 16), tail = chunksOf(1501, TAIL_CHUNKS), aside = chunksOf(3333, 12);
+      try {
+        await recorder.waitForSpawn();
+        for (const chunk of before) recorder.push(chunk);
+        await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 16, "pre-pause PCM");
+        expect(await pauseCommand(true)).toMatchObject({ outcome: "accept" });
+        for (const chunk of [...tail, ...aside]) recorder.push(chunk);
+        await waitUntil(() => readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * (16 + TAIL_CHUNKS), "click tail kept");
+        await Bun.sleep(60);
+        if (ending === "cancel") setCancelSignal();
+        // A physical F5 press while paused is not in the audio, so it must not cut the kept tail.
+        await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop", physical_press: true }))!);
+        await recording;
+        const archived = readFileSync(join(archivePath, "audio.wav"));
+        expect(archived).toEqual(Buffer.from(makeWav(concatPcm([...before, ...tail]))));
+        if (ending === "stop") expect(backendTranscribedDataSize).toBe(VAD_CHUNK_BYTES * (16 + TAIL_CHUNKS));
+        else expect(backendTranscribedDataSize).toBeUndefined();
+        const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+        expect(metadata.paused_spans).toHaveLength(1);
+        expect(metadata.paused_spans[0].end_ms).toBeGreaterThanOrEqual(metadata.paused_spans[0].start_ms);
+        expect(metadata.paused_spans[0].audio_offset_ms).toBe(((16 + TAIL_CHUNKS) * VAD_CHUNK_BYTES) / 32);
+        expect(await pauseCommand(false)).toMatchObject({ outcome: "noop", reason: "not recording" });
+      } finally {
+        writeFileSync(STOP_FILE, "stop");
+        await recording.catch(() => null);
+        stopSpy.mockRestore(); playbackSpy.mockRestore();
+      }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  it("PAUSE3: time spent paused never counts toward the PTT silence timeout", async () => {
+    const { waitForInput } = await import("../input");
+    const clock = installRecordingClock([600_000, 300_000]);
+    const recorder = installFakeRecorder([], true);
+    vadProbabilityForCall = () => 0.95;
+    let settled = false;
+    const recording = waitForInput(4000, "thoughtful", true, { archiveSource: "voicebar" }).finally(() => { settled = true; });
+    try {
+      await recorder.waitForSpawn();
+      for (const chunk of chunksOf(1500, 3)) recorder.push(chunk);
+      await waitUntil(() => vadCallCount >= 3, "speech classified");
+      clock.advance(300_000);
+      expect(await pauseCommand(true)).toMatchObject({ outcome: "accept" });
+      clock.advance(600_000); // a whole silence deadline, paused
+      await Bun.sleep(20);
+      expect(settled).toBe(false);
+      expect(await pauseCommand(false)).toMatchObject({ outcome: "accept" });
+      clock.advance(299_000); // 599 s of unpaused silence in all
+      await Bun.sleep(20);
+      expect(settled).toBe(false);
+      clock.advance(1_000);
+      await waitUntil(() => settled, "unpaused silence times out", 2_000);
+    } finally {
+      clock.restore();
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  // Round 2 (Codex review): adversarial boundaries. Exact bytes everywhere; the archive WAV is the reference.
+  const wavPayload = (wav: Uint8Array) => Buffer.from(wav.subarray(44));
+
+  for (const physicalPress of [true, false]) {
+    it(`PAUSE5: ${physicalPress ? "physical" : "plain"} stop while paused keeps a quiet tail, byte-identical in STT, archive and recovery`, async () => {
+      const { waitForInput } = await import("../input");
+      const { handleSocketCommand } = await import("../socket-handlers");
+      const { parseCommand } = await import("../socket-protocol");
+      const recorder = installFakeRecorder([], true);
+      vadProbabilityForCall = () => 0.95;
+      let archivePath = "";
+      const recording = waitForInput(4000, "thoughtful", true, {
+        archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+      });
+      // Retained speech, then > 5 s the trimmer reads as inactive (TRIM2: 1 s pad + 4 s quiet), with quiet
+      // speech (rms 25, under every trim threshold) inside it. Pause comes at the end of that tail.
+      const speech = chunksOf(1500, 20);
+      const quiet = [...chunksOf(0, 60), ...chunksOf(25, 40), ...chunksOf(0, 80)];
+      const tail = chunksOf(0, TAIL_CHUNKS), aside = chunksOf(3333, 10);
+      try {
+        await recorder.waitForSpawn();
+        for (const chunk of [...speech, ...quiet]) recorder.push(chunk);
+        await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 200, "speech and quiet tail", 3_000);
+        expect(await pauseCommand(true)).toMatchObject({ outcome: "accept" });
+        for (const chunk of [...tail, ...aside]) recorder.push(chunk);
+        await waitUntil(() => readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * (200 + TAIL_CHUNKS), "click tail kept");
+        await Bun.sleep(60);
+        await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop", ...(physicalPress ? { physical_press: true } : {}) }))!);
+        await recording;
+        const kept = concatPcm([...speech, ...quiet, ...tail]);
+        const archived = readFileSync(join(archivePath, "audio.wav"));
+        expect(archived).toEqual(Buffer.from(makeWav(kept)));
+        expect(readFileSync(retainedPath)).toEqual(archived);
+        expect(backendTranscribedWav).toBeDefined();
+        expect(wavPayload(backendTranscribedWav!)).toEqual(Buffer.from(kept));
+        const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+        expect(metadata.transcribed_duration_ms).toBe(metadata.raw_duration_ms);
+      } finally {
+        writeFileSync(STOP_FILE, "stop");
+        await recording.catch(() => null);
+      }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  it("PAUSE6: a Pause during mic startup is refused and the take keeps every frame", async () => {
+    const { waitForInput } = await import("../input");
+    const { handleSocketCommand } = await import("../socket-handlers");
+    const { parseCommand } = await import("../socket-protocol");
+    let startupAck: any;
+    // Runs inside the recorder spawn: the take exists (state is recording) but no capture is live yet.
+    const recorder = installFakeRecorder([], true, () => { startupAck ??= handleSocketCommand(parseCommand(JSON.stringify({ cmd: "set_recording_pause", paused: true, id: "startup" }))!); });
+    vadProbabilityForCall = () => 0.95;
+    let archivePath = "";
+    const recording = waitForInput(4000, "thoughtful", true, {
+      archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+    });
+    const speech = chunksOf(1500, 30);
+    try {
+      await recorder.waitForSpawn();
+      expect(startupAck).toMatchObject({ outcome: "noop", reason: "not recording" });
+      for (const chunk of speech) recorder.push(chunk);
+      await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 30, "every frame kept");
+      await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop" }))!);
+      await recording;
+      expect(readFileSync(join(archivePath, "audio.wav"))).toEqual(Buffer.from(makeWav(concatPcm(speech))));
+      expect(JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8")).paused_spans).toBeUndefined();
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  it("PAUSE7: a Pause racing the stop drain is refused and the drain tail is kept", async () => {
+    const { waitForInput } = await import("../input");
+    const { handleSocketCommand } = await import("../socket-handlers");
+    const { parseCommand } = await import("../socket-protocol");
+    const recorder = installFakeRecorder([], true);
+    vadProbabilityForCall = () => 0.95;
+    let archivePath = "";
+    let settled = false;
+    const recording = waitForInput(4000, "thoughtful", true, {
+      archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+    }).finally(() => { settled = true; });
+    const speech = chunksOf(1500, 30), drain = chunksOf(1502, 4);
+    try {
+      await recorder.waitForSpawn();
+      for (const chunk of speech) recorder.push(chunk);
+      await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 30, "pre-stop PCM");
+      await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop" }))!);
+      await waitUntil(() => !existsSync(STOP_FILE), "stop drain started");
+      expect(settled).toBe(false);
+      expect(await pauseCommand(true)).toMatchObject({ outcome: "noop", reason: "stopping" });
+      for (const chunk of drain) recorder.push(chunk);
+      await recording;
+      expect(readFileSync(join(archivePath, "audio.wav"))).toEqual(Buffer.from(makeWav(concatPcm([...speech, ...drain]))));
+      expect(JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8")).paused_spans).toBeUndefined();
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  it("PAUSE8: pause and resume between partial recorder writes leave no gap or duplicate frame", async () => {
+    const { waitForInput } = await import("../input");
+    const { handleSocketCommand } = await import("../socket-handlers");
+    const { parseCommand } = await import("../socket-protocol");
+    const recorder = installFakeRecorder([], true);
+    vadProbabilityForCall = () => 0.95;
+    let archivePath = "";
+    const recording = waitForInput(4000, "thoughtful", true, {
+      archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+    });
+    // Every sample is its own index, so the kept stream must rise by exactly 1 except across the paused span.
+    const totalSamples = 60 * 512;
+    const stream = new Uint8Array(totalSamples * 2);
+    const streamView = new DataView(stream.buffer);
+    for (let i = 0; i < totalSamples; i++) streamView.setInt16(i * 2, 1000 + i, true);
+    let written = 0;
+    // Recorder writes of 700 bytes never line up with 1024-byte chunks, so each command lands mid-chunk.
+    const writeUntil = (end: number) => {
+      while (written < end) {
+        const next = Math.min(end, written + 700);
+        recorder.push(stream.slice(written, next));
+        written = next;
+      }
+    };
+    try {
+      await recorder.waitForSpawn();
+      writeUntil(10 * 1024 + 700);
+      await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 10, "pre-pause PCM");
+      await Bun.sleep(30);
+      expect(await pauseCommand(true)).toMatchObject({ outcome: "accept" });
+      writeUntil(40 * 1024 + 350);
+      await waitUntil(() => readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * (10 + TAIL_CHUNKS), "click tail kept");
+      await Bun.sleep(60);
+      expect(readWavDataSize(retainedPath)).toBe(VAD_CHUNK_BYTES * (10 + TAIL_CHUNKS));
+      expect(await pauseCommand(false)).toMatchObject({ outcome: "accept" });
+      writeUntil(stream.byteLength);
+      await waitUntil(() => readWavDataSize(retainedPath) > VAD_CHUNK_BYTES * (10 + TAIL_CHUNKS + 15), "resumed PCM");
+      await Bun.sleep(30);
+      await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop" }))!);
+      await recording;
+      const archived = readFileSync(join(archivePath, "audio.wav"));
+      const view = new DataView(archived.buffer, archived.byteOffset + 44, archived.byteLength - 44);
+      const samples = Array.from({ length: view.byteLength / 2 }, (_, i) => view.getInt16(i * 2, true));
+      expect(samples[0]).toBe(1000);
+      const jumps = samples.slice(1).map((value, i) => value - samples[i]).filter(step => step !== 1);
+      expect(jumps).toHaveLength(1);
+      const [span] = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8")).paused_spans;
+      expect(jumps[0] - 1).toBe(span.dropped_ms * 16); // the jump skips exactly the dropped samples
+      expect(span.audio_offset_ms).toBe(((10 + TAIL_CHUNKS) * VAD_CHUNK_BYTES) / 32);
+      expect(samples[samples.length - 1]).toBeLessThanOrEqual(1000 + totalSamples - 1);
+      expect(readFileSync(retainedPath)).toEqual(archived);
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  it("PAUSE4: pause is refused for VAD captures and is a no-op when idle", async () => {
+    const { recordToBuffer } = await import("../input");
+    expect(await pauseCommand(true)).toMatchObject({ outcome: "noop", reason: "not recording" });
+    const recorder = installFakeRecorder([], true);
+    const recording = recordToBuffer(2_000, "thoughtful", false);
+    try {
+      await recorder.waitForSpawn();
+      await waitUntil(() => broadcasts.some(event => event.type === "state" && event.state === "recording"), "recording state");
+      expect(await pauseCommand(true)).toMatchObject({ outcome: "reject", reason: "pause needs push-to-talk" });
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   beforeEach(() => {
     // macOS tmpdir() can contain /var -> /private/var; archive admission rejects aliases.
@@ -490,6 +821,51 @@ describe("input recording durability", () => {
     clearStopSignal();
     clearCancelSignal();
   });
+
+  it("omits the microphone when the default changes while the recorder opens", async () => {
+    const { waitForInput } = await import("../input");
+    const deviceSpy = spyOn(inputDevice, "snapshotRecordingInputDevice")
+      .mockResolvedValueOnce({ name: "Opening microphone", uid: "opening-mic" })
+      .mockResolvedValue({ name: "Replacement microphone", uid: "replacement-mic" });
+    installFakeRecorder([makePcmChunk()], false);
+    let archivePath = "";
+    try {
+      await waitForInput(500, "standard", false, {
+        archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+      });
+      const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+      expect(metadata.input_device_name).toBeUndefined();
+      expect(metadata.input_device_uid).toBeUndefined();
+      expect(deviceSpy).toHaveBeenCalledTimes(2);
+    } finally { deviceSpy.mockRestore(); }
+  });
+
+  for (const failure of ["crash", "hang"] as const) {
+    it(`a ${failure} in the microphone metadata helper leaves the capture and archive intact`, async () => {
+      const { waitForInput } = await import("../input");
+      const helper = join(tmpRoot, "input-device-helper-fixture.ts");
+      writeFileSync(helper, failure === "crash" ? 'process.kill(process.pid, "SIGKILL");' : 'setInterval(() => {}, 1000);');
+      const snapshot = inputDevice.snapshotRecordingInputDevice;
+      let helperResults = 0;
+      const deviceSpy = spyOn(inputDevice, "snapshotRecordingInputDevice").mockImplementation(() =>
+        snapshot(helper).then(value => { helperResults++; return value; }));
+      const pcm = makePcmChunk();
+      const recorder = installFakeRecorder([pcm], false, () => { expect(helperResults).toBe(0); });
+      let archivePath = "";
+      try {
+        const recording = waitForInput(5000, "standard", false, {
+          archiveSource: "voicebar", onArchiveCreated: path => { archivePath = path; },
+        });
+        await recorder.waitForSpawn(); // No helper result is awaited before the recorder opens.
+        await recording;
+        expect(readFileSync(join(archivePath, "audio.wav"))).toEqual(Buffer.from(makeWav(pcm)));
+        const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+        expect(metadata.input_device_name).toBeUndefined();
+        expect(metadata.input_device_uid).toBeUndefined();
+        expect(deviceSpy).toHaveBeenCalledTimes(2);
+      } finally { deviceSpy.mockRestore(); }
+    });
+  }
 
   afterEach(() => {
     vadProcessSpy?.mockRestore();
@@ -2441,6 +2817,43 @@ describe("input recording durability", () => {
     return capturedVoiceBarAudio()[0];
   }
 
+  it("D1 finalizes Parakeet number words through live dictation and History re-transcribe", async () => {
+    const vocabularyPath = join(tmpRoot, "dictionary-numbers.json");
+    writeFileSync(vocabularyPath, JSON.stringify({ entries: [
+      { canonical: "6.1 Sol", variants: ["6 point 1 sol"] },
+    ] }));
+    const overrides = {
+      QA_VOICE_STT_VOCABULARY_PATH: vocabularyPath,
+      QA_VOICE_CORRECTOR: "off",
+      QA_VOICE_STT_POLISH: "off",
+    };
+    const saved = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]));
+    Object.assign(process.env, overrides);
+    polishSpy?.mockRestore();
+    const raw = "and make it a codex six point one sol on extra high please";
+    const expected = "And make it a codex 6.1 Sol on extra high please.";
+    getBackendSpy!.mockResolvedValue({
+      name: "parakeet-mlx", isAvailable: async () => true,
+      transcribe: async () => ({ text: raw, backend: "parakeet-mlx", durationMs: 1 }),
+    });
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    try {
+      const { waitForInput, retranscribeRecordingCapture } = await import("../input");
+      const pending = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+      await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+      expect(await pending).toBe(expected);
+      const [archive] = capturedVoiceBarAudio();
+      expect(await retranscribeRecordingCapture(archive)).toBe(expected);
+      expect(readFileSync(archive.replace("audio.wav", "voicelayer-transcript.txt"), "utf8")).toBe(expected);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("NOTX1 tells History when a live capture is kept with a reason", async () => {
     const archive = await silentVoiceBarArchive();
     expect(metadataUpdates()).toEqual([
@@ -2519,6 +2932,9 @@ describe("input recording durability", () => {
     broadcasts = [];
     expect(await (surface === "archive" ? retranscribeRecordingCapture(archive) : retranscribeLastCapture())).toBe(backendText);
     const metadata = voiceBarArchiveMetadata(archive);
+    expect(metadata.app_build).toEqual(recordingAppBuild());
+    expect(metadata.transcribed_by).toEqual(recordingAppBuild());
+    expect(metadata.retranscribed_by).toBeUndefined();
     expect(metadata.transcription_status).toBe("transcribed");
     expect(metadata).not.toHaveProperty("last_stt_gate_removal");
     expect(metadata).not.toHaveProperty("not_transcribed_detail");
@@ -3344,6 +3760,86 @@ describe("input recording durability", () => {
     expect(event?.recording_path).toBeUndefined();
     expect(event?.dictation_receipt).toBeUndefined();
     expectValidRetainedWav(capturedVoiceBarAudio()[0], 24 * VAD_CHUNK_BYTES);
+  });
+
+  for (const source of ["voicebar", "voice_ask"] as const) {
+    it(`records plausible per-stage timings for a fake ${source} take without logging text`, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+      const { waitForInput } = await import("../input");
+      let archivePath = "";
+      const log = spyOn(console, "error").mockImplementation(() => {});
+      const started = performance.now();
+      try {
+        await expect(waitForInput(2_000, "standard", true, {
+          archiveSource: source,
+          ...(source === "voice_ask" ? { voiceAskArtifacts: {
+            agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]), agentAudioFormat: "mp3" as const,
+            agentTranscript: "Synthetic question", agentTtsEngine: "edge-tts" as const,
+            agentTtsVoice: "en-US-JennyNeural",
+          } } : {}),
+          onArchiveCreated: path => { archivePath = path; },
+        })).resolves.toBe("Retained transcript.");
+        const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+        const timings = metadata.stage_timings_ms;
+        expect(timings).toBeDefined();
+        for (const key of ["capture_end_to_decode", "decode", "dictionary_rules", "polish", "gates", "delivery", "total"]) {
+          expect(timings[key]).toBeNumber();
+          expect(timings[key]).toBeGreaterThanOrEqual(0);
+          expect(timings[key]).toBeLessThanOrEqual(performance.now() - started + 1);
+        }
+        expect(timings.decode).toBeGreaterThan(0);
+        expect(timings.polish).toBeGreaterThan(0);
+        const timingLog = log.mock.calls.flat().map(String).filter(line => line.includes("stage_timings_ms="));
+        expect(timingLog).toHaveLength(1);
+        expect(timingLog[0]).toContain(JSON.stringify(timings));
+        expect(timingLog[0]).not.toContain(backendText);
+        expect(timingLog[0]).not.toContain("Synthetic question");
+      } finally { log.mockRestore(); }
+    });
+  }
+
+  for (const outcome of ["no-speech", "cancelled", "decode-failed"] as const) {
+    it(`keeps per-stage timings on a ${outcome} fake take`, async () => {
+      vadProcessSpy!.mockResolvedValue(outcome === "no-speech" ? 0 : 0.95);
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(outcome === "no-speech" ? 0 : 1800)), false);
+      if (outcome === "decode-failed") backendMode = "throw-on-get";
+      const { waitForInput } = await import("../input");
+      let archivePath = "";
+      const pending = waitForInput(2_000, "standard", true, {
+        archiveSource: "voicebar",
+        onArchiveCreated: path => { archivePath = path; },
+        onCaptureEnd: () => { if (outcome === "cancelled") setCancelSignal(); },
+      });
+      if (outcome === "decode-failed") await expect(pending).rejects.toThrow("still warming");
+      else await expect(pending).resolves.toBeNull();
+      const { stage_timings_ms: timings } = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+      expect(timings).toBeDefined();
+      expect(timings.total).toBeGreaterThanOrEqual(0);
+      expect(timings.delivery).toBe(0);
+      expect(timings.polish).toBe(0);
+    });
+  }
+
+  it("archives and retranscribes a text-only Ask without fabricated prompt audio", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const input = await import("../input");
+    let archivePath = "";
+    await expect(input.waitForInput(2_000, "standard", true, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: { promptDelivery: "text-only", agentTranscript: "האם להמשיך?" },
+      onArchiveCreated: path => { archivePath = path; },
+    })).resolves.toBe("Retained transcript.");
+    const metadata = JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+    expect(metadata).toMatchObject({ schema_version: 5, prompt_delivery: "text-only", agent_tts_engine: null,
+      agent_tts_voice: null, agent_audio_sha256: null, artifacts: { agent_audio: null }, transcription_status: "transcribed" });
+    expect(existsSync(join(archivePath, "agent-audio.mp3"))).toBe(false);
+    expect(readFileSync(join(archivePath, "agent-transcript.txt"), "utf8")).toBe("האם להמשיך?");
+    expect(readFileSync(join(archivePath, "audio.wav")).byteLength).toBeGreaterThan(44);
+    const { basename } = await import("path");
+    await expect(input.retranscribeVoiceAskArchive(basename(archivePath), { delivery: "return-only" })).resolves.toBe(backendText);
+    expect(JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8")).prompt_delivery).toBe("text-only");
   });
 
   it("adds measured receipt metadata to the actual completed VoiceBar event", async () => {
@@ -4371,16 +4867,21 @@ describe("input recording durability", () => {
 
     it("successful Ask re-transcribe clears the previous gate-removal note from History", async () => {
       const archive = writeAskArchive();
+      const capturedBuild = { version: "2.2.0", git_commit: "c".repeat(40), build_time_utc: "2026-11-01T00:00:00Z", source: "VoiceBar.Info.plist" };
+      writeFileSync(join(archive.archiveDir, "metadata.json"), JSON.stringify({ ...archive.metadata, app_build: capturedBuild }));
       const { retranscribeVoiceAskArchive } = await import("../input");
       backendText = "";
       backendAttemptEvidence = { status: "EMPTY_RESPONSE", gateRemoval: { gate: "cjk-outro", removedSpans: 1, rawCharacters: 16 } };
       await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow("empty retranscription");
       const audioPath = join(archive.archiveDir, "audio.wav");
       expect(voiceBarArchiveMetadata(audioPath)).toHaveProperty("last_stt_gate_removal");
+      expect(voiceBarArchiveMetadata(audioPath).app_build).toEqual(capturedBuild);
       backendText = "Recovered Ask words.";
       backendAttemptEvidence = undefined;
       expect(await retranscribeVoiceAskArchive(archive.id)).toBe(backendText);
       const metadata = voiceBarArchiveMetadata(audioPath);
+      expect(metadata.app_build).toEqual(capturedBuild);
+      expect(metadata.retranscribed_by).toEqual(recordingAppBuild());
       expect(metadata.transcription_status).toBe("transcribed");
       expect(metadata).not.toHaveProperty("last_stt_gate_removal");
       expect(metadata).not.toHaveProperty("not_transcribed_detail");

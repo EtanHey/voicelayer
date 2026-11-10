@@ -208,6 +208,9 @@ public final class FloatingPillPanel: NSPanel {
 
         // --- Visibility ---
         hidesOnDeactivate = false // stay visible when app loses focus
+        // U1: as a regular app, Hide VoiceBar (⌘H, the Dock menu's Hide) hides Settings, not the notch. The notch
+        // hides only through "Hide for 1 hour".
+        canHide = false
         isReleasedWhenClosed = false // keep in memory for reuse
         collectionBehavior = [
             .canJoinAllSpaces, // visible on every Space
@@ -270,6 +273,23 @@ public final class FloatingPillPanel: NSPanel {
 
     public func shouldHandlePillDrag(startedInVisiblePill: Bool) -> Bool {
         isPillDragEnabled && startedInVisiblePill
+    }
+
+    /// Shared by the resident app and UIE2E host: notch gestures must never move the whole window.
+    public func configureNotchDragging(screenKind: VoiceBarNotchScreenKind, allowsFreeDrag: Bool, mode: VoiceMode) {
+        if screenKind == .flatDisplayFallback {
+            isPillDragEnabled = false
+            isMovableByWindowBackground = false
+            return
+        }
+        let usesPhysicalHousing = screenKind == .hardwareNotch
+        let pillDragEnabled = !usesPhysicalHousing && allowsFreeDrag
+        let movableByWindowBackground = !usesPhysicalHousing && allowsFreeDrag
+            && VoiceBarPresentation.isPanelDraggable(mode: mode)
+        if isPillDragEnabled != pillDragEnabled { isPillDragEnabled = pillDragEnabled }
+        if isMovableByWindowBackground != movableByWindowBackground {
+            isMovableByWindowBackground = movableByWindowBackground
+        }
     }
 
     public func startsDrag(at point: NSPoint) -> Bool {

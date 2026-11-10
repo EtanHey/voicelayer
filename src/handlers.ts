@@ -32,8 +32,11 @@ import {
   awaitCurrentPlayback,
   getPlaybackQueueDepth,
   preemptLongRead,
+  parkReadForAsk,
+  releaseAskReadSuccessor,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
+  isPlaybackPaused,
   cancelPlayback,
   type CaptureAdmission,
   type QueuedPlaybackHandle,
@@ -41,6 +44,7 @@ import {
 import { waitForPlayerExit } from "./tts/playback-exit";
 import {
   waitForInput,
+  type WaitForInputOptions,
   clearInput,
   retranscribeVoiceAskArchive,
 } from "./input";
@@ -524,8 +528,8 @@ async function executeAdmittedNormalAsk({ ingress, context }: {
     deferReleaseUntil: (settlement) => {
       releaseDeferred = true;
       void settlement.then(
-        () => reservation.release(),
-        () => reservation.release(),
+        () => { reservation.release(); releaseAskReadSuccessor(); },
+        () => { reservation.release(); releaseAskReadSuccessor(); },
       );
     },
   };
@@ -869,20 +873,28 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   };
   armTimeout(VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS, "playback-wait");
 
+  let returnInterruptedRead: ((processing?: boolean) => boolean) | undefined;
   const converseFlow = async (): Promise<VoiceAskTurnOutcome> => {
     // V1 policy: refuse instead of queueing while the user is recording.
     // Queueing a question would make the eventual prompt stale and can still
     // leak audio if the recording state changes while the caller waits.
     assertSpeakerClear();
 
-    // Wait for all queued playback to finish (P0-2: awaits full queue)
-    preemptLongRead();
+    // Park the live read, then wait for physical playback exit before Ask borrows the speaker.
+    returnInterruptedRead = parkReadForAsk();
+    preemptLongRead("ask");
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
     }
 
     captureAdmission = reserveCaptureAdmission();
+    if (!captureAdmission && returnInterruptedRead && isPlaybackPaused()) {
+      // A seek's runner can materialize its parked job/slice after the old player exit.
+      await awaitCurrentPlayback({ forCaptureAdmission: true });
+      if (timeoutSettled || inputAbortController.signal.aborted) return { kind: "ended-before-capture" };
+      captureAdmission = reserveCaptureAdmission();
+    }
     if (!captureAdmission) throw new Error("Playback changed before Ask could reserve capture admission; try again");
 
     // Speak the question aloud — BLOCKING for converse
@@ -898,6 +910,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         waitForPlayback: true,
         voice: voiceName,
         captureAudioArtifact: true,
+        textOnlyOnSynthesisFailure: inputAbortController.signal,
         onPlaybackQueued: handle => {
           promptPlayers.push(handle);
           if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle, onPromptParkedChange)) {
@@ -914,7 +927,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         error instanceof SpeechPreparationStoppedError ? null : isSpeakerOutputRefusedError(error) ? "REJECTED" : "OUTPUT_UNAVAILABLE");
       throw error;
     }
-    if (!speech.playbackId && !speech.engine) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
+    if (!speech.playbackId && !speech.engine && !speech.textOnly) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
     }
@@ -926,7 +939,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     const promptStopped = speech.playbackOutcome?.reason === "stopped";
     if (speech.playbackOutcome && speech.playbackOutcome.status !== "completed" && !promptStopped) {
       captureAdmission.release();
-      if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && getEffectiveRecordingState() === "idle") {
+      if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() && getEffectiveRecordingState() === "idle") {
         broadcast({ type: "state", state: "idle", source: "playback" });
       }
       return { kind: "prompt-incomplete", status: speech.playbackOutcome.status };
@@ -934,20 +947,22 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // Bound recorder startup separately from prompt playback. The full capture
     // window is rearmed only by onCaptureStart after the microphone opens.
     armTimeout(outerTimeoutMs, "capture-start");
-    if (
-      !speech.audioArtifact ||
-      !speech.displayText?.trim() ||
-      !speech.engine ||
-      !speech.voice?.trim()
-    ) {
-      throw new Error(
-        "voice_ask could not retain synthesized prompt audio/transcript and actual-used engine/voice; recording was not started",
-      );
+    let voiceAskArtifacts: WaitForInputOptions["voiceAskArtifacts"];
+    if (speech.textOnly && speech.displayText?.trim()) {
+      voiceAskArtifacts = { promptDelivery: "text-only", agentTranscript: speech.displayText };
+      context?.emit({ kind: "voice_ask_text_prompt", question: speech.displayText });
+    } else {
+      if (!speech.audioArtifact || !speech.displayText?.trim() || !speech.engine || !speech.voice?.trim()) {
+        throw new Error("voice_ask could not retain synthesized prompt audio/transcript and actual-used engine/voice; recording was not started");
+      }
+      voiceAskArtifacts = { agentAudioBytes: speech.audioArtifact.bytes, agentAudioFormat: speech.audioArtifact.format,
+        agentTranscript: speech.displayText, agentTtsEngine: speech.engine, agentTtsVoice: speech.voice };
     }
 
     // Record mic audio, then transcribe with selected STT backend
     assertSpeakerClear();
-    if (promptPlayers.length) broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording" });
+    if (promptPlayers.length || isPlaybackPaused()) broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording",
+      ...(isPlaybackPaused() ? { preserves_paused_read: true } : {}) });
     const pushToEnd = resolvePushToEnd(validated.push_to_end ?? false, {
       caller: "mcp.voice_ask",
     });
@@ -959,13 +974,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       pushToEnd,
       {
         archiveSource: "voice_ask",
-        voiceAskArtifacts: {
-          agentAudioBytes: speech.audioArtifact.bytes,
-          agentAudioFormat: speech.audioArtifact.format,
-          agentTranscript: speech.displayText,
-          agentTtsEngine: speech.engine,
-          agentTtsVoice: speech.voice,
-        },
+        voiceAskArtifacts,
         onCaptureStart: () => {
           captureActive = true;
           armTimeout(outerTimeoutMs, "capture");
@@ -1000,6 +1009,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         },
         onPhaseChange: (phase) => {
           progressHeartbeat?.setStage(phase);
+          // The input phase follows bounded recorder-exit settlement; run after its transcribing state is published.
+          queueMicrotask(() => { if (returnInterruptedRead?.(true)) returnInterruptedRead = undefined; });
         },
         onNoAnswer: (unclassified) => { noAnswer = !unclassified; unclassifiedAnswer = unclassified; },
         onNoSpeech: () => {
@@ -1039,13 +1050,19 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         await promptReaped;
         await promptTimeoutCleanup;
         // A late old exit must not mark a newer playback/capture owner idle.
-        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() &&
+        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() &&
             getEffectiveRecordingState() === "idle") {
           broadcast({ type: "state", state: "idle", source: "playback" });
         }
       }
     }
-  }).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
+  }).finally(async () => {
+    await promptTimeoutCleanup;
+    captureAdmission?.release();
+    returnInterruptedRead?.();
+    returnInterruptedRead = undefined;
+    if (!operationLifecycle) releaseAskReadSuccessor();
+  });
   const confirmedTeardown = async () => {
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
     await settleSpeechArchivesForUpdate(archiveContext);
@@ -1066,7 +1083,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     ) {
       // Errors can return before owned teardown; never idle a foreign/newer owner.
       void Promise.all(promptPlayers.map(handle => handle.playerExited)).then(() => {
-        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() &&
+        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() && !isPlaybackPaused() &&
             getEffectiveRecordingState() === "idle") {
           broadcast({ type: "state", state: "idle" });
         }
@@ -1221,7 +1238,7 @@ export async function handleToggle(args: unknown): Promise<McpResult> {
   }
 
   // Manage combined flag — used by CC PreToolUse hook to block all voice tools
-  if (scope === "all") {
+  if (scope === "all" || (scope === "mic" && enabled)) {
     if (enabled) {
       if (existsSync(VOICE_DISABLED_FILE)) {
         try {

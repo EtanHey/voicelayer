@@ -11,6 +11,7 @@ import type { UpdateGateLease } from "../update-gate";
 const installerPath = fileURLToPath(new URL("../update-gate-installer.ts", import.meta.url));
 const storagePath = fileURLToPath(new URL("../update-gate-storage.ts", import.meta.url));
 type Mode = "collision" | "malformed" | "diagnostic" | "exhaustion";
+type CancelRelease = "before-attempt" | "after-attempt" | null;
 type Event = { event: string; kind?: string; error?: string; gate?: string; lock?: boolean; value?: boolean };
 
 // This creates an instrumented *copy*, never rewrites the loaded production module
@@ -18,7 +19,7 @@ type Event = { event: string; kind?: string; error?: string; gate?: string; lock
 function instrument(source: string, key: string): string {
   const anchors = 'resolve(import.meta.dir, "../.test-tmp")';
   expect(source.split(anchors)).toHaveLength(3);
-  const original = source.replaceAll(anchors, JSON.stringify(resolve(process.cwd(), ".test-tmp")))
+  const original = source.replaceAll(anchors, JSON.stringify(dirname(process.env.VOICELAYER_TEST_RUN_ROOT!)))
     .replace(/from "(\.\/[^"\n]+)"/g, (_, path: string) => `from ${JSON.stringify(resolve(dirname(installerPath), path))}`)
     .replace('import("./update-gate-bootstrap")', `import(${JSON.stringify(resolve(dirname(installerPath), "update-gate-bootstrap"))})`)
     .replace("acknowledgeVoiceDrain, updateVoiceGate", "acknowledgeVoiceDrain as originalAck, updateVoiceGate as originalUpdate")
@@ -30,13 +31,34 @@ function instrument(source: string, key: string): string {
   return original + probeImport + `
 import { existsSync as testExists } from "node:fs";
 const d = (globalThis as unknown as Record<string, {
-  mode: string; armed: boolean; injected: boolean; request: string; ready: string; release: string;
+  mode: string; cancelRelease: string | null; armed: boolean; injected: boolean; request: string; ready: string; release: string;
   events: Array<{event: string; kind?: string; error?: string; gate?: string; lock?: boolean; value?: boolean}>;
 }>)[${JSON.stringify(key)}]!;
 function updateVoiceGate(...args: Parameters<typeof originalUpdate>) {
-  const result = originalUpdate(...args);
-  if (result.kind === "APPLIED") d.events.push({event: "applied-transition", kind: result.state.kind});
-  return result;
+  const cancel = d.cancelRelease !== null && args[0]?.kind === "CANCEL" && testExists(updateGateFilePath()+".lock");
+  const release = () => {
+    writeFileSync(d.release, "release");
+    const deadline = performance.now() + 20_000;
+    while (testExists(updateGateFilePath()+".lock")) {
+      if (performance.now() > deadline) throw Error("Cancel fixture holder release timeout");
+      Bun.sleepSync(1);
+    }
+    d.events.push({event: "cancel-holder-released", lock: false,
+      gate: JSON.parse(readFileSync(updateGateFilePath(), "utf8")).kind});
+  };
+  if (cancel && d.cancelRelease === "before-attempt") release();
+  try {
+    const result = originalUpdate(...args);
+    if (result.kind === "APPLIED") d.events.push({event: "applied-transition", kind: result.state.kind});
+    return result;
+  } catch (error) {
+    if (cancel) d.events.push({event: "cancel-acquisition-failed", error: String(error), lock: testExists(updateGateFilePath()+".lock")});
+    throw error;
+  } finally {
+    // Force release between the real acquisition result and the retry decision.
+    // The matched control releases just before that same acquisition instead.
+    if (cancel && d.cancelRelease === "after-attempt") release();
+  }
 }
 async function retryContention<T>(read: () => T, retry: (result: T) => boolean): Promise<T> {
   try { return await originalRetry(read, retry); }
@@ -47,7 +69,7 @@ async function retryContention<T>(read: () => T, retry: (result: T) => boolean):
       d.events.push({event: "budget-exhausted", error: String(error),
         lock: testExists(updateGateFilePath()+".lock"),
         gate: JSON.parse(readFileSync(updateGateFilePath(), "utf8")).kind});
-      writeFileSync(d.release, "release");
+      if (d.cancelRelease === null) writeFileSync(d.release, "release");
     }
     throw error;
   }
@@ -106,13 +128,13 @@ function readInstallerGateState(...args: Parameters<typeof originalAtomic>) {
 `;
 }
 
-async function scenario(mode: Mode) {
+async function scenario(mode: Mode, cancelRelease: CancelRelease = null) {
   if (process.env.VOICELAYER_TEST_ISOLATED !== "1" || !process.env.VOICELAYER_TEST_RUN_ROOT)
     throw Error("mandatory normal preload missing");
   const saved = { ...process.env };
   const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT, "drain-"));
   const gate = join(root, "gate"), marker = join(root, "INSTALLER_RAN"), proof = join(root, "proof");
-  const d = { mode, armed: false, injected: false, request: join(root, "request"), ready: join(root, "ready"),
+  const d = { mode, cancelRelease, armed: false, injected: false, request: join(root, "request"), ready: join(root, "ready"),
     release: join(root, "release"), events: [] as Event[] };
   const key = `drain-readback:${root}`;
   (globalThis as unknown as Record<string, typeof d>)[key] = d;
@@ -132,7 +154,7 @@ async function scenario(mode: Mode) {
     }
     withUpdateGateLock(()=>{
       writeFileSync(${JSON.stringify(d.ready)},JSON.stringify({pid:process.pid}));
-      const deadline=performance.now()+${mode === "exhaustion" ? 5000 : 2000};
+      const deadline=performance.now()+${cancelRelease ? 20_000 : mode === "exhaustion" ? 5000 : 2000};
       while(!existsSync(${JSON.stringify(d.release)})) {
         if(performance.now()>deadline)throw Error("holder release timeout");Bun.sleepSync(1);
       }
@@ -192,6 +214,15 @@ async function scenario(mode: Mode) {
       expect(readInstallerGateState().kind).toBe("OPEN");
       expect(admitted).toHaveLength(1);
       expect(readdirSync(gate + ".admissions")).toEqual(admitted);
+      if (cancelRelease) {
+        expect(d.events.find(e => e.event === "cancel-holder-released"))
+          .toMatchObject({ lock: false, gate: "DRAINING" });
+        const failures = d.events.filter(e => e.event === "cancel-acquisition-failed");
+        expect(failures).toEqual(cancelRelease === "after-attempt"
+          ? [{ event: "cancel-acquisition-failed", error: "Error: UPDATE_GATE_LOCKED", lock: true }] : []);
+        expect(d.events.some(e => e.event === "applied-transition" && e.kind === "OPEN")).toBe(true);
+        expect(messages.some(m => m.includes("RECOVERY_REQUIRED"))).toBe(false);
+      }
       d.events.push({event: "exhaustion-refusal", error: String(error), kind: "OPEN"});
       // Same fixture, real pending admission and caller: a later retry succeeds.
       // The second refresh settles the work, rather than deleting its admission.
@@ -243,3 +274,6 @@ async function scenario(mode: Mode) {
 
 for (const mode of ["collision", "malformed", "diagnostic", "exhaustion"] as const)
   test(`drain readback: ${mode}`, () => scenario(mode), 30_000);
+
+for (const release of ["before-attempt", "after-attempt"] as const)
+  test(`drain readback: Cancel release ${release}`, () => scenario("exhaustion", release), 30_000);

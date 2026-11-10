@@ -1,5 +1,6 @@
+import { drainLedgerStatus, formatDrainStatus, type PendingParticipant } from "./update-gate-drain-status";
 import { randomUUID } from "node:crypto";
-import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, UnsafeSuccessorError, type InstallerParticipant } from "./update-gate-installer-participant";
+import { assertInstallerSocketPath, installerProcessIdentity, retryInstallerContention as retryContention, retryInstallerAcquisition, createInstallerParticipant, UnsafeSuccessorError, type InstallerParticipant, type InstallerEvidence } from "./update-gate-installer-participant";
 import { lstatSync, readFileSync, realpathSync, openSync, writeFileSync, fsyncSync, closeSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -137,65 +138,115 @@ function harnessCompletionEvidence(): CompletionEvidence {
     },
   };
 }
-/** Only this controller completes. No successor startup writer or recovery bypass.
- * RPC/ps/plist parsing precede G1; its callback checks fresh cached participant
- * proof, unchanged installed bytes, and this process's durable controller custody. */
+/** Refresh proofs after acquisition timeout; never stretch a receipt across the budget. */
+async function finishWithSuccessor(lease: UpdateGateLease, evidence: CompletionEvidence,
+  custody: ParticipantProof, beforeAcquisition: () => void = () => {}): Promise<void> {
+  const installed = evidence.installed(), successor = evidence.participant;
+  if (installed.sha !== lease.targetSha) throw Error("installed GitCommit does not match lease.targetSha");
+  const clock = evidence.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
+  const deadline = clock.now() + 60_000;
+  for (let attempt = 1, backoff = 100; ; attempt++, backoff = Math.min(backoff * 2, 1000)) {
+    let acquiring = false;
+    try {
+      const proof = await successor.refresh(lease);
+      if (!proof.ready || !proof.native || !proof.daemon || !sameLease(proof.native.lease, lease) || !sameLease(proof.daemon.lease, lease))
+        throw Error(`new participants not verified: ${proof.phase}`);
+      if (clock.now() >= deadline) throw Error("successor readiness deadline passed");
+      beforeAcquisition(); // Process sampling stays outside G1.
+      const apply = () => updateVoiceGate({ kind: "COMPLETE", lease, installerExitCode: 0,
+        installedSha: installed.sha, participantsVerified: true }, state => safeParticipantProof(() => ({
+          ready: clock.now() < deadline && state.kind === "COMMITTED" && sameLease(state.lease, lease) &&
+            custody(state) && installed.unchanged() && successor.verify(state),
+        })), process.env, { throwOnContention: true });
+      acquiring = true;
+      const result = successor.withCompletionProof ? await successor.withCompletionProof(apply) : await retryInstallerAcquisition(apply);
+      if (result.kind === "REFUSED") throw Error(`COMPLETE refused: ${result.reason}`);
+      return;
+    } catch (error) {
+      if (error instanceof UnsafeSuccessorError || (acquiring && !(error instanceof Error &&
+        error.message === "UNKNOWN: update-gate lock acquisition timed out"))) throw error;
+      console.error(`[update-gate] Successor readiness attempt ${attempt} failed: ${error}`);
+      const remaining = deadline - clock.now();
+      if (remaining <= 0) throw Error(`successor readiness deadline passed: ${error}`);
+      await clock.sleep(Math.min(backoff, remaining));
+      if (clock.now() >= deadline) throw Error(`successor readiness deadline passed: ${error}`);
+    }
+  }
+}
 export async function completeGatedInstall(lease: UpdateGateLease, exitCode: number, identity: string,
   harness?: CompletionEvidence, previous?: InstallerParticipant, installerPid?: number): Promise<boolean> {
   try {
     assertGatePath();
-    if (harness) { harnessParticipantEvidence(); }
+    if (harness) harnessParticipantEvidence();
     if (exitCode !== 0) throw Error(`installer exited ${exitCode}; completion not verified`);
     if (installerProcessIdentity(process.pid) !== identity) throw Error("controller process identity changed");
-    const evidence = harness ?? (process.env.VOICELAYER_TEST_ISOLATED === "1" ? harnessCompletionEvidence() : {
+    await finishWithSuccessor(lease, harness ?? (process.env.VOICELAYER_TEST_ISOLATED === "1" ? harnessCompletionEvidence() : {
       installed: readInstalledTarget,
       participant: previous?.successor ? previous.successor() : createInstallerParticipant(undefined, null),
+    }), () => {
+      const controller = readInstallerController(updateGateFilePath());
+      return controller?.pid === process.pid && controller.identity === identity &&
+        controller.lease.operationId === lease.operationId && controller.lease.generation === lease.generation;
     });
-    const installed = evidence.installed();
-    if (installed.sha !== lease.targetSha) throw Error("installed GitCommit does not match lease.targetSha");
-    const successor = evidence.participant;
-    const clock = harness?.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
-    const deadline = clock.now() + 15_000;
-    for (let attempt = 1, backoff = 100; ; attempt++, backoff = Math.min(backoff * 2, 1000)) {
-      try {
-        // refresh invalidates cached evidence and authenticates a new round trip.
-        const proof = await successor.refresh(lease);
-        if (!proof.ready || !proof.native || !proof.daemon || !sameLease(proof.native.lease, lease) || !sameLease(proof.daemon.lease, lease))
-          throw Error(`new participants not verified: ${proof.phase}`);
-        if (clock.now() >= deadline) throw Error("successor readiness deadline passed");
-        break;
-      } catch (error) {
-        console.error(`[update-gate] Successor readiness attempt ${attempt} failed: ${error}`);
-        if (error instanceof UnsafeSuccessorError) throw error;
-        const remaining = deadline - clock.now();
-        if (remaining <= 0) throw Error(`successor readiness deadline passed: ${error}`);
-        await clock.sleep(Math.min(backoff, remaining));
-        if (clock.now() >= deadline) throw Error(`successor readiness deadline passed: ${error}`);
-      }
-    }
-    const apply = () => updateVoiceGate({ kind: "COMPLETE", lease, installerExitCode: 0,
-      installedSha: installed.sha, participantsVerified: true }, state => safeParticipantProof(() => {
-        const controller = readInstallerController(updateGateFilePath());
-        return { ready: state.kind === "COMMITTED" && sameLease(state.lease, lease) &&
-          controller?.pid === process.pid && controller.identity === identity &&
-          controller.lease.operationId === lease.operationId && controller.lease.generation === lease.generation &&
-          installed.unchanged() && successor.verify(state) };
-      }), process.env, { throwOnContention: true });
-    const result = successor.withCompletionProof ? await successor.withCompletionProof(apply) : await retryInstallerAcquisition(apply);
-    if (result.kind === "REFUSED") throw Error(`COMPLETE refused: ${result.reason}`);
     console.error("[update-gate] COMPLETE: verified installed target and new participants; admission OPEN.");
     return true;
   } catch (error) {
     recoveryReceipt(lease, `completion failed: ${error}`, installerPid);
-    console.error("After this updater exits, restore availability with: voicelayer setup --cask-postflight\n" +
-      "This does not recover a COMMITTED gate; retain all gate/controller/recovery evidence.");
+    console.error("[update-gate] The next matching VoiceBar launch will verify and recover an abandoned COMMITTED lease automatically; retain recovery evidence.");
+    return false;
+  }
+}
+
+/** Availability backstop, never installer authorization. No rollback or half-state repair.
+ * A reaped controller cannot become live again; PID reuse/unknown identity refuses.
+ * Observe death for five seconds, then recheck custody under G1. The verified
+ * running target replaces the unavailable old controller's exit receipt. */
+export async function recoverAbandonedUpdate(ownSha = process.env.VOICEBAR_GIT_COMMIT,
+  harness?: CompletionEvidence & { controllerIdentity(pid: number): string | null }): Promise<boolean> {
+  try {
+    assertGatePath();
+    if (harness) harnessParticipantEvidence();
+    if (!ownSha || !/^[0-9a-f]{40}$/.test(ownSha)) return false;
+    const evidence: CompletionEvidence = harness ?? { installed: readInstalledTarget, participant: createInstallerParticipant(undefined, null) };
+    const clock = evidence.clock ?? { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) };
+    const identity = harness?.controllerIdentity ?? installerProcessIdentity;
+    const deadline = clock.now() + 60_000;
+    let abandonedAt: number | undefined;
+    let observedCustody: string | undefined;
+    for (;;) {
+      const state = await retryInstallerAcquisition(() => readInstallerGateState(), deadline, clock, 30_000);
+      if (state.kind !== "COMMITTED" || state.lease.targetSha !== ownSha) return false;
+      const lease = state.lease, controller = readInstallerController(updateGateFilePath());
+      if (!controller || controller.lease.operationId !== lease.operationId || controller.lease.generation !== lease.generation) return false;
+      const bytes = JSON.stringify(controller);
+      const custody = JSON.stringify({ lease, controller });
+      if (custody !== observedCustody) abandonedAt = undefined;
+      observedCustody = custody;
+      if (identity(controller.pid) !== null) abandonedAt = undefined;
+      else abandonedAt ??= clock.now();
+      if (abandonedAt !== undefined && clock.now() - abandonedAt >= 5000) {
+        // The observed dead incarnation cannot revive. Sample again outside G1;
+        // only unchanged custody is read inside the short publication section.
+        await finishWithSuccessor(lease, evidence,
+          () => JSON.stringify(readInstallerController(updateGateFilePath())) === bytes,
+          () => { if (identity(controller.pid) !== null) throw new UnsafeSuccessorError("controller absence changed"); });
+        console.error("[update-gate] Recovered abandoned COMMITTED lease: verified successor COMPLETE; admission OPEN.");
+        return true;
+      }
+      if (clock.now() >= deadline) return false;
+      await clock.sleep(Math.min(250, deadline - clock.now()));
+    }
+  } catch (error) {
+    console.error(`[update-gate] Successor recovery deferred; gate and custody retained: ${error}`);
     return false;
   }
 }
 async function cancelLease(lease: UpdateGateLease): Promise<void> {
   let failure: unknown;
   try {
-    const result = await retryContention(() => updateVoiceGate({ kind: "CANCEL", lease }), result => result.kind === "REFUSED" && result.reason === "UNKNOWN");
+    // Retry the failed acquisition even if its holder releases before we decide.
+    const result = await retryContention(() => updateVoiceGate({ kind: "CANCEL", lease }, undefined,
+      process.env, { throwOnContention: true }), () => false);
     if (result.kind !== "REFUSED") return;
     failure = Error(`Cancel refused: ${result.reason}`);
   } catch (error) { failure = error; }
@@ -208,6 +259,24 @@ export type BootstrapInstall = {
   onRequested(lease: UpdateGateLease): void;
   onCommitted(): void;
 };
+export const DEFAULT_DRAIN_TIMEOUT_MS = 120_000;
+const PREPARED_RECHECK_TIMEOUT_MS = 2000;
+function drainTimeoutMs(): number {
+  const value = process.env.VOICELAYER_UPDATE_DRAIN_TIMEOUT_MS;
+  if (value === undefined) return DEFAULT_DRAIN_TIMEOUT_MS;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > DEFAULT_DRAIN_TIMEOUT_MS)
+    throw Error("invalid VOICELAYER_UPDATE_DRAIN_TIMEOUT_MS (1..120000)");
+  return parsed;
+}
+function writeDrainReceipt(lease: UpdateGateLease, reason: string, status: string): void {
+  const path = `${updateGateFilePath()}.drain-${lease.operationId}.json`;
+  const fd = openSync(path, "wx", 0o600);
+  try { writeFileSync(fd, JSON.stringify({ lease, reason, status, at: new Date().toISOString() }) + "\n"); fsyncSync(fd); }
+  finally { closeSync(fd); }
+  const directory = openSync(dirname(path), "r");
+  try { fsyncSync(directory); } finally { closeSync(directory); }
+}
 export async function runGatedInstall(command: string[], harnessParticipant?: InstallerParticipant, bootstrap?: BootstrapInstall): Promise<number> {
   assertGatePath();
   if (!command.length) throw Error("UNKNOWN: missing installer command");
@@ -236,6 +305,8 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
   const lease: UpdateGateLease = { generation: current.generation + 1, operationId: randomUUID(),
     ownerId: randomUUID(), targetSha: process.env.VOICELAYER_UPDATE_TARGET_SHA ?? "" };
   if (!updateGateLeaseSchema.safeParse(lease).success) throw Error("UNKNOWN: verified target SHA required");
+  const drainBudget = drainTimeoutMs();
+  let drainDeadline = Infinity, preparedDeadline = Infinity, timedOut = false, timeoutReason = "", lastStatus = "", lastProof: InstallerEvidence | undefined;
   let requested = false, committed = false, commitAttempted = false, commitUncertain = false, completed = false, cancelled = false, displayedPhase = "";
   const pastCommit = () => committed || commitUncertain;
   const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const;
@@ -247,12 +318,48 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     process.on(name, handler);
     return [name, handler] as const;
   });
+  const pending = (): PendingParticipant[] => lastProof?.pending ?? (lastProof?.ready ? [] :
+    (["native", "daemon"] as const).map(participant => ({ participant, reply: lastProof?.phase ?? "no reply" })));
+  const status = () => formatDrainStatus(pending(), drainLedgerStatus());
+  const checkPrecommit = () => {
+    if (cancelled || bootstrap?.cancelled()) { cancelled = true; throw Error("UPDATE_CANCELLED"); }
+    if (performance.now() >= Math.min(drainDeadline, preparedDeadline)) {
+      timedOut = true; lastStatus = status();
+      timeoutReason = preparedDeadline < drainDeadline ? `prepared recheck timed out after ${PREPARED_RECHECK_TIMEOUT_MS} ms`
+        : `drain timed out after ${drainBudget} ms`;
+      throw Error(`${timeoutReason}: ${lastStatus}`);
+    }
+  };
+  // Bound even a participant that never settles. A late read-only refresh cannot
+  // authorize a transition: every locked mutation checks the deadline again.
+  const waitPrecommit = <T>(work: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+    const timer = setInterval(() => { try { checkPrecommit(); } catch (error) { clearInterval(timer); reject(error); } }, 10);
+    work.then(value => { clearInterval(timer); try { checkPrecommit(); resolve(value); } catch (error) { reject(error); } },
+      error => { clearInterval(timer); reject(error); });
+  });
+  const refreshPrecommit = async () => {
+    checkPrecommit();
+    const observed = lastProof?.participants ?? lastProof?.pending;
+    lastProof = { ready: false, phase: "no reply", pending: observed?.map(p => ({ ...p, reply: "no reply" })) };
+    try { lastProof = await waitPrecommit(participant.refresh(lease)); }
+    catch (error) {
+      if (!(error && typeof error === "object" && "replyLost" in error && error.replyLost === true)) throw error;
+      lastProof = { ready: false, phase: "no reply" };
+    }
+    checkPrecommit();
+    lastStatus = status();
+    if (displayedPhase !== lastStatus) {
+      console.error(`[update-gate] Update when idle: ${lastStatus}; Cancel: Ctrl-C (before commit)`);
+      displayedPhase = lastStatus;
+    }
+    return lastProof;
+  };
   const verify: ParticipantProof = state => safeParticipantProof(() => ({ ready: participant.verify(state) }));
   const acquire = <T>(read: () => T): Promise<T> => participant.withAcquisitionProof
     ? participant.withAcquisitionProof(read) : retryInstallerAcquisition(read);
   const transition = async (command: UpdateGateCommand) => {
     const apply = () => {
-      if (cancelled || bootstrap?.cancelled()) { cancelled = true; throw Error("UPDATE_CANCELLED"); }
+      checkPrecommit();
       const confirm: ParticipantProof = state => {
         if (!verify(state)) return false;
         if (command.kind === "COMMIT") return persistInstallerController(updateGateFilePath(), {
@@ -285,15 +392,12 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     const request = await transition({ kind: "REQUEST", lease });
     if (request.kind !== "APPLIED") throw Error("UNKNOWN: drain request refused");
     requested = true;
+    drainDeadline = performance.now() + drainBudget;
     bootstrap?.onRequested(lease);
     while (!cancelled && !bootstrap?.cancelled()) {
-      const proof = await participant.refresh(lease);
-      if (displayedPhase !== proof.phase) {
-        console.error(`[update-gate] Update when idle: ${proof.phase}; Cancel: Ctrl-C (before commit)`);
-        displayedPhase = proof.phase;
-      }
+      const proof = await refreshPrecommit();
       const ack = await acquire(() => {
-        if (cancelled || bootstrap?.cancelled()) { cancelled = true; throw Error("UPDATE_CANCELLED"); }
+        checkPrecommit();
         return acknowledgeVoiceDrain(lease, verify, { throwOnContention: true });
       });
       if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; }
@@ -303,10 +407,21 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
       }
       if (ack && proof.ready && proof.native && proof.daemon) {
         const prepared = await transition({ kind: "PREPARE", lease, native: proof.native, daemon: proof.daemon });
-        if (prepared.kind !== "APPLIED") throw Error("UNKNOWN: preparation refused");
+        if (prepared.kind !== "APPLIED") {
+          // A registration can land after the ACK and before PREPARE's lock.
+          // Preserve the in-lock refusal and retry the entire proof round.
+          const state = await retryContention(() => readInstallerGateState(), () => false);
+          if (state.kind !== "DRAINING" || !sameLease(state.lease, lease)) throw Error("UNKNOWN: preparation refused");
+          await waitPrecommit(Bun.sleep(20)); continue;
+        }
+        preparedDeadline = performance.now() + PREPARED_RECHECK_TIMEOUT_MS;
         if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; } // PREPARE retries await backoff, allowing Cancel to arrive.
         // PREPARED bytes alone cannot authorize COMMIT; obtain another live round trip.
-        await participant.refresh(lease);
+        const refreshed = await refreshPrecommit();
+        if (!refreshed.ready || !refreshed.native || !refreshed.daemon) {
+          // PREPARED no longer admits voice; do not park a failed recheck here.
+          throw Error(`UNKNOWN: prepared participant recheck refused: ${lastStatus}`);
+        }
         if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; }
         const commit = await transition({ kind: "COMMIT", lease });
         if (commit.kind !== "APPLIED") throw Error("UNKNOWN: commit refused; mutation not authorized");
@@ -328,7 +443,7 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
         completed = await completeGatedInstall(lease, result, controllerIdentity, undefined, participant, child.pid);
         return completed ? 0 : result || 1;
       }
-      await Bun.sleep(200);
+      await waitPrecommit(Bun.sleep(Math.min(200, drainDeadline - performance.now())));
     }
     return 130;
   } catch (error) {
@@ -345,7 +460,15 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
     throw error;
   } finally {
     if (pastCommit() && !completed) console.error("[update-gate] COMMITTED or uncertain: admission retained closed pending verified completion/recovery");
-    try { if (requested && !pastCommit()) await cancelLease(lease); }
+    try {
+      if (requested && !pastCommit()) {
+        await cancelLease(lease);
+        if (timedOut) {
+          console.error(`[update-gate] ${timeoutReason}; CANCEL restored OPEN: ${lastStatus}`);
+          writeDrainReceipt(lease, timeoutReason, lastStatus);
+        }
+      }
+    }
     finally { for (const [name, handler] of handlers) process.off(name, handler); }
   }
 }

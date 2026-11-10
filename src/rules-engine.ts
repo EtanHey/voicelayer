@@ -34,6 +34,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
   let result = text;
 
   const disabled = config?.disabledStages;
+  const appliedAliasTerms = new Set<string>();
 
   // Stage 1: Filler removal (highest priority — clean noise first)
   if (!disabled?.has("fillers")) {
@@ -58,26 +59,38 @@ export function applyRules(text: string, config?: RulesConfig): string {
       config.hebrewLatinAliasSources,
       config.shouldApplyAlias,
       config.possessiveAliasSources,
+      { onApplied: (term) => appliedAliasTerms.add(term) },
     );
   }
 
-  // Stage 5: Tech vocabulary
-  if (!disabled?.has("techVocab")) {
-    result = applyTechVocab(result);
+  // Canonical dictionary spelling is final, including number words.
+  const canonicalTerms = [...appliedAliasTerms].sort((a, b) => b.length - a.length);
+  const protectedOutputs: string[] = [];
+  for (const term of canonicalTerms) {
+    result = result.split(term).join(`\uE000${String.fromCharCode(0xE100 + protectedOutputs.length)}\uE001`);
+    protectedOutputs.push(applyPreNumberFormatting(term, disabled));
   }
-
-  if (!disabled?.has("codeTokens")) {
-    result = preserveCodeTokens(result);
+  result = applyPreNumberFormatting(result, disabled);
+  if (!disabled?.has("numbers")) result = applyNumberFormatting(result);
+  for (let i = 0; i < protectedOutputs.length; i++) {
+    result = result.split(`\uE000${String.fromCharCode(0xE100 + i)}\uE001`).join(protectedOutputs[i]);
   }
-
-  // Stage 3: Case formatting commands (before punctuation — "camel case foo bar" must be detected as phrase)
-  if (!disabled?.has("caseFormatting")) {
-    result = applyCaseFormatting(result);
-  }
-
-  // Stage 4: Number formatting
-  if (!disabled?.has("numbers")) {
-    result = applyNumberFormatting(result);
+  if (!disabled?.has("numbers") && !disabled?.has("aliases") && config?.aliases) {
+    const normalizedAliases: Record<string, string> = {};
+    const originalSources = new Map<string, string>();
+    const normalizeVariant = (source: string) => applyNumberFormatting(source).replace(
+      /\b(\d+)[ \t]+point[ \t]+(\d+)\b/gi, "$1.$2");
+    for (const [from, to] of Object.entries(config.aliases)) {
+      const normalized = normalizeVariant(from);
+      normalizedAliases[normalized] = to;
+      originalSources.set(normalized, from);
+    }
+    const normalizeSources = (sources?: ReadonlySet<string>) => new Set(
+      [...(sources ?? [])].map(normalizeVariant));
+    result = applyAliases(result, normalizedAliases,
+      normalizeSources(config.hebrewLatinAliasSources),
+      config.shouldApplyAlias ? (source, text) => config.shouldApplyAlias!(originalSources.get(source) ?? source, text) : undefined,
+      normalizeSources(config.possessiveAliasSources), { protectedTerms: canonicalTerms.map(term => applyPreNumberFormatting(term, disabled)) });
   }
 
   // Stage 2: Spoken punctuation
@@ -109,6 +122,16 @@ export function applyRules(text: string, config?: RulesConfig): string {
   result = result.replace(/[^\S\n]*\n[^\S\n]*/g, "\n");
   result = result.trim();
 
+  return result;
+}
+
+function applyPreNumberFormatting(text: string, disabled?: Set<string>): string {
+  let result = text;
+  // Stage 5: Tech vocabulary
+  if (!disabled?.has("techVocab")) result = applyTechVocab(result);
+  if (!disabled?.has("codeTokens")) result = preserveCodeTokens(result);
+  // Stage 3: Case formatting commands precede punctuation and numbers.
+  if (!disabled?.has("caseFormatting")) result = applyCaseFormatting(result);
   return result;
 }
 
@@ -1058,6 +1081,12 @@ const MULTIPLIERS: Record<string, number> = {
   million: 1_000_000,
 };
 
+function isTensThenUnit(before: string, after: string): boolean {
+  const tens = WORD_TO_NUMBER[before];
+  const unit = WORD_TO_NUMBER[after];
+  return tens >= 20 && tens % 10 === 0 && unit >= 1 && unit <= 9;
+}
+
 function parseNumberWords(words: string[]): number | null {
   if (words.length === 0) return null;
   let total = 0;
@@ -1101,9 +1130,40 @@ const NUMBER_WORDS = new Set([
   ...Object.keys(MULTIPLIERS),
 ]);
 
+/** Prose uses of "one" are lexical; counted quantities still use digits. */
+function isProseOne(words: string[], index: number): boolean {
+  if (words[index]?.toLowerCase() !== "one") return false;
+  const before = words[index - 1]?.toLowerCase();
+  const after = words[index + 1]?.toLowerCase();
+  return (before === "the" && !NUMBER_WORDS.has(after ?? "")) || after === "of" ||
+    (after === "more" && /^time[,.!?]?$/i.test(words[index + 2] ?? ""));
+}
+
 function formatNumbersInLine(text: string): string {
+  const cardinal = [...NUMBER_WORDS].join("|");
+  const digit = "zero|one|two|three|four|five|six|seven|eight|nine";
+  const decimal = new RegExp(`\\b((?:${cardinal})(?:[ \\t]+(?:${cardinal}))*)[ \\t]+point[ \\t]+((?:${digit})(?:[ \\t]+(?:${digit}))*)\\b`, "gi");
+  text = text.split(/(`[^`]*`)/g).map(part => part.startsWith("`") ? part : part.replace(decimal, (match, left: string, right: string) => {
+    const integer = parseNumberWords(left.toLowerCase().split(/[ \t]+/));
+    return integer === null ? match : `${integer}.${right.toLowerCase().split(/[ \t]+/).map(word => WORD_TO_NUMBER[word]).join("")}`;
+  })).join("");
   // Horizontal whitespace only — a \n never reaches here.
-  const words = text.split(/[^\S\n]+/);
+  const words = text.split(/[^\S\n]+/).flatMap((token, index, tokens) => {
+    // A decoder commonly attaches sentence punctuation to the final number.
+    // Make it a boundary token so it cannot block a cardinal or merge sentences.
+    const trailing = !/(?:\.{2,}|…)$/u.test(token) ? /^(.+?)([,.;:!?])$/u.exec(token) : null;
+    const base = trailing?.[1] ?? token;
+    const numericBase = NUMBER_WORDS.has(base.toLowerCase()) || /^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)-(?:one|two|three|four|five|six|seven|eight|nine)$/i.test(base) || base.toLowerCase() === "k";
+    const splitPunctuation = trailing && numericBase &&
+      (/[ -]/u.test(base) || base.toLowerCase() === "k" ||
+        (index > 0 && isTensThenUnit(tokens[index - 1].toLowerCase(), base.toLowerCase())) ||
+        /\b(?:hundred|thousand)\b/iu.test(text));
+    const word = splitPunctuation ? base : token;
+    const punctuation = splitPunctuation ? [trailing![2]] : [];
+    // Split only complete tens-unit cardinals, never hyphenated prose/code.
+    const match = /^(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)-(one|two|three|four|five|six|seven|eight|nine)$/i.exec(word);
+    return [...(match ? [match[1], match[2]] : [word]), ...punctuation];
+  });
   const result: string[] = [];
   let numBuffer: string[] = [];
 
@@ -1111,7 +1171,10 @@ function formatNumbersInLine(text: string): string {
     if (numBuffer.length > 0) {
       const num = parseNumberWords(numBuffer);
       if (num !== null) {
-        result.push(String(num));
+        // Keep the existing ungrouped exact-thousands format (1200/32000).
+        // Group five-or-more-digit cardinals with a thousands remainder.
+        result.push(num >= 10000 && num < 1000000 && num % 1000 !== 0 && numBuffer.some(w => w.toLowerCase() === "thousand")
+          ? String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : String(num));
       } else {
         result.push(...numBuffer);
       }
@@ -1119,18 +1182,40 @@ function formatNumbersInLine(text: string): string {
     }
   };
 
-  for (const word of words) {
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index];
     const lower = word.toLowerCase();
-    if (NUMBER_WORDS.has(lower)) {
+    const lastNumberWord = numBuffer.at(-1)?.toLowerCase();
+    if (lower === "and" && lastNumberWord && lastNumberWord in MULTIPLIERS) {
+      // Consume a conjunction only for a smaller, complete cardinal remainder.
+      // "thirty thousand and sixty thousand" remains two quantities.
+      let end = index + 1;
+      while (end < words.length && NUMBER_WORDS.has(words[end].toLowerCase()) && !isProseOne(words, end)) end++;
+      const tail = words.slice(index + 1, end).map(w => w.toLowerCase());
+      const remainder = parseNumberWords(tail);
+      const scale = MULTIPLIERS[lastNumberWord];
+      const hasSeparateValues = tail.some((value, i) => i > 0 &&
+        tail[i - 1] in WORD_TO_NUMBER && value in WORD_TO_NUMBER &&
+        !isTensThenUnit(tail[i - 1], value));
+      if (!hasSeparateValues && remainder !== null && remainder > 0 && remainder < scale) continue;
+    }
+    if (/^[,.;:!?]+$/u.test(word)) {
+      flushBuffer();
+      if (result.length > 0) result[result.length - 1] += word;
+      else result.push(word);
+    } else if (lower === "k" && numBuffer.length > 0) {
+      flushBuffer();
+      result[result.length - 1] += word;
+    } else if (isProseOne(words, index)) {
+      flushBuffer();
+      result.push(word);
+    } else if (NUMBER_WORDS.has(lower)) {
       const previous = numBuffer.at(-1)?.toLowerCase();
       if (previous && previous in WORD_TO_NUMBER && lower in WORD_TO_NUMBER) {
         // Only a tens word followed by a nonzero unit forms one cardinal.
         // Adjacent values in a list, repetition, or retraction are separate
         // speech: "two three" must stay "2 3", never their sum "5".
-        const before = WORD_TO_NUMBER[previous];
-        const after = WORD_TO_NUMBER[lower];
-        const tensThenUnit = before >= 20 && before % 10 === 0 && after >= 1 && after <= 9;
-        if (!tensThenUnit) flushBuffer();
+        if (!isTensThenUnit(previous, lower)) flushBuffer();
       }
       numBuffer.push(word);
     } else {
@@ -1146,6 +1231,10 @@ function formatNumbersInLine(text: string): string {
 // --- Stage 5: Tech vocabulary ---
 
 const TECH_VOCAB: [RegExp, string][] = [
+  // "a text edit" is ordinary prose. Normalize the app name only with an
+  // explicit app context, preserving every surrounding word and delimiter.
+  [/\b((?:open|launch|in|into|from|switch[ \t]+to|paste[ \t]+into|quit)[ \t]+(?:the[ \t]+)?)text[ \t]+edit\b/gi, "$1TextEdit"],
+  [/\btext[ \t]+edit(?=[ \t]+(?:app|window|document|doc)\b)/gi, "TextEdit"],
   [/\bPR\s*(\d+)(['’]s)\b/gi, "PR $1$2"],
   [/\bvision pro\b/gi, "Vision Pro"],
   [/\bsecond\s+dash\s+s\b/gi, "second-S"],
@@ -1279,6 +1368,7 @@ function applyAliases(
   hebrewLatinAliasSources: ReadonlySet<string> = new Set(),
   shouldApplyAlias?: (source: string, text: string) => boolean,
   possessiveAliasSources: ReadonlySet<string> = new Set(),
+  options: { protectedTerms?: string[]; onApplied?: (term: string) => void } = {},
 ): string {
   let result = text;
   const prefixKey = JSON.stringify([[...hebrewLatinAliasSources].sort(), [...possessiveAliasSources].sort()]);
@@ -1323,6 +1413,14 @@ function applyAliases(
   // Once a spoken span has been rewritten, later (shorter) aliases must not
   // rewrite words in its replacement. Offsets refer to the current result.
   const rewrittenSpans: Array<[number, number]> = [];
+  for (const term of options.protectedTerms ?? []) {
+    const pattern = dictionarySurfacePattern(term, term, { clitics: true });
+    for (const match of result.matchAll(pattern)) {
+      const start = match.index;
+      // Shield emitted terms even behind an attached Hebrew prefix (ל-Term).
+      rewrittenSpans.push([start, start + match[0].length]);
+    }
+  }
   for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
     // Gate on what the speaker said as well as the rewritten text: an
@@ -1355,6 +1453,7 @@ function applyAliases(
         }
       }
       rewrittenSpans.push([start, start + replacement.length]);
+      options.onApplied?.(to);
     }
   }
   return result;

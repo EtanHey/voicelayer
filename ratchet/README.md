@@ -31,6 +31,7 @@ The decoder fixture prints stdout for historical adapters and writes segment JSO
 request `-oj -of`. The lock row observes endings from the first recording frame, excluding connection-time
 idle replay while still detecting an ending that races HOLD. [Harness replay receipts](receipts/pr680-harness-replay.generated.json)
 record bug/fix/head values of 1/0/0, 11/0/0, and 2/0/0 for these three rows, all with `error: null`.
+Those receipts measure the historical 2.2.61 repair at `c27e465c`; they do not certify a later port head.
 
 R1 requires harness evidence: a small receive buffer held unread for at least 0.5 s, queued bytes filling that buffer, a sent frame larger than the buffer and maximum recv chunk, and at least one NDJSON frame spanning multiple recv calls. The wire receipt records these values; absent evidence is `pressure not exercised` (FAIL). This proves the exercised pressure/fragmentation seam without observing or modifying product write-return values. R3 waits up to 10 s for a complete update matching the original Ask, then requires 1 s without further received bytes (12 s total bound including margin); missing events, late duplicates, and incomplete frames fail. Setup exceptions clean up the registered worktree and temp root.
 
@@ -82,3 +83,6 @@ uses this provenance once this change reaches the default branch.
 Fresh row logs live under `baseline/<row>/<row>.build.log`; cache hits carry
 JSON receipts only, with the original run id, rather than copied build logs.
 Reusing an output directory is rejected explicitly to avoid stale results.
+
+The 2.3 port has its own [bug/fix/head replay receipts](receipts/pr680-2.3-harness-replay.generated.json),
+measured at `6e0787ddd023d69585e6e6fbf541894de5cdd5da`: all nine contracts met with `error: null`.

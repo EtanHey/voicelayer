@@ -44,7 +44,14 @@ export function createSpeechControl(token: string, handle: (
     if (drain && (params.cmd === "update_gate_drain" || params.cmd === "update_gate_quit"))
       return drain(params.lease, params.cmd === "update_gate_quit" ? "quit" : "drain");
     if (params.wait !== undefined && typeof params.wait !== "boolean") throw new Error("Invalid wait option");
-    const command = parseCommand(JSON.stringify(params));
+    const parsed = parseCommand(JSON.stringify(params));
+    // BARE-STOP: the speech channel controls speech only. Older CLIs send a bare stop; it never ends a capture.
+    const command = parsed?.cmd === "stop" ? { cmd: "stop" as const, scope: "speech" as const, ...(parsed.id ? { id: parsed.id } : {}) } : parsed;
+    if (command?.cmd === "health" && process.env.VOICELAYER_QA_HEALTH === "1") {
+      const health = await handle(command);
+      if (health?.type !== "health") throw new Error("QA health unavailable");
+      return { ...health };
+    }
     if (!command || (command.cmd !== "speak_text" && command.cmd !== "stop")) throw new Error("Invalid speech command");
     let read: LongReadHandle | undefined;
     const ack = await handle(command, (value) => { read = value; });

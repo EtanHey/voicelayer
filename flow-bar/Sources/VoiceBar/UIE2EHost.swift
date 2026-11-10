@@ -47,12 +47,23 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let model: UIE2EModel
     var settings: NSWindow!
     var pill: FloatingPillPanel!
+    /// 2.3 U4: the notch History panel (open state, extend-handle rows) for hit testing and the pill's size.
+    var notchModel: VoiceBarNotchPresentationModel!
     let menu = PillContextMenuController()
     var statusItem: NSStatusItem?
     var statusController: MenuBarStatusItemController?
     var popoverPresenter: MenuBarPopoverPresenter?
     var wizard: NSWindow?
     var contextMenuTracking = false
+    /// 2.3 U2: the same History bridge + surface handoff the app uses (U2 review R1: no separate QA menu path).
+    let historyBridge = VoiceBarNotchHistoryBridge()
+    lazy var surfaceHandoff: VoiceBarNotchSurfaceHandoff = makeSurfaceHandoff()
+    /// QA-only: hold scheduled menu presentations so a test can open History in the gap (wings-u2 queued-cancel).
+    var holdsMenuQueue = false
+    var heldMenuPresentations: [() -> Void] = []
+    private var historyEscapeMonitors: [Any] = []
+    private var firstClickMonitor: Any?
+    private var firstClickRecords: [[String: Any]] = []
 #if VOICEBAR_UIE2E_GATE2245
     var gate2245: UIE2EGate2245?
 #endif
@@ -122,22 +133,142 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         settings.title = "VoiceBar QA Settings"
         settings.isReleasedWhenClosed = false
-        settings.contentView = NSHostingView(rootView: VStack(spacing: 0) {
+        settings.contentView = NSHostingView(rootView: settingsRoot())
+        bindNotchModel(VoiceBarNotchPresentationModel(onLayoutInvalidated: { [weak self] in self?.updatePillLayout() }))
+        let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
+            onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
+            onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 },
+            presentationModel: notchModel,
+            includesPanelOutsets: true,
+            onOpenMicrophonePicker: { [weak self] in self?.surfaceHandoff.requestMenu(.microphone) },
+            onOpenSetupSettings: { [weak self] in self?.openSetupSettings() },
+            historyBridge: historyBridge,
+            onOpenNotchMenu: { [weak self] in self?.surfaceHandoff.requestMenu(.notch) },
+            onCancelNotchMenu: { [weak self] in self?.surfaceHandoff.cancelQueuedMenu() }))
+        bar.activeHitTestProvider = { [weak self] point in
+            guard let self else { return false }
+            return self.panelLayout().containsInteractiveContent(point)
+        }
+        bar.renderedSurfaceHitTestProvider = { [weak self] point in
+            guard let self else { return false }
+            return self.panelLayout().containsVisibleSurface(point)
+        }
+        bar.hoverExpansionHitTestProvider = { [weak self] point in
+            guard let self else { return false }
+            return self.panelLayout().containsHoverExpansion(point)
+        }
+        bar.hoverRetentionHitTestProvider = { [weak self] point in
+            guard let self else { return false }
+            return self.panelLayout().containsHoverRetention(point)
+        }
+        bar.onHoverChanged = { [weak self] hovering in
+            self?.model.voice.setHoveringFromDebouncedPointer(hovering)
+        }
+        bar.wantsLayer = true
+        bar.layer?.masksToBounds = true
+        bar.frame = NSRect(x: 0, y: 0, width: 680, height: 180)
+        pill = FloatingPillPanel(content: bar)
+        // This fixture paints a virtual notch. Use the resident app's configurePanelDragging decision.
+        pill.configureNotchDragging(screenKind: .flatDisplayFallback, allowsFreeDrag: false, mode: model.voice.mode)
+        pill.title = "VoiceBar QA Pill"
+        pill.setFrame(NSRect(x: 100, y: 20, width: 680, height: 180), display: false)
+        model.voice.onPanelLayoutChange = { [weak self] in
+            self?.updatePillLayout()
+        }
+        if let screen = NSScreen.main { Self.fitPill(pill, layout: panelLayout(), in: screen.visibleFrame) }
+        model.onVisibilityChange = { [weak self] hidden in
+            if hidden { self?.pill?.orderOut(nil) } else { self?.pill?.orderFront(nil) }
+        }
+        configureMenu()
+        // wings-u2 first-click check: the pill must never become key from a click while another app is active.
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: pill, queue: .main) {
+            [weak self] _ in MainActor.assumeIsolated { self?.model.receipt("pill-became-key") }
+        }
+        pill.contextMenuProvider = { self.makeContextMenu() }
+        pill.contextMenuHitTestProvider = { _ in true }
+        pill.orderFront(nil)
+        settings.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "wings-u2"
+            || ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS"] != nil {
+            installFirstClickReceipts()
+        }
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS"] != nil {
+            // U4 exercises the normal nonactivating click path with another app frontmost, not Settings' Esc.
+            settings.orderOut(nil)
+            installHistoryEscapeReceipts()
+        }
+        configureStatusItem()
+#if VOICEBAR_UIE2E_GATE2245
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" || ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
+            installHide1VisualMenu()
+        }
+#endif
+
+        model.seedNotchHistoryIfRequested()
+        model.receipt("launch")
+    }
+
+    private func installHistoryEscapeReceipts() {
+        func record(_ event: NSEvent, source: String) {
+            guard event.keyCode == 53 else { return }
+            sandbox.writeObject(["source": source, "eventWindowNumber": event.windowNumber,
+                           "eventTimestamp": event.timestamp,
+                           "eventWindowIsPill": event.window === pill,
+                           "eventWindowIsSettings": event.window === settings,
+                           "voiceBarKeyWindowNumber": NSApp.keyWindow?.windowNumber ?? 0,
+                           "voiceBarIsActive": NSApp.isActive] as [String: Any], file: "u4-escape-target.json")
+        }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { event in
+            MainActor.assumeIsolated { record(event, source: "global") }
+        }) { historyEscapeMonitors.append(monitor) }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in
+            MainActor.assumeIsolated { record(event, source: "local") }
+            return event
+        }) { historyEscapeMonitors.append(monitor) }
+    }
+
+    /// First-click oracle (U2 wings-u2, U4): whether VoiceBar was active, and whether the pill was key, at the moment
+    /// a mouse-down reached the pill. Written by the host at click time, because Finder's state after the click
+    /// cannot tell a product activation from XCUITest's own activation of the app under test.
+    private func installFirstClickReceipts() {
+        firstClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, let pill = self.pill, event.window === pill else { return }
+                self.firstClickRecords.append(["appActive": NSApp.isActive, "pillKey": pill.isKeyWindow,
+                                               "frontmost": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
+                                               "eventTimestamp": event.timestamp])
+                self.sandbox.writeObject(self.firstClickRecords, file: "first-click.json")
+            }
+            return event
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        historyEscapeMonitors.forEach(NSEvent.removeMonitor)
+        historyEscapeMonitors.removeAll()
+        if let firstClickMonitor { NSEvent.removeMonitor(firstClickMonitor) }
+        firstClickMonitor = nil
+    }
+
+    /// Shared with the offscreen layout regression test; constructing this view starts no services.
+    func settingsRoot(pasteFeedback: Bool? = nil, onFixtureFrames: @escaping ([String: CGRect]) -> Void = { _ in }) -> some View {
+        VStack(spacing: 0) {
             HStack {
                 Text("UI ONLY · synthetic data · no audio").font(.caption)
                 ForEach(["idle", "transcribing", "confirmation", "paste-failed", "error", "disconnected"], id: \.self) { name in
                     Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                 }
-            }.padding(6)
+            }.controlSize(.small).padding(2).fixtureFrame("baseline")
 #if VOICEBAR_UIE2E_GATE2245
-            gate2245Controls
+            gate2245Controls.controlSize(.small).fixtureFrame("gate")
 #endif
-            if Bundle.main.object(forInfoDictionaryKey: "UIE2EPasteFeedback") as? Bool == true {
+            if pasteFeedback ?? (Bundle.main.object(forInfoDictionaryKey: "UIE2EPasteFeedback") as? Bool == true) {
                 HStack {
                     ForEach(["paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"], id: \.self) { name in
                         Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                     }
-                }.padding(6)
+                }.controlSize(.small).padding(2).fixtureFrame("paste")
             }
             HStack {
                 ForEach(["speaking", "readback", "finish", "preparing", "selection-replace"], id: \.self) { name in
@@ -147,81 +278,55 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.makeContextMenu().popUp(positioning: nil, at: NSPoint(x: 20, y: 20), in: self.settings.contentView)
                 }.accessibilityIdentifier("qa-fixture-hidden-menu")
             }
-            UIE2ESettings(model: model)
-        })
-        let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
-            onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
-            onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 },
-            includesPanelOutsets: true))
-        bar.activeHitTestProvider = { [weak self] point in
-            guard let self else { return false }
-            return Self.panelLayout(for: self.model.voice).containsInteractiveContent(point)
+            .controlSize(.small).fixtureFrame("silent")
+            // 2.3 U2 wings (scenario wings-u2): each wing state of the 3-wings mock, silently.
+            HStack {
+                ForEach(["launcher", "recording", "setup-error", "speaking-collapsed"], id: \.self) { name in
+                    Button("Wing " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
+                }
+                Button("Hold menu queue") { self.holdsMenuQueue = true; self.model.receipt("menu-queue-held") }
+                    .accessibilityIdentifier("qa-fixture-hold-menu-queue")
+                Button("Release menu queue") { self.releaseMenuQueue() }
+                    .accessibilityIdentifier("qa-fixture-release-menu-queue")
+            }.controlSize(.small).padding(2).fixtureFrame("wings")
+            // Preserve Settings' real minimum viewport for its inner scrollers;
+            // only the small overflow below the fixture rows scrolls here.
+            ScrollView(.vertical) {
+                UIE2ESettings(model: model).frame(height: 620).fixtureFrame("settings")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .fixtureFrame("settings-viewport")
         }
-        bar.renderedSurfaceHitTestProvider = { [weak self] point in
-            guard let self else { return false }
-            return Self.panelLayout(for: self.model.voice).containsVisibleSurface(point)
-        }
-        bar.hoverExpansionHitTestProvider = { [weak self] point in
-            guard let self else { return false }
-            return Self.panelLayout(for: self.model.voice).containsHoverExpansion(point)
-        }
-        bar.hoverRetentionHitTestProvider = { [weak self] point in
-            guard let self else { return false }
-            return Self.panelLayout(for: self.model.voice).containsHoverRetention(point)
-        }
-        bar.onHoverChanged = { [weak self] hovering in
-            self?.model.voice.setHoveringFromDebouncedPointer(hovering)
-        }
-        bar.wantsLayer = true
-        bar.layer?.masksToBounds = true
-        bar.frame = NSRect(x: 0, y: 0, width: 680, height: 180)
-        pill = FloatingPillPanel(content: bar)
-        pill.title = "VoiceBar QA Pill"
-        pill.setFrame(NSRect(x: 100, y: 20, width: 680, height: 180), display: false)
-        model.voice.onPanelLayoutChange = { [weak self] in
-            self?.updatePillLayout()
-        }
-        if let screen = NSScreen.main { Self.fitPill(pill, layout: Self.panelLayout(for: model.voice), in: screen.visibleFrame) }
-        model.onVisibilityChange = { [weak self] hidden in
-            if hidden { self?.pill?.orderOut(nil) } else { self?.pill?.orderFront(nil) }
-        }
-        configureMenu()
-        pill.contextMenuProvider = { self.makeContextMenu() }
-        pill.contextMenuHitTestProvider = { _ in true }
-        pill.orderFront(nil)
-        settings.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        configureStatusItem()
-#if VOICEBAR_UIE2E_GATE2245
-        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" || ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
-            installHide1VisualMenu()
-        }
-#endif
-
-        model.onRunSetup = { [weak self] in self?.openWizard() }
-        model.receipt("launch")
+        .onPreferenceChange(UIE2EFixtureFrames.self, perform: onFixtureFrames)
     }
 
     /// Same operational input, morph canvas and hit configuration used by the production
     /// host. The QA-only capture placement keeps its core stable and away from Settings.
     /// No AppDelegate is constructed and no production services are started.
-    static func panelLayout(for state: VoiceState) -> VoiceBarPanelLayout {
-        let presentation = VoiceBarPresentation.notchPresentation(from: .init(
+    func panelLayout() -> VoiceBarPanelLayout {
+        Self.panelLayout(for: model.voice, historyOpen: notchModel?.isHistoryPanelOpen ?? false,
+                         historyRows: notchModel?.historyRows ?? NotchHistoryMorph.visibleRows)
+    }
+
+    static func panelLayout(for state: VoiceState, historyOpen: Bool = false,
+                            historyRows: Int = NotchHistoryMorph.visibleRows) -> VoiceBarPanelLayout {
+        var input = VoiceBarNotchOperationalInput(
             mode: state.mode,
             showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
+            showsRecordingPause: state.mode == .recording && state.recordingMode == "ptt",
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
             isPlaybackPaused: state.isPlaybackPaused,
-            readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+            readQueueLeadingSlotCount: VoiceBarPresentation.playbackLeadingSlotCount(for: state),
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker,
             queueDepth: state.queueDepth,
             keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
-            hotkeyPhase: state.hotkeyPhase,
+            hotkeyPhase: state.presentedHotkeyPhase,
             statusText: VoiceBarPresentation.liveStatusText(mode: state.mode, transcript: state.transcript,
-                confirmationText: state.confirmationText, hotkeyPhase: state.hotkeyPhase,
+                confirmationText: state.confirmationText, hotkeyPhase: state.presentedHotkeyPhase,
                 hotkeyEnabled: state.hotkeyEnabled, errorMessage: state.errorMessage,
                 transcribingStatusText: state.transcribingStatusText, commandModeState: state.commandModeState,
                 activeClipMarker: state.activeClipMarker),
@@ -230,7 +335,11 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isCollapsed: state.isCollapsed,
             visibleCoreOcclusionInset: 0,
             transientNote: state.selectionFeedbackNote,
-            transientNoteOffersHistory: state.selectionFeedbackNoteOffersHistory))
+            transientNoteOffersHistory: state.selectionFeedbackNoteOffersHistory,
+            showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state))
+        input.isHistoryPanelOpen = historyOpen
+        input.historyRows = historyRows
+        let presentation = VoiceBarPresentation.notchPresentation(from: input)
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(presentation: presentation,
             interactionConfiguration: AppDelegate.notchInteractionConfiguration(
@@ -244,13 +353,79 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             environment: [VoiceBarIsolatedCapturePlacement.topRightEnvironmentVariable: "1"]), display: true)
     }
 
+    /// U2×U4 review: the QA BarView renders this model, so it is fed from VoiceState exactly like the app's
+    /// (`AppDelegate.refreshNotchPresentationModel`), on every fixture and every layout change.
+    func bindNotchModel(_ notchModel: VoiceBarNotchPresentationModel) {
+        self.notchModel = notchModel
+        model.onFixtureApplied = { [weak self] in self?.refreshNotchModel() }
+        refreshNotchModel()
+    }
+
+    func refreshNotchModel() {
+        guard let notchModel else { return }
+        AppDelegate.refreshNotchPresentationModel(notchModel, for: model.voice)
+    }
+
     func updatePillLayout() {
+        refreshNotchModel()
         guard !contextMenuTracking else {
             model.receipt("qa-menu-layout-deferred")
             return
         }
         guard let pill, let screen = NSScreen.main else { return }
-        Self.fitPill(pill, layout: Self.panelLayout(for: model.voice), in: screen.visibleFrame)
+        Self.fitPill(pill, layout: panelLayout(), in: screen.visibleFrame)
+    }
+
+    /// 2.3 U2: the production handoff; only the scheduler can be held (QA) and the outcomes become receipts.
+    private func makeSurfaceHandoff() -> VoiceBarNotchSurfaceHandoff {
+        let handoff = VoiceBarNotchSurfaceHandoff(bridge: historyBridge, presentationModel: notchModel) { [weak self] kind in
+            self?.presentNotchMenu(kind)
+        }
+        handoff.schedule = { [weak self] block in
+            guard let self, holdsMenuQueue else { return DispatchQueue.main.async(execute: block) }
+            heldMenuPresentations.append(block)
+            model.receipt(self.surfaceHandoff.coordinator.queuedMenu == .notch ? "notch-menu-queued" : "microphone-list-queued")
+        }
+        handoff.onOutcome = { [weak self] outcome in
+            switch outcome {
+            case .presented(let kind): self?.model.receipt(kind == .notch ? "notch-menu-open" : "microphone-list-open")
+            case .cancelled(let kind): self?.model.receipt(kind == .notch ? "notch-menu-cancelled" : "microphone-list-cancelled")
+            }
+        }
+        return handoff
+    }
+
+    private func releaseMenuQueue() {
+        holdsMenuQueue = false
+        let held = heldMenuPresentations
+        heldMenuPresentations.removeAll()
+        model.receipt("menu-queue-released")
+        // Run after the release button's own click, as the app's scheduled block would.
+        for block in held { DispatchQueue.main.async(execute: block) }
+    }
+
+    /// The shared handoff's presenter: the production menu under the core or microphone wing (modal).
+    private func presentNotchMenu(_ kind: VoiceBarNotchMenuKind) {
+        guard let pill, let content = pill.contentView else { return }
+        menu.microphonePickerRowsProvider = { [model] in MicrophonePickerRow.rows(from: model.microphone) }
+        let list = kind == .notch ? menu.makeNotchMenu() : menu.makeMicrophonePickerMenu()
+        list.items.first?.setAccessibilityIdentifier(kind == .notch ? "uie2e-notch-menu" : "uie2e-microphone-list")
+        list.delegate = self
+        if kind == .notch { list.minimumWidth = panelLayout().presentation.geometry.topWidth }
+        let origin = AppDelegate.notchMenuOrigin(kind: kind, menuWidth: list.size.width,
+                                                 layout: panelLayout())
+        content.layoutSubtreeIfNeeded()
+        content.displayIfNeeded()
+        list.popUp(positioning: nil, at: content.convert(origin, from: nil), in: content)
+    }
+
+    /// 2.3 U2: the badged gear opens Settings › General scrolled to Permissions.
+    func openSetupSettings() {
+        model.tab = .general
+        model.focus = .permissions
+        model.requestID += 1
+        settings.makeKeyAndOrderFront(nil)
+        model.receipt("setup-settings")
     }
 
     private func makeContextMenu() -> NSMenu {
@@ -327,7 +502,14 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 transcript: UIE2EModel.transcript, onCopy: { self.model.copy(UIE2EModel.transcript) },
                 onSettings: { self.popoverPresenter?.close(); self.settings.makeKeyAndOrderFront(nil); self.model.receipt("popover-settings") },
                 onQuit: { self.model.receipt("popover-quit"); NSApp.terminate(nil) },
-                onRunSetup: { self.popoverPresenter?.close(); self.model.receipt("popover-setup"); self.openWizard() },
+                // A fixture broken step, so the popover's setup row exists; it opens General at Setup.
+                setupAlert: MenuBarSetupAlert(setup: SettingsGeneralSetup(
+                    permissions: SetupPermissionsStep(snapshot: SetupPermissionSnapshot(
+                        microphone: .granted, accessibilityGranted: false, inputMonitoringGranted: true,
+                        hotkeyListenerActive: true)).rows,
+                    hotkeyListenerActive: true, f5CheckedAt: nil, voice: nil)),
+                onFixSetup: { self.popoverPresenter?.close(); self.model.tab = .general; self.model.focus = .permissions
+                    self.model.requestID += 1; self.model.receipt("popover-setup") },
                 onChangeMicrophone: { self.popoverPresenter?.close(); self.model.tab = .general; self.model.requestID += 1; self.model.receipt("popover-microphone") }))
         }
         popoverPresenter = presenter
@@ -344,6 +526,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func configureMenu() {
+        menu.updateStatusProvider = { VoiceBarVersionStatus.latest.menuMessage }
         menu.transcriptProvider = { UIE2EModel.transcript }
         menu.recentTranscriptionEntriesProvider = { [self.model.recent] }
         menu.defaultMicrophoneNameProvider = { "QA microphone A" }
@@ -374,17 +557,30 @@ final class UIE2EModel {
     var hidden = false { didSet { onVisibilityChange?(hidden) } }
     var onVisibilityChange: ((Bool) -> Void)?
     var tab: SettingsTab = .general
+    var focus: SettingsFocus?
     var requestID = 0
     var events: [String] = []
     var commands: [[String: Any]] = []
     var selectionText = "QA original selection"
     private var holdsFixturePresentation = false
-    var onRunSetup: () -> Void = {}
+    /// The QA host refreshes its notch presentation model after every fixture (U2×U4 review).
+    var onFixtureApplied: () -> Void = {}
     var residency = "loaded"
     var processing: [String: Any] = [:]
     var speech: [String: Any] = [:]
     var microphoneOrder = ["a", "b"]
     var recent: RecentTranscriptionEntry { .init(text: Self.transcript, createdAt: Date(timeIntervalSince1970: 1_790_000_000)) }
+
+    /// 2.3 U4 native test only (`VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS=N`): N synthetic dictations in the notch History
+    /// panel, enough for its extend handle to reach 12 rows. Unset (every scenario run), nothing changes.
+    func seedNotchHistoryIfRequested() {
+        guard let raw = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_NOTCH_HISTORY_ROWS"],
+              let count = Int(raw), (1 ... 40).contains(count) else { return }
+        voice.recentTranscriptionEntries = (0 ..< count).map { index in
+            RecentTranscriptionEntry(text: "QA notch row \(index + 1)", recordingPath: sandbox.root
+                .appendingPathComponent("notch-\(index).wav").path, createdAt: Date().addingTimeInterval(Double(-60 * index)))
+        }
+    }
 
     init(sandbox: UIE2ESandbox) {
         self.sandbox = sandbox
@@ -416,10 +612,13 @@ final class UIE2EModel {
             createdAt: Date(timeIntervalSince1970: 1_790_000_000), transcript: Self.transcript,
             audioPath: sandbox.root.appendingPathComponent("fixture.wav"), durationMs: 5000,
             modelLabel: "QA recognizer", performanceEffort: .accurate, inputDeviceLabel: "QA microphone A")
-        let older = SettingsHistoryEntry(id: "qa-older", dayKey: entry.dayKey, recordingID: "qa-older",
-            createdAt: entry.createdAt.addingTimeInterval(-120), transcript: "QA older transcript",
+        // V27: the older row is on the day before, so the newest (selected) row is the last of its day, directly
+        // above the next day's header: the row Etan saw clipped.
+        let older = SettingsHistoryEntry(id: "qa-older", dayKey: "2026-10-14", recordingID: "qa-older",
+            createdAt: entry.createdAt.addingTimeInterval(-86_400), transcript: "QA older transcript",
             audioPath: sandbox.root.appendingPathComponent("older.wav"))
-        return .init(groups: [.init(dayKey: entry.dayKey, date: entry.createdAt, entries: [entry, older])], hasMore: true)
+        return .init(groups: [.init(dayKey: entry.dayKey, date: entry.createdAt, entries: [entry]),
+                              .init(dayKey: older.dayKey, date: older.createdAt, entries: [older])], hasMore: true)
     }
     var askHistory: SettingsAskHistoryPage {
         let entry = SettingsAskHistoryEntry(id: "qa-ask", dayKey: "2026-10-15", askID: "qa-ask", createdAt: Date(timeIntervalSince1970: 1_790_000_000),
@@ -428,11 +627,12 @@ final class UIE2EModel {
     }
     func historyPage(limit: Int) -> SettingsHistoryPage {
         receipt("history-page:" + String(limit))
-        guard limit > 100, let group = history.groups.first else { return history }
+        guard limit > 100, let group = history.groups.last else { return history }
         let entry = SettingsHistoryEntry(id: "qa-loaded", dayKey: group.dayKey, recordingID: "qa-loaded",
             createdAt: group.date.addingTimeInterval(-240), transcript: "QA loaded transcript",
             audioPath: sandbox.root.appendingPathComponent("loaded.wav"))
-        return .init(groups: [.init(dayKey: group.dayKey, date: group.date, entries: group.entries + [entry])], hasMore: false)
+        return .init(groups: history.groups.dropLast() + [.init(dayKey: group.dayKey, date: group.date,
+                                                              entries: group.entries + [entry])], hasMore: false)
     }
     func askHistoryPage(limit: Int) -> SettingsAskHistoryPage {
         receipt("ask-history-page:" + String(limit))
@@ -556,6 +756,7 @@ final class UIE2EModel {
             if name == "readback" { voice.handleEvent(["type": "state", "state": "idle", "source": "playback"]) }
         case "finish": voice.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         case "idle":
+            voice.setSetupMissingPermissions([])
             // Preserve the existing fixture contract: every idle reset restores
             // the synthetic health/connection baseline before clearing playback.
             refresh()
@@ -572,10 +773,50 @@ final class UIE2EModel {
         case "paste-failed": voice.mode = .idle; voice.confirmationText = "Paste failed. Click the text field and press Shift+F5."
         case "error": voice.handleEvent(["type": "error", "message": "QA fixture failure", "recoverable": true])
         case "transcribing": voice.handleEvent(["type": "state", "state": "transcribing"])
+        // 2.3 U2 wing states. The launcher and setup-error fixtures hold the hover presentation (a real pointer
+        // exit must not collapse them before their frame is measured); recording is a state event only, so no
+        // device opens.
+        case "launcher", "setup-error":
+            refresh(); voice.handleEvent(["type": "state", "state": "idle"])
+            voice.setSetupMissingPermissions(name == "setup-error" ? [.accessibility] : [])
+            voice.isHovering = true
+            voice.beginModalInteraction(); holdsFixturePresentation = true
+        case "recording":
+            voice.setSetupMissingPermissions([])
+            voice.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
+        case "speaking-collapsed":
+            voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
+                "text": "First QA item\nSecond QA item", "readback_id": "qa-readback"])
+            voice.dismissTeleprompter()
         case "disconnected": voice.setConnectionStatus(false)
         default: refresh(); voice.mode = .idle
         }
+        if ["launcher", "setup-error", "recording", "transcribing", "speaking-collapsed"].contains(name) {
+            // 2.3 U2: the wing widths the production presentation resolves for this state (wings-u2 reads it).
+            let geometry = UIE2EHost.panelLayout(for: voice).presentation.geometry
+            sandbox.writeObject(["fixture": name, "leadingWingWidth": Double(geometry.leadingWingWidth),
+                                 "trailingWingWidth": Double(geometry.trailingWingWidth),
+                                 "fixedWingWidth": Double(VoiceBarNotchContract.fixedWingWidth),
+                                 "setupNeedsAttention": voice.setupNeedsAttention], file: "wings.json")
+        }
         receipt("fixture:" + name)
+        onFixtureApplied()
+    }
+}
+
+private struct UIE2EFixtureFrames: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private extension View {
+    func fixtureFrame(_ name: String) -> some View {
+        background(GeometryReader { geometry in
+            Color.clear.preference(key: UIE2EFixtureFrames.self,
+                value: [name: geometry.frame(in: .global)])
+        })
     }
 }
 
@@ -612,8 +853,8 @@ private struct UIE2ESettings: View {
             onPasteHistoryTranscript: { model.pasteHistoryTranscript($0) }, onRetranscribeHistoryEntry: { _ in model.receipt("history-retranscribe") },
             onRevealHistoryFile: { _ in model.receipt("history-finder") },
             footerPresentation: { .resolve(isConnected: model.voice.isConnected, mode: model.voice.mode, captureLive: false,
-                                            errorMessage: nil, remoteSTTConfigured: false) }, onRunSetup: { model.receipt("run-setup"); model.onRunSetup() },
-            tabRequest: .init(tab: model.tab, id: model.requestID), initialDictionaryPreview: model.preview,
+                                            errorMessage: nil, remoteSTTConfigured: false) },
+            tabRequest: .init(tab: model.tab, focus: model.focus, id: model.requestID), initialDictionaryPreview: model.preview,
             onSelectedTabChange: { model.tab = $0 },
             historyPlayback: .init(start: { _ in fatalError("UIE2E forbids playback") }, stop: {}))
     }

@@ -96,7 +96,10 @@ final class NotchIconButtonTooltipTests: XCTestCase {
                                  createdAt: Date().addingTimeInterval(-60)),
         RecentTranscriptionEntry(text: "Another synthetic row.", recordingPath: "/synthetic/b.wav",
                                  createdAt: Date().addingTimeInterval(-7200)),
+        RecentTranscriptionEntry(text: NotchIconButtonTooltipTests.longRow, recordingPath: "/synthetic/c.wav",
+                                 createdAt: Date().addingTimeInterval(-9000)),
     ]
+    private static let longRow = "A synthetic dictation long enough that its one line cannot show every word in the notch."
 
     private func bar(_ state: VoiceState) -> BarView {
         BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {})
@@ -105,21 +108,25 @@ final class NotchIconButtonTooltipTests: XCTestCase {
     func testIdleLauncherButtons() throws {
         let s = state { $0.isHovering = true }
         assertEveryControlHasATooltip("idle", try mount(bar(s)),
-                                     expecting: ["Start voice recording", "History", "Settings"])
+                                     // 2.3 U2: the mic's tooltip names its shortcut (3-wings mock); the chevron joins it.
+                                     expecting: ["Start dictation (F5)", "Choose microphone", "History", "Settings"])
     }
 
     /// The dropdown open: the wing buttons keep their tooltips and every row action (Copy, Paste,
-    /// Re-transcribe) has one too (R0856-09).
+    /// Transcribe again) has one too (R0856-09).
     func testHistoryDropdownButtons() throws {
         let s = state { state in
             state.isHovering = true
             state.recentTranscriptionEntries = rows
         }
         let mounted = try mount(bar(s).presentingHistoryForTesting().forcingHistoryHover(0))
+        // 2.3 lane U4: no footer. Each row's text is its own open button, labelled by that text; a row too long for
+        // its line carries its whole text as a tooltip (V12).
         assertEveryControlHasATooltip("history", mounted, expecting: [
-            "Start voice recording", "Close history", "Settings",
-            "Copy", "Paste into the app you were using", "Re-transcribe",
-        ], textButtons: 1) // the "Open History…" footer is its own label
+            // 2.3 U2 (mic tooltip + chevron) × U4 (row actions, the long row's clipped-text tooltip).
+            "Start dictation (F5)", "Choose microphone", "Close history", "Settings",
+            "Copy", "Paste into the app you were using", "Transcribe again", Self.longRow,
+        ], textButtons: 2)
     }
 
     func testRecordingButtons() throws {
@@ -128,10 +135,31 @@ final class NotchIconButtonTooltipTests: XCTestCase {
                                      expecting: ["Stop recording", "Cancel recording"])
     }
 
+    /// Recording pause: a PTT take gets Pause beside Stop, with its own hit area clear of Stop and ✕.
+    func testPTTRecordingPauseButtonHasItsOwnHitArea() throws {
+        let s = state { $0.handleEvent(["type": "state", "state": "recording", "mode": "ptt", "capture_id": 4]) }
+        let mounted = try mount(bar(s))
+        assertEveryControlHasATooltip("recording ptt", mounted,
+                                     expecting: ["Stop recording", "Pause recording", "Cancel recording"])
+        func frame(_ text: String) throws -> CGRect {
+            let tip = try XCTUnwrap(mounted.tooltips.first { $0.text == text }, text)
+            return try XCTUnwrap(mounted.controls.first { $0.insetBy(dx: -1, dy: -1).contains(CGPoint(x: tip.frame.midX, y: tip.frame.midY)) }, text)
+        }
+        let stop = try frame("Stop recording"), pause = try frame("Pause recording"), cancel = try frame("Cancel recording")
+        XCTAssertFalse(pause.intersects(stop), "Pause \(pause) overlaps Stop \(stop)")
+        XCTAssertFalse(pause.intersects(cancel), "Pause \(pause) overlaps Cancel \(cancel)")
+        XCTAssertEqual(abs(pause.midX - stop.midX) < abs(cancel.midX - stop.midX), true, "Pause sits next to Stop")
+
+        s.setRecordingPaused(true)
+        assertEveryControlHasATooltip("recording ptt paused", try mount(bar(s)),
+                                     expecting: ["Stop recording", "Resume recording", "Cancel recording"])
+    }
+
     func testTranscribingAndErrorButtons() throws {
         let transcribing = state { $0.handleEvent(["type": "state", "state": "transcribing"]) }
         assertEveryControlHasATooltip("transcribing", try mount(bar(transcribing)),
-                                     expecting: ["Cancel transcription"])
+                                     // 2.3 U2: no third control while transcribing; History and Settings stay live.
+                                     expecting: ["History", "Settings"])
         let error = state { $0.handleEvent(["type": "error", "message": "Synthetic diagnostic for the tooltip test."]) }
         assertEveryControlHasATooltip("error", try mount(bar(error)),
                                      expecting: ["Synthetic diagnostic for the tooltip test.", "Dismiss error",
@@ -143,6 +171,7 @@ final class NotchIconButtonTooltipTests: XCTestCase {
             $0.handleEvent(["type": "state", "state": "speaking", "text": "Synthetic teleprompter text.",
                             "playback_id": "tooltips", "generation": 1])
         }
-        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking"])
+        // U5: each Teleprompter A word is a text-labelled "Jump to:" button, not an icon-only control.
+        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking", "Drag to show more or fewer lines"], textButtons: 3)
     }
 }

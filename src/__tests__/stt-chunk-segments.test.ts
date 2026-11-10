@@ -249,8 +249,7 @@ describe("chunk transcript segment stitching", () => {
     expect(JSON.stringify(original)).toBe(before);
   });
 
-  // Hosted replay reached 8.8 s; 2x headroom rounded up keeps all 500 trials.
-  test("emits monotonic segments for 500 tiled random chunk groupings", () => {
+  describe("500 tiled random chunk groupings", () => {
     let seed = 12_345;
     const random = () =>
       ((seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff) /
@@ -281,24 +280,33 @@ describe("chunk transcript segment stitching", () => {
       };
     };
 
-    for (let trial = 0; trial < 500; trial++) {
-      const chunks = [];
-      for (let startSeconds = 0; startSeconds < 140; startSeconds += 25) {
-        chunks.push(buildChunk(startSeconds));
-        if (startSeconds + 30 >= 140) break;
-      }
-      const merged = mergeChunkTranscriptsWithSegments(chunks);
-      expect(merged.text).toBe(
-        Array.from({ length: 140 }, (_, index) => word(index)).join(" "),
-      );
-      expect(merged.segments.length).toBeGreaterThan(0);
-      for (let index = 1; index < merged.segments.length; index++) {
-        expect(merged.segments[index]!.startS).toBeGreaterThanOrEqual(
-          merged.segments[index - 1]!.endS,
-        );
-      }
+    const expectedText = Array.from({ length: 140 }, (_, index) => word(index)).join(" ");
+    // Keep the original PRNG stream across all 500 trials, independent of test
+    // execution order. Each 50-trial replay keeps Bun's default timeout.
+    for (let firstTrial = 0; firstTrial < 500; firstTrial += 50) {
+      const groupings = Array.from({ length: 50 }, () => {
+        const chunks = [];
+        for (let startSeconds = 0; startSeconds < 140; startSeconds += 25) {
+          chunks.push(buildChunk(startSeconds));
+          if (startSeconds + 30 >= 140) break;
+        }
+        return chunks;
+      });
+
+      test(`emits monotonic segments for trials ${firstTrial + 1}-${firstTrial + 50}`, () => {
+        for (const chunks of groupings) {
+          const merged = mergeChunkTranscriptsWithSegments(chunks);
+          expect(merged.text).toBe(expectedText);
+          expect(merged.segments.length).toBeGreaterThan(0);
+          for (let index = 1; index < merged.segments.length; index++) {
+            expect(merged.segments[index]!.startS).toBeGreaterThanOrEqual(
+              merged.segments[index - 1]!.endS,
+            );
+          }
+        }
+      });
     }
-  }, 20_000);
+  });
 
   test("replays every captured M1 segment stream through all real seams", () => {
     // The fixture retains the real verbose_json segment grouping and timing,
@@ -329,7 +337,7 @@ describe("chunk transcript segment stitching", () => {
     }
   });
 
-  test("keeps the chunked escape hatch on json with no returned segments", async () => {
+  test("requests seam timing with outro off and uses bounded fallback without it", async () => {
     process.env[OUTRO_FLAG] = "0";
     delete process.env[SMART_CHUNKS_FLAG];
     const wavPath = join(TEST_TMP, "stt-segments-chunked-off.wav");
@@ -351,7 +359,7 @@ describe("chunk transcript segment stitching", () => {
 
     const result = await backend.transcribe(wavPath);
 
-    expect(requestedSegments).toEqual([false, false, false, false]);
+    expect(requestedSegments).toEqual([true, true, true, true]);
     expect(result.text).toBe("alpha bridge middle final done");
     expect(result.segments).toBeUndefined();
     expect(result.segmentsAudioSha256).toBeUndefined();

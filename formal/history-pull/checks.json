@@ -1,0 +1,69 @@
+{
+  "module": "HistoryPull",
+  "sourceBaseline": "531a261ede5d11466920e2249dac0b4045c33c64",
+  "sources": [
+    "flow-bar/Sources/VoiceBarUI/BarView.swift",
+    "flow-bar/Sources/VoiceBarUI/NotchHistoryMorph.swift"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Old": {
+      "role": "mutant",
+      "target": "NoClippedPanel",
+      "kind": "invariant"
+    },
+    "MutantNoGeneration": {
+      "role": "mutant",
+      "target": "NoClippedPanel",
+      "kind": "invariant"
+    },
+    "MutantNoSlop": {
+      "role": "mutant",
+      "target": "ClickNeverMoves",
+      "kind": "invariant"
+    },
+    "MutantNoCancel": {
+      "role": "mutant",
+      "target": "NoStrandedPanel",
+      "kind": "invariant"
+    },
+    "MutantNoSnap": {
+      "role": "mutant",
+      "target": "NoStrandedRows",
+      "kind": "invariant"
+    },
+    "MutantWholeRow": {
+      "role": "mutant",
+      "target": "NoStrandedRows",
+      "kind": "invariant"
+    },
+    "MutantNoPublish": {
+      "role": "mutant",
+      "target": "HitMatchesRows",
+      "kind": "invariant"
+    },
+    "MutantNoPendingCancel": {
+      "role": "mutant",
+      "target": "NoStalePress",
+      "kind": "invariant"
+    },
+    "MutantSeedFromTarget": {
+      "role": "mutant",
+      "target": "NoGrabJump",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "NoClippedPanel",
+    "ClickNeverMoves",
+    "NoStrandedPanel",
+    "NoStrandedRows",
+    "HitMatchesRows",
+    "NoStalePress",
+    "NoGrabJump"
+  ]
+}
