@@ -21,8 +21,8 @@ voicebar_sample_launchd() {
   local output line state="" pid="" owners executable
   output="$(launchctl print "gui/$(id -u)/com.voicelayer.voicebar" 2>/dev/null)" || return 1
   while IFS= read -r line; do
-    if [[ "$line" =~ ^[[:space:]]*state[[:space:]]*=[[:space:]]*(.*)$ ]]; then state="${BASH_REMATCH[1]}"; fi
-    if [[ "$line" =~ ^[[:space:]]*pid[[:space:]]*=[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then pid="${BASH_REMATCH[1]}"; fi
+    if [[ -z "$state" && "$line" =~ ^[[:space:]]*state[[:space:]]*=[[:space:]]*(.*)$ ]]; then state="${BASH_REMATCH[1]}"; fi
+    if [[ -z "$pid" && "$line" =~ ^[[:space:]]*pid[[:space:]]*=[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then pid="${BASH_REMATCH[1]}"; fi
   done <<< "$output"
   [[ "$state" == running && "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
   owners="$(pgrep -U "$(id -u)" -x VoiceBar)" || return 1
