@@ -3,8 +3,8 @@
   "kind": "temporal",
   "target": "OverlapPastes",
   "status": "EXPECTED_FAIL",
-  "generated": 327568,
-  "distinct": 14924,
+  "generated": 312814,
+  "distinct": 14522,
   "trace": [
     "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"init\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"none\" ]",
     "s = [ stage |-> [A |-> \"recording\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"socket\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]",
