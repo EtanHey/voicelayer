@@ -166,6 +166,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 MicrophoneDeviceManager.selectInputDevice(id: deviceID)
         }
     )
+    private lazy var responsivenessWatchdog = RuntimeResponsivenessWatchdog(loop: "main") { acknowledgement in
+        let loop = CFRunLoopGetMain()!
+        CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue, acknowledgement)
+        CFRunLoopWakeUp(loop)
+    }
     private var microphonePriorityTimer: Timer?
     private let pillContextMenuController = PillContextMenuController()
     private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
@@ -642,6 +647,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        responsivenessWatchdog.start()
         signal(SIGPIPE, SIG_IGN)
         NSLog("[VoiceBar] SIGPIPE ignored process-wide")
         signal(SIGTERM, SIG_IGN)
@@ -967,6 +973,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     private func performTerminationCleanup() {
+        responsivenessWatchdog.stop()
         stopPermissionHealth()
         memoryPressureSource?.cancel()
         memoryPressureSource = nil
@@ -3889,6 +3896,10 @@ func shouldIgnoreHotkeyEvent(
 struct VoiceBarApp {
     @MainActor
     static func main() {
+        if CommandLine.arguments.dropFirst().elementsEqual(["--version"]) {
+            print("VoiceBar \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown") \(Bundle.main.object(forInfoDictionaryKey: "GitCommit") as? String ?? "unknown")")
+            return
+        }
         #if VOICEBAR_QA
             // UI-only fixture dependencies: never initialize the resident app's audio,
             // hotkeys, daemon supervisor, singleton election, or socket cleanup.
@@ -3906,6 +3917,10 @@ struct VoiceBarApp {
                 "[VoiceBar] SOCKET_ISOLATION_REFUSED: non-resident/QA build requires isolated VoiceBar and MCP socket paths"
             )
             exit(EXIT_FAILURE)
+        }
+        if VoiceBarLaunchCustody.needsHandoff(bundlePath: Bundle.main.bundleURL.path,
+                singleton: VoiceLayerPaths.enforcesSingletonInstance, service: environment["XPC_SERVICE_NAME"]) {
+            exit(VoiceBarLaunchCustody.handoff() ? EXIT_SUCCESS : EXIT_FAILURE)
         }
         let application = NSApplication.shared
         let appDelegate = AppDelegate()

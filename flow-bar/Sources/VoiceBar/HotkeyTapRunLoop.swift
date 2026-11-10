@@ -25,6 +25,7 @@ final class HotkeyActivitySnapshot {
 /// Cleanup runs on the owning thread, whose closure retains the callback context until removal.
 final class HotkeyTapRunLoop {
     private var runLoop: CFRunLoop?
+    private var responsivenessWatchdog: RuntimeResponsivenessWatchdog?
 
     func start(install: @escaping (CFRunLoop) -> Void, cleanup: @escaping (CFRunLoop) -> Void) -> Bool {
         precondition(Thread.isMainThread)
@@ -48,6 +49,12 @@ final class HotkeyTapRunLoop {
         thread.start()
         // Startup only: the event callback never waits on this semaphore.
         ready.wait()
+        let loop = runLoop!
+        responsivenessWatchdog = RuntimeResponsivenessWatchdog(loop: "event_tap") { acknowledgement in
+            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue, acknowledgement)
+            CFRunLoopWakeUp(loop)
+        }
+        responsivenessWatchdog?.start()
         return true
     }
 
@@ -64,6 +71,8 @@ final class HotkeyTapRunLoop {
     }
 
     func stop() {
+        responsivenessWatchdog?.stop()
+        responsivenessWatchdog = nil
         guard let runLoop else { return }
         self.runLoop = nil
         CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { CFRunLoopStop(runLoop) }
