@@ -55,15 +55,14 @@ final class WingsU2Tests: XCTestCase {
         }
     }
 
-    /// 2.3 N1 (Etan, QA round 1, S2-F3): recording keeps Stop + Cancel in the fixed left wing; the right wing grows
-    /// to hold the live time and 2.2.61's level meter, the meter centred in the visible wing.
+    /// F2 centres the time/meter row and balances Stop + Cancel with symmetric recording wings.
     func testRecordingKeepsTheFixedLeftWingAndARightWingThatHugsItsPayload() {
         let recording = resolve(.recording)
         XCTAssertEqual(recording.visualState, .recording)
-        XCTAssertEqual(recording.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 92, accuracy: 0.001)
         XCTAssertEqual(recording.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth,
                        accuracy: 0.001)
-        XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 120, accuracy: 0.001)
+        XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 92, accuracy: 0.001)
     }
 
     /// T1/T5/T6/T7 (Etan QA 2026-11-09): reading puts speed, Back, Pause and Forward in the left wing, and lays the
@@ -78,7 +77,7 @@ final class WingsU2Tests: XCTestCase {
                              resolve(.speaking, isTeleprompterDismissed: true, readQueueLeadingSlotCount: transport)] {
             XCTAssertEqual(presentation.geometry.leadingWingWidth, VoiceBarPresentation.readingTransportWingWidth,
                            accuracy: 0.001)
-            XCTAssertEqual(presentation.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth,
+            XCTAssertEqual(presentation.geometry.trailingWingWidth, 120,
                            accuracy: 0.001)
         }
     }
@@ -91,8 +90,8 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertGreaterThan(resolve(.speaking, isTeleprompterDismissed: true, readQueueLeadingSlotCount: 3)
             .geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
         XCTAssertEqual(resolve(.recording, showsRecordingHold: true).geometry.trailingWingWidth,
-                       VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001,
-                       "the hold control never widens the right wing")
+                       VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl, accuracy: 0.001,
+                       "the hold control grows both recording wings symmetrically")
     }
 
     func testTheReadingTimeAndStopFillTheFixedRightWingExactly() {
@@ -163,6 +162,7 @@ final class WingsU2Tests: XCTestCase {
     /// D2: the list displays the priority order; every row and "Microphone priority…" opens Settings › Microphone
     /// priority, and nothing in it writes the macOS default input.
     func testTheMicrophoneListIsADisplayOfThePriorityListThatLeadsToSettings() {
+        _ = NSApplication.shared
         let controller = PillContextMenuController()
         controller.microphonePickerRowsProvider = {
             [MicrophonePickerRow(label: "MacBook Pro Microphone", isNextDictation: true),

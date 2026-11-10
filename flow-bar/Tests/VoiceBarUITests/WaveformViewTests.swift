@@ -37,7 +37,7 @@ final class WaveformViewTests: XCTestCase {
 
     /// 2.3 U2: the transcribing right wing is the fixed 73.5 pt wing (History + Settings). T5/T7 (Etan QA 2026-11-09:
     /// "the waveform is blue but is consistent with the same waveform and time stuff that we have when recording"):
-    /// the reading right wing is the recording wing (time + meter), clearing the physical notch the same way.
+    /// reading keeps its time/meter wing and physical-notch clearance when F2 narrows recording.
     func testTranscribingIsTheFixedWingAndReadingIsTheRecordingWingAtEveryCalibration() {
         let processing = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .transcribing, statusText: "Transcribing")
@@ -61,8 +61,8 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(speakingSlot.coreInset, VoiceBarNotchContract.fixedWingContentInset)
         XCTAssertEqual(speakingSlot.outerInset, VoiceBarNotchContract.fixedWingContentInset)
         XCTAssertEqual(speaking.geometry.trailingWingWidth,
-                       VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: calibratedInset),
-                       "the reading wing is the recording wing at every calibration")
+                       120 + calibratedInset,
+                       "reading retains its own payload width at every calibration")
         XCTAssertLessThanOrEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         XCTAssertLessThanOrEqual(
             WaveformLayout.viewportWidth,

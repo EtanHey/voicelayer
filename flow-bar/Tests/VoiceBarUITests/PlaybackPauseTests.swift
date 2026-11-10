@@ -311,8 +311,8 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(pausedEvent())
         let paused = presentation(for: state)
         XCTAssertEqual(paused.visualState, .compactStatus)
-        // T5/T7 (Etan QA 2026-11-09): paused keeps the recording-style wing (time, meter, Stop in its outer region).
-        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        // Reading keeps its time/meter/Stop wing when paused, independent of the narrower recording row.
+        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarPresentation.readingTrailingWingWidth(visibleCoreOcclusionInset: 0))
 
         resume(state, offset: 2500)
         XCTAssertFalse(state.isPlaybackPaused)

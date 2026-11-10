@@ -45,7 +45,8 @@ final class UIE2EHostNotchModelTests: XCTestCase {
         // on a VAD take (73.5 + 4 + 22 = 99.5 pt).
         XCTAssertEqual(model.presentation.geometry.leadingWingWidth,
                        VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
-        XCTAssertEqual(model.presentation.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(model.presentation.geometry.trailingWingWidth,
+                       VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
         // One envelope feed: the QA host resolves the same geometry from the same state.
         let host = UIE2EHost.panelLayout(for: state).presentation.geometry
         XCTAssertEqual(host.leadingWingWidth, model.presentation.geometry.leadingWingWidth, accuracy: 0.001)

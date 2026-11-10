@@ -11,6 +11,7 @@ final class ReviewerArchiveRecentsProbeTests: XCTestCase {
             recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { entries }, recentTranscriptionEntriesSaver: { _ in }
         )
+        state.isConnected = true
         state.frontmostAppProvider = { nil }
         return state
     }

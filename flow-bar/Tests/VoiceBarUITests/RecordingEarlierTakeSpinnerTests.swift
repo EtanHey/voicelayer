@@ -13,14 +13,14 @@ final class RecordingEarlierTakeSpinnerTests: XCTestCase {
 
     func testTheLeftWingGainsOneOuterSlotForTheSpinner() {
         let slot = VoiceBarNotchContract.material.compactControlSpacing + VoiceBarNotchContract.material.compactControlSize
-        XCTAssertEqual(resolve(earlier: false).geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth, accuracy: 0.001)
+        XCTAssertEqual(resolve(earlier: false).geometry.leadingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001)
         XCTAssertEqual(resolve(earlier: true).geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth + slot, accuracy: 0.001)
         let both = resolve(earlier: true, hold: true).geometry
         XCTAssertEqual(both.leadingWingWidth, VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl + slot, accuracy: 0.001)
         XCTAssertLessThanOrEqual(both.leadingWingWidth, 132)
         XCTAssertLessThanOrEqual(both.leadingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
-        // The right wing and every other state are untouched.
-        XCTAssertEqual(resolve(earlier: true).geometry.trailingWingWidth, resolve(earlier: false).geometry.trailingWingWidth)
+        // The paired recording wings grow together; other states are untouched.
+        XCTAssertEqual(resolve(earlier: true).geometry.trailingWingWidth, resolve(earlier: true).geometry.leadingWingWidth)
         XCTAssertEqual(resolve(earlier: true, mode: .transcribing).geometry, resolve(earlier: false, mode: .transcribing).geometry)
     }
 

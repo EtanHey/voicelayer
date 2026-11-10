@@ -16,6 +16,7 @@ final class RecordingEarlierTakeResidentTests: XCTestCase {
 
     func testTheSpinnerSlotCollapsesInTheResidentModelAfterCompletionCancelOrFailure() {
         let fixed = VoiceBarNotchContract.fixedWingWidth
+        let recordingWidth = VoiceBarNotchContract.recordingTrailingWingWidth
         let slot = VoiceBarNotchContract.material.compactControlSpacing + VoiceBarNotchContract.material.compactControlSize
         let terminal: [(String, [[String: Any]])] = [
             ("completion", []),
@@ -46,7 +47,7 @@ final class RecordingEarlierTakeResidentTests: XCTestCase {
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             XCTAssertEqual(state.mode, .recording, "\(name): B is still recording")
             XCTAssertGreaterThanOrEqual(callbacks, 1, "\(name): the layout change reaches the resident model")
-            XCTAssertEqual(model.presentation.geometry.leadingWingWidth - fixed, 0, accuracy: 0.001,
+            XCTAssertEqual(model.presentation.geometry.leadingWingWidth - recordingWidth, 0, accuracy: 0.001,
                            "\(name): no resident empty slot")
             XCTAssertFalse(VoiceBarPresentation.showsEarlierTakeProcessing(for: state), name)
         }

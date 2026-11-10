@@ -120,11 +120,10 @@ final class WingsU2HostTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .recording)
-        // 2.3 N1: the right wing hugs the time, the microphone and the level meter; it holds no control. Recording
-        // pause: Pause takes the third left-wing slot, as Lock does on a VAD take, so the left wing is the
-        // three-control width.
+        // Pause takes the third left-wing slot, as Lock does on a VAD take. F2 balances both wings
+        // at that three-control width; the right wing still holds no control.
         assertFixedWings(host, leading: 3, trailing: 0,
-                         trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+                         trailingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl,
                          leadingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
         // From the core outward: Cancel, then Pause, then Stop.
         firstClick(host, control: 0)
@@ -166,7 +165,7 @@ final class WingsU2HostTests: XCTestCase {
         state.sendCommand = { if let cmd = $0["cmd"] as? String { sent.append(cmd) } }
         let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 2))
         XCTAssertEqual(host.layout.presentation.visualState, .compactStatus)
-        assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+        assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: 120,
                          leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
         assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Pause speech", "Previous read", "Playback speed",
                                                      "Stop speaking", "Show teleprompter"])
@@ -188,7 +187,7 @@ final class WingsU2HostTests: XCTestCase {
         var sent: [String] = []
         state.sendCommand = { if let cmd = $0["cmd"] as? String { sent.append(cmd) } }
         let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 1))
-        assertFixedWings(host, leading: 4, trailing: 1, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+        assertFixedWings(host, leading: 4, trailing: 1, trailingWidth: 120,
                          leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
         assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Resume speech", "Previous read", "Playback speed",
                                                      "Stop speaking"])
@@ -214,7 +213,7 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertEqual(host.layout.presentation.visualState, .teleprompter)
         let geometry = host.layout.presentation.geometry
         XCTAssertEqual(geometry.leadingWingWidth, VoiceBarPresentation.readingTransportWingWidth, accuracy: 0.001)
-        XCTAssertEqual(geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001)
+        XCTAssertEqual(geometry.trailingWingWidth, 120, accuracy: 0.001)
         let pause = host.controlRects[BarViewClickabilityTests.pauseIndex]
         let point = NSPoint(x: pause.midX, y: pause.midY)
         guard let target = host.host.hitTest(point), let down = event(.leftMouseDown, at: point, in: host.panel) else {

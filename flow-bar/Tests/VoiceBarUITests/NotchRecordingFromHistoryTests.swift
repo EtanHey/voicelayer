@@ -41,9 +41,8 @@ final class NotchRecordingFromHistoryTests: XCTestCase {
     }
 
     func testAGrowingWingNeverWaitsForTheBodyToEmpty() {
-        // 2.3 U2: History and recording share the fixed 73.5 pt left wing, so Stop + Cancel never outgrow it; only
-        // an Ask's hold lock (a third control) still grows the wing.
-        XCTAssertEqual(geometry(.init(mode: .recording)).leadingWingWidth, history.leadingWingWidth)
+        // Symmetric recording wings grow past History even before the third control is needed.
+        XCTAssertGreaterThan(geometry(.init(mode: .recording)).leadingWingWidth, history.leadingWingWidth)
         let recording = geometry(.init(mode: .recording, showsRecordingHold: true))
         XCTAssertGreaterThan(recording.leadingWingWidth, history.leadingWingWidth)
         let transition = VoiceBarNotchShellTransition.resolve(from: history, to: recording, visualState: .recording)
