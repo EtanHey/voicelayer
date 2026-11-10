@@ -105,6 +105,9 @@ struct NotchDrawerCrossfade<Key: Hashable, Content: View>: View {
     var body: some View {
         ZStack(alignment: .top) {
             content(shown)
+                // Round 2 (Codex P1): input belongs to the content being switched TO. Until the mirror catches up
+                // with `key`, the content still drawn is the one leaving, so it takes no clicks either.
+                .allowsHitTesting(shown == key)
                 .id(shown)
                 .transition(transition)
         }
@@ -164,6 +167,10 @@ struct NotchDrawerSwap: ViewModifier, Animatable {
             .blur(radius: blur)
             .scaleEffect(scale)
             .offset(y: offset)
+            // Round 2 (Codex P1): a leaving subtree stays drawn for its fade but never takes input. Its clicks fall
+            // through to the incoming content, or to nothing, never to the old pane's action. `phase` is not
+            // animated, so it is `.leaving` from the removal's first frame, through a reversal that re-inserts it.
+            .allowsHitTesting(phase != .leaving)
             .onChange(of: opacity, initial: true) { _, _ in report() }
     }
 
