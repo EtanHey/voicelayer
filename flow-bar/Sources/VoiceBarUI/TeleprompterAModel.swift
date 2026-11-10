@@ -37,6 +37,12 @@ public enum TeleprompterA {
     /// The teleprompter's lower surface for `lines` text lines.
     public static func lowerSurfaceHeight(lines: Int) -> CGFloat { chromeHeight + CGFloat(clamp(lines)) * lineHeight }
 
+    /// S4-F2/F3: a stopped read fills the same text area as the live reader. In 2.4 the remaining shell
+    /// contains its scrubber, controls and reserved handle band; none of that space becomes a blank strip.
+    public static func stoppedBodyHeight(lines: Int) -> CGFloat {
+        lowerSurfaceHeight(lines: lines) - chromeHeight
+    }
+
     public enum Tier: Equatable {
         case spoken, read, unread
         public var opacity: Double {

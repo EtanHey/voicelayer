@@ -1315,7 +1315,16 @@ public struct BarView: View {
                     color: notchPrimaryLabelColor
                 )
             } meter: {
-                notchWaveform(isPaused: state.isRecordingPaused)
+                if state.isRecordingPaused {
+                    notchWaveform(isPaused: true)
+                        .accessibilityElement()
+                        .accessibilityLabel("Recording paused")
+                        // VoiceOver reads the same frozen time the wing shows.
+                        .accessibilityValue(VoiceBarReadingTimeLabel.text(
+                            elapsedMilliseconds: state.recordingElapsedMilliseconds()))
+                } else {
+                    notchWaveform
+                }
             }
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
@@ -1533,15 +1542,13 @@ public struct BarView: View {
             VStack(spacing: 0) {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
-                    .frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA
-                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines)
-                        : Theme.teleprompterViewportHeight : nil)
+                    .frame(height: state.showsTeleprompterScrubber ? teleprompterBodyHeight : nil)
                 if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
                         .drawingTimingNotice(false)
                         .padding(.top, TeleprompterA.scrubberGap)
                 }
-                // Live reading fits the shell exactly, so this is the 3 pt gap; a readback's shorter text leaves more.
+                // Live and stopped text both fill their body; only the designed 3 pt gap remains here.
                 Spacer(minLength: TeleprompterA.controlsGap)
                 notchTeleprompterControls
                 if showsTeleprompterA {
@@ -1667,7 +1674,7 @@ public struct BarView: View {
                     wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth
                     ),
-                    viewportHeight: Theme.teleprompterViewportHeight,
+                    viewportHeight: teleprompterBodyHeight,
                     contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
@@ -1679,6 +1686,12 @@ public struct BarView: View {
         .onChange(of: state.isPreparingSpeech, initial: true) { old, isPreparing in
             preparingHandoff.preparingChanged(to: isPreparing, initial: old == isPreparing)
         }
+    }
+
+    /// Port main's stopped-read fill to 2.4's scrubber/control/handle stack (S4-F2/F3).
+    private var teleprompterBodyHeight: CGFloat {
+        showsTeleprompterA ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines)
+            : TeleprompterA.stoppedBodyHeight(lines: state.teleprompterVisibleLines)
     }
 
     /// U5: live reading uses Teleprompter A; an idle-retained readback keeps its scrolling view.
