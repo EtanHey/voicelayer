@@ -370,7 +370,7 @@
       "HiddenVoiceBarTests/testARealDisconnectWhileHiddenStillReadsDisconnectedAfterShowing",
       "HiddenVoiceBarTests/testShowingAgainRestoresIdleAndDropsTheHiddenCopy",
       "HiddenVoiceBarTests/testShowingAfterAnAgentSpokeWhileHiddenStillEndsTheHide",
-      "HiddenVoiceBarTests/testHideDropsQueuedAndOpeningTakesBeforeCaptureCanStart",
+      "HiddenVoiceBarTests/testHidePreservesQueuedAndOpeningTakesUntilTheirNormalRelease",
       "HiddenVoiceBarTests/testF5WhileHiddenStartsNoRecording",
       "HiddenVoiceBarTests/testF5WhileHiddenStaysOffAfterTheDaemonReconnects",
       "HiddenVoiceBarTests/testF5WhileHiddenStaysOffAfterAnAgentFinishesSpeaking",
