@@ -8,6 +8,7 @@ import { chmodSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import * as stt from "../stt";
 import * as socket from "../socket-client";
+import * as captureTrace from "../capture-lifecycle";
 import { handleSocketCommand } from "../socket-handlers";
 import { setRecordingState } from "../recording-state";
 import { recordingJobsSnapshot } from "../recording-jobs";
@@ -118,17 +119,30 @@ describe("bare stop scoping (isolated fake recorder, never real mic)", () => {
     harness();
     const since = Date.now() - 1;
     const take = randomUUID();
-    await startTake(take);
-    await Bun.sleep(20);
-    await handleSocketCommand({ cmd: "stop" });
-    await Bun.sleep(900);
-    const survived = recordingJobsSnapshot().mic_take_id === take;
-    if (survived) await stopTake(take);
-    else await until(() => recordingJobsSnapshot().recording_jobs.length === 0, "killed take settled", 10_000);
-    const wavs = archivedWavs(since);
-    expect(wavs).toHaveLength(1);
-    // 44 bytes is the WAV header with zero PCM frames: Etan's two incident takes.
-    expect(wavs[0].bytes).toBeGreaterThan(44);
-    expect(survived).toBe(true);
-  });
+    let firstPCM = false;
+    const trace = captureTrace.captureLifecycle;
+    spies.push(spyOn(captureTrace, "captureLifecycle").mockImplementation((event, fields) => {
+      trace(event, fields);
+      if (event === "first-pcm" && fields.take_id === take) firstPCM = true;
+    }));
+    try {
+      await startTake(take);
+      await Bun.sleep(20);
+      await handleSocketCommand({ cmd: "stop" });
+      // Capture state precedes PCM. Under load, startup can outlast the old 900 ms
+      // sleep; our own scoped stop would then create the header-only WAV.
+      await until(() => firstPCM, "first PCM for the slow-opening take", 15_000);
+      const survived = recordingJobsSnapshot().mic_take_id === take;
+      if (survived) await stopTake(take);
+      else await until(() => recordingJobsSnapshot().recording_jobs.length === 0, "killed take settled", 10_000);
+      const wavs = archivedWavs(since);
+      expect(wavs).toHaveLength(1);
+      // 44 bytes is the WAV header with zero PCM frames: Etan's two incident takes.
+      expect(wavs[0].bytes).toBeGreaterThan(44);
+      expect(survived).toBe(true);
+    } finally {
+      // A failed PCM barrier must still settle this test's recorder before restoring spies.
+      if (recordingJobsSnapshot().mic_take_id === take) await stopTake(take);
+    }
+  }, 30_000);
 });
