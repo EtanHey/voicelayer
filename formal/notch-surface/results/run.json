@@ -16,7 +16,7 @@
     "formal/notch-surface/Fixed.cfg": "40cc0de75cda652284f32e5e3ac430a344f7a54c1598202aaa016e5956ea56d0",
     "flow-bar/Sources/VoiceBarUI/NotchSurface.swift": "0d677ddf0829e3ca0c570e9b98a68d7cc672d7e06193d7873dc5feb6350a06d2",
     "flow-bar/Sources/VoiceBarUI/NotchDrawerDismissal.swift": "c3b5e6d1db1da827df5084e91512ab32a0b08c082bbe8eadd68375ebd320c288",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "1b278082f9f91e279c05d519e04dd0fb9b3b45b3dbb48d74e5c39d642d0e8e20",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f9330fb466adcd3341631b169491dcba8d80a8dd8fa538770a0cd6b1ee877887",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

@@ -1588,16 +1588,7 @@ public struct BarView: View {
 
     /// Shown while a pull past open is armed: releasing opens Settings. It fits the handle's 18 pt band (0510 N6).
     private var settingsPullHint: some View {
-        Label(NotchHistoryPresentation.settingsPullHint, systemImage: "gearshape")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(notchPalette.primary.color)
-            .padding(.horizontal, 10)
-            .frame(height: NotchHistoryPresentation.settingsPullHintHeight)
-            .background(Capsule(style: .continuous).fill(notchPalette.primary.color.opacity(0.14)))
-            .transition(.opacity)
-            .allowsHitTesting(false)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier(NotchHistoryPresentation.settingsPullHintIdentifier)
+        NotchSettingsPullHint(ink: notchPalette.primary.color)
     }
 
     @ViewBuilder
