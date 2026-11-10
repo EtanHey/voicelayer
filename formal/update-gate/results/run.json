@@ -40,7 +40,7 @@
     "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
     "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
-    "src/mcp-server-daemon.ts": "6a7dde04f7945902d57d621ea6c4a08ca76c7240d2d6159ff57f4f00f6819129",
+    "src/mcp-server-daemon.ts": "43c8d2e125af6cd476663b77dc70839f405530f4b7409fc1b4cb57f4f07c2937",
     "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "2d9120f7a6343711697307d304c7b9db22f4e8303aedb0809ce3d3c77114972b",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },

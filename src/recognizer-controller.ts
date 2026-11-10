@@ -41,11 +41,12 @@ const defaults: RecognizerTransitionDeps = {
 
 /** Start after the daemon accepts commands. Maintenance makes inference wait
  * for this same load; capture admission never waits for the boot task. */
-export async function warmSelectedRecognizer(deps: RecognizerTransitionDeps = defaults): Promise<void> {
+export async function warmSelectedRecognizer(deps: RecognizerTransitionDeps = defaults) {
   const status = readRecognizerStatus();
   if (!(deps.assetsPresent?.(status.desired) ?? status.engines[status.desired].assets_present)) return;
   const result = await setRecognizerResidency(status.desired, "load", deps);
   console.error("[voicelayer] " + JSON.stringify({ event: "recognizer_boot_warmup", engine: status.desired, outcome: result.outcome, reason: result.reason ?? null }));
+  return result;
 }
 
 export async function unloadParakeetForMemoryPressure() {
