@@ -398,8 +398,13 @@ final class WingLayoutX4Tests: XCTestCase {
             let coreMinX = Int((270 - g.coreWidth / 2) * s), coreMaxX = Int((270 + g.coreWidth / 2) * s)
             let rightEdge = coreMaxX + Int(g.trailingWingWidth * s)
             let right = coreMaxX ..< rightEdge, top = 0 ..< Int(32 * s)
-            let digits = try XCTUnwrap(p.ink(x: right, y: top, Self.digit), "\(fixture): the time paints")
-            let bars = try XCTUnwrap(p.ink(x: (digits.last + 1) ..< rightEdge, y: top, Self.bar))
+            // The meter is the first coloured ink in the wing; the time is the bright ink before it. Paused reading
+            // has Stop after the meter, and its white glyph is not a digit (X12, M4: reading every bright pixel as the
+            // time measured Stop's glyph against Stop's red plate and reported a 0 pt gap).
+            let firstBar = try XCTUnwrap(p.ink(x: right, y: top, Self.bar), "\(fixture): the meter paints").first
+            let digits = try XCTUnwrap(p.ink(x: coreMaxX ..< firstBar, y: top, Self.digit), "\(fixture): the time paints")
+            let bars = try XCTUnwrap(p.ink(x: firstBar ..< min(rightEdge, firstBar + Int(WaveformLayout.viewportWidth * s)),
+                                           y: top, Self.bar))
             let marks = try XCTUnwrap(p.ink(x: right, y: top, Self.mark))
             let gap = CGFloat(bars.first - digits.last - 1) / s
             let coreSide = CGFloat(marks.first - coreMaxX) / s, outerSide = CGFloat(rightEdge - marks.last - 1) / s
