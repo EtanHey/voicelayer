@@ -584,8 +584,12 @@ export async function finalizeTranscriptionResultForSurface(
     return strip(formatted) === strip(text) ? formatted : text;
   });
   // Shared by initial delivery, voice_ask and every retranscription entry point.
-  // Substitute punctuation only: never delete words, retractions or cutoff markers.
-  const deliveredText = (text: string) => paragraphText(text).replace(/\u2014/gu, "-");
+  // A word-attached em dash carries a cut-off or retraction: retain that meaning
+  // with Etan's ellipsis marker. Free-standing prose dashes become ASCII.
+  // Neither substitution removes, completes or reorders any spoken word.
+  const deliveredText = (text: string) => paragraphText(text)
+    .replace(/(?<=[\p{L}\p{M}\p{N}])\u2014/gu, "…")
+    .replace(/\u2014/gu, "-");
   if (!surface) return { text: deliveredText(cleanedText) };
   const polished = await measureTakeStageAsync("polish", () => polishTranscriptionText({
     rawText,
