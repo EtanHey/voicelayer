@@ -18,8 +18,42 @@ enum VoiceBarLaunchCustody {
             && (arguments == nil || arguments == [executable])
     }
 
-    static func handoff() -> Bool {
-        // LaunchServices does not inherit the agent's stderr destination. Keep refusal/recovery visible.
+    static func handoff(
+        plist: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist"),
+        attachLog: () -> Bool = attachFileLog,
+        run: ([String]) -> Bool = run,
+        log: (String) -> Void = { NSLog("%@", $0) }
+    ) -> Bool {
+        // Keep the log attached even when setup has not installed a usable agent yet.
+        guard attachLog() else {
+            log("[VoiceBar][launch_custody] fallthrough=file_log_unavailable")
+            return false
+        }
+        let data: Data
+        do { data = try Data(contentsOf: plist) }
+        catch {
+            let reason = (error as? CocoaError)?.code == .fileReadNoSuchFile ? "missing_agent" : "unreadable_agent"
+            log("[VoiceBar][launch_custody] fallthrough=\(reason)")
+            return false
+        }
+        guard validAgent(data) else {
+            log("[VoiceBar][launch_custody] fallthrough=invalid_agent")
+            return false
+        }
+        let domain = "gui/\(getuid())"
+        let job = "\(domain)/\(label)"
+        // No -k, bootout, plist rewrite, second daemon owner, or incumbent signal.
+        let loaded = run(["print", job])
+        guard run(loaded ? ["kickstart", job] : ["bootstrap", domain, plist.path]) else {
+            log("[VoiceBar][launch_custody] fallthrough=\(loaded ? "kickstart_failed" : "bootstrap_failed")")
+            return false
+        }
+        log("[VoiceBar][launch_custody] handoff=accepted pid=\(getpid())")
+        return true
+    }
+
+    private static func attachFileLog() -> Bool {
         let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/voicelayer")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -28,21 +62,8 @@ enum VoiceBarLaunchCustody {
             let fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
             guard fd >= 0 else { return false }
             defer { close(fd) }
-            guard fchmod(fd, 0o600) == 0, dup2(fd, STDERR_FILENO) >= 0 else { return false }
+            return fchmod(fd, 0o600) == 0 && dup2(fd, STDERR_FILENO) >= 0
         } catch { return false }
-        let plist = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
-        guard let data = try? Data(contentsOf: plist), validAgent(data) else {
-            NSLog("[VoiceBar][launch_custody] refused=invalid_agent run=voicelayer_setup")
-            return false
-        }
-        let domain = "gui/\(getuid())"
-        let job = "\(domain)/\(label)"
-        // No -k, bootout, plist rewrite, second daemon owner, or incumbent signal.
-        let loaded = run(["print", job])
-        let accepted = loaded ? run(["kickstart", job]) : run(["bootstrap", domain, plist.path])
-        NSLog("[VoiceBar][launch_custody] handoff=%@ pid=%d", accepted ? "accepted" : "refused", getpid())
-        return accepted
     }
 
     private static func run(_ arguments: [String]) -> Bool {

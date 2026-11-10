@@ -168,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     )
     private lazy var responsivenessWatchdog = RuntimeResponsivenessWatchdog(loop: "main") { acknowledgement in
         let loop = CFRunLoopGetMain()!
-        CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue, acknowledgement)
+        CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { acknowledgement.perform() }
         CFRunLoopWakeUp(loop)
     }
     private var microphonePriorityTimer: Timer?
@@ -3919,8 +3919,9 @@ struct VoiceBarApp {
             exit(EXIT_FAILURE)
         }
         if VoiceBarLaunchCustody.needsHandoff(bundlePath: Bundle.main.bundleURL.path,
-                singleton: VoiceLayerPaths.enforcesSingletonInstance, service: environment["XPC_SERVICE_NAME"]) {
-            exit(VoiceBarLaunchCustody.handoff() ? EXIT_SUCCESS : EXIT_FAILURE)
+                singleton: VoiceLayerPaths.enforcesSingletonInstance, service: environment["XPC_SERVICE_NAME"]),
+           VoiceBarLaunchCustody.handoff() {
+            exit(EXIT_SUCCESS)
         }
         let application = NSApplication.shared
         let appDelegate = AppDelegate()

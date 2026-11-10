@@ -51,7 +51,7 @@ final class HotkeyTapRunLoop {
         ready.wait()
         let loop = runLoop!
         responsivenessWatchdog = RuntimeResponsivenessWatchdog(loop: "event_tap") { acknowledgement in
-            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue, acknowledgement)
+            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { acknowledgement.perform() }
             CFRunLoopWakeUp(loop)
         }
         responsivenessWatchdog?.start()

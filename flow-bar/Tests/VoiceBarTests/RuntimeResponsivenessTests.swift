@@ -46,7 +46,7 @@ final class RuntimeResponsivenessTests: XCTestCase {
         let recovered = expectation(description: "main recovered")
         let loop = CFRunLoopGetMain()!
         let watchdog = RuntimeResponsivenessWatchdog(loop: "main", threshold: 0.03, enqueue: { ack in
-            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue, ack)
+            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { ack.perform() }
             CFRunLoopWakeUp(loop)
         }, sink: { line in
             if line.contains("state=stalled") { stalled.signal() }
@@ -61,7 +61,7 @@ final class RuntimeResponsivenessTests: XCTestCase {
     func testStoppedWatchdogIgnoresLateAcknowledgement() {
         let queued = expectation(description: "probe queued")
         let lock = NSLock()
-        var acknowledgement: (() -> Void)?
+        var acknowledgement: DispatchWorkItem?
         let watchdog = RuntimeResponsivenessWatchdog(loop: "fixture", enqueue: { ack in
             lock.lock(); acknowledgement = ack; lock.unlock(); queued.fulfill()
         }, sink: { _ in XCTFail("stopped watchdog emitted a receipt") })
@@ -69,7 +69,8 @@ final class RuntimeResponsivenessTests: XCTestCase {
         wait(for: [queued], timeout: 2)
         watchdog.stop()
         lock.lock(); let ack = acknowledgement; lock.unlock()
-        ack?()
+        XCTAssertEqual(ack?.isCancelled, true)
+        ack?.perform()
         watchdog.stop() // Serial drain after the stale callback.
     }
 
@@ -90,4 +91,38 @@ final class RuntimeResponsivenessTests: XCTestCase {
         XCTAssertFalse(VoiceBarLaunchCustody.validAgent(try data(VoiceBarLaunchCustody.executable, extra: true)))
         XCTAssertFalse(VoiceBarLaunchCustody.validAgent(Data()))
     }
+
+    func testManualLaunchDispositionFallsThroughUnlessHandoffSucceeds() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-launch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let plist = root.appendingPathComponent("agent.plist")
+        let valid = try PropertyListSerialization.data(fromPropertyList: ["Label": VoiceBarLaunchCustody.label,
+            "ProgramArguments": [VoiceBarLaunchCustody.executable]], format: .xml, options: 0)
+        for (data, loaded, commandOK, expectedExit, reason) in [
+            (Optional<Data>.none, true, true, false, "missing_agent"),
+            (Data("invalid".utf8), true, true, false, "invalid_agent"),
+            (valid, true, true, true, "handoff=accepted"),
+            (valid, true, false, false, "kickstart_failed"),
+            (valid, false, true, true, "handoff=accepted"),
+            (valid, false, false, false, "bootstrap_failed"),
+        ] {
+            if let data { try data.write(to: plist) }
+            else { try? FileManager.default.removeItem(at: plist) }
+            var events: [String] = []
+            let exitsSuccessfully = VoiceBarLaunchCustody.handoff(plist: plist, attachLog: {
+                events.append("file_log_attached"); return true
+            }, run: { arguments in
+                events.append(arguments[0])
+                return arguments[0] == "print" ? loaded : commandOK
+            }, log: { events.append($0) })
+            XCTAssertEqual(exitsSuccessfully, expectedExit, reason)
+            XCTAssertEqual(events.first, "file_log_attached", reason)
+            XCTAssertTrue(events.last?.contains(reason) == true, reason)
+            if expectedExit { XCTAssertTrue(events.contains(loaded ? "kickstart" : "bootstrap")) }
+            else { XCTAssertTrue(events.last?.contains("fallthrough=") == true) }
+            if data == nil || data != valid { XCTAssertFalse(events.contains("print")) }
+        }
+    }
+
 }
