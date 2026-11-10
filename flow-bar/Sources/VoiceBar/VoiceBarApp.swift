@@ -271,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private let notchHistoryBridge = VoiceBarNotchHistoryBridge()
     /// 2.4 Lane A: the ONE notch surface (History and the Settings drawer); formal/notch-surface.
     private let notchSurface = NotchSurfaceModel()
+    private let notchHostWindow = HostWindowBox()
     /// 2.4 Lane A: the Settings drawer's build line and Check for updates. Never updates while anything is live.
     private lazy var notchUpdates: NotchUpdateController = MainActor.assumeIsolated {
         let controller = NotchUpdateController(isDictating: { [weak self] in
@@ -817,6 +818,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Floating pill
         refreshNotchPresentationModel()
         let initialLayout = currentPanelLayout()
+        notchHostWindow.livePanelWindow = { [weak self] in self?.panel }
         let barView = BarView(
             state: voiceState,
             commandRouter: commandRouter,
@@ -837,7 +839,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             onOpenNotchMenu: { [weak self] in self?.notchSurfaceHandoff.requestMenu(.notch) },
             onCancelNotchMenu: { [weak self] in self?.notchSurfaceHandoff.cancelQueuedMenu() },
             surface: notchSurface,
-            settingsDrawer: makeNotchSettingsDrawerContext()
+            settingsDrawer: makeNotchSettingsDrawerContext(),
+            hostWindow: notchHostWindow
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
@@ -1380,6 +1383,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         isSnoozed = true
         snoozedUntil = Date().addingTimeInterval(3600)
         voiceState.snooze(until: snoozedUntil)
+        playbackEdgeLayoutTask?.cancel()
+        notchSurfaceHandoff.cancelQueuedMenu()
+        notchSurface.hide()
+        MainActor.assumeIsolated { notchHostWindow.stop() }
+        panel?.makeFirstResponder(nil)
         panel?.orderOut(nil)
         logDiagnostic(event: "panel_order_out", details: ["reason": "snooze"])
 
@@ -1399,6 +1407,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         voiceState.unsnooze()
         refreshNotchPresentationAndPanelLayout(animated: false)
         reapplyAnchoredPanelPosition()
+        MainActor.assumeIsolated {
+            notchHostWindow.livePanelWindow = { [weak self] in self?.panel }
+            notchHostWindow.rebind(panel)
+        }
         orderPanelFront(reason: "unsnooze")
         presentAutomaticSetupIfNeeded()
         daemonController.presentDeferredMicrophonePermissionPrompt()
@@ -3343,6 +3355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// Tests: the app's own notch surface and the drawer context it hands BarView.
     var notchSurfaceForTesting: NotchSurfaceModel { notchSurface }
+    var notchHostWindowForTesting: HostWindowBox { notchHostWindow }
     func notchSettingsDrawerContextForTesting() -> NotchSettingsDrawerContext { makeNotchSettingsDrawerContext() }
 
     func defaultMicrophoneName() -> String? {

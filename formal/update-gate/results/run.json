@@ -53,7 +53,7 @@
     "src/cli/voicelayer.sh": "7d01d8562ebe628071a293147e0be9815a334b6f323913de82586890b0b91b03",
     "flow-bar/build-app.sh": "c6e9bc6a7f0d656d7db57df92605fc16a450d1aa51e176517e69eb70efe07f21",
     "scripts/lib/qa-candidate-lifecycle.py": "2e4c8a850094e6fa397c13e42f5dff09a4646627b1d7481fe21cc862008d41eb",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "941c3f976c22b29b697a7b80ea49e5aa0e7e51aaca7d09396c2513c4b104a5a5",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "a0d1c2678643e97610aefeed872edf6748bbe2c6b42df9423236ec6bb7719904",
     "src/update-gate-owner.ts": "94a6efef3240dc751a8600e15630127fcbd67009cca314ca65eb8d60f29ee8ea",
     "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "467763de15b00bc45940b695ad792914fdcc7e42dd414e6831e3b9604a47f11f",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"

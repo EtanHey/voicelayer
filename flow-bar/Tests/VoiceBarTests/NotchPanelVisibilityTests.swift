@@ -169,6 +169,16 @@ final class NotchPanelVisibilityTests: XCTestCase {
         }
     }
 
+    @MainActor func testHideDismissesTheOpenSurfaceBeforeShow() throws {
+        let (app, panel) = productPanel()
+        defer { app.unsnoozeNow(); panel.orderOut(nil) }
+        app.notchSurfaceForTesting.send(.openSettings(.general))
+        try hide(app)
+        XCTAssertNil(app.notchSurfaceForTesting.drawer, "Hide must end the drawer intent")
+        app.unsnoozeNow()
+        XCTAssertNil(app.notchSurfaceForTesting.drawer, "Show must start closed")
+    }
+
     @MainActor func testProductSnoozeSurvivesIncomingEventClassesAndShowRestoresCurrentState() throws {
         let scenarios: [(String, (VoiceState) -> Void)] = [
             ("speaking", { $0.handleEvent(["type": "state", "state": "speaking", "text": "hidden update"]) }),
