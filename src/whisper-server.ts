@@ -1,3 +1,5 @@
+import { hashWhisperWeights, executedWhisperHash } from "./whisper-model-identity";
+import { availableWhisperModelPath, requireWhisperModelPath, whisperAssetPath } from "./recognizer-assets";
 /**
  * whisper-server lifecycle manager.
  *
@@ -63,12 +65,7 @@ const PORT_OWNER_PROBE_TIMEOUT = 1000;
 const SERVER_BINARY_NAMES = ["whisper-server"];
 
 /** Model search (same order as stt.ts). */
-const MODEL_SEARCH_PATHS = [
-  () => join(homedir(), ".cache", "whisper", "ggml-large-v3-turbo.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-large-v3-turbo-q5_0.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-base.en.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-base.bin"),
-];
+
 
 interface WhisperServerState {
   /**
@@ -285,6 +282,7 @@ async function resolveFirstBinaryAsync(
 export interface WhisperServerLaunchRecord {
   binary: string;
   modelPath: string;
+  modelSha256?: string;
   args: string[];
   performanceEffort: WhisperPerformanceEffort | null;
   accelerationMode: WhisperAccelerationMode;
@@ -365,14 +363,7 @@ export function resolveWhisperModelPath(): string | null {
 
 /** Find a whisper model file. */
 function findModel(): string | null {
-  const envModel = process.env.QA_VOICE_WHISPER_MODEL;
-  if (envModel && existsSync(envModel)) return envModel;
-
-  for (const pathFn of MODEL_SEARCH_PATHS) {
-    const p = pathFn();
-    if (existsSync(p)) return p;
-  }
-  return null;
+  return availableWhisperModelPath();
 }
 
 function normalizeAccelerationRequest(
@@ -827,6 +818,10 @@ function adoptedFlagsMatch(record: {
 function adoptHealthyServer(port: number): void {
   const record = readWhisperServerOwnership(port);
   const listeners = findPortListenerPids(port);
+  const configured = testHooks.findModel?.() ?? requireWhisperModelPath();
+  if (record && record.model_path !== configured) {
+    throw new Error(`Whisper server model mismatch: serving ${record.model_path}; configured ${configured}`);
+  }
 
   if (record && listeners.includes(record.pid) && isPidAlive(record.pid)) {
     const flagsMatch = adoptedFlagsMatch(record);
@@ -842,6 +837,7 @@ function adoptHealthyServer(port: number): void {
     lastLaunchRecord = {
       binary: record.binary,
       modelPath: record.model_path,
+      modelSha256: record.model_sha256,
       args: record.args,
       performanceEffort: parseWhisperPerformanceEffort(record.performance_effort),
       accelerationMode: normalizeAdoptedAccelerationMode(
@@ -979,6 +975,7 @@ function refuseBenchLaunchOnLiveHost(port: number): void {
 }
 
 async function ensureServerUnlocked(port: number): Promise<number> {
+  if (!testHooks.findModel) requireWhisperModelPath();
   if (serverState?.stoppingRecord && serverState.proc) {
     const state = serverState;
     const { proc, stoppingRecord } = serverState;
@@ -987,6 +984,9 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     }
     assertWhisperOwnerOpen();
     detachExitedWhisperServer(state, stoppingRecord);
+  }
+  if (!testHooks.findModel && lastLaunchRecord && lastLaunchRecord.modelPath !== whisperAssetPath()) {
+    throw new Error(`Whisper server model does not match configured file: ${whisperAssetPath()}`);
   }
   // Already running?
   if (serverState && serverState.port === port) {
@@ -1030,12 +1030,10 @@ async function ensureServerUnlocked(port: number): Promise<number> {
 
   const model = testHooks.findModel?.() ?? findModel();
   if (!model) {
-    throw new Error(
-      "No whisper model found. Download:\n" +
-        "  curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \\\n" +
-        "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
-    );
+    throw new Error(`Whisper model is missing: ${whisperAssetPath()}. Download it in Settings.`);
   }
+
+  if (!testHooks.findModel) await hashWhisperWeights(model);
 
   // Get brew prefix for Metal shaders
   let metalPath: string | undefined;
@@ -1151,6 +1149,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           lastLaunchRecord = {
             binary,
             modelPath: model,
+            modelSha256: executedWhisperHash(model) ?? undefined,
             args: plan.args,
             performanceEffort: launchedPerformanceEffort,
             accelerationMode: plan.acceleration.mode,
@@ -1166,6 +1165,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
             binary,
             args: plan.args,
             model_path: model,
+            model_sha256: executedWhisperHash(model) ?? undefined,
             performance_effort: launchedPerformanceEffort,
             acceleration_mode: plan.acceleration.mode,
           });

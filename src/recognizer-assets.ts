@@ -17,9 +17,17 @@ export function parakeetPython(env: NodeJS.ProcessEnv = process.env): string | n
 }
 export function whisperAssetPath(env: NodeJS.ProcessEnv = process.env): string {
   if (env.QA_VOICE_WHISPER_MODEL) return resolve(env.QA_VOICE_WHISPER_MODEL);
-  const root = join(homedir(), ".cache", "whisper");
-  return ["ggml-large-v3-turbo.bin", "ggml-large-v3-turbo-q5_0.bin", "ggml-base.en.bin", "ggml-base.bin"]
-    .map(name => join(root, name)).find(path => fileBytes(path) > 0) ?? join(root, "ggml-large-v3-turbo.bin");
+  return join(homedir(), ".cache", "whisper", "ggml-large-v3-turbo.bin");
+}
+/** Resolve only the configured asset, never a substitute model. */
+export function availableWhisperModelPath(): string | null {
+  const path = whisperAssetPath();
+  return fileBytes(path) > 0 ? path : null;
+}
+export function requireWhisperModelPath(): string {
+  const path = availableWhisperModelPath();
+  if (!path) throw new Error(`Whisper model is missing: ${whisperAssetPath()}. Download it in Settings.`);
+  return path;
 }
 export function recognizerAssetPaths(engine: Recognizer, env: NodeJS.ProcessEnv = process.env): string[] {
   return engine === "whisper" ? [whisperAssetPath(env)] : PARAKEET_FILES.map(name =>

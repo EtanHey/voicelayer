@@ -1,3 +1,5 @@
+import { writeFileSync } from "fs";
+import { buildRecordingProvenance } from "../recording-provenance";
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import type { TranscriptSegment } from "../stt-transcript-alignment";
 import { mkdtempSync, rmSync } from "fs";
@@ -891,26 +893,35 @@ usage: whisper-server [options]
 
     it("preserves adopted model provenance without inventing missing effort", async () => {
       const fake = startFakeHealthyServer();
+      const savedModel = process.env.QA_VOICE_WHISPER_MODEL;
+      const model = join(ownershipDir, "legacy-model.bin");
+      writeFileSync(model, "fixture weights");
+      writeFileSync(`${model}.sha256`, "a".repeat(64));
+      process.env.QA_VOICE_WHISPER_MODEL = model;
       writeWhisperServerOwnership(fake.port, {
         pid: process.pid,
         owner_pid: process.pid,
         started_at: "2026-09-05T18:40:00.000Z",
         binary: "/opt/homebrew/bin/whisper-server",
-        args: ["/opt/homebrew/bin/whisper-server", "-m", FAKE_MODEL],
-        model_path: FAKE_MODEL,
+        args: ["/opt/homebrew/bin/whisper-server", "-m", model],
+        model_path: model,
         performance_effort: "invalid",
         acceleration_mode: "metal",
       });
       __setWhisperServerTestHooksForTests({
-        findModel: () => FAKE_MODEL,
         findPortListenerPids: () => [process.pid],
       });
 
       try {
         await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
-        expect(whisperServerLaunchRecord()?.modelPath).toBe(FAKE_MODEL);
+        expect(whisperServerLaunchRecord()?.modelPath).toBe(model);
         expect(whisperServerLaunchRecord()?.performanceEffort).toBeNull();
+        expect(buildRecordingProvenance({ backend: "whisper-server", languageMode: "auto",
+          probe: { machine: () => ({ host: null, chip: null, status: "pending" }),
+            whisperCppVersion: () => ({ version: null, source: "pending" }) } }).whisper_model_sha256).toBeNull();
       } finally {
+        if (savedModel === undefined) delete process.env.QA_VOICE_WHISPER_MODEL;
+        else process.env.QA_VOICE_WHISPER_MODEL = savedModel;
         resetWhisperServerModule();
         clearWhisperServerOwnership(fake.port);
         fake.stop();
@@ -993,7 +1004,7 @@ usage: whisper-server [options]
       }
     });
 
-    it("records a flag mismatch on the adopted server instead of killing it", async () => {
+    it("refuses a different model on the adopted server without killing it", async () => {
       const fake = startFakeHealthyServer();
       const killed: Array<{ pid: number; signal: string }> = [];
 
@@ -1024,13 +1035,10 @@ usage: whisper-server [options]
       });
 
       try {
-        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        await expect(ensureServer(fake.port)).rejects.toThrow(FAKE_MODEL);
+        await expect(ensureServer(fake.port)).rejects.toThrow("/tmp/ggml-base.en.bin");
         expect(killed).toEqual([]);
         expect(await fake.alive()).toBe(true);
-        const record = whisperServerLaunchRecord();
-        expect(record?.adopted).toBe(true);
-        expect(record?.flagsMatch).toBe(false);
-        expect(record?.modelPath).toBe("/tmp/ggml-base.en.bin");
       } finally {
         resetWhisperServerModule();
         clearWhisperServerOwnership(fake.port);

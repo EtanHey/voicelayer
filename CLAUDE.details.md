@@ -26,7 +26,7 @@
 - Backend selection: `QA_VOICE_STT_BACKEND=whisper|wispr|auto` (default auto).
 - The rules engine deterministically turns an ordered run with at least two valued spoken enumerator heads (`One,` / `First,`) into numbered lines before capitalization and polish; sequence/content heads such as `Next,` or `First of all,` may continue a qualified run, content heads stay verbatim, and polish may not renumber or merge an existing list.
 - whisper.cpp binary detection checks `whisper-cli` then `whisper-cpp`.
-- Model search order: `QA_VOICE_WHISPER_MODEL` -> `~/.cache/whisper/ggml-large-v3-turbo.bin` -> any `ggml-*.bin` in `~/.cache/whisper/`.
+- Model search order: `QA_VOICE_WHISPER_MODEL` (explicit override), otherwise `~/.cache/whisper/ggml-large-v3-turbo.bin`. Missing or empty configured weights fail with "Whisper model is missing"; other cached models are never substituted.
 - Transcription effort (backend configuration in `src/whisper-performance.ts`; no Settings picker): `fast` (`-bo 1 -bs 1`), `balanced` (`-bo 3 -bs 3`), `accurate` (`-bo 5 -bs 5`, default). Same `large-v3-turbo` model for all three — only whisper.cpp beam-search/best-of changes. Persisted to `~/.local/state/voicelayer/whisper-performance.json`; override per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT`. Saved values and environment overrides remain supported; Settings shows configured/active facts in Recognizer details.
 
 ## VoiceBar Settings (SwiftUI, `flow-bar/Sources/VoiceBarUI/SettingsView.swift`)
