@@ -333,6 +333,7 @@ final class AppLifecycleTests: XCTestCase {
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, transport)
     }
 
+    /// X1-34 (C6 L3): paused hidden keeps the eye one pitch inside the terminal X, so two controls from the outer edge.
     func testPausedSpeechKeepsPlayAndStopReachable() {
         let state = VoiceState()
         state.handleEvent(["type": "state", "state": "speaking", "text": "Paused read", "playback_id": "p", "generation": 1])
@@ -345,7 +346,7 @@ final class AppLifecycleTests: XCTestCase {
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
-                trailingControlCountFromOuter: 1,
+                trailingControlCountFromOuter: 2,
                 trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(visibleCoreOcclusionInset: 0),
                 leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth
             )

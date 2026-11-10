@@ -42,8 +42,15 @@ struct TeleprompterPlaybackScrubBar: View {
             isPlaying: playing,
             isGrowing: playing && state.isPlaybackDurationGrowing,
             allowsSeeking: state.isTeleprompterScrubSeekable,
-            isTeleprompter: true
+            isTeleprompter: true,
+            disabledReason: Self.disabledReason(isPaused: state.isPlaybackPaused)
         )
+    }
+
+    /// Hunt C5 teleprompter #3: X1-34 keeps the scrubber on screen while paused. A paused read refuses seeks (the
+    /// paused-slider gate), and it says that, not "No word timing available".
+    static func disabledReason(isPaused: Bool) -> String? {
+        isPaused ? "Paused. Press Play to seek" : nil
     }
 
     var body: some View {

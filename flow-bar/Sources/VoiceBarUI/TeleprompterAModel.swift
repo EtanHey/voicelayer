@@ -119,7 +119,7 @@ public enum TeleprompterA {
     }
 
     /// T3 (Etan QA 2026-11-09: "the reading prose ... can be totally removed"): reading has no status words. A
-    /// pause keeps its words, for VoiceOver only (the teleprompter collapses while paused).
+    /// pause keeps its words, for VoiceOver only (X1-34: the paused teleprompter stays readable on screen).
     public static func footerState(isPaused: Bool, isPausedForDictation: Bool) -> String {
         isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : ""
     }

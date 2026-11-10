@@ -77,7 +77,8 @@ final class TeleprompterAHandleTests: XCTestCase {
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"), encoding: .utf8)
         let lower = try XCTUnwrap(bar.components(separatedBy: "private var notchTeleprompterControls").dropFirst().first)
             .components(separatedBy: "// MARK: - Error state")[0]
-        XCTAssertTrue(lower.contains("playbackStopButton"), "the teleprompter's lower row carries the live Stop")
+        // X1-32 (C6 L3): the live terminal is the Stop square while playing and an X ("Close read") while paused.
+        XCTAssertTrue(lower.contains("readingTerminalButton"), "the teleprompter's lower row carries the live Stop")
         let view = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterAView.swift"),
                               encoding: .utf8)
         XCTAssertTrue(view.contains(".focusable(interactions: .activate)"))

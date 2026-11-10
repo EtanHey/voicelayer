@@ -2266,7 +2266,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 // centred in the visible wing, so Stop's outer inset follows the hardware notch's hidden points.
                 return VoiceBarNotchInteractionConfiguration(
                     leadingControlCount: playbackLeadingSlotCount(for: state),
-                    trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
+                    // X1-34 (C6 L3): a paused hidden read keeps its eye too.
+                    trailingControlCountFromOuter: VoiceBarPresentation.readingCompactTrailingControlCount(for: state),
                     trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(
                         visibleCoreOcclusionInset: visibleCoreOcclusionInset),
                     leadingOutermostControlWidth: playbackLeadingOutermostWidth(for: state)
