@@ -46,8 +46,14 @@ test("Whisper retains idle child custody past SIGKILL timeout and retries before
     findExternalWhisperServerPids: () => [], reserveVoiceMaintenance: () => () => {},
     spawn: () => {
       spawns++; healthy = true;
-      return { pid: 55113, exited: spawns === 1 ? exited.promise : Promise.resolve(0),
-        kill: (signal) => { signals.push(signal ?? "SIGTERM"); healthy = false; } };
+      const firstChild = spawns === 1;
+      // A healthy replacement stays alive until termination, including adoption.
+      const replacementExit = Promise.withResolvers<number>();
+      return { pid: 55113, exited: firstChild ? exited.promise : replacementExit.promise,
+        kill: (signal) => {
+          signals.push(signal ?? "SIGTERM"); healthy = false;
+          if (!firstChild) replacementExit.resolve(0);
+        } };
     },
   });
   try {
