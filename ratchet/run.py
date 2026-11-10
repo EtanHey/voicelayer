@@ -488,7 +488,20 @@ def wire_row(run, row):
                 if stream.readline() != b"\r\n":
                     raise RuntimeError("missing MCP header delimiter")
                 response = json.loads(stream.read(length))
+                # Snapshot before declaring retranscription complete: later logs
+                # cannot retroactively prove startup exercised the crash path.
+                boot_log_at_response = run.log("daemon")
             assert not response["result"].get("isError"), response
+        boot_rejections = []
+        for line in boot_log_at_response.splitlines():
+            if "{\"event\":\"recognizer_boot_warmup\"" not in line:
+                continue
+            event = json.loads(line[line.index("{"):])
+            if (event.get("engine") == "whisper" and event.get("outcome") == "reject"
+                    and "WHISPER_STARTUP_" in str(event.get("reason", ""))):
+                boot_rejections.append(event)
+        assert boot_rejections, "missing boot warm-up WHISPER_STARTUP_* rejection before retranscription completed"
+        boot_startup_reason = boot_rejections[-1]["reason"]
         retranscribe_seconds = time.monotonic() - retranscribe_started
         assert retranscribe_seconds < 15, "unloadable model stalled retranscription"
         wait(lambda: (directory / "voicelayer-transcript.txt").exists())
@@ -498,7 +511,7 @@ def wire_row(run, row):
         assert (directory / "voicelayer-transcript.txt").read_text() == "Recovered synthetic answer."
         assert json.loads((directory / "metadata.json").read_text())["transcription_status"] == "transcribed"
         run.output.with_suffix(".wire.json").write_text(json.dumps({
-            "unloadable_model": True, "retranscribe_seconds": retranscribe_seconds,
+            "boot_startup_reason": boot_startup_reason, "retranscribe_seconds": retranscribe_seconds,
             "archive_updates": len(matches), "durable_transcript": True, "durable_metadata": True,
             "transcription_events": sum(f.get("type") == "transcription" for f in frames),
             "event_observed": observed, "quiet_period_complete": quiet, "quiet_seconds": 1}))
