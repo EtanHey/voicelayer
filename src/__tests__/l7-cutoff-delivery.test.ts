@@ -30,6 +30,20 @@ describe("L7 cut-off meaning at the shared delivery boundary", () => {
   });
 
   for (const surface of ["dictation", "voice_ask"] as const) {
+    it("normalizes a model-proposed prose em dash at final delivery on " + surface, async () => {
+      const input = "Keep all words here - this clause must survive.";
+      const candidate = "Keep all words here — this clause must survive.";
+      const server = Bun.serve({ port: 0, fetch: request => request.method !== "POST"
+        ? Response.json({ data: [] }) : Response.json({ choices: [{ message: { content: candidate } }] }) });
+      try {
+        const result = await finalizeTranscriptionResultForSurface(input, surface, {
+          ...env(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+        });
+        expect(result.polishStatus).toBe("applied");
+        expect(result.text).toBe(input);
+        expect(words(result.text)).toEqual(words(input));
+      } finally { server.stop(true); }
+    });
     it.each(["applied", "shadowed", "rejected", "failed", "timeout"])("preserves cut-off meaning after %s polish on " + surface, async status => {
       const server = Bun.serve({ port: 0, fetch: request => {
         if (request.method !== "POST") return Response.json({ data: [] });
