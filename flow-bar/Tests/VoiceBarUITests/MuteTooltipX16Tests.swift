@@ -8,8 +8,8 @@ import XCTest
 /// it did. Live bisection on the M4 (isolated UIE2E QA app, synthetic hover, 3 s) pinned it to the per-item insertion
 /// transition `VoiceBarNotchWingContentEntry.transition` on the mute control alone: with it, no tooltip in 3 of 3
 /// hovers; without it (everything else identical), "Mute microphone" in 3 of 3. AppKit tooltip display cannot be
-/// observed offscreen (the drawn tooltip view is identical either way), so the source rule below is the regression
-/// pin and the M4 screenshots are the proof.
+/// observed offscreen (the drawn tooltip view is identical either way); the source rule, generalised to every late
+/// control in the row, lives in `LateWingControlTooltipTests` (X21), and the M4 screenshots are the proof.
 @MainActor
 final class MuteTooltipX16Tests: XCTestCase {
     private final class Router: BarCommandRouting {
@@ -18,37 +18,6 @@ final class MuteTooltipX16Tests: XCTestCase {
         func handleStop() {}
         func handleReplay() {}
         func handleRetranscribeHistoryEntry(recordingPath: String) {}
-    }
-
-    private func barViewSource() throws -> String {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/BarView.swift")
-        return try String(contentsOf: url, encoding: .utf8)
-    }
-
-    /// The body of the first `marker { ... }` block, braces matched.
-    private func block(after marker: String, in source: String) throws -> String {
-        let start = try XCTUnwrap(source.range(of: marker), "marker not found: \(marker)")
-        var depth = 0
-        var index = start.lowerBound
-        var opened = false
-        while index < source.endIndex {
-            let character = source[index]
-            if character == "{" { depth += 1; opened = true }
-            if character == "}" {
-                depth -= 1
-                if opened && depth == 0 { return String(source[start.lowerBound ... index]) }
-            }
-            index = source.index(after: index)
-        }
-        throw XCTSkip("unbalanced block after \(marker)")
-    }
-
-    func testTheMuteControlCarriesNoInsertionTransition() throws {
-        let mute = try block(after: "if let recordingPauseControl {", in: try barViewSource())
-        XCTAssertTrue(mute.contains("tooltip: recordingPauseControl.tooltip"), "fixture: this is the mute control")
-        XCTAssertFalse(mute.contains(".transition("),
-                       "[X16 J4] an insertion transition on the mute control stops AppKit showing its tooltip (M4)")
     }
 
     /// The real F5 order: the optimistic press shows Stop and Cancel; the daemon's `ptt` event inserts mute later.
