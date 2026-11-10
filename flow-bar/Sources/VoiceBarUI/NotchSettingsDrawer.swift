@@ -105,14 +105,25 @@ struct NotchSettingsDrawer: View {
     var history: () -> AnyView = { AnyView(EmptyView()) }
     let onSelectTab: (SettingsTab) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
 
     var body: some View {
         VStack(spacing: 0) {
             tabBar
             // Always fills below the tabs, even for a pane that draws nothing, so the tabs never re-centre (N3).
+            // C6 L2 (S9): a tab switch crossfades its content (`NotchDrawerMotion.tabTransition`).
             Color.clear
-                .overlay(alignment: .top) { content }
+                .overlay(alignment: .top) {
+                    NotchDrawerCrossfade(
+                        key: selectedTab,
+                        animation: NotchDrawerMotion.easeOut(NotchDrawerMotion.tabInDuration),
+                        transition: NotchDrawerMotion.tabTransition(reduceMotion: reduceMotion)
+                    ) { tab in
+                        content(tab)
+                    }
+                }
                 .clipped()
         }
         .padding(.horizontal, NotchSettingsDrawerPresentation.horizontalInset)
@@ -120,8 +131,8 @@ struct NotchSettingsDrawer: View {
     }
 
     @ViewBuilder
-    private var content: some View {
-        switch selectedTab {
+    private func content(_ tab: SettingsTab) -> some View {
+        switch tab {
         case .history:
             history()
         case .general:
@@ -132,7 +143,7 @@ struct NotchSettingsDrawer: View {
                 }
             }
         case .transcription, .dictionary, .speech:
-            pane(selectedTab)
+            pane(tab)
         }
     }
 

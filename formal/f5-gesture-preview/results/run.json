@@ -16,7 +16,7 @@
     "flow-bar/Sources/VoiceBar/HotkeyManager.swift": "31a294ee0c5d3a2bf234f0ff0a5934dcd4ca7e42d9390412bb78a5bb1621ce5a",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e23414d8b9dce29b38292f2ab265a52d2a38fc1839e0fdc916c813455a453b3e",
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "842a42043fae137e634cb0875392f4733a19bd4f13ceb4533ee06777f5579dd7",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f62b2fc412ff1077a913fc4af11e36ce2dce61563044dfa411dbe534b7e17609",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "be8c47de788e397ee66e060d9b9edde92fbda7ca8ea52c7f688ba0dfc293f9c8",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
