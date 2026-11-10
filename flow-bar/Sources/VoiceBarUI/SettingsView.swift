@@ -511,6 +511,7 @@ public struct SettingsView: View {
     public let historyAttempts: SettingsHistoryAttemptLogReader
     public let isHistoryRetranscribing: (String) -> Bool
     public let isAnyHistoryRetranscribing: () -> Bool
+    public let microphonePriorityDisabledReason: () -> String?
     public let isRecordingActive: () -> Bool
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
@@ -704,6 +705,7 @@ public struct SettingsView: View {
         historyAttempts: @escaping SettingsHistoryAttemptLogReader = { _ in nil },
         isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
         isAnyHistoryRetranscribing: @escaping () -> Bool = { false },
+        microphonePriorityDisabledReason: @escaping () -> String? = { nil },
         isRecordingActive: @escaping () -> Bool = { false },
         isTranscribingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
@@ -829,6 +831,7 @@ public struct SettingsView: View {
         self.historyAttempts = historyAttempts
         self.isHistoryRetranscribing = isHistoryRetranscribing
         self.isAnyHistoryRetranscribing = isAnyHistoryRetranscribing
+        self.microphonePriorityDisabledReason = microphonePriorityDisabledReason
         self.isRecordingActive = isRecordingActive
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
@@ -1318,16 +1321,23 @@ public struct SettingsView: View {
 
     // MARK: - General microphone priority
 
+    private var microphoneEditReason: String? {
+        microphonePriorityDisabledReason() ?? (isRecordingActive() ? "Finish recording to change microphones" : nil)
+    }
+
     private var microphonePrioritySection: some View {
         Section {
             if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {
                 SettingsRow(title: "Next dictation: \(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")",
                             description: "A hidden system or virtual device would be used next.") {
                     Button("Use visible microphones first") {
+                        guard microphoneEditReason == nil else { return }
                         onReorderPriority(visibleFirst)
                         refreshMicrophoneSnapshot()
                     }
-                    .help("This puts your microphones ahead of it.")
+                    .disabled(microphoneEditReason != nil)
+                    .background(PillControlTooltip(text: microphoneEditReason ?? "This puts your microphones ahead of it."))
+                    .accessibilityHint(microphoneEditReason ?? "This puts your microphones ahead of it.")
                 }
             }
 
@@ -1367,6 +1377,7 @@ public struct SettingsView: View {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
+                .disabled(microphoneEditReason != nil)
                 .opacity(hoveredMicrophoneIndex == index ? 1 : 0)
             }
             if isUsed {
@@ -1379,16 +1390,22 @@ public struct SettingsView: View {
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityAction(named: "Make default") {
-            makeMicrophoneDefault(at: index)
+        .background(PillControlTooltip(text: microphoneEditReason))
+        .accessibilityHint(microphoneEditReason ?? "Drag to reorder microphones")
+        .accessibilityActions {
+            if microphoneEditReason == nil {
+                if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
+                    Button("Make default") { makeMicrophoneDefault(at: index) }
+                }
+                if microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: -1) != nil {
+                    Button("Move up") { moveMicrophone(at: index, by: -1) }
+                }
+                if microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: 1) != nil {
+                    Button("Move down") { moveMicrophone(at: index, by: 1) }
+                }
+            }
         }
-        .accessibilityAction(named: "Move up") {
-            moveMicrophone(at: index, by: -1)
-        }
-        .accessibilityAction(named: "Move down") {
-            moveMicrophone(at: index, by: 1)
-        }
-        if let uid = row.uid {
+        if let uid = row.uid, row.canPrioritize, microphoneEditReason == nil {
             // C12: while a drag hovers this row, an insertion line marks where the mic will land, and the row
             // being dragged dims. The drop itself still reads the dragged UID from the payload.
             let edge = microphoneDrag.targetIndex == index
@@ -1430,7 +1447,7 @@ public struct SettingsView: View {
     private static let dropLineOffset: CGFloat = 11.5
 
     private func makeMicrophoneDefault(at index: Int) {
-        guard let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
+        guard microphoneEditReason == nil, let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
     }
@@ -1438,7 +1455,7 @@ public struct SettingsView: View {
     /// Dropping onto a row lands the dragged mic in that row's place: below it when dragged down, above it
     /// when dragged up (SwiftUI onMove indices), exactly where the insertion line was drawn.
     private func dropMicrophone(_ uid: String?, onto index: Int) -> Bool {
-        guard let uid, let uids = microphoneSnapshot.droppingVisibleUIDs(uid, onto: index) else { return false }
+        guard microphoneEditReason == nil, let uid, let uids = microphoneSnapshot.droppingVisibleUIDs(uid, onto: index) else { return false }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
         return true
@@ -1452,7 +1469,7 @@ public struct SettingsView: View {
     }
 
     private func moveMicrophone(at index: Int, by offset: Int) {
-        guard let uids = microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: offset) else { return }
+        guard microphoneEditReason == nil, let uids = microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: offset) else { return }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
     }

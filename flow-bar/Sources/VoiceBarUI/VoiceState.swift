@@ -2576,6 +2576,12 @@ public final class VoiceState {
     /// When the hide ends ("Hidden until HH:MM"); nil while shown, or when the caller gave no end time.
     public private(set) var hiddenUntil: Date?
 
+    /// formal/control-availability MicDefault/MicReorder/MicMove/MicVisibleFirst: capture owns preferences.
+    public var microphonePriorityDisabledReason: String? {
+        mode == .recording || captureLive || isRecordingHandoffPending || pendingIntent?.command == .record
+            ? "Finish recording to change microphones" : nil
+    }
+
     public static let hideUnfinishedTakeReason = "Finish or cancel this take before hiding VoiceBar."
 
     public var hideDisabledReason: String? {

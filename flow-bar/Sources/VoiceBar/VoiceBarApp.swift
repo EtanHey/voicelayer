@@ -3656,6 +3656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             isAnyHistoryRetranscribing: { [weak self] in
                 self?.voiceState.isHistoryRetranscriptionPending ?? false
             },
+            microphonePriorityDisabledReason: { [weak self] in self?.voiceState.microphonePriorityDisabledReason },
             isRecordingActive: { [weak self] in
                 self?.voiceState.mode == .recording
             },
@@ -3727,6 +3728,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     private func reorderMicrophonePriority(_ uids: [String]) {
+        guard voiceState.microphonePriorityDisabledReason == nil else { return }
         let devices = MicrophoneDeviceManager.availableInputDevices()
         microphonePriority.replacePreferredUIDs(uids, observing: devices)
         microphonePriorityApply.requestApply(

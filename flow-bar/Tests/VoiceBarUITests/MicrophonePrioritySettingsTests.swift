@@ -32,9 +32,9 @@ final class MicrophonePrioritySettingsTests: XCTestCase {
     func testReorderingStaysReachableWithoutAPointer() throws {
         let section = try prioritySection()
 
-        XCTAssertTrue(section.contains(".accessibilityAction(named: \"Make default\")"))
-        XCTAssertTrue(section.contains(".accessibilityAction(named: \"Move up\")"))
-        XCTAssertTrue(section.contains(".accessibilityAction(named: \"Move down\")"))
+        XCTAssertTrue(section.contains("Button(\"Make default\")"))
+        XCTAssertTrue(section.contains("Button(\"Move up\")"))
+        XCTAssertTrue(section.contains("Button(\"Move down\")"))
     }
 
     func testEveryGestureWritesThroughTheSnapshotOrdering() throws {
