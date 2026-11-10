@@ -17,7 +17,6 @@ public enum TeleprompterA {
     public static let handleSize = CGSize(width: 34, height: 4)
     /// The handle's hit band under the eye row.
     public static let handleBandHeight: CGFloat = 14
-
     /// T2/T8 (Etan QA 2026-11-09: "The drag bar ... can go underneath the eye and the replay row. Scrub would have
     /// less gap"): the lower body, top to bottom, is text, scrubber, eye row, height handle. No footer row; the gaps
     /// are tight so the text keeps the room.
@@ -60,12 +59,23 @@ public enum TeleprompterA {
         return max(0, focusLine - (visibleLines - 1) / 2)
     }
 
+    /// Whether `line` is inside the visible band once `scrolledLines` have gone above it.
+    public static func isVisible(line: Int, scrolledLines: Int, visibleLines: Int) -> Bool {
+        line >= scrolledLines && line < scrolledLines + visibleLines
+    }
+
     /// The fade only exists once a line has gone under it.
     public static func showsTopFade(scrolledLines: Int) -> Bool { scrolledLines > 0 }
 
     /// 240 ms ease-in-out-quart; reduced motion jumps. SwiftUI retargets it when the focus moves again mid-slide.
     public static func slide(reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : .timingCurve(0.77, 0, 0.175, 1, duration: 0.24)
+    }
+
+    /// T2 (QA 2026-11-08 S3-F1): only a reading step slides. A seek jumps several lines; sliding the lines that
+    /// stay mounted across that distance drew them through the newly mounted ones, so a jump lands instead.
+    public static func slide(reduceMotion: Bool, fromLine: Int, toLine: Int) -> Animation? {
+        abs(toLine - fromLine) <= 1 ? slide(reduceMotion: reduceMotion) : nil
     }
 
     public static let pull = Animation.spring(response: 0.38, dampingFraction: 0.86)

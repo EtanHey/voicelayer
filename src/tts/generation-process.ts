@@ -3,7 +3,7 @@ import { throwIfAbortedSafe } from "../abort";
 export async function runSpeechGeneration(argv: string[], signal?: AbortSignal, timeoutMs = 60_000,
   onSpawn?: (pid: number) => void): Promise<number> {
   throwIfAbortedSafe(signal);
-  const proc = Bun.spawn(argv, { env: process.env, detached: true, stdout: "ignore", stderr: "pipe" });
+  const proc = Bun.spawn(argv, { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, detached: true, stdout: "ignore", stderr: "pipe" });
   const stderr = (async () => {
     let tail = "";
     const decoder = new TextDecoder();

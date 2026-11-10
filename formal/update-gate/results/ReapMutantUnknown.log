@@ -1,0 +1,12 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NeverReapLiveOwner",
+  "status": "EXPECTED_FAIL",
+  "generated": 283,
+  "distinct": 270,
+  "trace": [
+    "/\\ phase = \"OPEN\"\n/\\ available = FALSE\n/\\ scenario = {}\n/\\ creation = {}\n/\\ gate = \"OPEN\"\n/\\ created = FALSE\n/\\ participants = [a |-> \"live\", b |-> \"unknown\"]\n/\\ evidence = {\"a\", \"b\"}\n/\\ mutex = FALSE",
+    "/\\ phase = \"OPEN\"\n/\\ available = FALSE\n/\\ scenario = {}\n/\\ creation = {\"b\"}\n/\\ gate = \"OPEN\"\n/\\ created = TRUE\n/\\ participants = [a |-> \"live\", b |-> \"unknown\"]\n/\\ evidence = {\"a\"}\n/\\ mutex = FALSE"
+  ]
+}

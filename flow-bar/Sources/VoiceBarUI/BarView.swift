@@ -651,6 +651,7 @@ public struct BarView: View {
         var input = VoiceBarNotchOperationalInput(
             mode: state.mode,
             showsRecordingHold: recordingHoldControl != nil,
+            showsRecordingPause: recordingPauseControl != nil,
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
@@ -1099,6 +1100,20 @@ public struct BarView: View {
                 ) {
                     commandRouter.handleStop()
                 }
+                // Recording pause sits beside Stop, in its own control slot.
+                if let recordingPauseControl {
+                    notchButton(
+                        icon: recordingPauseControl.iconName,
+                        isSelected: recordingPauseControl.isSelected,
+                        selectionStyle: .recordingState,
+                        accessibilityLabel: recordingPauseControl.accessibilityLabel,
+                        accessibilityHint: recordingPauseControl.accessibilityHint
+                    ) {
+                        state.setRecordingPaused(!state.isRecordingPaused)
+                    }
+                    .contentTransition(.symbolEffect(.replace))
+                    .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
+                }
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel recording") {
                     commandRouter.handleCancel()
                 }
@@ -1300,7 +1315,15 @@ public struct BarView: View {
                     color: notchPrimaryLabelColor
                 )
             } meter: {
-                notchWaveform
+                if state.isRecordingPaused {
+                    notchWaveform(isPaused: true)
+                        .accessibilityElement()
+                        .accessibilityLabel("Recording paused")
+                        .accessibilityValue(VoiceBarReadingTimeLabel.text(
+                            elapsedMilliseconds: state.recordingElapsedMilliseconds()))
+                } else {
+                    notchWaveform
+                }
             }
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
@@ -1415,13 +1438,17 @@ public struct BarView: View {
     }
 
     private var notchWaveform: some View {
+        notchWaveform(isPaused: false)
+    }
+
+    private func notchWaveform(isPaused: Bool) -> some View {
         VoiceBarNotchWaveform(
             mode: state.mode,
             isListening: !state.speechDetected,
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() },
-            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused
+            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused || isPaused
         )
         .help("Input level")
         .accessibilityLabel("Input level")
@@ -1876,6 +1903,14 @@ public struct BarView: View {
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker
+        )
+    }
+
+    private var recordingPauseControl: VoiceBarRecordingPauseControl? {
+        VoiceBarPresentation.recordingPauseControl(
+            mode: state.mode,
+            recordingMode: state.recordingMode,
+            isPaused: state.isRecordingPaused
         )
     }
 

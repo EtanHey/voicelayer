@@ -48,7 +48,7 @@ import {
   resolveRecorderBinary,
 } from "../recorder-binary";
 
-const ISOLATION_ROOT = join(process.cwd(), ".test-tmp");
+const ISOLATION_ROOT = join(import.meta.dir, "../..", ".test-tmp");
 
 describe("R-014 preload isolates every VoiceLayer path", () => {
   it("declares itself isolated", () => {

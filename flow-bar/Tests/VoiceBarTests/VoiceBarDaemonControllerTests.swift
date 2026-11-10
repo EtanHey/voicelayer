@@ -208,6 +208,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertNil(process.capturedEnvironment?["CODEX_CI"])
         XCTAssertNil(process.capturedEnvironment?["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
         XCTAssertNotNil(process.capturedEnvironment?["PATH"])
+        XCTAssertEqual(process.capturedEnvironment?["PYTHONDONTWRITEBYTECODE"], "1")
         XCTAssertEqual(
             process.capturedEnvironment?["VOICEBAR_PARENT_PID"],
             String(ProcessInfo.processInfo.processIdentifier)

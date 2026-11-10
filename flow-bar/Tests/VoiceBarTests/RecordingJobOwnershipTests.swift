@@ -546,7 +546,7 @@ final class RecordingJobOwnershipTests: XCTestCase {
     }
 
     func testE2E24EveryTerminalDeliversTheWholeTakeExactlyOnce() throws {
-        for (bundle, terminal) in [("com.googlecode.iterm2", true), ("dev.warp.Warp-Stable", false), ("com.apple.Terminal", true),
+        for (bundle, terminal) in [("com.googlecode.iterm2", true), ("dev.warp.Warp-Stable", true), ("com.apple.Terminal", true),
                        ("com.cmuxterm.app", true), ("com.mitchellh.ghostty", true), ("test.native", false)] {
             let state = makeState(identity: { { true } }), app = FakeApp(bundle, 12001)
             var commands: [[String: Any]] = [], typed: [String] = [], ax: [String] = []
@@ -567,11 +567,13 @@ final class RecordingJobOwnershipTests: XCTestCase {
             let event: [String: Any] = ["type": "transcription", "take_id": id, "job_kind": "live", "delivery_id": id, "text": text]
             state.handleEvent(event); state.handleEvent(event)
             XCTAssertEqual(TerminalPasteTargets.isTerminal(bundle), terminal)
+            XCTAssertEqual(state.latestReusableTranscript, "whole fu…\nשלום", "History keeps the complete words and internal line break")
             if terminal {
-                XCTAssertEqual(typed, ["whole fu…\nשלום"], bundle)
+                // The 2.3 terminal contract keeps cmux's composer newlines and folds other terminals' breaks.
+                let delivered = bundle == "com.cmuxterm.app" ? "whole fu…\nשלום" : "whole fu… שלום"
+                XCTAssertEqual(typed, [delivered], bundle)
                 XCTAssertEqual(ax, [], "A terminal must never use AX insertion")
             } else {
-                // Warp currently follows native AX routing. WARP-TERM belongs to a product lane.
                 XCTAssertEqual(typed, [], bundle)
                 XCTAssertEqual(ax, [text], bundle)
             }

@@ -72,6 +72,14 @@ public struct VoiceBarRecordingContent: Equatable {
     public var usesPulsingLabelOpacity: Bool
 }
 
+/// Recording pause: Pause beside Stop on a PTT take; paused, it becomes Resume (selected, like Lock).
+public struct VoiceBarRecordingPauseControl: Equatable {
+    public var iconName: String
+    public var accessibilityLabel: String
+    public var accessibilityHint: String
+    public var isSelected: Bool
+}
+
 public struct VoiceBarRecordingHoldControl: Equatable {
     public var iconName: String
     public var accessibilityLabel: String
@@ -125,6 +133,8 @@ public struct VoiceBarReadQueueControl: Equatable {
 public struct VoiceBarNotchOperationalInput: Equatable {
     public var mode: VoiceMode
     public var showsRecordingHold: Bool
+    /// Recording pause takes the third recording slot on a PTT take, where Lock sits on a VAD take.
+    public var showsRecordingPause: Bool
     public var hasTeleprompterText: Bool
     public var isTeleprompterDismissed: Bool
     public var isTeleprompterReadback: Bool
@@ -162,6 +172,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public init(
         mode: VoiceMode,
         showsRecordingHold: Bool = false,
+        showsRecordingPause: Bool = false,
         hasTeleprompterText: Bool = false,
         isTeleprompterDismissed: Bool = false,
         isTeleprompterReadback: Bool = false,
@@ -186,6 +197,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.showsEarlierTakeProcessing = showsEarlierTakeProcessing
         self.mode = mode
         self.showsRecordingHold = showsRecordingHold
+        self.showsRecordingPause = showsRecordingPause
         self.hasTeleprompterText = hasTeleprompterText
         self.isTeleprompterDismissed = isTeleprompterDismissed
         self.isTeleprompterReadback = isTeleprompterReadback
@@ -292,7 +304,7 @@ public enum VoiceBarPresentation {
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
             recordingLeadingWingWidth: recordingLeadingWingWidth(
                 mode: input.mode,
-                showsRecordingHold: input.showsRecordingHold,
+                showsRecordingHold: input.showsRecordingHold || input.showsRecordingPause,
                 showsEarlierTakeProcessing: input.showsEarlierTakeProcessing
             ),
             recordingTrailingWingWidth: input.mode == .recording
@@ -546,6 +558,20 @@ public enum VoiceBarPresentation {
             showsWaveform: true,
             usesPulsingLabelOpacity: false
         )
+    }
+
+    public static func recordingPauseControl(
+        mode: VoiceMode,
+        recordingMode: String?,
+        isPaused: Bool
+    ) -> VoiceBarRecordingPauseControl? {
+        guard mode == .recording, recordingMode == "ptt" else { return nil }
+        return isPaused
+            ? VoiceBarRecordingPauseControl(iconName: "play.fill", accessibilityLabel: "Resume recording",
+                                            accessibilityHint: "Continue the same take", isSelected: true)
+            : VoiceBarRecordingPauseControl(iconName: "pause.fill", accessibilityLabel: "Pause recording",
+                                            accessibilityHint: "Stop adding audio to this take until you resume",
+                                            isSelected: false)
     }
 
     public static func recordingHoldControl(

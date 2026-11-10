@@ -5,8 +5,9 @@ import XCTest
 
 /// 2.3 U2, one test per wing state of the 3-wings mock, run in the test host: the real `BarView` inside the real
 /// non-activating `FloatingPillPanel`, offscreen. Events go to the panel with `sendEvent`, so nothing is posted to
-/// the system and the pointer never moves. Each test checks that both wings stay at the fixed 73.5 pt, that the
-/// right wing never holds more than two controls, and that the first click on every control dispatches its
+/// the system and the pointer never moves. Each test checks that both wings stay at the fixed 73.5 pt (T1/T5: reading has
+/// its transport and recording-style wings; a PTT recording's left wing is the three-control 99.5 pt, Stop · Pause · ✕), that the right
+/// wing never holds more than two controls, and that the first click on every control dispatches its
 /// action once while the panel stays non-key and the frontmost app stays put (PILL1).
 ///
 /// The interaction configurations mirror `AppDelegate.notchInteractionConfiguration` (pinned to the same values
@@ -108,21 +109,33 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertTrue(VoiceBarSetupAttention.accessibilityLabel(missing: [.accessibility]).hasPrefix("Settings. "))
     }
 
-    func testRecordingIsStopAndCancelLeftLevelBarsRight() {
+    func testRecordingIsStopPauseAndCancelLeftLevelBarsRight() {
         let state = makeState()
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
         state.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
+        // Mirrors AppDelegate's PTT recording configuration (AppLifecycleTests): Stop · Pause · ✕.
         let host = makeHost(
             state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2)
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .recording)
-        // 2.3 N1: the right wing hugs the time, the microphone and the level meter; it holds no control.
-        assertFixedWings(host, leading: 2, trailing: 0, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth)
-        // From the core outward: Cancel, then Stop.
+        // 2.3 N1: the right wing hugs the time, the microphone and the level meter; it holds no control. Recording
+        // pause: Pause takes the third left-wing slot, as Lock does on a VAD take, so the left wing is the
+        // three-control width.
+        assertFixedWings(host, leading: 3, trailing: 0,
+                         trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+                         leadingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
+        // From the core outward: Cancel, then Pause, then Stop.
         firstClick(host, control: 0)
         XCTAssertEqual(host.router.calls, ["cancel"])
         firstClick(host, control: 1)
-        XCTAssertEqual(host.router.calls, ["cancel", "stop"])
+        drainMain()
+        XCTAssertEqual(host.router.calls, ["cancel"], "Pause is not a router command")
+        XCTAssertEqual(sent.last?["cmd"] as? String, "set_recording_pause")
+        XCTAssertEqual(sent.last?["paused"] as? Bool, true)
+        firstClick(host, control: 2)
+        XCTAssertEqual(host.router.calls, ["cancel", "stop"], "Stop stays reachable beside Pause")
     }
 
     func testTranscribingKeepsHistoryAndSettingsLiveWithoutAThirdControl() {
@@ -286,6 +299,7 @@ final class WingsU2HostTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(
                 mode: state.mode,
                 showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
+                showsRecordingPause: state.mode == .recording && state.recordingMode == "ptt",
                 hasTeleprompterText: state.teleprompterText != nil,
                 isTeleprompterDismissed: state.isTeleprompterDismissed,
                 isTeleprompterReadback: state.isTeleprompterReadback,

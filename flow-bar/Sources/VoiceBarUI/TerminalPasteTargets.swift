@@ -17,14 +17,18 @@ import Foundation
 /// So these bundle identifiers never take the AX route. They used to take
 /// clipboard + Cmd+V instead; since 2026-09-13 they get the transcript TYPED and
 /// his pasteboard is never touched. Typed ESC[200~ markers do not survive cmux
-/// (v2.2.19 turned them into a stray "a"), so line breaks go out as Shift+Return
-/// instead — see `SynthesizedTyping`. The full history of why is the AIDEV-NOTE
+/// (v2.2.19 turned them into a stray "a"). cmux keeps its shipped Shift+Return
+/// line breaks; other terminals fold them to spaces — see `typingText`.
+/// The full history of why is the AIDEV-NOTE
 /// at VoiceState's paste call site.
 public enum TerminalPasteTargets {
     /// Bundle identifiers that host a terminal emulator.
     public static let bundleIdentifiers: Set<String> = [
         "com.cmuxterm.app", // cmux (embeds Ghostty)
         "com.apple.Terminal",
+        "dev.warp.Warp-Stable",
+        "dev.warp.Warp-Preview",
+        "dev.warp.WarpOss",
         "com.googlecode.iterm2",
         "com.mitchellh.ghostty",
         "net.kovidgoyal.kitty",
@@ -37,8 +41,23 @@ public enum TerminalPasteTargets {
         return bundleIdentifiers.contains(bundleIdentifier)
     }
 
-    /// Removes at most one trailing newline. Internal newlines are kept — they are
-    /// the user's line breaks and go out as Shift+Return. A *trailing* one has
+    /// Shell-safe default: newline runs become one space; words and other layout stay intact.
+    /// cmux alone keeps its shipped kitty-protocol composer behavior (lead ruling, 2026-11-08).
+    public static func typingText(_ text: String, bundleIdentifier: String) -> String {
+        let stripped = strippingSingleTrailingNewline(text)
+        guard bundleIdentifier != "com.cmuxterm.app" else { return stripped }
+        var result = "", previousWasNewline = false
+        for character in stripped {
+            if character.isNewline {
+                if !previousWasNewline { result.append(" ") }
+            } else { result.append(character) }
+            previousWasNewline = character.isNewline
+        }
+        return result
+    }
+
+    /// Removes at most one trailing newline. This helper keeps internal line breaks;
+    /// `typingText` applies the per-terminal delivery policy. A *trailing* one has
     /// nothing after it: at best it leaves the composer on an empty line, and an
     /// app that reads Shift+Return as Return would submit.
     public static func strippingSingleTrailingNewline(_ text: String) -> String {
