@@ -532,29 +532,21 @@ final class ReadQueueTests: XCTestCase {
 
     // MARK: - QUEUE1b Q1B-SOL-1 (lead ruling): Hide ends the read chain on both sides
 
-    func testHideDuringTheCaptureDiscardsTheRetainedQueueOnBothSides() throws {
+    func testHideDuringCaptureRefusesAndKeepsTheRetainedQueue() throws {
         let (state, a) = readingA()
         press(state, "Bravo selection")
-        let b = try XCTUnwrap(commands.last?["id"] as? String)
         state.handleEvent(queueEvent(1, a))
         state.retainingReadQueueOnStop { state.stop() }
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         state.record(pressToTalk: true)
         state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        let queueCount = state.readQueueCount
         commands = []
         state.snooze()
-        XCTAssertEqual(cmds, ["cancel"], "capture mechanics unchanged: Hide still cancels the dictation")
-        XCTAssertEqual(commands.last?["discard_read_queue"] as? Bool, true, "the daemon is told to drop the queue")
-        XCTAssertEqual(state.readQueueCount, 0)
-        state.unsnooze()
-        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
-        state.mode = .idle
-        XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
-        commands = []
-        state.skipToNextRead()
-        XCTAssertEqual(commands.count, 0, "no Next survives Hide")
-        state.handleEvent(speaking(id: b, text: "Bravo selection", read: "read-B"))
-        XCTAssertNotEqual(state.statusText, "Bravo selection", "B is forgotten")
+        XCTAssertFalse(state.isHidden)
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertTrue(commands.isEmpty, "refused Hide sends neither cancel nor queue discard")
+        XCTAssertEqual(state.readQueueCount, queueCount)
     }
 
     func testHideWhileReadsWaitInIdleTellsTheDaemonToDropThem() {

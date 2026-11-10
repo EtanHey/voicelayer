@@ -96,7 +96,7 @@ enum HotkeyInputSource {
     case legacySocket
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     let voiceState = VoiceState(
         transcriptionVocabularyLoader: {
             STTVocabularySnapshotLoader.load().promptTerms
@@ -1048,6 +1048,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.isSnoozedProvider = { [weak self] in
             self?.isSnoozed ?? false
         }
+        pillContextMenuController.hideDisabledReasonProvider = { [weak self] in self?.voiceState.hideDisabledReason }
         pillContextMenuController.onSnooze = { [weak self] in
             self?.snoozeForOneHour()
         }
@@ -1374,6 +1375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func snoozeForOneHour() {
+        guard voiceState.hideDisabledReason == nil else { return }
         snoozeTask?.cancel()
         isSnoozed = true
         snoozedUntil = Date().addingTimeInterval(3600)
@@ -3119,6 +3121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func quickMenuActions() -> [VoiceBarMenuAction] {
         VoiceBarMenu.quickActions(
             isSnoozed: isSnoozed,
+            hideDisabledReason: voiceState.hideDisabledReason,
             openSettings: { [weak self] in self?.openSettingsWindow() },
             showVoiceBar: { [weak self] in self?.commandRouter.handleShowVoiceBar() },
             snoozeToggle: { [weak self] in
@@ -3141,6 +3144,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         controlledUpdateLease = lease
         terminationPolicy.authorize(intent)
         NSApplication.shared.terminate(nil)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.action == #selector(hideNotchForOneHour(_:)) else { return true }
+        menuItem.toolTip = voiceState.hideDisabledReason
+        return voiceState.hideDisabledReason == nil
     }
 
     @objc func hideNotchForOneHour(_: Any?) {
@@ -3570,6 +3579,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             isVoiceBarHidden: { [weak self] in
                 self?.isSnoozed ?? false
             },
+            hideVoiceBarDisabledReason: { [weak self] in self?.voiceState.hideDisabledReason },
             voiceBarHiddenUntil: { [weak self] in
                 self?.snoozedUntil
             },

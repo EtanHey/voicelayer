@@ -2575,19 +2575,26 @@ public final class VoiceState {
     /// When the hide ends ("Hidden until HH:MM"); nil while shown, or when the caller gave no end time.
     public private(set) var hiddenUntil: Date?
 
+    public static let hideUnfinishedTakeReason = "Finish or cancel this take before hiding VoiceBar."
+
+    public var hideDisabledReason: String? {
+        let unfinished = mode == .recording || mode == .transcribing || captureLive || isRecordingHandoffPending ||
+            isRecordingDrainPending || pendingIntent?.command == .record || deferredBarRecording != nil ||
+            deferredRecordingTakeID != nil || microphoneTakeID != nil || processingTakeCount > 0 ||
+            isHistoryRetranscriptionPending
+        return unfinished ? Self.hideUnfinishedTakeReason : nil
+    }
+
     public func snooze(until: Date? = nil) {
+        guard hideDisabledReason == nil else { return }
         isHidden = true
         hiddenUntil = until
         if deferredBarRecording != nil { cancel() }
         // QUEUE1b (lead ruling): Hide ends the user read chain on both sides; nothing resumes later.
         let hasWaitingReads = readQueueCurrentRequestID != nil
         switch mode {
-        case .recording, .transcribing:
-            var payload: [String: Any] = ["cmd": "cancel"]
-            if hasWaitingReads { payload["discard_read_queue"] = true }
-            sendIntent(command: .cancel, payload: payload, trackPending: false)
         case .speaking:
-            // BARE-STOP: Hide over speech stops speech only; a capture it means to end goes through cancel above.
+            // Hide over speech stops speech only; unfinished capture refuses Hide above.
             sendIntent(command: .stop, payload: ["cmd": "stop", "scope": "speech"], trackPending: false)
         default:
             if hasWaitingReads { sendIntent(command: .stop, payload: ["cmd": "stop", "scope": "speech"], trackPending: false) }

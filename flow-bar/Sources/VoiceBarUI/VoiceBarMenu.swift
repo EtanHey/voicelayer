@@ -25,6 +25,8 @@ public enum VoicePastePlan: Equatable {
 
 public struct VoiceBarMenuAction: Identifiable {
     public let title: String
+    public var isEnabled = true
+    public var disabledReason: String? = nil
     public let perform: () -> Void
 
     public var id: String {
@@ -35,6 +37,7 @@ public struct VoiceBarMenuAction: Identifiable {
 public enum VoiceBarMenu {
     public static func quickActions(
         isSnoozed: Bool = false,
+        hideDisabledReason: String? = nil,
         openSettings: @escaping () -> Void,
         showVoiceBar: @escaping () -> Void,
         snoozeToggle: @escaping () -> Void,
@@ -48,7 +51,10 @@ public enum VoiceBarMenu {
         ]
 
         if !isSnoozed {
-            actions.append(VoiceBarMenuAction(title: "Hide for 1 hour", perform: snoozeToggle))
+            actions.append(VoiceBarMenuAction(title: "Hide for 1 hour", isEnabled: hideDisabledReason == nil,
+                                              disabledReason: hideDisabledReason, perform: {
+                if hideDisabledReason == nil { snoozeToggle() }
+            }))
         }
 
         actions.append(contentsOf: [

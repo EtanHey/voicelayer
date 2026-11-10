@@ -53,6 +53,7 @@ public final class PillContextMenuController: NSObject {
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
     public var onUnsnooze: () -> Void = {}
+    public var hideDisabledReasonProvider: () -> String? = { nil }
     public var isSnoozedProvider: () -> Bool = { false }
     /// Opens Settings › General › Microphone priority. There is no direct device pick here (D2).
     public var onChangeMicrophone: () -> Void = {}
@@ -95,6 +96,8 @@ public final class PillContextMenuController: NSObject {
                 action: #selector(handleSnooze),
                 keyEquivalent: ""
             )
+            snoozeItem.isEnabled = hideDisabledReasonProvider() == nil
+            snoozeItem.toolTip = hideDisabledReasonProvider()
             snoozeItem.target = self
             menu.addItem(snoozeItem)
         }
@@ -187,11 +190,13 @@ public final class PillContextMenuController: NSObject {
             ("Paste last transcript", #selector(handlePasteLastTranscript), Self.isPasteEnabled(transcript: transcriptProvider())),
             ("Settings…", #selector(handleOpenSettings), true),
             (isSnoozedProvider() ? "Show VoiceBar" : "Hide notch for 1 hour",
-             isSnoozedProvider() ? #selector(handleUnsnooze) : #selector(handleSnooze), true),
+             isSnoozedProvider() ? #selector(handleUnsnooze) : #selector(handleSnooze),
+             isSnoozedProvider() || hideDisabledReasonProvider() == nil),
         ] {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             item.target = self
             item.isEnabled = enabled
+            if action == #selector(handleSnooze) { item.toolTip = hideDisabledReasonProvider() }
         }
         // macOS appends its own Quit; adding another would duplicate the Dock command.
         menu.insertItem(.separator(), at: 2)
