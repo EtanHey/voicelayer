@@ -107,6 +107,78 @@ final class NotchPanelVisibilityTests: XCTestCase {
         XCTAssertTrue(app.voiceState.isHidden)
     }
 
+    @MainActor func testHideRefusesUnfinishedTakesWithoutCancelOrPanelChanges() throws {
+        for phase in ["capturing", "draining", "queued", "processing", "delivering"] {
+            let (app, panel) = productPanel()
+            defer { panel.orderOut(nil) }
+            var commands: [[String: Any]] = []
+            app.voiceState.sendCommand = { commands.append($0) }
+            app.voiceState.handleEvent([
+                "type": "state", "state": "idle", "source": "recording",
+                "mic_take_id": ["capturing", "draining"].contains(phase) ? "take" : NSNull(),
+                "recording_jobs": [["take_id": "take", "kind": "live", "phase": phase]],
+            ])
+            let mode = app.voiceState.mode
+            commands.removeAll()
+            app.hideNotchForOneHour(nil)
+            XCTAssertFalse(app.isSnoozed, phase)
+            XCTAssertFalse(app.voiceState.isHidden, phase)
+            XCTAssertNil(app.snoozedUntil, phase)
+            XCTAssertTrue(panel.isVisible, phase)
+            XCTAssertEqual(app.voiceState.mode, mode, phase)
+            XCTAssertTrue(commands.isEmpty, "Hide must never cancel an unfinished take: \(phase)")
+            app.voiceState.unsnooze()
+        }
+    }
+
+    @MainActor func testEveryHideMenuRefusesAnUnfinishedTakeWithTheReason() throws {
+        let (app, panel) = productPanel()
+        defer { panel.orderOut(nil) }
+        app.voiceState.mode = .recording
+        let reason = "Finish or cancel this take before hiding VoiceBar."
+        let quick = try XCTUnwrap(app.quickMenuActions().first { $0.title == "Hide for 1 hour" })
+        XCTAssertFalse(quick.isEnabled)
+        XCTAssertEqual(quick.disabledReason, reason)
+        let native = try XCTUnwrap(VoiceBarMainMenu.make(appDelegate: app).items.first?.submenu?
+            .item(withTitle: "Hide notch for 1 hour"))
+        XCTAssertFalse(app.validateMenuItem(native))
+        XCTAssertEqual(native.toolTip, reason)
+        let controller = PillContextMenuController()
+        controller.hideDisabledReasonProvider = { app.voiceState.hideDisabledReason }
+        for menu in [controller.makeMenu(), controller.makeNotchMenu(), controller.makeDockMenu()] {
+            let hide = try XCTUnwrap(menu.items.first { $0.title.hasPrefix("Hide") })
+            XCTAssertFalse(hide.isEnabled)
+            XCTAssertEqual(hide.toolTip, reason)
+        }
+        app.voiceState.mode = .idle
+        XCTAssertTrue(app.validateMenuItem(native))
+        XCTAssertNil(native.toolTip)
+        XCTAssertTrue(try XCTUnwrap(controller.makeMenu().item(withTitle: "Hide for 1 hour")).isEnabled)
+    }
+
+    @MainActor func testDirectSnoozeRefusesLegacyRecordingAndTranscribing() {
+        for mode in [VoiceMode.recording, .transcribing] {
+            let state = VoiceState()
+            state.mode = mode
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.snooze()
+            XCTAssertFalse(state.isHidden)
+            XCTAssertEqual(state.mode, mode)
+            XCTAssertTrue(commands.isEmpty)
+        }
+    }
+
+    @MainActor func testHideDismissesTheOpenSurfaceBeforeShow() throws {
+        let (app, panel) = productPanel()
+        defer { app.unsnoozeNow(); panel.orderOut(nil) }
+        app.notchSurfaceForTesting.send(.openSettings(.general))
+        try hide(app)
+        XCTAssertNil(app.notchSurfaceForTesting.drawer, "Hide must end the drawer intent")
+        app.unsnoozeNow()
+        XCTAssertNil(app.notchSurfaceForTesting.drawer, "Show must start closed")
+    }
+
     @MainActor func testProductSnoozeSurvivesIncomingEventClassesAndShowRestoresCurrentState() throws {
         let scenarios: [(String, (VoiceState) -> Void)] = [
             ("speaking", { $0.handleEvent(["type": "state", "state": "speaking", "text": "hidden update"]) }),

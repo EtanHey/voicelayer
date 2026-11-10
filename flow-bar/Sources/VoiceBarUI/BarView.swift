@@ -439,13 +439,15 @@ public struct BarView: View {
         onOpenNotchMenu: @escaping () -> Void = {},
         onCancelNotchMenu: @escaping () -> Void = {},
         surface: NotchSurfaceModel? = nil,
-        settingsDrawer: NotchSettingsDrawerContext? = nil
+        settingsDrawer: NotchSettingsDrawerContext? = nil,
+        hostWindow: HostWindowBox? = nil
     ) {
         _notchAppearance = State(
             initialValue: VoiceBarNotchAppearance(
                 effectiveAppearance: NSApplication.shared.effectiveAppearance
             )
         )
+        if let hostWindow { _hostWindow = State(initialValue: hostWindow) }
         self.state = state
         self.commandRouter = commandRouter
         self.onOpenSettings = onOpenSettings
@@ -530,7 +532,7 @@ public struct BarView: View {
             }
     }
 
-    private var notchContent: some View {
+    private var notchContentShell: some View {
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: notchPresentation)
         return VoiceBarNotchView(
             presentation: notchPresentation,
@@ -569,6 +571,10 @@ public struct BarView: View {
         .transaction { if historyBridge?.presentedMenu != nil { $0.disablesAnimations = true; $0.animation = nil } }
         .coordinateSpace(name: Self.notchCanvasSpace)
         .gesture(historyPullGesture)
+    }
+
+    private var notchContent: some View {
+        notchContentShell
         .onChange(of: isHistoryPullGestureActive) { _, isActive in
             // A press the system cancelled (no `onEnded`) ends here: a drag settles at the nearer end, a press still
             // inside the slop just ends, so the next gesture never reuses a stale start (Codex review R1).
@@ -588,7 +594,8 @@ public struct BarView: View {
             synchronizeHistoryDismissal(isOpen: isOpen)
             let velocity = pendingHistoryReleaseVelocity
             pendingHistoryReleaseVelocity = 0
-            animateHistory(toOpen: isOpen, velocity: velocity)
+            if state.isHidden { resetHiddenDrawer() }
+            else { animateHistory(toOpen: isOpen, velocity: velocity) }
         }
         .onChange(of: isHistoryMounted) { _, isMounted in
             synchronizeLauncherRetention()
@@ -598,7 +605,8 @@ public struct BarView: View {
             historyDismissal?.stop()
             modalObserver?.stop()
         }
-        .background(HostWindowReader { window in hostWindow.window = window })
+        .background(HostWindowReader { window in hostWindow.rebind(window) })
+        .onChange(of: surface.hideGeneration) { _, _ in resetHiddenDrawer() }
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
         }
@@ -1037,8 +1045,29 @@ public struct BarView: View {
             let surface = surface
             historyDismissal = NotchDrawerDismissal { reason in surface.send(.dismiss(reason)) }
         }
-        historyDismissal?.panelWindow = hostWindow.window
+        if let historyDismissal { hostWindow.bind(historyDismissal) }
         historyDismissal?.start()
+    }
+
+    private func resetHiddenDrawer() {
+        historyMorphGeneration &+= 1
+        historyDismissal?.stop()
+        historyPull = NotchHistoryPull()
+        historyRowsPull = NotchHistoryPull()
+        historyFlight = nil
+        historyRowsFlight = nil
+        isDrawerBodyDragActive = false
+        isSettingsPullArmed = false
+        pendingHistoryReleaseVelocity = 0
+        pendingHistoryRowsVelocity = 0
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            historyProgress = 0
+            isHistoryMounted = false
+            historyRowsExtent = CGFloat(historyRows)
+        }
+        reportHistoryPanelMounted(false)
     }
 
     /// A Settings sheet or alert closes the drawer and keeps new ones from opening over it.

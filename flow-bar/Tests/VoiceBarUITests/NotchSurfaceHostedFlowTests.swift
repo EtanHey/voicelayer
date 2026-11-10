@@ -44,6 +44,26 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
     /// The requests the Settings drawer hands its panes (the microphone control's scroll target, 0510 N9 / F4).
     final class PaneRequests { var all: [SettingsTabRequest?] = [] }
 
+    func testHideResetsMountedDrawerAndShowCanOpenSettingsAndSelectATab() throws {
+        let harness = makeHarness()
+        harness.surface.send(.openHistory)
+        drain(0.5)
+        XCTAssertTrue(harness.model.isHistoryPanelOpen)
+        harness.state.snooze()
+        harness.surface.hide()
+        harness.panel.orderOut(nil)
+        drain(0.1)
+        XCTAssertNil(harness.surface.drawer)
+        XCTAssertFalse(harness.model.isHistoryPanelOpen, "hidden drawer must unmount without waiting for a spring")
+        harness.state.unsnooze()
+        harness.panel.orderBack(nil)
+        harness.surface.send(.openSettings(.general))
+        drain(0.5)
+        XCTAssertTrue(harness.model.isHistoryPanelOpen)
+        harness.surface.send(.selectSettingsTab(.transcription))
+        XCTAssertEqual(harness.surface.drawer, .settings(.transcription))
+    }
+
     private func drain(_ seconds: TimeInterval = 0.05) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }

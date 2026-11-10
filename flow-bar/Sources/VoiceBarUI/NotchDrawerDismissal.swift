@@ -27,6 +27,8 @@ public final class NotchDrawerDismissal {
     private var monitors: [Any] = []
     /// The notch panel: presses that reach it are inside the drawn notch.
     public weak var panelWindow: NSWindow?
+    public var livePanelWindow: (() -> NSWindow?)?
+    public var logOutsideClick: (String) -> Void = { NSLog("%@", $0) }
     /// Whether Esc inside VoiceBar belongs to someone else right now (a sheet, a modal, IME composition).
     public var escapeIsOwnedElsewhere: () -> Bool = NotchDrawerDismissal.escapeIsOwnedByModalOrComposition
     /// A cover inside the drawer (Dictionary's term editor) that takes Esc before the drawer does (0510 review F2).
@@ -44,14 +46,14 @@ public final class NotchDrawerDismissal {
 
     public func start() {
         guard monitors.isEmpty else { return }
-        if let mouse = NSEvent.addGlobalMonitorForEvents(matching: Self.mouseDownMask, handler: { [weak self] _ in
-            MainActor.assumeIsolated { self?.handleGlobalMouseDown() }
+        if let mouse = NSEvent.addGlobalMonitorForEvents(matching: Self.mouseDownMask, handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.handleGlobalMouseDown(windowNumber: event.windowNumber) }
         }) {
             monitors.append(mouse)
         }
         if let localMouse = NSEvent.addLocalMonitorForEvents(matching: Self.mouseDownMask, handler: { [weak self] event in
             let window = event.window
-            _ = MainActor.assumeIsolated { self?.handleLocalMouseDown(in: window) }
+            _ = MainActor.assumeIsolated { self?.handleLocalMouseDown(in: window, windowNumber: event.windowNumber) }
             return event // the click still lands where it was aimed
         }) {
             monitors.append(localMouse)
@@ -78,16 +80,29 @@ public final class NotchDrawerDismissal {
     // MARK: Decisions (the monitors call these; tests call them directly)
 
     /// A mouse-down in another app.
-    public func handleGlobalMouseDown() {
+    public func handleGlobalMouseDown(windowNumber: Int = 0) {
+        recordOutsideClick(eventWindowNumber: windowNumber)
         onDismiss(.outsideClick)
     }
 
     /// A mouse-down inside VoiceBar: outside unless it reached the notch panel itself.
     @discardableResult
-    public func handleLocalMouseDown(in window: NSWindow?) -> Bool {
-        guard Self.isOutside(window: window, panel: panelWindow) else { return false }
+    public func handleLocalMouseDown(in window: NSWindow?, windowNumber: Int? = nil) -> Bool {
+        let live = currentPanelWindow
+        guard Self.isOutside(window: window, panel: live) else { return false }
+        recordOutsideClick(eventWindowNumber: windowNumber ?? window?.windowNumber ?? 0)
         onDismiss(.outsideClick)
         return true
+    }
+
+    private var currentPanelWindow: NSWindow? {
+        if let livePanelWindow { return livePanelWindow() }
+        return panelWindow
+    }
+
+    private func recordOutsideClick(eventWindowNumber: Int) {
+        let live = currentPanelWindow
+        logOutsideClick("[VoiceBar] drawer_outside_click eventWindow=\(eventWindowNumber) storedPanelWindow=\(panelWindow?.windowNumber ?? 0) livePanelWindow=\(live?.windowNumber ?? 0) panelKey=\(live?.isKeyWindow ?? false) ignoresMouseEvents=\(live?.ignoresMouseEvents ?? false)")
     }
 
     public static func isOutside(window: NSWindow?, panel: NSWindow?) -> Bool {
@@ -159,7 +174,10 @@ struct HostWindowReader: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_: NSView, context _: Context) {}
+    func updateNSView(_ view: NSView, context _: Context) {
+        (view as? WindowReportingView)?.onWindow = onWindow
+        onWindow(view.window)
+    }
 
     private final class WindowReportingView: NSView {
         var onWindow: ((NSWindow?) -> Void)?
@@ -172,6 +190,28 @@ struct HostWindowReader: NSViewRepresentable {
 }
 
 /// Holds the host window for a SwiftUI view without retaining it.
-final class HostWindowBox {
-    weak var window: NSWindow?
+public final class HostWindowBox {
+    public private(set) weak var window: NSWindow?
+    public var livePanelWindow: (() -> NSWindow?)?
+    private weak var dismissal: NotchDrawerDismissal?
+
+    public init() {}
+
+    @MainActor public func rebind(_ reportedWindow: NSWindow?) {
+        if let livePanelWindow { window = livePanelWindow() }
+        else { window = reportedWindow }
+        dismissal?.panelWindow = window
+    }
+
+    @MainActor public func bind(_ dismissal: NotchDrawerDismissal) {
+        self.dismissal = dismissal
+        dismissal.panelWindow = window
+        dismissal.livePanelWindow = { [weak self] in
+            guard let self else { return nil }
+            if let livePanelWindow { return livePanelWindow() }
+            return window
+        }
+    }
+
+    @MainActor public func stop() { dismissal?.stop() }
 }

@@ -488,6 +488,7 @@ public struct SettingsView: View {
     public let onRequestMicrophone: (@escaping () -> Void) -> Void
     public let onOpenPermissionURL: (URL) -> Void
     public let isVoiceBarHidden: () -> Bool
+    public let hideVoiceBarDisabledReason: () -> String?
     public let voiceBarHiddenUntil: () -> Date?
     public let onHideVoiceBar: () -> Void
     public let onShowVoiceBar: () -> Void
@@ -663,6 +664,7 @@ public struct SettingsView: View {
         onRequestMicrophone: @escaping (@escaping () -> Void) -> Void = { $0() },
         onOpenPermissionURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
         isVoiceBarHidden: @escaping () -> Bool = { false },
+        hideVoiceBarDisabledReason: @escaping () -> String? = { nil },
         voiceBarHiddenUntil: @escaping () -> Date? = { nil },
         onHideVoiceBar: @escaping () -> Void = {},
         onShowVoiceBar: @escaping () -> Void = {},
@@ -791,6 +793,7 @@ public struct SettingsView: View {
         self.onRequestMicrophone = onRequestMicrophone
         self.onOpenPermissionURL = onOpenPermissionURL
         self.isVoiceBarHidden = isVoiceBarHidden
+        self.hideVoiceBarDisabledReason = hideVoiceBarDisabledReason
         self.voiceBarHiddenUntil = voiceBarHiddenUntil
         self.onHideVoiceBar = onHideVoiceBar
         self.onShowVoiceBar = onShowVoiceBar
@@ -1291,7 +1294,7 @@ public struct SettingsView: View {
             SettingsRow(title: SettingsGeneralCopy.hideTitle,
                         description: localVoiceBarHidden
                             ? SettingsVisibility.hiddenStatus(until: voiceBarHiddenUntil()) + ". VoiceBar keeps working."
-                            : SettingsGeneralCopy.hideDescription) {
+                            : hideVoiceBarDisabledReason() ?? SettingsGeneralCopy.hideDescription) {
                 if localVoiceBarHidden {
                     Button("Show VoiceBar") {
                         onShowVoiceBar()
@@ -1303,7 +1306,8 @@ public struct SettingsView: View {
                         onHideVoiceBar()
                         localVoiceBarHidden = isVoiceBarHidden()
                     }
-                    .help("Hide VoiceBar for 1 hour")
+                    .disabled(hideVoiceBarDisabledReason() != nil)
+                    .help(hideVoiceBarDisabledReason() ?? "Hide VoiceBar for 1 hour")
                 }
             }
         }

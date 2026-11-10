@@ -35,9 +35,9 @@
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "e2f80afef0ae06b066730a6e1d4159574241a9222458d190d2e8d6c6e2af1154",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "192998017375294a13990c9a38cf4c35daf51d8c6255e56489591613f5028ab0",
     "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "73eec828925057ec6464eb50d29995c839962ab8498b0cb91654da7993ae6e7e",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "bdbc25ad5081c776f6cf9214c343475e2c8cfc66145f8ff5c1ad7336f4e521ce",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "3003ff60b29cd4389ae123635235791238dcab410a285ee24c1b503226ba74bd",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "da89b33a7f8c164d07e3faadaa6d6fc6f80bb7c2adb6203278a1861ec0dba126",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "8fcb39b20215640fd46e80494b97c6bf244a7035a14897fc08c26dc65741b35f",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "33110a93200fb5039d08abaa9b32e7df9508c77b7725fe7942d5c4ddc7c6ea30",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "9f53c9ed233fe111285fec04ae3bbff67821ae88b667e36054500dd6f2744b3f",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
@@ -274,8 +274,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 215167,
-      "distinct": 32748
+      "generated": 188179,
+      "distinct": 30966
     },
     "MutTypedTab": {
       "role": "mutant",

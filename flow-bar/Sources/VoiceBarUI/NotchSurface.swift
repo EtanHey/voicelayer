@@ -85,6 +85,8 @@ public enum NotchDismissReason: String, Equatable, Hashable, Sendable, CaseItera
     case emptied
     /// A notch menu (the microphone list, the bare-notch menu) asked for the spot.
     case menu
+    /// The user hid VoiceBar; no drawer intent survives Show.
+    case hidden
 }
 
 public enum NotchSurfaceEvent: Equatable, Hashable, Sendable {
@@ -207,6 +209,7 @@ public struct NotchSurfaceMachine: Equatable, Hashable, Sendable {
 public final class NotchSurfaceModel {
     public private(set) var machine = NotchSurfaceMachine()
     /// Every transition, in order (tests, the UIE2E host's receipts). Bounded.
+    public private(set) var hideGeneration = 0
     public private(set) var journal: [NotchSurfaceJournalEntry] = []
     @ObservationIgnored public var log: (String) -> Void = { NSLog("%@", $0) }
     private static let journalLimit = 64
@@ -217,6 +220,11 @@ public final class NotchSurfaceModel {
     public var state: NotchSurfaceState { machine.state }
     public var isDrawerOpen: Bool { machine.drawer != nil }
     public var historyDetent: NotchHistoryDetent { machine.historyDetent }
+
+    public func hide() {
+        send(.dismiss(.hidden))
+        hideGeneration &+= 1 // Also resets an in-progress pull with no open drawer yet.
+    }
 
     @discardableResult
     public func send(_ event: NotchSurfaceEvent) -> NotchSurfaceOutcome {
