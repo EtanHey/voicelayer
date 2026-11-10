@@ -24,8 +24,11 @@ public final class MicrophonePriorityApplyCoordinator {
         mode: VoiceMode,
         captureLive: Bool
     ) {
-        guard devices != lastAvailableDevices else { return }
-        lastAvailableDevices = devices
+        // Match the priority UI's pickable-device rule. Capture-created aggregates must not
+        // arm a default-input write when recording returns to idle.
+        let pickableDevices = devices.filter { !$0.isVirtualOrAggregate }
+        guard pickableDevices != lastAvailableDevices else { return }
+        lastAvailableDevices = pickableDevices
         requestApply(mode: mode, captureLive: captureLive)
     }
 

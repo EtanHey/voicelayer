@@ -7,6 +7,11 @@ import ts from "typescript";
 // Exact lines AND occurrence budgets: adding a home path even in an allowed
 // file needs review. These exceptions are fixtures, isolation or path contracts.
 const ALLOWED: Record<string, Array<[string, number]>> = {
+  // Containment assertion only: this child receives a synthetic HOME before it
+  // starts, and validates every resolved path before its sandbox writes.
+  "src/__tests__/test-isolation-cwd.test.ts": [
+    ['expect(inside(process.env.HOME, path) || inside(process.env.TMPDIR, path)).toBe(true);', 1],
+  ],
   // Structural STT safety guard: cache entry/target metadata only, no corpus,
   // audio or transcript reads. Exactly one cache-base resolver is authorized.
   "src/__tests__/setup/stt-parakeet-policy.ts": [

@@ -177,7 +177,7 @@ def quit_app(app, env=None, force=False):
         time.sleep(.1)
     raise RuntimeError('REFUSED: QA/app descendants did not exit; never escalating past SIGTERM')
 
-def job_info(stopped=False):
+def job_info(stopped=False, allow_unloaded=False):
     path = HOME / 'Library/LaunchAgents/com.voicelayer.voicebar.plist'
     config = read_plist(path)
     expected = {'Label': 'com.voicelayer.voicebar', 'ProgramArguments': [str(RESIDENT / 'Contents/MacOS/VoiceBar')],
@@ -187,6 +187,8 @@ def job_info(stopped=False):
     if any(config.get(key) != value for key, value in expected.items()):
         raise RuntimeError('REFUSED: resident supervision/KeepAlive/log configuration is unknown')
     result = subprocess.run(['/bin/launchctl', 'print', LABEL], text=True, capture_output=True, timeout=2)
+    if allow_unloaded and result.returncode == 113:
+        return None
     loaded = {'path': str(path), 'program': expected['ProgramArguments'][0], 'stdout path': expected['StandardOutPath'], 'stderr path': expected['StandardErrorPath']}
     if result.returncode or any(not re.search(r'^\s*' + re.escape(key) + ' = ' + re.escape(value) + r'\s*$', result.stdout, re.M) for key, value in loaded.items()):
         raise RuntimeError('REFUSED: canonical resident LaunchAgent is not loaded as expected')
@@ -219,10 +221,13 @@ def wait_ready(app, env, exclusive=False):
     raise RuntimeError('App/daemon not ready; restore explicitly (use --force-resident only if required)')
 
 def restore_resident(force=False):
-    job_info()  # Prove supervision is available before retiring QA.
+    job_info(allow_unloaded=True)  # Validate the plist before retiring QA; helper can bootstrap it.
     env = read_plist(APP / 'Contents/Info.plist')['LSEnvironment'] if APP.exists() else B['environment']()
     quit_app(APP, env, force=force)
-    subprocess.run(['/bin/launchctl', 'kickstart', LABEL], check=True)  # No -k: never restart a running resident.
+    # Refuse a respawn before -k: never interrupt an active resident during restore.
+    if pids(RESIDENT):
+        raise RuntimeError('REFUSED: resident already running; verify its activity before restoring')
+    subprocess.run(['bash', str(B['ROOT'] / 'scripts/start-voicebar.sh')], check=True)
     wait_ready(RESIDENT, LIVE)
     if pids(RESIDENT) != [job_info()]:
         raise RuntimeError('REFUSED: restored resident PID does not match its LaunchAgent')

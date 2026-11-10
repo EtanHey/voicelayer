@@ -651,6 +651,7 @@ public struct BarView: View {
         var input = VoiceBarNotchOperationalInput(
             mode: state.mode,
             showsRecordingHold: recordingHoldControl != nil,
+            showsRecordingPause: recordingPauseControl != nil,
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
@@ -1099,6 +1100,20 @@ public struct BarView: View {
                 ) {
                     commandRouter.handleStop()
                 }
+                // Recording pause sits beside Stop, in its own control slot.
+                if let recordingPauseControl {
+                    notchButton(
+                        icon: recordingPauseControl.iconName,
+                        isSelected: recordingPauseControl.isSelected,
+                        selectionStyle: .recordingState,
+                        accessibilityLabel: recordingPauseControl.accessibilityLabel,
+                        accessibilityHint: recordingPauseControl.accessibilityHint
+                    ) {
+                        state.setRecordingPaused(!state.isRecordingPaused)
+                    }
+                    .contentTransition(.symbolEffect(.replace))
+                    .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
+                }
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel recording") {
                     commandRouter.handleCancel()
                 }
@@ -1300,7 +1315,16 @@ public struct BarView: View {
                     color: notchPrimaryLabelColor
                 )
             } meter: {
-                notchWaveform
+                if state.isRecordingPaused {
+                    notchWaveform(isPaused: true)
+                        .accessibilityElement()
+                        .accessibilityLabel("Recording paused")
+                        // VoiceOver reads the same frozen time the wing shows.
+                        .accessibilityValue(VoiceBarReadingTimeLabel.text(
+                            elapsedMilliseconds: state.recordingElapsedMilliseconds()))
+                } else {
+                    notchWaveform
+                }
             }
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
@@ -1415,13 +1439,17 @@ public struct BarView: View {
     }
 
     private var notchWaveform: some View {
+        notchWaveform(isPaused: false)
+    }
+
+    private func notchWaveform(isPaused: Bool) -> some View {
         VoiceBarNotchWaveform(
             mode: state.mode,
             isListening: !state.speechDetected,
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() },
-            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused
+            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused || isPaused
         )
         .help("Input level")
         .accessibilityLabel("Input level")
@@ -1514,15 +1542,13 @@ public struct BarView: View {
             VStack(spacing: 0) {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
-                    .frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA
-                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines)
-                        : Theme.teleprompterViewportHeight : nil)
+                    .frame(height: state.showsTeleprompterScrubber ? teleprompterBodyHeight : nil)
                 if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
                         .drawingTimingNotice(false)
                         .padding(.top, TeleprompterA.scrubberGap)
                 }
-                // Live reading fits the shell exactly, so this is the 3 pt gap; a readback's shorter text leaves more.
+                // Live and stopped text both fill their body; only the designed 3 pt gap remains here.
                 Spacer(minLength: TeleprompterA.controlsGap)
                 notchTeleprompterControls
                 if showsTeleprompterA {
@@ -1648,6 +1674,7 @@ public struct BarView: View {
                     wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth
                     ),
+                    viewportHeight: teleprompterBodyHeight,
                     contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
@@ -1659,6 +1686,12 @@ public struct BarView: View {
         .onChange(of: state.isPreparingSpeech, initial: true) { old, isPreparing in
             preparingHandoff.preparingChanged(to: isPreparing, initial: old == isPreparing)
         }
+    }
+
+    /// Port main's stopped-read fill to 2.4's scrubber/control/handle stack (S4-F2/F3).
+    private var teleprompterBodyHeight: CGFloat {
+        showsTeleprompterA ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines)
+            : TeleprompterA.stoppedBodyHeight(lines: state.teleprompterVisibleLines)
     }
 
     /// U5: live reading uses Teleprompter A; an idle-retained readback keeps its scrolling view.
@@ -1876,6 +1909,14 @@ public struct BarView: View {
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker
+        )
+    }
+
+    private var recordingPauseControl: VoiceBarRecordingPauseControl? {
+        VoiceBarPresentation.recordingPauseControl(
+            mode: state.mode,
+            recordingMode: state.recordingMode,
+            isPaused: state.isRecordingPaused
         )
     }
 

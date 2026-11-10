@@ -847,6 +847,8 @@ public struct TeleprompterView: View {
         wordBoundaries.contains { $0.wordIndex != nil }
     }
 
+    private var fadesBottom: Bool { isReadback && contentHeight + 2 * contentInset > viewportHeight }
+
     public var body: some View {
         ScrollViewReader { proxy in
             ScrollView(
@@ -871,6 +873,16 @@ public struct TeleprompterView: View {
                 )
             }
             .id(TeleprompterScrollPolicy.contentIdentity(for: text))
+            // T3 (QA 2026-11-08 S4-F2: "what the hell is this text?"): a stopped read that overflows its body fades
+            // out at the bottom edge instead of cutting a line through, like Teleprompter A's top fade.
+            .mask {
+                VStack(spacing: 0) {
+                    Color.black
+                    LinearGradient(colors: [.black, .black.opacity(fadesBottom ? 0 : 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: TeleprompterA.topFadeHeight)
+                }
+            }
             .coordinateSpace(name: "teleprompterViewport")
             .onPreferenceChange(TeleprompterWordFrames.self) { frames in
                 TeleprompterLandingProbe.didMeasure?(frames)

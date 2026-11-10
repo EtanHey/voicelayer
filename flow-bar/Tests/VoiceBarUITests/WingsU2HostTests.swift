@@ -108,21 +108,33 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertTrue(VoiceBarSetupAttention.accessibilityLabel(missing: [.accessibility]).hasPrefix("Settings. "))
     }
 
-    func testRecordingIsStopAndCancelLeftLevelBarsRight() {
+    func testRecordingIsStopPauseAndCancelLeftLevelBarsRight() {
         let state = makeState()
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
         state.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
+        // Mirrors AppDelegate's PTT recording configuration (AppLifecycleTests): Stop · Pause · ✕.
         let host = makeHost(
             state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2)
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .recording)
-        // 2.3 N1: the right wing hugs the time, the microphone and the level meter; it holds no control.
-        assertFixedWings(host, leading: 2, trailing: 0, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth)
-        // From the core outward: Cancel, then Stop.
+        // 2.3 N1: the right wing hugs the time, the microphone and the level meter; it holds no control. Recording
+        // pause: Pause takes the third left-wing slot, as Lock does on a VAD take, so the left wing is the
+        // three-control width.
+        assertFixedWings(host, leading: 3, trailing: 0,
+                         trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+                         leadingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
+        // From the core outward: Cancel, then Pause, then Stop.
         firstClick(host, control: 0)
         XCTAssertEqual(host.router.calls, ["cancel"])
         firstClick(host, control: 1)
-        XCTAssertEqual(host.router.calls, ["cancel", "stop"])
+        drainMain()
+        XCTAssertEqual(host.router.calls, ["cancel"], "Pause is not a router command")
+        XCTAssertEqual(sent.last?["cmd"] as? String, "set_recording_pause")
+        XCTAssertEqual(sent.last?["paused"] as? Bool, true)
+        firstClick(host, control: 2)
+        XCTAssertEqual(host.router.calls, ["cancel", "stop"], "Stop stays reachable beside Pause")
     }
 
     func testTranscribingKeepsHistoryAndSettingsLiveWithoutAThirdControl() {
@@ -286,6 +298,7 @@ final class WingsU2HostTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(
                 mode: state.mode,
                 showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
+                showsRecordingPause: state.mode == .recording && state.recordingMode == "ptt",
                 hasTeleprompterText: state.teleprompterText != nil,
                 isTeleprompterDismissed: state.isTeleprompterDismissed,
                 isTeleprompterReadback: state.isTeleprompterReadback,

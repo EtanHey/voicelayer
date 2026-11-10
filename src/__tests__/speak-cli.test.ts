@@ -22,7 +22,7 @@ describe("speak CLI", () => {
     expect(await parseSpeakArgs(["-", "--markdown", "--profile", "long", "--wait"], io("# Piped"))).toMatchObject({ text: "# Piped", format: "markdown", profile: "long", wait: true });
     expect(await parseSpeakArgs(["--file", "read.MD"], io())).toMatchObject({ text: "# File", format: "markdown" });
     expect(await parseSpeakArgs(["--file", "read.txt"], io())).toMatchObject({ format: "plain" });
-    expect(await parseSpeakArgs(["--stop"], io())).toMatchObject({ cmd: "stop" });
+    expect(await parseSpeakArgs(["--stop"], io())).toEqual({ cmd: "stop", scope: "speech" });
   });
   test("invalid and empty inputs fail", async () => {
     for (const args of [[], [""], ["--profile", "bad"], ["--file"], ["--oops"], ["--stop", "hello"], ["--file", "a", "hello"], ["hello", "world"]]) {
@@ -51,10 +51,13 @@ describe("speak CLI", () => {
     const daemon = await createMcpDaemon({ socketPath, speechControl: control });
     try {
       await requestSpeech({ cmd: "speak_text", text: "x".repeat(5000), profile: "long", format: "markdown", wait: false }, { socketPath, token: "test-token" });
-      await requestSpeech({ cmd: "stop" }, { socketPath, token: "test-token" });
-      expect(received).toEqual([{ cmd: "speak_text", text: "x".repeat(5000), profile: "long", format: "markdown", source: "cli" }, { cmd: "stop" }]);
-      await expect(requestSpeech({ cmd: "stop" }, { socketPath, token: "wrong" })).rejects.toThrow("Unauthorized");
-      expect(received.length).toBe(2);
+      await requestSpeech({ cmd: "stop", scope: "speech" }, { socketPath, token: "test-token" });
+      // BARE-STOP: an older CLI's bare stop, or one naming a take, is still only a speech stop on this channel.
+      await requestSpeech({ cmd: "stop", take_id: "dictation" } as never, { socketPath, token: "test-token" });
+      expect(received).toEqual([{ cmd: "speak_text", text: "x".repeat(5000), profile: "long", format: "markdown", source: "cli" },
+        { cmd: "stop", scope: "speech" }, { cmd: "stop", scope: "speech" }]);
+      await expect(requestSpeech({ cmd: "stop", scope: "speech" }, { socketPath, token: "wrong" })).rejects.toThrow("Unauthorized");
+      expect(received.length).toBe(3);
     } finally { daemon.stop(); }
   });
   test("shell entry reads piped stdin and file; errors exit nonzero", async () => {
@@ -215,7 +218,7 @@ describe("speak CLI review regressions", () => {
     try {
       const waiting = requestSpeech({ cmd: "speak_text", text: "read", profile: "auto", format: "plain", wait: true }, { socketPath, token: "token" }).then(() => { ended = true; });
       await until(() => speaking); expect(ended).toBe(false);
-      await requestSpeech({ cmd: "stop" }, { socketPath, token: "token" }); await waiting;
+      await requestSpeech({ cmd: "stop", scope: "speech" }, { socketPath, token: "token" }); await waiting;
       expect(ended).toBe(true);
       expect((await rpc(socketPath, "tools/list")).result.tools.map((tool: any) => tool.name)).toEqual(["voice_speak", "voice_ask"]);
     } finally { daemon.stop(); }

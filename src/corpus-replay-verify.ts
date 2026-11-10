@@ -690,6 +690,7 @@ export function buildCorpusDaemonEnvironment(options: {
     VOICELAYER_ALLOW_ORPHAN_DAEMON: "1",
     VOICELAYER_SOCKET_PATH: options.voiceBarSocketPath,
     VOICELAYER_MCP_SOCKET_PATH: options.mcpSocketPath,
+    VOICELAYER_WHISPER_OWNERSHIP_DIR: join(options.workDir, "whisper-ownership"),
     VOICELAYER_CONTROL_LAYER_BASE: join(options.workDir, "control-layer"),
     QA_VOICE_STT_POLISH_LOG_PATH: join(options.workDir, "polish-shadow.jsonl"),
     QA_VOICE_SOCKET_PATH: options.voiceBarSocketPath,

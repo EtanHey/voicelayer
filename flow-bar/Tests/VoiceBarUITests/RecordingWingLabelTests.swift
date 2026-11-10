@@ -13,6 +13,8 @@ final class RecordingWingLabelTests: XCTestCase {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
                                playbackAmplitudeClock: { [unowned self] in now }, keepsExpandedInDevState: false)
+        // The wing's time, Pause spans and the take's recording stamp share one clock.
+        state.recordingTimingClock = { [unowned self] in now }
         state.isConnected = true
         state.sendCommand = { _ in }
         return state

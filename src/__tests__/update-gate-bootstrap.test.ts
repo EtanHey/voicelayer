@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 function fixture(health: unknown = { type: "health", recording_state: "idle", queue_depth: 0 }) {
   const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "boot-")), bin = join(root, "bin");
-  mkdirSync(bin);
+  mkdirSync(bin); mkdirSync(join(root, "home"));
   const gate = join(root, "gate"), diag = join(root, "diag"), log = join(root, "calls"), socket = testSocket(`b${serial++}.sock`);
   const progress = join(root, "progress");
   for (const [name, value] of Object.entries({ diag: diagLine(), calls: "", progress: "", polls: "", owners: "123 VoiceBar\n", loaded: "yes", disabled: "false", active: "" })) writeFileSync(join(root, name), value);
@@ -36,13 +36,14 @@ function fixture(health: unknown = { type: "health", recording_state: "idle", qu
   const scripts = {
     ps: 'if [[ "$*" == "-p 123 -o lstart= -o comm=" ]]; then echo "Sat Oct 31 09:10:11 2026 $ROOT/VoiceBar.app/Contents/MacOS/VoiceBar"; elif [[ "$*" == "-p 123 -o comm=" ]]; then echo "$ROOT/VoiceBar.app/Contents/MacOS/VoiceBar"; else exec /bin/ps "$@"; fi',
     open: 'echo "open $*" >> "$CALL_LOG"; echo "123 VoiceBar" > "$ROOT/owners"',
-    pgrep: '[[ "$2" != *rec* ]] || printf . >> "$ROOT/polls"; if [[ -f "$ROOT/post-commit-fault" ]] && /usr/bin/grep -q COMMITTED "$ROOT/gate" 2>/dev/null; then rm "$ROOT/post-commit-fault"; echo postcommit-sample >> "$CALL_LOG"; exit 2; fi; if [[ -f "$ROOT/gate" && -f "$ROOT/proof-fault" ]]; then n=$(cat "$ROOT/proof-count" 2>/dev/null || echo 0); echo $((n+1)) > "$ROOT/proof-count"; [[ "$n" -lt 2 ]] || exit 2; fi; [[ ! -f "$ROOT/pgrep-error" ]] || exit 2; if [[ "$2" == *rec* ]]; then f=active; elif [[ "$2" != *VoiceBar* ]]; then f=direct; else f=owners; fi; if [[ "$2" == *whisper-server* && -s "$ROOT/resident" ]]; then cat "$ROOT/resident"; exit 0; fi; if [[ -s "$ROOT/$f" ]]; then cat "$ROOT/$f"; exit 0; else exit 1; fi',
+    pgrep: '[[ "$2" != *rec* ]] || printf . >> "$ROOT/polls"; if [[ -f "$ROOT/post-commit-fault" ]] && /usr/bin/grep -q COMMITTED "$ROOT/gate" 2>/dev/null; then rm "$ROOT/post-commit-fault"; echo postcommit-sample >> "$CALL_LOG"; exit 2; fi; if [[ -f "$ROOT/gate" && -f "$ROOT/proof-fault" ]]; then n=$(cat "$ROOT/proof-count" 2>/dev/null || echo 0); echo $((n+1)) > "$ROOT/proof-count"; [[ "$n" -lt 2 ]] || exit 2; fi; [[ ! -f "$ROOT/pgrep-error" ]] || exit 2; if [[ "$2" == *rec* ]]; then f=active; elif [[ "$2" != *VoiceBar* ]]; then f=direct; else f=owners; fi; if [[ "$2" == *whisper-server* && -s "$ROOT/resident" ]]; then cat "$ROOT/resident"; exit 0; fi; if [[ -s "$ROOT/$f" ]]; then if [[ "$1" == -x && "$2" == VoiceBar ]]; then while read -r pid rest; do echo "$pid"; done < "$ROOT/$f"; else cat "$ROOT/$f"; fi; exit 0; else exit 1; fi',
     launchctl: `case "$1" in
 print-disabled) printf '{\\n"com.voicelayer.voicebar" => %s\\n"com.voicelayer.mcp-daemon" => %s\\n}\\n' "$(cat "$ROOT/disabled")" "$(cat "$ROOT/disabled-mcp" 2>/dev/null || echo true)";;
-print) if [[ ( -f "$ROOT/loaded" && "$2" == *voicebar ) || ( -f "$ROOT/loaded-mcp" && "$2" == *mcp-daemon ) ]]; then echo "pid = 123"; echo "path = $ROOT/actual-job.plist"; [[ ! -f "$ROOT/stderr-path" ]] || printf "stderr path = %s\\n" "$(cat "$ROOT/stderr-path")"; exit 0; else echo 'Could not find service' >&2; exit 113; fi;;
+print) if [[ ( -f "$ROOT/loaded" && "$2" == *voicebar ) || ( -f "$ROOT/loaded-mcp" && "$2" == *mcp-daemon ) ]]; then [[ ! -s "$ROOT/owners" ]] || echo "state = running"; echo "pid = 123"; echo "path = $ROOT/actual-job.plist"; [[ ! -f "$ROOT/stderr-path" ]] || printf "stderr path = %s\\n" "$(cat "$ROOT/stderr-path")"; exit 0; else echo 'Could not find service' >&2; exit 113; fi;;
 disable) echo "$*" >> "$CALL_LOG"; if [[ "$2" == *voicebar ]]; then echo true > "$ROOT/disabled"; else echo true > "$ROOT/disabled-mcp"; fi; [[ ! -f "$ROOT/race" ]] || echo '456 rec' > "$ROOT/active";;
 enable) echo "$*" >> "$CALL_LOG"; [[ ! -f "$ROOT/fail-enable" ]] || exit 3; if [[ "$2" == *voicebar ]]; then echo false > "$ROOT/disabled"; else echo false > "$ROOT/disabled-mcp"; fi;;
 bootout) echo "$*" >> "$CALL_LOG"; if [[ "$2" == *voicebar ]]; then rm -f "$ROOT/loaded"; else rm -f "$ROOT/loaded-mcp"; fi; [[ ! -f "$ROOT/bootout-error" ]] || exit 5; [[ ! -f "$ROOT/cancel-bootout" ]] || /bin/kill -INT "$PPID"; [[ ! -f "$ROOT/after-bootout" ]] || echo '456 rec' > "$ROOT/active";;
+kickstart) echo "$*" >> "$CALL_LOG"; echo "123 VoiceBar" > "$ROOT/owners";;
 bootstrap) echo "$*" >> "$CALL_LOG"; [[ ! -f "$ROOT/fail-bootstrap" ]] || exit 4; echo yes > "$ROOT/loaded";;
 *) exit 2;; esac`,
     osascript: 'echo "quit" >> "$CALL_LOG"; if [[ ! -f "$ROOT/sticky" ]]; then : > "$ROOT/owners"; : > "$ROOT/resident"; fi',
@@ -70,7 +71,7 @@ if (existsSync(${JSON.stringify(join(root, "late-commit"))})) {
 import { runSupervisedBootstrap } from ${JSON.stringify(join(repo, "src/update-gate-bootstrap.ts"))};
 try { process.exitCode = await runSupervisedBootstrap([process.execPath, ${JSON.stringify(join(repo, "src/update-gate-installer.ts"))}, "brew", "install"], ${confirmed ? "async () => true" : "undefined"}, 40); }
 catch (e) { console.error(String(e)); process.exitCode = 1; }`);
-    return track(Bun.spawn([process.execPath, runner], { env: { ...process.env, ROOT: root, CALL_LOG: log, PATH: `${bin}:${process.env.PATH}`,
+    return track(Bun.spawn([process.execPath, runner], { env: { ...process.env, HOME: join(root, "home"), ROOT: root, CALL_LOG: log, PATH: `${bin}:${process.env.PATH}`,
       VOICELAYER_UPDATE_GATE_PATH: gate, VOICELAYER_BOOTSTRAP_DIAG_PATH: diag, VOICELAYER_MCP_SOCKET_PATH: socket,
       VOICELAYER_TEST_INSTALL_PROOF: proof, VOICELAYER_INSTALL_OPERATION: "", VOICELAYER_SUPERVISED_BOOTSTRAP: "", VOICELAYER_UPDATE_TARGET_SHA: "a".repeat(40) }, stdout: "pipe", stderr: "pipe" }));
   };
@@ -163,7 +164,7 @@ test("Cancel during graceful quit restores autostart without killing voice owner
   try {
     await f.waitForPhase("waiting for all legacy voice owners to exit", c);
     expect(await cancel(c)).toContain("owners");
-    const calls = readFileSync(f.log, "utf8"); expect(calls).toContain("enable "); expect(calls).not.toContain("install"); expect(calls).not.toContain("bootout ");
+    const calls = readFileSync(f.log, "utf8"); expect(calls).toContain("enable "); expect(calls).not.toMatch(/^install$/m); expect(calls).not.toContain("bootout ");
     expect(existsSync(f.gate)).toBe(false);
   } finally { f.server.stop(true); if (c.exitCode === null) { c.kill(); await c.exited; } }
 });
@@ -171,7 +172,7 @@ test("idle lost after disable refuses and restores autostart before any quit", a
   const f = fixture(); writeFileSync(join(f.root, "race"), "yes"); const c = f.start();
   try {
     expect(await c.exited).toBe(1); expect(await new Response(c.stderr).text()).toContain("idle lost");
-    const calls = readFileSync(f.log, "utf8"); expect(calls).toContain("enable "); expect(calls).not.toContain("quit"); expect(calls).not.toContain("install");
+    const calls = readFileSync(f.log, "utf8"); expect(calls).toContain("enable "); expect(calls).not.toContain("quit"); expect(calls).not.toMatch(/^install$/m);
   } finally { f.server.stop(true); }
 });
 test("queue depth, diagnostics and direct CLI each block independently", async () => {
@@ -200,6 +201,8 @@ test("busy to idle resumes, installer failure retains closed gate and disabled a
     await f.waitForPhase("audio/decoding", c); expect(readFileSync(f.log, "utf8")).toBe(""); writeFileSync(join(f.root, "active"), "");
     expect(await c.exited).toBe(7); expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
     expect(readFileSync(f.log, "utf8")).not.toContain("enable ");
+    expect(readFileSync(f.log, "utf8")).toContain(`open ${f.root}/VoiceBar.app`);
+    expect(readFileSync(join(f.root, "disabled"), "utf8").trim()).toBe("true");
   } finally { f.server.stop(true); }
 });
 test("concurrent bootstrap cannot restore the first controller's autostart", async () => {
@@ -214,7 +217,7 @@ test("failed final recheck restores unloaded autostart without installing", asyn
   const f = fixture(); writeFileSync(join(f.root, "after-bootout"), "yes"); const c = f.start();
   try {
     expect(await c.exited).toBe(1); const calls = readFileSync(f.log, "utf8");
-    expect(calls).toContain("enable "); expect(calls).toContain("bootstrap "); expect(calls).not.toContain("install");
+    expect(calls).toContain("enable "); expect(calls).toContain("bootstrap "); expect(calls).not.toMatch(/^install$/m);
   } finally { f.server.stop(true); }
 });
 test("bootstrap update uses brew reconciliation even without cask registration", async () => {
@@ -232,7 +235,9 @@ test("R1 restoration attempts every service and releases only its bootstrap mute
     expect(await c.exited).toBe(1);
     const calls = readFileSync(f.log, "utf8"), err = await new Response(c.stderr).text();
     expect(calls.match(/^enable /gm)?.length).toBe(2);
+    // Every job restore is attempted; observed noncanonical voice availability is independent.
     expect(calls.match(/^bootstrap /gm)?.length).toBe(2);
+    expect(calls).toContain(`open ${f.root}/VoiceBar.app`);
     expect(err).toContain("restoration incomplete");
     expect(err).toContain("enable"); expect(err).toContain("bootstrap");
     expect(existsSync(f.gate + ".bootstrap-lock")).toBe(false);
@@ -243,7 +248,7 @@ test("R1 cancelled bootout cannot commit or install and permits a fresh retry", 
   const f = fixture(); writeFileSync(join(f.root, "cancel-bootout"), "yes"); const c = f.start();
   try {
     expect(await c.exited).toBe(130);
-    expect(readFileSync(f.log, "utf8")).not.toContain("install");
+    expect(readFileSync(f.log, "utf8")).not.toMatch(/^install$/m);
     expect(existsSync(f.gate)).toBe(false);
     unlinkSync(join(f.root, "cancel-bootout"));
     expect(await f.start().exited).toBe(1);
@@ -257,7 +262,7 @@ test("R1 evidence fault refuses outside the gate lock and bootstrap remains retr
     expect(existsSync(f.gate + ".lock")).toBe(false);
     expect(existsSync(f.gate + ".voice-diag.json")).toBe(false);
     expect(existsSync(f.gate)).toBe(false);
-    expect(readFileSync(f.log, "utf8")).not.toContain("install");
+    expect(readFileSync(f.log, "utf8")).not.toMatch(/^install$/m);
     unlinkSync(join(f.root, "proof-fault"));
     expect(await f.start().exited).toBe(1);
   } finally { f.server.stop(true); }
@@ -266,7 +271,7 @@ test("R1 evidence fault refuses outside the gate lock and bootstrap remains retr
 test("R1 resident whisper exits with its native owner instead of blocking idle bootstrap", async () => {
   const f = fixture(); writeFileSync(join(f.root, "resident"), "456 whisper-server\n");
   const c = f.start();
-  try { expect(await c.exited).toBe(1); expect(readFileSync(f.log, "utf8")).toContain("install"); }
+  try { expect(await c.exited).toBe(1); expect(readFileSync(f.log, "utf8")).toMatch(/^install$/m); }
   finally { f.server.stop(true); }
 });
 
@@ -281,9 +286,15 @@ test("R1 durable COMMIT survives a post-acquisition sample failure without legac
     const calls = readFileSync(f.log, "utf8"), err = await new Response(c.stderr).text();
     expect(calls).toContain("postcommit-sample");
     expect(JSON.parse(readFileSync(f.gate, "utf8")).kind).toBe("COMMITTED");
+    // A committed fault restores only the observed bundle; both jobs stay disabled.
     expect(calls).not.toContain("enable ");
-    expect(calls).not.toContain("bootstrap ");
-    expect(calls).not.toContain("install");
+    expect(calls).toContain(`open ${f.root}/VoiceBar.app`);
+    expect(readFileSync(join(f.root, "disabled"), "utf8").trim()).toBe("true");
+    expect(calls).not.toContain("actual-job.plist");
+    expect(calls).not.toContain("loaded-mcp.plist");
+    expect(readFileSync(join(f.root, "disabled-mcp"), "utf8").trim()).toBe("true");
+    expect(calls).not.toContain("kickstart ");
+    expect(calls).not.toMatch(/^install$/m);
     expect(err).toContain("admission retained closed");
     expect(err).not.toContain("precommit Cancel");
     expect(existsSync(f.gate + ".controller")).toBe(true);
@@ -301,7 +312,7 @@ test("R1 loaded legacy stderr diagnostics can establish idle when the default ha
   writeFileSync(join(f.root, "diag"), "no diagnostic here\n");
   writeFileSync(legacy, diagLine());
   const c = f.start();
-  try { expect(await c.exited).toBe(1); expect(readFileSync(f.log, "utf8")).toContain("install"); }
+  try { expect(await c.exited).toBe(1); expect(readFileSync(f.log, "utf8")).toMatch(/^install$/m); }
   finally { f.server.stop(true); }
 });
 
@@ -345,7 +356,7 @@ test("R2 failed-but-effective bootout reloads the actual loaded plist", async ()
     expect(existsSync(join(f.root, "loaded"))).toBe(true);
     expect(readFileSync(join(f.root, "disabled"), "utf8").trim()).toBe("false");
     expect(readFileSync(f.log, "utf8")).toContain(`${f.root}/actual-job.plist`);
-    expect(readFileSync(f.log, "utf8")).not.toContain("install");
+    expect(readFileSync(f.log, "utf8")).not.toMatch(/^install$/m);
   } finally { f.server.stop(true); }
 });
 
@@ -354,8 +365,10 @@ test("R2 successful COMMIT finalizer never reads G1 again", async () => {
   const c = f.start();
   try {
     expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 1 });
-    expect(readFileSync(f.log, "utf8")).toContain("install");
+    expect(readFileSync(f.log, "utf8")).toMatch(/^install$/m);
     expect(readFileSync(f.log, "utf8")).not.toContain("enable ");
+    expect(readFileSync(f.log, "utf8")).toContain(`open ${f.root}/VoiceBar.app`);
+    expect(readFileSync(join(f.root, "disabled"), "utf8").trim()).toBe("true");
     await waitFor(f.root, () => !existsSync(f.gate + ".lock"), "finalizer lock release");
   } finally { f.server.stop(true); }
 });
@@ -365,7 +378,7 @@ test("R2 bootstrap COMMIT readback outlives the pre-sample deadline", async () =
   const c = f.start();
   try {
     expect({ exit: await c.exited, err: await new Response(c.stderr).text() }).toMatchObject({ exit: 1 });
-    expect(readFileSync(f.log, "utf8")).toContain("install");
+    expect(readFileSync(f.log, "utf8")).toMatch(/^install$/m);
   } finally { f.server.stop(true); }
 });
 

@@ -526,7 +526,12 @@ wait_for_exactly_one_voicebar_instance() {
 
 relaunch_voicebar_app() {
     echo "[build-app] Relaunching $APP_DIR..."
-    open "$APP_DIR"
+    if is_resident_app_dir; then
+        source "$REPO_ROOT/scripts/lib/voicebar-launchagent.sh"
+        voicebar_start_launchd "$APP_DIR" || return 1
+    else
+        open "$APP_DIR" # Isolated QA bundles have their own identity and paths.
+    fi
     wait_for_exactly_one_voicebar_instance
 }
 
@@ -944,7 +949,7 @@ clear_app_bundle_for_rebuild() {
 bundle_runtime_source() {
     mkdir -p "$APP_DIR/Contents/Resources/src"
     # Test fixtures can contain private incident data. Never ship test sources.
-    rsync -a --exclude='__tests__' --exclude='*.test.ts' \
+    rsync -a --exclude='__tests__' --exclude='*.test.ts' --exclude='__pycache__' --exclude='*.pyc' \
         "$REPO_ROOT/src/" "$APP_DIR/Contents/Resources/src/"
 }
 
@@ -1142,7 +1147,8 @@ echo "[build-app] Daemon dependencies bundled."
 # (vad.ts findModelPath resolves models/ relative to the bundled src). Omitting
 # this silently breaks recording on every rebuild.
 if [ -f "$REPO_ROOT/models/silero_vad.onnx" ]; then
-    cp -R "$REPO_ROOT/models" "$APP_DIR/Contents/Resources/"
+    mkdir -p "$APP_DIR/Contents/Resources/models"
+    rsync -a --exclude='__pycache__' --exclude='*.pyc' "$REPO_ROOT/models/" "$APP_DIR/Contents/Resources/models/"
     echo "[build-app] VAD model bundled."
 else
     echo "[build-app] WARNING: models/silero_vad.onnx not found — recording will fail until it is present." >&2
@@ -1179,6 +1185,7 @@ fi
 
 # Check our copied source; vendored dependencies are outside this privacy gate.
 bash "$REPO_ROOT/scripts/check-voicebar-test-free.sh" "$APP_DIR"
+bash "$REPO_ROOT/scripts/check-voicebar-python-cache-free.sh" "$APP_DIR"
 
 COMMIT_SHA="$(git_commit)"
 DESCRIBE_REF="$(git_describe)"
