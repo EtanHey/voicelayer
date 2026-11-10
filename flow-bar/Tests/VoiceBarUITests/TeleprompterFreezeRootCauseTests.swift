@@ -67,6 +67,23 @@ final class TeleprompterFreezeRootCauseTests: XCTestCase {
                        "A stale table cannot supply timing for the new read")
     }
 
+    func testTimingNoticeNeverBuildsALayoutModelPerCall() {
+        let state = makeState()
+        var event = speaking()
+        event["text"] = String(repeating: "One two ", count: 2000)
+        state.handleEvent(event)
+        let builds = TeleprompterAModel.layoutBuildCount
+        for _ in 0..<8 {
+            XCTAssertEqual(TeleprompterPlaybackScrubBar(state: state).timingNotice, "Word timing unavailable")
+        }
+        state.handleEvent([
+            "type": "speech_words", "utteranceId": "read", "wordOffset": 0,
+            "words": [["text": "One", "startMs": 0, "endMs": 900]],
+        ])
+        for _ in 0..<8 { XCTAssertNil(TeleprompterPlaybackScrubBar(state: state).timingNotice) }
+        XCTAssertEqual(TeleprompterAModel.layoutBuildCount, builds)
+    }
+
     func testV37AcceptedReadbackSeekMustAdoptItsNewPlayer() {
         let state = makeState()
         state.handleEvent(speaking())

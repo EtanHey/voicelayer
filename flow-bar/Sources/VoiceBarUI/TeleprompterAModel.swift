@@ -212,7 +212,15 @@ struct TeleprompterAModel {
     let glued: [Bool]
     let column: CGFloat
 
+    #if DEBUG
+    /// Test oracle: availability reads must never build the full word layout.
+    nonisolated(unsafe) static var layoutBuildCount = 0
+    #endif
+
     init(document: TeleprompterRenderedDocument, text: String, column: CGFloat) {
+        #if DEBUG
+        Self.layoutBuildCount += 1
+        #endif
         words = document.words
         layouts = document.layouts
         tokens = TeleprompterContentModel.displayTokens(text)
@@ -262,14 +270,6 @@ struct TeleprompterAModel {
         guard TeleprompterPlaybackPolicy.usesServerTimestamps(in: words) else { return nil }
         let id = TeleprompterPlaybackPolicy.currentWordIndex(in: words, elapsedMilliseconds: clock)
         return words.indices.contains(id) ? id : nil
-    }
-
-    /// Availability follows the same table precedence and display mapping as focusWord.
-    func hasTiming(table: SpeechWordTable?) -> Bool {
-        if let table, let tokenOfWord, !table.words.isEmpty {
-            return tokenOfWord.contains { table.words.indices.contains($0) && table.words[$0] != nil }
-        }
-        return TeleprompterPlaybackPolicy.usesServerTimestamps(in: words)
     }
 
     enum SeekTarget: Equatable { case word(utteranceID: String, index: Int), offset(Int) }

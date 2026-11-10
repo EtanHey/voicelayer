@@ -15,8 +15,8 @@
     "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "49ee1974b395bd75976260de947b5b7f8effe9e7aeb796e93b75934ae22b7969",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "a2ecf2f952df9ae8ca8a2666ee8c7a1d0e3e80e836556a4fb68ebd24779dfbe1",
     "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift": "75db0df217618e22a506fc2019c368c2eab47affc81848cfdd3c83aae8a0c67b",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift": "f186f29e10e4da1bfe84e7e0912d5d811d7eac784ff18ce5cbb55a8a97ed7e8e",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "a03c5aaee9f802ad47d2e2d24a932f5fc161c4742c4b030975721bf3fc56bc61",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift": "7eb77c9b0a09074b2ccf7b3218cc7e3eda3d9f274abb7be08a089dbe8ec728e0",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "d4cc8320a19eb24c2fcae8517029ec60a3dae311570e7dd1af6517729d4c6127",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
