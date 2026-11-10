@@ -116,8 +116,8 @@ final class RecordingWingLabelTests: XCTestCase {
             XCTAssertLessThanOrEqual(geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         }
         XCTAssertEqual(resolve(.transcribing).geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
-        XCTAssertEqual(VoiceBarPresentation.readingTrailingWingWidth(visibleCoreOcclusionInset: 0), 120,
-                       "reading keeps its Stop region")
+        XCTAssertEqual(VoiceBarPresentation.readingTrailingWingWidth(visibleCoreOcclusionInset: 0),
+                       VoiceBarPresentation.readingTransportWingWidth, "X4: reading mirrors the transport wing")
     }
 
     func testBarViewLaysTheTimeBeforeTheMeterAndAnEmptyRegionAfterIt() throws {

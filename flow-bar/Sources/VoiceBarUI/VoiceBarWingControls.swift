@@ -118,19 +118,43 @@ public struct VoiceBarReadingTimeLabel: View {
 public enum VoiceBarRecordingWingLabel {
     /// The time's region: "9:59" / "0:54" at 11 pt is 25.0 pt (26 rounded up to whole points).
     public static let width: CGFloat = 26
-    /// The empty region outside the meter. With the 2 pt time gap it keeps the meter within 1 pt of the visible
-    /// wing's centre (review D3 allows 2) and the wing at its 2.3 width, inside the 130 pt morph canvas.
-    public static let outerRegionWidth: CGFloat = 26
-    /// Etan, QA 0510 N10: "big padding between the waveform and the seconds counter". Between the time and the meter:
-    /// 2 pt, which paints a 4 pt gap from the last digit to the first bar (the digits' side bearing is the rest).
-    /// The 4 pt gap that was here painted 6 pt.
-    public static let timeGap: CGFloat = 2
-    /// QA 0449: 4 layout points plus digit side-bearing paint a clear 6 pt gap.
+    /// QA 0449: 4 layout points plus digit side-bearing paint a clear 6 pt gap. X4: reading uses it too, so the time
+    /// and the meter sit the same way whether VoiceBar is listening or reading aloud.
     public static let recordingTimeGap: CGFloat = 4
-    /// Between the meter and the outer region.
-    public static let meterGap: CGFloat = 4
+    /// X4: between the reading meter and the collapsed Stop: one control spacing, so a hidden read's eye sits exactly
+    /// over the meter's last control slot, one pitch inside Stop.
+    public static let readingStopGap: CGFloat = VoiceBarNotchContract.material.compactControlSpacing
+
+    /// X4: the reading row's width, the time region's leading edge to the meter's (or collapsed Stop's) trailing edge.
+    public static func readingRowWidth(showsStop: Bool) -> CGFloat {
+        width + recordingTimeGap + WaveformLayout.viewportWidth +
+            (showsStop ? readingStopGap + VoiceBarNotchContract.material.compactControlSize : 0)
+    }
     public static let timeFontSize: CGFloat = 11
     public static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: timeFontSize, weight: .medium)
+}
+
+/// X4 (Etan, PR #860: "too much space on the right"): the reading right wing is the recording row (time, gap, meter),
+/// centred in the wing with no blank outer region. Collapsed (paused or hidden), Stop follows the meter one control
+/// spacing out, and the whole row stays centred.
+struct VoiceBarReadingTrailingRow<Time: View, Meter: View, Stop: View>: View {
+    let showsStop: Bool
+    @ViewBuilder let time: Time
+    @ViewBuilder let meter: Meter
+    @ViewBuilder let stop: Stop
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 0) {
+            time
+            meter
+                .padding(.leading, VoiceBarRecordingWingLabel.recordingTimeGap)
+            if showsStop {
+                stop
+                    .padding(.leading, VoiceBarRecordingWingLabel.readingStopGap)
+            }
+        }
+    }
+
 }
 
 /// QA 0449: centre the time and meter as one row, without a blank outer region.
@@ -160,7 +184,9 @@ public struct VoiceBarRecordingTimeRegion: View {
     }
 
     public var body: some View {
-        Group {
+        // X4: the region keeps its width before capture opens, so the meter never jumps sideways when the time appears.
+        ZStack(alignment: .trailing) {
+            Color.clear.frame(width: VoiceBarRecordingWingLabel.width, height: 1)
             if isCaptureOpen {
                 TimelineView(.periodic(from: .now, by: 0.25)) { _ in
                     let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())

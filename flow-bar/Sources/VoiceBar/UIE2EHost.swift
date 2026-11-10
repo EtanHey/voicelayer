@@ -371,7 +371,8 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(presentation: presentation,
             interactionConfiguration: AppDelegate.notchInteractionConfiguration(
-                for: state, visualState: presentation.visualState, bandState: presentation.bandState),
+                for: state, visualState: presentation.visualState, bandState: presentation.bandState,
+                visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset),
             canvasGeometry: canvas.canvasGeometry)
     }
 

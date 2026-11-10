@@ -61,8 +61,8 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(speakingSlot.coreInset, VoiceBarNotchContract.fixedWingContentInset)
         XCTAssertEqual(speakingSlot.outerInset, VoiceBarNotchContract.fixedWingContentInset)
         XCTAssertEqual(speaking.geometry.trailingWingWidth,
-                       120 + calibratedInset,
-                       "reading retains its own payload width at every calibration")
+                       VoiceBarPresentation.readingTransportWingWidth,
+                       "X4: reading mirrors the transport wing at every calibration; its row centres in the visible part")
         XCTAssertLessThanOrEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         XCTAssertLessThanOrEqual(
             WaveformLayout.viewportWidth,
@@ -114,7 +114,7 @@ final class WaveformViewTests: XCTestCase {
         let speaking = try XCTUnwrap(barSource.components(separatedBy: "private var notchSpeakingTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchWaveform")[0]
         XCTAssertTrue(compact.contains("case .speaking:\n            notchSpeakingTrailingContent"))
-        XCTAssertTrue(speaking.contains("return HStack("))
+        XCTAssertTrue(speaking.contains("return VoiceBarReadingTrailingRow("))
         // T5: the reading wing draws the same notch meter as recording, beside the recording-style time.
         XCTAssertEqual(speaking.components(separatedBy: "notchWaveform").count - 1, 1)
         XCTAssertTrue(speaking.contains("VoiceBarReadingTimeRegion("))

@@ -8,6 +8,6 @@
   "trace": [
     "/\\ phase = \"OPEN\"\n/\\ available = FALSE\n/\\ scenario = {}\n/\\ creation = {}\n/\\ gate = \"OPEN\"\n/\\ created = FALSE\n/\\ participants = [a |-> \"dead\", b |-> \"dead\"]\n/\\ evidence = {\"a\", \"b\"}\n/\\ mutex = FALSE",
     "/\\ phase = \"DRAINING\"\n/\\ available = FALSE\n/\\ scenario = {}\n/\\ creation = {}\n/\\ gate = \"OPEN\"\n/\\ created = FALSE\n/\\ participants = [a |-> \"dead\", b |-> \"dead\"]\n/\\ evidence = {\"a\", \"b\"}\n/\\ mutex = FALSE",
-    "Finished checking temporal properties in 00s at 2026-11-10 07:02:09"
+    "Finished checking temporal properties in 00s at 2026-11-10 13:55:21"
   ]
 }

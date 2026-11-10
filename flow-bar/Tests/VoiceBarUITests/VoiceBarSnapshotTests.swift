@@ -153,6 +153,12 @@ final class VoiceBarSnapshotTests: XCTestCase {
         case "recording-ptt", "recording-vad", "busy-note":
             state.mode = .recording
             state.recordingMode = name == "recording-ptt" ? "ptt" : "vad"
+            if name != "busy-note" {
+                // X4: capture open, as Etan sees a take: the time shows beside the meter (a frozen clock keeps 0:00).
+                state.recordingTimingClock = { 100 }
+                state.handleEvent(["type": "audio_level", "rms": 0.0])
+                XCTAssertTrue(state.isRecordingCaptureOpen, "fixture: the recording catalog shows the open capture")
+            }
             if name == "busy-note" { state.speakSelection() }
         case "transcribing": state.mode = .transcribing
         case "hidden", "snoozed": state.snooze(until: name == "snoozed" ? Date(timeIntervalSince1970: 2_000_000_000) : nil)

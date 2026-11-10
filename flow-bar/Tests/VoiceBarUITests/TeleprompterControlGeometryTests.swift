@@ -23,8 +23,8 @@ final class TeleprompterControlGeometryTests: XCTestCase {
                      performanceTime: NSHapticFeedbackManager.PerformanceTime) { count += 1 }
     }
 
-    /// T4/T7 (Etan QA 2026-11-09): Replay + eye are one centred group; the terminal slot one pitch to its right holds
-    /// the live red Stop while reading and the X on a readback, and neither ever moves the group.
+    /// T4/T7 (Etan QA 2026-11-09), X4 (PR #860): Replay, eye and the terminal slot are one centred row; the terminal
+    /// slot holds the live red Stop while reading and the X on a readback, so swapping them never moves the row.
     func testReplayAndEyeKeepTheirXAndTheTerminalSlotIsStopThenX() throws {
         XCTAssertTrue(VLOffscreenPolicyInstalled())
         let app = NSApplication.shared
@@ -91,8 +91,9 @@ final class TeleprompterControlGeometryTests: XCTestCase {
             XCTAssertEqual(replay.midY, eye.midY, accuracy: 0.5, "[T4] one row")
             XCTAssertEqual(terminal.midY, eye.midY, accuracy: 0.5, "[T7] the red Stop sits in the eye row")
             XCTAssertEqual(terminal.minX - eye.maxX, 10, accuracy: 0.5, "Stop is one pitch past the group")
-            XCTAssertEqual(replay.union(eye).midX, host.bounds.midX, accuracy: 1,
-                           "[T4] Replay + eye are centred as a pair, without the terminal control")
+            XCTAssertEqual(replay.union(terminal).midX, host.bounds.midX, accuracy: 1,
+                           "[X4] Replay, eye and Stop are centred as one row (on the drag bar)")
+            XCTAssertEqual(eye.midX, host.bounds.midX, accuracy: 1, "[X4] the eye sits at the centre")
             try image(host, name: "speaking", reduceMotion: reduceMotion)
 
             let beforeHaptics = haptics.count

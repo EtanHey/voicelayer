@@ -471,7 +471,7 @@ final class BarViewClickabilityTests: XCTestCase {
         VoiceBarNotchInteractionConfiguration(
             leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
             trailingControlCountFromOuter: trailingFromOuter,
-            trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset + VoiceBarPresentation.readingStopOuterRegionInset,
+            trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(visibleCoreOcclusionInset: 0),
             lowerControlCount: lowerGroup,
             lowerSurfaceIsInteractive: lowerSurfaceIsInteractive,
             leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth,
@@ -1172,16 +1172,17 @@ final class BarViewClickabilityTests: XCTestCase {
 
     /// T4/T7: Replay and the eye are one centred group; the terminal X sits one pitch (30 pt) to its right. The row
     /// is `teleprompterLowerControlBottomInset` (20 pt) above the body's bottom, so its centre is 30 pt up.
+    // X4: Replay, the eye and X are one row centred in the body.
     private func readbackReplayButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.midX - 15, y: 30)
+        NSPoint(x: host.bounds.midX + VoiceBarPresentation.teleprompterLowerControlOffset(index: 0, count: 3), y: 30)
     }
 
     private func readbackVisibilityButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.midX + 15, y: 30)
+        NSPoint(x: host.bounds.midX + VoiceBarPresentation.teleprompterLowerControlOffset(index: 1, count: 3), y: 30)
     }
 
     private func readbackDismissButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.midX + 45, y: 30)
+        NSPoint(x: host.bounds.midX + VoiceBarPresentation.teleprompterLowerControlOffset(index: 2, count: 3), y: 30)
     }
 
     private func statusIconCenter(in host: NSView) -> NSPoint {

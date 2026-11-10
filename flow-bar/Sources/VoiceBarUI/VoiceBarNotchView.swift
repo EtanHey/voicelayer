@@ -308,9 +308,14 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     }
     // (`open` keeps the launcher's wing rects, so the controls and their hit targets never move.)
 
+    /// The History morph draws every change between History and the band a drawer opens over: the launcher, and
+    /// (0510 N7/R3) a recording or a compact status. X4 J3 (Etan, M4: "the drawer reopens then closes"): only the
+    /// launcher was listed, so over a recording the shell geometry sprang to the OPEN panel underneath the History
+    /// morph; when the close finished and the morph went away, the plain shell drew that open panel again and sprang
+    /// it shut, a second open and close. Snapping for every drawer band keeps the shell where the morph left it.
     static func isHistoryPair(_ from: VoiceBarNotchVisualState?, _ to: VoiceBarNotchVisualState) -> Bool {
-        let pair: Set<VoiceBarNotchVisualState?> = [.hoverLauncher, .history]
-        return from != to && pair.contains(from) && pair.contains(to)
+        let bands: Set<VoiceBarNotchVisualState?> = [.hoverLauncher, .recording, .compactStatus]
+        return from != to && (from == .history && bands.contains(to) || to == .history && bands.contains(from))
     }
 
     private var shellAnimation: Animation {
@@ -530,41 +535,40 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         _ content: some View,
         side: VoiceBarNotchSide
     ) -> some View {
+        // X4 J2 (Etan, M4: "the seconds and the waveform SHIFT sideways when I open or hold the notch"): a press, a
+        // pull or an opening drawer mounts History, so the visual state becomes `.history` while the band above the
+        // drawer is still the activity's (0510 R3). The wing keeps that band's content insets, so its row never
+        // reflows: on the M4 the old `.history` insets moved the recording time and meter 4.5 pt toward the notch.
         let slot = VoiceBarNotchContract.material.wingContentLayout(
             for: side,
-            state: presentation.visualState,
+            state: presentation.bandState,
             visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
         )
-        return content
-            .padding(contentInsets(for: slot))
-            .frame(
-                maxWidth: .infinity,
-                maxHeight: .infinity,
-                alignment: contentAlignment(for: slot)
-            )
+        return content.modifier(VoiceBarNotchWingSlot(slot: slot))
+    }
+}
+
+/// One wing's content placement: its insets on the core and outer sides, then its alignment in the wing.
+struct VoiceBarNotchWingSlot: ViewModifier {
+    let slot: VoiceBarNotchWingContentLayout
+
+    func body(content: Content) -> some View {
+        content
+            .padding(insets)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
             .clipped()
     }
 
-    private func contentInsets(for slot: VoiceBarNotchWingContentLayout) -> EdgeInsets {
+    private var insets: EdgeInsets {
         switch slot.side {
         case .leading:
-            EdgeInsets(
-                top: 0,
-                leading: slot.outerInset,
-                bottom: 0,
-                trailing: slot.coreInset
-            )
+            EdgeInsets(top: 0, leading: slot.outerInset, bottom: 0, trailing: slot.coreInset)
         case .trailing:
-            EdgeInsets(
-                top: 0,
-                leading: slot.coreInset,
-                bottom: 0,
-                trailing: slot.outerInset
-            )
+            EdgeInsets(top: 0, leading: slot.coreInset, bottom: 0, trailing: slot.outerInset)
         }
     }
 
-    private func contentAlignment(for slot: VoiceBarNotchWingContentLayout) -> Alignment {
+    private var alignment: Alignment {
         switch slot.alignment {
         case .center:
             .center

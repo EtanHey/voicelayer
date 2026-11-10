@@ -139,11 +139,17 @@ final class NotchHistoryMorphTests: XCTestCase {
         }
     }
 
-    func testOnlyLauncherAndHistoryHandOffWithoutASecondSpring() {
+    /// X4 J3: every band a drawer opens over (launcher, recording, compact status) hands off to the History morph
+    /// without a second spring; the teleprompter (which closes the drawer) still morphs.
+    func testDrawerBandsAndHistoryHandOffWithoutASecondSpring() {
         typealias View = VoiceBarNotchView<EmptyView, EmptyView, EmptyView>
         XCTAssertTrue(View.isHistoryPair(.hoverLauncher, .history))
         XCTAssertTrue(View.isHistoryPair(.history, .hoverLauncher))
-        XCTAssertFalse(View.isHistoryPair(.history, .recording), "recording still morphs from History as before")
+        XCTAssertTrue(View.isHistoryPair(.history, .recording), "[X4 J3] a drawer closing over a recording")
+        XCTAssertTrue(View.isHistoryPair(.recording, .history), "[X4 J3] a drawer opening over a recording")
+        XCTAssertTrue(View.isHistoryPair(.history, .compactStatus), "[X4 J3] a drawer closing over Typed")
+        XCTAssertFalse(View.isHistoryPair(.history, .teleprompter), "agent speech still morphs from History")
+        XCTAssertFalse(View.isHistoryPair(.recording, .compactStatus))
         XCTAssertFalse(View.isHistoryPair(.history, .history))
         XCTAssertFalse(View.isHistoryPair(nil, .history))
     }
