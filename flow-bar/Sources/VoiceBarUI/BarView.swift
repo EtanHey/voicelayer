@@ -553,6 +553,8 @@ public struct BarView: View {
                 notchLowerContent
             }
         )
+        // A re-shown shell starts with resolved geometry; ordinary hover retains its spring state.
+        .id(presentationModel?.presentationGeneration ?? 0)
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }

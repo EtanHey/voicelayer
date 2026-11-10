@@ -1392,20 +1392,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func unsnoozeNow() {
         snoozeTask?.cancel()
         playbackEdgeLayoutTask?.cancel()
-        isSnoozed = false
+        let wasHidden = isSnoozed || voiceState.isHidden
         snoozedUntil = nil
-        voiceState.unsnooze()
-        refreshNotchPresentationAndPanelLayout(animated: false)
-        reapplyAnchoredPanelPosition()
+        if wasHidden {
+            // Keep mode callbacks behind the ordering gate until the fresh shell is committed.
+            isSnoozed = true
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                voiceState.unsnooze()
+                refreshNotchPresentationAndPanelLayout(animated: false)
+                notchPresentationModel.prepareForPresentation()
+                reapplyAnchoredPanelPosition()
+                panel?.contentView?.needsLayout = true
+                panel?.contentView?.layoutSubtreeIfNeeded()
+                panel?.contentView?.displayIfNeeded()
+            }
+        } else {
+            voiceState.unsnooze()
+            refreshNotchPresentationAndPanelLayout(animated: false)
+            reapplyAnchoredPanelPosition()
+        }
+        isSnoozed = false
         orderPanelFront(reason: "unsnooze")
         presentAutomaticSetupIfNeeded()
         daemonController.presentDeferredMicrophonePermissionPrompt()
     }
 
     private func orderPanelFront(reason: String, regardless: Bool = false) {
-        guard let panel,
-              NotchPanelVisibility.present(panel, isHidden: isSnoozed || voiceState.isHidden,
-                                             regardless: regardless) else { return }
+        guard let panel, !isSnoozed, !voiceState.isHidden else { return }
+        #if VOICEBAR_QA
+        onPanelPresentationForTesting?(notchPresentationModel.presentation,
+                                       notchPresentationModel.presentationGeneration)
+        #endif
+        guard NotchPanelVisibility.present(panel, isHidden: isSnoozed || voiceState.isHidden,
+                                           regardless: regardless) else { return }
         logDiagnostic(event: "panel_order_front", details: ["reason": reason])
     }
 
@@ -1781,6 +1802,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.refreshNotchPresentationAndPanelLayout(animated: true)
         }
     }
+
+    var onPanelPresentationForTesting: ((VoiceBarNotchPresentation, UInt) -> Void)?
 
     func configurePanelVisibilityForTesting(_ panel: FloatingPillPanel,
                                            snoozeSleep: @escaping () async throws -> Void = {
