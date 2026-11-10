@@ -20,13 +20,13 @@ final class RecordingPauseTests: XCTestCase {
     func testPTTWingOffersPauseThenResume() {
         XCTAssertEqual(
             VoiceBarPresentation.recordingPauseControl(mode: .recording, recordingMode: "ptt", isPaused: false),
-            VoiceBarRecordingPauseControl(iconName: "pause.fill", accessibilityLabel: "Pause recording",
+            VoiceBarRecordingPauseControl(iconName: "mic.fill", accessibilityLabel: "Mute microphone",
                                           accessibilityHint: "Stop adding audio to this take until you resume",
                                           isSelected: false)
         )
         XCTAssertEqual(
             VoiceBarPresentation.recordingPauseControl(mode: .recording, recordingMode: "ptt", isPaused: true),
-            VoiceBarRecordingPauseControl(iconName: "play.fill", accessibilityLabel: "Resume recording",
+            VoiceBarRecordingPauseControl(iconName: "mic.slash.fill", accessibilityLabel: "Unmute microphone",
                                           accessibilityHint: "Continue the same take", isSelected: true)
         )
         // VAD takes end on their own silence and keep the Lock slot; nothing else shows Pause.

@@ -567,9 +567,9 @@ public enum VoiceBarPresentation {
     ) -> VoiceBarRecordingPauseControl? {
         guard mode == .recording, recordingMode == "ptt" else { return nil }
         return isPaused
-            ? VoiceBarRecordingPauseControl(iconName: "play.fill", accessibilityLabel: "Resume recording",
+            ? VoiceBarRecordingPauseControl(iconName: "mic.slash.fill", accessibilityLabel: "Unmute microphone",
                                             accessibilityHint: "Continue the same take", isSelected: true)
-            : VoiceBarRecordingPauseControl(iconName: "pause.fill", accessibilityLabel: "Pause recording",
+            : VoiceBarRecordingPauseControl(iconName: "mic.fill", accessibilityLabel: "Mute microphone",
                                             accessibilityHint: "Stop adding audio to this take until you resume",
                                             isSelected: false)
     }
