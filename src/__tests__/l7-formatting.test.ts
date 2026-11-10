@@ -10,6 +10,21 @@ const words = (text: string) => text.toLowerCase().match(/[\p{L}\p{M}\p{N}'’]+
 const baseEnv = () => ({ ...process.env, QA_VOICE_CORRECTOR: "identity", VOICELAYER_STT_COHERENT_PARAGRAPHS: "0", VOICELAYER_STT_PAUSE_PARAGRAPHS: "0" });
 
 describe("L7 shared formatting boundary", () => {
+  it("joins a conditional paragraph introduced by successful polish without changing any words", async () => {
+    const raw = "The amber project keeps every spoken thought and every repeated word in its original order. ".repeat(5) + seam;
+    const candidate = raw.replace("know. If", "know.\n\nIf");
+    const server = Bun.serve({ port: 0, fetch: request => request.method !== "POST"
+      ? Response.json({ data: [] }) : Response.json({ choices: [{ message: { content: candidate } }] }) });
+    try {
+      const result = await finalizeTranscriptionResultForSurface(raw, "dictation", {
+        ...baseEnv(), QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      });
+      expect(result.polishStatus).toBe("applied");
+      expect(result.text).toContain(seam);
+      expect(words(result.text)).toEqual(words(raw));
+    } finally { server.stop(true); }
+  });
   it.each(["off", "on"])("keeps the conditional before a 600-second speech gap when polish is %s", async mode => {
     const left = "The amber project keeps every spoken thought and every repeated word in its original order. ".repeat(5) + seam;
     const right = "Okay, yeah. " + "The violet project needs complete raw speech with its original fragments and retractions. ".repeat(5);
