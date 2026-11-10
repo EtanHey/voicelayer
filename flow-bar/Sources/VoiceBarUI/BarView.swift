@@ -1205,6 +1205,10 @@ public struct BarView: View {
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel recording") {
                     commandRouter.handleCancel()
                 }
+                // X21 (as X16 for mute): no per-item insertion transition here. The daemon's `vad` event inserts Lock
+                // after the wing exists, growing it by one slot; with `VoiceBarNotchWingContentEntry.transition` on a
+                // late control AppKit does not show its tooltip (bisected live on the M4 for mute). Lock takes the slot
+                // Cancel vacates, which the glass already covers; Cancel and Stop move out with the growing wing.
                 if let recordingHoldControl {
                     notchButton(
                         icon: recordingHoldControl.iconName,
@@ -1215,8 +1219,6 @@ public struct BarView: View {
                     ) {
                         state.setRecordingHold(!state.isRecordingHoldEngaged)
                     }
-                    // It arrives with the wing growing by one slot.
-                    .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
                 }
             }
             // Keep the controls on their core-anchored hit regions as the symmetric wing grows.
