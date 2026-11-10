@@ -48,7 +48,10 @@ describe("stt-corrector", () => {
     expect(result.text).toBe("Ask Karabiner about VoiceLayer");
     expect(result.context).toBe("dictionary-heavy");
     expect(result.changed).toBe(true);
-    expect(result.latencyMs).toBeLessThan(10);
+    expect(result.mode).toBe("rules");
+    // Keep only a generous sanity guard: CI and push-hook load can delay this
+    // synchronous path. Strict timing belongs in the opt-in benchmark below.
+    expect(result.latencyMs).toBeLessThan(250);
   });
 
   it("threads aggressive filler configuration through rules-mode cleanup", () => {

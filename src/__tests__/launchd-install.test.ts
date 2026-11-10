@@ -183,6 +183,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
         'printf "%s\\n" "$*" >> "$VOICEBAR_TEST_LAUNCHCTL_LOG"',
         'state="$(cat "$VOICEBAR_TEST_LAUNCHCTL_STATE" 2>/dev/null || printf loaded)"',
         'if [[ "$1" == "print" ]]; then',
+        '  [[ "$state" == "running" ]] && { printf "state = running\\npid = 222\\n"; exit 0; }',
         '  [[ "$state" == "loaded" ]] && exit 0',
         '  if [[ "$state" == "draining" ]]; then',
         '    count="$(cat "$VOICEBAR_TEST_LAUNCHCTL_COUNT" 2>/dev/null || printf 0)"',
@@ -197,6 +198,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
         '  printf "draining\\n" > "$VOICEBAR_TEST_LAUNCHCTL_STATE"',
         "  exit 0",
         "fi",
+        'if [[ "$1" == "bootstrap" ]]; then printf "running\\n" > "$VOICEBAR_TEST_LAUNCHCTL_STATE"; fi',
         "exit 0",
         "",
       ].join("\n"),
@@ -204,6 +206,9 @@ describe("MCP daemon LaunchAgent install contract", () => {
     chmodSync(launchctlStub, 0o755);
     writeFileSync(plutilStub, "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(plutilStub, 0o755);
+    for (const [name, body] of [["pgrep", "echo 222"], ["ps", `echo "${tempHome}/absent-fixture.app/Contents/MacOS/VoiceBar"`]]) {
+      writeFileSync(join(binDir, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+    }
     writeFileSync(launchctlState, "loaded\n");
 
     const result = Bun.spawnSync(

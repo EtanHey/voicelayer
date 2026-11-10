@@ -86,7 +86,7 @@ test("required redirects and missing isolated roots reject fallback before user 
     if (JSON.stringify(classifyVocabulary(homeVocabulary)) !== JSON.stringify(['production vocabulary'])) {
       failures.push('HOME fallback negative control');
     }
-    // Resolve production names only with process isolation absent, still under synthetic HOME.
+    // A plain production-like child may remove isolation, still under synthetic HOME.
     const isolated = process.env.VOICELAYER_TEST_ISOLATED;
     delete process.env.VOICELAYER_TEST_ISOLATED;
     try {

@@ -34,6 +34,7 @@ const REAL_TOOLS = [
   "dirname",
   "id",
   "mkdir",
+
 ];
 
 const workspaces: string[] = [];
@@ -97,6 +98,9 @@ function makeWorkspace(options: StubOptions): Workspace {
   const shellFakes = `
 export VOICELAYER_INSTALL_OPERATION=fixture-admitted
 
+pgrep() { printf '42\\n'; }
+ps() { printf '%s/Contents/MacOS/VoiceBar\\n' "$VOICEBAR_APP_PATH"; }
+export -f pgrep ps
 plutil() {
   printf 'plutil %s\\n' "$*" >> "$STUB_LOG"
   return 0
@@ -114,7 +118,9 @@ xattr() {
 `}
 `;
   writeFileSync(join(stubDir, "launchctl"), `#!/bin/bash\n  printf 'launchctl %s\\n' "$*" >> "$STUB_LOG"
+  if [ "\${1:-}" = "kickstart" ] || [ "\${1:-}" = "bootstrap" ]; then : > "$STUB_STATE.started"; fi
   if [ "\${1:-}" = "print" ]; then
+    if [ -f "$STUB_STATE.started" ]; then printf 'state = running\\npid = 42\\n'; exit 0; fi
     count=0
     if [ -f "$STUB_STATE" ]; then read -r count < "$STUB_STATE" || true; fi
     count=$((count + 1))

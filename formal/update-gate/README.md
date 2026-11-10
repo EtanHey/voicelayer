@@ -145,6 +145,25 @@ and G1 publication as atomic. It does not prove partial-write recovery, detached
 installer quiescence, actual launch latency, IPC availability or installed macOS
 behavior. R5 half-state repair and rollback to a different build remain deferred.
 
+## Dead admission owners
+
+ReapFixed checks NeverReapLiveOwner and DeadRegistrationsCanPrepare. Owner death
+is irreversible for the recorded incarnation; PID reuse proves that incarnation
+dead. Unknown/live owners remain. Reap and PREPARE share G1; weak fairness lets
+a drain containing only dead registrations reach PREPARED. ReapOld reproduces
+the stuck ledger; ReapMutantAge violates safety by retiring a live old owner.
+ReapMutantUnknown violates the same safety property by treating unknown or
+legacy-unverifiable evidence as death.
+OS identity correctness, crash durability of reason files and native execution
+are outside the model. No age-based lease, lock or registration expiry is modeled.
+
+Round 2 expands the same evidence partition with `reusedOtherUid`, `reusedLegacy`,
+`zombie`, and `legacyUnverifiable`. The first three prove the recorded incarnation
+dead; unverifiable legacy evidence still blocks. No new property is claimed.
+The sysctl layout and the strict birth-after-mtime comparison are checked in source
+tests, not derived from TLC. Retention affects retired proof artifacts only and
+does not change admission state.
+
 ## Precommit user-block correction
 
 The admission/deadline extension is checked alongside CANCEL retry in

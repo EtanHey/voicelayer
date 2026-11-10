@@ -260,6 +260,7 @@ export async function synthesizeWithRetry(
           metadataFile,
           prosody,
         ),
+        { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } },
       );
 
       const killOnExit = () => { try { synth.kill("SIGKILL"); } catch {} };

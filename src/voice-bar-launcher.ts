@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * Voice Bar launcher — auto-starts VoiceBar.app if not running.
  *
@@ -36,20 +37,20 @@ export function ensureVoiceBarRunning(): void {
     return;
   }
 
-  // Auto-launch VoiceBar.app — works if installed to /Applications or ~/Applications
+  // The canonical resident is always started and verified through launchd.
   console.error("[voicelayer] Voice Bar not running — launching...");
   try {
-    const result = Bun.spawnSync(["open", "-a", "VoiceBar"]);
+    const result = Bun.spawnSync(["/bin/bash", fileURLToPath(new URL("../scripts/start-voicebar.sh", import.meta.url))], { env: process.env });
     if (result.exitCode === 0) {
       console.error("[voicelayer] Voice Bar launched successfully");
     } else {
       console.error(
-        "[voicelayer] Failed to launch Voice Bar — install to /Applications or add to Login Items",
+        "[voicelayer] Failed to launch Voice Bar — run voicelayer setup; launchd startup/ownership verification failed",
       );
     }
   } catch {
     console.error(
-      "[voicelayer] Failed to launch Voice Bar — install to /Applications or add to Login Items",
+      "[voicelayer] Failed to launch Voice Bar — run voicelayer setup; launchd startup/ownership verification failed",
     );
   }
 }

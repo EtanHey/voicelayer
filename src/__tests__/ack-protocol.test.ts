@@ -201,7 +201,10 @@ describe("ack protocol", () => {
         true,
         { archiveSource: "voicebar", onCaptureStart: expect.any(Function) },
       );
-      expect(errorSpy).not.toHaveBeenCalled();
+      const unexpectedErrors = errorSpy.mock.calls.filter(
+        ([message]) => typeof message !== "string" || !message.startsWith("[voicelayer][capture-lifecycle] "),
+      );
+      expect(unexpectedErrors).toEqual([]);
     } finally {
       errorSpy.mockRestore();
       if (savedAllowPushToEnd === undefined) {
@@ -234,6 +237,23 @@ describe("ack protocol", () => {
       outcome: "accept",
       id: "record-1",
     });
+  });
+
+  it("admits F5 after mic is turned back on following an all-off toggle", async () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    handleSocketCommand({ cmd: "toggle", scope: "all", enabled: false });
+    expect(handleSocketCommand({ cmd: "record", press_to_talk: true })).toMatchObject({ outcome: "reject", reason: "mic disabled" });
+    expect(waitForInputSpy).not.toHaveBeenCalled();
+
+    handleSocketCommand({ cmd: "toggle", scope: "mic", enabled: true });
+    expect(existsSync(TEST_VOICE_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(true);
+    const response = handleSocketCommand({ cmd: "record", press_to_talk: true });
+    await fixtureCheckpoint();
+    expect(response).toMatchObject({ outcome: "accept" });
+    expect(waitForInputSpy).toHaveBeenCalledTimes(1);
   });
 
   it("returns accept ack for stop when recording is active", async () => {

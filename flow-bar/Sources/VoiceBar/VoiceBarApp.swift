@@ -193,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var terminationGateForTesting: NativeUpdateGate?
     var terminationOwnsServerForTesting: Bool?
     var terminationCleanupForTesting: (() -> Void)?
+    var terminationSaveNowForTesting: (() -> ContinuousClock.Instant)?
     var terminationSaveSleepForTesting: ((Duration) async -> Void)?
     #endif
 
@@ -592,7 +593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 _ = application.terminate()
             }
 
-            waitForTermination(ofExactPIDs: exactPIDs, timeout: VoiceBarDaemonController.acceptedQuitWait)
+            waitForTermination(ofExactPIDs: exactPIDs)
             // A refused quit can mean live capture or a closed update gate. Never escalate it to SIGKILL.
             let survivorPIDs = exactPIDs.filter { processIsAlive(exactPID: $0) }
             guard survivorPIDs.isEmpty else {
@@ -611,13 +612,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func waitForTermination(
-        ofExactPIDs exactPIDs: [pid_t],
-        timeout: TimeInterval
+        ofExactPIDs exactPIDs: [pid_t]
     ) {
-        _ = Self.waitForIncumbents(exactPIDs, timeout: timeout, isAlive: processIsAlive)
+        _ = Self.waitForIncumbents(exactPIDs, isAlive: processIsAlive)
     }
 
-    static func waitForIncumbents(_ pids: [pid_t], timeout: TimeInterval = VoiceBarDaemonController.acceptedQuitWait,
+    static func waitForIncumbents(_ pids: [pid_t], timeout: TimeInterval = VoiceBarQuitDeferral.maximumWait + VoiceBarDaemonController.acceptedQuitWait,
         isAlive: (pid_t) -> Bool, now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) -> Bool {
         let deadline = now() + timeout
@@ -653,6 +653,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         terminationSignalSource.resume()
         self.terminationSignalSource = terminationSignalSource
+
+        let launchdLabel = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"]
+        if getppid() != 1 || launchdLabel != "com.voicelayer.voicebar" {
+            NSLog("[VoiceBar] WARNING: VoiceBar isn't running under launchd — restart it with voicelayer bar")
+        }
 
         // Register Apple Event handler for voicebar:// URL scheme.
         // Defer registration until the next run loop iteration after launch setup.
@@ -1424,11 +1429,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             voiceState.stop()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                var now: () -> ContinuousClock.Instant = { ContinuousClock().now }
                 var sleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
                 #if VOICEBAR_QA
+                now = self.terminationSaveNowForTesting ?? now
                 sleep = self.terminationSaveSleepForTesting ?? sleep
                 #endif
-                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, sleep: sleep)
+                await VoiceBarQuitDeferral.waitWhileSaving({ self.voiceState.isSavingDictationForQuit }, now: now, sleep: sleep)
                 self.quitSavePending = false
                 #if VOICEBAR_QA
                 if let cleanup = self.terminationCleanupForTesting { cleanup(); return }
@@ -1504,7 +1511,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let typedHost = TerminalPasteTargets.isTerminal(bundle)
                     || ["com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS"].contains(bundle)
                     || app.map { ChromiumFamilyApps.contains(bundleURL: $0.bundleURL) } == true
-                return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost)
+                return CommandModeAXHelper.captureFocusedTargetEligibility(requiresWritableAX: !typedHost,
+                    allowsTerminalGroup: TerminalPasteTargets.isTerminal(bundle))
             }
         }
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
@@ -2193,8 +2201,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 trailingControlCountFromCore: 2
             )
         case .recording:
+            // Stop and Cancel, plus a third slot beside Stop: Lock on a VAD take, Pause on a PTT take. The count
+            // follows the same `showsRecordingHold || showsRecordingPause` the presentation sizes the wing from, so
+            // Stop, the outermost control, stays inside the hit region.
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: state.recordingMode == "vad" ? 3 : 2
+                leadingControlCount: state.recordingMode == "vad" || state.recordingMode == "ptt" ? 3 : 2
             )
         case .compactStatus:
             switch state.mode {
@@ -2333,6 +2344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var input = VoiceBarNotchOperationalInput(
                 mode: mode,
                 showsRecordingHold: mode == .recording && state?.recordingMode == "vad",
+                showsRecordingPause: mode == .recording && state?.recordingMode == "ptt",
                 hasTeleprompterText: state?.teleprompterText != nil,
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,

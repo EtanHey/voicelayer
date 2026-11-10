@@ -46,6 +46,7 @@ public struct TeleprompterAView: View {
     }
 
     @State private var cache = TeleprompterAModelCache()
+    @State private var settledScrolledLines = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
@@ -74,10 +75,16 @@ public struct TeleprompterAView: View {
             ForEach(Array(window), id: \.self) { line in
                 lineView(model, line: line, focusGroup: focusGroup)
                     .offset(y: CGFloat(line - scrolled) * TeleprompterA.lineHeight)
+                    // QA 2026-11-08 c07 X1 (Etan R3: Pause seeked back). Lines mounted outside the visible band (the one
+                    // above, for the slide; those below) are clipped from sight but not from hits, and the line above sat
+                    // under the wing's Pause. Only a line you can see takes a click.
+                    .allowsHitTesting(TeleprompterA.isVisible(line: line, scrolledLines: scrolled, visibleLines: visibleLines))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .animation(TeleprompterA.slide(reduceMotion: reduceMotion), value: scrolled)
+        .animation(TeleprompterA.slide(reduceMotion: reduceMotion, fromLine: settledScrolledLines, toLine: scrolled),
+                   value: scrolled)
+        .onChange(of: scrolled, initial: true) { _, line in settledScrolledLines = line }
         .mask {
             VStack(spacing: 0) {
                 LinearGradient(colors: [.black.opacity(TeleprompterA.showsTopFade(scrolledLines: scrolled) ? 0 : 1), .black],

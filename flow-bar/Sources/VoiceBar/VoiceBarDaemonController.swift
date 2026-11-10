@@ -221,6 +221,7 @@ enum VoiceBarDaemonEnvironment {
         }
         env.removeValue(forKey: preserveQAOverridesEnvironmentVariable)
         env.removeValue(forKey: legacyPreserveQAOverridesEnvironmentVariable)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         // A foreign/unstamped plist cannot establish a VoiceBar build identity.
         let stamped = (bundleInfo["GitCommit"] as? String)?.range(of: "^[a-fA-F0-9]{40}$", options: .regularExpression) != nil
         // Overwrite inherited identities: only this running bundle can name its build.

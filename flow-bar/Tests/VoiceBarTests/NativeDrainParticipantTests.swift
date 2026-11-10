@@ -81,7 +81,10 @@ import VoiceBarUI
             app.voiceState.handleEvent(["type": "audio_level", "rms": 0.2])
             var stops = 0, ticks = 0, exited = false
             app.voiceState.sendCommand = { if $0["cmd"] as? String == "stop" { stops += 1 } }
-            app.terminationSaveSleepForTesting = { _ in
+            var instant = ContinuousClock().now
+            app.terminationSaveNowForTesting = { instant }
+            app.terminationSaveSleepForTesting = { duration in
+                instant = instant.advanced(by: duration)
                 ticks += 1
                 XCTAssertFalse(exited)
                 if archiveCompletes, ticks == 3 {
@@ -91,7 +94,7 @@ import VoiceBarUI
                     app.voiceState.handleEvent(["type": "state", "state": "transcribing", "stt_audio_ms": 1000])
                 }
             }
-            defer { app.terminationSaveSleepForTesting = nil }
+            defer { app.terminationSaveSleepForTesting = nil; app.terminationSaveNowForTesting = nil }
             app.terminationCleanupForTesting = {
                 XCTAssertEqual(try? Data(contentsOf: raw), bytes)
                 XCTAssertEqual(FileManager.default.fileExists(atPath: archive.path), archiveCompletes)
@@ -135,6 +138,28 @@ import VoiceBarUI
         policy.authorize(.controlledUpdate)
         policy.authorize(.menuBar)
         XCTAssertEqual(policy.reply(enforcesSingleton: true, voiceBusy: true, gatePermitsQuit: false), .terminateNow)
+    }
+
+    func testReplacementSurvivesIncumbentsFullSaveWindowAndCleanup() async {
+        var incumbent = VoiceBarTerminationPolicy()
+        XCTAssertEqual(incumbent.reply(enforcesSingleton: true, voiceBusy: true), .terminateLater)
+        let start = ContinuousClock().now
+        var instant = start
+        await VoiceBarQuitDeferral.waitWhileSaving({ true }, now: { instant }, sleep: { _ in
+            instant = instant.advanced(by: .milliseconds(150))
+        })
+        let elapsed = start.duration(to: instant).components
+        let saveElapsed = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+        let incumbentExit = saveElapsed + VoiceBarDaemonController.acceptedQuitWait - 0.1
+        var time: TimeInterval = 0
+        let newcomerContinues = AppDelegate.waitForIncumbents([123], isAlive: { _ in time < incumbentExit },
+            now: { time }, wait: { time += $0 })
+        XCTAssertTrue(newcomerContinues, "the newcomer must outlive the incumbent's deferred quit")
+        time = max(time, incumbentExit)
+        let runningCopies = (time < incumbentExit ? 1 : 0) + (newcomerContinues ? 1 : 0)
+        XCTAssertEqual(runningCopies, 1, "the incumbent's later exit must not leave zero copies")
+        incumbent.authorize(.internalFailure)
+        XCTAssertEqual(incumbent.reply(enforcesSingleton: true, voiceBusy: true), .terminateCancel)
     }
 
     func testSlowAcceptingIncumbentLeavesReplacementRunning() {

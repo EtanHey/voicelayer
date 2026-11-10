@@ -1335,11 +1335,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         let finishedReplayStartEpoch = state.playbackEpoch
         let finishedReplayIntentCount = replayIntentCount
-        try click(
-            host,
-            at: NSPoint(x: host.bounds.midX - 28, y: 23),
-            in: window
-        )
+        try clickReplay(host, in: window)
         XCTAssertTrue(waitForCondition(timeout: 1) {
             replayIntentCount == finishedReplayIntentCount + 1
         })
@@ -1351,7 +1347,9 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             directChildProcessCount(named: "afplay", parentPID: daemonPID) == 1
         })
         XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 60))
-        print("[replay-runtime] finished replay click fired a fresh afplay process")
+        if replayIntentCount == finishedReplayIntentCount + 1 {
+            print("[replay-runtime] finished replay intent observed")
+        }
 
         let askReplayPhrase = "Replay this blocking voice ask prompt without entering recording early."
         let askStartEpoch = state.playbackEpoch
@@ -1400,8 +1398,8 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         }
         askHost.layoutSubtreeIfNeeded()
         let askReplayIntentCount = replayIntentCount
-        try click(askHost, at: NSPoint(x: askHost.bounds.midX - 28, y: 23), in: askWindow)
-        try click(askHost, at: NSPoint(x: askHost.bounds.midX - 28, y: 23), in: askWindow)
+        try clickReplay(askHost, in: askWindow)
+        try clickReplay(askHost, in: askWindow)
         XCTAssertTrue(waitForCondition(timeout: 1) {
             replayIntentCount == askReplayIntentCount + 2
         })
@@ -1614,6 +1612,19 @@ private func click(_ host: NSView, at point: NSPoint, in window: NSWindow) throw
     ))
     window.sendEvent(down)
     window.sendEvent(up)
+}
+
+@MainActor
+private func clickReplay(_ host: NSView, in window: NSWindow) throws {
+    host.layoutSubtreeIfNeeded()
+    func descendants(_ view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap(descendants)
+    }
+    let replay = try XCTUnwrap(descendants(host).first {
+        $0.toolTip == "Replay" && !$0.visibleRect.isEmpty
+    }, "Replay must expose a visible native tooltip control")
+    let centre = NSPoint(x: replay.bounds.midX, y: replay.bounds.midY)
+    try click(host, at: replay.convert(centre, to: nil), in: window)
 }
 
 @MainActor

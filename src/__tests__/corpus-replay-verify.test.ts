@@ -11,7 +11,8 @@ import {
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, relative, isAbsolute, dirname } from "path";
+import { whisperServerOwnershipPath } from "../whisper-server-ownership";
 import {
   allocateFreeLocalhostPort,
   assertPrivateCaptionExpectation,
@@ -503,7 +504,8 @@ describe("corpus replay verification", () => {
     ).toThrow("inside the verify work directory");
   });
 
-  test("isolates corpus daemon journal and polish writes inside the verify work directory", () => {
+  test("isolates corpus daemon ownership, journal and polish writes inside the verify work directory", () => {
+    expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");
     const workDir = makeTempRoot();
     const environment = buildCorpusDaemonEnvironment({
       workDir,
@@ -516,6 +518,7 @@ describe("corpus replay verification", () => {
       baseEnvironment: {
         HOME: "/real/user/home",
         PATH: "/usr/bin:/bin",
+        VOICELAYER_WHISPER_OWNERSHIP_DIR: "/real/user/ownership",
         VOICELAYER_CONTROL_LAYER_BASE: "/real/user/journal",
         QA_VOICE_STT_POLISH_LOG_PATH: "/real/user/polish-shadow.jsonl",
         QA_VOICE_WHISPER_SERVER_PORT: "8178",
@@ -523,6 +526,22 @@ describe("corpus replay verification", () => {
     });
 
     expect(environment.HOME).toBe("/real/user/home");
+    expect(environment.VOICELAYER_WHISPER_OWNERSHIP_DIR).toBe(
+      join(workDir, "whisper-ownership"),
+    );
+    const previousOwnership = process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR;
+    try {
+      process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR =
+        environment.VOICELAYER_WHISPER_OWNERSHIP_DIR;
+      const ownershipDirectory = dirname(whisperServerOwnershipPath(18179));
+      const withinRun = relative(workDir, ownershipDirectory);
+      expect(isAbsolute(withinRun)).toBe(false);
+      expect(withinRun.startsWith("..")).toBe(false);
+      expect(ownershipDirectory).toBe(join(workDir, "whisper-ownership"));
+    } finally {
+      if (previousOwnership === undefined) delete process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR;
+      else process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR = previousOwnership;
+    }
     expect(environment.VOICELAYER_CONTROL_LAYER_BASE).toBe(
       join(workDir, "control-layer"),
     );

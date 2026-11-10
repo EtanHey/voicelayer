@@ -202,7 +202,7 @@ describe("CLI integration", () => {
     expect(cliSrc).not.toMatch(/SCRIPT_DIR=.*\n\nFLOW_BAR_DIR=.*\n\ncase/s);
     expect(cliSrc).toContain("build-app)");
     expect(cliSrc).toContain('bash "$PACKAGE_ROOT/flow-bar/build-app.sh"');
-    expect(cliSrc).toContain('open "/Applications/VoiceBar.app"');
+    expect(cliSrc).toContain('bash "$PACKAGE_ROOT/scripts/start-voicebar.sh"');
     expect(cliSrc).not.toContain('exec ".build/release/VoiceBar"');
   });
 

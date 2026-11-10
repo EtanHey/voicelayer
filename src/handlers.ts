@@ -1251,7 +1251,7 @@ export async function handleToggle(args: unknown): Promise<McpResult> {
   }
 
   // Manage combined flag — used by CC PreToolUse hook to block all voice tools
-  if (scope === "all") {
+  if (scope === "all" || (scope === "mic" && enabled)) {
     if (enabled) {
       if (existsSync(VOICE_DISABLED_FILE)) {
         try {

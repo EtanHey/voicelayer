@@ -1,4 +1,4 @@
-import { requireIsolatedOverride } from "./test-isolation";
+import { assertTestIsolation, requireIsolatedOverride } from "./test-isolation";
 /**
  * Centralized path constants for VoiceLayer temp files.
  *
@@ -54,6 +54,7 @@ export const DEFAULT_TMP_ROOT = "/tmp";
 
 /** Default state root. `VOICELAYER_STATE_DIR` replaces it wholesale. */
 export function defaultStateDir(): string {
+  assertTestIsolation();
   return join(homedir(), ".local", "state", "voicelayer");
 }
 
@@ -123,6 +124,7 @@ mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 
 // Simple path join — avoids importing node:path just for concatenation
 function tmpPath(name: string): string {
+  assertTestIsolation();
   return `${TMP_ROOT}/${name}`;
 }
 
@@ -131,6 +133,7 @@ function readOverride(
   fallback: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  assertTestIsolation();
   const value = env[name]?.trim();
   return value ? value : fallback;
 }
@@ -140,6 +143,7 @@ function readOverrideAliased(
   fallback: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  assertTestIsolation();
   for (const name of names) {
     const value = env[name]?.trim();
     if (value) return value;
@@ -151,6 +155,7 @@ function firstOverrideValue(
   names: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
+  assertTestIsolation();
   for (const name of names) {
     const value = env[name]?.trim();
     if (value) return value;
@@ -189,6 +194,7 @@ function heartbeatPathBesidePid(pidPath: string): string {
 export function mcpHeartbeatFilePath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  assertTestIsolation();
   const explicit = env[MCP_HEARTBEAT_OVERRIDE_ENV]?.trim();
   if (explicit) return explicit;
   const pidOverride = env[MCP_PID_OVERRIDE_ENV]?.trim();
@@ -359,6 +365,7 @@ export const DAEMON_PID_FILE = tmpPath("voicelayer-daemon.pid");
  * Prevents symlink attacks on predictable /tmp paths (S1 security fix).
  */
 export function safeWriteFileSync(filePath: string, content: string): void {
+  assertTestIsolation();
   if (existsSync(filePath)) {
     try {
       const stat = lstatSync(filePath);

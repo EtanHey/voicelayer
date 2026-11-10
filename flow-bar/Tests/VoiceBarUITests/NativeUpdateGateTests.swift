@@ -42,7 +42,7 @@ import XCTest
         XCTAssertEqual(files.count, 1)
         let record = try String(contentsOfFile: path + ".admissions/" + XCTUnwrap(files.first))
         XCTAssertTrue(record.hasPrefix("{\"token\":"))
-        XCTAssertNotNil(record.range(of: #"^\{"token":"[^"]+","pid":\d+,"incarnation":"[^"]+","generation":0\}\n$"#, options: .regularExpression))
+        XCTAssertNotNil(record.range(of: #"^\{"token":"[^"]+","pid":\d+,"incarnation":"[^"]+","generation":0,"startTime":"[0-9]+:[0-9]+"\}\n$"#, options: .regularExpression))
         XCTAssertTrue(gate.permitsTermination(), "OPEN ignores orphan or active ledger; live activity is checked by the app")
         release()
         XCTAssertTrue(gate.permitsTermination())

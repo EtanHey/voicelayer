@@ -18,11 +18,17 @@ final class TeleprompterScrubLiveCaseTests: XCTestCase {
         func handleRetranscribeHistoryEntry(recordingPath _: String) {}
     }
 
+    private final class Layout {
+        var frames: [String: CGRect] = [:]
+    }
+
     private struct Render {
         let image: CGImage
         let scale: CGFloat
         let width: CGFloat
         let height: CGFloat
+        let track: CGRect
+        let totalLabel: CGRect
     }
 
     private func render(elapsedMs: Int, totalMs: Int, name: String) throws -> Render {
@@ -45,10 +51,20 @@ final class TeleprompterScrubLiveCaseTests: XCTestCase {
         model.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false)
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation).canvasGeometry
         let size = CGSize(width: canvas.totalWidth + 24, height: canvas.totalHeight + 17)
+        let layout = Layout()
         let host = NSHostingView(rootView:
             BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
                     presentationModel: model, includesPanelOutsets: true)
                 .environment(\.colorScheme, .dark)
+                .overlayPreferenceValue(PlaybackScrubBoundsKey.self) { anchors in
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onChange(of: anchors.mapValues { proxy[$0] }, initial: true) { _, frames in
+                                layout.frames = frames
+                            }
+                    }
+                    .allowsHitTesting(false)
+                }
         )
         host.appearance = NSAppearance(named: .darkAqua)
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
@@ -68,7 +84,9 @@ final class TeleprompterScrubLiveCaseTests: XCTestCase {
                 .write(to: directory.appendingPathComponent("live-case-\(name).png"))
         }
         let image = try XCTUnwrap(bitmap.cgImage)
-        return Render(image: image, scale: CGFloat(image.width) / size.width, width: size.width, height: size.height)
+        return Render(image: image, scale: CGFloat(image.width) / size.width, width: size.width, height: size.height,
+                      track: try XCTUnwrap(layout.frames["track"]),
+                      totalLabel: try XCTUnwrap(layout.frames["total"]))
     }
 
     /// Luminance per pixel, top-down rows, in pixel units.
@@ -98,14 +116,13 @@ final class TeleprompterScrubLiveCaseTests: XCTestCase {
         let render = try render(elapsedMs: elapsedMs, totalMs: totalMs, name: name)
         let (width, height, lum) = try luminance(render)
         let s = render.scale
-        // The scrub row lives between the text viewport and the controls of the teleprompter body.
-        let zoneTop = Int((VoiceBarNotchContract.topHeight + 16 + Theme.teleprompterViewportHeight) * s)
-        let zoneBottom = min(height, Int((VoiceBarNotchContract.topHeight + 196 - 14 - 26) * s))
-        let body = VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth
-        let bodyLeft = Int((render.width - body) / 2 * s), bodyRight = Int((render.width + body) / 2 * s)
+        // Resolve the production view's anchors in the hosting view, then convert to bitmap pixels.
+        // The hour clock widens both label slots; fixed body offsets can include leading label ink.
+        let zoneTop = max(0, Int(ceil(render.track.minY * s)))
+        let zoneBottom = min(height, Int(floor(render.track.maxY * s)))
+        let labelLeft = max(0, Int(ceil(render.totalLabel.minX * s)))
+        let bodyRight = min(width, Int(floor(render.totalLabel.maxX * s)))
 
-        // Labels: bright ink in the trailing quarter of the body, inside the scrub zone.
-        let labelLeft = bodyRight - Int(120 * s)
         var rows = Set<Int>(), minX = Int.max, maxX = Int.min
         for row in zoneTop ..< zoneBottom {
             for column in labelLeft ..< bodyRight where lum[row * width + column] > 110 {
@@ -122,11 +139,10 @@ final class TeleprompterScrubLiveCaseTests: XCTestCase {
                              "\(name): \"so far\" must sit next to \(total) on its line")
         XCTAssertLessThan(maxX, bodyRight - Int(2 * s), "\(name): the label clips at the shell edge")
 
-        // Track: the row through the knob's centre. From the end of the played fill to the track's end it is one
-        // unbroken bar, never a dotted or dashed tail.
-        // Past the leading time label (inset 14 + slot + spacing, under 114 pt on every version), up to the
-        // trailing label zone; on 2.2.48 this span includes the dashed tail.
-        let laneLeft = bodyLeft + Int(114 * s), laneRight = labelLeft
+        // Scan only inside the actual track frame, excluding both labels and their spacing.
+        let laneLeft = max(0, Int(ceil(render.track.minX * s)))
+        let laneRight = min(width, Int(floor(render.track.maxX * s)))
+        XCTAssertGreaterThan(laneRight, laneLeft)
         var trackRow = zoneTop, best = 0
         for row in zoneTop ..< zoneBottom {
             let count = (laneLeft ..< laneRight).filter { lum[row * width + $0] > 40 }.count

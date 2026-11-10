@@ -1,0 +1,3 @@
+# Bun resolves preload paths from cwd; keep both root preloads in this test cwd.
+[test]
+preload = ["./setup/preload.ts", "./setup/resolver-cache.ts"]

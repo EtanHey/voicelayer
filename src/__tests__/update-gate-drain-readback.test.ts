@@ -19,7 +19,7 @@ type Event = { event: string; kind?: string; error?: string; gate?: string; lock
 function instrument(source: string, key: string): string {
   const anchors = 'resolve(import.meta.dir, "../.test-tmp")';
   expect(source.split(anchors)).toHaveLength(3);
-  const original = source.replaceAll(anchors, JSON.stringify(resolve(process.cwd(), ".test-tmp")))
+  const original = source.replaceAll(anchors, JSON.stringify(dirname(process.env.VOICELAYER_TEST_RUN_ROOT!)))
     .replace(/from "(\.\/[^"\n]+)"/g, (_, path: string) => `from ${JSON.stringify(resolve(dirname(installerPath), path))}`)
     .replace('import("./update-gate-bootstrap")', `import(${JSON.stringify(resolve(dirname(installerPath), "update-gate-bootstrap"))})`)
     .replace("acknowledgeVoiceDrain, updateVoiceGate", "acknowledgeVoiceDrain as originalAck, updateVoiceGate as originalUpdate")
