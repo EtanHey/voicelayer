@@ -1,6 +1,7 @@
 import { captureLifecycle } from "./capture-lifecycle";
 import { recordingAppBuild, tagTranscription, type RecordingAppBuild } from "./recording-build";
 import { TakeStageTimings, withTakeStageTimings, measureTakeStage, measureTakeStageAsync } from "./take-stage-timings";
+import { beginTranscriptionStageReceipt } from "./transcription-stage-receipt";
 import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
@@ -564,8 +565,10 @@ export async function finalizeTranscriptionResultForSurface(
   surface: STTPolishSurface | null,
   env: STTFinalizeEnv = processingEnv(),
   boundaryContext?: BoundaryContext,
+  receiptAudioPath?: string,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = measureTakeStage("dictionary_rules", () => finalizeTranscriptionText(rawText, env));
+  const finishReceipt = await beginTranscriptionStageReceipt(receiptAudioPath, rawText, cleanedText);
   // A long unformatted final needs paragraphs regardless of polish state.
   // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
   const paragraphText = (text: string): string => measureTakeStage("dictionary_rules", () => {
@@ -579,7 +582,11 @@ export async function finalizeTranscriptionResultForSurface(
     const strip = (value: string) => value.replace(/\s/gu, "");
     return strip(formatted) === strip(text) ? formatted : text;
   });
-  if (!surface) return { text: paragraphText(cleanedText) };
+  if (!surface) {
+    const text = paragraphText(cleanedText);
+    finishReceipt?.(cleanedText, text, null);
+    return { text };
+  }
   const polished = await measureTakeStageAsync("polish", () => polishTranscriptionText({
     rawText,
     cleanedText,
@@ -613,8 +620,10 @@ export async function finalizeTranscriptionResultForSurface(
       polished.failureKind !== "timeout" && polished.failureKind !== "endpoint-error") {
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
   }
+  const text = paragraphText(polished.text);
+  finishReceipt?.(polished.text, text, polished.status);
   return {
-    text: paragraphText(polished.text),
+    text,
     polished: polished.polished,
     polishStatus: polished.status,
     ...(polished.reason ? { polishReason: polished.reason } : {}),
@@ -3724,6 +3733,8 @@ export async function waitForInput(
       finalized = await finalizeTranscriptionResultForSurface(
         rawText,
         polishSurfaceForWaitOptions(options),
+        processingEnv(), undefined,
+        (voiceBarArchivePath ?? voiceAskArchivePath) ? join((voiceBarArchivePath ?? voiceAskArchivePath)!, "audio.wav") : undefined,
       );
       if (chunkBackendLabels.size === 1) {
         sttBackendLabel = [...chunkBackendLabels][0]!;
@@ -3754,6 +3765,7 @@ export async function waitForInput(
         polishSurfaceForWaitOptions(options),
         finalizeEnv,
         boundaryContext,
+        (voiceBarArchivePath ?? voiceAskArchivePath) ? join((voiceBarArchivePath ?? voiceAskArchivePath)!, "audio.wav") : undefined,
       );
       if (result.text.trim() && !finalized.text) {
         console.error(
@@ -4622,7 +4634,11 @@ async function retranscribeVoiceAskArchiveAdmitted(
     working = prepareFullVoiceAskWavForSTT(snapshot);
     const backend = await getBackend();
     const result = await backend.transcribe(working.path);
-    const text = result.text.trim();
+    // Ask archive recovery intentionally keeps raw decoder wording. It still shares
+    // the final delivery contract, including paragraph and punctuation boundaries.
+    const finalized = await finalizeTranscriptionResultForSurface(result.text, null,
+      { ...processingEnv(), QA_VOICE_CORRECTOR: "identity" }, undefined, snapshot.audioPath);
+    const text = finalized.text.trim();
     if (!text) {
       if (result.attemptEvidence?.gateRemoval) {
         revalidateVoiceAskArchiveSnapshot(snapshot);
@@ -4815,6 +4831,7 @@ async function retranscribeRecordingCaptureAdmitted(
               finalizeEnv,
             )
           : undefined,
+        wavPath,
       );
       const text = finalized.text.trim() ? finalized.text : "";
       if (result.text.trim() && !text) {
@@ -4937,6 +4954,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
               finalizeEnv,
             )
           : undefined,
+        archivedAudioPath ?? undefined,
       );
       const text = finalized.text.trim() ? finalized.text : "";
       if (result.text.trim() && !text) {

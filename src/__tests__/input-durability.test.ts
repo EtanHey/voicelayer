@@ -5596,16 +5596,24 @@ describe("input recording durability", () => {
         );
       } else {
         const originalFsync = fsModule.fsyncSync;
-        let fsyncCalls = 0;
-        injectedSpy = spyOn(fsModule, "fsyncSync").mockImplementation(
+        const originalRename = fsModule.renameSync;
+        let metadataCommitted = false, injected = false;
+        const renameSpy = spyOn(fsModule, "renameSync").mockImplementation((from, to) => {
+          originalRename(from, to);
+          if (to === metadataPath) metadataCommitted = true;
+        });
+        // Target the actual commit edge, not an incidental global fsync count:
+        // private attribution receipts now fsync independently before this transaction.
+        const syncSpy = spyOn(fsModule, "fsyncSync").mockImplementation(
           ((fd: number) => {
-            fsyncCalls++;
-            if (fsyncCalls === 4) {
+            if (metadataCommitted && !injected) {
+              injected = true;
               throw new Error("injected post-commit fsync");
             }
             return originalFsync(fd);
           }) as typeof fsModule.fsyncSync,
         );
+        injectedSpy = { mockRestore() { syncSpy.mockRestore(); renameSpy.mockRestore(); } };
       }
 
       const { retranscribeVoiceAskArchive } = await import("../input");
