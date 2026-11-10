@@ -10,8 +10,9 @@ final class OptionF5OverReadTests: XCTestCase {
     private var commands: [[String: Any]] = []
     private var cmds: [String] { commands.compactMap { $0["cmd"] as? String } }
 
-    private func reading(_ text: String = "QA read on screen") -> VoiceState {
-        let state = VoiceState()
+    private func reading(_ text: String = "QA read on screen", elapsedMilliseconds: Int = 0,
+                         clock: @escaping () -> TimeInterval = { 100 }) -> VoiceState {
+        let state = VoiceState(playbackAmplitudeClock: clock)
         state.isConnected = true
         state.isCollapsed = false
         commands = []
@@ -20,7 +21,7 @@ final class OptionF5OverReadTests: XCTestCase {
         state.speakSelection()
         let id = commands.last?["id"] as? String ?? ""
         state.handleEvent(["type": "state", "state": "speaking", "request_id": id, "text": text, "utteranceId": "read-1",
-                           "playback_id": "p-1", "generation": 1, "playback_offset_ms": 0, "duration_ms": 20_000,
+                           "playback_id": "p-1", "generation": 1, "playback_offset_ms": elapsedMilliseconds, "duration_ms": 20_000,
                            "long_read": ["id": "read-1", "chunk_index": 0, "chunk_count": 1, "chunk_start_ms": 0]])
         commands = []
         return state
@@ -40,13 +41,31 @@ final class OptionF5OverReadTests: XCTestCase {
     }
 
     func testSameTextDedupesWithANoticeAndKeepsThePosition() {
-        let state = reading("QA read on screen")
+        // Hold the clock fixed: the live player is allowed to advance during selection capture.
+        // A nonzero position ensures a rewind/restart cannot pass as preserved playback.
+        let state = reading("QA read on screen", elapsedMilliseconds: 7000)
         let shownBefore = state.playbackElapsedMilliseconds()
+        XCTAssertEqual(shownBefore, 7000)
         state.selectionTextCaptureHandler = { $0(.completed("  QA  read\non screen ")) }
         state.speakSelection()
         XCTAssertEqual(cmds, [], "same text: no second read, no Stop, no Next")
         XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
         XCTAssertEqual(state.playbackElapsedMilliseconds(), shownBefore)
+        XCTAssertEqual(state.mode, .speaking)
+    }
+
+    func testSameTextDedupeAllowsClockProgressWithoutRestartingTheRead() {
+        var now: TimeInterval = 100
+        let state = reading("QA read on screen", elapsedMilliseconds: 7000, clock: { now })
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 7000)
+        state.selectionTextCaptureHandler = { complete in
+            now += 0.002 // Selection capture took 2 ms while playback continued.
+            complete(.completed("  QA  read\non screen "))
+        }
+        state.speakSelection()
+        XCTAssertEqual(cmds, [], "same text never restarts, stops or advances the queue")
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 7002)
         XCTAssertEqual(state.mode, .speaking)
     }
 

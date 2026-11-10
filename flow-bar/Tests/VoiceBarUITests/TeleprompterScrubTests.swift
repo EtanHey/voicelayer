@@ -400,12 +400,10 @@ final class TeleprompterScrubTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
-        // Readback keeps its 78 pt viewport; U5's live Teleprompter A sizes to its lines (T2: the handle sits under the
-        // eye row now, not under the text).
-        XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? showsTeleprompterA\n" +
-            "                        ? TeleprompterA.bodyHeight(lines: state.teleprompterVisibleLines)\n" +
-            "                        : Theme.teleprompterViewportHeight : nil)"))
-        // T8: one spacer between the scrubber and the eye row; at its 3 pt minimum while reading live.
+        // S4-F2/F3: the stopped reader fills 2.4's body above its scrubber and controls too.
+        XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? teleprompterBodyHeight : nil)"))
+        XCTAssertTrue(bar.contains("viewportHeight: teleprompterBodyHeight,"))
+        XCTAssertTrue(bar.contains("TeleprompterA.stoppedBodyHeight(lines: state.teleprompterVisibleLines)"))
         XCTAssertTrue(bar.contains("Spacer(minLength: TeleprompterA.controlsGap)"))
         let trailing = try XCTUnwrap(bar.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchCompactStatusContent")[0]

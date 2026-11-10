@@ -7,6 +7,14 @@ import SwiftUI
 /// AIDEV-NOTE: This is its own View on purpose. It samples the clip's position on a timer; if
 /// that read happened inside SettingsView's body, every tick would re-render the whole Settings
 /// window. Keep position reads in here.
+// Bounds travel as anchors so render tests inspect the laid-out controls, including hour label slots.
+struct PlaybackScrubBoundsKey: PreferenceKey {
+    static var defaultValue: [String: Anchor<CGRect>] { [:] }
+    static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
 struct SettingsPlaybackScrubBar: View {
     let position: () -> SettingsAudioPlaybackPosition
     let seek: (TimeInterval) -> Void
@@ -99,6 +107,7 @@ struct SettingsPlaybackScrubBar: View {
                 .frame(minWidth: 34, alignment: .trailing)
                 .opacity(labelOpacity(duration: position.duration))
             track(shown)
+                .anchorPreference(key: PlaybackScrubBoundsKey.self, value: .bounds) { ["track": $0] }
             durationText(shown.duration)
                 .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
                 .lineLimit(1)
@@ -108,6 +117,7 @@ struct SettingsPlaybackScrubBar: View {
                 .frame(width: isTeleprompter ? Self.teleprompterLabelWidth(for: position.duration) : nil,
                        alignment: .leading)
                 .frame(minWidth: 34, alignment: .leading)
+                .anchorPreference(key: PlaybackScrubBoundsKey.self, value: .bounds) { ["total": $0] }
                 .opacity(labelOpacity(duration: position.duration))
         }
         .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())

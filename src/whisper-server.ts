@@ -1084,6 +1084,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
 
   let launch = buildLaunch(requestedAcceleration);
 
+  let startupFailure: string | undefined;
   const startLaunch = async (
     plan: WhisperServerLaunchPlan,
   ): Promise<boolean> => {
@@ -1110,14 +1111,30 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     startingChildren.add(proc);
     let cleanupAttempted = false;
     try {
-      // Drain stderr in background (server logs)
+      let stderrTail = "";
+      let failureReason: string | undefined;
+      let signalFailure!: (reason: string) => void;
+      const failed = new Promise<string>((resolve) => { signalFailure = resolve; });
+      const fail = (reason: string) => {
+        if (failureReason) return;
+        failureReason = reason;
+        signalFailure(reason);
+      };
+      void proc.exited?.then(
+        (code) => fail(`whisper-server exited during startup (code ${code}); WHISPER_STARTUP_EXIT`),
+        () => { /* A rejected exit promise does not confirm termination. */ },
+      );
+      // Drain stderr, retaining only a bounded line tail for load diagnostics.
+      // Do not expose model contents or silently select another model.
       if (proc.stderr) {
         const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
         (async () => {
+          const decoder = new TextDecoder();
           try {
             while (true) {
-              const { done } = await reader.read();
+              const { done, value } = await reader.read();
               if (done) break;
+              stderrTail = (stderrTail + decoder.decode(value, { stream: true })).slice(-4096);
             }
           } catch {}
         })();
@@ -1127,7 +1144,12 @@ async function ensureServerUnlocked(port: number): Promise<number> {
       const startupTimeoutMs = getStartupTimeoutMs();
       const deadline = Date.now() + startupTimeoutMs;
       while (Date.now() < deadline) {
-        if (await whileWhisperOwnerOpen(checkServerHealthy(port))) {
+        if (proc.exitCode != null) fail(`whisper-server exited during startup (code ${proc.exitCode}); WHISPER_STARTUP_EXIT`);
+        const healthy = await whileWhisperOwnerOpen(Promise.race([
+          checkServerHealthy(port), failed.then(() => false),
+        ]));
+        if (failureReason) break;
+        if (healthy) {
           assertWhisperOwnerOpen();
           // Healthy is not the same as ours. Publishing an unowned listener would
           // stamp every recording with a binary/args/PID that did not produce it.
@@ -1183,10 +1205,14 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           notifyWhisperModelStateChange();
           return true;
         }
-        await whileWhisperOwnerOpen(sleep(500));
+        await whileWhisperOwnerOpen(Promise.race([sleep(500), failed]));
       }
 
-      // Timeout — kill and report failure to caller.
+      startupFailure = failureReason
+        ? `${failureReason}${stderrTail ? `; stderr=${JSON.stringify(stderrTail)}` : ""}`
+        : `whisper-server failed to start within ${startupTimeoutMs / 1000}s; WHISPER_STARTUP_TIMEOUT`;
+      console.error(`[voicelayer] ${startupFailure}`);
+      // Failed startup — kill and report failure to caller.
       cleanupAttempted = true;
       await terminateFailedLaunch(proc);
       return false;
@@ -1207,9 +1233,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     if (await startLaunch(launch)) return port;
   }
 
-  throw new Error(
-    `whisper-server failed to start within ${getStartupTimeoutMs() / 1000}s`,
-  );
+  throw new Error(startupFailure);
 }
 
 /**

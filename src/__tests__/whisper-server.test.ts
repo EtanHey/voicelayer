@@ -340,6 +340,61 @@ usage: whisper-server [options]
   });
 
   describe("ensureServer lifecycle", () => {
+    it("fails promptly when a real child exits during startup", async () => {
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => process.execPath,
+        findModel: () => "/synthetic/nonempty-unloadable-model.bin",
+        spawn: () => Bun.spawn([process.execPath, "-e", "setTimeout(() => { console.error(\"fixture fatal load diagnostic\"); process.exit(7); }, 100)"], {
+          env: process.env, stdout: "pipe", stderr: "pipe",
+        }),
+        isServerHealthy: async () => false,
+        findPortListenerPids: () => [],
+      });
+      try {
+        const started = performance.now();
+        const startup = ensureServer(18994);
+        await expect(startup).rejects.toThrow("whisper-server exited during startup (code 7)");
+        await expect(startup).rejects.toThrow("WHISPER_STARTUP_EXIT");
+        await expect(startup).rejects.toThrow("fixture fatal load diagnostic");
+        expect(performance.now() - started).toBeLessThan(5000);
+        expect(whisperServerLaunchRecord()).toBe(null);
+      } finally {
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
+      }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+    it("allows a slow live child with benign and Core ML fallback stderr", async () => {
+      let spawned = false, healthPolls = 0;
+      const exit = Promise.withResolvers<number>();
+      const warnings = "loading model\nwhisper_init_state: failed to load Core ML model from 'fixture-encoder.mlmodelc'\n";
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/fixture/whisper-server",
+        findModel: () => "/fixture/model.bin",
+        spawn: () => {
+          spawned = true;
+          return { pid: 31339, exited: exit.promise, exitCode: null,
+            stderr: new ReadableStream({ start(controller) {
+              controller.enqueue(new TextEncoder().encode(warnings)); controller.close();
+            } }), kill: () => { exit.resolve(0); } };
+        },
+        isServerHealthy: async () => spawned && ++healthPolls >= 3,
+        findPortListenerPids: () => spawned ? [31339] : [],
+        sleep: async () => { await Bun.sleep(25); },
+      });
+      try {
+        await expect(ensureServer(18995)).resolves.toBe(18995);
+        expect(healthPolls).toBeGreaterThanOrEqual(3);
+        expect(whisperServerLaunchRecord()?.pid).toBe(31339);
+      } finally {
+        stopServer();
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
+      }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+
     it("does not publish a launch record when our child lost the port race", async () => {
       // The health check only proves *something* answers on the port. Here our
       // child died on startup and another process is serving: adopting it would
@@ -369,7 +424,7 @@ usage: whisper-server [options]
       try {
         __clearWhisperServerLaunchRecordForTests();
         await expect(ensureServer(18991)).rejects.toThrow(
-          /failed to start within/,
+          /exited during startup \(code 1\)/,
         );
         expect(whisperServerLaunchRecord()).toBe(null);
       } finally {

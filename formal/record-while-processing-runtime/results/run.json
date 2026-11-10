@@ -116,8 +116,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 171366,
-      "distinct": 57666
+      "generated": 168909,
+      "distinct": 56962
     },
     "RetargetMutant": {
       "role": "mutant",
@@ -156,16 +156,16 @@
       "kind": "temporal",
       "target": "DeliveryAckBound",
       "status": "EXPECTED_FAIL",
-      "generated": 94743,
-      "distinct": 34959
+      "generated": 107440,
+      "distinct": 38757
     },
     "StallMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 104294,
-      "distinct": 31838
+      "generated": 102756,
+      "distinct": 31538
     },
     "FailedMicMutant": {
       "role": "mutant",
@@ -212,8 +212,8 @@
       "kind": "temporal",
       "target": "QueuedCaptureStarts",
       "status": "EXPECTED_FAIL",
-      "generated": 112462,
-      "distinct": 39579
+      "generated": 113860,
+      "distinct": 39882
     }
   }
 }
