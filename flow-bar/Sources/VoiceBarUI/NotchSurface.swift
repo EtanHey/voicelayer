@@ -208,8 +208,12 @@ public struct NotchSurfaceMachine: Equatable, Hashable, Sendable {
 @Observable
 public final class NotchSurfaceModel {
     public private(set) var machine = NotchSurfaceMachine()
+    /// Tab/focus request shared by app menu actions and the drawer's own controls.
+    public var settingsRequest: SettingsTabRequest?
     /// Every transition, in order (tests, the UIE2E host's receipts). Bounded.
     public private(set) var hideGeneration = 0
+    /// Invalidates pointer gestures synchronously, before SwiftUI observes a dismissal.
+    public private(set) var dismissalGeneration = 0
     public private(set) var journal: [NotchSurfaceJournalEntry] = []
     @ObservationIgnored public var log: (String) -> Void = { NSLog("%@", $0) }
     private static let journalLimit = 64
@@ -228,7 +232,10 @@ public final class NotchSurfaceModel {
 
     @discardableResult
     public func send(_ event: NotchSurfaceEvent) -> NotchSurfaceOutcome {
+        let wasOpen = isDrawerOpen
         let outcome = machine.send(event)
+        if case .dismiss = event { dismissalGeneration &+= 1 }
+        else if wasOpen, !isDrawerOpen { dismissalGeneration &+= 1 }
         switch outcome {
         case .unchanged:
             break

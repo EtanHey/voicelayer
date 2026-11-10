@@ -1748,6 +1748,7 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         var retranscribeCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             if command["cmd"] as? String == "retranscribe_last" {
                 retranscribeCommand = command
@@ -1785,6 +1786,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertTrue(state.remoteOwnedRecordingForTesting)
         var retranscribeCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             if command["cmd"] as? String == "retranscribe_last" {
                 retranscribeCommand = command

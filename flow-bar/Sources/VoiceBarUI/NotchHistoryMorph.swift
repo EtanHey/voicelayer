@@ -201,6 +201,11 @@ public enum NotchHistoryMorph {
         (pow(2 * Double.pi / response, 2), 4 * Double.pi * dampingFraction / response)
     }
 
+    /// A critically damped close must start toward zero, without enough speed to cross it.
+    public static func closingVelocity(from progress: CGFloat, velocity: Double) -> Double {
+        min(0, max(-2 * Double.pi / closeResponse * Double(max(0, progress)), velocity))
+    }
+
     /// The spring toward `open`. `velocity` is in progress per second (a flick's release speed); SwiftUI's
     /// initial velocity is relative to the distance still to travel, so it is converted here. Interpolating
     /// springs merge with the one already running and keep its velocity, which is what makes every morph
@@ -214,7 +219,8 @@ public enum NotchHistoryMorph {
             ? springCoefficients(response: openResponse, dampingFraction: openDampingFraction)
             : springCoefficients(response: closeResponse, dampingFraction: closeDampingFraction)
         let distance = Double((opening ? 1 : 0) - progress)
-        let relative = abs(distance) > 0.001 ? velocity / distance : 0
+        let speed = opening ? velocity : closingVelocity(from: progress, velocity: velocity)
+        let relative = abs(distance) > 0.001 ? speed / distance : 0
         return .interpolatingSpring(
             mass: 1,
             stiffness: coefficients.stiffness,
@@ -264,7 +270,8 @@ public struct NotchHistorySpringFlight: Equatable {
         let coefficients = NotchHistoryMorph.springCoefficients(response: response, dampingFraction: dampingFraction)
         self.from = from
         self.to = to
-        self.velocity = velocity
+        self.velocity = to == 0 && dampingFraction == 1
+            ? NotchHistoryMorph.closingVelocity(from: from, velocity: velocity) : velocity
         self.start = start
         self.stiffness = coefficients.stiffness
         self.damping = coefficients.damping

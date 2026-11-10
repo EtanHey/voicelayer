@@ -234,7 +234,7 @@ final class NotchHistoryPanelTests: XCTestCase {
         XCTAssertEqual(NotchHistoryPresentation.rowActions.map(\.symbol),
                        ["doc.on.doc", "text.insert", "arrow.clockwise"])
         XCTAssertEqual(NotchHistoryPresentation.rowActions.map(\.label),
-                       ["Copy", "Paste into the app you were using", "Transcribe again"])
+                       ["Copy", "Paste into the app you were using", "Re-transcribe"])
         XCTAssertGreaterThanOrEqual(NotchHistoryPresentation.rowActionSize, 24)
     }
 }

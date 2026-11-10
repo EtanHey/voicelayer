@@ -179,9 +179,8 @@ final class EtanQA0510Tests: XCTestCase {
         XCTAssertFalse(VoiceBarPresentation.showsIdleMicrophoneControl(for: state))
     }
 
-    /// N10: the recording wing's painted gap from the last digit to the first meter bar. S1 measured 6 pt (12 px at
-    /// 2x); the production row now paints 4 pt, and never lets the two touch.
-    func testN10RecordingWaveformSitsCloseToTheTimer() throws {
+    /// QA 0449 supersedes N10: clear separation and painted vertical centring, at fixed 2x.
+    func testN10RecordingWaveformHasAClearGapAndSharesTheTimerCentre() throws {
         let row = VoiceBarRecordingTrailingRow {
             VoiceBarRecordingTimeRegion(elapsedMilliseconds: { 2_000 }, isCaptureOpen: true, microphoneName: nil,
                                         color: .white)
@@ -201,19 +200,52 @@ final class EtanQA0510Tests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
         let bitmap = try Self.fixedScaleBitmap(host)
         var lastDigit = -1, firstBar = Int.max
+        var digits = CGRect.null, bars = CGRect.null
         for x in 0 ..< bitmap.pixelsWide {
             for y in 0 ..< bitmap.pixelsHigh {
                 let c = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
-                if min(c.redComponent, c.greenComponent, c.blueComponent) > 0.6 { lastDigit = max(lastDigit, x) }
-                if c.redComponent > 0.5, c.greenComponent < 0.45 { firstBar = min(firstBar, x) }
+                if min(c.redComponent, c.greenComponent, c.blueComponent) > 0.6 {
+                    lastDigit = max(lastDigit, x); digits = digits.union(CGRect(x: x, y: y, width: 1, height: 1))
+                }
+                if c.redComponent > 0.5, c.greenComponent < 0.45 {
+                    firstBar = min(firstBar, x); bars = bars.union(CGRect(x: x, y: y, width: 1, height: 1))
+                }
             }
         }
         XCTAssertGreaterThanOrEqual(lastDigit, 0, "fixture: the time paints")
         XCTAssertLessThan(firstBar, Int.max, "fixture: the meter paints")
         let gap = CGFloat(firstBar - lastDigit) * 130 / CGFloat(bitmap.pixelsWide)
-        print("[N10] painted waveform-to-time gap=\(gap) pt")
-        XCTAssertLessThanOrEqual(gap, 4.5, "[N10] tighten the waveform-to-timer gap (S1 painted 6 pt)")
-        XCTAssertGreaterThanOrEqual(gap, 2, "[N10] the digits and the bars never touch")
+        let offset = abs(digits.midY - bars.midY) / 2
+        print("[0449 E1] gap=\(gap) pt, vertical centre offset=\(offset) pt")
+        XCTAssertGreaterThanOrEqual(gap, 5, "[0449 E1] the digits and bars have a clear gap")
+        XCTAssertLessThanOrEqual(gap, 7, "[0449 E1] aim for 6 pt")
+        XCTAssertLessThanOrEqual(offset, 1, "[0449 E1] the painted centres align")
+    }
+
+    func test0449RecordingWingsPaintEqualSpaceAroundTheNotch() throws {
+        for hold in [false, true] {
+            for inset: CGFloat in [0, 8.5] {
+                let p = VoiceBarPresentation.notchPresentation(from: .init(
+                    mode: .recording, showsRecordingHold: hold, visibleCoreOcclusionInset: inset))
+                let g = p.geometry
+                let host = NSHostingView(rootView: VoiceBarNotchContinuousShape(geometry: g).fill(.white)
+                    .frame(width: g.totalWidth, height: 32).background(Color.black))
+                host.frame.size = CGSize(width: g.totalWidth, height: 32)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try Self.fixedScaleBitmap(host)
+                var left = Int.max, right = -1
+                for x in 0 ..< bitmap.pixelsWide {
+                    if let c = bitmap.colorAt(x: x, y: 8)?.usingColorSpace(.deviceRGB), c.redComponent > 0.8 {
+                        left = min(left, x); right = max(right, x)
+                    }
+                }
+                XCTAssertGreaterThan(right, left, "fixture: the shell paints")
+                let l = g.coreOriginX - CGFloat(left) / 2
+                let r = CGFloat(right + 1) / 2 - g.coreOriginX - g.coreWidth
+                print("[0449 E2] hold=\(hold) inset=\(inset) left=\(l) right=\(r)")
+                XCTAssertEqual(l, r, accuracy: 2, "[0449 E2] equal space either side of the notch")
+            }
+        }
     }
 
     /// Review F2: in the notch drawer, Dictionary's Add/Edit cover owns Esc. Esc cancels the cover and returns to

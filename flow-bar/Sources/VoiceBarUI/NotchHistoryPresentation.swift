@@ -59,7 +59,7 @@ public enum NotchHistoryPresentation {
     public static let rowActions: [RowAction] = [
         RowAction(kind: .copy, symbol: VoiceBarActionSymbol.copy, label: "Copy"),
         RowAction(kind: .paste, symbol: VoiceBarActionSymbol.paste, label: "Paste into the app you were using"),
-        RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Transcribe again"),
+        RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Re-transcribe"),
     ]
 
     /// The row's actions for VoiceOver and keyboard users, who never hover (UXP-3, UX pass #7): the hover buttons

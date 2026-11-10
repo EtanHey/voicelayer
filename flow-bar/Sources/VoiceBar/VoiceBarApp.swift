@@ -1074,6 +1074,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 hasLatestCapture: FileManager.default.fileExists(atPath: VoiceLayerPaths.retainedRecordingPath)
             ) ?? false
         }
+        pillContextMenuController.retranscribeLatestDisabledReasonProvider = { [weak self] in
+            guard let self else { return "VoiceLayer is disconnected" }
+            return voiceState.historyRetranscriptionAvailability.reason ??
+                (FileManager.default.fileExists(atPath: VoiceLayerPaths.retainedRecordingPath) ? nil : "No recording is available")
+        }
         pillContextMenuController.onRetranscribeLatest = { [weak self] in
             self?.logDiagnostic(event: "context_menu_retranscribe_latest_tapped")
             self?.voiceState.retranscribeLastCapture()
@@ -3200,6 +3205,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil, historyRecordingID: String? = nil) {
+        // Notch entry points (gear, menu, system selectors and Cmd+,) stay in its drawer. A specific archive
+        // detail still has only the window implementation, so preserve that explicit destination.
+        if historyRecordingID == nil, panel?.isVisible == true, !voiceState.isHidden {
+            let currentTab: SettingsTab?
+            if case let .settings(current) = notchSurface.drawer { currentTab = current } else { currentTab = nil }
+            let selected = tab ?? currentTab ?? lastSettingsTab
+            notchSurface.settingsRequest = SettingsTabRequest(tab: selected, focus: focus,
+                id: (notchSurface.settingsRequest?.id ?? 0) + 1)
+            notchSurface.send(.openSettings(selected))
+            return
+        }
         voiceState.captureSettingsHistoryPasteTarget()
         refreshPermissionHealth(.settingsOpened)
         NSApp.activate(ignoringOtherApps: true)
@@ -3650,12 +3666,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self?.voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)
             },
             historyRunLog: { [weak self] in self?.voiceState.historyRunLog ?? SettingsHistoryRunLog() },
+            historyRetranscriptionAvailability: { [weak self] in self?.voiceState.historyRetranscriptionAvailability ?? .unavailable("VoiceLayer is disconnected") },
             isHistoryRetranscribing: { [weak self] recordingPath in
                 self?.voiceState.activeHistoryRetranscriptionPath == recordingPath
             },
             isAnyHistoryRetranscribing: { [weak self] in
                 self?.voiceState.isHistoryRetranscriptionPending ?? false
             },
+            microphonePriorityDisabledReason: { [weak self] in self?.voiceState.microphonePriorityDisabledReason },
             isRecordingActive: { [weak self] in
                 self?.voiceState.mode == .recording
             },
@@ -3727,6 +3745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     private func reorderMicrophonePriority(_ uids: [String]) {
+        guard voiceState.microphonePriorityDisabledReason == nil else { return }
         let devices = MicrophoneDeviceManager.availableInputDevices()
         microphonePriority.replacePreferredUIDs(uids, observing: devices)
         microphonePriorityApply.requestApply(

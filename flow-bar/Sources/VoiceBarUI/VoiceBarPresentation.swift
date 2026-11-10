@@ -293,6 +293,12 @@ public enum VoiceBarPresentation {
         ) && !(input.mode == .idle && hasCompactStatus) && !isPlaybackPaused(input)
         let keepsIdleExpanded = input.mode == .idle && !input.isCollapsed
 
+        let recordingWing = input.mode == .recording ? max(
+            recordingLeadingWingWidth(mode: input.mode,
+                showsRecordingHold: input.showsRecordingHold || input.showsRecordingPause,
+                showsEarlierTakeProcessing: input.showsEarlierTakeProcessing) ?? 0,
+            VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
+        ) : nil
         let resolved = VoiceBarNotchPresentation.resolve(
             hasTeleprompter: hasTeleprompter,
             isRecording: isRecording,
@@ -302,15 +308,8 @@ public enum VoiceBarPresentation {
             teleprompterLines: input.teleprompterLines,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(input: input),
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
-            recordingLeadingWingWidth: recordingLeadingWingWidth(
-                mode: input.mode,
-                showsRecordingHold: input.showsRecordingHold || input.showsRecordingPause,
-                showsEarlierTakeProcessing: input.showsEarlierTakeProcessing
-            ),
-            recordingTrailingWingWidth: input.mode == .recording
-                ? VoiceBarNotchContract.recordingTrailingWingWidth(
-                    visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
-                : nil,
+            recordingLeadingWingWidth: recordingWing,
+            recordingTrailingWingWidth: recordingWing,
             teleprompterLeadingWingWidth: input.mode == .speaking
                 ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
                 : nil,
@@ -441,7 +440,9 @@ public enum VoiceBarPresentation {
 
     /// T5/T7: the reading right wing is the recording wing (time, meter, outer region).
     public static func readingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
-        VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+        max(0, visibleCoreOcclusionInset) + 2 * VoiceBarNotchContract.fixedWingContentInset +
+            VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.timeGap + WaveformLayout.viewportWidth +
+            VoiceBarRecordingWingLabel.meterGap + VoiceBarRecordingWingLabel.outerRegionWidth
     }
 
     // MARK: - T4/T7 teleprompter lower row (Etan QA 2026-11-09)

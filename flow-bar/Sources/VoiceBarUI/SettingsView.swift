@@ -188,6 +188,14 @@ enum SettingsHistoryActionAvailability: Equatable {
     case unavailable(String)
 }
 
+/// One production admission result for archive controls in the drawer, window and latest menu.
+public enum HistoryRetranscriptionAvailability: Equatable {
+    case available
+    case unavailable(String)
+    public var reason: String? { if case let .unavailable(reason) = self { return reason }; return nil }
+    public var isEnabled: Bool { self == .available }
+}
+
 struct SettingsHistoryActionEnablement: Equatable {
     let isRetranscribing: Bool
     let isRecording: Bool
@@ -195,12 +203,14 @@ struct SettingsHistoryActionEnablement: Equatable {
     /// The recording being re-transcribed, so its own Re-transcribe says so instead of "Another…".
     var retranscribingPath: String?
     var isVoiceBusy: Bool = false
+    var archiveAdmission: HistoryRetranscriptionAvailability?
 
     func isEnabled(
         _ action: SettingsHistoryAction,
         for part: SettingsHistoryMediaPart
     ) -> Bool {
         guard part.isEnabled(action) else { return false }
+        if action == .retranscribe, let archiveAdmission { return archiveAdmission.isEnabled }
 
         if action == .play, isRecording || isTranscribing || isVoiceBusy {
             return false
@@ -219,6 +229,9 @@ struct SettingsHistoryActionEnablement: Equatable {
         for part: SettingsHistoryMediaPart
     ) -> SettingsHistoryActionAvailability {
         guard part.isEnabled(action) else { return .hidden }
+        if action == .retranscribe, let archiveAdmission {
+            return archiveAdmission.reason.map(SettingsHistoryActionAvailability.unavailable) ?? .available
+        }
         guard !isEnabled(action, for: part) else { return .available }
         switch action {
         case .play, .retranscribe:
@@ -509,8 +522,10 @@ public struct SettingsView: View {
     public let historyRunLog: () -> SettingsHistoryRunLog
     public let historyDiagnostics: @Sendable (URL) async -> SettingsHistoryDiagnostics
     public let historyAttempts: SettingsHistoryAttemptLogReader
+    public let historyRetranscriptionAvailability: () -> HistoryRetranscriptionAvailability?
     public let isHistoryRetranscribing: (String) -> Bool
     public let isAnyHistoryRetranscribing: () -> Bool
+    public let microphonePriorityDisabledReason: () -> String?
     public let isRecordingActive: () -> Bool
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
@@ -702,8 +717,10 @@ public struct SettingsView: View {
             }.value
         },
         historyAttempts: @escaping SettingsHistoryAttemptLogReader = { _ in nil },
+        historyRetranscriptionAvailability: @escaping () -> HistoryRetranscriptionAvailability? = { nil },
         isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
         isAnyHistoryRetranscribing: @escaping () -> Bool = { false },
+        microphonePriorityDisabledReason: @escaping () -> String? = { nil },
         isRecordingActive: @escaping () -> Bool = { false },
         isTranscribingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
@@ -827,8 +844,10 @@ public struct SettingsView: View {
         self.historyRunLog = historyRunLog
         self.historyDiagnostics = historyDiagnostics
         self.historyAttempts = historyAttempts
+        self.historyRetranscriptionAvailability = historyRetranscriptionAvailability
         self.isHistoryRetranscribing = isHistoryRetranscribing
         self.isAnyHistoryRetranscribing = isAnyHistoryRetranscribing
+        self.microphonePriorityDisabledReason = microphonePriorityDisabledReason
         self.isRecordingActive = isRecordingActive
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
@@ -1318,16 +1337,23 @@ public struct SettingsView: View {
 
     // MARK: - General microphone priority
 
+    private var microphoneEditReason: String? {
+        microphonePriorityDisabledReason() ?? (isRecordingActive() ? "Finish recording to change microphones" : nil)
+    }
+
     private var microphonePrioritySection: some View {
         Section {
             if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {
                 SettingsRow(title: "Next dictation: \(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")",
                             description: "A hidden system or virtual device would be used next.") {
                     Button("Use visible microphones first") {
+                        guard microphoneEditReason == nil else { return }
                         onReorderPriority(visibleFirst)
                         refreshMicrophoneSnapshot()
                     }
-                    .help("This puts your microphones ahead of it.")
+                    .disabled(microphoneEditReason != nil)
+                    .background(PillControlTooltip(text: microphoneEditReason ?? "This puts your microphones ahead of it."))
+                    .accessibilityHint(microphoneEditReason ?? "This puts your microphones ahead of it.")
                 }
             }
 
@@ -1367,6 +1393,7 @@ public struct SettingsView: View {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
+                .disabled(microphoneEditReason != nil)
                 .opacity(hoveredMicrophoneIndex == index ? 1 : 0)
             }
             if isUsed {
@@ -1379,16 +1406,22 @@ public struct SettingsView: View {
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityAction(named: "Make default") {
-            makeMicrophoneDefault(at: index)
+        .background(PillControlTooltip(text: microphoneEditReason))
+        .accessibilityHint(microphoneEditReason ?? "Drag to reorder microphones")
+        .accessibilityActions {
+            if microphoneEditReason == nil {
+                if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
+                    Button("Make default") { makeMicrophoneDefault(at: index) }
+                }
+                if microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: -1) != nil {
+                    Button("Move up") { moveMicrophone(at: index, by: -1) }
+                }
+                if microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: 1) != nil {
+                    Button("Move down") { moveMicrophone(at: index, by: 1) }
+                }
+            }
         }
-        .accessibilityAction(named: "Move up") {
-            moveMicrophone(at: index, by: -1)
-        }
-        .accessibilityAction(named: "Move down") {
-            moveMicrophone(at: index, by: 1)
-        }
-        if let uid = row.uid {
+        if let uid = row.uid, row.canPrioritize, microphoneEditReason == nil {
             // C12: while a drag hovers this row, an insertion line marks where the mic will land, and the row
             // being dragged dims. The drop itself still reads the dragged UID from the payload.
             let edge = microphoneDrag.targetIndex == index
@@ -1430,7 +1463,7 @@ public struct SettingsView: View {
     private static let dropLineOffset: CGFloat = 11.5
 
     private func makeMicrophoneDefault(at index: Int) {
-        guard let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
+        guard microphoneEditReason == nil, let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
     }
@@ -1438,7 +1471,7 @@ public struct SettingsView: View {
     /// Dropping onto a row lands the dragged mic in that row's place: below it when dragged down, above it
     /// when dragged up (SwiftUI onMove indices), exactly where the insertion line was drawn.
     private func dropMicrophone(_ uid: String?, onto index: Int) -> Bool {
-        guard let uid, let uids = microphoneSnapshot.droppingVisibleUIDs(uid, onto: index) else { return false }
+        guard microphoneEditReason == nil, let uid, let uids = microphoneSnapshot.droppingVisibleUIDs(uid, onto: index) else { return false }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
         return true
@@ -1452,7 +1485,7 @@ public struct SettingsView: View {
     }
 
     private func moveMicrophone(at index: Int, by offset: Int) {
-        guard let uids = microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: offset) else { return }
+        guard microphoneEditReason == nil, let uids = microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: offset) else { return }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
     }
@@ -1824,7 +1857,7 @@ public struct SettingsView: View {
         let enablement = SettingsHistoryActionEnablement(
             isRetranscribing: isAnyHistoryRetranscribing(), isRecording: isRecordingActive(),
             isTranscribing: isTranscribingActive(), retranscribingPath: retranscribing ? entry.audioPath.path : nil,
-            isVoiceBusy: historyPlayback.isVoiceBusy)
+            isVoiceBusy: historyPlayback.isVoiceBusy, archiveAdmission: historyRetranscriptionAvailability())
         return VStack(alignment: .leading, spacing: 6) {
             historyMediaPartStats(part)
             historyMediaPartActions(part, isRetranscribing: retranscribing, enablement: enablement)
@@ -2132,7 +2165,7 @@ public struct SettingsView: View {
             isRecording: isRecordingActive(),
             isTranscribing: isTranscribingActive(),
             retranscribingPath: isRetranscribing ? part.audioPath?.path : nil,
-            isVoiceBusy: historyPlayback.isVoiceBusy
+            isVoiceBusy: historyPlayback.isVoiceBusy, archiveAdmission: historyRetranscriptionAvailability()
         )
 
         VStack(alignment: .leading, spacing: 6) {
@@ -2346,6 +2379,7 @@ public struct SettingsView: View {
         case .retranscribe:
             Button {
                 guard let audioPath = part.audioPath else { return }
+                guard historyRetranscriptionAvailability()?.isEnabled != false else { return }
                 onRetranscribeHistoryEntry(audioPath.path)
             } label: {
                 historyActionLabel(

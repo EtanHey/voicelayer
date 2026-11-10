@@ -125,24 +125,23 @@ public enum VoiceBarRecordingWingLabel {
     /// 2 pt, which paints a 4 pt gap from the last digit to the first bar (the digits' side bearing is the rest).
     /// The 4 pt gap that was here painted 6 pt.
     public static let timeGap: CGFloat = 2
+    /// QA 0449: 4 layout points plus digit side-bearing paint a clear 6 pt gap.
+    public static let recordingTimeGap: CGFloat = 4
     /// Between the meter and the outer region.
     public static let meterGap: CGFloat = 4
     public static let timeFontSize: CGFloat = 11
     public static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: timeFontSize, weight: .medium)
 }
 
-/// The recording right wing's row: the time, the level meter, and the empty region that centres the meter.
+/// QA 0449: centre the time and meter as one row, without a blank outer region.
 struct VoiceBarRecordingTrailingRow<Time: View, Meter: View>: View {
     @ViewBuilder let time: Time
     @ViewBuilder let meter: Meter
 
     var body: some View {
-        HStack(spacing: VoiceBarRecordingWingLabel.timeGap) {
+        HStack(alignment: .center, spacing: VoiceBarRecordingWingLabel.recordingTimeGap) {
             time
-            HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
-                meter
-                Color.clear.frame(width: VoiceBarRecordingWingLabel.outerRegionWidth, height: 1)
-            }
+            meter
         }
     }
 }

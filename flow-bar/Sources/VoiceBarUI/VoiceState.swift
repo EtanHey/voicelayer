@@ -2541,13 +2541,27 @@ public final class VoiceState {
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
 
+    public var historyRetranscriptionAvailability: HistoryRetranscriptionAvailability {
+        MainActor.assumeIsolated {
+            if !isConnected { return .unavailable("VoiceLayer is disconnected") }
+            if nativeUpdateGate?.permitsNewVoice() == false { return .unavailable("An update owns VoiceBar") }
+            if hideDisabledReason != nil || pendingRecoveredTranscriptionPaste {
+                return .unavailable("Finish or cancel the current take and re-transcription first")
+            }
+            if mode == .speaking || isPlaybackPaused || isPlaybackPreparing || isAskCapture || historyPlayback.isVoiceBusy {
+                return .unavailable("Finish speech or Ask before re-transcribing")
+            }
+            if mode != .idle { return .unavailable("Recover VoiceBar before re-transcribing") }
+            return .available
+        }
+    }
+
     public func canRetranscribeLatestCapture(hasLatestCapture: Bool) -> Bool {
-        hasLatestCapture && mode != .recording && mode != .transcribing &&
-            !pendingRecoveredTranscriptionPaste && !isHistoryRetranscriptionPending
+        hasLatestCapture && historyRetranscriptionAvailability.isEnabled
     }
 
     public func retranscribeLastCapture() {
-        guard !pendingRecoveredTranscriptionPaste else { return }
+        guard historyRetranscriptionAvailability.isEnabled else { return }
         pendingRecoveredTranscriptionPaste = true
         sendIntent(
             command: .retranscribeLast,
@@ -2556,6 +2570,7 @@ public final class VoiceState {
     }
 
     public func retranscribeHistoryEntry(recordingPath: String) {
+        guard historyRetranscriptionAvailability.isEnabled else { return }
         let trimmedPath = recordingPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
         let id = UUID().uuidString
@@ -2575,6 +2590,12 @@ public final class VoiceState {
     public private(set) var isHidden = false
     /// When the hide ends ("Hidden until HH:MM"); nil while shown, or when the caller gave no end time.
     public private(set) var hiddenUntil: Date?
+
+    /// formal/control-availability MicDefault/MicReorder/MicMove/MicVisibleFirst: capture owns preferences.
+    public var microphonePriorityDisabledReason: String? {
+        mode == .recording || captureLive || isRecordingHandoffPending || pendingIntent?.command == .record
+            ? "Finish recording to change microphones" : nil
+    }
 
     public static let hideUnfinishedTakeReason = "Finish or cancel this take before hiding VoiceBar."
 
