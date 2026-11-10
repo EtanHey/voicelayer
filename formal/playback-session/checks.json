@@ -4,10 +4,17 @@
   "sources": [
     "src/playback/session.ts",
     "src/playback/ledger.ts",
-    "src/__tests__/playback-session.test.ts"
+    "src/__tests__/playback-session.test.ts",
+    "src/tts.ts",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift"
   ],
   "checks": {
     "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "ClientFixed": {
       "role": "positive",
       "target": null,
       "kind": "pass"
@@ -91,6 +98,16 @@
       "role": "mutant",
       "target": "SuccessorWaitsForRelease",
       "kind": "invariant"
+    },
+    "OldPrevReturnMutant": {
+      "role": "mutant",
+      "target": "RestoreReceiptApplied",
+      "kind": "invariant"
+    },
+    "OldReplayShownMutant": {
+      "role": "mutant",
+      "target": "EndedReplayNotShownRunning",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -105,6 +122,8 @@
     "NoSameQueued",
     "ParkedEventuallyReleased",
     "QueueSurvivesAsk",
-    "SuccessorWaitsForRelease"
+    "SuccessorWaitsForRelease",
+    "RestoreReceiptApplied",
+    "EndedReplayNotShownRunning"
   ]
 }

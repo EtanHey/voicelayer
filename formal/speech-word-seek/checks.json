@@ -7,7 +7,8 @@
     "src/__tests__/speech-words.test.ts",
     "src/socket-protocol.ts",
     "src/socket-handlers.ts",
-    "src/__tests__/tts-long-read-runtime.test.ts"
+    "src/__tests__/tts-long-read-runtime.test.ts",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift"
   ],
   "checks": {
     "Fixed": {
@@ -29,11 +30,23 @@
       "role": "mutant",
       "target": "StopWins",
       "kind": "invariant"
+    },
+    "OldReplayIdentityMutant": {
+      "role": "mutant",
+      "target": "ReplayIdentityFresh",
+      "kind": "invariant"
+    },
+    "OldReplayInvisibleMutant": {
+      "role": "mutant",
+      "target": "AcceptedSeekVisible",
+      "kind": "temporal"
     }
   },
   "acceptance": [
     "SinglePlayer",
     "FreshSeek",
-    "StopWins"
+    "StopWins",
+    "ReplayIdentityFresh",
+    "AcceptedSeekVisible"
   ]
 }

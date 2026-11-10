@@ -3,13 +3,13 @@
   "kind": "invariant",
   "target": "FreshSeek",
   "status": "EXPECTED_FAIL",
-  "generated": 28,
-  "distinct": 25,
+  "generated": 30,
+  "distinct": 27,
   "trace": [
-    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ owner = 0\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 0, n |-> 0]\n/\\ players = {}\n/\\ serial = 0\n/\\ latest = 0",
-    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ owner = 1\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 1, n |-> 1]\n/\\ players = {}\n/\\ serial = 1\n/\\ latest = 1",
-    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 1, n |-> 2]\n/\\ owner = 1\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 1, n |-> 1]\n/\\ players = {}\n/\\ serial = 2\n/\\ latest = 1",
-    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 1, n |-> 2]\n/\\ owner = 2\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 2, n |-> 3]\n/\\ players = {}\n/\\ serial = 3\n/\\ latest = 2",
-    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ owner = 2\n/\\ staleSeek = TRUE\n/\\ restart = [id |-> 1, n |-> 2]\n/\\ players = {}\n/\\ serial = 3\n/\\ latest = 2"
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ retired = {}\n/\\ ended = {}\n/\\ owner = 0\n/\\ shown = [id |-> 0, n |-> 0]\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 0, n |-> 0]\n/\\ players = {}\n/\\ staleReplay = FALSE\n/\\ accepted = [id |-> 0, n |-> 0]\n/\\ serial = 0\n/\\ reqOf = <<0, 0, 0>>\n/\\ latest = 0",
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ retired = {}\n/\\ ended = {}\n/\\ owner = 1\n/\\ shown = [id |-> 0, n |-> 0]\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 1, n |-> 1]\n/\\ players = {}\n/\\ staleReplay = FALSE\n/\\ accepted = [id |-> 1, n |-> 1]\n/\\ serial = 1\n/\\ reqOf = <<1, 0, 0>>\n/\\ latest = 1",
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 1, n |-> 2]\n/\\ retired = {}\n/\\ ended = {}\n/\\ owner = 1\n/\\ shown = [id |-> 0, n |-> 0]\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 1, n |-> 1]\n/\\ players = {}\n/\\ staleReplay = FALSE\n/\\ accepted = [id |-> 1, n |-> 2]\n/\\ serial = 2\n/\\ reqOf = <<1, 0, 0>>\n/\\ latest = 1",
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 1, n |-> 2]\n/\\ retired = {}\n/\\ ended = {}\n/\\ owner = 2\n/\\ shown = [id |-> 0, n |-> 0]\n/\\ staleSeek = FALSE\n/\\ restart = [id |-> 2, n |-> 3]\n/\\ players = {}\n/\\ staleReplay = FALSE\n/\\ accepted = [id |-> 2, n |-> 3]\n/\\ serial = 3\n/\\ reqOf = <<1, 2, 0>>\n/\\ latest = 2",
+    "/\\ stoppedSeek = FALSE\n/\\ pending = [id |-> 0, n |-> 0]\n/\\ retired = {}\n/\\ ended = {}\n/\\ owner = 2\n/\\ shown = [id |-> 0, n |-> 0]\n/\\ staleSeek = TRUE\n/\\ restart = [id |-> 1, n |-> 2]\n/\\ players = {}\n/\\ staleReplay = FALSE\n/\\ accepted = [id |-> 2, n |-> 3]\n/\\ serial = 3\n/\\ reqOf = <<1, 2, 0>>\n/\\ latest = 2"
   ]
 }
