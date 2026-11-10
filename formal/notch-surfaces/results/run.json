@@ -18,7 +18,7 @@
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "71aa8297b9c50760d8c91c25d4faf502261f57d78dedcc2c8a869a643bd16e2f",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift": "d37e537343919a323d7d06b9e00d1f777f72ef0b433376724e780f94b66719ca",
     "flow-bar/Sources/VoiceBarUI/BareNotchMenuControl.swift": "a7dc2ca4c1e4afe7b3d1477e40307a7c8c4647ef047d2604d5bc9141813432ac",
-    "flow-bar/Sources/VoiceBar/UIE2EHost.swift": "760669ca25f53df18ec944835392587379b9645e5c9508aed8d4390fd3c3c468",
+    "flow-bar/Sources/VoiceBar/UIE2EHost.swift": "d102efb7461e2666b9748996977b613e56526bc5a6fcda58a5e705ad8da01262",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

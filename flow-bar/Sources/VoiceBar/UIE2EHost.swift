@@ -45,6 +45,8 @@ enum UIE2ENoDeviceGuard {
 final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let sandbox: UIE2ESandbox
     let model: UIE2EModel
+    let hostGeometry: VoiceBarNotchScreenGeometry?
+    private var syntheticInputTimer: Timer?
     var settings: NSWindow!
     var pill: FloatingPillPanel!
     /// 2.3 U4: the notch History panel (open state, extend-handle rows) for hit testing and the pill's size.
@@ -77,6 +79,8 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     init(sandbox: UIE2ESandbox) {
         self.sandbox = sandbox
         model = UIE2EModel(sandbox: sandbox)
+        hostGeometry = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_GEOMETRY"] == "host"
+            ? UIE2ECaptureFixtures.hostGeometry() : nil
     }
 
     static func runIfRequested() -> Bool {
@@ -99,6 +103,8 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private static func confirmedMute() throws -> Bool {
+        // A terminal-mac guest has no audio route to mute. Read-only CoreAudio proof; lookup errors refuse.
+        if UIE2ECaptureFixtures.hasNoDefaultOutputDevice() { return true }
         let check = Process()
         check.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         check.arguments = ["-e", "output muted of (get volume settings)"]
@@ -182,14 +188,14 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         bar.layer?.masksToBounds = true
         bar.frame = NSRect(x: 0, y: 0, width: 680, height: 180)
         pill = FloatingPillPanel(content: bar)
-        // This fixture paints a virtual notch. Use the resident app's configurePanelDragging decision.
-        pill.configureNotchDragging(screenKind: .flatDisplayFallback, allowsFreeDrag: false, mode: model.voice.mode)
+        // Default isolated placement stays virtual; explicit host mode uses measured display geometry.
+        pill.configureNotchDragging(screenKind: hostGeometry?.kind ?? .flatDisplayFallback, allowsFreeDrag: false, mode: model.voice.mode)
         pill.title = "VoiceBar QA Pill"
         pill.setFrame(NSRect(x: 100, y: 20, width: 680, height: 180), display: false)
         model.voice.onPanelLayoutChange = { [weak self] in
             self?.updatePillLayout()
         }
-        if let screen = NSScreen.main { Self.fitPill(pill, layout: panelLayout(), in: screen.visibleFrame) }
+        if let screen = NSScreen.main { fitPill(in: screen) }
         model.onVisibilityChange = { [weak self] hidden in
             if hidden { self?.pill?.orderOut(nil) } else { self?.pill?.orderFront(nil) }
         }
@@ -224,7 +230,13 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
 #endif
 
         model.seedNotchHistoryIfRequested()
+        syntheticInputTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.advanceSyntheticCapture(milliseconds: 50) }
+        }
         model.receipt("launch")
+        if let name = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_FIXTURE"] {
+            model.fixture(name)
+        }
     }
 
     private func installHistoryEscapeReceipts() {
@@ -263,6 +275,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        syntheticInputTimer?.invalidate()
         historyEscapeMonitors.forEach(NSEvent.removeMonitor)
         historyEscapeMonitors.removeAll()
         if let firstClickMonitor { NSEvent.removeMonitor(firstClickMonitor) }
@@ -299,7 +312,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .controlSize(.small).fixtureFrame("silent")
             // 2.3 U2 wings (scenario wings-u2): each wing state of the 3-wings mock, silently.
             HStack {
-                ForEach(["launcher", "recording", "setup-error", "speaking-collapsed"], id: \.self) { name in
+                ForEach(["launcher", "recording", "recording-vad", "recording-ptt-long", "setup-error", "speaking-collapsed"], id: \.self) { name in
                     Button("Wing " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                 }
                 Button("Hold menu queue") { self.holdsMenuQueue = true; self.model.receipt("menu-queue-held") }
@@ -332,11 +345,21 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// No AppDelegate is constructed and no production services are started.
     func panelLayout() -> VoiceBarPanelLayout {
         Self.panelLayout(for: model.voice, historyOpen: notchModel?.isHistoryPanelOpen ?? false,
-                         historyRows: notchModel?.historyRows ?? NotchHistoryMorph.visibleRows)
+                         historyRows: notchModel?.historyRows ?? NotchHistoryMorph.visibleRows, screenGeometry: hostGeometry)
     }
 
     static func panelLayout(for state: VoiceState, historyOpen: Bool = false,
-                            historyRows: Int = NotchHistoryMorph.visibleRows) -> VoiceBarPanelLayout {
+                            historyRows: Int = NotchHistoryMorph.visibleRows,
+                            screenGeometry: VoiceBarNotchScreenGeometry? = nil) -> VoiceBarPanelLayout {
+        if let geometry = screenGeometry {
+            let model = VoiceBarNotchPresentationModel()
+            AppDelegate.refreshNotchPresentationModel(model, for: state, coreWidth: geometry.housingFrame.width,
+                visibleCoreOcclusionInset: geometry.visibleCoreOcclusionInset,
+                virtualNotchIdleCoreHeight: geometry.virtualNotchIdleCoreHeight)
+            model.setHistoryRows(historyRows)
+            model.setHistoryPanelOpen(historyOpen)
+            return layout(presentation: model.presentation, state: state)
+        }
         var input = VoiceBarNotchOperationalInput(
             mode: state.mode,
             showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
@@ -368,6 +391,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         input.historyRows = historyRows
         input.showsIdleMicrophoneControl = VoiceBarPresentation.showsIdleMicrophoneControl(for: state)
         let presentation = VoiceBarPresentation.notchPresentation(from: input)
+        return layout(presentation: presentation, state: state)
+    }
+
+    private static func layout(presentation: VoiceBarNotchPresentation, state: VoiceState) -> VoiceBarPanelLayout {
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(presentation: presentation,
             interactionConfiguration: AppDelegate.notchInteractionConfiguration(
@@ -382,11 +409,20 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             environment: [VoiceBarIsolatedCapturePlacement.topRightEnvironmentVariable: "1"]), display: true)
     }
 
+    private func fitPill(in screen: NSScreen) {
+        let layout = panelLayout()
+        if let geometry = hostGeometry {
+            pill.contentView?.setFrameSize(layout.panelSize)
+            pill.setFrame(layout.windowFrame(anchoredTo: geometry), display: true)
+            UIE2ECaptureFixtures.receipt(sandbox: sandbox, geometry: geometry, panel: pill, state: model.voice)
+        } else { Self.fitPill(pill, layout: layout, in: screen.visibleFrame) }
+    }
+
     /// U2×U4 review: the QA BarView renders this model, so it is fed from VoiceState exactly like the app's
     /// (`AppDelegate.refreshNotchPresentationModel`), on every fixture and every layout change.
     func bindNotchModel(_ notchModel: VoiceBarNotchPresentationModel) {
         self.notchModel = notchModel
-        model.onFixtureApplied = { [weak self] in self?.refreshNotchModel(); self?.publishTakeIdentity() }
+        model.onFixtureApplied = { [weak self] in self?.updatePillLayout(); self?.publishTakeIdentity() }
         refreshNotchModel()
     }
 
@@ -413,7 +449,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func refreshNotchModel() {
         guard let notchModel else { return }
-        AppDelegate.refreshNotchPresentationModel(notchModel, for: model.voice)
+        AppDelegate.refreshNotchPresentationModel(notchModel, for: model.voice,
+            coreWidth: hostGeometry?.housingFrame.width ?? VoiceBarNotchContract.coreWidth,
+            visibleCoreOcclusionInset: hostGeometry?.visibleCoreOcclusionInset ?? 0,
+            virtualNotchIdleCoreHeight: hostGeometry?.virtualNotchIdleCoreHeight)
     }
 
     func updatePillLayout() {
@@ -423,7 +462,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         guard let pill, let screen = NSScreen.main else { return }
-        Self.fitPill(pill, layout: panelLayout(), in: screen.visibleFrame)
+        fitPill(in: screen)
     }
 
     /// 2.3 U2: the production handoff; only the scheduler can be held (QA) and the outcomes become receipts.
@@ -626,6 +665,7 @@ final class UIE2EModel {
     var missingPermissions: [HotkeyPermission] = [.accessibility, .inputMonitoring]
     /// 2.4 #813: the synthetic recording take, exposed natively by the host (`recording-take-id`).
     var recordingTakeID: String?
+    var syntheticCaptureClockMs: Int?
     var onNotchSurface: (NotchSurfaceEvent) -> Void = { _ in }
     var onShowSettings: () -> Void = {}
     var recent: RecentTranscriptionEntry { .init(text: Self.transcript, createdAt: Date(timeIntervalSince1970: 1_790_000_000)) }
@@ -881,6 +921,7 @@ final class UIE2EModel {
     }
 
     func fixture(_ name: String) {
+        syntheticCaptureClockMs = nil
         if holdsFixturePresentation { voice.endModalInteraction(); holdsFixturePresentation = false }
         voice.confirmationText = nil
         if ["confirmation", "paste-failed", "paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"].contains(name) {
@@ -950,9 +991,9 @@ final class UIE2EModel {
             voice.setSetupMissingPermissions(name == "setup-error" ? [.accessibility] : [])
             voice.isHovering = true
             voice.beginModalInteraction(); holdsFixturePresentation = true
-        case "recording":
-            voice.setSetupMissingPermissions([])
-            voice.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
+        case "recording", "recording-ptt", "recording-vad", "recording-ptt-long":
+            beginSyntheticCapture(mode: name == "recording-vad" ? "vad" : "ptt",
+                                  elapsedMilliseconds: name == "recording-ptt-long" ? 3_661_000 : 12_000)
         case "speaking-collapsed":
             voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
                 "text": "First QA item\nSecond QA item", "readback_id": "qa-readback",
