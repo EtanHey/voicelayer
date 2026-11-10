@@ -401,11 +401,12 @@ final class EtanQA0510Tests: XCTestCase {
     /// Render every tab selected in turn. A declaration of Image is not proof that its glyph painted.
     /// This is a normal assertion: intermittent N3 must not be made artificially red on a good frame.
     func testN3AllTabGlyphsPaintForEverySelection() throws {
+        for appearance in [VoiceBarNotchAppearance.dark, .light] {
         for controlState in ControlActiveState.allCases {
         for selected in SettingsTab.allCases {
-            let drawer = NotchSettingsDrawer(selectedTab: selected, appearance: .dark,
+            let drawer = NotchSettingsDrawer(selectedTab: selected, appearance: appearance,
                 context: NotchSettingsDrawerContext(updates: nil), onSelectTab: { _ in })
-            let host = NSHostingView(rootView: drawer.frame(width: 420, height: 348).background(Color.black)
+            let host = NSHostingView(rootView: drawer.frame(width: 420, height: 348).background(appearance == .dark ? Color.black : Color.white)
                 .environment(\.controlActiveState, controlState))
             let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 420, height: 348),
                                   styleMask: .borderless, backing: .buffered, defer: false)
@@ -413,6 +414,7 @@ final class EtanQA0510Tests: XCTestCase {
             window.contentView = host
             defer { window.contentView = nil; window.close() }
             VLOrderTestWindow(window)
+            XCTAssertFalse(window.isKeyWindow)
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             let bitmap = try Self.fixedScaleBitmap(host)
@@ -424,11 +426,13 @@ final class EtanQA0510Tests: XCTestCase {
                 for y in Int(8 * scale)..<Int(24 * scale) {
                     for x in Int((centre - 11) * scale)..<Int((centre + 11) * scale) {
                         let c = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
-                        if min(c.redComponent, c.greenComponent, c.blueComponent) > 0.45 { bright += 1 }
+                        if appearance == .dark ? min(c.redComponent, c.greenComponent, c.blueComponent) > 0.45
+                            : max(c.redComponent, c.greenComponent, c.blueComponent) < 0.55 { bright += 1 }
                     }
                 }
                 XCTAssertGreaterThan(bright, 8, "[N3] \(tab.title) glyph absent with \(selected.title) selected, control state=\(controlState); pixels=\(bright)")
             }
+        }
         }
         }
     }
