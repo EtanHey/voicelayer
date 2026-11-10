@@ -77,8 +77,8 @@ final class WingsU2Tests: XCTestCase {
                              resolve(.speaking, isTeleprompterDismissed: true, readQueueLeadingSlotCount: transport)] {
             XCTAssertEqual(presentation.geometry.leadingWingWidth, VoiceBarPresentation.readingTransportWingWidth,
                            accuracy: 0.001)
-            XCTAssertEqual(presentation.geometry.trailingWingWidth, 120,
-                           accuracy: 0.001)
+            XCTAssertEqual(presentation.geometry.trailingWingWidth, VoiceBarPresentation.readingTransportWingWidth,
+                           accuracy: 0.001, "X4: equal wings about the notch")
         }
     }
 

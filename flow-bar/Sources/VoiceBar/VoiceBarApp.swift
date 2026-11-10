@@ -1241,7 +1241,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     configuration: Self.notchInteractionConfiguration(
                         for: voiceState,
                         visualState: layout.presentation.visualState,
-                        bandState: layout.presentation.bandState
+                        bandState: layout.presentation.bandState,
+                        visibleCoreOcclusionInset: layout.presentation.visibleCoreOcclusionInset
                     )
                 )
                 guard region.rects.indices.contains(expected.rectIndex) else {
@@ -2208,7 +2209,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             interactionConfiguration: Self.notchInteractionConfiguration(
                 for: voiceState,
                 visualState: presentation.visualState,
-                bandState: presentation.bandState
+                bandState: presentation.bandState,
+                visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
             ),
             canvasGeometry: canvas.canvasGeometry
         )
@@ -2227,11 +2229,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     static func notchInteractionConfiguration(
         for state: VoiceState,
         visualState: VoiceBarNotchVisualState,
-        bandState: VoiceBarNotchVisualState? = nil
+        bandState: VoiceBarNotchVisualState? = nil,
+        visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchInteractionConfiguration {
         // 0510 R3: under a drawer the band keeps the activity's own controls; the drawer's body is live too.
         if visualState == .history, let bandState, bandState != .history, bandState != .hoverLauncher {
-            return notchInteractionConfiguration(for: state, visualState: bandState).withInteractiveLowerSurface
+            return notchInteractionConfiguration(for: state, visualState: bandState,
+                                                 visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+                .withInteractiveLowerSurface
         }
         switch visualState {
         case .idle:
@@ -2257,12 +2262,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1, trailingControlCountFromCore: 2)
             case .speaking:
                 // T1/T6: speed, Back, pause/play and Forward on the left.
-                // T5/T7: collapsed, Stop sits in the recording-style wing's outer region (a hidden read's eye beside it).
+                // T5/T7: collapsed, Stop follows the meter (a hidden read's eye one pitch inside it). X4: the row is
+                // centred in the visible wing, so Stop's outer inset follows the hardware notch's hidden points.
                 return VoiceBarNotchInteractionConfiguration(
                     leadingControlCount: playbackLeadingSlotCount(for: state),
                     trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
-                    trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-                        + VoiceBarPresentation.readingStopOuterRegionInset,
+                    trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(
+                        visibleCoreOcclusionInset: visibleCoreOcclusionInset),
                     leadingOutermostControlWidth: playbackLeadingOutermostWidth(for: state)
                 )
             case .error:

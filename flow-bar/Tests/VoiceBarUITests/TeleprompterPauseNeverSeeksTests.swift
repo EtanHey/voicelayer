@@ -134,13 +134,13 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
                 NSPoint(x: originX + geometry.coreOriginX - VoiceBarNotchContract.compactCoreContentInset - size / 2
                     - CGFloat(slot) * pitch, y: y)
             }
-            // 2.4 T4/T7: Replay and eye are centred in the lower row; Stop is one pitch beyond the group.
+            // X4: Replay, eye and Stop are one row centred in the lower body.
             let centerX = originX + geometry.totalWidth / 2
             let lowerY = bar.bounds.minY + VoiceBarPresentation.teleprompterLowerControlBottomInset + size / 2
-            let lowerPitch = size + VoiceBarPresentation.teleprompterLowerControlSpacing
-            let replay = NSPoint(x: centerX - lowerPitch / 2, y: lowerY)
-            let eye = NSPoint(x: centerX + lowerPitch / 2, y: lowerY)
-            let stop = NSPoint(x: centerX + VoiceBarPresentation.teleprompterTerminalOffset(groupControlCount: 2), y: lowerY)
+            func lower(_ index: Int) -> NSPoint {
+                NSPoint(x: centerX + VoiceBarPresentation.teleprompterLowerControlOffset(index: index, count: 3), y: lowerY)
+            }
+            let replay = lower(0), eye = lower(1), stop = lower(2)
             for (name, center, expected) in [("Replay", replay, "replay"), ("Stop", stop, "stop")] {
                 try sweep(center, .square, in: window, { dx, dy in
                     let calls = router.calls

@@ -1191,7 +1191,8 @@ public struct BarView: View {
                         isSelected: recordingPauseControl.isSelected,
                         selectionStyle: .recordingState,
                         accessibilityLabel: recordingPauseControl.accessibilityLabel,
-                        accessibilityHint: recordingPauseControl.accessibilityHint
+                        accessibilityHint: recordingPauseControl.accessibilityHint,
+                        tooltip: recordingPauseControl.tooltip
                     ) {
                         state.setRecordingPaused(!state.isRecordingPaused)
                     }
@@ -1460,52 +1461,37 @@ public struct BarView: View {
 
     /// T5/T7 (Etan QA 2026-11-09: "the waveform is blue but is consistent with the same waveform and time stuff that
     /// we have when recording" and "maybe just the red stop button goes to the bottom"): reading aloud lays the right
-    /// wing out exactly like recording, time then level meter (blue: the playback level), in the recording wing's
-    /// geometry. With the teleprompter open, the red Stop sits in its eye row and the wing's outer region is empty, as
-    /// when recording. Collapsed (paused or hidden) there is no eye row, so Stop takes that outer region; a hidden
-    /// but playing read puts Show teleprompter beside it.
+    /// wing out like recording, time then level meter (blue: the playback level). With the teleprompter open, the red
+    /// Stop sits in its eye row. Collapsed (paused or hidden) there is no eye row, so Stop follows the meter; a hidden
+    /// but playing read puts Show teleprompter over the meter's last slot, one pitch inside Stop.
+    /// X4 (Etan, PR #860): the row is centred in the visible wing, with no blank outer region.
     private var notchSpeakingTrailingContent: some View {
         let isCompact = notchPresentation.bandState == .compactStatus
         let showsReveal = isCompact && state.isTeleprompterDismissed && !state.isPlaybackPaused
-        let material = VoiceBarNotchContract.material
-        // 0510 N10 made the recording row time, 2 pt, meter, 4 pt, a 26 pt outer region. Reading keeps that geometry
-        // (T5), so the meter sits where it does when recording. Stop sits centred in the outer region on its hit slot
-        // (`readingStopOuterRegionInset`), and the eye one control pitch inside Stop, over the hidden meter's edge.
-        let stopOuterInset = VoiceBarPresentation.readingStopOuterRegionInset
-        let revealOverhang = VoiceBarRecordingWingLabel.meterGap + VoiceBarRecordingWingLabel.outerRegionWidth -
-            stopOuterInset - material.compactControlSize - material.compactControlSpacing
-        return HStack(spacing: VoiceBarRecordingWingLabel.timeGap) {
+        return VoiceBarReadingTrailingRow(showsStop: isCompact) {
             VoiceBarReadingTimeRegion(
                 elapsedMilliseconds: { state.playbackElapsedMilliseconds() },
                 color: notchPrimaryLabelColor,
                 showsClock: { state.showsPlaybackClock }
             )
-            HStack(spacing: VoiceBarRecordingWingLabel.meterGap) {
-                ZStack(alignment: .trailing) {
-                    notchWaveform
-                        .opacity(showsReveal ? 0 : 1)
-                    if showsReveal {
-                        notchTeleprompterButton(
-                            icon: "eye",
-                            accessibilityLabel: "Show teleprompter"
-                        ) {
-                            state.showTeleprompter()
-                        }
-                        .padding(.trailing, -revealOverhang)
+        } meter: {
+            ZStack(alignment: .trailing) {
+                notchWaveform
+                    .opacity(showsReveal ? 0 : 1)
+                if showsReveal {
+                    notchTeleprompterButton(
+                        icon: "eye",
+                        accessibilityLabel: "Show teleprompter"
+                    ) {
+                        state.showTeleprompter()
                     }
                 }
-                .frame(width: WaveformLayout.viewportWidth, alignment: .trailing)
-                ZStack(alignment: .trailing) {
-                    if isCompact {
-                        playbackStopButton
-                            .padding(.trailing, stopOuterInset)
-                    }
-                }
-                .frame(width: VoiceBarRecordingWingLabel.outerRegionWidth,
-                       height: material.compactControlSize, alignment: .trailing)
             }
+            .frame(width: WaveformLayout.viewportWidth, alignment: .trailing)
+        } stop: {
+            playbackStopButton
         }
-        // As when recording, the time starts 8 pt past the PHYSICAL notch (the glass hides the wing's first points).
+        // As when recording, the row is centred clear of the PHYSICAL notch (the glass hides the wing's first points).
         .padding(.leading, max(0, notchPresentation.visibleCoreOcclusionInset))
     }
 
@@ -1766,10 +1752,10 @@ public struct BarView: View {
     /// U5: live reading uses Teleprompter A; an idle-retained readback keeps its scrolling view.
     private var showsTeleprompterA: Bool { state.mode == .speaking && !state.isTeleprompterReadback }
 
-    /// T4/T7 (Etan QA 2026-11-09: "Still has the centered eye, but not the centered replay button ... they're not in
-    /// one flex box together centered" and "maybe just the red stop button goes to the bottom"): Replay and the eye are
-    /// one group centred in the body. The terminal control (the live red Stop while reading, X on an ended readback)
-    /// sits one control pitch to the group's right and never moves it.
+    /// T4/T7 (Etan QA 2026-11-09: "they're not in one flex box together centered" and "maybe just the red stop button
+    /// goes to the bottom"). X4 (Etan, PR #860: "stop / eye / replay not centred with the drag bar"): Replay, the eye
+    /// and the terminal control (the live red Stop while reading, X on an ended readback) are one row centred in the
+    /// body, on the drag bar's centre.
     private var notchTeleprompterControls: some View {
         HStack(spacing: VoiceBarPresentation.teleprompterLowerControlSpacing) {
             if state.canReplay {
@@ -1792,6 +1778,7 @@ public struct BarView: View {
                     state.dismissTeleprompter()
                 }
             }
+            notchTeleprompterTerminal
         }
         .frame(maxWidth: .infinity)
         .overlay(alignment: .leading) {
@@ -1803,17 +1790,6 @@ public struct BarView: View {
                     .foregroundStyle(notchPalette.tertiary.color)
                     .lineLimit(1)
                     .allowsHitTesting(false)
-            }
-        }
-        .overlay {
-            // The terminal control rides beside the centred group without taking part in its width.
-            GeometryReader { proxy in
-                notchTeleprompterTerminal
-                    .position(
-                        x: proxy.size.width / 2 + VoiceBarPresentation.teleprompterTerminalOffset(
-                            groupControlCount: VoiceBarPresentation.teleprompterLowerGroupCount(canReplay: state.canReplay)),
-                        y: proxy.size.height / 2
-                    )
             }
         }
         .frame(height: TeleprompterA.controlsHeight)

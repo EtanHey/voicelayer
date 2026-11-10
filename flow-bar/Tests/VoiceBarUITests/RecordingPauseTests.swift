@@ -21,13 +21,12 @@ final class RecordingPauseTests: XCTestCase {
         XCTAssertEqual(
             VoiceBarPresentation.recordingPauseControl(mode: .recording, recordingMode: "ptt", isPaused: false),
             VoiceBarRecordingPauseControl(iconName: "mic.fill", accessibilityLabel: "Mute microphone",
-                                          accessibilityHint: "Stop adding audio to this take until you resume",
-                                          isSelected: false)
+                                          accessibilityHint: "Mute microphone", isSelected: false)
         )
         XCTAssertEqual(
             VoiceBarPresentation.recordingPauseControl(mode: .recording, recordingMode: "ptt", isPaused: true),
             VoiceBarRecordingPauseControl(iconName: "mic.slash.fill", accessibilityLabel: "Unmute microphone",
-                                          accessibilityHint: "Continue the same take", isSelected: true)
+                                          accessibilityHint: "Unmute microphone", isSelected: true)
         )
         // VAD takes end on their own silence and keep the Lock slot; nothing else shows Pause.
         XCTAssertNil(VoiceBarPresentation.recordingPauseControl(mode: .recording, recordingMode: "vad", isPaused: false))

@@ -149,24 +149,15 @@ public struct VoiceBarNotchHitRegion: Equatable {
         }
 
         if configuration.lowerControlCount > 0 {
-            let lowerPitch = size + 10
-            let rowWidth = (CGFloat(configuration.lowerControlCount) * size)
-                + (CGFloat(configuration.lowerControlCount - 1) * 10)
-            let rowOriginX = (geometry.totalWidth - rowWidth) / 2
-            for index in 0 ..< configuration.lowerControlCount {
+            // X4: the group and the terminal control are one row centred on the body (the drag bar's centre). The
+            // rects keep their order: the group, then the terminal slot.
+            let count = configuration.lowerControlCount + (configuration.lowerTerminalControl ? 1 : 0)
+            for index in 0 ..< count {
+                let midX = geometry.totalWidth / 2
+                    + VoiceBarPresentation.teleprompterLowerControlOffset(index: index, count: count)
                 rects.append(
                     CGRect(
-                        x: rowOriginX + (CGFloat(index) * lowerPitch),
-                        y: configuration.lowerControlBottomInset,
-                        width: size,
-                        height: size
-                    )
-                )
-            }
-            if configuration.lowerTerminalControl {
-                rects.append(
-                    CGRect(
-                        x: rowOriginX + rowWidth + 10,
+                        x: midX - size / 2,
                         y: configuration.lowerControlBottomInset,
                         width: size,
                         height: size

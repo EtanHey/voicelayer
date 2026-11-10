@@ -78,6 +78,8 @@ public struct VoiceBarRecordingPauseControl: Equatable {
     public var accessibilityLabel: String
     public var accessibilityHint: String
     public var isSelected: Bool
+    /// X4 (Etan, PR #860): the mute button names what a click does, on hover as well as to VoiceOver.
+    public var tooltip: String { accessibilityLabel }
 }
 
 public struct VoiceBarRecordingHoldControl: Equatable {
@@ -433,16 +435,23 @@ public enum VoiceBarPresentation {
             showsProcessingSpinner: showsProcessingSpinner && speech == 0)
     }
 
-    /// Collapsed Stop sits centred in the recording wing's outer region (26 pt since 0510 N10), 3 pt in from each side.
-    public static var readingStopOuterRegionInset: CGFloat {
-        (VoiceBarRecordingWingLabel.outerRegionWidth - VoiceBarNotchContract.material.compactControlSize) / 2
+    /// X4 (Etan, PR #860: "too much space on the right"): the reading right wing matches the reading left wing, so the
+    /// wings are equal about the notch, and its row (time, meter, and Stop while collapsed) is centred in the wing's
+    /// VISIBLE part: the glass hides the first `visibleCoreOcclusionInset` points on a hardware notch.
+    public static func readingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
+        max(readingTransportWingWidth,
+            max(0, visibleCoreOcclusionInset) + 2 * VoiceBarNotchContract.fixedWingContentInset +
+                VoiceBarRecordingWingLabel.readingRowWidth(showsStop: true))
     }
 
-    /// T5/T7: the reading right wing is the recording wing (time, meter, outer region).
-    public static func readingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
-        max(0, visibleCoreOcclusionInset) + 2 * VoiceBarNotchContract.fixedWingContentInset +
-            VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.timeGap + WaveformLayout.viewportWidth +
-            VoiceBarRecordingWingLabel.meterGap + VoiceBarRecordingWingLabel.outerRegionWidth
+    /// The collapsed Stop's distance from the right wing's outer edge (its hit slot): the content inset plus half the
+    /// room the centred row leaves in the visible wing.
+    public static func readingStopOuterInset(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
+        let inset = max(0, visibleCoreOcclusionInset)
+        let lane = readingTrailingWingWidth(visibleCoreOcclusionInset: inset) - inset -
+            2 * VoiceBarNotchContract.fixedWingContentInset
+        let spare = lane - VoiceBarRecordingWingLabel.readingRowWidth(showsStop: true)
+        return VoiceBarNotchContract.fixedWingContentInset + max(0, spare) / 2
     }
 
     // MARK: - T4/T7 teleprompter lower row (Etan QA 2026-11-09)
@@ -450,15 +459,21 @@ public enum VoiceBarPresentation {
     /// The lower row's pitch is a control plus 10 pt (`VoiceBarNotchHitRegion`).
     public static let teleprompterLowerControlSpacing: CGFloat = 10
 
-    /// Replay (when available) and the eye: the group centred in the body.
+    /// Replay (when available) and the eye.
     public static func teleprompterLowerGroupCount(canReplay: Bool) -> Int { canReplay ? 2 : 1 }
 
-    /// The terminal control (Stop or X) centre, from the body's centre: one pitch past the group's trailing edge.
+    /// X4 (Etan, PR #860: "stop / eye / replay not centred with the drag bar"): Replay, the eye and the terminal control
+    /// (Stop while reading, X on an ended readback) are ONE row centred on the body, which is where the drag bar is.
+    /// The centre of control `index` (0 = leftmost) of `count`, from the body's centre.
+    public static func teleprompterLowerControlOffset(index: Int, count: Int) -> CGFloat {
+        let pitch = VoiceBarNotchContract.material.compactControlSize + teleprompterLowerControlSpacing
+        return (CGFloat(index) - CGFloat(max(1, count) - 1) / 2) * pitch
+    }
+
+    /// The terminal control's centre, from the body's centre: the last slot of the centred row.
     public static func teleprompterTerminalOffset(groupControlCount: Int) -> CGFloat {
-        let size = VoiceBarNotchContract.material.compactControlSize
-        let count = CGFloat(max(1, groupControlCount))
-        let groupWidth = count * size + (count - 1) * teleprompterLowerControlSpacing
-        return groupWidth / 2 + teleprompterLowerControlSpacing + size / 2
+        let count = max(1, groupControlCount) + 1
+        return teleprompterLowerControlOffset(index: count - 1, count: count)
     }
 
     /// The lower row's distance from the body's bottom edge: the handle band (or its reserve) sits under it.
@@ -569,10 +584,9 @@ public enum VoiceBarPresentation {
         guard mode == .recording, recordingMode == "ptt" else { return nil }
         return isPaused
             ? VoiceBarRecordingPauseControl(iconName: "mic.slash.fill", accessibilityLabel: "Unmute microphone",
-                                            accessibilityHint: "Continue the same take", isSelected: true)
+                                            accessibilityHint: "Unmute microphone", isSelected: true)
             : VoiceBarRecordingPauseControl(iconName: "mic.fill", accessibilityLabel: "Mute microphone",
-                                            accessibilityHint: "Stop adding audio to this take until you resume",
-                                            isSelected: false)
+                                            accessibilityHint: "Mute microphone", isSelected: false)
     }
 
     public static func recordingHoldControl(

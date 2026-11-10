@@ -305,8 +305,7 @@ final class AppLifecycleTests: XCTestCase {
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
                 trailingControlCountFromOuter: 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-                    + VoiceBarPresentation.readingStopOuterRegionInset,
+                trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(visibleCoreOcclusionInset: 0),
                 leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth
             )
         )
@@ -347,8 +346,7 @@ final class AppLifecycleTests: XCTestCase {
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
                 trailingControlCountFromOuter: 1,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset
-                    + VoiceBarPresentation.readingStopOuterRegionInset,
+                trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(visibleCoreOcclusionInset: 0),
                 leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth
             )
         )
