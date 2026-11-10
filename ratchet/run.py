@@ -213,10 +213,19 @@ class Run:
             "VOICEBAR_USER_DEFAULTS_SUITE": "ratchet." + self.root.name,
             "RATCHET_RESIDENT": str(self.root / "resident.sock"),
         })
-        (self.root / "model.bin").touch()
+        # Asset admission requires a nonempty regular file; the decoder below is synthetic.
+        (self.root / "model.bin").write_bytes(b"ratchet synthetic model placeholder\n")
         stub = self.root / "bin/whisper-cli"
         stub.write_text("#!" + sys.executable + "\n" + (REPO / "ratchet/fixture-whisper.py").read_text())
         stub.chmod(0o700)
+        # Boot warmup uses the server even when inference selects the CLI fixture.
+        # Keep it off the resident server's port and provide synthetic health only.
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            self.env["QA_VOICE_WHISPER_SERVER_PORT"] = str(reservation.getsockname()[1])
+        server = self.root / "bin/whisper-server"
+        server.write_text("#!" + sys.executable + "\n" + (REPO / "ratchet/fixture-whisper-server.py").read_text())
+        server.chmod(0o700)
         self.env["PATH"] = str(self.root / "bin") + ":" + self.env["PATH"]
 
     def instrument(self):
