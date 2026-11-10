@@ -34,8 +34,9 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         // In wing coordinates from the drawn core edge: the physical notch edge is at the occlusion inset.
         let physicalEdge = screen.visibleCoreOcclusionInset
         XCTAssertEqual(screen.housingFrame.maxX + physicalEdge, 857, accuracy: 0.001, "auxiliaryTopRightArea.minX")
-        for time in ["0:00", "0:54", "9:59", "10m", "99h"] {
-            let text = ceil((time as NSString).size(withAttributes: [.font: VoiceBarRecordingWingLabel.timeFont]).width)
+        // X1-23 (C6 L3): long clocks keep minutes and seconds in a narrower face of the same size.
+        for time in ["0:00", "0:54", "9:59", "10:00", "59:59"] {
+            let text = ceil((time as NSString).size(withAttributes: [.font: VoiceBarClockFace.nsFont(for: time)]).width)
             XCTAssertLessThanOrEqual(text, VoiceBarRecordingWingLabel.width, "\(time) fits its region")
             // The time region is trailing-aligned: its text starts where the region's spare width ends.
             let textMinX = slot.coreInset + (VoiceBarRecordingWingLabel.width - text)

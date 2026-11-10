@@ -105,24 +105,29 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(VoiceBarReadingTimeLabel.text(elapsedMilliseconds: -5), "0:00")
     }
 
-    /// U2 review R1 (A1): "10:00" in the 12 pt tabular system font measures 33.8 pt against the fixed 31.5 pt lane,
-    /// so a long read lost part of its time. Past 9:59 the label switches to whole minutes ("10m", "59m"), then
-    /// hours, so every supported value fits the fixed wing, measured with the font the label renders.
+    /// X1-23 (C6 L3, Etan QA 2026-11-10: "should probably still have the full like seconds and minutes"), replacing
+    /// U2 R1's "10m"/"1h": every clock keeps its seconds. Under an hour the face fits the wing's 26 pt time region at
+    /// its full 11 pt (two-digit minutes in SF condensed); an hour-plus clock fits after its bounded scale.
     func testEverySupportedReadingTimeFitsTheFixedLane() {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         let samples: [(Int, String)] = [
-            (0, "0:00"), (599_999, "9:59"), (600_000, "10m"), (3_599_999, "59m"), (5_999_999, "99m"),
-            (6_000_000, "1h"), (359_999_999, "99h"), (900_000_000_000, "99h"),
+            (0, "0:00"), (599_999, "9:59"), (600_000, "10:00"), (754_000, "12:34"), (3_599_999, "59:59"),
+            (3_600_000, "1:00:00"), (5_999_999, "1:39:59"), (359_999_999, "99:59:59"), (900_000_000_000, "99:59:59"),
         ]
+        let region = VoiceBarRecordingWingLabel.width
         for (milliseconds, expected) in samples {
             let text = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: milliseconds)
             XCTAssertEqual(text, expected, "\(milliseconds) ms")
-            let width = (text as NSString).size(withAttributes: [.font: font]).width
-            XCTAssertLessThanOrEqual(width, VoiceBarReadingTimeLabel.width, "\(text) is \(width) pt wide")
+            let width = (text as NSString).size(withAttributes: [.font: VoiceBarClockFace.nsFont(for: text)]).width
+            if milliseconds < 3_600_000 {
+                XCTAssertLessThanOrEqual(width, region, "\(text) is \(width) pt wide at full size")
+            } else {
+                XCTAssertLessThanOrEqual(width * VoiceBarClockFace.minimumScaleFactor, region, "\(text) fits once scaled")
+            }
         }
-        // The witness for the old format: two-digit minutes with seconds do not fit.
-        XCTAssertGreaterThan(("10:00" as NSString).size(withAttributes: [.font: font]).width,
-                             VoiceBarReadingTimeLabel.width)
+        // The witness: two-digit minutes in the standard face overflow the region, which is why the face narrows.
+        XCTAssertGreaterThan(("10:00" as NSString).size(withAttributes: [.font: VoiceBarRecordingWingLabel.timeFont]).width,
+                             region)
+        XCTAssertEqual(VoiceBarClockFace.width(for: "9:59"), .standard, "short clocks keep the standard face")
     }
 
     // MARK: - Hit regions match the drawn controls
