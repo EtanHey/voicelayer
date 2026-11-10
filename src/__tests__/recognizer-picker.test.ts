@@ -125,7 +125,7 @@ test("failed W selection restores previous P and the actual backend reuses it wi
   const { calls, deps } = ops(); deps.startW = async () => { calls.push("startW"); throw new Error("fixture W load failure"); };
   const selected = await selectRecognizer("whisper", deps);
   expect(calls).toEqual(["stopP", "stopW", "startW", "stopW", "startP", "reset"]);
-  expect(selected.recognizer_status).toMatchObject({ desired: "whisper", effective: "parakeet", phase: "ready", fallback_reason: "whisper-startup-failed", engines: { whisper: { phase: "error" } } });
+  expect(selected.recognizer_status).toMatchObject({ desired: "parakeet", effective: "parakeet", phase: "ready", fallback_reason: "whisper-startup-failed", engines: { whisper: { phase: "error" } } });
   expect(await handleSocketCommand({ cmd: "set_whisper_residency", action: "load", id: "restored-P-legacy" })).toMatchObject({ outcome: "reject", reason: "select-whisper-first" });
   const recovery = recognizerRecovery()!; expect(recovery.engine).toBe("parakeet");
   expect(JSON.parse(readFileSync(recovery.evidencePath!, "utf8"))).toMatchObject({ requested: "whisper", previousEffective: "parakeet", reason: "whisper-startup-failed" });
@@ -138,6 +138,23 @@ test("failed W selection restores previous P and the actual backend reuses it wi
   try { stt.resetBackendCache(); const result = await (await stt.getBackend()).transcribe(path, { language: "he" });
     expect(result.backend).toBe("whisper-server+fallback-whisper-startup-failed->parakeet-resident"); expect(p).toHaveBeenCalledTimes(1); expect(w).not.toHaveBeenCalled(); expect(cli).not.toHaveBeenCalled();
   } finally { p.mockRestore(); w.mockRestore(); cli.mockRestore(); stt.resetBackendCache(); setRecognizerRecoveryWhisper(null); }
+});
+
+test("L11: failed Whisper selection restores persisted Parakeet across daemon restart", async () => {
+  await selectRecognizer("parakeet", ops().deps);
+  const { deps } = ops(); deps.startW = async () => { throw new Error("unloadable Whisper"); };
+  await selectRecognizer("whisper", deps);
+  const child = Bun.spawn([process.execPath, "-e", `
+    import {warmSelectedRecognizer} from "./src/recognizer-controller";
+    const calls=[];
+    const result=await warmSelectedRecognizer({assetsPresent:()=>true,stopP:async()=>{},stopW:async()=>{},
+      startP:async()=>{calls.push("P")},startW:async()=>{calls.push("W");throw Error("unloadable Whisper")},reset:()=>{}});
+    console.log(JSON.stringify({calls,result}));
+  `], { env: process.env, stdout: "pipe", stderr: "pipe" });
+  const restarted = JSON.parse(await new Response(child.stdout).text());
+  expect(await child.exited).toBe(0);
+  expect(restarted.calls).toEqual(["P"]);
+  expect(restarted.result).toMatchObject({outcome:"accept",recognizer_status:{desired:"parakeet",effective:"parakeet"}});
 });
 
 test("post-startup cleanup failure retains a dedicated barrier and stable reason", async () => {

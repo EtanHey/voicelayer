@@ -72,8 +72,23 @@ describe("opt-in resident Parakeet router", () => {
   test.each(["", "   "])("empty returned text with verified speech falls back on the original audio", async text => {
     const { backend, calls } = setup(response(text)); expect((await backend.transcribe(path)).backend).toContain("fallback-empty-response"); expect(calls).toEqual(["P", "unload", "W"]);
   });
-  test("frame loss cannot pass as a completed response", async () => {
-    const { backend } = setup({ ...response(), covered_frames: 15999 }); expect((await backend.transcribe(path)).backend).toContain("fallback-incomplete-response");
+  test.each([
+    { ...response(), complete: false },
+    { ...response(), attemptEvidence: { decodeCoverage: "PARTIAL" } },
+    { ...response(), attemptEvidence: { tail: "KNOWN_MISSING" } },
+  ] as ParakeetResponse[])("explicit provider incompleteness still permits failure fallback", async native => {
+    const { backend, calls } = setup(native);
+    expect((await backend.transcribe(path)).backend).toContain("fallback-incomplete-response");
+    expect(calls).toEqual(["P", "unload", "W"]);
+  });
+  test("L11: one-frame accounting gap keeps usable Parakeet text without Whisper", async () => {
+    const native = { ...response(), covered_frames: 15999 };
+    const { backend, calls } = setup(native);
+    const result = await backend.transcribe(path);
+    expect(result.text).toBe(native.text);
+    expect(result.backend).toBe("parakeet-resident+incomplete-response+kept-native");
+    expect(result.outcome).toBe("NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN");
+    expect(calls).toEqual(["P"]);
   });
   test("Hebrew script in a complete output does not silently switch engines", async () => {
     const { backend, calls } = setup(response("שלום עולם")); const result = await backend.transcribe(path);

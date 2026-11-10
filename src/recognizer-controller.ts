@@ -120,6 +120,13 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
       assertRecognizerOwnerOpen();
       noteRecognizerEngine(value, { phase: "ready", available: true, error: null }); noteRecognizerEffective(value);
     } catch (startupError) {
+      // A failed W selection must not strand the next daemon on broken W.
+      // Keep P's explicit-selection/recovery contract unchanged.
+      if (value === "whisper" && previous.desired === "parakeet") {
+        try { persistRecognizer(previous.desired); } catch { await stop(value); throw new Error("settings-write-failed"); }
+        console.error("[voicelayer] " + JSON.stringify({ event: "recognizer_selection_rolled_back",
+          requested: value, restored_desired: previous.desired, cause: "whisper-startup-failed" }));
+      }
       if (recognizerOwnerClosed()) { await stop(value); throw new Error("owner-shutdown"); }
       const failureReason = value + "-startup-failed";
       const attempt = startupError instanceof Error ? { name: startupError.name, message: startupError.message,

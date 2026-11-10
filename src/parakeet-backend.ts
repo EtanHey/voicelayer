@@ -348,7 +348,12 @@ export class ParakeetBackend implements STTBackend {
         // not evidence of silence. Keep the recording and admit guarded W.
         console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_empty_failure", speech_evidence: speechEvidence.status })}`);
       }
-      if (reason === "uncovered-internal" || reason === "uncovered-tail") {
+      // Completed, input-bound native text with a frame-accounting discrepancy
+      // is a coverage concern. Explicit partial/error responses still fail over.
+      const accountingGap = reason === "incomplete-response" && result.complete && !!result.text.trim() &&
+        result.sample_rate === info.sampleRate && result.input_frames === info.frames &&
+        result.attemptEvidence?.decodeCoverage !== "PARTIAL" && result.attemptEvidence?.tail !== "KNOWN_MISSING";
+      if (reason && (accountingGap || reason === "uncovered-internal" || reason === "uncovered-tail")) {
         console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_coverage_retry", reason, uncovered_spans_s: uncoveredSpans })}`);
         nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result,
           whisper: null, speechEvidence, errorType: null, stage: "native-or-input-boundary" });

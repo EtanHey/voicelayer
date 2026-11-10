@@ -1,5 +1,4 @@
-import { hashWhisperWeights, executedWhisperHash } from "./whisper-model-identity";
-import { availableWhisperModelPath, requireWhisperModelPath, whisperAssetPath } from "./recognizer-assets";
+import { availableWhisperModelPath, requireWhisperModelPath, whisperAssetPath, whisperLaunchIdentity } from "./recognizer-assets";
 /**
  * whisper-server lifecycle manager.
  *
@@ -853,15 +852,9 @@ function adoptHealthyServer(port: number): void {
     return;
   }
 
-  const pid = listeners[0] ?? 0;
-  console.error(
-    `[voicelayer] Healthy whisper-server on port ${port}${pid ? ` (PID ${pid})` : ""} has no live ownership record; adopting it rather than killing a server this process did not launch.`,
-  );
-  serverState = { proc: null, port, pid, adopted: true };
-  // No ownership record means no provenance. Reporting the flags we *would*
-  // have used would be a guess, not provenance.
-  lastLaunchRecord = null;
-  notifyWhisperModelStateChange();
+  // Health proves liveness, not the loaded model. Refuse without signalling
+  // or relaunching over a server whose live ownership cannot bind its identity.
+  throw new Error("Whisper server model identity unverified: no live ownership record");
 }
 
 function normalizeAdoptedAccelerationMode(
@@ -1033,7 +1026,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     throw new Error(`Whisper model is missing: ${whisperAssetPath()}. Download it in Settings.`);
   }
 
-  if (!testHooks.findModel) await hashWhisperWeights(model);
+  const modelSha256 = testHooks.findModel ? undefined : await whisperLaunchIdentity(model);
 
   // Get brew prefix for Metal shaders
   let metalPath: string | undefined;
@@ -1111,7 +1104,6 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     startingChildren.add(proc);
     let cleanupAttempted = false;
     try {
-      let stderrTail = "";
       let failureReason: string | undefined;
       let signalFailure!: (reason: string) => void;
       const failed = new Promise<string>((resolve) => { signalFailure = resolve; });
@@ -1124,8 +1116,8 @@ async function ensureServerUnlocked(port: number): Promise<number> {
         (code) => fail(`whisper-server exited during startup (code ${code}); WHISPER_STARTUP_EXIT`),
         () => { /* A rejected exit promise does not confirm termination. */ },
       );
-      // Drain stderr, retaining only a bounded line tail for load diagnostics.
-      // Do not expose model contents or silently select another model.
+      // Log the complete diagnostic stream; only the short machine reason
+      // reaches callers such as the Settings notice.
       if (proc.stderr) {
         const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
         (async () => {
@@ -1134,7 +1126,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              stderrTail = (stderrTail + decoder.decode(value, { stream: true })).slice(-4096);
+              console.error("[voicelayer] whisper-server stderr: " + decoder.decode(value, { stream: true }));
             }
           } catch {}
         })();
@@ -1171,7 +1163,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           lastLaunchRecord = {
             binary,
             modelPath: model,
-            modelSha256: executedWhisperHash(model) ?? undefined,
+            modelSha256: modelSha256,
             args: plan.args,
             performanceEffort: launchedPerformanceEffort,
             accelerationMode: plan.acceleration.mode,
@@ -1187,7 +1179,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
             binary,
             args: plan.args,
             model_path: model,
-            model_sha256: executedWhisperHash(model) ?? undefined,
+            model_sha256: modelSha256,
             performance_effort: launchedPerformanceEffort,
             acceleration_mode: plan.acceleration.mode,
           });
@@ -1209,7 +1201,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
       }
 
       startupFailure = failureReason
-        ? `${failureReason}${stderrTail ? `; stderr=${JSON.stringify(stderrTail)}` : ""}`
+        ? failureReason
         : `whisper-server failed to start within ${startupTimeoutMs / 1000}s; WHISPER_STARTUP_TIMEOUT`;
       console.error(`[voicelayer] ${startupFailure}`);
       // Failed startup — kill and report failure to caller.
