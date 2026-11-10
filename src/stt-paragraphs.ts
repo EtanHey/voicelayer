@@ -1,4 +1,5 @@
 import { appendControlLayerEvent } from "./control-layer-journal";
+import { isConditionalContinuation } from "./stt-coherent-paragraphs";
 import {
   endsWithAbbreviation,
   alignTranscriptWordIndices,
@@ -86,6 +87,7 @@ export function applyPauseParagraphs(
     if (!pauseS) continue;
     const start = end + terminal[0].length - terminal[1].length;
     const next = end + terminal[0].length;
+    if (isConditionalContinuation(text.slice(next))) continue;
     candidates.push({ start, end: next, pauseS });
   }
   const edits: Array<{ start: number; end: number }> = [];

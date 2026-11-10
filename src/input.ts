@@ -579,7 +579,10 @@ export async function finalizeTranscriptionResultForSurface(
     const strip = (value: string) => value.replace(/\s/gu, "");
     return strip(formatted) === strip(text) ? formatted : text;
   });
-  if (!surface) return { text: paragraphText(cleanedText) };
+  // Shared by initial delivery, voice_ask and every retranscription entry point.
+  // Substitute punctuation only: never delete words, retractions or cutoff markers.
+  const deliveredText = (text: string) => paragraphText(text).replace(/\u2014/gu, "-");
+  if (!surface) return { text: deliveredText(cleanedText) };
   const polished = await measureTakeStageAsync("polish", () => polishTranscriptionText({
     rawText,
     cleanedText,
@@ -614,7 +617,7 @@ export async function finalizeTranscriptionResultForSurface(
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
   }
   return {
-    text: paragraphText(polished.text),
+    text: deliveredText(polished.text),
     polished: polished.polished,
     polishStatus: polished.status,
     ...(polished.reason ? { polishReason: polished.reason } : {}),

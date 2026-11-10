@@ -2130,7 +2130,7 @@ describe("stt-polish", () => {
     }
   });
 
-  it("scales HTTP polish completion budget beyond 4096 tokens for long dictation", async () => {
+  it("covers long HTTP dictation with bounded requests and a sufficient completion budget per chunk", async () => {
     const requests: Record<string, unknown>[] = [];
     const cleanedText = Array.from(
       { length: 2400 },
@@ -2143,9 +2143,12 @@ describe("stt-polish", () => {
         if (url.pathname === "/v1/models") {
           return Response.json({ data: [] });
         }
-        requests.push((await request.json()) as Record<string, unknown>);
+        const body = (await request.json()) as Record<string, unknown>;
+        requests.push(body);
+        const messages = body.messages as Array<{ content: string }>;
+        const chunk = messages.at(-1)!.content.split("VoiceLayer cleaned text to fix:\n")[1];
         return Response.json({
-          choices: [{ message: { content: cleanedText } }],
+          choices: [{ message: { content: chunk } }],
         });
       },
     });
@@ -2161,13 +2164,15 @@ describe("stt-polish", () => {
         },
       });
 
-      expect(requests).toHaveLength(3);
-      expect(requests[0].max_tokens).toBeGreaterThan(512);
-      expect(requests[0].max_tokens).toBeGreaterThan(4096);
+      expect(requests.length).toBeGreaterThan(3);
+      const chunks = requests.map(request => (request.messages as Array<{ content: string }>).at(-1)!.content.split("VoiceLayer cleaned text to fix:\n")[1]);
+      expect(chunks.join(" ")).toBe(cleanedText);
+      for (let i = 0; i < requests.length; i++) {
+        expect(chunks[i].length).toBeLessThan(1900);
+        expect(Number(requests[i].max_tokens)).toBeGreaterThanOrEqual(Math.ceil(chunks[i].split(/\s+/u).length * 2.2));
+      }
       expect(result.status).toBe("applied");
-      expect(result.text).toBe(`${cleanedText}.`);
-      expect(requests[1].max_tokens).toBe(requests[0].max_tokens);
-      expect(requests[2].max_tokens).toBe(requests[0].max_tokens);
+      expect(result.text).toBe(cleanedText);
     } finally {
       server.stop(true);
     }
