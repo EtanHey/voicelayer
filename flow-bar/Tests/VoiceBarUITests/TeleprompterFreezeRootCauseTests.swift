@@ -50,17 +50,19 @@ final class TeleprompterFreezeRootCauseTests: XCTestCase {
         }
     }
 
-    func testREDV37AcceptedReadbackSeekMustAdoptItsNewPlayer() {
+    func testV37AcceptedReadbackSeekMustAdoptItsNewPlayer() {
         let state = makeState()
         state.handleEvent(speaking())
         now += 2
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         XCTAssertTrue(state.isTeleprompterReadback)
         state.seek(offsetMs: 0)
-        // This is what replayReadback currently emits: a new player and utterance,
-        // but the metadata still contains the original, now-retired request_id.
+        // A delayed old frame still cannot resurrect the retired submission.
         state.handleEvent(speaking(player: "replayed", utterance: "readback-1"))
+        XCTAssertEqual(state.mode, .idle)
+        state.handleEvent(speaking(player: "replayed", utterance: "readback-1", request: "fresh-replay"))
         XCTAssertEqual(state.mode, .speaking, "An accepted user readback seek must restart the display clock")
+        XCTAssertEqual(state.speechWords?.utteranceID, "readback-1")
     }
 
     func testV357ReturningFromPreviousReadRestoresTheHeldPresentation() {

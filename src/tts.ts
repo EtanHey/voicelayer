@@ -3228,6 +3228,9 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
   const duration = chunks.reduce((sum, c) => sum + c.metadata.durationMs!, 0);
   if (offsetMs >= duration) { retained.release(); return { outcome: "reject", reason: "Replay position unavailable" }; }
   const controller = new AbortController(), id = `readback-${process.pid}-${++longReadCounter}`;
+  // This explicit user invocation owns a fresh presentation across all replayed chunks.
+  // The retained audio, History ref and text hash still identify the original read.
+  const requestId = randomUUID();
   let generation = 1;
   const handle: OwnedLongRead = { id, get generation() { return generation; }, controller,
     wordTimeline: new SpeechWordTimeline(id),
@@ -3256,6 +3259,7 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
       const started = new Promise<boolean>(resolve => { resolveStarted = resolve; });
       const metadata = chunks[info.chunk_index].metadata;
       const playback = playAudioNonBlocking(chunk.audioFile, { ...metadata, wordTimeline: handle.wordTimeline, retainedReplay: true, readbackID,
+        speechIdentity: { ...metadata.speechIdentity, request_id: requestId },
         // Ordinary short speech remains short; long speech keeps its global cursor.
         longRead: metadata.longRead ? { ...info, estimated_total_ms: duration,
           ...(metadata.longRead.display ? { display: metadata.longRead.display } : {}) } : undefined,

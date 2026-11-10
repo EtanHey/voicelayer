@@ -11,8 +11,7 @@ import { TEST_TMP } from "./setup/test-tmp";
 import { TTS_HISTORY_FILE } from "../paths";
 import { deferredFixture, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
-// Phase-one RED: replayReadback copies a completed submission's request_id into a
-// new utterance. VoiceState has retired that id and drops the new speaking edge.
+// Regression coverage for Previous Read return and an ended read's fresh presentation.
 let players: ReturnType<typeof fixtureBarrier<ReturnType<typeof deferredFixture<number>>>>;
 let events: any[];
 let restore: (() => void)[] = [];
@@ -45,12 +44,12 @@ afterEach(async () => {
   for (const undo of restore) undo();
 });
 
-it("RED V3-7: an ended readback seek must not reuse the retired submission identity", async () => {
+it("V3-7: an ended readback seek must not reuse the retired submission identity", async () => {
   const file = join(TEST_TMP, "freeze-red-synthetic.mp3");
   writeFileSync(file, "synthetic media; decoder and player are owned fakes");
   const original = tts.playAudioNonBlocking(file, {
     text: "One two", voice: "fixture", durationMs: 2000,
-    speechIdentity: { request_id: "completed-submission" },
+    speechIdentity: { request_id: "completed-submission", text_hash: "original-hash" },
     wordBoundaries: [{ text: "One", offset_ms: 0, duration_ms: 900 },
       { text: "two", offset_ms: 1000, duration_ms: 900 }],
   });
@@ -69,6 +68,10 @@ it("RED V3-7: an ended readback seek must not reuse the retired submission ident
   expect(replay.playback_id).not.toBe(first.playback_id);
   expect(replay.utteranceId).not.toBe(first.utteranceId);
   expect(replay.request_id, "the client retired this submission at playback idle").not.toBe(first.request_id);
+  expect(replay.request_id).toBeString();
+  expect(replay.text_hash).toBe(first.text_hash);
+  expect(replay.readback_id).toBe(first.readback_id);
+  expect(replay.text).toBe(first.text);
 });
 
 it("V3-5/7: previous-read return must restore the held read's presentation", async () => {

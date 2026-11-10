@@ -10,10 +10,10 @@
     "formal/speech-word-seek/OverlapMutant.cfg": "5adb3622b43117ab0811bcb9d0ac7ad0c8a3514cf84ab7c44fb16d6ee106684a",
     "formal/speech-word-seek/StaleMutant.cfg": "dce40e330519dcdaeb8faeadceb3f0ff4f2df11e66d383a8855d570e9d18e04f",
     "formal/speech-word-seek/Fixed.cfg": "6fb0a1974c339c408f06715758dd45ea13598a3c72d2acf6be38e96b0bdbc921",
-    "src/tts.ts": "cc4e551ba64e9a0bf6950981f45e6cebbff0673e512f0df14db6977bd0120ebe",
-    "src/tts/speech-words.ts": "e5b1b01485c5b27b8bc7c5ee0bd24c4900e719924d304187fab1eb0151d73c52",
+    "src/tts.ts": "d954fa8f1a442416b05370d165eea5ef3b5b5e1bdf3bbbc3ff031a03ac12704a",
+    "src/tts/speech-words.ts": "65aee12e0d17659ed044c418edef306ca3f679c913fda08a09339f7006bdddf5",
     "src/__tests__/speech-words.test.ts": "ae10c21b242fe47d3930bffa974c00032cbe4e5e373aa314eb52a6ea25cf0d78",
-    "src/socket-protocol.ts": "00a5805b984f1c599ea5fd906853fbb3938b08f1ae2029b65649de719fcb491a",
+    "src/socket-protocol.ts": "7ae2b01ad94ea5d64b0870c58df47af848c0436331854b8199ec1cac9956cf5d",
     "src/socket-handlers.ts": "29df4b4578b6ef655380f3f3567762853de18743e0dea7602e438cbe3e6e8b1a",
     "src/__tests__/tts-long-read-runtime.test.ts": "5cc72db55a287ed312626bcc17e57b321bdb33c381799890ae7cd558befee368",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
