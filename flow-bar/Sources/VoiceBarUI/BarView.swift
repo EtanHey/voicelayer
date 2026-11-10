@@ -389,6 +389,8 @@ public struct BarView: View {
     @State private var historyRowsExtent = CGFloat(NotchHistoryMorph.visibleRows)
     /// A drag on the open drawer's body (2.4: drag UP closes, drag further DOWN opens Settings) owns the pull.
     @State private var isDrawerBodyDragActive = false
+    @State private var isDismissedDrawerGesture = false
+    @State private var drawerPullDismissalGeneration = 0
     @State private var drawerBodyDragEndedAt: TimeInterval = -1
     /// The pull has gone far enough past open that releasing it opens Settings.
     @State private var isSettingsPullArmed = false
@@ -592,6 +594,14 @@ public struct BarView: View {
             // mounted (reopened during its close spring), where no mount change reaches the handoff.
             if isOpen { historyBridge?.historyOpenRequested() }
             synchronizeHistoryDismissal(isOpen: isOpen)
+            if !isOpen {
+                isDismissedDrawerGesture = historyPull.phase != .idle || historyRowsPull.phase != .idle
+                historyPull = NotchHistoryPull()
+                historyRowsPull = NotchHistoryPull()
+                isDrawerBodyDragActive = false
+                isSettingsPullArmed = false
+                presentationModel?.setHistoryPullActive(false)
+            }
             let velocity = pendingHistoryReleaseVelocity
             pendingHistoryReleaseVelocity = 0
             if state.isHidden { resetHiddenDrawer() }
@@ -739,8 +749,29 @@ public struct BarView: View {
         }
         // SwiftUI retargets from what is drawn and keeps its velocity; the flight records the same.
         let now = NotchHistoryClock.now()
-        let drawn = renderedHistoryProgress(at: now)
+        let drawn = max(0, renderedHistoryProgress(at: now))
         let carried = (historyFlight?.velocity(at: now) ?? 0) + velocity
+        if !toOpen {
+            let speed = NotchHistoryMorph.closingVelocity(from: drawn, velocity: carried)
+            // End the previous animation before starting a close, so SwiftUI cannot merge its opening velocity.
+            historyFlight = nil
+            var stop = Transaction(); stop.disablesAnimations = true
+            withTransaction(stop) { historyProgress = drawn }
+            DispatchQueue.main.async {
+                guard generation == historyMorphGeneration, !isHistoryPresented else { return }
+                let start = NotchHistoryClock.now()
+                historyFlight = NotchHistorySpringFlight(from: drawn, to: 0, velocity: speed, start: start,
+                    response: NotchHistoryMorph.closeResponse, dampingFraction: NotchHistoryMorph.closeDampingFraction)
+                withAnimation(NotchHistoryMorph.animation(opening: false, from: drawn, velocity: speed),
+                              completionCriteria: .removed) {
+                    historyProgress = 0
+                } completion: {
+                    guard generation == historyMorphGeneration, !isHistoryPresented else { return }
+                    isHistoryMounted = false
+                }
+            }
+            return
+        }
         historyFlight = NotchHistorySpringFlight(
             from: drawn, to: toOpen ? 1 : 0, velocity: carried, start: now,
             response: toOpen ? NotchHistoryMorph.openResponse : NotchHistoryMorph.closeResponse,
@@ -765,19 +796,22 @@ public struct BarView: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.notchCanvasSpace))
             .updating($isHistoryPullGestureActive) { _, active, _ in active = true }
             .onChanged { value in
+                guard !isDismissedDrawerGesture else { return }
                 let openHeight = notchPresentationOpenHistoryHeight
-                let time = value.time.timeIntervalSinceReferenceDate
+                let time = NotchHistoryClock.now()
                 if isDrawerBodyDragActive { return }
                 if case .idle = historyPull.phase, case .idle = historyRowsPull.phase {
                     historyPressIsBare = abs(value.startLocation.x - historyPanelCentreX) <= notchPresentation.geometry.coreWidth / 2
                         && NotchHistoryPull.accepts(y: value.startLocation.y)
                     guard canPullDrawer || isSettingsDrawerOpen || historyPressIsBare else { return }
                     if NotchHistoryPull.accepts(y: value.startLocation.y) {
+                        drawerPullDismissalGeneration = surface.dismissalGeneration
                         historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
                     } else if isHistoryPresented, NotchHistoryPull.acceptsHandle(
                         point: value.startLocation, centreX: historyPanelCentreX,
                         panelHeight: openHeight, progress: historyFrozenProgress ?? renderedHistoryProgress(at: time)
                     ) {
+                        drawerPullDismissalGeneration = surface.dismissalGeneration
                         historyRowsPull.press(y: value.startLocation.y, progress: historyRowsExtent, time: time)
                     } else {
                         return
@@ -794,7 +828,8 @@ public struct BarView: View {
                 followHistoryPull(y: value.location.y, time: time, openHeight: openHeight)
             }
             .onEnded { _ in
-                guard !isDrawerBodyDragActive else { return }
+                defer { isDismissedDrawerGesture = false }
+                guard !isDismissedDrawerGesture, !isDrawerBodyDragActive else { return }
                 endHistoryPull(cancelled: false)
             }
     }
@@ -805,26 +840,41 @@ public struct BarView: View {
     private var drawerBodyDragGesture: some Gesture {
         DragGesture(minimumDistance: NotchHistoryMorph.dragSlop, coordinateSpace: .named(Self.notchCanvasSpace))
             .onChanged { value in
-                let time = value.time.timeIntervalSinceReferenceDate
+                guard !isDismissedDrawerGesture else { return }
+                let time = NotchHistoryClock.now()
                 if !isDrawerBodyDragActive {
                     guard case .idle = historyPull.phase, case .idle = historyRowsPull.phase, isHistoryPresented,
                           (historyFrozenProgress ?? renderedHistoryProgress(at: NotchHistoryClock.now())) > 0.98
                     else { return }
                     isDrawerBodyDragActive = true
+                    drawerPullDismissalGeneration = surface.dismissalGeneration
                     historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
                 }
                 followHistoryPull(y: value.location.y, time: time, openHeight: notchPresentationOpenHistoryHeight)
             }
             .onEnded { _ in
-                guard isDrawerBodyDragActive else { return }
+                defer { isDismissedDrawerGesture = false }
+                guard !isDismissedDrawerGesture, isDrawerBodyDragActive else { return }
                 endHistoryPull(cancelled: false)
                 isDrawerBodyDragActive = false
                 drawerBodyDragEndedAt = NotchHistoryClock.now()
             }
     }
 
+    /// A close wins over a release in the same event turn, before `.onChange` can cancel the local pull.
+    private func admitsCurrentDrawerGesture() -> Bool {
+        guard drawerPullDismissalGeneration == surface.dismissalGeneration else {
+            historyPull = NotchHistoryPull(); historyRowsPull = NotchHistoryPull()
+            isDrawerBodyDragActive = false; isSettingsPullArmed = false
+            presentationModel?.setHistoryPullActive(false)
+            return false
+        }
+        return true
+    }
+
     /// One pull follow for the band and the body: the panel tracks the pointer, and past open it arms Settings.
     private func followHistoryPull(y: CGFloat, time: TimeInterval, openHeight: CGFloat) {
+        guard admitsCurrentDrawerGesture() else { return }
         guard let progress = historyPull.move(
             y: y, time: time, range: openHeight - VoiceBarNotchContract.topHeight,
             seed: renderedHistoryProgress(at: time)
@@ -851,6 +901,7 @@ public struct BarView: View {
         if case .idle = historyRowsPull.phase {
             guard case .idle = historyPull.phase, isHistoryPresented,
                   (historyFrozenProgress ?? renderedHistoryProgress(at: time)) > 0.98 else { return }
+            drawerPullDismissalGeneration = surface.dismissalGeneration
             historyRowsPull.press(y: y, progress: historyRowsExtent, time: time)
         }
         dragHistoryRows(to: y, time: time)
@@ -859,6 +910,7 @@ public struct BarView: View {
     /// V6: the extend handle follows the pointer one row per 46 pt, stretching past the last row. Pushed above the
     /// collapsed rows it closes the panel with the pointer instead (0510 N4, `NotchHistoryMorph.handleDrag`).
     private func dragHistoryRows(to y: CGFloat, time: TimeInterval) {
+        guard admitsCurrentDrawerGesture() else { return }
         let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
         guard historyRowsPull.move(
             y: y, time: time, range: NotchHistoryMorph.rowHeight,
@@ -888,16 +940,19 @@ public struct BarView: View {
     /// 0510 N4: Settings' grip pushes the drawer closed under the pointer, the same open/close pull as History's
     /// body: it follows, and a release past halfway (or a flick up) closes it.
     private func dragDrawerGrip(y: CGFloat, time: TimeInterval) {
+        guard !isDismissedDrawerGesture else { return }
         if !isDrawerBodyDragActive {
             guard case .idle = historyPull.phase, case .idle = historyRowsPull.phase, isHistoryPresented,
                   (historyFrozenProgress ?? renderedHistoryProgress(at: time)) > 0.98 else { return }
             isDrawerBodyDragActive = true
+            drawerPullDismissalGeneration = surface.dismissalGeneration
             historyPull.press(y: y, progress: historyProgress, time: time)
         }
         followHistoryPull(y: y, time: time, openHeight: notchPresentationOpenHistoryHeight)
     }
 
     private func endDrawerGripDrag(cancelled: Bool) {
+        defer { isDismissedDrawerGesture = false }
         guard isDrawerBodyDragActive else { return }
         endHistoryPull(cancelled: cancelled)
         isDrawerBodyDragActive = false
@@ -907,6 +962,7 @@ public struct BarView: View {
     /// A released (or cancelled) handle settles on the nearest whole row with the `pull` spring; the hit region and
     /// the session's remembered height take the settled rows at once. A press that never moved changes nothing.
     private func endHistoryRowsPull(cancelled: Bool) {
+        guard admitsCurrentDrawerGesture() else { return }
         presentationModel?.setHistoryPullActive(false)
         let rawRows = historyRowsPull.rawProgress
         guard case let .settle(_, velocity) = historyRowsPull.release(progress: historyRowsExtent, cancelled: cancelled)
@@ -976,6 +1032,7 @@ public struct BarView: View {
     }
 
     private func endHistoryPull(cancelled: Bool) {
+        guard !isDismissedDrawerGesture, admitsCurrentDrawerGesture() else { return }
         if historyRowsPull.phase != .idle {
             endHistoryRowsPull(cancelled: cancelled)
             return

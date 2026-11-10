@@ -198,6 +198,34 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         XCTAssertEqual(harness.surface.journal.last?.event, .dismiss(.toggle))
     }
 
+    /// Dismissal wins over the release of a drag that began before it, including an armed Settings pull.
+    func test0449OutsideDismissalCannotBeUndoneByAnInFlightDrawerRelease() throws {
+        for dy: CGFloat in [-140, 80] {
+            let h = makeHarness()
+            try openHistory(h)
+            let start = notchPoint(h, fromTop: 120)
+            try send(.leftMouseDown, at: start, to: h.panel)
+            drain()
+            let end = NSPoint(x: start.x, y: start.y + dy)
+            try send(.leftMouseDragged, at: end, to: h.panel)
+            drain(0.05)
+            let dismissal = NotchDrawerDismissal { h.surface.send(.dismiss($0)) }
+            dismissal.handleGlobalMouseDown()
+            // Release in the same turn, before SwiftUI can observe the dismissal.
+            XCTAssertNil(h.surface.drawer)
+            let count = h.surface.journal.count
+            try send(.leftMouseUp, at: end, to: h.panel)
+            drain(1)
+            XCTAssertNil(h.surface.drawer, "[0449] a late release must not reopen after outside dismissal")
+            XCTAssertFalse(h.model.isHistoryPanelOpen, "[0449] no drawn drawer remains after dismissal")
+            XCTAssertFalse(h.surface.journal.dropFirst(count).contains { entry in
+                if case .openHistory = entry.event { return true }
+                if case .openSettings = entry.event { return true }
+                return false
+            }, "[0449] dismissal wins over an older pointer gesture")
+        }
+    }
+
     /// Etan: "drag UP closes it, mirroring drag-down to open". The press lands on the rows, not the band.
     func testDraggingTheOpenHistoryBodyUpClosesIt() throws {
         let harness = makeHarness()
