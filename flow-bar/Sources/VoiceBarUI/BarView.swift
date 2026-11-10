@@ -1162,6 +1162,8 @@ public struct BarView: View {
                     .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
                 }
             }
+            // Keep the controls on their core-anchored hit regions as the symmetric wing grows.
+            .frame(maxWidth: .infinity, alignment: .trailing)
             // R0856-05: the recording controls arrive with a wider wing; they show once its glass covers them.
             .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
         case .compactStatus, .teleprompter:
@@ -1334,10 +1336,8 @@ public struct BarView: View {
                 settingsButton
             }
         case .recording:
-            // 2.3 N1 (Etan, QA round 1; real M4): the live time 8 pt clear of the physical notch, then 2.2.61's
-            // 46 × 24 pt level meter, centred in the visible wing by an equal empty region outside it (review D3). The
-            // time shows only once capture has opened (review D1); the capturing microphone is its tooltip and VoiceOver
-            // value, never wing text.
+            // QA 0449: the time/meter group is centred in equal wings, with a clear gap and no blank outer region.
+            // Capture-open still owns the timer; the capturing microphone remains its tooltip and VoiceOver value.
             VoiceBarRecordingTrailingRow {
                 VoiceBarRecordingTimeRegion(
                     elapsedMilliseconds: { state.recordingElapsedMilliseconds() },

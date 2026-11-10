@@ -152,9 +152,8 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            // 2.3 U2: an Ask's hold lock widens the left wing by one slot (99.5). 2.3 N1: the right wing holds the
-            // time and the level meter, centred by an empty outer region (120 on a flat display).
-            NSSize(width: 405, height: 32)
+            // QA 0449: the three-control recording wing is 99.5 pt on both sides of the 185 pt core.
+            NSSize(width: 384, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -1156,7 +1155,8 @@ final class BarViewClickabilityTests: XCTestCase {
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
         NSPoint(
-            x: host.bounds.minX + 50,
+            x: (host.bounds.width - VoiceBarNotchContract.coreWidth) / 2
+                - VoiceBarNotchContract.compactCoreContentInset - 10,
             y: host.bounds.midY
         )
     }
@@ -1166,7 +1166,8 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.minX + 24, y: host.bounds.midY)
+        NSPoint(x: (host.bounds.width - VoiceBarNotchContract.coreWidth) / 2
+            - VoiceBarNotchContract.compactCoreContentInset - 10 - 26, y: host.bounds.midY)
     }
 
     /// T4/T7: Replay and the eye are one centred group; the terminal X sits one pitch (30 pt) to its right. The row

@@ -209,7 +209,8 @@ final class NotchShellCentredTests: XCTestCase {
             )
             XCTAssertEqual(
                 presentation.geometry.leadingWingWidth,
-                name == "transcript shown" ? fit : max(VoiceBarNotchContract.fixedWingWidth, fit),
+                name.hasPrefix("recording") ? max(VoiceBarNotchContract.recordingTrailingWingWidth, fit)
+                    : name == "transcript shown" ? fit : max(VoiceBarNotchContract.fixedWingWidth, fit),
                 "\(name): the leading wing is not the fixed wing for its \(controlCount) control(s)"
             )
         }

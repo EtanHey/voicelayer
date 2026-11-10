@@ -41,13 +41,11 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
             let textMinX = slot.coreInset + (VoiceBarRecordingWingLabel.width - text)
             XCTAssertGreaterThanOrEqual(textMinX - physicalEdge, 8, "\(time) keeps ≥ 8 pt from the real notch")
         }
-        // The meter is centred in the visible wing (from the notch edge to the outer edge), within 2 pt.
         let wing = p.geometry.trailingWingWidth
-        let meterMinX = slot.coreInset + VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.timeGap
-        XCTAssertEqual(meterMinX + WaveformLayout.viewportWidth / 2, (physicalEdge + wing) / 2, accuracy: 2)
-        XCTAssertEqual(meterMinX + WaveformLayout.viewportWidth + VoiceBarRecordingWingLabel.meterGap +
-                       VoiceBarRecordingWingLabel.outerRegionWidth + slot.outerInset, wing, accuracy: 0.001,
-                       "the regions fill the wing exactly")
+        XCTAssertEqual(wing, p.geometry.leadingWingWidth, "QA 0449: equal space either side of the notch")
+        let contentWidth = VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.recordingTimeGap + WaveformLayout.viewportWidth
+        XCTAssertEqual(slot.coreInset + contentWidth + slot.outerInset, wing, accuracy: 0.001,
+                       "the row fills the visible wing without an empty outer region")
         XCTAssertLessThanOrEqual(wing, VoiceBarNotchContract.morphCanvasWingCapacity, "inside the morph canvas")
         XCTAssertLessThanOrEqual(wing, 132)
     }
