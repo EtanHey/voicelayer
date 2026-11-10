@@ -264,6 +264,14 @@ struct TeleprompterAModel {
         return words.indices.contains(id) ? id : nil
     }
 
+    /// Availability follows the same table precedence and display mapping as focusWord.
+    func hasTiming(table: SpeechWordTable?) -> Bool {
+        if let table, let tokenOfWord, !table.words.isEmpty {
+            return tokenOfWord.contains { table.words.indices.contains($0) && table.words[$0] != nil }
+        }
+        return TeleprompterPlaybackPolicy.usesServerTimestamps(in: words)
+    }
+
     enum SeekTarget: Equatable { case word(utteranceID: String, index: Int), offset(Int) }
 
     func seekTarget(for word: Int, table: SpeechWordTable?) -> SeekTarget? {

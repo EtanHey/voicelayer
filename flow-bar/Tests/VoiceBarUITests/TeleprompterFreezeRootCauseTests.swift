@@ -31,7 +31,7 @@ final class TeleprompterFreezeRootCauseTests: XCTestCase {
         return event
     }
 
-    func testREDV36TimingNoticeAgreesWithTheTableThatHighlightsWords() throws {
+    func testV36TimingNoticeAgreesWithTheTableThatHighlightsWords() throws {
         let state = makeState()
         state.handleEvent(speaking())
         state.handleEvent([
@@ -42,12 +42,29 @@ final class TeleprompterFreezeRootCauseTests: XCTestCase {
         let table = try XCTUnwrap(state.speechWords)
         XCTAssertEqual(table.wordIndex(atMilliseconds: 1200), 1)
         XCTAssertTrue(state.isTeleprompterScrubSeekable)
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = true
-        XCTExpectFailure("V3-6: timing notice belongs to the timing-affordance lane", options: options) {
-            XCTAssertNil(TeleprompterPlaybackScrubBar(state: state).timingNotice,
-                         "The active word table supplies timing even without a legacy subtitle event")
-        }
+        XCTAssertNil(TeleprompterPlaybackScrubBar(state: state).timingNotice,
+                     "The active word table supplies timing even without a legacy subtitle event")
+    }
+
+    func testTimingNoticeTracksReadIdentityAndDoesNotAuthorizeMissingAudio() {
+        let state = makeState()
+        var event = speaking()
+        event.removeValue(forKey: "duration_ms")
+        event.removeValue(forKey: "chunk_duration_ms")
+        state.handleEvent(event)
+        let timing: [String: Any] = [
+            "type": "speech_words", "utteranceId": "read", "wordOffset": 0,
+            "words": [["text": "One", "startMs": 0, "endMs": 900]],
+        ]
+        state.handleEvent(timing)
+        XCTAssertFalse(state.isTeleprompterScrubSeekable, "Timing cannot create seekable audio")
+        state.handleEvent(speaking())
+        state.handleEvent(timing)
+        XCTAssertNil(TeleprompterPlaybackScrubBar(state: state).timingNotice)
+        state.handleEvent(speaking(player: "new", utterance: "new-read", request: "new-request"))
+        state.handleEvent(timing)
+        XCTAssertEqual(TeleprompterPlaybackScrubBar(state: state).timingNotice, "Word timing unavailable",
+                       "A stale table cannot supply timing for the new read")
     }
 
     func testV37AcceptedReadbackSeekMustAdoptItsNewPlayer() {
@@ -135,18 +152,18 @@ final class TeleprompterFreezeRootCauseTests: XCTestCase {
         XCTAssertTrue(state.isTeleprompterReadback)
     }
 
-    func testREDV37PausedScrubberMustNotOfferARejectedSeek() {
+    func testV37PausedScrubberMustNotOfferARejectedSeek() {
         let state = makeState()
         state.handleEvent(speaking())
         state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "original",
                            "generation": 2, "offset_ms": 1000, "pause_owner": "user"])
         XCTAssertTrue(state.isPlaybackPaused)
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = true
-        XCTExpectFailure("V3-7: paused scrubber gate belongs to the timing-affordance lane", options: options) {
-            XCTAssertFalse(state.isTeleprompterScrubSeekable,
-                           "seekPlayback explicitly rejects paused reads; the slider must honor that gate")
-        }
+        XCTAssertFalse(state.isTeleprompterScrubSeekable,
+                       "seekPlayback explicitly rejects paused reads; the slider must honor that gate")
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.seek(offsetMs: 500)
+        XCTAssertTrue(commands.isEmpty, "A drag begun before pause must not send after pause")
     }
 
     func testV37LiveSeekWithCurrentSubmissionAdoptsTheReplacement() {

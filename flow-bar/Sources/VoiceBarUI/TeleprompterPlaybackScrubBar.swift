@@ -15,10 +15,12 @@ struct TeleprompterPlaybackScrubBar: View {
     }
 
     var timingNotice: String? {
-        let words = TeleprompterContentModel.words(text: state.statusText, wordBoundaries: state.wordBoundaries)
-        return state.isTeleprompterPlaybackReady && !words.contains {
-            TeleprompterSeekPolicy.offset(for: $0, isReadback: false) != nil
-        } ? "Word timing unavailable" : nil
+        let model = TeleprompterAModelCache().model(
+            text: state.teleprompterText ?? "", boundaries: state.teleprompterWordBoundaries,
+            blocks: state.teleprompterDisplayBlocks, complete: state.teleprompterHasCompleteDisplay,
+            column: TeleprompterA.columnWidth)
+        return state.isTeleprompterPlaybackReady && !model.hasTiming(table: state.currentSpeechTiming)
+            ? "Word timing unavailable" : nil
     }
 
     var control: SettingsPlaybackScrubBar {

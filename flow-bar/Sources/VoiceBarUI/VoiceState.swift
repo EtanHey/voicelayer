@@ -2565,7 +2565,7 @@ public final class VoiceState {
     }
 
     public var isTeleprompterScrubSeekable: Bool {
-        isTeleprompterPlaybackReady || (isTeleprompterReadback && retainedReadbackID != nil &&
+        (isTeleprompterPlaybackReady && !isPlaybackPaused) || (isTeleprompterReadback && retainedReadbackID != nil &&
             (retainedPlaybackDurationMilliseconds ?? 0) > 0)
     }
 
@@ -2585,6 +2585,11 @@ public final class VoiceState {
 
     /// U5: the daemon's word table for the utterance on screen (nil from a daemon without word timing).
     public private(set) var speechWords: SpeechWordTable?
+    /// Only timing owned by the read on screen can suppress its unavailable notice.
+    var currentSpeechTiming: SpeechWordTable? {
+        speechWords?.utteranceID == currentUtteranceID ? speechWords : nil
+    }
+
     /// U5: Teleprompter A lines (3–8) from its handle; app session only (SPEC open question 4).
     /// Lane B: the lines the read on screen wraps to at the current column (nil until the teleprompter measured it).
     public private(set) var teleprompterTextLineCount: Int?
@@ -2616,7 +2621,8 @@ public final class VoiceState {
     }
 
     public func seek(offsetMs: Int) {
-        guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0 else { return }
+        guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0,
+              mode != .speaking || !isPlaybackPaused else { return }
         var command: [String: Any] = ["cmd": "seek", "offset_ms": offsetMs]
         if isTeleprompterReadback {
             guard let retainedReadbackID else { showConfirmation("Replay prefix audio unavailable"); return }

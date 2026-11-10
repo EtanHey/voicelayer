@@ -13,10 +13,10 @@
     "formal/teleprompter-a-seek/PausedSeekMutant.cfg": "3ee2506468c002c91ebbb5a7b635eca14af857345820a1a3a58ea8b0801eb562",
     "formal/teleprompter-a-seek/Fixed.cfg": "b63f79f479524afc3793227d14e141a0954f45757d9c441d62d37b3a7b079b31",
     "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "49ee1974b395bd75976260de947b5b7f8effe9e7aeb796e93b75934ae22b7969",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "542b7b6587d2a16e4c7a525c66e31d0c145804eb14c796615c72ac6933c9dfbf",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "a2ecf2f952df9ae8ca8a2666ee8c7a1d0e3e80e836556a4fb68ebd24779dfbe1",
     "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift": "75db0df217618e22a506fc2019c368c2eab47affc81848cfdd3c83aae8a0c67b",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift": "a92cd5e046671c21ed190f1b35506126f858786685eb71bc0971913de20cd3cd",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "76b9eaad0710c306e21847d6bbfab8d21d4fd9efb511eb35b72ca05083d909e0",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift": "f186f29e10e4da1bfe84e7e0912d5d811d7eac784ff18ce5cbb55a8a97ed7e8e",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "a03c5aaee9f802ad47d2e2d24a932f5fc161c4742c4b030975721bf3fc56bc61",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
