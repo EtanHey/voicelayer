@@ -65,16 +65,28 @@ final class TeleprompterFreezeRootCauseTests: XCTestCase {
         XCTAssertEqual(state.speechWords?.utteranceID, "readback-1")
     }
 
-    func testV357ReturningFromPreviousReadRestoresTheHeldPresentation() {
+    func testV357ReturningFromPreviousReadRestoresTheHeldPresentation() { assertPreviousReturn() }
+    func testPreviousReturnAfterOptimisticStop() { assertPreviousReturn(exit: "stop") }
+    func testPreviousReturnAfterLegacyShortReadIdle() { assertPreviousReturn(exit: "idle") }
+    func testPreviousReturnOfAPreparingRead() { assertPreviousReturn(preparing: true) }
+
+    private func assertPreviousReturn(exit: String = "completed", preparing: Bool = false) {
         let state = makeState()
-        state.handleEvent(speaking())
+        var initial = speaking()
+        if preparing {
+            initial.removeValue(forKey: "playback_id")
+            initial["long_read"] = ["id": "read", "chunk_index": 0, "preparing": true]
+        }
+        state.handleEvent(initial)
         state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "original",
                            "generation": 2, "offset_ms": 1000, "pause_owner": "user"])
         // Previous-read playback changes the surface while retaining the current
         // read in the daemon. Its completion returns that read paused.
         var previous = speaking(player: "previous", utterance: "previous-read", request: nil)
-        previous["previous_read_hold"] = ["playback_id": "original", "generation": 2]
+        previous["previous_read_hold"] = ["playback_id": "original", "generation": 2, "utterance_id": "read"]
         state.handleEvent(previous)
+        if exit == "stop" { state.stop() }
+        if exit == "idle" { state.handleEvent(["type": "state", "state": "idle", "source": "playback"]) }
         state.handleEvent(["type": "playback_outcome", "playback_id": "previous", "status": "completed"])
         // The daemon now publishes a correlated complete presentation before its pause.
         var returned = speaking(offset: 1000)
@@ -97,7 +109,11 @@ final class TeleprompterFreezeRootCauseTests: XCTestCase {
 
     func testPreviousReturnCannotReplaceANewerReadOrAuthorizeForeignPause() {
         let state = makeState()
-        state.handleEvent(speaking(player: "newer", utterance: "newer-read"))
+        state.handleEvent(speaking())
+        var previous = speaking(player: "previous", request: nil)
+        previous["previous_read_hold"] = ["playback_id": "original", "generation": 1]
+        state.handleEvent(previous)
+        state.handleEvent(speaking(player: "newer", utterance: "newer-read", request: "newer-request"))
         var staleReturn = speaking(player: "held", request: "held-return")
         staleReturn["previous_read_return"] = ["from_playback_id": "previous", "offset_ms": 1000, "pause_owner": "user"]
         state.handleEvent(staleReturn)
@@ -105,6 +121,9 @@ final class TeleprompterFreezeRootCauseTests: XCTestCase {
                            "generation": 2, "offset_ms": 1000, "pause_owner": "user"])
         XCTAssertEqual(state.speechWords?.utteranceID, "newer-read")
         XCTAssertFalse(state.isPlaybackPaused)
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.handleEvent(staleReturn)
+        XCTAssertEqual(state.mode, .idle, "A superseded loan cannot return after the newer read ends")
     }
 
     func testV35OrdinaryPlaybackIdleFinishesTheClock() {

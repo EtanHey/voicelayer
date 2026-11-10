@@ -2014,7 +2014,7 @@ class PlaybackQueueManager {
 
   previousHeldIdentity(): StateEvent["previous_read_hold"] {
     const job = this.previousHeld?.job;
-    return job ? { playback_id: job.id, generation: job.lifecycle.generation } : undefined;
+    return job ? { playback_id: job.id, generation: job.lifecycle.generation, utterance_id: job.wordTimeline.utteranceId } : undefined;
   }
 
   /** The replay is over: the held read comes back paused at its word. */

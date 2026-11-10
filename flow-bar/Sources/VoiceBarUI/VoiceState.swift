@@ -417,6 +417,7 @@ public final class VoiceState {
                 if selectionCaptureInFlight { selectionCaptureCancelled = true }
             }
             if mode == .disconnected {
+                previousReadPresentation = nil
                 invalidateSelectionSpeechIdentity()
                 clearReadQueue()
             } else if mode != .speaking, !keepsSelectionReadThroughCapture {
@@ -2797,7 +2798,7 @@ public final class VoiceState {
         return generation.map { $0 >= currentPlayback.generation } ?? true
     }
 
-    private var previousReadPresentation: (id: String, read: ReadSnapshot)?
+    private var previousReadPresentation: (id: String, generation: Int, borrower: String, request: String?, read: ReadSnapshot)?
 
     /// CLICK2: why `ownsPlaybackEvent` refused an event, in allowlisted words.
     private func playbackEventDropReason(_ event: [String: Any]) -> String {
@@ -3564,30 +3565,33 @@ public final class VoiceState {
                 if idleSource == "recording" { refreshModelsBusy() }
             case "speaking":
                 let previousHold = event["previous_read_hold"] as? [String: Any]
-                let lendsPresentation = previousHold?["playback_id"] as? String == currentPlayback?.id
-                    && currentPlayback != nil && mode == .speaking
-                    && (previousHold?["generation"] as? Int).map { $0 >= currentPlayback!.generation } == true
+                let heldID = previousHold?["playback_id"] as? String
+                let heldGeneration = previousHold?["generation"] as? Int
+                let lendsPresentation = mode == .speaking && heldID != nil
+                    && ((currentPlayback != nil && heldID == currentPlayback?.id)
+                        || (currentUtteranceID != nil && previousHold?["utterance_id"] as? String == currentUtteranceID))
+                    && heldGeneration.map { $0 > 0 && $0 >= (currentPlayback?.generation ?? 0) } == true
                 let previousReturn = event["previous_read_return"] as? [String: Any]
                 if let previousReturn {
-                    // Only the player borrowing this surface can return it. A foreign pause
-                    // or a delayed return after a newer read still cannot change ownership.
-                    guard let currentPlayback, mode == .speaking,
-                          previousReturn["from_playback_id"] as? String == currentPlayback.id,
+                    // The saved loan survives Stop/legacy idle, but never a superseding presentation.
+                    guard let held = previousReadPresentation, mode == .speaking || mode == .idle,
+                          mode == .idle || currentPlayback?.id == held.borrower,
+                          previousReturn["from_playback_id"] as? String == held.borrower,
                           previousReturn["pause_owner"] as? String == "user",
                           let offset = previousReturn["offset_ms"] as? Int, offset >= 0,
-                          let id = event["playback_id"] as? String, id != currentPlayback.id,
-                          let generation = event["generation"] as? Int, generation > 0 else {
+                          event["playback_id"] as? String == held.id,
+                          event["request_id"] as? String == held.request,
+                          let generation = event["generation"] as? Int, generation >= held.generation else {
                         logSpeakingDrop(event, reason: "wrong-return-owner")
                         return
                     }
+                    // Optimistic Stop can retire this unended loan; only its exact return reactivates it.
+                    if let request = held.request { selectionRetiredRequestIDs.removeAll { $0 == request } }
                 }
                 let requestID = event["request_id"] as? String
                 if let requestID, selectionRetiredRequestIDs.contains(requestID) {
                     logSpeakingDrop(event, reason: "retired-request")
                     return
-                }
-                if lendsPresentation, let currentPlayback {
-                    previousReadPresentation = (currentPlayback.id, currentReadSnapshot())
                 }
                 if let requestID { selectionUnacknowledgedRequestIDs.remove(requestID) }
                 let submission = requestID.flatMap { selectionSubmissions[$0] }
@@ -3597,6 +3601,12 @@ public final class VoiceState {
                 if let submission, submission.order < selectionReceiptOrder {
                     logSpeakingDrop(event, reason: "older-receipt")
                     return
+                }
+                if lendsPresentation, let heldID, let heldGeneration, let borrower = event["playback_id"] as? String {
+                    previousReadPresentation = (heldID, heldGeneration, borrower, selectionReadRequestID, currentReadSnapshot())
+                } else if previousReturn == nil, let held = previousReadPresentation,
+                          event["playback_id"] as? String != held.borrower, event["preserves_paused_read"] as? Bool != true {
+                    previousReadPresentation = nil
                 }
                 if event["preserves_paused_read"] as? Bool != true { askParkedRead = nil }
                 if let submission {

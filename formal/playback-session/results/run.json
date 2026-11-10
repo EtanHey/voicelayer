@@ -29,8 +29,8 @@
     "src/playback/session.ts": "84ddaf10eec452305703fc2b9f425aaf3bd253a15590471fa35447720226022c",
     "src/playback/ledger.ts": "d57b969ab6147f269362dae68faad29ff7675338003366e6b473c57a6e3ea166",
     "src/__tests__/playback-session.test.ts": "37911a0c7f01cbc95f178bbb8339ac9a34183d67eb9fc30f6b0c94fab128a0a0",
-    "src/tts.ts": "cc4e551ba64e9a0bf6950981f45e6cebbff0673e512f0df14db6977bd0120ebe",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "44019826f6264e045678e5037045b80369cf6e1a4437fc2ebe3dd8605ce5ee06",
+    "src/tts.ts": "d955005599c2a2e4cf565ce4c6ee4365d1d2ee80c42b3645de1840ddd9825e2e",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "542b7b6587d2a16e4c7a525c66e31d0c145804eb14c796615c72ac6933c9dfbf",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
@@ -201,8 +201,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 118187,
-      "distinct": 40547
+      "generated": 133067,
+      "distinct": 45313
     },
     "AskCancelsReadMutant": {
       "role": "mutant",

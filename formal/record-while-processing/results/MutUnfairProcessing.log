@@ -3,8 +3,8 @@
   "kind": "temporal",
   "target": "ProcessingSettles",
   "status": "EXPECTED_FAIL",
-  "generated": 182635,
-  "distinct": 8548,
+  "generated": 224631,
+  "distinct": 10191,
   "trace": [
     "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"init\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"none\" ]",
     "s = [ stage |-> [A |-> \"recording\", B |-> \"fresh\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"socket\",\n  target |-> \"A\",\n  cancelToken |-> \"none\",\n  saved |-> {},\n  cancelRequested |-> {},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"none\",\n  reply |-> \"accept\" ]",
@@ -15,6 +15,6 @@
     "s = [ stage |-> [A |-> \"transcribing\", B |-> \"cancelled\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"click\",\n  target |-> \"B\",\n  cancelToken |-> \"B\",\n  saved |-> {\"A\", \"B\"},\n  cancelRequested |-> {\"B\"},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {\"A\"},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 2, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"B\",\n  reply |-> \"accept\" ]",
     "s = [ stage |-> [A |-> \"transcribing\", B |-> \"cancelled\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"tick\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {\"A\", \"B\"},\n  cancelRequested |-> {\"B\"},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {\"A\"},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 1, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"B\",\n  reply |-> \"accept\" ]",
     "s = [ stage |-> [A |-> \"transcribing\", B |-> \"cancelled\"],\n  guard |-> \"none\",\n  cooldown |-> 0,\n  event |-> \"tick\",\n  target |-> \"none\",\n  cancelToken |-> \"none\",\n  saved |-> {\"A\", \"B\"},\n  cancelRequested |-> {\"B\"},\n  talking |-> [A |-> FALSE, B |-> FALSE],\n  spoke |-> {\"A\"},\n  silence |-> [A |-> 0, B |-> 0],\n  elapsed |-> [A |-> 0, B |-> 0],\n  deliveries |-> [A |-> 0, B |-> 0],\n  floor |-> [A |-> 0, B |-> 0],\n  ring |-> FALSE,\n  requestId |-> \"B\",\n  reply |-> \"accept\" ]",
-    "Finished checking temporal properties in 00s at 2026-11-10 01:42:17"
+    "Finished checking temporal properties in 00s at 2026-11-10 02:26:25"
   ]
 }

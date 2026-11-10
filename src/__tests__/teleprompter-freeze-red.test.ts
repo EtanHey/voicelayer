@@ -99,12 +99,13 @@ it("V3-5/7: previous-read return must restore the held read's presentation", asy
   players.values[2].resolve(0);
   await fixtureCheckpoint();
   const returned = events.slice(beginning);
+  console.error("previous-read return sequence:", returned.map(event => `${event.type}:${event.state ?? ""}`).join(","));
   expect(returned.some(event => event.type === "playback_state" && event.playback_id === held.id && event.state === "paused")).toBe(true);
   expect(returned.some(event => event.playback_id === held.id && event.text === "Second read"),
     "the current screen still contains First read; a bare pause for another player is rejected as wrong-owner").toBe(true);
   const presentation = returned.find(event => event.previous_read_return);
   const replay = events.filter(event => event.state === "speaking" && event.playback_id !== held.id).at(-1);
-  expect(replay.previous_read_hold).toEqual({ playback_id: held.id, generation: 2 });
+  expect(replay.previous_read_hold).toEqual({ playback_id: held.id, generation: 2, utterance_id: heldEdge.utteranceId });
   expect(presentation).toMatchObject({ utteranceId: heldEdge.utteranceId, request_id: "held-submission",
     generation: 2, duration_ms: 2000, chunk_duration_ms: 2000, playback_offset_ms: 1000,
     previous_read_return: { from_playback_id: replay.playback_id, offset_ms: 1000, pause_owner: "user" } });
