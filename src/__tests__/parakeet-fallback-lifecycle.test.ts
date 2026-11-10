@@ -7,14 +7,20 @@ test("owned one-shot fallback abort waits for exit and retains raw partial provi
   const root = testTmp("parakeet-cli-stop"); mkdirSync(root, { recursive: true });
   const cli = root + "/cli", marker = root + "/started.json";
   writeFileSync(cli, `#!${process.execPath}\nimport { writeFileSync, writeSync } from 'fs';\nwriteSync(1,'raw partial provider text');\nwriteFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid,args:process.argv.slice(2)}));\nsetInterval(()=>{},1000);\n`, { mode: 0o700 });
+  const savedModel = process.env.QA_VOICE_WHISPER_MODEL;
+  const model = root + "/fake-model";
+  writeFileSync(model, "isolated synthetic weights");
+  process.env.QA_VOICE_WHISPER_MODEL = model;
   const controller = new AbortController();
   const backend = new WhisperCppBackend({ signal: controller.signal, noVocabularyPrompt: true });
-  Object.assign(backend, { binaryPath: cli, modelPath: root + "/fake-model" });
+  Object.assign(backend, { binaryPath: cli });
   // This fixture must not resolve or probe the host's brew/engine binaries.
   const probe = spyOn(Bun, "spawnSync").mockImplementation(() => ({ exitCode: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }) as ReturnType<typeof Bun.spawnSync>);
-  const result = backend.transcribe(root + "/input.wav", { language: "he" }).then(value => ({ value, error: null }), error => ({ value: null, error }));
+  let earlyError: unknown;
+  const result = backend.transcribe(root + "/input.wav", { language: "he" }).then(value => ({ value, error: null }), error => { earlyError = error; return { value: null, error }; });
   try {
     for (let n = 0; n < 200 && !existsSync(marker); n++) await Bun.sleep(5);
+    if (!existsSync(marker)) console.error("Synthetic CLI did not start:", earlyError);
     expect(existsSync(marker)).toBe(true);
     const invocation = JSON.parse(readFileSync(marker, "utf8"));
     expect(invocation.args).not.toContain("--prompt");
@@ -24,5 +30,9 @@ test("owned one-shot fallback abort waits for exit and retains raw partial provi
     expect(settled.value).toBeNull(); expect(settled.error).toBeInstanceOf(WhisperCliError);
     expect(settled.error.attempt.stdout).toBe("raw partial provider text");
     expect(settled.error.attempt.exitCode).not.toBe(0);
-  } finally { controller.abort(); await result; probe.mockRestore(); }
+  } finally {
+    controller.abort(); await result; probe.mockRestore();
+    if (savedModel === undefined) delete process.env.QA_VOICE_WHISPER_MODEL;
+    else process.env.QA_VOICE_WHISPER_MODEL = savedModel;
+  }
 });

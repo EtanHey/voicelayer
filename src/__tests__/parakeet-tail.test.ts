@@ -29,7 +29,7 @@ const nativeText = "Keep every raw word and the unfinished fu… no, the full th
 const native: ParakeetResponse = { text: nativeText, complete: true, input_frames: 79 * 16000,
   covered_frames: 79 * 16000, sample_rate: 16000, last_token_end_s: 26, inference_s: 0.1, language: null };
 const root = testTmp("lane-k-tail"), path = join(root, "audio.wav");
-const keys = ["VOICELAYER_STT_OUTRO_GATE", "QA_VOICE_WHISPER_LANG", "LANE_K_JSON", "LANE_K_ARGS"] as const;
+const keys = ["VOICELAYER_STT_OUTRO_GATE", "QA_VOICE_WHISPER_LANG", "LANE_K_JSON", "LANE_K_ARGS", "QA_VOICE_WHISPER_MODEL"] as const;
 let saved: (string | undefined)[];
 beforeEach(() => {
   mkdirSync(root, { recursive: true }); writeFileSync(path, wav());
@@ -82,7 +82,9 @@ console.log("[00:00:00.000 --> 00:00:26.000] stdout is not the JSON text");\n`);
       freshSpeechProbabilities: quiet.map((p, i) => freshSpeech && i * 0.032 >= 70 ? 0.9 : p) });
   } });
   Object.defineProperty(backend, "binaryPath", { value: binary });
-  Object.defineProperty(backend, "modelPath", { value: join(root, "fixture.bin") });
+  const model = join(root, "fixture.bin");
+  writeFileSync(model, "isolated synthetic weights");
+  process.env.QA_VOICE_WHISPER_MODEL = model;
   return { backend, json, argsPath, captionCalls: () => captionCalls };
 }
 
