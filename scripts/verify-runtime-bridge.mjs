@@ -18,7 +18,8 @@ const connections = new Set();
 const clients = [];
 const receipt = { status: 'RUNNING', stages: [], bridge, liveSocket };
 const save = () => writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { mode: 0o600 });
-let heldId, releaseObserved, forwarded = 0;
+let heldId, releaseObserved, holdNext = false, forwarded = 0;
+process.umask(0o077);
 const proxy = createServer(downstream => {
   const upstream = createConnection(liveSocket);
   for (const socket of [upstream, downstream]) {
@@ -34,7 +35,7 @@ const proxy = createServer(downstream => {
     while ((newline = requests.indexOf('\n')) >= 0) {
       const line = requests.slice(0, newline); requests = requests.slice(newline + 1);
       const frame = JSON.parse(line);
-      if (frame.method === 'ping') { heldId = frame.id; forwarded++; }
+      if (frame.method === 'tools/list' && (holdNext || frame.id === heldId)) { heldId = frame.id; holdNext = false; forwarded++; }
       upstream.write(line + '\n');
     }
   });
@@ -43,7 +44,7 @@ const proxy = createServer(downstream => {
     let newline;
     while ((newline = replies.indexOf('\n')) >= 0) {
       const line = replies.slice(0, newline); replies = replies.slice(newline + 1);
-      if (JSON.parse(line).id === heldId && heldId !== undefined) { releaseObserved?.(); continue; }
+      if (JSON.parse(line).id === heldId && heldId !== undefined) { if (JSON.parse(line).result?.tools) releaseObserved?.(); continue; }
       downstream.write(line + '\n');
     }
   });
@@ -54,12 +55,22 @@ async function session(socket) {
   const client = new Client({ name: 'L8-runtime-acceptance', version: '1' });
   clients.push(client);
   await client.connect(transport);
-  return { client, transport, pid: transport.pid };
+  return { client, transport, pid: transport.pid, preSendRefusals: 0 };
 }
 async function tools(session) {
-  const result = await session.client.listTools({}, { timeout: 15000 });
-  if (!result.tools.length || session.pid !== session.transport.pid) throw Error('bridge identity/tool listing failed');
-  return { bridgePid: session.pid, toolCount: result.tools.length };
+  const deadline = performance.now() + 15000;
+  for (;;) {
+    try {
+      const result = await session.client.listTools({}, { timeout: 15000 });
+      if (!result.tools.length || session.pid !== session.transport.pid) throw Error('bridge identity/tool listing failed');
+      return { bridgePid: session.pid, toolCount: result.tools.length, preSendRefusals: session.preSendRefusals };
+    } catch (error) {
+      // These requests were explicitly NOT SENT. Never retry an interrupted/executed request.
+      if (error.code !== -32000 || !error.message.includes('request was not sent') || performance.now() >= deadline) throw error;
+      session.preSendRefusals++;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
 }
 async function command(argv) {
   await new Promise((resolve, reject) => {
@@ -74,13 +85,14 @@ try {
   receipt.stages.push({ phase: 'baseline', ...await tools(direct), latchedBridgePid: latched.pid }); save();
   for (const [index, argv] of commands.entries()) {
     const observed = new Promise(resolve => { releaseObserved = resolve; });
-    const pending = latched.client.ping({ timeout: 120000 }).then(() => ({ unexpectedSuccess: true }), error => ({ code: error.code }));
-    await Promise.race([observed, new Promise((_, reject) => setTimeout(() => reject(Error('live ping response latch timed out')), 10000))]);
+    heldId = undefined; holdNext = true;
+    const pending = latched.client.listTools({}, { timeout: 120000 }).then(() => ({ unexpectedSuccess: true }), error => ({ code: error.code }));
+    await Promise.race([observed, new Promise((_, reject) => setTimeout(() => reject(Error('live tool-list response latch timed out')), 10000))]);
     await command(argv);
     const interrupted = await pending;
     if (interrupted.code !== -32000 || forwarded !== index + 1) throw Error('interrupted request semantics failed');
     receipt.stages.push({ phase: `replacement-${index + 1}`, ...await tools(direct),
-      latched: await tools(latched), interruptedCode: interrupted.code, forwardedPingCount: forwarded }); save();
+      latched: await tools(latched), interruptedCode: interrupted.code, forwardedHeldRequestCount: forwarded }); save();
   }
   receipt.status = 'PASS'; save();
 } catch (error) {
