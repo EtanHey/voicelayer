@@ -367,10 +367,6 @@ public struct BarView: View {
     /// The Settings drawer's data and actions. Without it the gear keeps opening the Settings window (2.3).
     private let settingsDrawer: NotchSettingsDrawerContext?
     @State private var modalObserver: NotchModalObserver?
-    /// The spot the Settings drawer was last opened at (0510 N9: the microphone control opens General at the
-    /// microphone priority list). Its id changes per request so the pane scrolls there again.
-    @State private var settingsRequest: SettingsTabRequest?
-    @State private var settingsRequestID = 0
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     /// The History panel is on screen (open, opening, closing or being pulled). The window keeps the panel's size
@@ -512,7 +508,7 @@ public struct BarView: View {
         if isSettingsDrawerOpen {
             surface.send(.dismiss(.toggle))
         } else {
-            settingsRequest = nil
+            surface.settingsRequest = nil
             surface.send(.openSettings(.general))
         }
     }
@@ -1583,7 +1579,7 @@ public struct BarView: View {
         if notchPresentation.visualState == .history, let tab = settingsTabShown, let settingsDrawer {
             VStack(spacing: 0) {
                 NotchSettingsDrawer(
-                    selectedTab: tab, appearance: notchAppearance, context: settingsDrawer, request: settingsRequest,
+                    selectedTab: tab, appearance: notchAppearance, context: settingsDrawer, request: surface.settingsRequest,
                     history: {
                         AnyView(historyPanelContent(listHeight: NotchSettingsDrawerPresentation.historyListHeight)
                             .padding(.top, NotchHistoryMorph.listTopInset))
@@ -2069,15 +2065,15 @@ public struct BarView: View {
             if isMicrophoneSettingsOpen {
                 surface.send(.dismiss(.toggle))
             } else {
-                settingsRequestID &+= 1
-                settingsRequest = SettingsTabRequest(tab: .general, focus: .microphonePriority, id: settingsRequestID)
+                surface.settingsRequest = SettingsTabRequest(tab: .general, focus: .microphonePriority,
+                    id: (surface.settingsRequest?.id ?? 0) + 1)
                 surface.send(.openSettings(.general))
             }
         }
     }
 
     private var isMicrophoneSettingsOpen: Bool {
-        surface.drawer == .settings(.general) && settingsRequest?.focus == .microphonePriority
+        surface.drawer == .settings(.general) && surface.settingsRequest?.focus == .microphonePriority
     }
 
     /// Tests only: mount with the notch History panel already open.

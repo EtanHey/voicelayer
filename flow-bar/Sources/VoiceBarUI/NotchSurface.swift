@@ -208,6 +208,8 @@ public struct NotchSurfaceMachine: Equatable, Hashable, Sendable {
 @Observable
 public final class NotchSurfaceModel {
     public private(set) var machine = NotchSurfaceMachine()
+    /// Tab/focus request shared by app menu actions and the drawer's own controls.
+    public var settingsRequest: SettingsTabRequest?
     /// Every transition, in order (tests, the UIE2E host's receipts). Bounded.
     public private(set) var hideGeneration = 0
     /// Invalidates pointer gestures synchronously, before SwiftUI observes a dismissal.

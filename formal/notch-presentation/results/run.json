@@ -32,12 +32,12 @@
     "formal/notch-presentation/Fixed.cfg": "87d27589a3cf2adf8e4c1e7652b70d9826bebb861b8a406e59db80e09e559029",
     "formal/notch-presentation/OldQuitCause.cfg": "6c6fc8f33a06e3fd7babba4d98b5e7cb980fd966daf42659204397f0424a80b6",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "71aa8297b9c50760d8c91c25d4faf502261f57d78dedcc2c8a869a643bd16e2f",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "e2f80afef0ae06b066730a6e1d4159574241a9222458d190d2e8d6c6e2af1154",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "56b27fd8729ad4817a8b6d8fbc30c1eb91b33660b3112cef03a4946aa7dc03d6",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "192998017375294a13990c9a38cf4c35daf51d8c6255e56489591613f5028ab0",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "73eec828925057ec6464eb50d29995c839962ab8498b0cb91654da7993ae6e7e",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "8fcb39b20215640fd46e80494b97c6bf244a7035a14897fc08c26dc65741b35f",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "33110a93200fb5039d08abaa9b32e7df9508c77b7725fe7942d5c4ddc7c6ea30",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "9f53c9ed233fe111285fec04ae3bbff67821ae88b667e36054500dd6f2744b3f",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "0057466652425e7468359c365d14865d3142579739dd9ff728e08d4f2a19f10d",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e23414d8b9dce29b38292f2ab265a52d2a38fc1839e0fdc916c813455a453b3e",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "142dee58e0378ba970a3372160a5f64c269091e408e6019043b88b74a7cbd873",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "732365ac74fb1da0196ef7aa9c3cbc07646f409850363c8dd111d0865e5ce268",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
@@ -274,8 +274,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 188179,
-      "distinct": 30966
+      "generated": 148321,
+      "distinct": 27008
     },
     "MutTypedTab": {
       "role": "mutant",
