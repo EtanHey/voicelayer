@@ -15,10 +15,21 @@ struct TeleprompterPlaybackScrubBar: View {
     }
 
     var timingNotice: String? {
-        let words = TeleprompterContentModel.words(text: state.statusText, wordBoundaries: state.wordBoundaries)
-        return state.isTeleprompterPlaybackReady && !words.contains {
-            TeleprompterSeekPolicy.offset(for: $0, isReadback: false) != nil
-        } ? "Word timing unavailable" : nil
+        guard state.isTeleprompterPlaybackReady else { return nil }
+        let text = state.teleprompterText ?? ""
+        let hasTiming: Bool
+        if let table = state.currentSpeechTiming, !table.words.isEmpty {
+            let tokens = TeleprompterContentModel.displayTokens(text)
+            hasTiming = table.words.enumerated().contains { index, word in
+                guard let word, tokens.indices.contains(index) else { return false }
+                return word.text == tokens[index]
+            }
+        } else {
+            // An empty table is the placeholder before any speech_words event arrives.
+            let words = TeleprompterContentModel.words(text: text, wordBoundaries: state.teleprompterWordBoundaries)
+            hasTiming = TeleprompterPlaybackPolicy.usesServerTimestamps(in: words)
+        }
+        return hasTiming ? nil : "Word timing unavailable"
     }
 
     var control: SettingsPlaybackScrubBar {

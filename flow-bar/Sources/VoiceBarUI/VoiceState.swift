@@ -428,6 +428,7 @@ public final class VoiceState {
                 if selectionCaptureInFlight { selectionCaptureCancelled = true }
             }
             if mode == .disconnected {
+                previousReadPresentation = nil
                 invalidateSelectionSpeechIdentity()
                 clearReadQueue()
             } else if mode != .speaking, !keepsSelectionReadThroughCapture {
@@ -1470,8 +1471,8 @@ public final class VoiceState {
     }
 
     /// Current playback owns only its acknowledged identity, never other pending submissions.
-    private func clearCurrentSelectionReadIdentity(advanceEpoch: Bool = false) {
-        if let id = selectionReadRequestID {
+    private func clearCurrentSelectionReadIdentity(advanceEpoch: Bool = false, retireCurrent: Bool = true) {
+        if retireCurrent, let id = selectionReadRequestID {
             retireSelectionRequest(id)
             if selectionSpeechRequestID == id {
                 selectionSpeechRequestID = nil
@@ -2657,7 +2658,7 @@ public final class VoiceState {
     }
 
     public var isTeleprompterScrubSeekable: Bool {
-        isTeleprompterPlaybackReady || (isTeleprompterReadback && retainedReadbackID != nil &&
+        (isTeleprompterPlaybackReady && !isPlaybackPaused) || (isTeleprompterReadback && retainedReadbackID != nil &&
             (retainedPlaybackDurationMilliseconds ?? 0) > 0)
     }
 
@@ -2677,6 +2678,11 @@ public final class VoiceState {
 
     /// U5: the daemon's word table for the utterance on screen (nil from a daemon without word timing).
     public private(set) var speechWords: SpeechWordTable?
+    /// Only timing owned by the read on screen can suppress its unavailable notice.
+    var currentSpeechTiming: SpeechWordTable? {
+        speechWords?.utteranceID == currentUtteranceID ? speechWords : nil
+    }
+
     /// U5: Teleprompter A lines (3–8) from its handle; app session only (SPEC open question 4).
     /// Lane B: the lines the read on screen wraps to at the current column (nil until the teleprompter measured it).
     public private(set) var teleprompterTextLineCount: Int?
@@ -2708,7 +2714,8 @@ public final class VoiceState {
     }
 
     public func seek(offsetMs: Int) {
-        guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0 else { return }
+        guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0,
+              mode != .speaking || !isPlaybackPaused else { return }
         var command: [String: Any] = ["cmd": "seek", "offset_ms": offsetMs]
         if isTeleprompterReadback {
             guard let retainedReadbackID else { showConfirmation("Replay prefix audio unavailable"); return }
@@ -2889,6 +2896,8 @@ public final class VoiceState {
         guard playbackID == currentPlayback.id else { return false }
         return generation.map { $0 >= currentPlayback.generation } ?? true
     }
+
+    private var previousReadPresentation: (id: String, generation: Int, borrower: String, request: String?, read: ReadSnapshot)?
 
     /// CLICK2: why `ownsPlaybackEvent` refused an event, in allowlisted words.
     private func playbackEventDropReason(_ event: [String: Any]) -> String {
@@ -3654,6 +3663,30 @@ public final class VoiceState {
                 }
                 if idleSource == "recording" { refreshModelsBusy() }
             case "speaking":
+                let previousHold = event["previous_read_hold"] as? [String: Any]
+                let heldID = previousHold?["playback_id"] as? String
+                let heldGeneration = previousHold?["generation"] as? Int
+                let lendsPresentation = mode == .speaking && heldID != nil
+                    && ((currentPlayback != nil && heldID == currentPlayback?.id)
+                        || (currentUtteranceID != nil && previousHold?["utterance_id"] as? String == currentUtteranceID))
+                    && heldGeneration.map { $0 > 0 && $0 >= (currentPlayback?.generation ?? 0) } == true
+                let previousReturn = event["previous_read_return"] as? [String: Any]
+                if let previousReturn {
+                    // The saved loan survives Stop/legacy idle, but never a superseding presentation.
+                    guard let held = previousReadPresentation, mode == .speaking || mode == .idle,
+                          mode == .idle || currentPlayback?.id == held.borrower,
+                          previousReturn["from_playback_id"] as? String == held.borrower,
+                          previousReturn["pause_owner"] as? String == "user",
+                          let offset = previousReturn["offset_ms"] as? Int, offset >= 0,
+                          event["playback_id"] as? String == held.id,
+                          event["request_id"] as? String == held.request,
+                          let generation = event["generation"] as? Int, generation >= held.generation else {
+                        logSpeakingDrop(event, reason: "wrong-return-owner")
+                        return
+                    }
+                    // Optimistic Stop can retire this unended loan; only its exact return reactivates it.
+                    if let request = held.request { selectionRetiredRequestIDs.removeAll { $0 == request } }
+                }
                 let requestID = event["request_id"] as? String
                 if let requestID, selectionRetiredRequestIDs.contains(requestID) {
                     logSpeakingDrop(event, reason: "retired-request")
@@ -3667,6 +3700,12 @@ public final class VoiceState {
                 if let submission, submission.order < selectionReceiptOrder {
                     logSpeakingDrop(event, reason: "older-receipt")
                     return
+                }
+                if lendsPresentation, let heldID, let heldGeneration, let borrower = event["playback_id"] as? String {
+                    previousReadPresentation = (heldID, heldGeneration, borrower, selectionReadRequestID, currentReadSnapshot())
+                } else if previousReturn == nil, let held = previousReadPresentation,
+                          event["playback_id"] as? String != held.borrower, event["preserves_paused_read"] as? Bool != true {
+                    previousReadPresentation = nil
                 }
                 if event["preserves_paused_read"] as? Bool != true { askParkedRead = nil }
                 if let submission {
@@ -3690,7 +3729,7 @@ public final class VoiceState {
                 }
                 if readID == nil || readID != selectionReadID || (requestID != nil && requestID != selectionReadRequestID) {
                     if requestID != selectionReadRequestID {
-                        clearCurrentSelectionReadIdentity(advanceEpoch: false)
+                        clearCurrentSelectionReadIdentity(advanceEpoch: false, retireCurrent: !lendsPresentation)
                     }
                     // A different read supersedes this capture, without becoming a user Stop.
                     if !acknowledgesSubmission, selectionCaptureInFlight { selectionCaptureCancelled = true }
@@ -3790,6 +3829,12 @@ public final class VoiceState {
                     let stored = playbackTimelineChunks[playbackChunkStartMilliseconds]
                     wordBoundaries = stored?.text == event["text"] as? String ? stored?.words ?? [] : []
                 }
+                if previousReturn != nil, let held = previousReadPresentation,
+                   held.id == event["playback_id"] as? String {
+                    restoreLongReadDocument(held.read.document)
+                    speechWords = held.read.speechWords
+                    previousReadPresentation = nil
+                }
                 updateLongReadDocument(longRead, readbackID: playbackReadbackID,
                                        chunkText: event["text"] as? String ?? "", displayValue: event["display"])
                 mode = .speaking
@@ -3821,6 +3866,13 @@ public final class VoiceState {
                 }
                 canReplay = true
                 hotkeyPhase = .idle
+                if let previousReturn {
+                    var pause = event
+                    pause["state"] = "paused"
+                    pause["offset_ms"] = previousReturn["offset_ms"]
+                    pause["pause_owner"] = previousReturn["pause_owner"]
+                    handlePlaybackStateEvent(pause)
+                }
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":

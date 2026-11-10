@@ -67,6 +67,10 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   preserves_paused_read?: boolean;
   /** Capture admission released: restore only the named paused presentation, without audio. */
   restores_paused_read?: boolean;
+  /** Previous Read lends the surface to this player; its correlated return is already paused. */
+  previous_read_return?: { from_playback_id: string; offset_ms: number; pause_owner: "user" };
+  /** The read whose presentation is temporarily lent to Previous Read. */
+  previous_read_hold?: { playback_id: string; generation: number; utterance_id?: string };
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
   /** This player's whole audio (chunk or utterance), measured from long_read.chunk_start_ms (0 without one). */

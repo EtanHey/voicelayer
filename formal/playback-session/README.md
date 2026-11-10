@@ -33,6 +33,8 @@ the read left the speaker); `pausedAt` is what the engine stored; a resume must 
 | QueueSurvivesAsk | statechart gap 2: an ask that parks nothing empties the narration queue (`selectionReads.clear()`) | AskClearsQueueMutant |
 | SuccessorWaitsForRelease | statechart gap 5: the next queued read starts while the ask's answer is still transcribing | EarlySuccessorMutant |
 | ParkedEventuallyReleased (temporal, under FairSpec) | #818 review: a read an ask parked is eventually restored or ended, never left parked | NoRestoreMutant |
+| RestoreReceiptApplied (ClientFixed) | 2.4 freeze V3-5: the previous-read return sent a bare `playback_state(paused)`; VoiceBar dropped it wrong-owner and kept the replay | OldPrevReturnMutant |
+| EndedReplayNotShownRunning (ClientFixed) | 2.4 freeze V3-5: "the finished replay remains playing; pause does nothing" | OldReplayShownMutant |
 
 TeleTracksAudio allows one word event of lag on purpose: the teleprompter learns each word after the audio speaks it
 (Advance then TeleSync). It is exact after every TeleSync, and a resume/restore resets it to the stored word.
@@ -74,5 +76,28 @@ Stop during an ask ends the ask and the read it parked: Stop means stop (the pau
   clock, the pause cursor and the watchdog is code-only, covered by the daemon tests (`playback-engine.test.ts`
   set_playback_speed rows), not by TLC.
 - The model checks at most two asks per run (`asks < 2`).
+
+## Client layer (2.4 teleprompter freeze, brief M)
+
+The engine above assumes the client shows what the engine means. Every failure in the 2.4 freeze QA was the client owning
+a different player than the daemon. `cOwner`/`cPhase`/`cWord` are what VoiceState shows: the read whose presentation it
+holds, what that read is shown doing, and the word shown. `ClientStep` applies each daemon step's event in socket order.
+Presentations (state(speaking) for a read first going live, the ask's `restores_paused_read`, and in Fixed the previous
+read's restore receipt) replace the owner. Every other event applies only to the owned read (`ownsPlaybackEvent`). A
+replay that ends while a read is held sends no playback idle.
+`BareReturn` is the 85ea16f4 daemon: `releasePreviousHold` → `restoreHeld(…, "paused")` sends only `playback_state(paused)`
+for the held player.
+
+The client is a deterministic observer. Each engine step has exactly one client successor, so it neither blocks nor adds
+engine behaviour. Fixed and Liveness therefore keep it frozen (`ClientLayer = FALSE`) and keep their 837,722 states.
+`ClientFixed` checks every engine invariant plus the two client invariants with `ClientLayer = TRUE` and one ask
+(`MaxAsks = 1`). With two asks and the client on, Fixed reached 1,450,738 states in 83 s locally, which is over the
+hosted per-case budget (3.6× slower, 180 s cap). Coverage probes (not recorded) confirmed these are reachable in
+ClientFixed: a restored read under an ask, a resume after the return, and an ask release while a read is held. So the
+client invariants are not vacuous.
+
+Out of scope: a stalled main queue (V3-1/V3-3). Delivery is FIFO and instantaneous here. A bounded-progress
+property needs explicit time (`now`, `lastClientApply`), sent/applied sequence numbers and a fairness assumption on the
+client's run loop. Such a property can only state the budget; no model can forbid macOS descheduling the main thread.
 
 Run: `bash formal/playback-session/check.sh` (recorded evidence in `results/`).

@@ -222,7 +222,15 @@ struct TeleprompterAModel {
     let glued: [Bool]
     let column: CGFloat
 
+    #if DEBUG
+    /// Test oracle: availability reads must never build the full word layout.
+    nonisolated(unsafe) static var layoutBuildCount = 0
+    #endif
+
     init(document: TeleprompterRenderedDocument, text: String, column: CGFloat) {
+        #if DEBUG
+        Self.layoutBuildCount += 1
+        #endif
         words = document.words
         layouts = document.layouts
         tokens = TeleprompterContentModel.displayTokens(text)
