@@ -1074,6 +1074,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 hasLatestCapture: FileManager.default.fileExists(atPath: VoiceLayerPaths.retainedRecordingPath)
             ) ?? false
         }
+        pillContextMenuController.retranscribeLatestDisabledReasonProvider = { [weak self] in
+            guard let self else { return "VoiceLayer is disconnected" }
+            return voiceState.historyRetranscriptionAvailability.reason ??
+                (FileManager.default.fileExists(atPath: VoiceLayerPaths.retainedRecordingPath) ? nil : "No recording is available")
+        }
         pillContextMenuController.onRetranscribeLatest = { [weak self] in
             self?.logDiagnostic(event: "context_menu_retranscribe_latest_tapped")
             self?.voiceState.retranscribeLastCapture()
@@ -3650,6 +3655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self?.voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)
             },
             historyRunLog: { [weak self] in self?.voiceState.historyRunLog ?? SettingsHistoryRunLog() },
+            historyRetranscriptionAvailability: { [weak self] in self?.voiceState.historyRetranscriptionAvailability ?? .unavailable("VoiceLayer is disconnected") },
             isHistoryRetranscribing: { [weak self] recordingPath in
                 self?.voiceState.activeHistoryRetranscriptionPath == recordingPath
             },

@@ -188,6 +188,14 @@ enum SettingsHistoryActionAvailability: Equatable {
     case unavailable(String)
 }
 
+/// One production admission result for archive controls in the drawer, window and latest menu.
+public enum HistoryRetranscriptionAvailability: Equatable {
+    case available
+    case unavailable(String)
+    public var reason: String? { if case let .unavailable(reason) = self { return reason }; return nil }
+    public var isEnabled: Bool { self == .available }
+}
+
 struct SettingsHistoryActionEnablement: Equatable {
     let isRetranscribing: Bool
     let isRecording: Bool
@@ -195,12 +203,14 @@ struct SettingsHistoryActionEnablement: Equatable {
     /// The recording being re-transcribed, so its own Re-transcribe says so instead of "Another…".
     var retranscribingPath: String?
     var isVoiceBusy: Bool = false
+    var archiveAdmission: HistoryRetranscriptionAvailability?
 
     func isEnabled(
         _ action: SettingsHistoryAction,
         for part: SettingsHistoryMediaPart
     ) -> Bool {
         guard part.isEnabled(action) else { return false }
+        if action == .retranscribe, let archiveAdmission { return archiveAdmission.isEnabled }
 
         if action == .play, isRecording || isTranscribing || isVoiceBusy {
             return false
@@ -219,6 +229,9 @@ struct SettingsHistoryActionEnablement: Equatable {
         for part: SettingsHistoryMediaPart
     ) -> SettingsHistoryActionAvailability {
         guard part.isEnabled(action) else { return .hidden }
+        if action == .retranscribe, let archiveAdmission {
+            return archiveAdmission.reason.map(SettingsHistoryActionAvailability.unavailable) ?? .available
+        }
         guard !isEnabled(action, for: part) else { return .available }
         switch action {
         case .play, .retranscribe:
@@ -509,6 +522,7 @@ public struct SettingsView: View {
     public let historyRunLog: () -> SettingsHistoryRunLog
     public let historyDiagnostics: @Sendable (URL) async -> SettingsHistoryDiagnostics
     public let historyAttempts: SettingsHistoryAttemptLogReader
+    public let historyRetranscriptionAvailability: () -> HistoryRetranscriptionAvailability?
     public let isHistoryRetranscribing: (String) -> Bool
     public let isAnyHistoryRetranscribing: () -> Bool
     public let microphonePriorityDisabledReason: () -> String?
@@ -703,6 +717,7 @@ public struct SettingsView: View {
             }.value
         },
         historyAttempts: @escaping SettingsHistoryAttemptLogReader = { _ in nil },
+        historyRetranscriptionAvailability: @escaping () -> HistoryRetranscriptionAvailability? = { nil },
         isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
         isAnyHistoryRetranscribing: @escaping () -> Bool = { false },
         microphonePriorityDisabledReason: @escaping () -> String? = { nil },
@@ -829,6 +844,7 @@ public struct SettingsView: View {
         self.historyRunLog = historyRunLog
         self.historyDiagnostics = historyDiagnostics
         self.historyAttempts = historyAttempts
+        self.historyRetranscriptionAvailability = historyRetranscriptionAvailability
         self.isHistoryRetranscribing = isHistoryRetranscribing
         self.isAnyHistoryRetranscribing = isAnyHistoryRetranscribing
         self.microphonePriorityDisabledReason = microphonePriorityDisabledReason
@@ -1841,7 +1857,7 @@ public struct SettingsView: View {
         let enablement = SettingsHistoryActionEnablement(
             isRetranscribing: isAnyHistoryRetranscribing(), isRecording: isRecordingActive(),
             isTranscribing: isTranscribingActive(), retranscribingPath: retranscribing ? entry.audioPath.path : nil,
-            isVoiceBusy: historyPlayback.isVoiceBusy)
+            isVoiceBusy: historyPlayback.isVoiceBusy, archiveAdmission: historyRetranscriptionAvailability())
         return VStack(alignment: .leading, spacing: 6) {
             historyMediaPartStats(part)
             historyMediaPartActions(part, isRetranscribing: retranscribing, enablement: enablement)
@@ -2149,7 +2165,7 @@ public struct SettingsView: View {
             isRecording: isRecordingActive(),
             isTranscribing: isTranscribingActive(),
             retranscribingPath: isRetranscribing ? part.audioPath?.path : nil,
-            isVoiceBusy: historyPlayback.isVoiceBusy
+            isVoiceBusy: historyPlayback.isVoiceBusy, archiveAdmission: historyRetranscriptionAvailability()
         )
 
         VStack(alignment: .leading, spacing: 6) {
@@ -2363,6 +2379,7 @@ public struct SettingsView: View {
         case .retranscribe:
             Button {
                 guard let audioPath = part.audioPath else { return }
+                guard historyRetranscriptionAvailability()?.isEnabled != false else { return }
                 onRetranscribeHistoryEntry(audioPath.path)
             } label: {
                 historyActionLabel(

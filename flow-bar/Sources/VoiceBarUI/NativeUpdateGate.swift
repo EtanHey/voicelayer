@@ -203,6 +203,12 @@ import CoreFoundation
             return ["lease": actual, "activeOperations": 0, "openArchives": 0]
         }
     }
+    /// Read-only view admission. UNKNOWN keeps the existing fail-open voice policy; the daemon rechecks ownership.
+    public func permitsNewVoice() -> Bool {
+        guard let current = try? snapshot() else { return true }
+        return ["OPEN", "DRAINING"].contains(current.state["kind"] as? String ?? "")
+    }
+
     public func permitsTermination(controlledLease: [String: Any]? = nil) -> Bool {
         (try? locked {
             let current = try state()

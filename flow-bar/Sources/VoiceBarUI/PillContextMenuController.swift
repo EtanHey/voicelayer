@@ -61,6 +61,7 @@ public final class PillContextMenuController: NSObject {
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var canRetranscribeLatestProvider: () -> Bool = { false }
+    public var retranscribeLatestDisabledReasonProvider: () -> String? = { nil }
     public var onRetranscribeLatest: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
     /// 2.3 U2: the microphones the notch picker lists, in priority order (connected and visible only).
@@ -134,6 +135,8 @@ public final class PillContextMenuController: NSObject {
         )
         retranscribeItem.target = self
         retranscribeItem.isEnabled = canRetranscribeLatestProvider()
+        retranscribeItem.toolTip = retranscribeLatestDisabledReasonProvider()
+        retranscribeItem.setAccessibilityHelp(retranscribeLatestDisabledReasonProvider())
         menu.addItem(retranscribeItem)
 
         menu.addItem(.separator())
@@ -212,6 +215,8 @@ public final class PillContextMenuController: NSObject {
         let again = NSMenuItem(title: "Transcribe latest again", action: #selector(handleRetranscribeLatest), keyEquivalent: "")
         again.target = self
         again.isEnabled = canRetranscribeLatestProvider()
+        again.toolTip = retranscribeLatestDisabledReasonProvider()
+        again.setAccessibilityHelp(retranscribeLatestDisabledReasonProvider())
         menu.insertItem(again, at: 2)
         menu.item(withTitle: "Settings…")?.keyEquivalent = ","
         menu.item(withTitle: "Hide notch for 1 hour")?.title = "Hide for 1 hour"

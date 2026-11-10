@@ -2176,6 +2176,7 @@ public struct BarView: View {
                     onOpenHistory()
                 }
             },
+            retranscriptionAvailability: { state.historyRetranscriptionAvailability },
             listHeight: fixedListHeight ?? min(
                 NotchHistoryMorph.listHeight(rows: historyRowsExtent),
                 NotchHistoryMorph.historyCanvasLowerSurfaceHeight - notchPresentation.feedbackHeight

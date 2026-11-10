@@ -16,6 +16,7 @@ struct NotchHistoryPanel: View {
     let onRetranscribe: (String) -> Void
     /// A click on a row's text opens it in the History window (SPEC open question 1). Copy / Paste stay on hover.
     var onOpen: (RecentTranscriptionEntry) -> Void = { _ in }
+    var retranscriptionAvailability: () -> HistoryRetranscriptionAvailability = { .available }
     /// The visible list: six rows, or eight once the extend handle pulled it down (V6).
     var listHeight: CGFloat = NotchHistoryMorph.listHeight
     /// Shots only: render one row as hovered without a pointer.
@@ -178,10 +179,12 @@ struct NotchHistoryPanel: View {
         .accessibilityAction { onOpen(entry) }
         .accessibilityActions {
             ForEach(NotchHistoryPresentation.accessibilityActions(for: entry), id: \.symbol) { action in
-                Button(action.label) { perform(action.kind, entry: entry, id: id) }
+                if action.kind != .retranscribe || retranscriptionAvailability().isEnabled {
+                    Button(action.label) { perform(action.kind, entry: entry, id: id) }
+                }
             }
         }
-        .accessibilityHint(NotchHistoryPresentation.openHint)
+        .accessibilityHint(retranscriptionAvailability().reason ?? NotchHistoryPresentation.openHint)
     }
 
     private func actionButtons(_ entry: RecentTranscriptionEntry, id: String) -> some View {
@@ -210,7 +213,10 @@ struct NotchHistoryPanel: View {
                     .buttonStyle(.plain)
                     // R0856-09: the notch panel is non-activating; SwiftUI `.help` never showed here. The wing
                     // buttons' native registration does (fc126263).
-                    .background(PillControlTooltip(text: action.label))
+                    .disabled(action.kind == .retranscribe && !retranscriptionAvailability().isEnabled)
+                    .background(PillControlTooltip(text: action.kind == .retranscribe
+                        ? retranscriptionAvailability().reason ?? action.label : action.label))
+                    .accessibilityHint(action.kind == .retranscribe ? retranscriptionAvailability().reason ?? action.label : action.label)
                     .accessibilityLabel(action.label)
                 }
             }
@@ -234,6 +240,7 @@ struct NotchHistoryPanel: View {
         case .paste:
             onPaste(entry)
         case .retranscribe:
+            guard retranscriptionAvailability().isEnabled else { return }
             if let path = entry.recordingPath { onRetranscribe(path) }
         }
     }

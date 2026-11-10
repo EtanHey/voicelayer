@@ -31,6 +31,45 @@ final class QA0449ControlAvailabilityTests: XCTestCase {
         XCTAssertNil(s.microphonePriorityDisabledReason, "the formal policy permits editing after capture closes")
     }
 
+    func testArchiveHandlerRejectsDisconnectedCaptureAndSpeechBeforeStartingAPendingJob() {
+        for mode in [VoiceMode.idle, .recording, .transcribing, .speaking, .error] {
+            let s = state()
+            s.mode = mode
+            s.isConnected = mode != .idle
+            var sent = 0
+            s.sendCommand = { _ in sent += 1 }
+            s.retranscribeHistoryEntry(recordingPath: "/synthetic/audio.wav")
+            XCTAssertEqual(sent, 0, "archive admission must reject \(mode)")
+            XCTAssertFalse(s.isHistoryRetranscriptionPending)
+        }
+    }
+
+    func testHistorySurfacesShareAdmissionAndTheHandlerRechecksBeforeDispatch() throws {
+        let s = state(); s.isConnected = true
+        let entry = SettingsHistoryEntry(id: "qa", dayKey: "2026-01-01", recordingID: "qa", createdAt: Date(),
+            transcript: "Synthetic", audioPath: URL(fileURLWithPath: "/synthetic/audio.wav"))
+        let part = SettingsHistoryRowModel.recording(entry).parts[0]
+        for mode in [VoiceMode.idle, .recording, .transcribing, .speaking, .error] {
+            s.mode = mode
+            let admission = s.historyRetranscriptionAvailability
+            let window = SettingsHistoryActionEnablement(isRetranscribing: false, isRecording: false,
+                isTranscribing: false, archiveAdmission: admission)
+            XCTAssertEqual(window.isEnabled(.retranscribe, for: part), admission.isEnabled)
+            XCTAssertEqual(window.availability(.retranscribe, for: part),
+                           admission.reason.map(SettingsHistoryActionAvailability.unavailable) ?? .available)
+        }
+        s.mode = .idle
+        var sent = 0; s.sendCommand = { _ in sent += 1 }
+        XCTAssertTrue(s.historyRetranscriptionAvailability.isEnabled)
+        s.mode = .recording // A stale enabled row cannot start a request.
+        s.retranscribeHistoryEntry(recordingPath: entry.audioPath.path)
+        XCTAssertEqual(sent, 0)
+        s.mode = .idle
+        s.retranscribeHistoryEntry(recordingPath: entry.audioPath.path)
+        XCTAssertEqual(sent, 1)
+        XCTAssertFalse(s.historyRetranscriptionAvailability.isEnabled, "pending-before-ACK blocks every surface")
+    }
+
     func testMicrophonePointerDropAndAXShareTheExplainedLockAndHandlersRecheckIt() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()

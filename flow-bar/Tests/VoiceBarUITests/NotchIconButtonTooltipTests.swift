@@ -127,7 +127,7 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         assertEveryControlHasATooltip("history", mounted, expecting: [
             // 2.3 U2 (mic tooltip + chevron) × U4 (row actions, the long row's clipped-text tooltip).
             "Start dictation (F5)", "Choose microphone", "Close history", "Settings",
-            "Copy", "Paste into the app you were using", "Transcribe again", Self.longRow,
+            "Copy", "Paste into the app you were using", "Re-transcribe", Self.longRow,
         ], textButtons: 2)
     }
 

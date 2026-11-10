@@ -105,6 +105,7 @@ final class PillContextMenuControllerTests: XCTestCase {
     func testRetranscribeLatestDisabledForEveryBusyStateAndMissingCapture() throws {
         let state = VoiceState()
         let controller = PillContextMenuController()
+        state.isConnected = true
         var hasCapture = false
         controller.canRetranscribeLatestProvider = {
             state.canRetranscribeLatestCapture(hasLatestCapture: hasCapture)
@@ -128,6 +129,7 @@ final class PillContextMenuControllerTests: XCTestCase {
         try assertEnabled(false)
 
         let latestState = VoiceState()
+        latestState.isConnected = true
         controller.canRetranscribeLatestProvider = {
             latestState.canRetranscribeLatestCapture(hasLatestCapture: true)
         }
