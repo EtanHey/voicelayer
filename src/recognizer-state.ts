@@ -10,6 +10,7 @@ export interface RecognizerDownloadStatus { state: "idle" | "downloading" | "ver
 export interface RecognizerStatus {
   revision: number; desired: Recognizer; effective: Recognizer | null; phase: RecognizerPhase;
   engines: Record<Recognizer, { assets_present: boolean; disk_bytes: number; download: RecognizerDownloadStatus; phase: RecognizerPhase; available: boolean | null; error: string | null }>;
+  last_transcription_backend?: string | null;
   fallback_reason: string | null; switch_allowed: boolean; switch_refusal_reason: string | null;
   idle_unload_seconds: number; source: "settings" | "env" | "default";
   unload_when_idle: boolean; unload_when_idle_locked: boolean; unload_when_idle_env_var: string | null;
@@ -31,6 +32,7 @@ export function persistRecognizer(recognizer: Recognizer): void {
   safeWriteFileSync(tmp, JSON.stringify({ version: 1, recognizer }) + "\n");
   try { renameSync(tmp, path); } finally { try { unlinkSync(tmp); } catch {} }
 }
+let lastTranscriptionBackend: string | null = null;
 let revision = 0, effective: Recognizer | null = null, phase: RecognizerPhase = "sleeping", fallbackReason: string | null = null;
 let requests = 0, transition = false, queuedRequests = 0;
 // Downloads own only their engine; admitted requests never join this work.
@@ -93,6 +95,7 @@ export function readRecognizerStatus(): RecognizerStatus {
   const preference = recognizerPreference(), reason = recognizerSwitchRefusal();
   return { revision, desired: preference.recognizer, effective, phase,
     engines: { parakeet: { ...engines.parakeet, ...readRecognizerAssets("parakeet") }, whisper: { ...engines.whisper, ...readRecognizerAssets("whisper") } },
+    last_transcription_backend: lastTranscriptionBackend,
     fallback_reason: fallbackReason, switch_allowed: reason === null, switch_refusal_reason: reason,
     idle_unload_seconds: modelIdleSeconds(), ...modelIdlePolicy(), source: preference.source };
 }
@@ -163,4 +166,10 @@ export async function beginRecognizerRequestAfterMaintenance(signal?: AbortSigna
 
 export function assertRecognizerCleanupConfirmed(): void {
   if (cleanupBarriers.size || Object.values(engines).some(engine => engine.error === "cleanup-unconfirmed")) throw new Error("cleanup-unconfirmed");
+}
+
+/** Completed transcription provenance survives model maintenance and downloads. */
+export function noteRecognizerTranscription(backend: string): void {
+  lastTranscriptionBackend = backend;
+  publish();
 }

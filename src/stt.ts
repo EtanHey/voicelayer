@@ -1,3 +1,4 @@
+import { noteRecognizerTranscription } from "./recognizer-state";
 import { measureTakeStageAsync } from "./take-stage-timings";
 /**
  * STT backend abstraction — whisper.cpp (local) or Wispr Flow (cloud fallback).
@@ -3616,6 +3617,7 @@ function observeRecognizerBackend<T extends STTBackend>(backend: T): T {
         noteRecognizerEffective("whisper");
       }
       const result = await transcribe(path, options);
+      noteRecognizerTranscription(result.backend);
       const finalProvider = result.backend.split("->").pop() ?? result.backend;
       const reason = result.backend.match(/\+fallback-([^>]+)->/)?.[1] ?? (result.backend.includes("+vad-no-speech") ? "vad-no-speech" : null);
       if (finalProvider.startsWith("parakeet")) noteRecognizerEffective("parakeet", reason);
