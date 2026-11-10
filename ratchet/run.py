@@ -223,6 +223,7 @@ class Run:
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             self.env["QA_VOICE_WHISPER_SERVER_PORT"] = str(reservation.getsockname()[1])
+        self.env["RATCHET_WHISPER_SERVER_RECEIPT"] = str(self.root / "whisper-server.jsonl")
         server = self.root / "bin/whisper-server"
         server.write_text("#!" + sys.executable + "\n" + (REPO / "ratchet/fixture-whisper-server.py").read_text())
         server.chmod(0o700)
@@ -301,6 +302,9 @@ class Run:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait()
+        receipt = self.root / "whisper-server.jsonl"
+        if receipt.exists():
+            self.output.with_suffix(".whisper-server.jsonl").write_bytes(receipt.read_bytes())
         for name in ("app", "daemon", "daemon-stop", "daemon-unlock"):
             self.output.with_suffix("." + name + ".log").write_text(self.transport_log(name))
         for log in self.files:
