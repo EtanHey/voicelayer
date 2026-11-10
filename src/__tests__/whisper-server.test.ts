@@ -338,6 +338,28 @@ usage: whisper-server [options]
   });
 
   describe("ensureServer lifecycle", () => {
+    it("fails within one second when a real child exits before health", async () => {
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => process.execPath,
+        findModel: () => "/synthetic/nonempty-unloadable-model.bin",
+        spawn: () => Bun.spawn([process.execPath, "-e", "process.exit(7)"], {
+          env: process.env, stdout: "pipe", stderr: "pipe",
+        }),
+        isServerHealthy: async () => false,
+        findPortListenerPids: () => [],
+      });
+      try {
+        const started = performance.now();
+        await expect(ensureServer(18994)).rejects.toThrow("WHISPER_STARTUP_EXIT: exit_code=7");
+        expect(performance.now() - started).toBeLessThan(1000);
+        expect(whisperServerLaunchRecord()).toBe(null);
+      } finally {
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
+      }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+
     it("does not publish a launch record when our child lost the port race", async () => {
       // The health check only proves *something* answers on the port. Here our
       // child died on startup and another process is serving: adopting it would

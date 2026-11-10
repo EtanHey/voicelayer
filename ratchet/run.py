@@ -359,6 +359,16 @@ def command_client_registered(log, pid):
 
 
 def wire_row(run, row):
+    if row == "retranscribe-history-refresh":
+        # Bytes exist, but this synthetic model cannot load. Exercise real boot
+        # maintenance with a crashing server, never a healthy-server substitute.
+        (run.root / "model.bin").write_bytes(b"unloadable synthetic weights")
+        crashing = run.root / "bin/whisper-server"
+        crashing.write_text("#!/bin/sh\nprintf 'error loading model\\n' >&2\nexit 7\n")
+        crashing.chmod(0o700)
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            run.env["QA_VOICE_WHISPER_SERVER_PORT"] = str(reservation.getsockname()[1])
     (run.root / "vocab.json").write_text(json.dumps({"entries": []}))
     fixtures = prepare_recents(run) if row == "recents-newest-after-retranscribe" else None
     run.app()
@@ -468,7 +478,9 @@ def wire_row(run, row):
         (directory / "metadata.json").write_text(json.dumps(metadata))
         payload = json.dumps(dict(jsonrpc="2.0", id=42, method="tools/call", params={
             "name": "voice_ask", "arguments": {"retranscribe_archive_id": archive_id}})).encode()
+        retranscribe_started = time.monotonic()
         with connect(run.root / "m.sock") as mcp:
+            mcp.settimeout(15)
             mcp.sendall(b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload)
             with mcp.makefile("rb") as stream:
                 header = stream.readline()
@@ -477,6 +489,8 @@ def wire_row(run, row):
                     raise RuntimeError("missing MCP header delimiter")
                 response = json.loads(stream.read(length))
             assert not response["result"].get("isError"), response
+        retranscribe_seconds = time.monotonic() - retranscribe_started
+        assert retranscribe_seconds < 15, "unloadable model stalled retranscription"
         wait(lambda: (directory / "voicelayer-transcript.txt").exists())
         frames, observed, quiet = captured.archive(str(audio.resolve()))
         matches = [f for f in frames if f.get("type") == "archive_metadata_updated"
@@ -484,6 +498,7 @@ def wire_row(run, row):
         assert (directory / "voicelayer-transcript.txt").read_text() == "Recovered synthetic answer."
         assert json.loads((directory / "metadata.json").read_text())["transcription_status"] == "transcribed"
         run.output.with_suffix(".wire.json").write_text(json.dumps({
+            "unloadable_model": True, "retranscribe_seconds": retranscribe_seconds,
             "archive_updates": len(matches), "durable_transcript": True, "durable_metadata": True,
             "transcription_events": sum(f.get("type") == "transcription" for f in frames),
             "event_observed": observed, "quiet_period_complete": quiet, "quiet_seconds": 1}))
