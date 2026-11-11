@@ -52,7 +52,19 @@ public enum VoiceBarBackingScaleSynchronizer {
         guard let layer else { return }
         layer.contentsScale = scale
         layer.sublayers?.forEach { apply(scale, to: $0) }
+        // N12: only a layer that draws itself can be asked to draw again. One that was handed its contents
+        // (SwiftUI's SF Symbol image layers: every symbol on macOS 27, the bitmap ones on macOS 26) comes back
+        // empty, and SwiftUI repaints it only when that one glyph next changes. This pass runs after every panel
+        // layout change, so the drawer's tab icons vanished until their tab was selected.
+        guard !holdsHandedContents(layer) else { return }
         layer.setNeedsDisplay()
+    }
+
+    /// Contents assigned to the layer by its owner, which Core Animation cannot draw again.
+    static func holdsHandedContents(_ layer: CALayer) -> Bool {
+        guard let contents = layer.contents else { return false }
+        let type = CFGetTypeID(contents as CFTypeRef)
+        return type == CGImage.typeID || type == IOSurfaceGetTypeID()
     }
 
     private static func layerScales(in layer: CALayer?) -> [CGFloat] {
