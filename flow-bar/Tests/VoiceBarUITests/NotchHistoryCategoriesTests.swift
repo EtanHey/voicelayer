@@ -188,6 +188,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
                 isARepeat: false, keyCode: code
             ))
         }
+        XCTAssertTrue(harness.panel.makeFirstResponder(monitor))
         XCTAssertFalse(monitor.routeKey(try key(123), isKeyWindow: false),
                        "the arrows are not the notch's while another window has the keys")
         XCTAssertEqual(shown(harness), [.speech])
@@ -355,6 +356,48 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         archive.surfaceClosed()
         XCTAssertTrue(archive.ask == nil)
         XCTAssertTrue(archive.speech == nil)
+    }
+
+    private final class OtherFocus: NSView {
+        override var acceptsFirstResponder: Bool { true }
+    }
+
+    func testH2ArrowsRequireHistoryFocusNotMerelyTheKeyWindow() throws {
+        let harness = makeHarness()
+        open(harness, .openSettings(.history))
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        let right = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: harness.panel.windowNumber, context: nil,
+            characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 124))
+        let other = OtherFocus(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+        harness.host.addSubview(other)
+        XCTAssertTrue(harness.panel.makeFirstResponder(other))
+        XCTAssertFalse(monitor.routeKey(right, isKeyWindow: true), "arrows belong to the focused Settings control")
+        let field = NSTextView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+        harness.host.addSubview(field)
+        XCTAssertTrue(harness.panel.makeFirstResponder(field))
+        XCTAssertFalse(monitor.routeKey(right, isKeyWindow: true), "arrows belong to the focused text field")
+        XCTAssertTrue(harness.panel.makeFirstResponder(monitor), "the list has its own safe AppKit focus target")
+        XCTAssertFalse(monitor.routeKey(right, isKeyWindow: false))
+        XCTAssertTrue(monitor.routeKey(right, isKeyWindow: true), "a focused History list owns Right")
+        drain(0.3)
+        XCTAssertEqual(shown(harness), [.ask])
+        // The same focus target covers a selector click, and a click on the Settings tab bar releases it.
+        let selector = try XCTUnwrap(frame(identified: NotchHistoryPresentation.categoryIdentifier(.ask), harness))
+        let selectorPoint = harness.panel.convertPoint(fromScreen: NSPoint(x: selector.midX, y: selector.midY))
+        let click = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: selectorPoint,
+            modifierFlags: [], timestamp: 0, windowNumber: harness.panel.windowNumber,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        XCTAssertTrue(harness.panel.makeFirstResponder(other))
+        monitor.handlePointer(click)
+        XCTAssertTrue(harness.panel.firstResponder === monitor, "the category selector owns the History focus target")
+        let outside = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown,
+            location: NSPoint(x: 1, y: harness.host.bounds.maxY - 1), modifierFlags: [], timestamp: 0,
+            windowNumber: harness.panel.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 1))
+        monitor.handlePointer(outside)
+        XCTAssertFalse(monitor.routeKey(right, isKeyWindow: true), "outside controls release History focus")
+        other.removeFromSuperview()
+        field.removeFromSuperview()
     }
 
     // MARK: Pictures (opt-in)

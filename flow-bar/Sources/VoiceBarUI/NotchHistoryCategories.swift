@@ -52,6 +52,12 @@ struct NotchHistoryCategoryPanel: View {
                 selector(width: width)
                 pages(width: width)
             }
+            .background(NotchHistorySwipeMonitor(
+                onBegin: { pager.begin() },
+                onMove: { dx, dy in follow { $0.move(dx: dx, dy: dy) } },
+                onEnd: { finish(width: width, flick: nil) },
+                onStep: { select(pager.index + $0) }
+            ))
         }
         .frame(height: dictations.listHeight)
         .onAppear { archive.surfaceOpened() }
@@ -135,12 +141,6 @@ struct NotchHistoryCategoryPanel: View {
             }
         }
         .padding(.horizontal, -Self.pageGap / 2)
-        .background(NotchHistorySwipeMonitor(
-            onBegin: { pager.begin() },
-            onMove: { dx, dy in follow { $0.move(dx: dx, dy: dy) } },
-            onEnd: { finish(width: width, flick: nil) },
-            onStep: { select(pager.index + $0) }
-        ))
         .simultaneousGesture(
             DragGesture(minimumDistance: NotchHistoryCategoryPager.slop)
                 .onChanged { value in
@@ -244,9 +244,9 @@ private extension Array {
 /// vertical gesture, the event goes on to the list untouched; once it is a sideways swipe the list never sees it
 /// (nor its momentum). A plain mouse wheel has no gesture phases and is left alone.
 ///
-/// The arrow keys come through here too: Left and Right step a category while the notch panel is the key window
-/// and no text field is being edited. (SwiftUI's `.focusable()` on the lists aborted the process when the panel
-/// closed after a click, so the keys are read where the swipes are.)
+/// Left and Right require this list/selector's AppKit first-responder target. Clicking outside the History
+/// region releases it, so arrows never leak from a Settings tab or a text editor. SwiftUI `.focusable()` is
+/// deliberately avoided: it aborted the old hosted panel on close.
 struct NotchHistorySwipeMonitor: NSViewRepresentable {
     let onBegin: () -> Void
     let onMove: (CGFloat, CGFloat) -> Bool
@@ -271,31 +271,60 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
         private var isSideways = false
         private var swallowsMomentum = false
 
+        override var acceptsFirstResponder: Bool { true }
+        // Focus ownership must not make the nonactivating notch steal the key window on a pointer press.
+        override var needsPanelToBecomeKey: Bool { false }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow !== window, window?.firstResponder === self { window?.makeFirstResponder(nil) }
+            super.viewWillMove(toWindow: newWindow)
+        }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             removeMonitor()
             guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] event in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown, .leftMouseDown]) { [weak self] event in
                 guard let self else { return event }
+                if event.type == .leftMouseDown {
+                    self.handlePointer(event)
+                    return event
+                }
                 return (event.type == .keyDown ? self.handleKey(event) : self.handle(event)) ? nil : event
             }
         }
 
         func removeMonitor() {
+            if window?.firstResponder === self { window?.makeFirstResponder(nil) }
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
         }
 
-        /// Whether the key was Left or Right for the categories (plain, in this key window, outside a text field).
+        /// A pointer press focuses only this History region, including its category selector.
+        func handlePointer(_ event: NSEvent) {
+            guard let window, event.window === window else { return }
+            guard bounds.contains(convert(event.locationInWindow, from: nil)) else {
+                if window.firstResponder === self { window.makeFirstResponder(nil) }
+                return
+            }
+            // A future editor inside History must keep its native text navigation too.
+            var hit = window.contentView.flatMap { $0.hitTest($0.convert(event.locationInWindow, from: nil)) }
+            while let view = hit {
+                if view is NSTextField || view is NSTextView { return }
+                hit = view.superview
+            }
+            window.makeFirstResponder(self)
+        }
+
+        /// Plain Left/Right belong to the categories only when their list/selector has focus in this key window.
         func handleKey(_ event: NSEvent) -> Bool {
             routeKey(event, isKeyWindow: window?.isKeyWindow ?? false)
         }
 
         /// `handleKey` with the key-window fact spelled out (an offscreen test panel cannot become key).
         func routeKey(_ event: NSEvent, isKeyWindow: Bool) -> Bool {
-            guard let window, event.window === window, isKeyWindow, !(window.firstResponder is NSText),
+            guard let window, event.window === window, isKeyWindow, window.firstResponder === self,
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   let handlers else { return false }
             switch event.keyCode {
