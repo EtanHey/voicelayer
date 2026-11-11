@@ -621,6 +621,7 @@ public struct SettingsView: View {
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
     @State private var hoveredMicrophoneIndex: Int?
+    @Environment(\.settingsHoverPreview) private var settingsHoverPreview
     @State private var setupHighlight = SettingsArrivalHighlight()
     @FocusState private var focusedSetupFix: SettingsSetupStepID?
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
@@ -937,6 +938,12 @@ public struct SettingsView: View {
     private func notchPane(_ tab: SettingsTab) -> some View {
         notchPaneContent(tab)
             .scrollContentBackground(.hidden)
+            // Etan (QA 2026-11-11): "the gutters on the sides are still huge". A grouped Form insets its cards 20 pt
+            // inside the drawer's own 8 pt, and `contentMargins` does not move them (measured on macOS 26.5). The
+            // drawer widens a Form pane by that inset, so its cards line up with the tab bar's edges (lane S
+            // DESIGN.md §1), and moves the overlay scroller back inside the visible pane.
+            .modifier(NotchGroupedFormGutter(isGroupedForm: tab.notchUsesGroupedForm))
+            .environment(\.settingsRowWrapsFully, true)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .modifier(
                 SettingsVocabularyRevisionObserver(
@@ -1110,6 +1117,7 @@ public struct SettingsView: View {
             setupSection
             microphonePrioritySection
             dictationSection
+            shortcutsSection
             voiceBarSection
 
             SettingsDisclosureRow("Advanced", isExpanded: $isAdvancedExpanded) {
@@ -1151,20 +1159,10 @@ public struct SettingsView: View {
                     }
                     Divider()
                     // S1: the version lives once, in the sidebar footer. This row only copies the diagnostic summary.
-                    SettingsRow(title: "Diagnostic summary") {
+                    SettingsRow(title: "Diagnostic summary", description: SettingsGeneralCopy.diagnosticDescription) {
                         SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
                                            label: "build and diagnostic summary")
                     }
-                    Divider()
-                    Text("Gestures")
-                    LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
-                    LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel,
-                                   value: VoiceBarHotkeyContract.repasteDescription)
-                    LabeledContent(VoiceBarHotkeyContract.speakSelectionShortcutLabel,
-                                   value: VoiceBarHotkeyContract.speakSelectionDescription)
-                    Button(VoiceBarHotkeyContract.readClipboardActionLabel) { onReadClipboard?() }
-                        .disabled(onReadClipboard == nil)
-                        .help(VoiceBarHotkeyContract.readClipboardDescription)
                 }
                 .padding(.top, 6)
             }
@@ -1302,6 +1300,26 @@ public struct SettingsView: View {
         }
     }
 
+    /// Etan (QA 2026-11-11, shot 3: "still very jumbled"): the gestures were a bare "Gestures" line inside Advanced,
+    /// labels left and grey descriptions right-aligned and wrapping under them, with Read Clipboard alone below.
+    /// They are now their own section of ordinary rows: the key as the title, what it does as the description, and
+    /// Read Clipboard as a row whose button sits in the trailing column.
+    private var shortcutsSection: some View {
+        Section(SettingsGeneralCopy.shortcutsHeader) {
+            SettingsRow(title: SettingsGeneralCopy.singleTapTitle,
+                        description: VoiceBarHotkeyContract.singleTapDescription) { EmptyView() }
+            SettingsRow(title: VoiceBarHotkeyContract.repasteShortcutLabel,
+                        description: VoiceBarHotkeyContract.repasteDescription) { EmptyView() }
+            SettingsRow(title: VoiceBarHotkeyContract.speakSelectionShortcutLabel,
+                        description: VoiceBarHotkeyContract.speakSelectionDescription) { EmptyView() }
+            SettingsRow(title: SettingsGeneralCopy.readClipboardTitle,
+                        description: VoiceBarHotkeyContract.readClipboardDescription) {
+                Button(VoiceBarHotkeyContract.readClipboardActionLabel) { onReadClipboard?() }
+                    .disabled(onReadClipboard == nil)
+            }
+        }
+    }
+
     private var voiceBarSection: some View {
         Section("VoiceBar") {
             if let openAtLogin {
@@ -1379,7 +1397,11 @@ public struct SettingsView: View {
     @ViewBuilder
     private func microphonePriorityRow(_ row: MicrophonePriorityRow, at index: Int, visibleCount: Int) -> some View {
         let isUsed = SettingsMicrophoneRowPresentation.isUsedForDictation(row, snapshot: microphoneSnapshot)
-        let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row), lead: {
+        let isHovered = hoveredMicrophoneIndex == index || settingsHoverPreview.microphoneRow == index
+        // Etan (QA 2026-11-11, shots 1-2): status and the "Used for dictation" pill share the second line, and Make
+        // default is the row's only trailing control. Nothing appears under the row and hovering moves nothing.
+        let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row),
+                                  badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil, lead: {
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.tertiary)
                 .opacity(row.canPrioritize ? 1 : 0)
@@ -1388,16 +1410,14 @@ public struct SettingsView: View {
             // Review R1 #736: the pill and Make default are independent. The mic in use can still sit below a
             // disconnected one, and promoting it keeps it first when that one reconnects.
             if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
-                // Hover reveals it; VoiceOver and the keyboard keep the named action below.
+                // Hover reveals it in space it always holds; VoiceOver and the keyboard keep the named action below.
                 Button("Make default") {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
                 .disabled(microphoneEditReason != nil)
-                .opacity(hoveredMicrophoneIndex == index ? 1 : 0)
-            }
-            if isUsed {
-                SettingsPill(text: "Used for dictation")
+                .opacity(isHovered ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: isHovered)
             }
         }
         .opacity(row.isConnected ? 1 : 0.55)
@@ -2435,7 +2455,8 @@ public struct SettingsView: View {
                 }
                 searchRow
             }
-            .padding(.horizontal, notchEmbeddedTab == nil ? 22 : 12)
+            // In the drawer the search field and lists start on the tab bar's edge, like the Form cards (lane S).
+            .padding(.horizontal, notchEmbeddedTab == nil ? 22 : 0)
             .padding(.top, notchEmbeddedTab == nil ? 19 : 8)
             .padding(.bottom, notchEmbeddedTab == nil ? 14 : 8)
             Divider()

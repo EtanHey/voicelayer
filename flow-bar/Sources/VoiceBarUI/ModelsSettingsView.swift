@@ -284,8 +284,8 @@ public struct ModelsSettingsView: View {
         let busyReason = Self.effortDisabledReason(for: state)
         let disabled = row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
             || processingPending[row.key] != nil
-        return SettingsRow(title: row.key.title, description: row.rowDescription) {
-            if row.experimental { SettingsPill(text: "Experimental", tint: .orange) }
+        return SettingsRow(title: row.key.title, description: row.line,
+                           titleBadge: row.experimental ? SettingsPill(text: "Experimental", tint: .orange) : nil) {
             Toggle(row.key.title, isOn: Binding(
                 get: { processingPending[row.key] ?? row.isOn },
                 set: { onToggleProcessing?(row.key, $0) }
@@ -293,11 +293,13 @@ public struct ModelsSettingsView: View {
             .labelsHidden().toggleStyle(.switch)
             .disabled(disabled)
             .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
+            // Etan (QA 2026-11-11, shot 5): why it is locked shows on hover of the switch, never in the text.
+            .settingsLockedReason(disabled ? row.lockedReason ?? busyReason : nil)
         }
         // SwiftUI's default macOS Form toggle leaves a saved-on switch looking active.
         // Keep its saved value but mute the entire row when it cannot be used.
         .opacity(disabled ? 0.45 : 1)
-        .modifier(OptionalHelp(text: row.lockedReason))
+        .settingsLockedReasonBubble()
     }
 
     /// Row 2 (Etan ruling: Parakeet stays resident). OFF by default; nil while the daemon does not report it. The switch
@@ -310,7 +312,7 @@ public struct ModelsSettingsView: View {
         let lockedReason: String?
         let disabled: Bool
 
-        /// Same rule as the Processing rows: the explanation always shows, a lock adds its reason below.
+        /// Same rule as the Processing rows: the explanation always shows; the lock's reason is on the switch's hover.
         var captionLines: [String] { [line] + (lockedReason.map { [$0] } ?? []) }
     }
 
@@ -343,14 +345,16 @@ public struct ModelsSettingsView: View {
     }
 
     private func unloadWhenIdleToggle(_ row: UnloadWhenIdleRow) -> some View {
-        SettingsRow(title: row.title, description: row.captionLines.joined(separator: " ")) {
+        SettingsRow(title: row.title, description: row.line) {
             Toggle(row.title, isOn: Binding(get: { row.isOn }, set: { onSetUnloadWhenIdle?($0) }))
                 .labelsHidden().toggleStyle(.switch)
                 .disabled(row.disabled)
                 .accessibilityIdentifier("recognizer-unload-when-idle")
+                .settingsLockedReason(row.lockedReason)
         }
         // Matches the Processing rows: a locked switch is muted whole, keeping its real value.
         .opacity(row.lockedReason != nil ? 0.45 : 1)
+        .settingsLockedReasonBubble()
         .padding(.top, 4)
     }
 
@@ -362,14 +366,10 @@ public struct ModelsSettingsView: View {
         let isOn: Bool
         let lockedReason: String?
 
-        /// C22: the explanation always shows; a lock adds its reason below instead of replacing it.
+        /// C22: the explanation always shows; a lock adds its reason. The row paints only `line`; the reason shows
+        /// on hover of the switch (Etan, QA 2026-11-11).
         var captionLines: [String] {
             [line] + (lockedReason.map { [$0] } ?? [])
-        }
-
-        /// The row's one description (V12, two lines then an ellipsis): a lock leads, so the ellipsis never hides it.
-        var rowDescription: String {
-            (lockedReason.map { ["\($0)."] } ?? []).joined() + (lockedReason == nil ? "" : " ") + line
         }
     }
 
