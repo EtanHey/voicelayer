@@ -833,6 +833,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             onOpenHistoryRecording: { [weak self] path in
                 self?.openSettingsWindow(tab: .history, historyRecordingID: path)
             },
+            onOpenHistoryEntry: { [weak self] destination in
+                self?.openSettingsWindow(tab: .history, historyDestination: destination)
+            },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true,
@@ -3217,10 +3220,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         requestTermination(.menuBar)
     }
 
-    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil, historyRecordingID: String? = nil) {
+    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil, historyRecordingID: String? = nil, historyDestination: SettingsHistoryDestination? = nil) {
         // Notch entry points (gear, menu, system selectors and Cmd+,) stay in its drawer. A specific archive
         // detail still has only the window implementation, so preserve that explicit destination.
-        if historyRecordingID == nil, panel?.isVisible == true, !voiceState.isHidden {
+        if historyRecordingID == nil, historyDestination == nil, panel?.isVisible == true, !voiceState.isHidden {
             let currentTab: SettingsTab?
             if case let .settings(current) = notchSurface.drawer { currentTab = current } else { currentTab = nil }
             let selected = tab ?? currentTab ?? lastSettingsTab
@@ -3234,7 +3237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.activate(ignoringOtherApps: true)
         if let tab {
             settingsTabRequest = SettingsTabRequest(
-                tab: tab, focus: focus, historyRecordingID: historyRecordingID, id: (settingsTabRequest?.id ?? 0) + 1
+                tab: tab, focus: focus, historyRecordingID: historyRecordingID, historyDestination: historyDestination, id: (settingsTabRequest?.id ?? 0) + 1
             )
         }
         if let settingsWindow {

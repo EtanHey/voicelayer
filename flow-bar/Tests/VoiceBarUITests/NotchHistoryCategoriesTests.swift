@@ -209,6 +209,25 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         XCTAssertTrue(labels(harness).contains { $0.contains(NotchHistoryPresentation.emptyState(for: .ask).title) })
     }
 
+    func testH2AskAndSpeechRowsOpenTheirOwnArchiveEntry() throws {
+        for surface in [NotchSurfaceEvent.openHistory, .openSettings(.history)] {
+            for scope in [SettingsHistoryScope.ask, .speech] {
+                let harness = makeHarness()
+                open(harness, surface)
+                wait { harness.archive.speech != nil }
+                try swipe(harness, dx: -160)
+                if scope == .speech { try swipe(harness, dx: -160) }
+                let row = try XCTUnwrap(frame(identified: "history-row-2", harness))
+                let point = harness.panel.convertPoint(fromScreen: NSPoint(x: row.minX + 30, y: row.midY))
+                try send(.leftMouseDown, at: point, to: harness.panel)
+                try send(.leftMouseUp, at: point, to: harness.panel)
+                drain(0.3)
+                XCTAssertEqual(harness.opens.values, ["\(scope.rawValue):synthetic-\(scope.rawValue)-1"],
+                               "a row must preserve its category and archive id")
+            }
+        }
+    }
+
     // MARK: Pictures (opt-in)
 
     /// Writes both History surfaces in each category, an empty category and one mid-swipe frame: the real History
@@ -240,7 +259,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
             func list(height: CGFloat) -> AnyView {
                 let dictations = NotchHistoryPanel(
                     entries: fixture.state.recentTranscriptionEntries, activeRetranscriptionPath: nil, palette: palette,
-                    onCopy: { _ in true }, onPaste: { _ in }, onRetranscribe: { _ in }, listHeight: height
+                    onCopy: { _ in true }, onPaste: { _ in }, onRetranscribe: { _ in }, listHeight: height, forcedHoverIndex: 0
                 )
                 return Self.historySurface(dictations, fixture.archive, shot.scope, shot.swipe)
             }
@@ -325,6 +344,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         func add() { lock.withLock { value += 1 } }
     }
 
+    private final class OpenLog { var values: [String] = [] }
+
     private struct Harness {
         let model: VoiceBarNotchPresentationModel
         let surface: NotchSurfaceModel
@@ -332,6 +353,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         let panel: FloatingPillPanel
         let archive: NotchHistoryArchiveStore
         let loads: LoadLog
+        let opens: OpenLog
     }
 
     private static let marker: [SettingsHistoryScope: String] = [
@@ -363,7 +385,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
                         text: "\(Self.marker[scope]!) \(index + 1).", recordingPath: scope == .recording ? "/synthetic/\(index).wav" : nil,
                         createdAt: Date().addingTimeInterval(Double(-60 * (index + 1)))
                     ),
-                    detail: detail(index)
+                    detail: detail(index),
+                    destination: SettingsHistoryDestination(scope: scope, entryID: "synthetic-\(scope.rawValue)-\(index)")
                 )
             }
         }
@@ -381,11 +404,13 @@ final class NotchHistoryCategoriesTests: XCTestCase {
     private func makeHarness(askCount: Int = 12) -> Harness {
         let fixture = makeFixture(askCount: askCount)
         let (state, archive, loads, context) = (fixture.state, fixture.archive, fixture.loads, fixture.context)
+        let opens = OpenLog()
         let model = VoiceBarNotchPresentationModel()
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
         let host = PillHostingView(rootView: AnyView(BarView(
-            state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
+            state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: { opens.values.append("generic") },
+            onOpenHistoryEntry: { opens.values.append("\($0.scope.rawValue):\($0.entryID)") },
             presentationModel: model, includesPanelOutsets: true, surface: surface, settingsDrawer: context
         ).historyCategories(archive: archive)))
         host.activeHitTestProvider = { _ in true }
@@ -396,7 +421,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         panel.orderBack(nil)
         windows.append(panel)
         model.setHovered(true)
-        let harness = Harness(model: model, surface: surface, host: host, panel: panel, archive: archive, loads: loads)
+        let harness = Harness(model: model, surface: surface, host: host, panel: panel, archive: archive, loads: loads, opens: opens)
         resize(harness)
         drain(0.3)
         return harness

@@ -16,6 +16,7 @@ struct NotchHistoryPanel: View {
     let onRetranscribe: (String) -> Void
     /// A click on a row's text opens it in the History window (SPEC open question 1). Copy / Paste stay on hover.
     var onOpen: (RecentTranscriptionEntry) -> Void = { _ in }
+    var onOpenAtIndex: ((Int) -> Void)?
     var retranscriptionAvailability: () -> HistoryRetranscriptionAvailability = { .available }
     /// The visible list: six rows, or eight once the extend handle pulled it down (V6).
     var listHeight: CGFloat = NotchHistoryMorph.listHeight
@@ -132,7 +133,7 @@ struct NotchHistoryPanel: View {
         return HStack(alignment: .center, spacing: NotchHistoryPresentation.rowColumnSpacing) {
             // A row click opens it in the History window (SPEC open question 1). A plain button, so the clipped-text
             // tooltip sits on a control and keyboard users reach it too.
-            Button { onOpen(entry) } label: {
+            Button { open(entry, index: index) } label: {
                 VStack(alignment: .leading, spacing: NotchHistoryPresentation.rowLineSpacing) {
                     Text(NotchHistoryPresentation.firstWords(entry.text))
                         .font(.system(size: NotchHistoryPresentation.rowTextFontSize))
@@ -183,7 +184,7 @@ struct NotchHistoryPanel: View {
         )
         // UXP-3: the hover buttons exist only under the pointer; VoiceOver and keyboard users get the same actions
         // on the row itself.
-        .accessibilityAction { onOpen(entry) }
+        .accessibilityAction { open(entry, index: index) }
         .accessibilityActions {
             ForEach(NotchHistoryPresentation.accessibilityActions(for: entry), id: \.symbol) { action in
                 if action.kind != .retranscribe || retranscriptionAvailability().isEnabled {
@@ -192,6 +193,10 @@ struct NotchHistoryPanel: View {
             }
         }
         .accessibilityHint(retranscriptionAvailability().reason ?? NotchHistoryPresentation.openHint)
+    }
+
+    private func open(_ entry: RecentTranscriptionEntry, index: Int) {
+        if let onOpenAtIndex { onOpenAtIndex(index) } else { onOpen(entry) }
     }
 
     private func header(_ entry: RecentTranscriptionEntry, index: Int) -> String? {

@@ -5,12 +5,22 @@ import Foundation
 /// loaders (`SettingsAskHistoryArchive`, `SettingsSpeechHistoryArchive`), off the main actor, and only while a
 /// History surface is open: the first surface to open loads, an archive change while one is open reloads, and with
 /// none open it reads nothing and listens to nothing. Dictations stay the in-memory list the notch already has.
+public struct SettingsHistoryDestination: Equatable, Sendable {
+    public let scope: SettingsHistoryScope
+    public let entryID: String
+    public init(scope: SettingsHistoryScope, entryID: String) {
+        self.scope = scope
+        self.entryID = entryID
+    }
+}
+
 @MainActor
 public final class NotchHistoryArchiveStore: ObservableObject {
     public struct Row: Equatable, Sendable {
         public let entry: RecentTranscriptionEntry
         /// What follows the time on the row's second line.
         public let detail: String?
+        public var destination: SettingsHistoryDestination? = nil
     }
 
     public typealias Loader = @Sendable (Int) async -> [Row]
@@ -90,7 +100,8 @@ public final class NotchHistoryArchiveStore: ObservableObject {
     nonisolated static func row(_ entry: SettingsAskHistoryEntry) -> Row {
         Row(
             entry: RecentTranscriptionEntry(text: entry.displayResponseTranscript, createdAt: entry.createdAt),
-            detail: entry.hasQuestionText ? "Asked “\(NotchHistoryPresentation.firstWords(entry.questionText))”" : nil
+            detail: entry.hasQuestionText ? "Asked “\(NotchHistoryPresentation.firstWords(entry.questionText))”" : nil,
+            destination: SettingsHistoryDestination(scope: .ask, entryID: entry.id)
         )
     }
 
@@ -100,7 +111,8 @@ public final class NotchHistoryArchiveStore: ObservableObject {
             entry: RecentTranscriptionEntry(text: entry.preview, createdAt: entry.createdAt),
             detail: entry.status == "completed" || entry.durationMs == nil
                 ? (entry.durationMs == nil ? entry.statusLabel : entry.durationLabel)
-                : "\(entry.durationLabel) · \(entry.statusLabel)"
+                : "\(entry.durationLabel) · \(entry.statusLabel)",
+            destination: SettingsHistoryDestination(scope: .speech, entryID: entry.id)
         )
     }
 }

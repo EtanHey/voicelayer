@@ -352,6 +352,7 @@ public struct BarView: View {
     /// SPEC open question 1 (recommendation built): a notch History row click opens that recording in the History
     /// window. Nil falls back to opening the window at its newest row.
     public var onOpenHistoryRecording: ((String) -> Void)?
+    public var onOpenHistoryEntry: ((SettingsHistoryDestination) -> Void)?
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
@@ -431,6 +432,7 @@ public struct BarView: View {
         onOpenSettings: @escaping () -> Void,
         onOpenHistory: @escaping () -> Void,
         onOpenHistoryRecording: ((String) -> Void)? = nil,
+        onOpenHistoryEntry: ((SettingsHistoryDestination) -> Void)? = nil,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false,
@@ -456,6 +458,7 @@ public struct BarView: View {
         self.onOpenMicrophonePicker = onOpenMicrophonePicker
         self.onOpenSetupSettings = onOpenSetupSettings ?? onOpenSettings
         self.onOpenHistoryRecording = onOpenHistoryRecording
+        self.onOpenHistoryEntry = onOpenHistoryEntry
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
@@ -2171,7 +2174,12 @@ public struct BarView: View {
         // Lane H: Dictations / Ask / Speech, side to side. The category selector comes out of this same height.
         NotchHistoryCategoryPanel(
             dictations: historyDictationsPanel(listHeight: fixedListHeight), archive: historyArchive,
-            initialScope: historyInitialScope, initialSwipe: historyInitialSwipe
+            initialScope: historyInitialScope, initialSwipe: historyInitialSwipe,
+            onOpenArchive: { destination in
+                guard !drawerBodyDragJustHappened else { return }
+                surface.send(.dismiss(.action))
+                onOpenHistoryEntry?(destination)
+            }
         )
     }
 

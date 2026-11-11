@@ -15,6 +15,8 @@ struct NotchHistoryCategoryPanel: View {
     let dictations: NotchHistoryPanel
     @ObservedObject var archive: NotchHistoryArchiveStore
 
+    var onOpenArchive: (SettingsHistoryDestination) -> Void = { _ in }
+
     @State private var pager: NotchHistoryCategoryPager
     @State private var isDragging = false
     @State private var swipeEndedAt: TimeInterval = 0
@@ -27,9 +29,11 @@ struct NotchHistoryCategoryPanel: View {
 
     /// `initialScope` and `initialSwipe` (points the lists are dragged, as mid-gesture) are for shots.
     init(dictations: NotchHistoryPanel, archive: NotchHistoryArchiveStore,
-         initialScope: SettingsHistoryScope = .recording, initialSwipe: CGFloat = 0) {
+         initialScope: SettingsHistoryScope = .recording, initialSwipe: CGFloat = 0,
+         onOpenArchive: @escaping (SettingsHistoryDestination) -> Void = { _ in }) {
         self.dictations = dictations
         self.archive = archive
+        self.onOpenArchive = onOpenArchive
         var pager = NotchHistoryCategoryPager(count: Self.scopes.count, index: Self.scopes.firstIndex(of: initialScope) ?? 0)
         if initialSwipe != 0 { pager.move(dx: initialSwipe, dy: 0) }
         _pager = State(initialValue: pager)
@@ -163,6 +167,10 @@ struct NotchHistoryCategoryPanel: View {
             return panel
         case .ask: rows = archive.ask
         case .speech: rows = archive.speech
+        }
+        panel.onOpenAtIndex = { index in
+            guard !swipeJustHappened, let destination = rows?[safe: index]?.destination else { return }
+            onOpenArchive(destination)
         }
         panel.entries = rows?.map(\.entry) ?? []
         panel.emptyState = NotchHistoryPresentation.emptyState(for: scope, isLoaded: rows != nil)

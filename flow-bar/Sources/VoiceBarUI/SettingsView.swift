@@ -53,12 +53,14 @@ public struct SettingsTabRequest: Equatable {
     /// History only: the dictation to select, by its audio path (a notch History row click, 2.3 U4). When it isn't
     /// on the loaded page the list keeps its usual selection.
     public let historyRecordingID: String?
+    public let historyDestination: SettingsHistoryDestination?
     public let id: Int
 
-    public init(tab: SettingsTab, focus: SettingsFocus? = nil, historyRecordingID: String? = nil, id: Int) {
+    public init(tab: SettingsTab, focus: SettingsFocus? = nil, historyRecordingID: String? = nil, historyDestination: SettingsHistoryDestination? = nil, id: Int) {
         self.tab = tab
         self.focus = focus
         self.historyRecordingID = historyRecordingID
+        self.historyDestination = historyDestination
         self.id = id
     }
 }
@@ -574,6 +576,7 @@ public struct SettingsView: View {
     @State private var speechLoading = SettingsSpeechHistoryLoading()
     @State private var speechEntries: [SettingsSpeechHistoryEntry] = []
     @State private var selectedSpeechID: String?
+    @State private var selectedAskID: String?
     @State private var speechReload = SettingsSpeechHistoryReloadRequest()
     @State private var selectedHistoryScope: SettingsHistoryScope
     @State private var askHistoryDayGroups: [SettingsAskHistoryDayGroup]
@@ -897,6 +900,14 @@ public struct SettingsView: View {
             historyMemory.request(recording)
             _selectedHistoryScope = State(initialValue: .recording)
         }
+        if tabRequest?.tab == .history, let destination = tabRequest?.historyDestination {
+            _selectedHistoryScope = State(initialValue: destination.scope)
+            switch destination.scope {
+            case .recording: historyMemory.request(destination.entryID)
+            case .ask: _selectedAskID = State(initialValue: destination.entryID)
+            case .speech: _selectedSpeechID = State(initialValue: destination.entryID)
+            }
+        }
         _historyMemory = State(initialValue: historyMemory)
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
@@ -1001,6 +1012,18 @@ public struct SettingsView: View {
                 selectedHistoryScope = .recording
                 historyMemory.request(recording)
                 historyMemory.applyPage(historyDayGroups.flatMap(\.entries).map(\.id))
+            }
+            if request?.tab == .history, let destination = request?.historyDestination {
+                selectedHistoryScope = destination.scope
+                switch destination.scope {
+                case .recording:
+                    historyMemory.request(destination.entryID)
+                    historyMemory.applyPage(historyDayGroups.flatMap(\.entries).map(\.id))
+                case .ask:
+                    askHistorySearch = ""
+                    selectedAskID = destination.entryID
+                case .speech: selectedSpeechID = destination.entryID
+                }
             }
         }
         // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
@@ -1624,6 +1647,7 @@ public struct SettingsView: View {
     // AIDEV-NOTE: Recording is deliberately first (left) and the default scope — the F5 list is
     // unchanged by the Ask tab, and ask exchanges never appear in it.
     private var speechHistoryScope: some View {
+        ScrollViewReader { proxy in
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(speechEntries.isEmpty && speechLoading.isLoading ? "Loading…" : "\(speechEntries.count) speech record\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
@@ -1687,6 +1711,9 @@ public struct SettingsView: View {
                                     }
                                 }
                             }
+                            .id(entry.id)
+                            .accessibilityIdentifier("history-speech-\(entry.id)")
+                            .accessibilityAddTraits(entry.id == selectedSpeechID ? .isSelected : [])
                         }
                         if speechEntries.count >= speechReload.limit {
                             Button("Load older") { speechReload.loadOlder() }
@@ -1695,6 +1722,11 @@ public struct SettingsView: View {
                 }
             }
         }
+        .onChange(of: selectedSpeechID) { _, id in if let id { proxy.scrollTo(id, anchor: .top) } }
+        .onChange(of: speechEntries) { _, _ in
+            if let selectedSpeechID { proxy.scrollTo(selectedSpeechID, anchor: .top) }
+        }
+        .onAppear { if let selectedSpeechID { proxy.scrollTo(selectedSpeechID, anchor: .top) } }
         .task(id: speechReload.taskID) {
             let invocation = speechLoading.begin()
             defer { speechLoading.finish(invocation) }
@@ -1708,6 +1740,7 @@ public struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { notification in
             guard !(notification.object is SettingsHistoryArchiveChange) else { return }
             speechReload.archiveChanged()
+        }
         }
     }
 
@@ -1937,6 +1970,11 @@ public struct SettingsView: View {
                                 historyDaySection(title: group.dayTitle()) {
                                     ForEach(group.entries) { entry in
                                         historyEntryRow(SettingsHistoryRowModel.ask(entry))
+                                            .id(entry.id)
+                                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(
+                                                entry.id == selectedAskID ? Color.accentColor : .clear, lineWidth: 2))
+                                            .accessibilityIdentifier("history-ask-\(entry.id)")
+                                            .accessibilityAddTraits(entry.id == selectedAskID ? .isSelected : [])
                                     }
                                 }
                             }
@@ -1973,7 +2011,12 @@ public struct SettingsView: View {
                     }
                 }
             }
+            .onChange(of: selectedAskID) { _, id in if let id { proxy.scrollTo(id, anchor: .top) } }
+            .onChange(of: askHistoryDayGroups) { _, _ in
+                if let selectedAskID { proxy.scrollTo(selectedAskID, anchor: .top) }
+            }
             .onAppear {
+                if let selectedAskID { proxy.scrollTo(selectedAskID, anchor: .top) }
                 if askHistoryDayGroups.isEmpty || SettingsHistorySearch(askHistorySearch).isActive,
                    !isAskHistoryLoading {
                     requestAskHistoryReload(scrollProxy: proxy, animated: false)
