@@ -106,14 +106,34 @@ extension View {
     /// The queued count on a 20 pt transport control (Forward). BarView and the glyph-clearance pixel test share this
     /// placement, so the test measures what the notch draws.
     func queueCountBadge(_ label: String?, accessibilityLabel: String?) -> some View {
-        overlay(alignment: .bottomTrailing) {
+        modifier(VoiceBarQueueCountBadgeModifier(label: label, accessibilityLabel: accessibilityLabel))
+    }
+}
+
+extension VoiceBarQueueCountBadge {
+    /// R892 P3: the badge grows in from 0.6 as it arrives and shrinks as it leaves; with Reduce Motion it only fades.
+    static func insertionScale(reduceMotion: Bool) -> CGFloat { reduceMotion ? 1 : 0.6 }
+
+    static func transition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity
+            : .scale(scale: insertionScale(reduceMotion: false), anchor: .topLeading).combined(with: .opacity)
+    }
+}
+
+private struct VoiceBarQueueCountBadgeModifier: ViewModifier {
+    let label: String?
+    let accessibilityLabel: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottomTrailing) {
             if let label {
                 let placement = VoiceBarQueueCountBadge.placement(for: label)
                 VoiceBarQueueCountBadgeView(label: label)
                     .offset(x: placement.width, y: placement.height)
                     .allowsHitTesting(false)
                     .accessibilityLabel(accessibilityLabel ?? "")
-                    .transition(.scale(scale: 0.6, anchor: .topLeading).combined(with: .opacity))
+                    .transition(VoiceBarQueueCountBadge.transition(reduceMotion: reduceMotion))
             }
         }
     }
