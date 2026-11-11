@@ -38,7 +38,7 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
         let updates = await SettingsDrawerLaneSSnapshotTests.updates()
         let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.general, updates: updates), height: 470)
         let title = try Self.line(lines, containing: "macbook pro microphone")
-        let pill = try Self.line(lines, containing: "used for dictation")
+        let pill = try Self.line(lines, containing: "dictation mic")
         let nextTitle = try Self.line(lines, containing: "airpods")
         // OCR may read "Connected Used for dictation" as one line; either way its centre is the status line's.
         let statusLineY = title.box.maxY + 4
@@ -51,7 +51,7 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
                           "[S1] the in-use row is as tall as a plain two-line row (\(rowPitchUsed) vs \(rowPitchPlain))")
     }
 
-    /// Shot 5: "Unavailable with Parakeet." led the Smart chunks description. At rest the row now paints only what it
+    /// Shot 5: "Needs Whisper." led the Smart chunks description. At rest the row now paints only what it
     /// does; the reason shows when the switch is hovered (SettingsDrawerLaneSSnapshotTests renders that state).
     func testSmartChunksNeverPaintsItsLockReasonInItsText() throws {
         let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.transcription, updates: nil), height: 1100)
@@ -61,7 +61,7 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
                        "[S4] the lock reason is painted in the row: \(lines.map(\.text))")
         // Lead review (c7 07:55Z): with the Experimental badge on the title line the description uses the full text
         // column instead of wrapping beside a reserved badge.
-        XCTAssertTrue(lines.contains { $0.text.contains("splits long whisper recordings at pauses") },
+        XCTAssertTrue(lines.contains { $0.text.contains("splits long whisper takes at pauses") },
                       "[S4] the description wraps in a narrow column: \(lines.map(\.text))")
     }
 
@@ -118,9 +118,9 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
     func testTheVersionFooterStatusIsOneLineOnTheTitleEdge() async throws {
         let updates = await SettingsDrawerLaneSSnapshotTests.updates()
         let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.general, updates: updates), height: 470)
-        let status = try Self.line(lines, containing: "no newer release")
-        XCTAssertTrue(status.text.contains("past 2.2.61"), "[S5] the status wraps: \(lines.map(\.text))")
-        let build = try Self.line(lines, containing: "ahead of release")
+        let status = try Self.line(lines, containing: "up to date")
+        XCTAssertFalse(lines.contains { $0.text.contains("ahead of release") || $0.text.contains("8e1d535") })
+        let build = try Self.line(lines, containing: "2.4.0")
         XCTAssertEqual(status.box.minX, build.box.minX, accuracy: 2, "[S5] status and build line share an edge")
     }
 

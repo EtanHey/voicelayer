@@ -37,7 +37,7 @@ public enum SettingsSetupFix: Equatable, Sendable {
         case let .permission(action):
             if case .requestMicrophone = action { return "Allow…" }
             return "Open System Settings"
-        case .checkF5: return "Check"
+        case .checkF5: return "Test F5"
         case .restartF5Listener: return "Restart F5 listener"
         case .manageVoice: return "Manage"
         case .startVoiceEngine: return "Start engine"
@@ -130,19 +130,19 @@ public struct SettingsGeneralSetup: Equatable, Sendable {
             return SettingsSetupStep(
                 id: .microphone, title: "Microphone access",
                 description: row.isGranted ? "VoiceBar can hear your microphones."
-                    : "Off. VoiceBar needs this to hear you.",
+                    : "Off — needed to hear you.",
                 isDone: row.isGranted, fix: fix)
         case .accessibility:
             return SettingsSetupStep(
                 id: .accessibility, title: "Accessibility",
                 description: row.isGranted ? "Lets VoiceBar paste what you say into other apps."
-                    : "Off. VoiceBar needs this to paste what you say into other apps.",
+                    : "Off — needed to paste into other apps.",
                 isDone: row.isGranted, fix: fix)
         case .inputMonitoring:
             return SettingsSetupStep(
                 id: .inputMonitoring, title: "Input Monitoring",
                 description: row.isGranted ? "Lets F5 and the mouse side button start dictation."
-                    : "Off. VoiceBar needs this to hear F5 and the mouse side button.",
+                    : "Off — needed for F5 and mouse side buttons.",
                 isDone: row.isGranted, fix: fix)
         }
     }
@@ -211,7 +211,7 @@ enum SettingsMicrophoneRowPresentation {
         return snapshot.nextDeviceName != nil && snapshot.nextDeviceName == row.label
     }
 
-    static let usedBadge = "Used for dictation"
+    static let usedBadge = "Dictation mic"
 
     /// Make default is offered on any connected, prioritizable mic below the top, whether or not it is the one in use.
     static func offersMakeDefault(_ row: MicrophonePriorityRow, at index: Int) -> Bool {
@@ -228,22 +228,22 @@ enum SettingsMicrophoneRowPresentation {
 enum SettingsGeneralCopy {
     static let dictationKeyTitle = "Dictation key"
     static let dictationKeyDescription =
-        "Hold to talk. Double-tap to keep recording hands-free; it stops after 10 minutes of silence."
+        "Hold to talk. Double-tap for hands-free (stops after 10 min silence)."
     static let mouseTitle = "Mouse side buttons"
     static let mouseDescription = "Forward acts like F5. Back sends Return."
     static let openAtLoginTitle = "Open at login"
     static let hideTitle = "Hide the notch"
-    static let hideDescription = "VoiceBar keeps working. Click its Dock icon to bring the notch back."
+    static let hideDescription = "Stays running. Click the Dock icon to show the notch."
     static let relayTitle = "F5 key helper"
     static let shortcutsHeader = "Shortcuts"
     static let singleTapTitle = "Tap F5"
-    static let readClipboardTitle = "Read clipboard aloud"
-    static let diagnosticDescription = "Copies the build and recognizer facts for a bug report."
+    static let readClipboardTitle = "Read clipboard"
+    static let diagnosticDescription = "Copies build + recognizer info for a bug report."
     static let microphoneNote =
-        "Drag to reorder. VoiceBar uses the first connected microphone. Disconnected ones keep their place."
+        "Drag to set order. First connected mic is used."
 
     static func relayDescription(installed: Bool, listenerActive: Bool) -> String {
         let state = installed ? "Installed." : listenerActive ? "Not installed." : "Needs setup."
-        return "Lets F5 start dictation even when macOS maps it to the dictation key. \(state)"
+        return "Keeps F5 for dictation when macOS steals it. \(state)"
     }
 }

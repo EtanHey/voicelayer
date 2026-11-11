@@ -44,7 +44,7 @@ final class SettingsGeneralSetupTests: XCTestCase {
         XCTAssertEqual(broken.header, "Finish setup")
         XCTAssertEqual(broken.steps.map(\.id), [.accessibility])
         let accessibility = try XCTUnwrap(broken.steps.first)
-        XCTAssertEqual(accessibility.description, "Off. VoiceBar needs this to paste what you say into other apps.")
+        XCTAssertEqual(accessibility.description, "Off — needed to paste into other apps.")
         XCTAssertEqual(accessibility.fix, .permission(.openSettings(
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")))
         XCTAssertEqual(accessibility.fix?.title, "Open System Settings")

@@ -229,7 +229,7 @@ final class RecognizerKUICopyTests: XCTestCase {
     }
 
     func testParakeetLineFollowsTheSwitch() throws {
-        XCTAssertEqual(try Self.state(Self.payload(unloadWhenIdle: false)).autoLoadLine(for: .parakeet), "Stays loaded between dictations.")
+        XCTAssertEqual(try Self.state(Self.payload(unloadWhenIdle: false)).autoLoadLine(for: .parakeet), "Stays loaded between takes.")
         XCTAssertEqual(try Self.state(Self.payload(unloadWhenIdle: true)).autoLoadLine(for: .parakeet), "Unloads after 10 min idle to free memory.")
         XCTAssertNil(try Self.state(Self.payload(parakeet: "sleeping", unloadWhenIdle: false)).autoLoadLine(for: .parakeet),
                      "Sleeping already says it loads when you dictate")

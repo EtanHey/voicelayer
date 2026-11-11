@@ -58,7 +58,7 @@ final class SettingsGeneralPaneShotsTests: XCTestCase {
     /// U1 (#727) gives the installed app a Dock icon whose click brings a hidden notch back.
     func testHideTheNotchSaysHowToBringItBack() {
         XCTAssertEqual(SettingsGeneralCopy.hideDescription,
-                       "VoiceBar keeps working. Click its Dock icon to bring the notch back.")
+                       "Stays running. Click the Dock icon to show the notch.")
     }
 
     func testGeneralRowsNeverClipBeforeTheSecondLine() {

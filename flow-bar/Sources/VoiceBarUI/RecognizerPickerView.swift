@@ -19,7 +19,7 @@ public struct RecognizerPickerView: View {
     }
     var displayedExplanation: String? {
         if suppressDisabledExplanation, let disabled = state.disabledReason, state.explanation == disabled { return nil }
-        return state.explanation ?? (onSelect == nil ? "Recognizer switching unavailable" : nil)
+        return state.explanation ?? (onSelect == nil ? "Switching unavailable" : nil)
     }
     /// Spec 2.3 row names: Parakeet is short; Whisper keeps its model name.
     static func rowTitle(_ engine: RecognizerPickerEngine) -> String {
@@ -27,7 +27,7 @@ public struct RecognizerPickerView: View {
     }
 
     static func blurb(_ engine: RecognizerPickerEngine) -> String {
-        engine == .parakeet ? "Fastest on this Mac. English." : "Slower. Handles Hebrew and mixed languages."
+        engine == .parakeet ? "Fastest. English." : "Slower. Hebrew and mixed languages."
     }
 
     /// The row's status: Loaded / On disk / Not downloaded, with the model's size once known, or the live

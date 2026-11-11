@@ -63,7 +63,7 @@ public enum NotchSettingsDrawerPresentation {
         case .idle: nil
         case .checking: "Checking for updates…"
         case .upToDate: "No newer release is available."
-        case let .ahead(latest): "No newer release. This build is past \(latest)."
+        case .ahead: "Up to date"
         case let .available(version): "VoiceBar \(version) is available."
         case .couldNotCheck: "Could not check for updates. Try again in a moment."
         case .updating: "Updating. VoiceBar restarts when it is done."

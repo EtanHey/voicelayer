@@ -137,7 +137,7 @@ public struct ModelsSettingsView: View {
                     ForEach(Self.processingRows(for: controls, recognizer: recognizerState), id: \.key) { row in
                         processingToggle(row)
                     }
-                    Text("Applies to your next dictation.")
+                    Text("Applies next dictation.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if let processingNotice {
@@ -320,13 +320,13 @@ public struct ModelsSettingsView: View {
         guard let setting = recognizer.unloadWhenIdle else { return nil }
         let engine = RecognizerPickerEngine.parakeet
         let size = recognizer.assetsPresent(for: engine) ? recognizer.diskBytes[engine].flatMap(approximateSize) : nil
-        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) without dictation" }
-            ?? "when you are not dictating"
+        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) idle" }
+            ?? "while idle"
         return UnloadWhenIdleRow(
             title: "Unload when idle",
             isOn: recognizer.unloadWhenIdlePending ?? setting.effective,
             // The load cost is not measured on this Mac yet, so the copy says "a few seconds", never a number.
-            line: "Frees \(size.map { "about \($0) of " } ?? "")memory \(idle). The next dictation loads \(engine.shortName) again, which adds a few seconds.",
+            line: "Frees \(size.map { "~\($0)" } ?? "memory") \(idle). Next dictation reloads \(engine.shortName) (few seconds).",
             lockedReason: setting.lockedReason,
             disabled: setting.lockedReason != nil || recognizer.unloadWhenIdlePending != nil
                 || recognizer.selected == nil || !canChange)
@@ -377,7 +377,7 @@ public struct ModelsSettingsView: View {
     /// D194-r1: smart chunks exist only on the resident Whisper server path (src/stt.ts);
     /// whisper-cli and Wispr Flow return no segments, and a server request that falls back to the CLI skips them.
     /// Etan's note #2 (2.3): smart chunks are Whisper-only, so with Parakeet the row is disabled with this tooltip.
-    static let unavailableWithParakeet = "Unavailable with Parakeet"
+    static let unavailableWithParakeet = "Needs Whisper"
 
     static let whisperServerOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
 
@@ -391,21 +391,21 @@ public struct ModelsSettingsView: View {
         return [
             ProcessingRow(
                 key: .modelPolish,
-                line: "Fixes punctuation and capitals. If polish would add or drop a word, VoiceBar keeps the raw text instead.",
+                line: "Fixes punctuation and capitals. Never adds or drops words.",
                 experimental: false,
                 isOn: controls.modelPolish.effective == .on,
                 lockedReason: polishLock
             ),
             ProcessingRow(
                 key: .outroGate,
-                line: "Drops a “Thank you.” the recognizer invents in silence. Words you really said stay.",
+                line: "Drops a fake “Thank you.” Silence only.",
                 experimental: false,
                 isOn: controls.outroGate.effective,
                 lockedReason: locked(.outroGate, controls.outroGate)
             ),
             ProcessingRow(
                 key: .smartChunks,
-                line: "Splits long Whisper recordings at pauses.",
+                line: "Splits long Whisper takes at pauses.",
                 experimental: true,
                 isOn: controls.smartChunks.effective,
                 lockedReason: recognizer.map { $0.smartChunkingApplicable ? locked(.smartChunks, controls.smartChunks) : unavailableWithParakeet } ?? locked(.smartChunks, controls.smartChunks)

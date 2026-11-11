@@ -25,7 +25,7 @@ public enum ProcessingKey: String, CaseIterable, Equatable, Hashable, Sendable {
     public var title: String {
         switch self {
         case .modelPolish: "Model polish"
-        case .outroGate: "Remove made-up closing phrases"
+        case .outroGate: "Drop invented outros"
         case .smartChunks: "Smart chunks"
         }
     }

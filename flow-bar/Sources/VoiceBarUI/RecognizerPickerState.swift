@@ -308,7 +308,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
                 return idleUnloadSeconds.map { "Unloads after \(Self.idleText($0)) idle to free memory." }
                     ?? "Unloads when idle to free memory."
             }
-            return residency(for: engine) == .loaded ? "Stays loaded between dictations." : nil
+            return residency(for: engine) == .loaded ? "Stays loaded between takes." : nil
         }
         guard let idleUnloadSeconds else { return "Loads automatically when selected." }
         return "Loads automatically when selected; unloads after \(Self.idleText(idleUnloadSeconds)) idle."

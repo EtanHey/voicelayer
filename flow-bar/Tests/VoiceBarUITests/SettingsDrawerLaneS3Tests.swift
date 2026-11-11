@@ -161,7 +161,7 @@ final class SettingsDrawerLaneS3Tests: XCTestCase {
     func testDictionaryToolbarIsOneRowAndTermsAreOneLine() throws {
         let lines = try Layout.paintedLines(Self.drawer(.dictionary), height: 900)
         let add = try Layout.line(lines, containing: "add term")
-        let search = try Layout.line(lines, containing: "search terms")
+        let search = try Layout.line(lines, containing: "search dictionary")
         XCTAssertEqual(add.box.midY, search.box.midY, accuracy: 4, "[S3-dict] Add term and search share a row")
         let term = try Layout.line(lines, containing: "kubernetes")
         let spellings = try Layout.line(lines, containing: "cooper netties")

@@ -94,7 +94,7 @@ public struct SpeechSettingsView: View {
                     }
                 }
             } else {
-                Text(connected ? "Speech settings are not reported by this VoiceLayer version." : "VoiceLayer isn't connected. Speech settings appear when it reconnects.")
+                Text(connected ? "Speech settings are not reported by this VoiceLayer version." : "Reconnect VoiceLayer to edit speech.")
                     .foregroundStyle(.secondary)
             }
             if let notice, pending["preview"] == nil {
@@ -272,8 +272,8 @@ public struct SpeechSettingsView: View {
         return "\(rate) \(percent > 0 ? "faster" : "slower")"
     }
     static func subtitle(_ kind: SpeechProfile, limit: Int) -> String {
-        kind == .short ? "Agent announcements and automatic reads up to \(limit) characters."
-            : "Reads over \(limit) characters, such as the speak command and Option+F5."
+        kind == .short ? "Announcements ≤ \(limit) characters."
+            : "speak / Option+F5 over \(limit) characters."
     }
     static func lockFooter(_ kind: SpeechProfile, controls: SpeechControlsState) -> String? {
         guard let profile = controls.profiles[kind] else { return nil }

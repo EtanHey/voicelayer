@@ -14,18 +14,18 @@ final class SettingsRowActionFocusTests: XCTestCase {
         let pane = microphonePane { reorders.append($0) }
         try withHost(pane, tab: .general) { host, window in
             let rest = try lines(host)
-            XCTAssertFalse(rest.contains { $0.text.contains("make default") })
+            XCTAssertFalse(rest.contains { $0.text.contains("prefer top") })
             try save(host, as: "before-mic-row-focus")
             try tab(window)
             let row = try focusedFrame(window, in: host)
             XCTAssertGreaterThan(row.width, 300, "Tab reaches the microphone row")
-            XCTAssertTrue(try lines(host).contains { $0.text.contains("make default") })
+            XCTAssertTrue(try lines(host).contains { $0.text.contains("prefer top") })
             try tab(window)
             let button = try focusedFrame(window, in: host)
             XCTAssertLessThan(button.width, 110, "the next Tab reaches the reserved action itself")
             XCTAssertTrue(row.contains(button), "the action belongs to this row")
             let revealed = try lines(host)
-            let action = try XCTUnwrap(revealed.first { $0.text.contains("make default") })
+            let action = try XCTUnwrap(revealed.first { $0.text.contains("prefer top") })
             XCTAssertTrue(button.insetBy(dx: -4, dy: -4).intersects(action.box))
             XCTAssertNotNil(host.hitTest(NSPoint(x: button.midX, y: button.midY)))
             for text in ["macbook pro microphone", "airpods", "usb audio device"] {
@@ -37,7 +37,7 @@ final class SettingsRowActionFocusTests: XCTestCase {
             try save(host, as: "after-mic-row-focus")
             try tab(window, backwards: true)
             XCTAssertEqual(try focusedFrame(window, in: host), row)
-            XCTAssertTrue(try lines(host).contains { $0.text.contains("make default") })
+            XCTAssertTrue(try lines(host).contains { $0.text.contains("prefer top") })
             try tab(window)
             XCTAssertEqual(try focusedFrame(window, in: host), button)
             try pressSpace(window)
@@ -59,7 +59,7 @@ final class SettingsRowActionFocusTests: XCTestCase {
         try withHost(microphonePane(recording: true) { reorders.append($0) }, tab: .general) { host, window in
             try tab(window)
             try pressSpace(window)
-            XCTAssertFalse(try lines(host).contains { $0.text.contains("make default") })
+            XCTAssertFalse(try lines(host).contains { $0.text.contains("prefer top") })
             XCTAssertTrue(reorders.isEmpty)
         }
     }

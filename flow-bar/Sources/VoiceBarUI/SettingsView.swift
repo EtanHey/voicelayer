@@ -1322,7 +1322,8 @@ public struct SettingsView: View {
                         description: VoiceBarHotkeyContract.speakSelectionDescription) { EmptyView() }
             SettingsRow(title: SettingsGeneralCopy.readClipboardTitle,
                         description: VoiceBarHotkeyContract.readClipboardDescription) {
-                Button(VoiceBarHotkeyContract.readClipboardActionLabel) { onReadClipboard?() }
+                Button("Read") { onReadClipboard?() }
+                    .accessibilityLabel(VoiceBarHotkeyContract.readClipboardActionLabel)
                     .disabled(onReadClipboard == nil)
             }
         }
@@ -1422,7 +1423,7 @@ public struct SettingsView: View {
             // disconnected one, and promoting it keeps it first when that one reconnects.
             if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
                 // Focus reveals the same reserved control as hover; the named VoiceOver action stays below.
-                Button("Make default") {
+                Button("Prefer top") {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
@@ -1452,7 +1453,7 @@ public struct SettingsView: View {
         .accessibilityActions {
             if microphoneEditReason == nil {
                 if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
-                    Button("Make default") { makeMicrophoneDefault(at: index) }
+                    Button("Prefer top") { makeMicrophoneDefault(at: index) }
                 }
                 if microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: -1) != nil {
                     Button("Move up") { moveMicrophone(at: index, by: -1) }
@@ -2516,7 +2517,7 @@ public struct SettingsView: View {
                                 VStack(spacing: 10) {
                                     Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
                                     Text("No terms yet").font(.headline)
-                                    Text("Add names, products, and other preferred spellings.")
+                                    Text("Add a preferred spelling.")
                                         .font(.caption).foregroundStyle(SettingsPanePalette.helper)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 170)
@@ -2721,7 +2722,7 @@ public struct SettingsView: View {
                 .foregroundStyle(.secondary)
             // The search is a plain TextField: normal macOS editing, Edit menu ⌘V, and P1's paste integration reach it
             // through `focusedEditorField == .search`. No paste path of its own.
-            TextField("Search terms and variants", text: $dictionarySearch)
+            TextField("Search dictionary", text: $dictionarySearch)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .search)
                 .onExitCommand { dictionarySearch = "" }

@@ -144,15 +144,15 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
         let rest = try SettingsDrawerLaneSLayoutTests.paintedLines(Self.drawer(.general, updates: updates), height: 470)
         let hover = try SettingsDrawerLaneSLayoutTests.paintedLines(Self.drawer(.general, updates: updates)
             .environment(\.settingsHoverPreview, SettingsHoverPreview(microphoneRow: 1)), height: 470)
-        XCTAssertFalse(rest.contains { $0.text.contains("make default") }, "hidden at rest")
-        let button = try SettingsDrawerLaneSLayoutTests.line(hover, containing: "make default")
-        for text in ["macbook pro microphone", "used for dictation", "airpods", "usb audio device"] {
+        XCTAssertFalse(rest.contains { $0.text.contains("prefer top") }, "hidden at rest")
+        let button = try SettingsDrawerLaneSLayoutTests.line(hover, containing: "prefer top")
+        for text in ["macbook pro microphone", "dictation mic", "airpods", "usb audio device"] {
             let before = try SettingsDrawerLaneSLayoutTests.line(rest, containing: text).box
             let after = try SettingsDrawerLaneSLayoutTests.line(hover, containing: text).box
             XCTAssertEqual(before.minY, after.minY, accuracy: 1.5, "[S1] '\(text)' moved on hover")
         }
         let title = try SettingsDrawerLaneSLayoutTests.line(hover, containing: "macbook pro microphone").box
-        let status = try SettingsDrawerLaneSLayoutTests.line(hover, containing: "used for dictation").box
+        let status = try SettingsDrawerLaneSLayoutTests.line(hover, containing: "dictation mic").box
         XCTAssertGreaterThan(button.box.maxY, title.minY, "[S1] Make default is on the row, not under it")
         XCTAssertLessThan(button.box.minY, status.maxY, "[S1] Make default is on the row, not under it")
         XCTAssertGreaterThan(button.box.minX, title.maxX, "[S1] and to its right, in the trailing column")
@@ -163,7 +163,7 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
     func testHoveringTheLockedSwitchShowsWhyAboveItCoveringNothing() throws {
         let lines = try SettingsDrawerLaneSLayoutTests.paintedLines(Self.drawer(.transcription, updates: nil)
             .environment(\.settingsHoverPreview, SettingsHoverPreview(lockedReasons: true)), height: 1100)
-        let reason = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "unavailable with parakeet")
+        let reason = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "needs whisper")
         let title = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "smart chunks")
         let badge = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "experimental")
         let description = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "splits long")
