@@ -147,7 +147,7 @@
       "PlaybackPauseTests/testToggleOutsideSpeakingSendsNothing",
       "PlaybackPauseTests/testRejectedPauseExplainsItselfAndKeepsPlaying",
       "PlaybackPauseTests/testPausedEventFreezesTheClockAtTheDaemonOffset",
-      "PlaybackPauseTests/testPauseCollapsesTheTeleprompterAndResumeExpandsIt",
+      "PlaybackPauseTests/testPauseKeepsTheTeleprompterAndHideCollapsesIt",
       "PlaybackPauseTests/testPauseToggleNotifiesPanelLayout",
       "PlaybackPauseTests/testResumeContinuesFromThePausedWordWithItsTimings",
       "PlaybackPauseTests/testRefusedAutomaticResumeStopsTheReadRetainsTextAndShowsCompactNote",

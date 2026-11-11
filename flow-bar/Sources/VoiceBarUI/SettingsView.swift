@@ -628,8 +628,6 @@ public struct SettingsView: View {
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
     @State private var hoveredMicrophoneIndex: Int?
-    @FocusState private var focusedMicrophoneIndex: Int?
-    @FocusState private var focusedMicrophoneAction: Int?
     @Environment(\.settingsHoverPreview) private var settingsHoverPreview
     @State private var setupHighlight = SettingsArrivalHighlight()
     @FocusState private var focusedSetupFix: SettingsSetupStepID?
@@ -1410,7 +1408,6 @@ public struct SettingsView: View {
     private func microphonePriorityRow(_ row: MicrophonePriorityRow, at index: Int, visibleCount: Int) -> some View {
         let isUsed = SettingsMicrophoneRowPresentation.isUsedForDictation(row, snapshot: microphoneSnapshot)
         let isHovered = hoveredMicrophoneIndex == index || settingsHoverPreview.microphoneRow == index
-        let showsAction = isHovered || focusedMicrophoneIndex == index || focusedMicrophoneAction == index
         // Etan (QA 2026-11-11, shots 1-2): status and the "Used for dictation" pill share the second line, and Make
         // default is the row's only trailing control. Nothing appears under the row and hovering moves nothing.
         let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row),
@@ -1424,17 +1421,14 @@ public struct SettingsView: View {
             // Review R1 #736: the pill and Make default are independent. The mic in use can still sit below a
             // disconnected one, and promoting it keeps it first when that one reconnects.
             if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
-                // Focus reveals the same reserved control as hover; the named VoiceOver action stays below.
+                // Hover reveals it in space it always holds; VoiceOver and the keyboard keep the named action below.
                 Button("Make default") {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
                 .disabled(microphoneEditReason != nil)
-                .modifier(SettingsRowActionReveal(visible: showsAction, enabled: microphoneEditReason == nil) {
-                    makeMicrophoneDefault(at: index)
-                })
-                .focused($focusedMicrophoneAction, equals: index)
-                .animation(.easeOut(duration: 0.12), value: showsAction)
+                .opacity(isHovered ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: isHovered)
             }
         }
         .opacity(row.isConnected ? 1 : 0.55)
@@ -1442,13 +1436,6 @@ public struct SettingsView: View {
             if hovering { hoveredMicrophoneIndex = index } else if hoveredMicrophoneIndex == index { hoveredMicrophoneIndex = nil }
         }
         .contentShape(Rectangle())
-        .focusable(SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) && microphoneEditReason == nil)
-        .focused($focusedMicrophoneIndex, equals: index)
-        .onKeyPress(.space) {
-            guard focusedMicrophoneIndex == index, microphoneEditReason == nil else { return .ignored }
-            makeMicrophoneDefault(at: index)
-            return .handled
-        }
         .accessibilityElement(children: .combine)
         .background(PillControlTooltip(text: microphoneEditReason))
         .accessibilityHint(microphoneEditReason ?? "Drag to reorder microphones")

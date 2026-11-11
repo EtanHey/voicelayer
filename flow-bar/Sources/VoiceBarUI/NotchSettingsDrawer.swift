@@ -36,20 +36,21 @@ public enum NotchSettingsDrawerPresentation {
     public static let detailFontSize: CGFloat = 11.5
     public static let tabGlyphSize: CGFloat = 13
 
-    /// The drawer's height in History row units: expanded History's eight, so the real settings panes get the most
-    /// room the window (sized for eight) already has, and the History/Settings swap never resizes it.
+    /// The height, in History row units, a drawer opens at before its grip has resized it: expanded History's
+    /// eight. C6 L2c (N16): the grip drags it taller, up to `maximumRows`, and it reopens at the height it was left
+    /// at (`NotchSettingsDrawerHeight.swift`). The window never resizes for any of these heights.
     public static let rows = NotchHistoryMorph.maximumRows
 
-    /// The drawer's height below the 32 pt band.
+    /// The default drawer's height below the 32 pt band.
     public static var lowerSurfaceHeight: CGFloat {
         NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(rows))
     }
 
     public static let topInset: CGFloat = 6
 
-    /// The History tab's list: the drawer below its tab bar, above the grip's band (BarView adds the grip).
+    /// The default drawer's History tab list: below its tab bar, above the grip's band (BarView adds the grip).
     public static var historyListHeight: CGFloat {
-        lowerSurfaceHeight - topInset - tabBarHeight - NotchHistoryMorph.listTopInset - NotchHistoryMorph.handleBandHeight
+        historyListHeight(rows: CGFloat(rows))
     }
 
     public static let versionTitle = "VoiceBar"

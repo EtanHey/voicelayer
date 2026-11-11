@@ -404,14 +404,14 @@ final class VoiceBarPresentationTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(mode: .transcribing)
         )
 
-        // Launcher and processing retain their fixed wings; F2 recording centres the time/meter row
-        // inside symmetric 92 pt wings. The fitted F5 hint remains independent.
+        // Launcher and processing retain their fixed wings; recording's symmetric wings fit the time/meter row with
+        // its 8 pt gap and 14 pt outer inset (C7-W: 8 + 26 + 8 + 46 + 14). The fitted F5 hint remains independent.
         for presentation in [launcher, processing] {
             XCTAssertEqual(presentation.geometry.leadingWingWidth, 73.5)
             XCTAssertEqual(presentation.geometry.trailingWingWidth, 73.5)
         }
-        XCTAssertEqual(recording.geometry.leadingWingWidth, 92)
-        XCTAssertEqual(recording.geometry.trailingWingWidth, 92)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 102)
+        XCTAssertEqual(recording.geometry.trailingWingWidth, 102)
         XCTAssertEqual(quickTap.geometry.leadingWingWidth, 47.5)
         XCTAssertEqual(
             quickTap.geometry.trailingWingWidth,
@@ -439,11 +439,12 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 92)
-        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 92)
-        XCTAssertEqual(vad.geometry.leadingWingWidth, 99.5)
-        XCTAssertEqual(vad.geometry.trailingWingWidth, 99.5, "the hold control grows both wings symmetrically")
-        XCTAssertEqual(vad.geometry.leadingWingWidth - pushToTalk.geometry.leadingWingWidth, 7.5)
+        // C7-W: the time/meter wing (102 pt) is wider than Stop + Lock + Cancel (99.5 pt), so the hold control no
+        // longer changes the band's width.
+        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 102)
+        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 102)
+        XCTAssertEqual(vad.geometry.leadingWingWidth, 102)
+        XCTAssertEqual(vad.geometry.trailingWingWidth, 102, "the wings stay symmetric with the hold control")
     }
 
     func testTextBearingCompactStatusKeepsTrailingSafetyPaddingInsideStableCanvas() {

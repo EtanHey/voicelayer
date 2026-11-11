@@ -12,11 +12,11 @@
     "formal/teleprompter-a-seek/OldTimingNoticeMutant.cfg": "4bc81401a94f844d987976b1762a8317dee91f0cd9572ca2785a0c97c2834e53",
     "formal/teleprompter-a-seek/PausedSeekMutant.cfg": "3ee2506468c002c91ebbb5a7b635eca14af857345820a1a3a58ea8b0801eb562",
     "formal/teleprompter-a-seek/Fixed.cfg": "b63f79f479524afc3793227d14e141a0954f45757d9c441d62d37b3a7b079b31",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "fa63b8ebc8c110393b382037c544959e260e4a0f81b99b6b1341237707600f2c",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e23414d8b9dce29b38292f2ab265a52d2a38fc1839e0fdc916c813455a453b3e",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "61b03c378b3001ab4344b5808fa20f15503504c872d5558fee944ea05223f427",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "2a4ebd4a6b1415d6cd283fcbc562956b0e1adb08049d3c32e1079a663800cb2b",
     "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift": "75db0df217618e22a506fc2019c368c2eab47affc81848cfdd3c83aae8a0c67b",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift": "7eb77c9b0a09074b2ccf7b3218cc7e3eda3d9f274abb7be08a089dbe8ec728e0",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "dbaafa14dece2c2512af7fa9a4e1b2b4045d594ef2d5a2181cabfd2898112a79",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift": "a4b4ff1b3acebee07c28d0276fd47d2a2421800eddfeaf762981d4be01a01de0",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "1e0e29192c263fb6f6db17f333c40208fd8e4e06a40b4446fb865dae066097f0",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

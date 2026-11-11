@@ -128,6 +128,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
             // 2.3 U2 (mic tooltip + chevron) × U4 (row actions, the long row's clipped-text tooltip).
             "Start dictation (F5)", "Choose microphone", "Close history", "Settings",
             "Copy", "Paste into the app you were using", "Re-transcribe", Self.longRow,
+            // Lane H: the category selector's three segments.
+            "What you dictated", "Your answers to spoken questions", "Text read aloud to you",
         ], textButtons: 2)
     }
 

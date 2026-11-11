@@ -102,6 +102,35 @@ public struct VoiceBarTranscriptPreviewLayout: Equatable {
     public var isMultiline: Bool
 }
 
+/// X1-35 (Etan QA 2026-11-10: "reading playing and then reading pause should be the same thing with the pause button
+/// clicked ... maybe hiding while still speaking should be available as well ... that state should be finished or
+/// finished reading"). The read on screen, named the way Etan names it. Pause and Hide are independent axes
+/// (X1-34: "paused on its own should not hide the teleprompter, but just pause"); `finished` is an ended read.
+public enum VoiceBarReadingState: String, Equatable, CaseIterable {
+    case playing = "reading-playing"
+    case playingHidden = "reading-playing-hidden"
+    case paused = "reading-paused"
+    case pausedHidden = "reading-paused-hidden"
+    case finished = "reading-finished"
+
+    public var isPaused: Bool { self == .paused || self == .pausedHidden }
+    public var isHidden: Bool { self == .playingHidden || self == .pausedHidden }
+}
+
+/// X1-32 (Etan QA 2026-11-10: "that square should probably be X because I don't think the square does anything in that
+/// state"). The control at the end of the reading row: the red Stop square only while audio plays. Paused, nothing is
+/// playing to stop, so it is an X that ends the read and closes it (a user Stop retains no readback, so one click
+/// closes). An ended read's X dismisses the retained text.
+public struct VoiceBarReadingTerminalControl: Equatable {
+    public enum Action: Equatable { case stopSpeech, dismissReadback }
+    public let iconName: String
+    public let accessibilityLabel: String
+    public let accessibilityHint: String
+    /// The red Stop container; the X glyphs are plain notch ink.
+    public let isDestructive: Bool
+    public let action: Action
+}
+
 public struct VoiceBarPlaybackPauseControl: Equatable {
     public let iconName: String
     public let accessibilityLabel: String
@@ -140,7 +169,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var hasTeleprompterText: Bool
     public var isTeleprompterDismissed: Bool
     public var isTeleprompterReadback: Bool
-    /// P16: the read is parked by Pause; the teleprompter collapses until Resume.
+    /// P16: the read is parked by Pause. X1-34: the teleprompter stays as it was (Hide is its own control).
     public var isPlaybackPaused: Bool
     /// QUEUE1: pause/play alone is 1 slot; Next and the "+N" count widen the leading wing.
     public var readQueueLeadingSlotCount: Int
@@ -292,14 +321,13 @@ public enum VoiceBarPresentation {
             hasText: input.hasTeleprompterText,
             isDismissed: input.isTeleprompterDismissed,
             isReadback: input.isTeleprompterReadback
-        ) && !(input.mode == .idle && hasCompactStatus) && !isPlaybackPaused(input)
+        ) && !(input.mode == .idle && hasCompactStatus)
         let keepsIdleExpanded = input.mode == .idle && !input.isCollapsed
 
-        let recordingWing = input.mode == .recording ? max(
-            recordingLeadingWingWidth(mode: input.mode,
-                showsRecordingHold: input.showsRecordingHold || input.showsRecordingPause,
-                showsEarlierTakeProcessing: input.showsEarlierTakeProcessing) ?? 0,
-            VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
+        let recordingWing = input.mode == .recording ? recordingWingWidth(
+            showsThirdControl: input.showsRecordingHold || input.showsRecordingPause,
+            showsEarlierTakeProcessing: input.showsEarlierTakeProcessing,
+            visibleCoreOcclusionInset: input.visibleCoreOcclusionInset
         ) : nil
         let resolved = VoiceBarNotchPresentation.resolve(
             hasTeleprompter: hasTeleprompter,
@@ -324,8 +352,9 @@ public enum VoiceBarPresentation {
             visibleCoreOcclusionInset: input.visibleCoreOcclusionInset,
             transientNoteWidth: input.transientNote.map(Theme.intrinsicPillStatusWidth(for:))
         )
-        return VoiceBarNotchFeedback.resolve(input: input, presentation: resolved)
-            .map { resolved.addingFeedback($0) } ?? resolved
+        return (VoiceBarNotchFeedback.resolve(input: input, presentation: resolved)
+            .map { resolved.addingFeedback($0) } ?? resolved)
+            .holdingReadingCanvas(input.mode == .speaking)
     }
 
     private static func compactStatusLeadingWingWidth(
@@ -520,6 +549,25 @@ public enum VoiceBarPresentation {
         }
     }
 
+    /// Both recording wings (they are equal about the notch): the wider of the controls' wing and the time/meter's.
+    public static func recordingWingWidth(showsThirdControl: Bool, showsEarlierTakeProcessing: Bool,
+                                          visibleCoreOcclusionInset: CGFloat) -> CGFloat {
+        max(recordingLeadingWingWidth(mode: .recording, showsRecordingHold: showsThirdControl,
+                                      showsEarlierTakeProcessing: showsEarlierTakeProcessing) ?? 0,
+            VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: visibleCoreOcclusionInset))
+    }
+
+    /// C7-W (Etan, QA 2026-11-11): Stop sits `compactContentInset` from the band's left edge, the inset the meter
+    /// keeps from the right edge. The controls stay one row counted from the core, so this is the row's distance from
+    /// the core: whatever the wing has left past Stop, Cancel and the third slot (Mute or Lock; reserved before the
+    /// daemon names the take's mode, so Cancel never moves when it arrives) and the earlier take's spinner.
+    public static func recordingLeadingCoreInset(wingWidth: CGFloat, showsEarlierTakeProcessing: Bool) -> CGFloat {
+        let material = VoiceBarNotchContract.material
+        let slots: CGFloat = showsEarlierTakeProcessing ? 4 : 3
+        let row = slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
+        return max(VoiceBarNotchContract.compactCoreContentInset, wingWidth - material.compactContentInset - row)
+    }
+
     private static func recordingLeadingWingWidth(
         mode: VoiceMode,
         showsRecordingHold: Bool,
@@ -605,8 +653,49 @@ public enum VoiceBarPresentation {
         )
     }
 
-    private static func isPlaybackPaused(_ input: VoiceBarNotchOperationalInput) -> Bool {
-        input.mode == .speaking && input.isPlaybackPaused
+    // MARK: - X1-32/34/35 reading state (Etan QA 2026-11-10)
+
+    public static func readingState(mode: VoiceMode, isPaused: Bool, isDismissed: Bool,
+                                    isReadback: Bool) -> VoiceBarReadingState? {
+        if mode == .speaking {
+            return isPaused ? (isDismissed ? .pausedHidden : .paused) : (isDismissed ? .playingHidden : .playing)
+        }
+        return mode == .idle && isReadback ? .finished : nil
+    }
+
+    public static func readingState(for state: VoiceState) -> VoiceBarReadingState? {
+        readingState(mode: state.mode, isPaused: state.isPlaybackPaused,
+                     isDismissed: state.isTeleprompterDismissed, isReadback: state.isTeleprompterReadback)
+    }
+
+    /// The collapsed reading wing's controls counted from its outer edge: the terminal control, then (hidden, playing
+    /// or paused) Show teleprompter one pitch inside it. The hit region counts the same controls BarView draws.
+    public static func readingCompactTrailingControlCount(for state: VoiceState) -> Int {
+        readingState(for: state)?.isHidden == true ? 2 : 1
+    }
+
+    public static func readingTerminalControl(for reading: VoiceBarReadingState) -> VoiceBarReadingTerminalControl {
+        switch reading {
+        case .playing, .playingHidden:
+            VoiceBarReadingTerminalControl(iconName: "stop.fill", accessibilityLabel: "Stop speaking",
+                                           accessibilityHint: "Stop reading aloud", isDestructive: true,
+                                           action: .stopSpeech)
+        case .paused, .pausedHidden:
+            VoiceBarReadingTerminalControl(iconName: "xmark", accessibilityLabel: "Close read",
+                                           accessibilityHint: "End the paused read and close the teleprompter",
+                                           isDestructive: false, action: .stopSpeech)
+        case .finished:
+            VoiceBarReadingTerminalControl(iconName: "xmark", accessibilityLabel: "Dismiss teleprompter",
+                                           accessibilityHint: "Close the finished read", isDestructive: false,
+                                           action: .dismissReadback)
+        }
+    }
+
+    /// X1-34 (Etan: "the eye stays there when it's actually paused hidden"): a hidden read, playing or paused, keeps
+    /// Show teleprompter in the collapsed wing, over the meter's last slot.
+    public static func showsWingTeleprompterReveal(reading: VoiceBarReadingState?,
+                                                   bandState: VoiceBarNotchVisualState) -> Bool {
+        bandState == .compactStatus && reading?.isHidden == true
     }
 
     /// P16 (Etan, 2026-10-18): pause/play sits on the pill's left while VoiceBar speaks, never while
@@ -634,7 +723,7 @@ public enum VoiceBarPresentation {
             : VoiceBarPlaybackPauseControl(
                 iconName: "pause.fill",
                 accessibilityLabel: "Pause speech",
-                accessibilityHint: "Pause reading and collapse the teleprompter"
+                accessibilityHint: "Pause reading; the teleprompter stays open"
             )
     }
 

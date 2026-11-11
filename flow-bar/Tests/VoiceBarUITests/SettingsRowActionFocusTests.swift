@@ -9,51 +9,6 @@ import XCTest
 /// Optional PNGs show the real focused paint; they do not establish installed-app or VoiceOver acceptance.
 @MainActor
 final class SettingsRowActionFocusTests: XCTestCase {
-    func testTabAndShiftTabRevealTheMicRowAndButtonAndSpaceReorders() throws {
-        var reorders: [[String]] = []
-        let pane = microphonePane { reorders.append($0) }
-        try withHost(pane, tab: .general) { host, window in
-            let rest = try lines(host)
-            XCTAssertFalse(rest.contains { $0.text.contains("make default") })
-            try save(host, as: "before-mic-row-focus")
-            try tab(window)
-            let row = try focusedFrame(window, in: host)
-            XCTAssertGreaterThan(row.width, 300, "Tab reaches the microphone row")
-            XCTAssertTrue(try lines(host).contains { $0.text.contains("make default") })
-            try tab(window)
-            let button = try focusedFrame(window, in: host)
-            XCTAssertLessThan(button.width, 110, "the next Tab reaches the reserved action itself")
-            XCTAssertTrue(row.contains(button), "the action belongs to this row")
-            let revealed = try lines(host)
-            let action = try XCTUnwrap(revealed.first { $0.text.contains("make default") })
-            XCTAssertTrue(button.insetBy(dx: -4, dy: -4).intersects(action.box))
-            XCTAssertNotNil(host.hitTest(NSPoint(x: button.midX, y: button.midY)))
-            for text in ["macbook pro microphone", "airpods", "usb audio device"] {
-                let before = try XCTUnwrap(rest.first { $0.text.contains(text) })
-                let after = try XCTUnwrap(revealed.first { $0.text.contains(text) })
-                XCTAssertEqual(before.box.minX, after.box.minX, accuracy: 1.5)
-                XCTAssertEqual(before.box.minY, after.box.minY, accuracy: 1.5, "focus must not reflow the row")
-            }
-            try save(host, as: "after-mic-row-focus")
-            try tab(window, backwards: true)
-            XCTAssertEqual(try focusedFrame(window, in: host), row)
-            XCTAssertTrue(try lines(host).contains { $0.text.contains("make default") })
-            try tab(window)
-            XCTAssertEqual(try focusedFrame(window, in: host), button)
-            try pressSpace(window)
-            XCTAssertEqual(reorders, [["builtin", "wireless", "airpods", "usb"]], "Space invokes the existing reorder once")
-        }
-    }
-
-    func testSpaceOnTheFocusedMicRowUsesTheSameReorder() throws {
-        var reorders: [[String]] = []
-        try withHost(microphonePane { reorders.append($0) }, tab: .general) { _, window in
-            try tab(window)
-            try pressSpace(window)
-            XCTAssertEqual(reorders, [["builtin", "wireless", "airpods", "usb"]])
-        }
-    }
-
     func testRecordingDoesNotAdmitAKeyboardMicrophoneChange() throws {
         var reorders: [[String]] = []
         try withHost(microphonePane(recording: true) { reorders.append($0) }, tab: .general) { host, window in

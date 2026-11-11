@@ -7,18 +7,22 @@ import SwiftUI
 /// Hovering a row shows Copy / Paste / Transcribe again on its right. It draws on the notch's own contrast
 /// palette and adds no material of its own.
 struct NotchHistoryPanel: View {
-    let entries: [RecentTranscriptionEntry]
+    var entries: [RecentTranscriptionEntry]
     let activeRetranscriptionPath: String?
     let palette: VoiceBarNotchContrastPalette
     /// Returns whether the text reached the pasteboard; the tick shows only then (#161 review).
     let onCopy: (RecentTranscriptionEntry) -> Bool
-    let onPaste: (RecentTranscriptionEntry) -> Void
+    var onPaste: (RecentTranscriptionEntry) -> Void
     let onRetranscribe: (String) -> Void
     /// A click on a row's text opens it in the History window (SPEC open question 1). Copy / Paste stay on hover.
     var onOpen: (RecentTranscriptionEntry) -> Void = { _ in }
     var retranscriptionAvailability: () -> HistoryRetranscriptionAvailability = { .available }
     /// The visible list: six rows, or eight once the extend handle pulled it down (V6).
     var listHeight: CGFloat = NotchHistoryMorph.listHeight
+    /// Lane H: a category's own second line by row position (Ask and Speech); nil keeps the dictation line.
+    var rowHeader: ((Int) -> String?)?
+    /// Lane H: what an empty category says, in a row's own anatomy.
+    var emptyState: NotchHistoryPresentation.EmptyState?
     /// Shots only: render one row as hovered without a pointer.
     var forcedHoverIndex: Int?
     /// Shots only: render the scroll indicator as if mid-scroll, at this content offset.
@@ -38,6 +42,9 @@ struct NotchHistoryPanel: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(zip(entries.indices, ids)), id: \.1) { index, id in
                     row(entries[index], index: index, id: id)
+                }
+                if entries.isEmpty, let emptyState {
+                    emptyRow(emptyState)
                 }
             }
             .background(
@@ -134,7 +141,7 @@ struct NotchHistoryPanel: View {
                         .truncationMode(.tail)
                         // V12: a row whose words don't fit shows them all when the pointer rests on it.
                         .background(PillControlTooltip(text: NotchHistoryPresentation.clippedTextTooltip(entry.text)))
-                    Text(NotchHistoryPresentation.rowHeader(for: entry) ?? " ")
+                    Text(header(entry, index: index) ?? " ")
                         .font(.system(size: NotchHistoryPresentation.rowMetaFontSize))
                         .monospacedDigit()
                         .foregroundStyle(palette.tertiary.color)
@@ -170,7 +177,7 @@ struct NotchHistoryPanel: View {
         .accessibilityIdentifier(NotchHistoryPresentation.rowAccessibilityIdentifier(index: index))
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(
-            [NotchHistoryPresentation.firstWords(entry.text), NotchHistoryPresentation.rowHeader(for: entry)]
+            [NotchHistoryPresentation.firstWords(entry.text), header(entry, index: index)]
                 .compactMap { $0 }
                 .joined(separator: ", ")
         )
@@ -185,6 +192,31 @@ struct NotchHistoryPanel: View {
             }
         }
         .accessibilityHint(retranscriptionAvailability().reason ?? NotchHistoryPresentation.openHint)
+    }
+
+    private func header(_ entry: RecentTranscriptionEntry, index: Int) -> String? {
+        guard let rowHeader else { return NotchHistoryPresentation.rowHeader(for: entry) }
+        return rowHeader(index)
+    }
+
+    /// An empty category: one still row with the list's own insets, sizes and height. Nothing to hover or press.
+    private func emptyRow(_ state: NotchHistoryPresentation.EmptyState) -> some View {
+        VStack(alignment: .leading, spacing: NotchHistoryPresentation.rowLineSpacing) {
+            Text(state.title)
+                .font(.system(size: NotchHistoryPresentation.rowTextFontSize))
+                .foregroundStyle(palette.secondary.color)
+            Text(state.detail)
+                .font(.system(size: NotchHistoryPresentation.rowMetaFontSize))
+                .foregroundStyle(palette.tertiary.color)
+        }
+        .lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, NotchHistoryPresentation.rowLeadingPadding)
+        .padding(.trailing, NotchHistoryPresentation.rowTrailingPadding)
+        .frame(height: NotchHistoryMorph.rowHeight)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(state.title). \(state.detail)")
+        .accessibilityIdentifier(NotchHistoryPresentation.emptyRowIdentifier)
     }
 
     private func actionButtons(_ entry: RecentTranscriptionEntry, id: String) -> some View {

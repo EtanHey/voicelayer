@@ -243,22 +243,28 @@ final class AppLifecycleTests: XCTestCase {
             )
         )
 
+        // C7-W: the recording row sits out from the core by the wing's spare width (flat display: 102 - 14 - 72).
+        let recordingCoreInset = VoiceBarPresentation.recordingLeadingCoreInset(
+            wingWidth: VoiceBarPresentation.recordingWingWidth(
+                showsThirdControl: true, showsEarlierTakeProcessing: false, visibleCoreOcclusionInset: 0),
+            showsEarlierTakeProcessing: false)
+        XCTAssertEqual(recordingCoreInset, 16)
         state.mode = .recording
         state.recordingMode = "ptt"
         // Recording pause: Stop · Pause · ✕, so Stop stays inside the hit region on a PTT take.
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: recordingCoreInset)
         )
         state.recordingMode = nil
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, leadingCoreInset: recordingCoreInset)
         )
         state.recordingMode = "vad"
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: recordingCoreInset)
         )
 
         state.mode = .transcribing
@@ -272,12 +278,14 @@ final class AppLifecycleTests: XCTestCase {
         state.recordingMode = nil
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .history, bandState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, lowerSurfaceIsInteractive: true)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, lowerSurfaceIsInteractive: true,
+                                                  leadingCoreInset: recordingCoreInset)
         )
         state.recordingMode = "ptt"
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .history, bandState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, lowerSurfaceIsInteractive: true)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, lowerSurfaceIsInteractive: true,
+                                                  leadingCoreInset: recordingCoreInset)
         )
         state.mode = .transcribing
 
@@ -333,6 +341,7 @@ final class AppLifecycleTests: XCTestCase {
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, transport)
     }
 
+    /// X1-34 (C6 L3): paused hidden keeps the eye one pitch inside the terminal X, so two controls from the outer edge.
     func testPausedSpeechKeepsPlayAndStopReachable() {
         let state = VoiceState()
         state.handleEvent(["type": "state", "state": "speaking", "text": "Paused read", "playback_id": "p", "generation": 1])
@@ -345,7 +354,7 @@ final class AppLifecycleTests: XCTestCase {
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
-                trailingControlCountFromOuter: 1,
+                trailingControlCountFromOuter: 2,
                 trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(visibleCoreOcclusionInset: 0),
                 leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth
             )

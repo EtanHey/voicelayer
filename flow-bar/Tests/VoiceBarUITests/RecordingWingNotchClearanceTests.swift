@@ -34,8 +34,9 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         // In wing coordinates from the drawn core edge: the physical notch edge is at the occlusion inset.
         let physicalEdge = screen.visibleCoreOcclusionInset
         XCTAssertEqual(screen.housingFrame.maxX + physicalEdge, 857, accuracy: 0.001, "auxiliaryTopRightArea.minX")
-        for time in ["0:00", "0:54", "9:59", "10m", "99h"] {
-            let text = ceil((time as NSString).size(withAttributes: [.font: VoiceBarRecordingWingLabel.timeFont]).width)
+        // X1-23 (C6 L3): long clocks keep minutes and seconds in a narrower face of the same size.
+        for time in ["0:00", "0:54", "9:59", "10:00", "59:59"] {
+            let text = ceil((time as NSString).size(withAttributes: [.font: VoiceBarClockFace.nsFont(for: time)]).width)
             XCTAssertLessThanOrEqual(text, VoiceBarRecordingWingLabel.width, "\(time) fits its region")
             // The time region is trailing-aligned: its text starts where the region's spare width ends.
             let textMinX = slot.coreInset + (VoiceBarRecordingWingLabel.width - text)
@@ -43,7 +44,7 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         }
         let wing = p.geometry.trailingWingWidth
         XCTAssertEqual(wing, p.geometry.leadingWingWidth, "QA 0449: equal space either side of the notch")
-        let contentWidth = VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.recordingTimeGap + WaveformLayout.viewportWidth
+        let contentWidth = VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.recordingMeterGap + WaveformLayout.viewportWidth
         XCTAssertEqual(slot.coreInset + contentWidth + slot.outerInset, wing, accuracy: 0.001,
                        "the row fills the visible wing without an empty outer region")
         XCTAssertLessThanOrEqual(wing, VoiceBarNotchContract.morphCanvasWingCapacity, "inside the morph canvas")
@@ -59,7 +60,9 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         let p = recording(screen)
         let slot = VoiceBarNotchContract.material.wingContentLayout(for: .trailing, state: .recording)
         XCTAssertEqual(slot.coreInset, VoiceBarNotchContract.fixedWingContentInset)
-        XCTAssertEqual(slot.coreInset, slot.outerInset, "equal insets: the meter is centred in the whole wing")
+        // C7-W: the meter ends at the left wing's outer inset (Stop's distance from the band's left edge).
+        XCTAssertEqual(slot.outerInset, VoiceBarNotchContract.material.compactContentInset)
+        XCTAssertEqual(slot.alignment, .outer)
         XCTAssertEqual(p.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: 0),
                        accuracy: 0.001)
     }

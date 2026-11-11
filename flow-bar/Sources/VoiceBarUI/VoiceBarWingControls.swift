@@ -63,6 +63,100 @@ struct VoiceBarSetupAttentionDot: View {
     }
 }
 
+/// X1-30 (Etan QA 2026-11-10: "the indicator is not beautiful ... or not the best located. It's not rounded
+/// properly" / "when there is 1 in the queue, it is actually rounded"). The queued count on Forward's corner as a
+/// real badge: a true circle for 1-9, an evenly rounded pill beyond, a fixed height whatever the digits, and a ring of
+/// the notch's own fill. It never changes layout or hit rects.
+/// M4 defects (lead, 2026-11-11): on the glyph it hid Forward; lifted above it, the screen's top edge (the wing's row
+/// starts at y 0) shaved its rounding. The 32 pt top row has 6 pt above Forward's ink but 11.75 pt below it, so the
+/// count hangs at Forward's bottom-trailing corner: below the ink (0.75 pt clear), 1.75 pt inside the row's bottom,
+/// and centred 3 pt inside Forward's trailing edge so "10" overhangs by at most the 5 pt the hardware notch leaves
+/// visible. Clear of the glyph, it needs no cut-out ring.
+public enum VoiceBarQueueCountBadge {
+    public static let height: CGFloat = 9
+    public static let fontSize: CGFloat = 7
+    public static let horizontalPadding: CGFloat = 1.5
+    /// The badge centre from the control's bottom-trailing corner (the 20 pt plate, centred in the 32 pt row).
+    public static let centreOffset = CGSize(width: -3, height: -0.25)
+
+    /// How far to move a badge pinned bottom-trailing to the control so its centre lands on `centreOffset`.
+    public static func placement(for label: String) -> CGSize {
+        let size = size(for: label)
+        return CGSize(width: centreOffset.width + size.width / 2, height: centreOffset.height + size.height / 2)
+    }
+    public static let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+
+    /// The painted size for `label`: never narrower than tall (a circle for one digit).
+    public static func size(for label: String) -> CGSize {
+        let text = ceil((label as NSString).size(withAttributes: [.font: tabular]).width)
+        return CGSize(width: max(height, text + 2 * horizontalPadding), height: height)
+    }
+
+    private static var tabular: NSFont {
+        let descriptor = font.fontDescriptor.withDesign(.rounded)?.addingAttributes([.featureSettings: [[
+            NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+            NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
+        ]]]) ?? font.fontDescriptor
+        return NSFont(descriptor: descriptor, size: fontSize) ?? font
+    }
+
+}
+
+extension View {
+    /// The queued count on a 20 pt transport control (Forward). BarView and the glyph-clearance pixel test share this
+    /// placement, so the test measures what the notch draws.
+    func queueCountBadge(_ label: String?, accessibilityLabel: String?) -> some View {
+        modifier(VoiceBarQueueCountBadgeModifier(label: label, accessibilityLabel: accessibilityLabel))
+    }
+}
+
+extension VoiceBarQueueCountBadge {
+    /// R892 P3: the badge grows in from 0.6 as it arrives and shrinks as it leaves; with Reduce Motion it only fades.
+    static func insertionScale(reduceMotion: Bool) -> CGFloat { reduceMotion ? 1 : 0.6 }
+
+    static func transition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity
+            : .scale(scale: insertionScale(reduceMotion: false), anchor: .topLeading).combined(with: .opacity)
+    }
+}
+
+private struct VoiceBarQueueCountBadgeModifier: ViewModifier {
+    let label: String?
+    let accessibilityLabel: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottomTrailing) {
+            if let label {
+                let placement = VoiceBarQueueCountBadge.placement(for: label)
+                VoiceBarQueueCountBadgeView(label: label)
+                    .offset(x: placement.width, y: placement.height)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(accessibilityLabel ?? "")
+                    .transition(VoiceBarQueueCountBadge.transition(reduceMotion: reduceMotion))
+            }
+        }
+    }
+}
+
+struct VoiceBarQueueCountBadgeView: View {
+    let label: String
+
+    var body: some View {
+        let size = VoiceBarQueueCountBadge.size(for: label)
+        Text(label)
+            .font(.system(size: VoiceBarQueueCountBadge.fontSize, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize()
+            .foregroundStyle(Color.white)
+            .frame(width: size.width, height: size.height)
+            .background(Capsule().fill(Theme.speakingColor))
+            .contentTransition(.numericText())
+    }
+
+}
+
 /// 2.3 U2: the reading-aloud time in the right wing (`.time` in the mocks: 12 pt tabular digits, the secondary
 /// ink). Its width fills the fixed wing's content lane beside Stop exactly, so Stop's hit rect is fixed.
 public struct VoiceBarReadingTimeLabel: View {
@@ -78,16 +172,15 @@ public struct VoiceBarReadingTimeLabel: View {
     /// width so Stop never moves.
     var showsClock: () -> Bool = { true }
 
-    /// "m:ss" up to 9:59. Two-digit minutes with seconds ("10:00", 33.8 pt) overflow the fixed 31.5 pt lane, so a
-    /// longer read shows whole minutes ("10m" to "99m"), then whole hours ("1h" to "99h"); all fit the lane.
+    /// X1-23 (Etan QA 2026-11-10: "it's become minutes because it's long should probably still have the full like
+    /// seconds and minutes"): every clock keeps its seconds. "m:ss" to 9:59, "mm:ss" to 59:59, then "h:mm:ss" (capped
+    /// at 99:59:59). The longer forms keep the region's width by drawing narrower (`VoiceBarClockFace`), never by
+    /// dropping the seconds the old "10m" / "1h" forms lost.
     public static func text(elapsedMilliseconds: Int) -> String {
-        let seconds = max(0, elapsedMilliseconds) / 1000
-        if seconds < 600 {
-            return "\(seconds / 60):" + String(format: "%02d", seconds % 60)
-        }
-        let minutes = seconds / 60
-        if minutes < 100 { return "\(minutes)m" }
-        return "\(min(99, minutes / 60))h"
+        let seconds = min(max(0, elapsedMilliseconds) / 1000, 99 * 3600 + 59 * 60 + 59)
+        let mmss = String(format: "%02d", seconds % 60)
+        if seconds < 3600 { return "\(seconds / 60):" + mmss }
+        return "\(seconds / 3600):" + String(format: "%02d", seconds / 60 % 60) + ":" + mmss
     }
 
     public var body: some View {
@@ -97,7 +190,7 @@ public struct VoiceBarReadingTimeLabel: View {
             let shows = showsClock()
             let time = shows ? Self.text(elapsedMilliseconds: elapsedMilliseconds()) : ""
             Text(time)
-                .font(.system(size: 12))
+                .font(.system(size: 12).width(VoiceBarClockFace.width(for: time)))
                 .monospacedDigit()
                 .foregroundStyle(color)
                 .lineLimit(1)
@@ -106,6 +199,56 @@ public struct VoiceBarReadingTimeLabel: View {
                 .accessibilityLabel("Reading time")
                 .accessibilityValue(shows ? time : "Preparing")
         }
+    }
+}
+
+/// X1-23: the wing clock's face. Up to 9:59 it is the standard SF digits; "10:00" in them is 32.2 pt against the
+/// 26 pt time region, so two-digit minutes draw in SF's condensed width (25.5 pt for "59:59") and hours in its
+/// compressed width (scaled further only past the region, a read over an hour). Same size, weight, ink and tabular
+/// digits throughout, so the wing, the meter and the 8 pt notch clearance never move.
+public enum VoiceBarClockFace {
+    public static func width(for text: String) -> Font.Width {
+        switch text.count {
+        case ...4: .standard
+        case 5: .condensed
+        default: .compressed
+        }
+    }
+
+    static func nsWidth(for text: String) -> NSFont.Width {
+        switch width(for: text) {
+        case .condensed: .condensed
+        case .compressed: .compressed
+        default: .standard
+        }
+    }
+
+    /// The font the time draws with (tabular digits), for measurement.
+    public static func nsFont(for text: String, size: CGFloat = VoiceBarRecordingWingLabel.timeFontSize) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: .medium, width: nsWidth(for: text))
+        let tabular = base.fontDescriptor.addingAttributes([.featureSettings: [[
+            NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+            NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
+        ]]])
+        return NSFont(descriptor: tabular, size: size) ?? base
+    }
+
+    /// Only an hour-plus clock can still exceed the region in its compressed face; it scales down to fit.
+    public static let minimumScaleFactor: CGFloat = 0.75
+}
+
+struct VoiceBarClockText: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: VoiceBarRecordingWingLabel.timeFontSize, weight: .medium)
+                .width(VoiceBarClockFace.width(for: text)))
+            .monospacedDigit()
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .minimumScaleFactor(VoiceBarClockFace.minimumScaleFactor)
     }
 }
 
@@ -118,9 +261,24 @@ public struct VoiceBarReadingTimeLabel: View {
 public enum VoiceBarRecordingWingLabel {
     /// The time's region: "9:59" / "0:54" at 11 pt is 25.0 pt (26 rounded up to whole points).
     public static let width: CGFloat = 26
+    /// Tabular digits share one lane per clock class; only a class boundary changes its width.
+    public static func clockWidth(for text: String) -> CGFloat {
+        let widest: String
+        switch text.count {
+        case ...4: widest = "8:88"
+        case 5: widest = "88:88"
+        case 7: widest = "8:88:88"
+        default: widest = "88:88:88"
+        }
+        return max(width, ceil((widest as NSString).size(withAttributes: [.font: timeFont]).width))
+    }
     /// QA 0449: 4 layout points plus digit side-bearing paint a clear 6 pt gap. X4: reading uses it too, so the time
     /// and the meter sit the same way whether VoiceBar is listening or reading aloud.
     public static let recordingTimeGap: CGFloat = 4
+    /// C7-W (Etan, QA 2026-11-11: "there's no enough gap" between the seconds and the waveform): the recording row's
+    /// own gap. 8 layout points plus the digits' side bearing paint 9.5 pt, more than three meter-bar spacings, so the
+    /// time and the meter read as two things. The reading row keeps `recordingTimeGap` (its wing has no room to spare).
+    public static let recordingMeterGap: CGFloat = 8
     /// X4: between the reading meter and the collapsed Stop: one control spacing, so a hidden read's eye sits exactly
     /// over the meter's last control slot, one pitch inside Stop.
     public static let readingStopGap: CGFloat = VoiceBarNotchContract.material.compactControlSpacing
@@ -157,16 +315,29 @@ struct VoiceBarReadingTrailingRow<Time: View, Meter: View, Stop: View>: View {
 
 }
 
-/// QA 0449: centre the time and meter as one row, without a blank outer region.
+/// The recording time and meter as one row. C7-W: the wing slot pins it to the wing's outer inset, the same inset
+/// Stop keeps from the left edge.
 struct VoiceBarRecordingTrailingRow<Time: View, Meter: View>: View {
     @ViewBuilder let time: Time
     @ViewBuilder let meter: Meter
 
     var body: some View {
-        HStack(alignment: .center, spacing: VoiceBarRecordingWingLabel.recordingTimeGap) {
+        HStack(alignment: .center, spacing: VoiceBarRecordingWingLabel.recordingMeterGap) {
             time
-            meter
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
+            GeometryReader { proxy in
+                meter
+                    .scaleEffect(x: proxy.size.width / WaveformLayout.viewportWidth, y: 1, anchor: .trailing)
+                    .frame(width: proxy.size.width, alignment: .trailing)
+            }
+                .frame(minWidth: 0, maxWidth: WaveformLayout.viewportWidth)
+                .frame(height: WaveformLayout.viewportHeight)
+                .clipped()
         }
+        // Longer clocks use the meter's leading space; both band edges and the left controls hold still.
+        .frame(width: VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.recordingMeterGap
+            + WaveformLayout.viewportWidth)
     }
 }
 
@@ -184,25 +355,22 @@ public struct VoiceBarRecordingTimeRegion: View {
     }
 
     public var body: some View {
-        // X4: the region keeps its width before capture opens, so the meter never jumps sideways when the time appears.
-        ZStack(alignment: .trailing) {
-            Color.clear.frame(width: VoiceBarRecordingWingLabel.width, height: 1)
-            if isCaptureOpen {
-                TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                    let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+            ZStack(alignment: .trailing) {
+                Color.clear.frame(height: 1)
+                if isCaptureOpen {
                     Text(time)
-                        .font(.system(size: VoiceBarRecordingWingLabel.timeFontSize, weight: .medium))
-                        .monospacedDigit()
+                        .font(Font(VoiceBarRecordingWingLabel.timeFont))
                         .foregroundStyle(color)
                         .lineLimit(1)
-                        .fixedSize()
                         .accessibilityElement()
                         .accessibilityLabel("Recording time")
                         .accessibilityValue(microphoneName.map { "\(time), \($0)" } ?? time)
                 }
             }
+            .frame(width: VoiceBarRecordingWingLabel.clockWidth(for: time), alignment: .trailing)
         }
-        .frame(width: VoiceBarRecordingWingLabel.width, alignment: .trailing)
         .background(PillControlTooltip(text: microphoneName))
     }
 }
@@ -226,12 +394,7 @@ public struct VoiceBarReadingTimeRegion: View {
             // The accessibility value is computed with the visible text on every tick (U2 review R1).
             let shows = showsClock()
             let time = shows ? VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds()) : ""
-            Text(time)
-                .font(.system(size: VoiceBarRecordingWingLabel.timeFontSize, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .fixedSize()
+            VoiceBarClockText(text: time, color: color)
                 .frame(width: VoiceBarRecordingWingLabel.width, alignment: .trailing)
                 .accessibilityElement()
                 .accessibilityLabel("Reading time")

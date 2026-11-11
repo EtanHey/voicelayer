@@ -152,8 +152,8 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            // QA 0449: the three-control recording wing is 99.5 pt on both sides of the 185 pt core.
-            NSSize(width: 384, height: 32)
+            // C7-W: the recording wing is 102 pt on both sides of the 185 pt core (8 + 26 + 8 + 46 + 14).
+            NSSize(width: 389, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -359,10 +359,11 @@ final class BarViewClickabilityTests: XCTestCase {
             "type": "playback_state", "state": "paused", "playback_id": "p-1", "generation": 2,
             "offset_ms": 900, "chunk_offset_ms": 900,
         ])
+        // X1-34 (C6 L3): the paused hidden read keeps its eye beside the terminal X.
         let paused = makeInteractivePanelHost(
             state: state,
             router: router,
-            configuration: Self.readingConfiguration(trailingFromOuter: 1)
+            configuration: Self.readingConfiguration(trailingFromOuter: 2)
         )
         XCTAssertEqual(paused.layout.presentation.visualState, .compactStatus)
         let playRect = paused.controlRects[Self.pauseIndex]
@@ -603,7 +604,9 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(speaking.contains("notchButton("))
         XCTAssertEqual(speaking.components(separatedBy: "notchTeleprompterButton(").count - 1, 2)
         XCTAssertTrue(speaking.contains("icon: \"eye\""))
-        XCTAssertTrue(speaking.contains("icon: \"stop.fill\""))
+        // X1-32 (C6 L3): the terminal glyph (Stop square, or X once paused) comes from the reading state.
+        XCTAssertTrue(speaking.contains("VoiceBarPresentation.readingTerminalControl("))
+        XCTAssertEqual(VoiceBarPresentation.readingTerminalControl(for: .playing).iconName, "stop.fill")
 
         let teleprompterStart = try XCTUnwrap(source.range(of: "private func notchTeleprompterButton"))
         XCTAssertTrue(source[teleprompterStart.lowerBound...]
@@ -763,7 +766,8 @@ final class BarViewClickabilityTests: XCTestCase {
     func testQueuedSpeechUsesOnlyASmallBadgeOnForward() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("if let count = forward.countLabel"))
+        // L3 M4 defect fix: the badge is drawn by the shared, glyph-clear placement (QueueBadgeL3Tests pixel test).
+        XCTAssertTrue(source.contains(".queueCountBadge(forward.countLabel"))
         XCTAssertFalse(source.contains("private var queueVisualization"))
     }
 
@@ -865,7 +869,14 @@ final class BarViewClickabilityTests: XCTestCase {
                 }
                 var settingsOpens = 0
                 let configuration = state.mode == .recording
-                    ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+                    ? VoiceBarNotchInteractionConfiguration(
+                        leadingControlCount: 3,
+                        // C7-W: the recording row sits out from the core, as the app configures it.
+                        leadingCoreInset: VoiceBarPresentation.recordingLeadingCoreInset(
+                            wingWidth: VoiceBarPresentation.recordingWingWidth(
+                                showsThirdControl: true, showsEarlierTakeProcessing: false,
+                                visibleCoreOcclusionInset: 0),
+                            showsEarlierTakeProcessing: false))
                     : VoiceBarNotchInteractionConfiguration(
                         leadingControlCount: 2, trailingControlCountFromCore: 2
                     )

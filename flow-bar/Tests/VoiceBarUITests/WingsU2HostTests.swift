@@ -120,11 +120,11 @@ final class WingsU2HostTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .recording)
-        // Pause takes the third left-wing slot, as Lock does on a VAD take. F2 balances both wings
-        // at that three-control width; the right wing still holds no control.
+        // Pause takes the third left-wing slot, as Lock does on a VAD take. C7-W: both wings take the time/meter
+        // wing's width (102 pt, wider than the three controls' 99.5); the right wing still holds no control.
         assertFixedWings(host, leading: 3, trailing: 0,
-                         trailingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl,
-                         leadingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
+                         trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+                         leadingWidth: VoiceBarNotchContract.recordingTrailingWingWidth)
         // From the core outward: Cancel, then Pause, then Stop.
         firstClick(host, control: 0)
         XCTAssertEqual(host.router.calls, ["cancel"])
@@ -179,6 +179,8 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertFalse(state.isTeleprompterDismissed, "the eye shows the teleprompter again")
     }
 
+    /// X1-32/X1-34 (C6 L3): paused hidden keeps the eye one pitch inside the terminal, which is an X ("Close read")
+    /// that ends the read through Stop's route.
     func testReadingAloudPausedIsPlayLeftTimeAndStopRight() {
         let state = makeSpeakingState()
         state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-1", "generation": 2,
@@ -186,11 +188,11 @@ final class WingsU2HostTests: XCTestCase {
         state.dismissTeleprompter()
         var sent: [String] = []
         state.sendCommand = { if let cmd = $0["cmd"] as? String { sent.append(cmd) } }
-        let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 1))
-        assertFixedWings(host, leading: 4, trailing: 1, trailingWidth: VoiceBarPresentation.readingTransportWingWidth,
+        let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 2))
+        assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: VoiceBarPresentation.readingTransportWingWidth,
                          leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
         assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Resume speech", "Previous read", "Playback speed",
-                                                     "Stop speaking"])
+                                                     "Close read", "Show teleprompter"])
         firstClick(host, control: BarViewClickabilityTests.pauseIndex)
         XCTAssertEqual(sent, ["resume"])
         firstClick(host, control: BarViewClickabilityTests.compactStopIndex)
