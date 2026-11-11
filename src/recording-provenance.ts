@@ -598,6 +598,7 @@ export function polishReachabilityForStatus(
   if (!status) return null;
   switch (status) {
     case "applied":
+    case "partial":
     case "rejected":
     case "shadowed":
       return true;

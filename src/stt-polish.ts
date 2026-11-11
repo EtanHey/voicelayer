@@ -15,6 +15,7 @@ export type STTPolishStatus =
   | "unavailable"
   | "shadowed"
   | "applied"
+  | "partial"
   | "rejected"
   | "failed";
 export type STTPolishFailureKind =
@@ -56,6 +57,7 @@ export interface STTPolishResult {
   retried: boolean;
   latencyMs: number;
   polished: boolean;
+  chunkCounts?: { applied: number; attempted: number; total: number };
   reason?: string;
   /** Structured transport failure; timeouts/HTTP errors never trigger recovery. */
   failureKind?: STTPolishFailureKind;
@@ -1431,6 +1433,12 @@ function validatePolishCandidate(
   if (changedProtectedTokens(cleanedText, candidate) && !allowedSpokenListRewrite) {
     return POLISH_REJECTION_REASONS.PROTECTED_TOKENS_CHANGED;
   }
+
+  // Supplied/dictated line breaks belong to the speaker, including list rows.
+  const breaks = (text: string) => new Map([...text.matchAll(/\r?\n[^\S\r\n]*(?:\r?\n[^\S\r\n]*)*/gu)].map(m =>
+    [conservedContentTokens(text.slice(0, m.index)).length, m[0].match(/\n/gu)!.length]));
+  const candidateBreaks = breaks(candidate);
+  if ([...breaks(cleanedText)].some(([at, count]) => (candidateBreaks.get(at) ?? 0) < count)) return "polish response removed supplied layout";
 
   const cleanedChars = cleanedText.trim().length;
   const candidateChars = candidate.length;

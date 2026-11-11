@@ -122,6 +122,15 @@ Recordings backup: `bash scripts/backup-recordings-icloud.sh [--dry-run]` copies
 - The same `VOICELAYER_STT_OUTRO_GATE` switch also controls the single-pass caption-tail gate (`src/stt-caption-gate.ts`); turning it off disables both gates. The caption gate needs aligned `verbose_json` segments and two independent Silero sessions over the candidate tail. It keeps the transcript when either session hears speech, when timing is unreliable, or when the text was already rewritten. Its boundary-only lexicon covers credit captions (`Transcription by CastingWords`, `Subtitles by …`, `Thanks for watching`) and a bare trailing-segment `you`, which may also lead a caption. A run over a dead input device (every in-file sample within 2 LSB: zeros, ±1 dither, or constant DC) may exceed the 8 s run bound; all acoustic checks still apply. The >=90 s chunked path does not run this caption gate.
 - `VOICELAYER_SOCKET_PATH` and `VOICELAYER_MCP_SOCKET_PATH` isolate dev VoiceBar/MCP sockets; legacy `QA_VOICE_SOCKET_PATH` and `QA_VOICE_MCP_SOCKET_PATH` remain supported.
 
+## Changeable transcription delivery decisions (2026-11-11)
+
+- Temporary lead ruling, pending Etan's confirmation of comma versus hyphen: prose U+2014 becomes a comma plus one space, with adjacent punctuation coalesced. Attachment to a word is **not** evidence of a cutoff or hesitation. Do not turn `here—this` or `anyway—that` into ellipses.
+- Real decoder-marked ellipses remain intact. The rules engine's existing marked acoustic-filler path (`um—`, `uh—`, `er—`) is canonicalized to ellipses before polish so ordered fragment-fidelity checks protect it. Other unlabelled dashes remain prose. Retractions and every repeated word are retained.
+- Inline/fenced code, paths and URLs are byte-preserved by the dash rule. This exemption does not authorize unrelated cleanup changes inside literal spans.
+- Supplied line/paragraph breaks and dictated `new paragraph` belong to the speaker. Only a newly automatic conditional paragraph break may be joined; list items and headings are not joined into neighbouring prose.
+- Long HTTP polish uses one shared maximum 18-second budget. Chunks target 1800 characters and extend only to pre-polish sentence ends, with a 3600-character polishable limit. Oversized sentences remain unpolished; no arbitrary whitespace seam is submitted. The seam guard also refuses a new terminal or continuation capitalization at an internal edge. Inline code alone does not disable the whole take.
+- A mixed result is `partial`, with applied/attempted/total chunk counts in provenance. All unattempted or rejected text keeps its original words and receives deterministic paragraph formatting; terminal punctuation is restored only at the end of the whole take, never at an internal seam.
+
 ## Dependencies (setup)
 - sox (`rec`), edge-tts, whisper-cpp (optional), yt-dlp, ffmpeg
 - Python: mlx-audio, fastapi, uvicorn, numpy, pydantic, silero-vad, torch, soundfile

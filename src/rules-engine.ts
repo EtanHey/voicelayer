@@ -167,6 +167,11 @@ const DISFLUENCY_PATTERNS: RegExp[] = [
   /(?:^|\s)(?:אמ|אה)(?=\s|$)/g,
 ];
 
+/** The marked acoustic-filler path above is explicit fragment evidence. */
+export function canonicalizeMarkedFillerFragments(text: string): string {
+  return text.replace(/\b(um|uh|er)\b—/giu, "$1…");
+}
+
 // These expressions can carry meaning and are ordinary English. They remain
 // available only for callers that explicitly opt into the legacy aggressive
 // behavior; deleting them unconditionally changes what the speaker asserted.

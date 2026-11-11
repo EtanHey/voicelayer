@@ -2134,7 +2134,7 @@ describe("stt-polish", () => {
     const requests: Record<string, unknown>[] = [];
     const cleanedText = Array.from(
       { length: 2400 },
-      (_, index) => `word${index}`,
+      (_, index) => `Word${index}${index % 50 === 49 ? "." : ""}`,
     ).join(" ");
     const server = Bun.serve({
       port: 0,
@@ -2168,11 +2168,13 @@ describe("stt-polish", () => {
       const chunks = requests.map(request => (request.messages as Array<{ content: string }>).at(-1)!.content.split("VoiceLayer cleaned text to fix:\n")[1]);
       expect(chunks.join(" ")).toBe(cleanedText);
       for (let i = 0; i < requests.length; i++) {
-        expect(chunks[i].length).toBeLessThan(1900);
+        expect(chunks[i].length).toBeLessThanOrEqual(3600);
+        expect(chunks[i]).toMatch(/[.!?]$/u);
         expect(Number(requests[i].max_tokens)).toBeGreaterThanOrEqual(Math.ceil(chunks[i].split(/\s+/u).length * 2.2));
       }
       expect(result.status).toBe("applied");
-      expect(result.text).toBe(cleanedText);
+      // Deterministic paragraphing may add whitespace; every word and mark stays exact.
+      expect(result.text.replace(/\s/gu, "")).toBe(cleanedText.replace(/\s/gu, ""));
     } finally {
       server.stop(true);
     }

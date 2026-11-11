@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { finalizeTranscriptionResultForSurface } from "../input";
 
-const raw = "Keep um— uh— er— fu— pub— pub— sorry published.";
+// Decoder-marked ellipses are explicit fragments; attachment alone is not evidence.
+const raw = "Keep um… uh… er… fu… pub… pub… sorry published.";
 const expected = "Keep um… uh… er… fu… pub… pub… sorry published.";
 const words = (text: string) => text.match(/[\p{L}\p{M}\p{N}'’]+/gu);
 const env = () => ({ ...process.env, QA_VOICE_CORRECTOR: "identity", QA_VOICE_STT_POLISH: "off" });
@@ -24,7 +25,7 @@ describe("L7 cut-off meaning at the shared delivery boundary", () => {
   it("keeps complete-word retraction order and treats free-standing prose dashes separately", async () => {
     const input = "Tuesday—no, Wednesday—actually Thursday. Keep all words — this clause must survive.";
     const result = await finalizeTranscriptionResultForSurface(input, null, env());
-    expect(result.text).toBe("Tuesday…no, Wednesday…actually Thursday. Keep all words - this clause must survive.");
+    expect(result.text).toBe("Tuesday, no, Wednesday, actually Thursday. Keep all words, this clause must survive.");
     expect(words(result.text)).toEqual(words(input));
     expect(result.text).not.toContain("\u2014");
   });
@@ -32,7 +33,7 @@ describe("L7 cut-off meaning at the shared delivery boundary", () => {
   for (const surface of ["dictation", "voice_ask"] as const) {
     it("normalizes a model-proposed prose em dash at final delivery on " + surface, async () => {
       const input = "Keep all words here - this clause must survive.";
-      const candidate = "Keep all words here — this clause must survive.";
+      const candidate = "Keep all words here—this clause must survive.";
       const server = Bun.serve({ port: 0, fetch: request => request.method !== "POST"
         ? Response.json({ data: [] }) : Response.json({ choices: [{ message: { content: candidate } }] }) });
       try {
@@ -40,7 +41,7 @@ describe("L7 cut-off meaning at the shared delivery boundary", () => {
           ...env(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
         });
         expect(result.polishStatus).toBe("applied");
-        expect(result.text).toBe(input);
+        expect(result.text).toBe("Keep all words here, this clause must survive.");
         expect(words(result.text)).toEqual(words(input));
       } finally { server.stop(true); }
     });

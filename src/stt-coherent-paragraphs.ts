@@ -68,8 +68,8 @@ function opener(sentence: string): string {
 interface Boundary { start: number; end: number }
 
 /** null means fenced or multiline code; inline code remains an indivisible span. */
-function inlineCodeSpans(text: string): Boundary[] | null {
-  if (/^[^\S\r\n]*(?:`{3,}|~{3,})/mu.test(text)) return null;
+export function inlineCodeSpans(text: string, includeMultiline = false): Boundary[] | null {
+  if (!includeMultiline && /^[^\S\r\n]*(?:`{3,}|~{3,})/mu.test(text)) return null;
   const runs = [...text.matchAll(/`+/gu)];
   const spans: Boundary[] = [];
   for (let i = 0; i < runs.length; i++) {
@@ -77,7 +77,7 @@ function inlineCodeSpans(text: string): Boundary[] | null {
     let close = i + 1;
     while (close < runs.length && runs[close][0].length !== open[0].length) close++;
     const end = close < runs.length ? runs[close].index! + runs[close][0].length : text.length;
-    if (/[\r\n]/u.test(text.slice(open.index!, end))) return null;
+    if (!includeMultiline && /[\r\n]/u.test(text.slice(open.index!, end))) return null;
     spans.push({ start: open.index!, end });
     i = close;
   }
@@ -128,7 +128,7 @@ function plainSentenceToken(text: string, at: number, next: string): boolean {
 }
 
 /** Whitespace runs after a completed sentence that may become "\n\n". */
-function sentenceBoundaries(text: string): Boundary[] {
+export function sentenceBoundaries(text: string): Boundary[] {
   const code = inlineCodeSpans(text);
   if (!code) return [];
   const out: Boundary[] = [];

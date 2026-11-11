@@ -192,6 +192,9 @@ describe("corpus replay verification", () => {
     expect(() =>
       assertCorpusReplayResult({ ...base, polishStatus: "applied" }),
     ).toThrow("polished=true");
+    expect(() => assertCorpusReplayResult({ ...base, polishStatus: "partial" })).toThrow("polished=true");
+    expect(() => assertCorpusReplayResult({ ...base, polishStatus: "partial", polished: true,
+      polishReason: "Long-take chunks: applied=2/21, attempted=3" })).not.toThrow();
     expect(() => assertCorpusReplayResult({ ...base, polishStatus: "failed" })).toThrow(
       "polish path did not complete",
     );

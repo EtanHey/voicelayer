@@ -1,6 +1,8 @@
+import { canonicalDeliveryInput, formatDeliveryDashes, joinAutomaticConditionalParagraphs } from "./stt-delivery-format";
 import { captureLifecycle } from "./capture-lifecycle";
 import { recordingAppBuild, tagTranscription, type RecordingAppBuild } from "./recording-build";
 import { TakeStageTimings, withTakeStageTimings, measureTakeStage, measureTakeStageAsync } from "./take-stage-timings";
+import { beginTranscriptionStageReceipt } from "./transcription-stage-receipt";
 import { userVoicePresent } from "./voice-away-policy";
 import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission, holdVoiceAdmission } from "./update-gate-admission";
 /**
@@ -29,7 +31,7 @@ import { withCaptureVoiceAdmission, withAsyncVoiceAdmission, withVoiceAdmission,
  */
 
 import { applyPauseParagraphs, MIN_PARAGRAPH_CHARS, pauseParagraphsEnabled } from "./stt-paragraphs";
-import { applyCoherentParagraphFallback, coherentParagraphsEnabled, hasParagraphCodeBlock, isConditionalContinuation, preservesInlineCode } from "./stt-coherent-paragraphs";
+import { applyCoherentParagraphFallback, coherentParagraphsEnabled, hasParagraphCodeBlock, preservesInlineCode } from "./stt-coherent-paragraphs";
 import { processingEnv } from "./processing-settings";
 import { physicalStopInput, STOP_CAPTURE_DRAIN_MS as PUSH_TO_END_STOP_CAPTURE_DRAIN_MS, STOP_POLL_MS } from "./physical-stop-input";
 import { createHash, randomBytes } from "crypto";
@@ -564,17 +566,13 @@ export async function finalizeTranscriptionResultForSurface(
   surface: STTPolishSurface | null,
   env: STTFinalizeEnv = processingEnv(),
   boundaryContext?: BoundaryContext,
+  receiptAudioPath?: string,
 ): Promise<FinalizedTranscriptionResult> {
-  const cleanedText = measureTakeStage("dictionary_rules", () => finalizeTranscriptionText(rawText, env));
-  // A long unformatted final needs paragraphs regardless of polish state.
-  // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
+  const cleanedText = measureTakeStage("dictionary_rules", () => canonicalDeliveryInput(finalizeTranscriptionText(rawText, env)));
+  const finishReceipt = await beginTranscriptionStageReceipt(receiptAudioPath, rawText, cleanedText);
   const paragraphText = (text: string): string => measureTakeStage("dictionary_rules", () => {
-    // Code whitespace is content: abstain before either paragraph stage.
     if (hasParagraphCodeBlock(text)) return text;
-    // Decoder or model layout may already strand a dependent conditional.
-    // Join whitespace only; punctuation and every spoken word remain untouched.
-    const layout = text.replace(/([.!?]["'”’»)\]]*)[^\S\r\n]*\r?\n(?:[^\S\r\n]*\r?\n)+[^\S\r\n]*(?=\S)/gu,
-      (gap: string, terminal: string, at: number) => isConditionalContinuation(text.slice(at + gap.length)) ? terminal + " " : gap);
+    const layout = joinAutomaticConditionalParagraphs(cleanedText, text);
     const candidate = !coherentParagraphsEnabled(env) && pauseParagraphsEnabled(env) && boundaryContext
       ? applyPauseParagraphs(layout, boundaryContext.segments, boundaryContext.pauses)
       : layout;
@@ -583,40 +581,22 @@ export async function finalizeTranscriptionResultForSurface(
     const strip = (value: string) => value.replace(/\s/gu, "");
     return strip(formatted) === strip(text) ? formatted : text;
   });
-  // Shared by initial delivery, voice_ask and every retranscription entry point.
-  // A word-attached em dash carries a cut-off or retraction: retain that meaning
-  // with Etan's ellipsis marker. Free-standing prose dashes become ASCII.
-  // Neither substitution removes, completes or reorders any spoken word.
-  const deliveredText = (text: string) => paragraphText(text)
-    .replace(/(?<=[\p{L}\p{M}\p{N}])\u2014/gu, "…")
-    .replace(/\u2014/gu, "-");
-  if (!surface) return { text: deliveredText(cleanedText) };
-  const polished = await measureTakeStageAsync("polish", () => polishTranscriptionText({
-    rawText,
-    cleanedText,
-    surface,
-    env,
-  }));
-  appendControlLayerEvent(
-    "transcription.polish",
-    {
-      mode: polished.mode,
-      status: polished.status,
-      surface: polished.surface,
-      changed: polished.changed,
-      retried: polished.retried,
-      latency_ms: Math.round(polished.latencyMs),
-      raw_chars: rawText.length,
-      cleaned_chars: cleanedText.length,
-      polished_chars: polished.polishedText?.length ?? null,
-      final_chars: polished.text.length,
-      polished: polished.polished,
-      reason: polished.reason ?? null,
-      failure_kind: polished.failureKind ?? null,
-      error: polished.error ?? null,
-    },
-    { topic: "voice.transcription" },
-  );
+  const deliveredText = (text: string) => formatDeliveryDashes(paragraphText(text));
+  if (!surface) {
+    const text = deliveredText(cleanedText);
+    finishReceipt?.(cleanedText, text, null);
+    return { text };
+  }
+  const polished = await measureTakeStageAsync("polish", () => polishTranscriptionText({ rawText, cleanedText, surface, env }));
+  const text = deliveredText(polished.text);
+  appendControlLayerEvent("transcription.polish", {
+    mode: polished.mode, status: polished.status, surface: polished.surface,
+    changed: polished.changed, retried: polished.retried, latency_ms: Math.round(polished.latencyMs),
+    raw_chars: rawText.length, cleaned_chars: cleanedText.length,
+    polished_chars: polished.polishedText?.length ?? null, final_chars: text.length,
+    polished: polished.polished, reason: polished.reason ?? null,
+    failure_kind: polished.failureKind ?? null, error: polished.error ?? null,
+  }, { topic: "voice.transcription" });
   if (polished.status === "rejected") console.error(`[voicelayer] ${JSON.stringify({
     event: "polish_rejected", reason: polished.reason ?? "unspecified", latency_ms: Math.round(polished.latencyMs),
   })}`);
@@ -624,12 +604,9 @@ export async function finalizeTranscriptionResultForSurface(
       polished.failureKind !== "timeout" && polished.failureKind !== "endpoint-error") {
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
   }
-  return {
-    text: deliveredText(polished.text),
-    polished: polished.polished,
-    polishStatus: polished.status,
-    ...(polished.reason ? { polishReason: polished.reason } : {}),
-  };
+  finishReceipt?.(polished.text, text, polished.status);
+  return { text, polished: polished.polished, polishStatus: polished.status,
+    ...(polished.reason ? { polishReason: polished.reason } : {}) };
 }
 
 function transcriptionPolishMetadata(
@@ -3735,6 +3712,8 @@ export async function waitForInput(
       finalized = await finalizeTranscriptionResultForSurface(
         rawText,
         polishSurfaceForWaitOptions(options),
+        processingEnv(), undefined,
+        (voiceBarArchivePath ?? voiceAskArchivePath) ? join((voiceBarArchivePath ?? voiceAskArchivePath)!, "audio.wav") : undefined,
       );
       if (chunkBackendLabels.size === 1) {
         sttBackendLabel = [...chunkBackendLabels][0]!;
@@ -3765,6 +3744,7 @@ export async function waitForInput(
         polishSurfaceForWaitOptions(options),
         finalizeEnv,
         boundaryContext,
+        (voiceBarArchivePath ?? voiceAskArchivePath) ? join((voiceBarArchivePath ?? voiceAskArchivePath)!, "audio.wav") : undefined,
       );
       if (result.text.trim() && !finalized.text) {
         console.error(
@@ -4633,7 +4613,11 @@ async function retranscribeVoiceAskArchiveAdmitted(
     working = prepareFullVoiceAskWavForSTT(snapshot);
     const backend = await getBackend();
     const result = await backend.transcribe(working.path);
-    const text = result.text.trim();
+    // Ask archive recovery intentionally keeps raw decoder wording. It still shares
+    // the final delivery contract, including paragraph and punctuation boundaries.
+    const finalized = await finalizeTranscriptionResultForSurface(result.text, null,
+      { ...processingEnv(), QA_VOICE_CORRECTOR: "identity" }, undefined, snapshot.audioPath);
+    const text = finalized.text.trim();
     if (!text) {
       if (result.attemptEvidence?.gateRemoval) {
         revalidateVoiceAskArchiveSnapshot(snapshot);
@@ -4826,6 +4810,7 @@ async function retranscribeRecordingCaptureAdmitted(
               finalizeEnv,
             )
           : undefined,
+        wavPath,
       );
       const text = finalized.text.trim() ? finalized.text : "";
       if (result.text.trim() && !text) {
@@ -4948,6 +4933,7 @@ async function retranscribeLastCaptureAdmitted(): Promise<string | null> {
               finalizeEnv,
             )
           : undefined,
+        archivedAudioPath ?? undefined,
       );
       const text = finalized.text.trim() ? finalized.text : "";
       if (result.text.trim() && !text) {

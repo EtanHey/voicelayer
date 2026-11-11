@@ -879,7 +879,7 @@ describe("input recording durability", () => {
     clearCancelSignal();
     if (process.env.PRIV11_NONCE) {
       const tokens = [`CANARY-TXT-${process.env.PRIV11_NONCE}`, `CANARY-HOME-${process.env.PRIV11_NONCE}`];
-      expect(diagnosticLeaks(tmpRoot, tokens, tmpRoot), "Canary in diagnostics before fixture cleanup").toEqual([]);
+      expect(diagnosticLeaks(tmpRoot, tokens, tmpRoot, process.env.QA_VOICE_RECORDINGS_DIR), "Canary in diagnostics before fixture cleanup").toEqual([]);
     }
     rmSync(tmpRoot, { recursive: true, force: true });
     if (savedRetainedPath === undefined) {
@@ -920,7 +920,7 @@ describe("input recording durability", () => {
             archiveDir = join(process.env.QA_VOICE_RECORDINGS_DIR!, "2026-06-25", "2026-06-25T10-11-12-000Z-abcd1234");
             mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
             const audioPath = join(archiveDir, "audio.wav");
-            writeFileSync(audioPath, makeWav(makePcmChunk()));
+            writeFileSync(audioPath, makeWav(makePcmChunk()), { mode: 0o600 });
             backendMode = "hang";
             const pending = input.retranscribeRecordingCapture(audioPath);
             await waitUntil(() => finishHangingTranscription !== undefined, "private archived result");
@@ -5596,16 +5596,24 @@ describe("input recording durability", () => {
         );
       } else {
         const originalFsync = fsModule.fsyncSync;
-        let fsyncCalls = 0;
-        injectedSpy = spyOn(fsModule, "fsyncSync").mockImplementation(
+        const originalRename = fsModule.renameSync;
+        let metadataCommitted = false, injected = false;
+        const renameSpy = spyOn(fsModule, "renameSync").mockImplementation((from, to) => {
+          originalRename(from, to);
+          if (to === metadataPath) metadataCommitted = true;
+        });
+        // Target the actual commit edge, not an incidental global fsync count:
+        // private attribution receipts now fsync independently before this transaction.
+        const syncSpy = spyOn(fsModule, "fsyncSync").mockImplementation(
           ((fd: number) => {
-            fsyncCalls++;
-            if (fsyncCalls === 4) {
+            if (metadataCommitted && !injected) {
+              injected = true;
               throw new Error("injected post-commit fsync");
             }
             return originalFsync(fd);
           }) as typeof fsModule.fsyncSync,
         );
+        injectedSpy = { mockRestore() { syncSpy.mockRestore(); renameSpy.mockRestore(); } };
       }
 
       const { retranscribeVoiceAskArchive } = await import("../input");

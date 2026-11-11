@@ -50,6 +50,7 @@ const DEFAULT_INTERACTION_TIMEOUT_MS = 300_000;
 const DEFAULT_INTERACTION_TERMINATION_GRACE_MS = 10_000;
 const HANDLED_POLISH_STATUSES = new Set([
   "applied",
+  "partial",
   "rejected",
   "shadowed",
   "skipped",
@@ -212,7 +213,7 @@ export function assertCorpusReplayResult(input: {
     throw new Error(`${input.specimenId}: degenerate polished output ${JSON.stringify(actual)}`);
   }
   const similarity = wordSimilarity(input.reference, actual);
-  if (input.polishStatus === "applied") {
+  if (input.polishStatus === "applied" || input.polishStatus === "partial") {
     if (input.polished !== true) {
       throw new Error(
         `${input.specimenId}: transcription did not report polished=true ` +
@@ -222,7 +223,7 @@ export function assertCorpusReplayResult(input: {
     }
   }
   const needsPunctuationFloor =
-    input.polishStatus === "applied" ||
+    input.polishStatus === "applied" || input.polishStatus === "partial" ||
     (normalizedWords(actual).length >= MIN_PUNCTUATION_FLOOR_WORDS &&
       similarity.referenceOverlap >= MIN_REFERENCE_OVERLAP);
   if (needsPunctuationFloor && !hasPunctuationFloor(actual)) {
