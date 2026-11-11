@@ -157,6 +157,7 @@ struct NotchHistoryCategoryPanel: View {
     private func list(_ scope: SettingsHistoryScope) -> NotchHistoryPanel {
         var panel = dictations
         panel.listHeight = listHeight
+        panel.scope = scope
         // A click that ends a swipe is not a row click.
         panel.onOpen = { entry in if !swipeJustHappened { dictations.onOpen(entry) } }
         panel.onPaste = { entry in if !swipeJustHappened { dictations.onPaste(entry) } }
@@ -172,9 +173,10 @@ struct NotchHistoryCategoryPanel: View {
             guard !swipeJustHappened, let destination = rows?[safe: index]?.destination else { return }
             onOpenArchive(destination)
         }
+        panel.rowHasActionableText = { rows?[safe: $0]?.hasActionableText ?? false }
         panel.entries = rows?.map(\.entry) ?? []
         panel.emptyState = NotchHistoryPresentation.emptyState(for: scope, isLoaded: rows != nil)
-        panel.forcedHoverIndex = nil
+        panel.forcedHoverIndex = dictations.forcedHoverIndex
         panel.forcedScrollOffset = nil
         panel.rowHeader = { index in
             guard let row = rows?[safe: index] else { return nil }

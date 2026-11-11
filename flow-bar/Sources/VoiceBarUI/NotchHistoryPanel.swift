@@ -24,6 +24,8 @@ struct NotchHistoryPanel: View {
     var rowHeader: ((Int) -> String?)?
     /// Lane H: what an empty category says, in a row's own anatomy.
     var emptyState: NotchHistoryPresentation.EmptyState?
+    var scope: SettingsHistoryScope = .recording
+    var rowHasActionableText: ((Int) -> Bool)?
     /// Shots only: render one row as hovered without a pointer.
     var forcedHoverIndex: Int?
     /// Shots only: render the scroll indicator as if mid-scroll, at this content offset.
@@ -160,7 +162,7 @@ struct NotchHistoryPanel: View {
                 )
             } else if showsActions {
                 // UXP-3: the Copy glyph itself turns into the tick; no second "Copied ✓" beside it.
-                actionButtons(entry, id: id)
+                actionButtons(entry, index: index, id: id)
             }
         }
         .padding(.leading, NotchHistoryPresentation.rowLeadingPadding)
@@ -186,7 +188,7 @@ struct NotchHistoryPanel: View {
         // on the row itself.
         .accessibilityAction { open(entry, index: index) }
         .accessibilityActions {
-            ForEach(NotchHistoryPresentation.accessibilityActions(for: entry), id: \.symbol) { action in
+            ForEach(actions(for: entry, index: index), id: \.symbol) { action in
                 if action.kind != .retranscribe || retranscriptionAvailability().isEnabled {
                     Button(action.label) { perform(action.kind, entry: entry, id: id) }
                 }
@@ -224,9 +226,17 @@ struct NotchHistoryPanel: View {
         .accessibilityIdentifier(NotchHistoryPresentation.emptyRowIdentifier)
     }
 
-    private func actionButtons(_ entry: RecentTranscriptionEntry, id: String) -> some View {
+    func actions(for entry: RecentTranscriptionEntry, index: Int) -> [NotchHistoryPresentation.RowAction] {
+        guard !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              rowHasActionableText?(index) ?? true else { return [] }
+        return NotchHistoryPresentation.accessibilityActions(for: entry).filter {
+            scope != .speech || $0.kind == .copy
+        }
+    }
+
+    private func actionButtons(_ entry: RecentTranscriptionEntry, index: Int, id: String) -> some View {
         HStack(spacing: 0) {
-            ForEach(NotchHistoryPresentation.rowActions, id: \.symbol) { action in
+            ForEach(actions(for: entry, index: index), id: \.symbol) { action in
                 if action.kind == .copy {
                     CopyFeedbackButton(
                         action.label,

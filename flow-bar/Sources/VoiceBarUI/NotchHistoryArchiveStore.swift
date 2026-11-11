@@ -20,6 +20,7 @@ public final class NotchHistoryArchiveStore: ObservableObject {
         public let entry: RecentTranscriptionEntry
         /// What follows the time on the row's second line.
         public let detail: String?
+        public var hasActionableText = true
         public var destination: SettingsHistoryDestination? = nil
     }
 
@@ -101,6 +102,7 @@ public final class NotchHistoryArchiveStore: ObservableObject {
         Row(
             entry: RecentTranscriptionEntry(text: entry.displayResponseTranscript, createdAt: entry.createdAt),
             detail: entry.hasQuestionText ? "Asked “\(NotchHistoryPresentation.firstWords(entry.questionText))”" : nil,
+            hasActionableText: entry.hasResponseTranscript,
             destination: SettingsHistoryDestination(scope: .ask, entryID: entry.id)
         )
     }
@@ -108,10 +110,12 @@ public final class NotchHistoryArchiveStore: ObservableObject {
     /// A Speech row leads with the text that was read aloud; its length follows the time.
     nonisolated static func row(_ entry: SettingsSpeechHistoryEntry) -> Row {
         Row(
-            entry: RecentTranscriptionEntry(text: entry.preview, createdAt: entry.createdAt),
+            entry: RecentTranscriptionEntry(text: entry.spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? entry.preview : entry.spokenText, createdAt: entry.createdAt),
             detail: entry.status == "completed" || entry.durationMs == nil
                 ? (entry.durationMs == nil ? entry.statusLabel : entry.durationLabel)
                 : "\(entry.durationLabel) · \(entry.statusLabel)",
+            hasActionableText: !entry.spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             destination: SettingsHistoryDestination(scope: .speech, entryID: entry.id)
         )
     }
