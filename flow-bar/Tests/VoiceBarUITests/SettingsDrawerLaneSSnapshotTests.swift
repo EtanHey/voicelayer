@@ -157,4 +157,31 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
             XCTAssertFalse(reason.box.intersects(word.box), "[S4] the bubble covers '\(word.text)'")
         }
     }
+
+    static func scrollViews(in view: NSView) -> [NSScrollView] {
+        if let scroll = view as? NSScrollView { return [scroll] }
+        return view.subviews.flatMap(scrollViews(in:))
+    }
+
+    /// Item 3: the widened Form's overlay scroller is moved back inside the visible pane (19 pt from the scroll
+    /// view's right edge, which sits 20 pt past the pane's clip), so cancelling the gutter never hides it.
+    func testTheWidenedFormKeepsItsScrollerInsideThePane() throws {
+        let size = CGSize(width: Self.drawerWidth, height: 470)
+        let host = NSHostingView(rootView: Self.drawer(.general, updates: nil).frame(width: size.width, height: size.height))
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: .borderless, backing: .buffered,
+                              defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        VLOrderTestWindow(window)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        let scroll = try XCTUnwrap(Self.scrollViews(in: host).first, "the General Form scrolls")
+        XCTAssertEqual(scroll.scrollerInsets.right, NotchSettingsDrawerPresentation.groupedFormInset - 1,
+                       "[S3] the scroller is inset back inside the visible pane")
+        let frame = scroll.convert(scroll.bounds, to: host)
+        XCTAssertEqual(frame.width, size.width - 2 * NotchSettingsDrawerPresentation.horizontalInset
+                       + 2 * NotchSettingsDrawerPresentation.groupedFormInset, accuracy: 1,
+                       "[S3] the Form is widened by its inset on both sides")
+    }
 }
