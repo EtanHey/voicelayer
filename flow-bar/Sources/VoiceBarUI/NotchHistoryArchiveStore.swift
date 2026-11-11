@@ -1,10 +1,6 @@
 import Combine
 import Foundation
 
-/// Lane H: the notch History's Ask and Speech rows. It reads the archive with the Settings History tab's own
-/// loaders (`SettingsAskHistoryArchive`, `SettingsSpeechHistoryArchive`), off the main actor, and only while a
-/// History surface is open: the first surface to open loads, an archive change while one is open reloads, and with
-/// none open it reads nothing and listens to nothing. Dictations stay the in-memory list the notch already has.
 public struct SettingsHistoryDestination: Equatable, Sendable {
     public let scope: SettingsHistoryScope
     public let entryID: String
@@ -14,6 +10,10 @@ public struct SettingsHistoryDestination: Equatable, Sendable {
     }
 }
 
+/// Lane H: the notch History's Ask and Speech rows. It reads the archive with the Settings History tab's own
+/// loaders (`SettingsAskHistoryArchive`, `SettingsSpeechHistoryArchive`), off the main actor, and only while a
+/// History surface is open: the first surface to open loads, an archive change while one is open reloads, and with
+/// none open it reads nothing and listens to nothing. Dictations stay the in-memory list the notch already has.
 @MainActor
 public final class NotchHistoryArchiveStore: ObservableObject {
     public struct Row: Equatable, Sendable {

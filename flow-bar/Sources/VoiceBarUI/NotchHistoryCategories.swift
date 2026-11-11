@@ -19,6 +19,7 @@ struct NotchHistoryCategoryPanel: View {
 
     @State private var pager: NotchHistoryCategoryPager
     @State private var isDragging = false
+    @State private var swipeCancellation = NotchHistorySwipeCancellation()
     @State private var swipeEndedAt: TimeInterval = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -53,10 +54,11 @@ struct NotchHistoryCategoryPanel: View {
                 pages(width: width)
             }
             .background(NotchHistorySwipeMonitor(
-                onBegin: { pager.begin() },
+                onBegin: { beginSwipe() },
                 onMove: { dx, dy in follow { $0.move(dx: dx, dy: dy) } },
                 onEnd: { finish(width: width, flick: nil) },
-                onStep: { select(pager.index + $0) }
+                onStep: { select(pager.index + $0) },
+                cancellation: swipeCancellation
             ))
         }
         .frame(height: dictations.listHeight)
@@ -145,8 +147,8 @@ struct NotchHistoryCategoryPanel: View {
             DragGesture(minimumDistance: NotchHistoryCategoryPager.slop)
                 .onChanged { value in
                     if !isDragging {
+                        beginSwipe()
                         isDragging = true
-                        pager.begin()
                     }
                     _ = follow { $0.move(to: value.translation) }
                 }
@@ -215,12 +217,20 @@ struct NotchHistoryCategoryPanel: View {
         return true
     }
 
+    private func beginSwipe() {
+        if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
+        pager.begin()
+    }
+
     private func finish(width: CGFloat, flick: Bool?) {
         if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
         settle(NotchDrawerMotion.contentInDuration) { $0.end(width: width, flick: flick) }
     }
 
     private func select(_ index: Int) {
+        if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
+        swipeCancellation.generation &+= 1
+        isDragging = false
         settle(NotchDrawerMotion.tabInDuration) { $0.select(index) }
     }
 
@@ -239,6 +249,10 @@ private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
+final class NotchHistorySwipeCancellation {
+    var generation = 0
+}
+
 /// Feeds a trackpad's two-finger scroll over the lists to the pager. SwiftUI's vertical ScrollView would take these
 /// events whole, so a local monitor looks at each one first: until the gesture's axis is known, and for every
 /// vertical gesture, the event goes on to the list untouched; once it is a sideways swipe the list never sees it
@@ -253,6 +267,8 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
     let onEnd: () -> Void
     /// -1 for Left, +1 for Right.
     let onStep: (Int) -> Void
+    /// A reference fence: a selector/key change invalidates pending events immediately, before view updates.
+    var cancellation: NotchHistorySwipeCancellation? = nil
 
     func makeNSView(context: Context) -> Probe { Probe() }
 
@@ -270,6 +286,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
         private var isTracking = false
         private var isSideways = false
         private var swallowsMomentum = false
+        private var trackingGeneration = 0
 
         override var acceptsFirstResponder: Bool { true }
         // Focus ownership must not make the nonactivating notch steal the key window on a pointer press.
@@ -299,6 +316,14 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
             if window?.firstResponder === self { window?.makeFirstResponder(nil) }
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
+            resetTracking()
+        }
+
+        private func resetTracking() {
+            isTracking = false
+            isSideways = false
+            swallowsMomentum = false
+            trackingGeneration = handlers?.cancellation?.generation ?? 0
         }
 
         /// A pointer press focuses only this History region, including its category selector.
@@ -343,6 +368,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
         /// `handle` with the event's window and place spelled out (a test's synthetic scroll event carries neither).
         func route(_ event: NSEvent, in eventWindow: NSWindow?, at location: NSPoint) -> Bool {
             guard let window, eventWindow === window, let handlers else { return false }
+            if trackingGeneration != (handlers.cancellation?.generation ?? 0) { resetTracking() }
             if !event.momentumPhase.isEmpty {
                 let swallow = swallowsMomentum
                 if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {

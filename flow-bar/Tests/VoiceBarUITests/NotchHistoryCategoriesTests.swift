@@ -419,6 +419,84 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         XCTAssertTrue(NotchHistoryPresentation.emptyState(for: .ask, isLoaded: false).detail.isEmpty)
     }
 
+    @discardableResult
+    private func partialSwipe(_ harness: Harness, monitor: NotchHistorySwipeMonitor.Probe,
+                              phase: Int64, dx: Int32 = 0) throws -> Bool {
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                       wheel1: 0, wheel2: dx, wheel3: 0))
+        cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+        let point = monitor.convert(NSPoint(x: monitor.bounds.midX, y: monitor.bounds.midY), to: nil)
+        return monitor.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: harness.panel, at: point)
+    }
+
+    func testH2NewSwipeInterruptsGestureOrSettlementWithoutSticking() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -120)
+        // A new began cancels the unfinished gesture's translation.
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: 120)
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        XCTAssertEqual(harness.archive.selectedScope, .recording)
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160)
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        XCTAssertEqual(harness.archive.selectedScope, .ask)
+        // Start back immediately, while the first settlement animation is still in flight.
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: 160)
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        drain(0.3)
+        XCTAssertEqual(shown(harness), [.recording])
+    }
+
+    func testH2CloseDuringSwipeReopensWithoutStuckOffset() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160)
+        harness.surface.send(.dismiss(.toggle))
+        drain(0.8)
+        open(harness, .openHistory)
+        XCTAssertEqual(shown(harness), [.recording])
+        try swipe(harness, dx: -160)
+        XCTAssertEqual(shown(harness), [.ask], "reopened History must accept a fresh gesture")
+    }
+
+    func testH2TabSelectionCancelsTheOldSwipeTail() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -100)
+        let tab = try XCTUnwrap(frame(identified: NotchHistoryPresentation.categoryIdentifier(.speech), harness))
+        let point = harness.panel.convertPoint(fromScreen: NSPoint(x: tab.midX, y: tab.midY))
+        try send(.leftMouseDown, at: point, to: harness.panel)
+        try send(.leftMouseUp, at: point, to: harness.panel)
+        drain(0.02)
+        XCTAssertEqual(harness.archive.selectedScope, .speech)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: 160)
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        drain(0.3)
+        XCTAssertEqual(shown(harness), [.speech], "the interrupted swipe must not override the selected tab")
+    }
+
+    func testH2MonitorRemovalDiscardsPendingSwipeEvents() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160)
+        monitor.removeMonitor() // also called during dismantle / window movement
+        XCTAssertFalse(try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160))
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        XCTAssertEqual(harness.archive.selectedScope, .recording, "a removed monitor cannot finish its old gesture")
+    }
+
     // MARK: Pictures (opt-in)
 
     /// Writes both History surfaces in each category, an empty category and one mid-swipe frame: the real History
