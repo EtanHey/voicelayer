@@ -416,6 +416,22 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pill.setFrame(layout.windowFrame(anchoredTo: geometry), display: true)
             UIE2ECaptureFixtures.receipt(sandbox: sandbox, geometry: geometry, panel: pill, state: model.voice)
         } else { Self.fitPill(pill, layout: layout, in: screen.visibleFrame) }
+        recertifyPillBackingScale()
+    }
+
+    /// N12: the app re-rasterizes the panel two main-queue turns after every layout change
+    /// (`AppDelegate.schedulePanelBackingScaleRecertification`, reason `layout_changed`). This host skipped that
+    /// step, so the drawer glyphs it wiped on the real app stayed painted in every native fixture.
+    private func recertifyPillBackingScale() {
+        DispatchQueue.main.async { [weak self] in
+            self?.pill?.contentView?.needsLayout = true
+            self?.pill?.contentView?.layoutSubtreeIfNeeded()
+            DispatchQueue.main.async { [weak self] in
+                guard let pill = self?.pill, let content = pill.contentView,
+                      let scale = (pill.screen ?? NSScreen.main)?.backingScaleFactor else { return }
+                VoiceBarBackingScaleSynchronizer.synchronize(content, to: scale)
+            }
+        }
     }
 
     /// U2×U4 review: the QA BarView renders this model, so it is fed from VoiceState exactly like the app's
@@ -816,6 +832,19 @@ final class UIE2EModel {
             // proves BarView geometry, never real replay admission or audio lifecycle.
             voice.handleEvent(["type": "ack", "command": cmd, "id": message["id"] ?? "", "outcome": "accept"])
             fixture(cmd == "replay" ? "speaking" : "finish")
+            return
+        case "retranscribe_recording":
+            // N12: the daemon's answer to a History re-transcription (accept, transcribing, then the archived
+            // result), so a native fixture can land a History update under an open drawer. Synthetic text only.
+            let path = message["audio_path"] as? String ?? ""
+            voice.handleEvent(["type": "ack", "command": cmd, "id": message["id"] ?? "", "outcome": "accept"])
+            voice.handleEvent(["type": "state", "state": "transcribing"])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.voice.handleEvent(["type": "transcription", "text": "QA notch row re-transcribed",
+                                         "recording_path": path])
+                self?.voice.handleEvent(["type": "state", "state": "idle"])
+                self?.receipt("history-retranscribed")
+            }
             return
         case "set_whisper_residency": residency = message["action"] as? String == "load" ? "loaded" : "not_loaded"
         case "set_processing_setting":
