@@ -273,11 +273,14 @@ export class ParakeetServer {
         if (child.fault) throw child.fault;
         if (typeof result.text !== "string" || result.complete !== true || result.sample_rate !== 16000 ||
             !Number.isSafeInteger(result.input_frames) || (result.input_frames as number) <= 0 ||
-            result.covered_frames !== result.input_frames || typeof result.inference_s !== "number" ||
+            !Number.isSafeInteger(result.covered_frames) || (result.covered_frames as number) < 0 ||
+            (result.covered_frames as number) > (result.input_frames as number) || typeof result.inference_s !== "number" ||
             !Number.isFinite(result.inference_s) || result.inference_s < 0 ||
             (result.language !== null && typeof result.language !== "string")) {
           throw new ParakeetServiceError(result.complete === false ? "PARTIAL" : "INVALID", result, "Parakeet incomplete response");
         }
+        // A valid coverage discrepancy belongs to native coverage qualification,
+        // not a protocol failure that destroys usable words and switches engines.
         const end = result.last_token_end_s;
         if (end !== null && (typeof end !== "number" || !Number.isFinite(end) || end < 0 || end > (result.input_frames as number) / 16000)) {
           result.raw_last_token_end_s = end;
